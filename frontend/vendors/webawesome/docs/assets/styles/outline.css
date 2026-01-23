@@ -1,0 +1,50 @@
+#outline {
+  order: 2;
+  margin-block: 2rem;
+}
+
+#outline h2 > a {
+  font-weight: inherit;
+  color: inherit;
+}
+
+#outline > nav {
+  position: sticky;
+  top: calc(var(--docs-header-height) + 3.5rem);
+  padding-inline-end: 2rem;
+  max-width: 240px;
+  min-width: 240px;
+}
+
+#outline-expandable {
+  display: none;
+}
+
+#outline-expandable ul {
+  columns: 2;
+  column-gap: 2rem;
+  padding-inline: 1rem;
+}
+
+#outline [data-level='3'] {
+  margin-inline-start: 1rem;
+}
+
+@media screen and (max-width: 1199px) {
+  wa-page [slot='aside'] {
+    display: none;
+  }
+  #outline {
+    padding-block: 0.25rem;
+    margin-block-end: -1rem;
+  }
+
+  #outline-standard {
+    display: none;
+  }
+
+  #outline-expandable {
+    display: block;
+    margin-block-end: var(--wa-space-xl);
+  }
+}
