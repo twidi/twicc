@@ -1,6 +1,8 @@
 // frontend/src/stores/data.js
 
 import { defineStore } from 'pinia'
+import { DEFAULT_DISPLAY_MODE } from '../constants'
+import { computeVisualItems } from '../utils/visualItems'
 
 export const useDataStore = defineStore('data', {
     state: () => ({
@@ -16,7 +18,20 @@ export const useDataStore = defineStore('data', {
                 loadingError: false
             },
             projects: {},   // { projectId: { sessionsFetched, sessionsLoading, sessionsLoadingError } }
-            sessions: {}    // { sessionId: { itemsFetched, itemsLoading, itemsLoadingError } }
+            sessions: {},   // { sessionId: { itemsFetched, itemsLoading, itemsLoadingError } }
+
+            // Display mode - global, not per-session
+            // Values: 'debug' | 'normal' | 'simplified'
+            sessionItemsDisplayMode: DEFAULT_DISPLAY_MODE,
+
+            // Expanded groups - per session
+            // { sessionId: [groupHeadLineNum, ...] }
+            // Using array instead of Set for Vue reactivity
+            sessionExpandedGroups: {},
+
+            // Visual items - computed from sessionItems, display mode, and expanded groups
+            // { sessionId: [{ lineNum, isGroupHead?, isExpanded? }, ...] }
+            sessionVisualItems: {}
         }
     }),
 
@@ -49,7 +64,31 @@ export const useDataStore = defineStore('data', {
         areProjectSessionsFetched: (state) => (projectId) =>
             state.localState.projects[projectId]?.sessionsFetched ?? false,
         areSessionItemsFetched: (state) => (sessionId) =>
-            state.localState.sessions[sessionId]?.itemsFetched ?? false
+            state.localState.sessions[sessionId]?.itemsFetched ?? false,
+
+        // Display mode getter
+        getDisplayMode: (state) => state.localState.sessionItemsDisplayMode,
+
+        // Get expanded groups for a session (returns array)
+        getExpandedGroups: (state) => (sessionId) =>
+            state.localState.sessionExpandedGroups[sessionId] || [],
+
+        // Check if a group is expanded
+        isGroupExpanded: (state) => (sessionId, groupHeadLineNum) => {
+            const groups = state.localState.sessionExpandedGroups[sessionId]
+            return groups ? groups.includes(groupHeadLineNum) : false
+        },
+
+        // Get a single item by lineNum (handles 1-based to 0-based conversion)
+        getSessionItem: (state) => (sessionId, lineNum) => {
+            const items = state.sessionItems[sessionId]
+            if (!items || lineNum < 1) return null
+            return items[lineNum - 1] || null
+        },
+
+        // Get visual items for a session
+        getSessionVisualItems: (state) => (sessionId) =>
+            state.localState.sessionVisualItems[sessionId] || []
     },
 
     actions: {
@@ -119,6 +158,8 @@ export const useDataStore = defineStore('data', {
                 // Place item at correct index
                 targetArray[index] = item
             }
+
+            this.recomputeVisualItems(sessionId)
         },
 
         // Initial loading from API
@@ -375,6 +416,185 @@ export const useDataStore = defineStore('data', {
             if (this.localState.projects[projectId]) {
                 this.localState.projects[projectId].sessionsFetched = false
             }
+        },
+
+        // Visual items computation
+
+        /**
+         * Recompute visual items for a session based on current mode and expanded groups.
+         * Should be called after:
+         * - sessionItems changes (metadata loaded, content loaded, new item via WebSocket)
+         * - Display mode changes
+         * - Group is toggled
+         *
+         * @param {string} sessionId
+         */
+        recomputeVisualItems(sessionId) {
+            const items = this.sessionItems[sessionId]
+            if (!items) {
+                this.localState.sessionVisualItems[sessionId] = []
+                return
+            }
+
+            const mode = this.localState.sessionItemsDisplayMode
+            const expandedGroups = this.localState.sessionExpandedGroups[sessionId] || []
+
+            this.localState.sessionVisualItems[sessionId] = computeVisualItems(items, mode, expandedGroups)
+        },
+
+        /**
+         * Recompute visual items for ALL sessions.
+         * Called when display mode changes (affects all sessions).
+         */
+        recomputeAllVisualItems() {
+            for (const sessionId of Object.keys(this.sessionItems)) {
+                this.recomputeVisualItems(sessionId)
+            }
+        },
+
+        // Display mode and expanded groups actions
+
+        /**
+         * Set display mode.
+         * @param {string} mode - 'debug' | 'normal' | 'simplified'
+         */
+        setDisplayMode(mode) {
+            this.localState.sessionItemsDisplayMode = mode
+            this.recomputeAllVisualItems()
+        },
+
+        /**
+         * Toggle expanded state of a group.
+         * @param {string} sessionId
+         * @param {number} groupHeadLineNum - line_num of the group head item
+         */
+        toggleExpandedGroup(sessionId, groupHeadLineNum) {
+            // Ensure array exists for this session
+            if (!this.localState.sessionExpandedGroups[sessionId]) {
+                this.localState.sessionExpandedGroups[sessionId] = []
+            }
+
+            const groups = this.localState.sessionExpandedGroups[sessionId]
+            const index = groups.indexOf(groupHeadLineNum)
+
+            if (index >= 0) {
+                // Collapse: remove from array
+                groups.splice(index, 1)
+            } else {
+                // Expand: add to array
+                groups.push(groupHeadLineNum)
+            }
+
+            this.recomputeVisualItems(sessionId)
+        },
+
+        /**
+         * Expand a group (idempotent).
+         * @param {string} sessionId
+         * @param {number} groupHeadLineNum - line_num of the group head item
+         */
+        expandGroup(sessionId, groupHeadLineNum) {
+            if (!this.localState.sessionExpandedGroups[sessionId]) {
+                this.localState.sessionExpandedGroups[sessionId] = []
+            }
+            const groups = this.localState.sessionExpandedGroups[sessionId]
+            if (!groups.includes(groupHeadLineNum)) {
+                groups.push(groupHeadLineNum)
+            }
+        },
+
+        /**
+         * Collapse a group (idempotent).
+         * @param {string} sessionId
+         * @param {number} groupHeadLineNum - line_num of the group head item
+         */
+        collapseGroup(sessionId, groupHeadLineNum) {
+            const groups = this.localState.sessionExpandedGroups[sessionId]
+            if (groups) {
+                const index = groups.indexOf(groupHeadLineNum)
+                if (index >= 0) {
+                    groups.splice(index, 1)
+                }
+            }
+        },
+
+        /**
+         * Collapse all groups for a session.
+         * @param {string} sessionId
+         */
+        collapseAllGroups(sessionId) {
+            this.localState.sessionExpandedGroups[sessionId] = []
+        },
+
+        /**
+         * Load metadata for all items in a session (without content).
+         * @param {string} projectId
+         * @param {string} sessionId
+         * @returns {Promise<Array|null>} Array of metadata objects or null on error
+         */
+        async loadSessionMetadata(projectId, sessionId) {
+            try {
+                const res = await fetch(
+                    `/api/projects/${projectId}/sessions/${sessionId}/items/metadata/`
+                )
+                if (!res.ok) {
+                    console.error('Failed to load session metadata:', res.status, res.statusText)
+                    return null
+                }
+                return await res.json()
+            } catch (error) {
+                console.error('Failed to load session metadata:', error)
+                return null
+            }
+        },
+
+        /**
+         * Initialize sessionItems array from metadata (no content).
+         * @param {string} sessionId
+         * @param {Array} metadata - Array of { line_num, display_level, group_head, group_tail }
+         */
+        initSessionItemsFromMetadata(sessionId, metadata) {
+            this.sessionItems[sessionId] = metadata.map(m => ({
+                line_num: m.line_num,
+                display_level: m.display_level,
+                group_head: m.group_head,
+                group_tail: m.group_tail,
+                content: null  // Will be filled by content fetch
+            }))
+
+            // Compute visual items after initialization
+            this.recomputeVisualItems(sessionId)
+        },
+
+        /**
+         * Update existing session items with fetched content.
+         * @param {string} sessionId
+         * @param {Array} items - Array of { line_num, content, display_level, group_head, group_tail }
+         */
+        updateSessionItemsContent(sessionId, items) {
+            const sessionItemsArray = this.sessionItems[sessionId]
+            if (!sessionItemsArray) return
+
+            for (const item of items) {
+                const index = item.line_num - 1  // line_num is 1-based
+                if (sessionItemsArray[index]) {
+                    // Update content
+                    sessionItemsArray[index].content = item.content
+                    // Also update metadata in case it was computed after initial load
+                    if (item.display_level != null) {
+                        sessionItemsArray[index].display_level = item.display_level
+                    }
+                    if (item.group_head != null) {
+                        sessionItemsArray[index].group_head = item.group_head
+                    }
+                    if (item.group_tail != null) {
+                        sessionItemsArray[index].group_tail = item.group_tail
+                    }
+                }
+            }
+
+            // Recompute visual items in case metadata changed
+            this.recomputeVisualItems(sessionId)
         }
     }
 })

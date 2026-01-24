@@ -7,6 +7,7 @@ with the database, and reads new lines from modified JSONL files.
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -14,7 +15,8 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 
-from twicc_poc.core.models import Project, Session, SessionItem
+from twicc_poc.compute import compute_item_metadata_live, compute_metadata
+from twicc_poc.core.models import DisplayLevel, Project, Session, SessionItem
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -115,17 +117,36 @@ def sync_session_items(session: Session, file_path: Path) -> int:
 
             for line in lines:
                 current_line_num += 1
-                items_to_create.append(
-                    SessionItem(
-                        session=session,
-                        line_num=current_line_num,
-                        content=line,
-                    )
+                item = SessionItem(
+                    session=session,
+                    line_num=current_line_num,
+                    content=line,
                 )
+                # Pre-compute display_level (no group info yet)
+                try:
+                    parsed = json.loads(line)
+                except json.JSONDecodeError:
+                    parsed = {}
+                metadata = compute_metadata(parsed)
+                item.display_level = metadata['display_level']
+                items_to_create.append(item)
 
-            # Bulk create with ignore_conflicts in case of duplicate line_num
+            # Bulk create all items
             SessionItem.objects.bulk_create(items_to_create, ignore_conflicts=True)
             new_items_count = len(items_to_create)
+
+            # Second pass: compute group membership for level 2 items
+            for item in items_to_create:
+                if item.display_level == DisplayLevel.COLLAPSIBLE:
+                    compute_item_metadata_live(session.id, item, item.content)
+                    # Need to save the group info
+                    SessionItem.objects.filter(
+                        session=session,
+                        line_num=item.line_num
+                    ).update(
+                        group_head=item.group_head,
+                        group_tail=item.group_tail
+                    )
 
             # Update session tracking fields
             session.last_line = current_line_num

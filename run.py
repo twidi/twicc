@@ -31,15 +31,19 @@ from django.core.management import call_command
 from twicc_poc.core.models import Project, Session
 from twicc_poc.sync import sync_all
 from twicc_poc.watcher import start_watcher, stop_watcher
+from twicc_poc.background import start_background_compute_task, stop_background_task
 
 
 async def run_server(port: int):
-    """Run the ASGI server with file watcher."""
+    """Run the ASGI server with file watcher and background compute task."""
     import uvicorn
     from twicc_poc.asgi import application
 
     # Start watcher task
     watcher_task = asyncio.create_task(start_watcher())
+
+    # Start background compute task (after initial sync completed in main())
+    compute_task = asyncio.create_task(start_background_compute_task())
 
     # Configure uvicorn
     config = uvicorn.Config(
@@ -58,6 +62,14 @@ async def run_server(port: int):
         watcher_task.cancel()
         try:
             await watcher_task
+        except asyncio.CancelledError:
+            pass
+
+        # Clean shutdown of background compute task
+        stop_background_task()
+        compute_task.cancel()
+        try:
+            await compute_task
         except asyncio.CancelledError:
             pass
 
@@ -87,6 +99,7 @@ def main():
         sys.exit(1)
 
     print("✓ File watcher scheduled")
+    print("✓ Background compute task scheduled")
     print(f"→ Server starting on http://0.0.0.0:{port_int}")
 
     # Run async server

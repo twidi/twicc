@@ -8,6 +8,7 @@ from twicc_poc.core.serializers import (
     serialize_project,
     serialize_session,
     serialize_session_item,
+    serialize_session_item_metadata,
 )
 
 
@@ -103,6 +104,22 @@ def session_items(request, project_id, session_id):
             items = items.filter(q_filter)
 
     data = [serialize_session_item(item) for item in items]
+    return JsonResponse(data, safe=False)
+
+
+def session_items_metadata(request, project_id, session_id):
+    """GET /api/projects/<id>/sessions/<session_id>/items/metadata/ - Metadata of all items.
+
+    Returns all items with metadata fields but WITHOUT content.
+    Used for initial session load to build the visual items list.
+    """
+    try:
+        session = Session.objects.get(id=session_id, project_id=project_id)
+    except Session.DoesNotExist:
+        raise Http404("Session not found")
+
+    items = session.items.all()  # Already ordered by line_num (see Meta.ordering)
+    data = [serialize_session_item_metadata(item) for item in items]
     return JsonResponse(data, safe=False)
 
 

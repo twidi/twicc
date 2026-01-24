@@ -29,6 +29,16 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "data.sqlite",
+        "OPTIONS": {
+            "timeout": 20,
+            "init_command": """
+                PRAGMA journal_mode=WAL;
+                PRAGMA synchronous=NORMAL;
+                PRAGMA mmap_size=134217728;
+                PRAGMA journal_size_limit=27103364;
+                PRAGMA cache_size=2000;
+            """,
+        },
     }
 }
 
@@ -64,3 +74,6 @@ LOGGING = {
         },
     },
 }
+
+# Display levels computation
+CURRENT_COMPUTE_VERSION = 12  # Bump when display rules change to trigger recomputation

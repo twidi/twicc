@@ -10,6 +10,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/", views.project_sessions),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/", views.session_detail),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/", views.session_items),
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/items/metadata/", views.session_items_metadata),
     # Catch-all for Vue Router (must be last)
     re_path(r"^(?!api/|static/|ws/).*$", views.spa_index),
 ]

@@ -5,9 +5,10 @@ import { useDebounceFn } from '@vueuse/core'
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useDataStore } from '../stores/data'
-import { INITIAL_ITEMS_COUNT } from '../constants'
+import { INITIAL_ITEMS_COUNT, DISPLAY_MODES } from '../constants'
 import SessionItem from '../components/SessionItem.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
+import GroupToggle from '../components/GroupToggle.vue'
 
 const route = useRoute()
 const store = useDataStore()
@@ -31,51 +32,99 @@ const sessionId = computed(() => route.params.sessionId)
 // Session data
 const session = computed(() => store.getSession(sessionId.value))
 
-// Session items
+// Session items (raw, with metadata + content)
 const items = computed(() => store.getSessionItems(sessionId.value))
+
+// Visual items (filtered by display mode and expanded groups)
+const visualItems = computed(() => store.getSessionVisualItems(sessionId.value))
+
+// Display mode (global, from store)
+const displayMode = computed(() => store.getDisplayMode)
+
+// Check if session computation is pending
+const isComputePending = computed(() => {
+    const sess = store.getSession(sessionId.value)
+    return sess && sess.compute_version_up_to_date === false
+})
 
 // Loading and error states
 const isLoading = computed(() => store.areSessionItemsLoading(sessionId.value))
 const hasError = computed(() => store.didSessionItemsFailToLoad(sessionId.value))
 
 /**
- * Load initial session items (first N and last N).
- * Used for initial load and retry after error.
+ * Load session data: metadata (all items) + initial content (first N and last N).
+ * Fetches both in parallel for faster loading.
  */
-async function loadInitialItems(pId, sId, lastLine) {
+async function loadSessionData(pId, sId, lastLine) {
     // Mark as fetched first (before async operations to avoid race conditions)
     if (!store.localState.sessions[sId]) {
         store.localState.sessions[sId] = {}
     }
     store.localState.sessions[sId].itemsFetched = true
+    store.localState.sessions[sId].itemsLoading = true
 
-    // Initialize items array with placeholders
-    store.initSessionItems(sId, lastLine)
+    try {
+        // Build ranges for initial content
+        const ranges = []
+        if (lastLine <= INITIAL_ITEMS_COUNT * 2) {
+            // Small session: load everything
+            ranges.push([1, lastLine])
+        } else {
+            // Large session: load first N and last N
+            ranges.push([1, INITIAL_ITEMS_COUNT])
+            ranges.push([lastLine - INITIAL_ITEMS_COUNT + 1, lastLine])
+        }
 
-    // Load first N and last N items
-    const ranges = []
-    if (lastLine <= INITIAL_ITEMS_COUNT * 2) {
-        // Small session: load everything
-        ranges.push([1, lastLine])
-    } else {
-        // Large session: load first N and last N
-        ranges.push([1, INITIAL_ITEMS_COUNT])
-        ranges.push([lastLine - INITIAL_ITEMS_COUNT + 1, lastLine])
+        // Build range params for items endpoint
+        const params = new URLSearchParams()
+        for (const [min, max] of ranges) {
+            params.append('range', `${min}:${max}`)
+        }
+
+        // Fetch BOTH in parallel
+        const [metadataResult, itemsResult] = await Promise.all([
+            store.loadSessionMetadata(pId, sId),
+            fetch(`/api/projects/${pId}/sessions/${sId}/items/?${params}`)
+                .then(res => res.ok ? res.json() : null)
+                .catch(() => null)
+        ])
+
+        // Check for errors
+        if (!metadataResult || !itemsResult) {
+            store.localState.sessions[sId].itemsLoadingError = true
+            return
+        }
+
+        // Process results
+        store.initSessionItemsFromMetadata(sId, metadataResult)
+        store.updateSessionItemsContent(sId, itemsResult)
+
+        // Success
+        store.localState.sessions[sId].itemsLoadingError = false
+
+    } catch (error) {
+        console.error('Failed to load session data:', error)
+        store.localState.sessions[sId].itemsLoadingError = true
+    } finally {
+        store.localState.sessions[sId].itemsLoading = false
     }
-
-    await store.loadSessionItemsRanges(pId, sId, ranges, { isInitialLoading: true })
 }
 
-// Load session items when session changes
+// Load session data when session changes
 watch([projectId, sessionId, session], async ([newProjectId, newSessionId, newSession]) => {
     if (!newProjectId || !newSessionId || !newSession) return
+
+    // Don't load if computation is pending
+    if (newSession.compute_version_up_to_date === false) {
+        return
+    }
 
     const lastLine = newSession.last_line
     if (!lastLine) return
 
     // Only initialize and load if not already done
     if (!store.areSessionItemsFetched(newSessionId)) {
-        await loadInitialItems(newProjectId, newSessionId, lastLine)
+        await loadSessionData(newProjectId, newSessionId, lastLine)
     }
 
     // Always scroll to end of session (with retry until stable)
@@ -83,7 +132,7 @@ watch([projectId, sessionId, session], async ([newProjectId, newSessionId, newSe
     scrollToBottomUntilStable()
 }, { immediate: true })
 
-// Retry loading session items after error
+// Retry loading session data after error
 async function handleRetry() {
     if (!projectId.value || !sessionId.value || !session.value) return
 
@@ -96,13 +145,38 @@ async function handleRetry() {
     }
     // Clear existing items
     delete store.sessionItems[sessionId.value]
+    delete store.sessionVisualItems[sessionId.value]
 
-    await loadInitialItems(projectId.value, sessionId.value, lastLine)
+    await loadSessionData(projectId.value, sessionId.value, lastLine)
 
     // Scroll to bottom after successful load
     await nextTick()
     scrollToBottomUntilStable()
 }
+
+/**
+ * Called when session becomes ready (compute completed).
+ * Triggered by watching compute_version_up_to_date transition.
+ */
+async function onComputeCompleted() {
+    if (!projectId.value || !sessionId.value || !session.value) return
+
+    const lastLine = session.value.last_line
+    if (!lastLine) return
+
+    await loadSessionData(projectId.value, sessionId.value, lastLine)
+
+    await nextTick()
+    scrollToBottomUntilStable()
+}
+
+// Watch for session compute completion
+watch(() => session.value?.compute_version_up_to_date, (newValue, oldValue) => {
+    // Transition from false (or undefined) to true
+    if (newValue === true && oldValue !== true) {
+        onComputeCompleted()
+    }
+})
 
 /**
  * Scroll to bottom repeatedly until the scroll position stabilizes.
@@ -129,65 +203,60 @@ async function scrollToBottomUntilStable() {
 }
 
 /**
- * Find ranges of placeholders (items without content) within a given range.
- * Returns an array of [start, end] ranges (1-based line_num).
+ * Get the content of an item by its line number.
+ * Used by the scroller template and size-dependencies.
  */
-function findPlaceholderRanges(startIndex, endIndex) {
-    const sessionItems = items.value
-    if (!sessionItems?.length) return []
+function getItemContent(lineNum) {
+    const item = store.getSessionItem(sessionId.value, lineNum)
+    return item?.content
+}
 
+/**
+ * Convert an array of line numbers to ranges for API calls.
+ * e.g., [1, 2, 3, 5, 6, 10] -> [[1, 3], [5, 6], [10, 10]]
+ */
+function lineNumsToRanges(lineNums) {
+    if (lineNums.length === 0) return []
+
+    const sorted = [...lineNums].sort((a, b) => a - b)
     const ranges = []
-    let rangeStart = null
+    let rangeStart = sorted[0]
+    let rangeEnd = sorted[0]
 
-    // Clamp to valid indices (0-based)
-    const start = Math.max(0, startIndex)
-    const end = Math.min(sessionItems.length - 1, endIndex)
-
-    for (let i = start; i <= end; i++) {
-        const item = sessionItems[i]
-        const isPlaceholder = !item.content
-
-        if (isPlaceholder && rangeStart === null) {
-            // Start a new range
-            rangeStart = i
-        } else if (!isPlaceholder && rangeStart !== null) {
-            // End current range (convert to 1-based line_num)
-            ranges.push([rangeStart + 1, i])
-            rangeStart = null
+    for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i] === rangeEnd + 1) {
+            rangeEnd = sorted[i]
+        } else {
+            ranges.push([rangeStart, rangeEnd])
+            rangeStart = sorted[i]
+            rangeEnd = sorted[i]
         }
     }
 
-    // Close any open range
-    if (rangeStart !== null) {
-        ranges.push([rangeStart + 1, end + 1])
-    }
-
+    ranges.push([rangeStart, rangeEnd])
     return ranges
 }
 
 /**
  * Execute the pending load - called after debounce.
+ * Loads specific line numbers instead of ranges of indices.
  */
 async function executePendingLoad() {
     const range = pendingLoadRange.value
-    if (!range) return
+    if (!range || !range.lineNums || range.lineNums.length === 0) return
 
-    const { startIndex, endIndex } = range
     pendingLoadRange.value = null
 
-    // Find placeholder ranges within the buffered visible area
-    const placeholderRanges = findPlaceholderRanges(startIndex, endIndex)
+    const ranges = lineNumsToRanges(range.lineNums)
 
-    if (placeholderRanges.length > 0 && projectId.value && sessionId.value) {
-        // Check if we're at bottom BEFORE loading
+    if (ranges.length > 0 && projectId.value && sessionId.value) {
         const el = scrollerRef.value?.$el
         const wasAtBottom = el
             ? (el.scrollHeight - el.scrollTop - el.clientHeight) <= 20
             : false
 
-        await store.loadSessionItemsRanges(projectId.value, sessionId.value, placeholderRanges)
+        await store.loadSessionItemsRanges(projectId.value, sessionId.value, ranges)
 
-        // Re-scroll to bottom if we were at bottom before loading
         if (el && wasAtBottom) {
             const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
             if (distanceFromBottom > 5) {
@@ -201,22 +270,33 @@ async function executePendingLoad() {
 const debouncedLoad = useDebounceFn(executePendingLoad, LOAD_DEBOUNCE_MS)
 
 /**
- * Handle scroller update event - sets current visible range and triggers debounced load.
- * Indices from DynamicScroller are 0-based.
- * No accumulation: only load where user stops scrolling.
+ * Handle scroller update event - triggers lazy loading for visible items.
+ * Works with visualItems (filtered list) and maps to actual line numbers.
  */
 function onScrollerUpdate(startIndex, endIndex, visibleStartIndex, visibleEndIndex) {
+    const visItems = visualItems.value
+    if (!visItems || visItems.length === 0) return
+
     // Add buffer around visible range
     const bufferedStart = Math.max(0, visibleStartIndex - LOAD_BUFFER)
-    const bufferedEnd = visibleEndIndex + LOAD_BUFFER
+    const bufferedEnd = Math.min(visItems.length - 1, visibleEndIndex + LOAD_BUFFER)
 
-    // Replace (not accumulate): only care about current visible range
-    pendingLoadRange.value = {
-        startIndex: bufferedStart,
-        endIndex: bufferedEnd
+    // Collect line numbers that need content loading
+    const lineNumsToLoad = []
+    for (let i = bufferedStart; i <= bufferedEnd; i++) {
+        const visualItem = visItems[i]
+        if (visualItem) {
+            const sessionItem = store.getSessionItem(sessionId.value, visualItem.lineNum)
+            if (sessionItem && !sessionItem.content) {
+                lineNumsToLoad.push(visualItem.lineNum)
+            }
+        }
     }
 
-    debouncedLoad()
+    if (lineNumsToLoad.length > 0) {
+        pendingLoadRange.value = { lineNums: lineNumsToLoad }
+        debouncedLoad()
+    }
 }
 
 // Format mtime as local datetime
@@ -231,6 +311,22 @@ function truncateId(id) {
     if (!id || id.length <= 20) return id
     return id.slice(0, 8) + '...' + id.slice(-8)
 }
+
+/**
+ * Handle display mode change from the selector.
+ */
+function onModeChange(event) {
+    const newMode = event.target.value
+    store.setDisplayMode(newMode)
+}
+
+/**
+ * Toggle a group's expanded state.
+ * Called when clicking on a GroupToggle component.
+ */
+function toggleGroup(groupHeadLineNum) {
+    store.toggleExpandedGroup(sessionId.value, groupHeadLineNum)
+}
 </script>
 
 <template>
@@ -240,6 +336,21 @@ function truncateId(id) {
             <div class="session-title">
                 <h2 :title="sessionId">{{ truncateId(sessionId) }}</h2>
             </div>
+
+            <!-- Mode selector -->
+            <div class="session-controls">
+                <wa-select
+                    :value="displayMode"
+                    @change="onModeChange"
+                    size="small"
+                    class="mode-selector"
+                >
+                    <wa-option :value="DISPLAY_MODES.DEBUG">Debug</wa-option>
+                    <wa-option :value="DISPLAY_MODES.NORMAL">Normal</wa-option>
+                    <wa-option :value="DISPLAY_MODES.SIMPLIFIED">Simplified</wa-option>
+                </wa-select>
+            </div>
+
             <div class="session-meta">
                 <span class="meta-item">
                     <wa-icon name="list-numbers"></wa-icon>
@@ -254,9 +365,17 @@ function truncateId(id) {
 
         <wa-divider></wa-divider>
 
+        <!-- Compute pending state -->
+        <div v-if="isComputePending" class="compute-pending-state">
+            <wa-callout variant="warning">
+                <wa-icon slot="icon" name="hourglass"></wa-icon>
+                <span>Session is being prepared, please wait...</span>
+            </wa-callout>
+        </div>
+
         <!-- Error state -->
         <FetchErrorPanel
-            v-if="hasError"
+            v-else-if="hasError"
             :loading="isLoading"
             @retry="handleRetry"
         >
@@ -273,11 +392,11 @@ function truncateId(id) {
         <DynamicScroller
             :key="sessionId"
             ref="scrollerRef"
-            v-else-if="items.length > 0"
-            :items="items"
+            v-else-if="visualItems.length > 0"
+            :items="visualItems"
             :min-item-size="80"
             :buffer="200"
-            key-field="line_num"
+            key-field="lineNum"
             class="session-items"
             :emit-update="true"
             @update="onScrollerUpdate"
@@ -286,24 +405,50 @@ function truncateId(id) {
                 <DynamicScrollerItem
                     :item="item"
                     :active="active"
-                    :size-dependencies="[item.content]"
+                    :size-dependencies="[getItemContent(item.lineNum), item.isExpanded]"
                     :data-index="index"
                     class="item-wrapper"
                 >
                     <!-- Placeholder (no content loaded yet) -->
-                    <div v-if="!item.content" class="item-placeholder">
-                        <div class="line-number">{{ item.line_num }}</div>
+                    <div v-if="!getItemContent(item.lineNum)" class="item-placeholder">
+                        <div class="line-number">{{ item.lineNum }}</div>
                         <wa-skeleton effect="sheen"></wa-skeleton>
                     </div>
-                    <!-- Real item -->
+
+                    <!-- Group head (collapsed): show toggle only -->
+                    <GroupToggle
+                        v-else-if="item.isGroupHead && !item.isExpanded"
+                        :expanded="false"
+                        @toggle="toggleGroup(item.lineNum)"
+                    />
+
+                    <!-- Group head (expanded): show toggle + item content -->
+                    <div v-else-if="item.isGroupHead && item.isExpanded" class="group-expanded">
+                        <GroupToggle
+                            :expanded="true"
+                            @toggle="toggleGroup(item.lineNum)"
+                        />
+                        <SessionItem
+                            :content="getItemContent(item.lineNum)"
+                            :line-num="item.lineNum"
+                        />
+                    </div>
+
+                    <!-- Regular item: show item content -->
                     <SessionItem
                         v-else
-                        :content="item.content"
-                        :line-num="item.line_num"
+                        :content="getItemContent(item.lineNum)"
+                        :line-num="item.lineNum"
                     />
                 </DynamicScrollerItem>
             </template>
         </DynamicScroller>
+
+        <!-- Filtered empty state (all items hidden by current mode) -->
+        <div v-else-if="visualItems.length === 0 && items.length > 0" class="empty-state">
+            <wa-icon name="filter"></wa-icon>
+            <span>No items to display in this mode</span>
+        </div>
 
         <!-- Empty state -->
         <div v-else class="empty-state">
@@ -321,12 +466,20 @@ function truncateId(id) {
 }
 
 .session-header {
-    flex-shrink: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wa-space-m);
     padding: var(--wa-space-l);
 }
 
 .session-view > wa-divider {
     flex-shrink: 0;
+}
+
+.session-title {
+    flex: 1;
+    min-width: 0;  /* Allow text truncation */
 }
 
 .session-title h2 {
@@ -337,7 +490,16 @@ function truncateId(id) {
     color: var(--wa-color-text);
 }
 
+.session-controls {
+    flex-shrink: 0;
+}
+
+.mode-selector {
+    min-width: 120px;
+}
+
 .session-meta {
+    width: 100%;
     display: flex;
     gap: var(--wa-space-l);
     margin-top: var(--wa-space-s);
@@ -392,5 +554,28 @@ function truncateId(id) {
 .item-placeholder wa-skeleton {
     flex: 1;
     height: 1.5em;
+}
+
+.compute-pending-state {
+    padding: var(--wa-space-l);
+}
+
+.compute-pending-state wa-callout {
+    max-width: 500px;
+    margin: 0 auto;
+}
+
+.group-expanded {
+    display: flex;
+    flex-direction: column;
+}
+
+.group-expanded .group-toggle {
+    margin-bottom: 0;
+}
+
+.group-expanded .session-item {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
 }
 </style>
