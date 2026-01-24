@@ -20,6 +20,11 @@ onMounted(async () => {
 </template>
 
 <style>
+body {
+    margin: 0;
+    padding: 0;
+}
+
 .app-container {
     min-height: 100vh;
     background: var(--wa-color-surface-base);

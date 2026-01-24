@@ -74,7 +74,7 @@ function handleBackHome() {
                 <h3 class="sessions-title">Sessions</h3>
                 <SessionList
                     :project-id="projectId"
-                    :active-session-id="sessionId"
+                    :session-id="sessionId"
                     @select="handleSessionSelect"
                 />
             </div>

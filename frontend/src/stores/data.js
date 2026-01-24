@@ -7,7 +7,7 @@ export const useDataStore = defineStore('data', {
         // Server data
         projects: {},       // { id: { id, sessions_count, mtime, archived } }
         sessions: {},       // { id: { id, project_id, last_line, mtime, archived } }
-        sessionItems: {},   // { sessionId: [{ line_num, content }, ...] }
+        sessionItems: {},   // { sessionId: [{ line_num, content }, ...] } - line_num is 1-based
 
         // Local UI state (separate from server data to avoid being overwritten)
         localState: {
@@ -53,44 +53,55 @@ export const useDataStore = defineStore('data', {
             this.$patch({ sessions: { [session.id]: session } })
         },
 
-        // Session Items - handles out-of-order arrivals by maintaining line_num sort
+        /**
+         * Initialize session items array with placeholders.
+         * Placeholders are objects with only line_num (no content).
+         * @param {string} sessionId
+         * @param {number} lastLine - Total number of lines (session.last_line)
+         */
+        initSessionItems(sessionId, lastLine) {
+            if (this.sessionItems[sessionId]) return // Already initialized
+
+            this.sessionItems[sessionId] = Array.from(
+                { length: lastLine },
+                (_, index) => ({ line_num: index + 1 }) // line_num is 1-based
+            )
+        },
+
+        /**
+         * Add or update session items in the array.
+         * Items are placed at their correct index (line_num - 1).
+         * If items arrive beyond current array size, extends with placeholders.
+         * @param {string} sessionId
+         * @param {Array<{line_num: number, content: string}>} newItems
+         */
         addSessionItems(sessionId, newItems) {
-            this.$patch((state) => {
-                if (!newItems?.length) return
+            if (!newItems?.length) return
 
-                if (!state.sessionItems[sessionId]) {
-                    state.sessionItems[sessionId] = []
+            const items = this.sessionItems[sessionId]
+            if (!items) {
+                // Not initialized yet - create array from the items we have
+                // Find max line_num to know array size
+                const maxLineNum = Math.max(...newItems.map(item => item.line_num))
+                this.sessionItems[sessionId] = Array.from(
+                    { length: maxLineNum },
+                    (_, index) => ({ line_num: index + 1 })
+                )
+            }
+
+            const targetArray = this.sessionItems[sessionId]
+
+            for (const item of newItems) {
+                const index = item.line_num - 1 // line_num is 1-based, array is 0-based
+
+                // Extend array with placeholders if needed
+                while (targetArray.length <= index) {
+                    targetArray.push({ line_num: targetArray.length + 1 })
                 }
 
-                const existing = state.sessionItems[sessionId]
-
-                // Sort new items first
-                const sorted = newItems.toSorted((a, b) => a.line_num - b.line_num)
-
-                // Nothing existing → just assign sorted
-                if (existing.length === 0) {
-                    existing.push(...sorted)
-                    return
-                }
-
-
-                const lastExisting = existing[existing.length - 1].line_num
-                const firstExisting = existing[0].line_num
-                const firstNew = sorted[0].line_num
-                const lastNew = sorted[sorted.length - 1].line_num
-
-                if (firstNew > lastExisting) {
-                    // Case 1: all new items come after → push
-                    existing.push(...sorted)
-                } else if (lastNew < firstExisting) {
-                    // Case 2: all new items come before → unshift
-                    existing.unshift(...sorted)
-                } else {
-                    // Case 3: overlap → push + full re-sort
-                    existing.push(...sorted)
-                    existing.sort((a, b) => a.line_num - b.line_num)
-                }
-            })
+                // Place item at correct index
+                targetArray[index] = item
+            }
         },
 
         // Initial loading from API
@@ -163,7 +174,7 @@ export const useDataStore = defineStore('data', {
          * Load specific ranges of session items.
          * @param {string} projectId
          * @param {string} sessionId
-         * @param {Array<string|[number, number|null]>} ranges - Array of ranges:
+         * @param {Array<number|[number, number|null]>} ranges - Array of ranges (line_num is 1-based):
          *   - number: exact line (e.g., 5)
          *   - [min, max]: range (e.g., [10, 20])
          *   - [min, null]: from min onwards (e.g., [10, null])

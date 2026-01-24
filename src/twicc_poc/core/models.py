@@ -46,7 +46,7 @@ class SessionItem(models.Model):
         on_delete=models.CASCADE,
         related_name="items",
     )
-    line_num = models.PositiveIntegerField()
+    line_num = models.PositiveIntegerField()  # 1-based (first line = 1)
     content = models.TextField()
 
     class Meta:

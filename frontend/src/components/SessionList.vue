@@ -7,7 +7,7 @@ const props = defineProps({
         type: String,
         required: true
     },
-    activeSessionId: {
+    sessionId: {
         type: String,
         default: null
     }
@@ -46,7 +46,7 @@ function handleSelect(session) {
             v-for="session in sessions"
             :key="session.id"
             class="session-item"
-            :class="{ 'session-item--active': session.id === activeSessionId }"
+            :class="{ 'session-item--active': session.id === sessionId }"
             @click="handleSelect(session)"
         >
             <div class="session-id" :title="session.id">{{ truncateId(session.id) }}</div>

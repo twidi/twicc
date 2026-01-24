@@ -1,11 +1,29 @@
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, watch, ref, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
+import { useDebounceFn } from '@vueuse/core'
+import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
+import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useDataStore } from '../stores/data'
 import SessionItem from '../components/SessionItem.vue'
 
 const route = useRoute()
 const store = useDataStore()
+
+// Number of items to load at start (first N and last N)
+const INITIAL_ITEMS_COUNT = 20
+
+// Reference to the DynamicScroller component
+const scrollerRef = ref(null)
+
+// Buffer: load N items before/after visible range
+const LOAD_BUFFER = 20
+
+// Debounce delay for scroll-triggered loading (ms)
+const LOAD_DEBOUNCE_MS = 150
+
+// Track pending range to load (accumulated during debounce)
+const pendingLoadRange = ref(null)
 
 // Current session from route params
 const projectId = computed(() => route.params.projectId)
@@ -21,11 +39,156 @@ const items = computed(() => store.getSessionItems(sessionId.value))
 const isLoading = computed(() => store.areSessionItemsLoading(sessionId.value))
 
 // Load session items when session changes
-watch([projectId, sessionId], async ([newProjectId, newSessionId]) => {
-    if (newProjectId && newSessionId) {
-        await store.loadSessionItems(newProjectId, newSessionId)
+watch([projectId, sessionId, session], async ([newProjectId, newSessionId, newSession]) => {
+    if (!newProjectId || !newSessionId || !newSession) return
+
+    const lastLine = newSession.last_line
+    if (!lastLine) return
+
+    // Only initialize and load if not already done
+    if (!store.areSessionItemsFetched(newSessionId)) {
+        // Mark as fetched first (before async operations to avoid race conditions)
+        if (!store.localState.sessions[newSessionId]) {
+            store.localState.sessions[newSessionId] = {}
+        }
+        store.localState.sessions[newSessionId].itemsFetched = true
+
+        // Initialize items array with placeholders
+        store.initSessionItems(newSessionId, lastLine)
+
+        // Load first N and last N items
+        const ranges = []
+        if (lastLine <= INITIAL_ITEMS_COUNT * 2) {
+            // Small session: load everything
+            ranges.push([1, lastLine])
+        } else {
+            // Large session: load first N and last N
+            ranges.push([1, INITIAL_ITEMS_COUNT])
+            ranges.push([lastLine - INITIAL_ITEMS_COUNT + 1, lastLine])
+        }
+
+        await store.loadSessionItemsRanges(newProjectId, newSessionId, ranges)
     }
+
+    // Always scroll to end of session (with retry until stable)
+    await nextTick()
+    scrollToBottomUntilStable()
 }, { immediate: true })
+
+/**
+ * Scroll to bottom repeatedly until the scroll position stabilizes.
+ * This handles the case where items are rendered with dynamic heights
+ * that change the total scroll height after scrollToBottom is called.
+ */
+async function scrollToBottomUntilStable() {
+    const scroller = scrollerRef.value
+    if (!scroller) return
+
+    const el = scroller.$el
+    if (!el) return
+
+    const maxAttempts = 10
+    const delayBetweenAttempts = 50 // ms
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        scroller.scrollToBottom()
+        await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts))
+
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+        if (distanceFromBottom <= 5) break
+    }
+}
+
+/**
+ * Find ranges of placeholders (items without content) within a given range.
+ * Returns an array of [start, end] ranges (1-based line_num).
+ */
+function findPlaceholderRanges(startIndex, endIndex) {
+    const sessionItems = items.value
+    if (!sessionItems?.length) return []
+
+    const ranges = []
+    let rangeStart = null
+
+    // Clamp to valid indices (0-based)
+    const start = Math.max(0, startIndex)
+    const end = Math.min(sessionItems.length - 1, endIndex)
+
+    for (let i = start; i <= end; i++) {
+        const item = sessionItems[i]
+        const isPlaceholder = !item.content
+
+        if (isPlaceholder && rangeStart === null) {
+            // Start a new range
+            rangeStart = i
+        } else if (!isPlaceholder && rangeStart !== null) {
+            // End current range (convert to 1-based line_num)
+            ranges.push([rangeStart + 1, i])
+            rangeStart = null
+        }
+    }
+
+    // Close any open range
+    if (rangeStart !== null) {
+        ranges.push([rangeStart + 1, end + 1])
+    }
+
+    return ranges
+}
+
+/**
+ * Execute the pending load - called after debounce.
+ */
+async function executePendingLoad() {
+    const range = pendingLoadRange.value
+    if (!range) return
+
+    const { startIndex, endIndex } = range
+    pendingLoadRange.value = null
+
+    // Find placeholder ranges within the buffered visible area
+    const placeholderRanges = findPlaceholderRanges(startIndex, endIndex)
+
+    if (placeholderRanges.length > 0 && projectId.value && sessionId.value) {
+        // Check if we're at bottom BEFORE loading
+        const el = scrollerRef.value?.$el
+        const wasAtBottom = el
+            ? (el.scrollHeight - el.scrollTop - el.clientHeight) <= 20
+            : false
+
+        await store.loadSessionItemsRanges(projectId.value, sessionId.value, placeholderRanges)
+
+        // Re-scroll to bottom if we were at bottom before loading
+        if (el && wasAtBottom) {
+            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+            if (distanceFromBottom > 5) {
+                await nextTick()
+                scrollToBottomUntilStable()
+            }
+        }
+    }
+}
+
+const debouncedLoad = useDebounceFn(executePendingLoad, LOAD_DEBOUNCE_MS)
+
+/**
+ * Handle scroller update event - sets current visible range and triggers debounced load.
+ * Indices from DynamicScroller are 0-based.
+ * No accumulation: only load where user stops scrolling.
+ */
+function onScrollerUpdate(startIndex, endIndex, visibleStartIndex, visibleEndIndex) {
+    // Add buffer around visible range
+    const bufferedStart = Math.max(0, visibleStartIndex - LOAD_BUFFER)
+    const bufferedEnd = visibleEndIndex + LOAD_BUFFER
+
+    // Replace (not accumulate): only care about current visible range
+    pendingLoadRange.value = {
+        startIndex: bufferedStart,
+        endIndex: bufferedEnd
+    }
+
+    debouncedLoad()
+}
 
 // Format mtime as local datetime
 function formatDate(timestamp) {
@@ -62,26 +225,49 @@ function truncateId(id) {
 
         <wa-divider></wa-divider>
 
-        <!-- Items list -->
-        <div class="session-items">
-            <div
-                v-for="(item, index) in items"
-                :key="item.line_num"
-                class="item-wrapper"
-            >
-                <SessionItem
-                    :content="item.content"
-                    :line-num="item.line_num"
-                />
-                <wa-divider v-if="index < items.length - 1"></wa-divider>
-            </div>
-            <div v-if="isLoading" class="empty-state">
-                <wa-spinner></wa-spinner>
-                <span>Loading...</span>
-            </div>
-            <div v-else-if="items.length === 0" class="empty-state">
-                No items in this session
-            </div>
+        <!-- Items list (virtualized) -->
+        <DynamicScroller
+            :key="sessionId"
+            ref="scrollerRef"
+            v-if="items.length > 0"
+            :items="items"
+            :min-item-size="80"
+            :buffer="200"
+            key-field="line_num"
+            class="session-items"
+            :emit-update="true"
+            @update="onScrollerUpdate"
+        >
+            <template #default="{ item, index, active }">
+                <DynamicScrollerItem
+                    :item="item"
+                    :active="active"
+                    :size-dependencies="[item.content]"
+                    :data-index="index"
+                    class="item-wrapper"
+                >
+                    <!-- Placeholder (no content loaded yet) -->
+                    <div v-if="!item.content" class="item-placeholder">
+                        <div class="line-number">{{ item.line_num }}</div>
+                        <wa-skeleton effect="sheen"></wa-skeleton>
+                    </div>
+                    <!-- Real item -->
+                    <SessionItem
+                        v-else
+                        :content="item.content"
+                        :line-num="item.line_num"
+                    />
+                </DynamicScrollerItem>
+            </template>
+        </DynamicScroller>
+
+        <!-- Loading / Empty states -->
+        <div v-else-if="isLoading" class="empty-state">
+            <wa-spinner></wa-spinner>
+            <span>Loading...</span>
+        </div>
+        <div v-else class="empty-state">
+            No items in this session
         </div>
     </div>
 </template>
@@ -128,16 +314,10 @@ function truncateId(id) {
 .session-items {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
-    padding: var(--wa-space-l);
 }
 
 .item-wrapper {
-    margin-bottom: var(--wa-space-m);
-}
-
-.item-wrapper wa-divider {
-    margin-top: var(--wa-space-m);
+    padding: var(--wa-space-s) var(--wa-space-l);
 }
 
 .empty-state {
@@ -148,5 +328,29 @@ function truncateId(id) {
     height: 200px;
     color: var(--wa-color-text-subtle);
     font-size: var(--wa-font-size-m);
+}
+
+.item-placeholder {
+    display: flex;
+    gap: var(--wa-space-m);
+    padding: var(--wa-space-m);
+    background: var(--wa-color-surface-alt);
+    border-radius: var(--wa-radius-m);
+}
+
+.item-placeholder .line-number {
+    flex-shrink: 0;
+    width: 40px;
+    text-align: right;
+    color: var(--wa-color-text-subtle);
+    font-family: var(--wa-font-mono);
+    font-size: var(--wa-font-size-s);
+    font-weight: 500;
+    user-select: none;
+}
+
+.item-placeholder wa-skeleton {
+    flex: 1;
+    height: 60px;
 }
 </style>
