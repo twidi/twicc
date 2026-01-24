@@ -219,3 +219,6 @@ data.sqlite
 
 # JSONL data files (if generated locally)
 *.jsonl
+
+# Development process controller runtime data
+.devctl/

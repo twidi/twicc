@@ -8,6 +8,9 @@ Claude Code Web UI - A standalone, self-contained web application to replace the
 
 **Status:** Proof-of-concept in architecture/planning phase. Implementation details are documented in `architecture-decisions.md`.
 
+**Quality approach:** Although this is a proof-of-concept, we aim to implement everything to the best standards possible. The goal is to stress-test the system and learn as much as we can for the eventual production implementation. The only shortcuts we allow: no tests and no linting.
+
+
 ## Stack
 
 | Layer | Technology |
@@ -21,24 +24,22 @@ Claude Code Web UI - A standalone, self-contained web application to replace the
 | State Management | Vue reactive + VueUse |
 | UI Components | Web Awesome (wa-* elements) |
 
-## Commands
+
+## Development Process Controller (devctl.py)
+
+Script to manage frontend and backend dev servers as background processes. Use this when the user asks to start, stop, or restart the dev servers.
 
 ```bash
-# Launch application (handles npm install, build, migrations automatically)
-uv run ./run.py
-uv run ./run.py 8080  # custom port
-
-# Frontend development
-cd frontend && npm run dev   # dev server with hot reload
-cd frontend && npm run build # production build
-
-# Linting and type checking
-uv run ruff check .
-uv run mypy .
-
-# Tests
-uv run pytest
+uv run ./devctl.py start [front|back|all]   # Start process(es)
+uv run ./devctl.py stop [front|back|all]    # Stop process(es)
+uv run ./devctl.py restart [front|back|all] # Restart process(es)
+uv run ./devctl.py status                   # Check running status
+uv run ./devctl.py logs [front|back]        # Show recent logs (--lines=N)
 ```
+
+**Expected ports:** Frontend on 5173, Backend on 3500. The script verifies correct port binding after start.
+
+**Log files:** `.devctl/logs/frontend.log` and `.devctl/logs/backend.log` - read these to debug issues.
 
 ## Architecture
 

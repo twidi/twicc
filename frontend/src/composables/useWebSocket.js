@@ -14,7 +14,9 @@ export function useWebSocket() {
     // Track if we've ever been connected (to distinguish first connect from reconnect)
     let wasConnected = false
 
-    const { status, send } = useVueWebSocket(`ws://${location.host}/ws/`, {
+    // Use wss:// for https, ws:// for http
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const { status, send } = useVueWebSocket(`${wsProtocol}//${location.host}/ws/`, {
         autoReconnect: {
             retries: Infinity,
             delay: 1000,
