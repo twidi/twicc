@@ -1,11 +1,23 @@
 <script setup>
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useDataStore } from '../stores/data'
 import ProjectList from '../components/ProjectList.vue'
+import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 
 const router = useRouter()
+const store = useDataStore()
+
+// Loading and error states
+const isLoading = computed(() => store.isProjectsListLoading)
+const hasError = computed(() => store.didProjectsListFailToLoad)
 
 function handleProjectSelect(project) {
     router.push({ name: 'project', params: { projectId: project.id } })
+}
+
+async function handleRetry() {
+    await store.loadProjects({ isInitialLoading: true })
 }
 </script>
 
@@ -15,7 +27,23 @@ function handleProjectSelect(project) {
             <h1>Claude Code Projects</h1>
         </header>
         <main class="home-content">
-            <ProjectList @select="handleProjectSelect" />
+            <!-- Error state -->
+            <FetchErrorPanel
+                v-if="hasError"
+                :loading="isLoading"
+                @retry="handleRetry"
+            >
+                Failed to load projects
+            </FetchErrorPanel>
+
+            <!-- Loading state -->
+            <div v-else-if="isLoading" class="loading-state">
+                <wa-spinner></wa-spinner>
+                <span>Loading projects...</span>
+            </div>
+
+            <!-- Normal content -->
+            <ProjectList v-else @select="handleProjectSelect" />
         </main>
     </div>
 </template>
@@ -25,10 +53,14 @@ function handleProjectSelect(project) {
     padding: var(--wa-space-l);
     max-width: 900px;
     margin: 0 auto;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
 .home-header {
     margin-bottom: var(--wa-space-xl);
+    flex-shrink: 0;
 }
 
 .home-header h1 {
@@ -39,6 +71,18 @@ function handleProjectSelect(project) {
 }
 
 .home-content {
-    /* Content fills available space */
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.loading-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--wa-space-s);
+    flex: 1;
+    color: var(--wa-color-text-subtle);
+    font-size: var(--wa-font-size-m);
 }
 </style>

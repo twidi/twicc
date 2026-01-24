@@ -11,8 +11,12 @@ export const useDataStore = defineStore('data', {
 
         // Local UI state (separate from server data to avoid being overwritten)
         localState: {
-            projects: {},   // { projectId: { sessionsFetched: boolean } }
-            sessions: {}    // { sessionId: { itemsFetched: boolean, itemsLoading: boolean } }
+            projectsList: {
+                loading: false,
+                loadingError: false
+            },
+            projects: {},   // { projectId: { sessionsFetched, sessionsLoading, sessionsLoadingError } }
+            sessions: {}    // { sessionId: { itemsFetched, itemsLoading, itemsLoadingError } }
         }
     }),
 
@@ -26,9 +30,22 @@ export const useDataStore = defineStore('data', {
                 .sort((a, b) => b.mtime - a.mtime),
         getSession: (state) => (id) => state.sessions[id],
         getSessionItems: (state) => (sessionId) => state.sessionItems[sessionId] || [],
-        // Local state getters
+
+        // Local state getters - loading
+        isProjectsListLoading: (state) => state.localState.projectsList.loading,
+        areSessionsLoading: (state) => (projectId) =>
+            state.localState.projects[projectId]?.sessionsLoading ?? false,
         areSessionItemsLoading: (state) => (sessionId) =>
             state.localState.sessions[sessionId]?.itemsLoading ?? false,
+
+        // Local state getters - errors
+        didProjectsListFailToLoad: (state) => state.localState.projectsList.loadingError,
+        didSessionsFailToLoad: (state) => (projectId) =>
+            state.localState.projects[projectId]?.sessionsLoadingError ?? false,
+        didSessionItemsFailToLoad: (state) => (sessionId) =>
+            state.localState.sessions[sessionId]?.itemsLoadingError ?? false,
+
+        // Local state getters - fetched
         areProjectSessionsFetched: (state) => (projectId) =>
             state.localState.projects[projectId]?.sessionsFetched ?? false,
         areSessionItemsFetched: (state) => (sessionId) =>
@@ -108,15 +125,21 @@ export const useDataStore = defineStore('data', {
 
         /**
          * Load all projects from the API.
+         * @param {Object} options
+         * @param {boolean} options.isInitialLoading - If true, enables UI feedback (loading states, error handling)
          * @returns {Promise<Set<string>>} Set of project IDs that have changed
          *          (projects where sessionsFetched=true AND mtime changed or new)
          */
-        async loadProjects() {
+        async loadProjects({ isInitialLoading = false } = {}) {
             const changedIds = new Set()
+            this.localState.projectsList.loading = true
             try {
                 const res = await fetch('/api/projects/')
                 if (!res.ok) {
                     console.error('Failed to load projects:', res.status, res.statusText)
+                    if (isInitialLoading) {
+                        this.localState.projectsList.loadingError = true
+                    }
                     return changedIds
                 }
                 const freshProjects = await res.json()
@@ -132,10 +155,17 @@ export const useDataStore = defineStore('data', {
                     // Update store
                     this.projects[fresh.id] = fresh
                 }
+                // Success: clear any previous error
+                this.localState.projectsList.loadingError = false
                 return changedIds
             } catch (error) {
                 console.error('Failed to load projects:', error)
+                if (isInitialLoading) {
+                    this.localState.projectsList.loadingError = true
+                }
                 throw error  // Re-throw for reconciliation retry logic
+            } finally {
+                this.localState.projectsList.loading = false
             }
         },
         /**
@@ -143,10 +173,11 @@ export const useDataStore = defineStore('data', {
          * @param {string} projectId
          * @param {Object} options
          * @param {boolean} options.force - Force reload even if already fetched
+         * @param {boolean} options.isInitialLoading - If true, enables UI feedback (loading states, error handling)
          * @returns {Promise<Set<string>>} Set of session IDs that have changed
          *          (sessions where itemsFetched=true AND mtime changed or new)
          */
-        async loadSessions(projectId, { force = false } = {}) {
+        async loadSessions(projectId, { force = false, isInitialLoading = false } = {}) {
             const changedIds = new Set()
 
             // Skip if already fetched (unless forced)
@@ -154,10 +185,19 @@ export const useDataStore = defineStore('data', {
                 return changedIds
             }
 
+            // Initialize localState for this project if needed
+            if (!this.localState.projects[projectId]) {
+                this.localState.projects[projectId] = {}
+            }
+            this.localState.projects[projectId].sessionsLoading = true
+
             try {
                 const res = await fetch(`/api/projects/${projectId}/sessions/`)
                 if (!res.ok) {
                     console.error('Failed to load sessions:', res.status, res.statusText)
+                    if (isInitialLoading) {
+                        this.localState.projects[projectId].sessionsLoadingError = true
+                    }
                     return changedIds
                 }
                 const freshSessions = await res.json()
@@ -173,18 +213,28 @@ export const useDataStore = defineStore('data', {
                     // Update store
                     this.sessions[fresh.id] = fresh
                 }
-                // Mark as fetched in localState
-                if (!this.localState.projects[projectId]) {
-                    this.localState.projects[projectId] = {}
-                }
+                // Mark as fetched in localState and clear any previous error
                 this.localState.projects[projectId].sessionsFetched = true
+                this.localState.projects[projectId].sessionsLoadingError = false
                 return changedIds
             } catch (error) {
                 console.error('Failed to load sessions:', error)
+                if (isInitialLoading) {
+                    this.localState.projects[projectId].sessionsLoadingError = true
+                }
                 throw error  // Re-throw for reconciliation retry logic
+            } finally {
+                this.localState.projects[projectId].sessionsLoading = false
             }
         },
-        async loadSessionItems(projectId, sessionId) {
+        /**
+         * Load all items for a session from the API.
+         * @param {string} projectId
+         * @param {string} sessionId
+         * @param {Object} options
+         * @param {boolean} options.isInitialLoading - If true, enables UI feedback (loading states, error handling)
+         */
+        async loadSessionItems(projectId, sessionId, { isInitialLoading = false } = {}) {
             // Skip if already fetched
             if (this.localState.sessions[sessionId]?.itemsFetched) {
                 return
@@ -193,18 +243,30 @@ export const useDataStore = defineStore('data', {
             if (!this.localState.sessions[sessionId]) {
                 this.localState.sessions[sessionId] = {}
             }
-            this.localState.sessions[sessionId].itemsLoading = true
+
+            // Only set loading if isInitialLoading is true (initial load case)
+            if (isInitialLoading) {
+                this.localState.sessions[sessionId].itemsLoading = true
+            }
+
             try {
                 const res = await fetch(`/api/projects/${projectId}/sessions/${sessionId}/items/`)
                 if (!res.ok) {
                     console.error('Failed to load session items:', res.status, res.statusText)
+                    if (isInitialLoading) {
+                        this.localState.sessions[sessionId].itemsLoadingError = true
+                    }
                     return
                 }
                 const items = await res.json()
                 this.sessionItems[sessionId] = items
                 this.localState.sessions[sessionId].itemsFetched = true
+                this.localState.sessions[sessionId].itemsLoadingError = false
             } catch (error) {
                 console.error('Failed to load session items:', error)
+                if (isInitialLoading) {
+                    this.localState.sessions[sessionId].itemsLoadingError = true
+                }
             } finally {
                 this.localState.sessions[sessionId].itemsLoading = false
             }
@@ -219,9 +281,21 @@ export const useDataStore = defineStore('data', {
          *   - [min, max]: range (e.g., [10, 20])
          *   - [min, null]: from min onwards (e.g., [10, null])
          *   - [null, max]: up to max (e.g., [null, 10])
+         * @param {Object} options
+         * @param {boolean} options.isInitialLoading - If true, enables UI feedback (loading states, error handling)
          */
-        async loadSessionItemsRanges(projectId, sessionId, ranges) {
+        async loadSessionItemsRanges(projectId, sessionId, ranges, { isInitialLoading = false } = {}) {
             if (!ranges?.length) return
+
+            // Initialize localState for this session if needed
+            if (!this.localState.sessions[sessionId]) {
+                this.localState.sessions[sessionId] = {}
+            }
+
+            // Only set loading if isInitialLoading is true (initial load case)
+            if (isInitialLoading) {
+                this.localState.sessions[sessionId].itemsLoading = true
+            }
 
             // Build query params
             const params = new URLSearchParams()
@@ -242,12 +316,24 @@ export const useDataStore = defineStore('data', {
                 )
                 if (!res.ok) {
                     console.error('Failed to load session items ranges:', res.status, res.statusText)
+                    if (isInitialLoading) {
+                        this.localState.sessions[sessionId].itemsLoadingError = true
+                    }
                     return
                 }
                 const items = await res.json()
                 this.addSessionItems(sessionId, items)
+                // Success: clear any previous error
+                this.localState.sessions[sessionId].itemsLoadingError = false
             } catch (error) {
                 console.error('Failed to load session items ranges:', error)
+                if (isInitialLoading) {
+                    this.localState.sessions[sessionId].itemsLoadingError = true
+                }
+            } finally {
+                if (isInitialLoading) {
+                    this.localState.sessions[sessionId].itemsLoading = false
+                }
             }
         },
 

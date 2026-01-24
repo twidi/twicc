@@ -7,6 +7,7 @@ import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useDataStore } from '../stores/data'
 import { INITIAL_ITEMS_COUNT } from '../constants'
 import SessionItem from '../components/SessionItem.vue'
+import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 
 const route = useRoute()
 const store = useDataStore()
@@ -33,8 +34,37 @@ const session = computed(() => store.getSession(sessionId.value))
 // Session items
 const items = computed(() => store.getSessionItems(sessionId.value))
 
-// Loading state
+// Loading and error states
 const isLoading = computed(() => store.areSessionItemsLoading(sessionId.value))
+const hasError = computed(() => store.didSessionItemsFailToLoad(sessionId.value))
+
+/**
+ * Load initial session items (first N and last N).
+ * Used for initial load and retry after error.
+ */
+async function loadInitialItems(pId, sId, lastLine) {
+    // Mark as fetched first (before async operations to avoid race conditions)
+    if (!store.localState.sessions[sId]) {
+        store.localState.sessions[sId] = {}
+    }
+    store.localState.sessions[sId].itemsFetched = true
+
+    // Initialize items array with placeholders
+    store.initSessionItems(sId, lastLine)
+
+    // Load first N and last N items
+    const ranges = []
+    if (lastLine <= INITIAL_ITEMS_COUNT * 2) {
+        // Small session: load everything
+        ranges.push([1, lastLine])
+    } else {
+        // Large session: load first N and last N
+        ranges.push([1, INITIAL_ITEMS_COUNT])
+        ranges.push([lastLine - INITIAL_ITEMS_COUNT + 1, lastLine])
+    }
+
+    await store.loadSessionItemsRanges(pId, sId, ranges, { isInitialLoading: true })
+}
 
 // Load session items when session changes
 watch([projectId, sessionId, session], async ([newProjectId, newSessionId, newSession]) => {
@@ -45,33 +75,34 @@ watch([projectId, sessionId, session], async ([newProjectId, newSessionId, newSe
 
     // Only initialize and load if not already done
     if (!store.areSessionItemsFetched(newSessionId)) {
-        // Mark as fetched first (before async operations to avoid race conditions)
-        if (!store.localState.sessions[newSessionId]) {
-            store.localState.sessions[newSessionId] = {}
-        }
-        store.localState.sessions[newSessionId].itemsFetched = true
-
-        // Initialize items array with placeholders
-        store.initSessionItems(newSessionId, lastLine)
-
-        // Load first N and last N items
-        const ranges = []
-        if (lastLine <= INITIAL_ITEMS_COUNT * 2) {
-            // Small session: load everything
-            ranges.push([1, lastLine])
-        } else {
-            // Large session: load first N and last N
-            ranges.push([1, INITIAL_ITEMS_COUNT])
-            ranges.push([lastLine - INITIAL_ITEMS_COUNT + 1, lastLine])
-        }
-
-        await store.loadSessionItemsRanges(newProjectId, newSessionId, ranges)
+        await loadInitialItems(newProjectId, newSessionId, lastLine)
     }
 
     // Always scroll to end of session (with retry until stable)
     await nextTick()
     scrollToBottomUntilStable()
 }, { immediate: true })
+
+// Retry loading session items after error
+async function handleRetry() {
+    if (!projectId.value || !sessionId.value || !session.value) return
+
+    const lastLine = session.value.last_line
+    if (!lastLine) return
+
+    // Reset fetched state to allow reload
+    if (store.localState.sessions[sessionId.value]) {
+        store.localState.sessions[sessionId.value].itemsFetched = false
+    }
+    // Clear existing items
+    delete store.sessionItems[sessionId.value]
+
+    await loadInitialItems(projectId.value, sessionId.value, lastLine)
+
+    // Scroll to bottom after successful load
+    await nextTick()
+    scrollToBottomUntilStable()
+}
 
 /**
  * Scroll to bottom repeatedly until the scroll position stabilizes.
@@ -223,11 +254,26 @@ function truncateId(id) {
 
         <wa-divider></wa-divider>
 
+        <!-- Error state -->
+        <FetchErrorPanel
+            v-if="hasError"
+            :loading="isLoading"
+            @retry="handleRetry"
+        >
+            Failed to load session content
+        </FetchErrorPanel>
+
+        <!-- Loading state -->
+        <div v-else-if="isLoading" class="empty-state">
+            <wa-spinner></wa-spinner>
+            <span>Loading...</span>
+        </div>
+
         <!-- Items list (virtualized) -->
         <DynamicScroller
             :key="sessionId"
             ref="scrollerRef"
-            v-if="items.length > 0"
+            v-else-if="items.length > 0"
             :items="items"
             :min-item-size="80"
             :buffer="200"
@@ -259,11 +305,7 @@ function truncateId(id) {
             </template>
         </DynamicScroller>
 
-        <!-- Loading / Empty states -->
-        <div v-else-if="isLoading" class="empty-state">
-            <wa-spinner></wa-spinner>
-            <span>Loading...</span>
-        </div>
+        <!-- Empty state -->
         <div v-else class="empty-state">
             No items in this session
         </div>
@@ -349,6 +391,6 @@ function truncateId(id) {
 
 .item-placeholder wa-skeleton {
     flex: 1;
-    height: 60px;
+    height: 1.5em;
 }
 </style>

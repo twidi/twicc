@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import SessionList from '../components/SessionList.vue'
+import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -15,12 +16,23 @@ const sessionId = computed(() => route.params.sessionId || null)
 // All projects for the selector (already sorted by mtime desc in store)
 const allProjects = computed(() => store.getProjects)
 
+// Loading and error states for sessions
+const areSessionsLoading = computed(() => store.areSessionsLoading(projectId.value))
+const didSessionsFailToLoad = computed(() => store.didSessionsFailToLoad(projectId.value))
+
 // Load sessions when project changes
 watch(projectId, async (newProjectId) => {
     if (newProjectId) {
-        await store.loadSessions(newProjectId)
+        await store.loadSessions(newProjectId, { isInitialLoading: true })
     }
 }, { immediate: true })
+
+// Retry loading sessions
+async function handleRetry() {
+    if (projectId.value) {
+        await store.loadSessions(projectId.value, { isInitialLoading: true })
+    }
+}
 
 // Handle project change from selector
 function handleProjectChange(event) {
@@ -72,7 +84,25 @@ function handleBackHome() {
 
             <div class="sidebar-sessions">
                 <h3 class="sessions-title">Sessions</h3>
+
+                <!-- Error state -->
+                <FetchErrorPanel
+                    v-if="didSessionsFailToLoad"
+                    :loading="areSessionsLoading"
+                    @retry="handleRetry"
+                >
+                    Failed to load sessions
+                </FetchErrorPanel>
+
+                <!-- Loading state -->
+                <div v-else-if="areSessionsLoading" class="sessions-loading">
+                    <wa-spinner></wa-spinner>
+                    <span>Loading...</span>
+                </div>
+
+                <!-- Normal content -->
                 <SessionList
+                    v-else
                     :project-id="projectId"
                     :session-id="sessionId"
                     @select="handleSessionSelect"
@@ -147,6 +177,8 @@ function handleBackHome() {
     min-height: 0;
     overflow-y: auto;
     padding: var(--wa-space-m);
+    display: flex;
+    flex-direction: column;
 }
 
 .sessions-title {
@@ -173,5 +205,16 @@ function handleBackHome() {
     height: 100%;
     color: var(--wa-color-text-subtle);
     font-size: var(--wa-font-size-l);
+}
+
+.sessions-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--wa-space-s);
+    padding: var(--wa-space-xl);
+    color: var(--wa-color-text-subtle);
+    font-size: var(--wa-font-size-s);
 }
 </style>

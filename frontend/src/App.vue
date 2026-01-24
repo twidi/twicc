@@ -2,6 +2,7 @@
 import { onMounted } from 'vue'
 import { useWebSocket } from './composables/useWebSocket'
 import { useDataStore } from './stores/data'
+import ConnectionIndicator from './components/ConnectionIndicator.vue'
 
 // Initialize WebSocket connection for real-time updates
 const { wsStatus } = useWebSocket()
@@ -9,11 +10,12 @@ const { wsStatus } = useWebSocket()
 // Load initial data
 const store = useDataStore()
 onMounted(async () => {
-    await store.loadProjects()
+    await store.loadProjects({ isInitialLoading: true })
 })
 </script>
 
 <template>
+    <ConnectionIndicator :status="wsStatus" />
     <div class="app-container">
         <router-view />
     </div>

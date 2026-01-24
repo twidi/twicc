@@ -97,6 +97,7 @@ Two tables for append-only JSONL sync:
 
 - Python: ruff (line-length=120), mypy (strict, Python 3.13)
 - Tests: pytest with pytest-django
+- **Language:** All code content (UI strings, comments, variable names) must be in English. Only documentation files (*.md) may contain French.
 
 ## Key Implementation Notes
 
@@ -106,6 +107,18 @@ Two tables for append-only JSONL sync:
 - KeepAlive caches up to 5 conversations (preserves scroll, collapsed states)
 - UI state persisted to localStorage via VueUse
 - No authentication layer (current design)
+
+## Web Awesome Components
+
+**IMPORTANT:** Chaque composant Web Awesome utilisé doit être importé explicitement dans `frontend/src/main.js`. Les imports chargent à la fois le JS du composant et ses styles (via shadow DOM).
+
+```javascript
+// Exemple dans main.js
+import '@awesome.me/webawesome/dist/components/button/button.js'
+import '@awesome.me/webawesome/dist/components/callout/callout.js'
+```
+
+Si un composant `wa-*` apparaît sans style en production (mais fonctionne en dev), c'est probablement qu'il manque l'import dans `main.js`.
 
 # Documentation Web Awesome
 Une version "one file" quasi complète de la doc est disponible dans `frontend/node_modules/@awesome.me/webawesome/dist/llms.txt`

@@ -146,7 +146,10 @@ export function useReconciliation() {
             return { hasErrors: true, failedProjectIds: [], failedSessions: [] }
         }
 
-        if (changedProjectIds.size === 0) {
+        const currentProjectHasError = currentProjectId && store.didSessionsFailToLoad(currentProjectId)
+        const currentSessionHasError = currentSessionId && store.didSessionItemsFailToLoad(currentSessionId)
+
+        if (changedProjectIds.size === 0 && !currentProjectHasError && !currentSessionHasError) {
             console.log('Nothing to update')
             return { hasErrors: false, failedProjectIds: [], failedSessions: [] }
         }
@@ -156,8 +159,13 @@ export function useReconciliation() {
 
         // ═══════════════════════════════════════════════════════════════════════
         // STEP 2: Priority chain (current project → current session)
+        // Also retry if current project/session has a loading error
         // ═══════════════════════════════════════════════════════════════════════
-        if (currentProjectId && remainingProjectIds.has(currentProjectId)) {
+        const currentProjectNeedsUpdate = currentProjectId && (
+            remainingProjectIds.has(currentProjectId) || currentProjectHasError || currentSessionHasError
+        )
+
+        if (currentProjectNeedsUpdate) {
             const hasCurrentSession = currentSessionId != null
             const groupName = hasCurrentSession ? 'Current project/session' : 'Current project'
             console.group(groupName)
@@ -167,8 +175,11 @@ export function useReconciliation() {
                 const changedSessionIds = await store.loadSessions(currentProjectId, { force: true })
                 remainingProjectIds.delete(currentProjectId)
 
-                // If current session changed, load its new items immediately
-                if (currentSessionId && changedSessionIds.has(currentSessionId)) {
+                // If current session changed OR has error, load its items immediately
+                const currentSessionNeedsUpdate = currentSessionId && (
+                    changedSessionIds.has(currentSessionId) || currentSessionHasError
+                )
+                if (currentSessionNeedsUpdate) {
                     try {
                         console.log('Updating current session')
                         await loadNewItems(currentProjectId, currentSessionId)
@@ -267,7 +278,7 @@ export function useReconciliation() {
     }
 
     /**
-     * Load new items for a session that has changed.
+     * Load new items for a session that has changed or had a loading error.
      * Only loads the last INITIAL_ITEMS_COUNT items to avoid fetching too much.
      * The virtual scroller will load more if the user scrolls.
      */
@@ -277,15 +288,16 @@ export function useReconciliation() {
 
         const serverLastLine = session.last_line
         const items = store.sessionItems[sessionId] || []
+        const hasError = store.didSessionItemsFailToLoad(sessionId)
 
         // Items array is ordered by line_num, so last item has the highest line_num
         const lastItem = items.length > 0 ? items[items.length - 1] : null
         const localLastLine = lastItem?.line_num || 0
 
-        if (serverLastLine <= localLastLine) return // Nothing new
+        // Nothing new and no error to retry
+        if (serverLastLine <= localLastLine && !hasError) return
 
-        // Load at most INITIAL_ITEMS_COUNT items to avoid fetching everything
-        // If user scrolls up, virtual scroller will load the rest
+        // Virtual scroller will load what's missing
         const rangeStart = Math.max(localLastLine + 1, serverLastLine - INITIAL_ITEMS_COUNT + 1)
 
         await store.loadSessionItemsRanges(projectId, sessionId, [[rangeStart, null]])
