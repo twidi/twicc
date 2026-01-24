@@ -105,43 +105,83 @@ export const useDataStore = defineStore('data', {
         },
 
         // Initial loading from API
+
+        /**
+         * Load all projects from the API.
+         * @returns {Promise<Set<string>>} Set of project IDs that have changed
+         *          (projects where sessionsFetched=true AND mtime changed or new)
+         */
         async loadProjects() {
+            const changedIds = new Set()
             try {
                 const res = await fetch('/api/projects/')
                 if (!res.ok) {
                     console.error('Failed to load projects:', res.status, res.statusText)
-                    return
+                    return changedIds
                 }
-                const projects = await res.json()
-                for (const p of projects) {
-                    this.projects[p.id] = p
+                const freshProjects = await res.json()
+                for (const fresh of freshProjects) {
+                    const local = this.projects[fresh.id]
+                    const wasSessionsFetched = this.localState.projects[fresh.id]?.sessionsFetched
+
+                    // Project changed if: sessionsFetched AND (new OR mtime different)
+                    if (wasSessionsFetched && (!local || local.mtime !== fresh.mtime)) {
+                        changedIds.add(fresh.id)
+                    }
+
+                    // Update store
+                    this.projects[fresh.id] = fresh
                 }
+                return changedIds
             } catch (error) {
                 console.error('Failed to load projects:', error)
+                throw error  // Re-throw for reconciliation retry logic
             }
         },
-        async loadSessions(projectId) {
-            // Skip if already fetched
-            if (this.localState.projects[projectId]?.sessionsFetched) {
-                return
+        /**
+         * Load sessions for a project from the API.
+         * @param {string} projectId
+         * @param {Object} options
+         * @param {boolean} options.force - Force reload even if already fetched
+         * @returns {Promise<Set<string>>} Set of session IDs that have changed
+         *          (sessions where itemsFetched=true AND mtime changed or new)
+         */
+        async loadSessions(projectId, { force = false } = {}) {
+            const changedIds = new Set()
+
+            // Skip if already fetched (unless forced)
+            if (!force && this.localState.projects[projectId]?.sessionsFetched) {
+                return changedIds
             }
+
             try {
                 const res = await fetch(`/api/projects/${projectId}/sessions/`)
                 if (!res.ok) {
                     console.error('Failed to load sessions:', res.status, res.statusText)
-                    return
+                    return changedIds
                 }
-                const sessions = await res.json()
-                for (const s of sessions) {
-                    this.sessions[s.id] = s
+                const freshSessions = await res.json()
+                for (const fresh of freshSessions) {
+                    const local = this.sessions[fresh.id]
+                    const wasItemsFetched = this.localState.sessions[fresh.id]?.itemsFetched
+
+                    // Session changed if: itemsFetched AND (new OR mtime different)
+                    if (wasItemsFetched && (!local || local.mtime !== fresh.mtime)) {
+                        changedIds.add(fresh.id)
+                    }
+
+                    // Update store
+                    this.sessions[fresh.id] = fresh
                 }
                 // Mark as fetched in localState
                 if (!this.localState.projects[projectId]) {
                     this.localState.projects[projectId] = {}
                 }
                 this.localState.projects[projectId].sessionsFetched = true
+                return changedIds
             } catch (error) {
                 console.error('Failed to load sessions:', error)
+                throw error  // Re-throw for reconciliation retry logic
             }
         },
         async loadSessionItems(projectId, sessionId) {
@@ -208,6 +248,46 @@ export const useDataStore = defineStore('data', {
                 this.addSessionItems(sessionId, items)
             } catch (error) {
                 console.error('Failed to load session items ranges:', error)
+            }
+        },
+
+        // Unload actions (for reconciliation failures or cache cleanup)
+
+        /**
+         * Unload a session's items data.
+         * Resets itemsFetched to false and clears the items array.
+         * Does NOT remove the session itself from the store.
+         * @param {string} sessionId
+         */
+        unloadSession(sessionId) {
+            if (this.localState.sessions[sessionId]) {
+                this.localState.sessions[sessionId].itemsFetched = false
+                this.localState.sessions[sessionId].itemsLoading = false
+            }
+            delete this.sessionItems[sessionId]
+        },
+
+        /**
+         * Unload a project's sessions data.
+         * Resets sessionsFetched to false, clears all sessions of this project,
+         * and unloads all their items.
+         * Does NOT remove the project itself from the store.
+         * @param {string} projectId
+         */
+        unloadProject(projectId) {
+            // First, unload all sessions of this project
+            const sessionsToUnload = Object.values(this.sessions)
+                .filter(s => s.project_id === projectId)
+                .map(s => s.id)
+
+            for (const sessionId of sessionsToUnload) {
+                this.unloadSession(sessionId)
+                delete this.sessions[sessionId]
+            }
+
+            // Then reset the project's fetch state
+            if (this.localState.projects[projectId]) {
+                this.localState.projects[projectId].sessionsFetched = false
             }
         }
     }

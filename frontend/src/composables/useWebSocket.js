@@ -1,15 +1,24 @@
 // frontend/src/composables/useWebSocket.js
 
+import { watch } from 'vue'
 import { useWebSocket as useVueWebSocket } from '@vueuse/core'
+import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
+import { useReconciliation } from './useReconciliation'
 
 export function useWebSocket() {
     const store = useDataStore()
+    const route = useRoute()
+    const { onReconnected } = useReconciliation()
+
+    // Track if we've ever been connected (to distinguish first connect from reconnect)
+    let wasConnected = false
 
     const { status, send } = useVueWebSocket(`ws://${location.host}/ws/`, {
         autoReconnect: {
-            retries: 5,
-            delay: 1000
+            retries: Infinity,
+            delay: 1000,
+            maxDelay: 30000
         },
         heartbeat: {
             message: JSON.stringify({ type: 'ping' }),
@@ -55,6 +64,21 @@ export function useWebSocket() {
                 break
         }
     }
+
+    // Detect WebSocket connection/reconnection and trigger reconciliation
+    // We reconcile on EVERY connection (not just reconnections) because:
+    // - Initial data is loaded via API before WebSocket connects
+    // - If WebSocket connects late, we may have missed updates
+    watch(status, (newStatus, oldStatus) => {
+        if (newStatus === 'OPEN') {
+            const currentProjectId = route.params.projectId || null
+            const currentSessionId = route.params.sessionId || null
+            const isReconnection = wasConnected && oldStatus === 'CLOSED'
+            console.log(`WebSocket ${isReconnection ? 'reconnected' : 'connected'}, starting reconciliation...`)
+            onReconnected(currentProjectId, currentSessionId)
+            wasConnected = true
+        }
+    })
 
     return { wsStatus: status, send }
 }

@@ -5,13 +5,11 @@ import { useDebounceFn } from '@vueuse/core'
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useDataStore } from '../stores/data'
+import { INITIAL_ITEMS_COUNT } from '../constants'
 import SessionItem from '../components/SessionItem.vue'
 
 const route = useRoute()
 const store = useDataStore()
-
-// Number of items to load at start (first N and last N)
-const INITIAL_ITEMS_COUNT = 20
 
 // Reference to the DynamicScroller component
 const scrollerRef = ref(null)
