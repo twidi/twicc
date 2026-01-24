@@ -146,7 +146,6 @@ async def sync_project_and_broadcast(
             "type": "project_added",
             "project": serialize_project(project),
         })
-        logger.info(f"New project detected: {project_id}")
     elif project.archived:
         # Project was archived but folder reappeared
         project.archived = False
@@ -211,7 +210,6 @@ async def sync_and_broadcast(
         has_content = await check_file_has_content_async(path)
         if not has_content:
             # Empty file (0 lines) - ignore completely
-            logger.debug(f"Ignoring empty session file: {session_id} in {project_id}")
             return
 
         # Ensure project exists first
@@ -233,7 +231,6 @@ async def sync_and_broadcast(
             "type": "session_added",
             "session": serialize_session(session),
         })
-        logger.info(f"New session detected: {session_id} in {project_id}")
 
         if items_result > 0:
             # Refresh session to get updated values
@@ -262,8 +259,6 @@ async def sync_and_broadcast(
                 "type": "project_updated",
                 "project": serialize_project(project),
             })
-
-            logger.debug(f"Synced {items_result} items for session {session_id}")
         return
 
     # Session exists in DB - sync items
@@ -303,8 +298,6 @@ async def sync_and_broadcast(
             "type": "project_updated",
             "project": serialize_project(project),
         })
-
-        logger.debug(f"Synced {items_result} items for session {session_id}")
     elif session.archived:
         # Session file reappeared - unarchive
         session.archived = False
@@ -352,7 +345,6 @@ async def start_watcher() -> None:
     async for changes in awatch(projects_dir, stop_event=stop_event):
         for change_type, path_str in changes:
             path = Path(path_str)
-            logger.info(f"File change detected: {change_type.name} - {path_str}")
 
             # Handle project directories (direct children of projects_dir)
             if path.parent == projects_dir and (path.is_dir() or change_type == Change.deleted):
