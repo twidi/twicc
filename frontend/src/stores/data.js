@@ -559,6 +559,7 @@ export const useDataStore = defineStore('data', {
                 display_level: m.display_level,
                 group_head: m.group_head,
                 group_tail: m.group_tail,
+                kind: m.kind,
                 content: null  // Will be filled by content fetch
             }))
 
@@ -569,7 +570,7 @@ export const useDataStore = defineStore('data', {
         /**
          * Update existing session items with fetched content.
          * @param {string} sessionId
-         * @param {Array} items - Array of { line_num, content, display_level, group_head, group_tail }
+         * @param {Array} items - Array of { line_num, content, display_level, group_head, group_tail, kind }
          */
         updateSessionItemsContent(sessionId, items) {
             const sessionItemsArray = this.sessionItems[sessionId]
@@ -589,6 +590,9 @@ export const useDataStore = defineStore('data', {
                     }
                     if (item.group_tail != null) {
                         sessionItemsArray[index].group_tail = item.group_tail
+                    }
+                    if (item.kind !== undefined) {
+                        sessionItemsArray[index].kind = item.kind
                     }
                 }
             }

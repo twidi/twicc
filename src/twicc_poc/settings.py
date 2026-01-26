@@ -76,4 +76,4 @@ LOGGING = {
 }
 
 # Display levels computation
-CURRENT_COMPUTE_VERSION = 12  # Bump when display rules change to trigger recomputation
+CURRENT_COMPUTE_VERSION = 13  # Bump when display rules change to trigger recomputation

@@ -49,10 +49,11 @@ def serialize_session_item(item):
     return {
         "line_num": item.line_num,
         "content": item.content,
-        # NEW: Display metadata fields
+        # Display metadata fields
         "display_level": item.display_level,
         "group_head": item.group_head,
         "group_tail": item.group_tail,
+        "kind": item.kind,
     }
 
 
@@ -71,5 +72,6 @@ def serialize_session_item_metadata(item):
         "display_level": item.display_level,
         "group_head": item.group_head,
         "group_tail": item.group_tail,
+        "kind": item.kind,
         # NO content field - that's the whole point
     }

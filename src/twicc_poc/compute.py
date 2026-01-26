@@ -14,9 +14,11 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 
-from twicc_poc.core.models import DisplayLevel, SessionItem
+from twicc_poc.core.enums import ItemDisplayLevel, ItemKind
+from twicc_poc.core.models import SessionItem
 
-
+# Content types considered user-visible (for display_level and kind computation)
+VISIBLE_CONTENT_TYPES = ('text', 'document', 'image')
 
 if TYPE_CHECKING:
     from twicc_poc.core.models import Session
@@ -42,7 +44,7 @@ def find_current_group_head(session_id: str, from_line_num: int) -> int | None:
     recent_level2 = SessionItem.objects.filter(
         session_id=session_id,
         line_num__lte=from_line_num,
-        display_level=DisplayLevel.COLLAPSIBLE
+        display_level=ItemDisplayLevel.COLLAPSIBLE
     ).order_by('-line_num').first()
 
     if recent_level2 and recent_level2.group_head:
@@ -70,15 +72,16 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
         logger.warning(f"Invalid JSON in item {session_id}:{item.line_num}")
         parsed = {}
 
-    metadata = compute_metadata(parsed)
+    metadata = compute_item_metadata(parsed)
     item.display_level = metadata['display_level']
+    item.kind = metadata['kind']
 
-    if item.display_level == DisplayLevel.ALWAYS:
+    if item.display_level == ItemDisplayLevel.ALWAYS:
         # Level 1: no group membership
         item.group_head = None
         item.group_tail = None
 
-    elif item.display_level == DisplayLevel.COLLAPSIBLE:
+    elif item.display_level == ItemDisplayLevel.COLLAPSIBLE:
         # Level 2: might join or start a group
         # Check previous item
         previous = SessionItem.objects.filter(
@@ -86,7 +89,7 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
             line_num=item.line_num - 1
         ).first()
 
-        if previous and previous.display_level in (DisplayLevel.COLLAPSIBLE, DisplayLevel.DEBUG_ONLY):
+        if previous and previous.display_level in (ItemDisplayLevel.COLLAPSIBLE, ItemDisplayLevel.DEBUG_ONLY):
             # Previous item was level 2 or 3 → might be continuing a group
             existing_head = find_current_group_head(session_id, item.line_num - 1)
             if existing_head:
@@ -139,41 +142,84 @@ def _is_only_tool_result(content: str | list) -> bool:
     return True
 
 
-def _has_text_content(content: list) -> bool:
+def _has_visible_content(content: str | list) -> bool:
     """
-    Check if assistant message content contains visible text.
+    Check if message content contains user-visible content.
+
+    User-visible content types are: text, document, image.
 
     Args:
-        content: List of content items from assistant message
+        content: Message content (string or list of content items)
 
     Returns:
-        True if at least one text content item exists
+        True if content is a string or contains at least one visible content item
     """
+    if isinstance(content, str):
+        return True
+
     if not isinstance(content, list):
         return False
 
     for item in content:
-        if isinstance(item, dict) and item.get('type') == 'text':
+        if isinstance(item, dict) and item.get('type') in VISIBLE_CONTENT_TYPES:
             return True
 
     return False
 
 
-def compute_display_level(parsed_json: dict) -> int:
+def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
     """
-    Determine the display level for an item based on its JSON content.
+    Determine the display level for an item based on its JSON content and kind.
 
     Classification rules:
-    - ALWAYS (1): Real user messages, assistant messages with text, API errors
+    - ALWAYS (1): USER_MESSAGE, ASSISTANT_MESSAGE, API_ERROR kinds
     - COLLAPSIBLE (2): Meta messages, tool results, thinking/tool_use only,
                        summaries, file snapshots, custom titles
     - DEBUG_ONLY (3): System messages (except api_error), queue ops, progress
 
     Args:
         parsed_json: Parsed JSON content of the item
+        kind: The pre-computed ItemKind (or None)
 
     Returns:
-        DisplayLevel enum value (1=ALWAYS, 2=COLLAPSIBLE, 3=DEBUG_ONLY)
+        ItemDisplayLevel enum value (1=ALWAYS, 2=COLLAPSIBLE, 3=DEBUG_ONLY)
+
+    Note:
+        Any modification to this function's logic MUST increment
+        CURRENT_COMPUTE_VERSION in settings.py to trigger recomputation.
+    """
+    # These kinds are always visible
+    if kind in (ItemKind.USER_MESSAGE, ItemKind.ASSISTANT_MESSAGE, ItemKind.API_ERROR):
+        return ItemDisplayLevel.ALWAYS
+
+    entry_type = parsed_json.get('type')
+
+    # DEBUG_ONLY: System messages (except api_error), queue operations, progress
+    if entry_type == 'system':
+        return ItemDisplayLevel.DEBUG_ONLY
+
+    if entry_type in ('queue-operation', 'progress'):
+        return ItemDisplayLevel.DEBUG_ONLY
+
+    # Everything else is collapsible: meta messages, tool results, thinking/tool_use,
+    # summaries, file snapshots, custom titles, etc.
+    return ItemDisplayLevel.COLLAPSIBLE
+
+
+def compute_item_kind(parsed_json: dict) -> ItemKind | None:
+    """
+    Determine the kind/category of an item based on its JSON content.
+
+    Classification rules:
+    - USER_MESSAGE: User messages with visible content (text, document, image), not meta
+    - ASSISTANT_MESSAGE: Assistant messages with visible content (text, document, image)
+    - API_ERROR: System messages with subtype 'api_error'
+
+    Args:
+        parsed_json: Parsed JSON content of the item
+
+    Returns:
+        ItemKind enum value, or None if not a recognized kind
 
     Note:
         Any modification to this function's logic MUST increment
@@ -181,65 +227,60 @@ def compute_display_level(parsed_json: dict) -> int:
     """
     entry_type = parsed_json.get('type')
 
-    # DEBUG_ONLY: System messages (except api_error), queue operations, progress
+    # API error
     if entry_type == 'system':
         subtype = parsed_json.get('subtype')
         if subtype == 'api_error':
-            return DisplayLevel.ALWAYS
-        return DisplayLevel.DEBUG_ONLY
-
-    if entry_type in ('queue-operation', 'progress'):
-        return DisplayLevel.DEBUG_ONLY
+            return ItemKind.API_ERROR
+        return None
 
     # User messages
     if entry_type == 'user':
-        # Meta messages are collapsible
+        # Meta messages are not user messages
         if parsed_json.get('isMeta') is True:
-            return DisplayLevel.COLLAPSIBLE
+            return None
 
-        # Messages containing only tool_result are collapsible
         message = parsed_json.get('message', {})
         content = message.get('content', [])
-        if _is_only_tool_result(content):
-            return DisplayLevel.COLLAPSIBLE
 
-        # Real user messages are always visible
-        return DisplayLevel.ALWAYS
+        # Only user messages with visible content count as USER_MESSAGE
+        if _has_visible_content(content):
+            return ItemKind.USER_MESSAGE
+
+        return None
 
     # Assistant messages
     if entry_type == 'assistant':
         message = parsed_json.get('message', {})
         content = message.get('content', [])
 
-        # Assistant messages with text content are always visible
-        if _has_text_content(content):
-            return DisplayLevel.ALWAYS
+        # Only assistant messages with visible content count as ASSISTANT_MESSAGE
+        if _has_visible_content(content):
+            return ItemKind.ASSISTANT_MESSAGE
 
-        # Messages with only thinking/tool_use are collapsible
-        return DisplayLevel.COLLAPSIBLE
+        return None
 
-    # Everything else is collapsible: summary, file-history-snapshot, custom-title
-    return DisplayLevel.COLLAPSIBLE
+    return None
 
 
-def compute_metadata(parsed_json: dict) -> dict:
+def compute_item_metadata(parsed_json: dict) -> dict:
     """
     Compute all metadata fields for a single item.
+
+    Kind is computed first, then used to determine display_level.
 
     Args:
         parsed_json: Parsed JSON content of the item
 
     Returns:
         Dict with computed metadata fields:
-        - display_level: int (DisplayLevel enum value)
-        - (future) cost: float
-        - (future) component_type: str
+        - display_level: int (ItemDisplayLevel enum value)
+        - kind: str | None (item category)
     """
+    kind = compute_item_kind(parsed_json)
     return {
-        'display_level': compute_display_level(parsed_json),
-        # Future fields can be added here:
-        # 'cost': compute_cost(parsed_json),
-        # 'component_type': compute_component_type(parsed_json),
+        'display_level': compute_item_display_level(parsed_json, kind),
+        'kind': kind,
     }
 
 
@@ -296,10 +337,11 @@ def compute_session_metadata(session_id: str) -> None:
             logger.warning(f"Invalid JSON in item {item.session_id}:{item.line_num}")
             parsed = {}
 
-        metadata = compute_metadata(parsed)
+        metadata = compute_item_metadata(parsed)
         item.display_level = metadata['display_level']
+        item.kind = metadata['kind']
 
-        if item.display_level == DisplayLevel.ALWAYS:
+        if item.display_level == ItemDisplayLevel.ALWAYS:
             # Level 1: close previous group if any
             if group_items:
                 tail = group_items[-1].line_num
@@ -310,7 +352,7 @@ def compute_session_metadata(session_id: str) -> None:
             item.group_head = None
             item.group_tail = None
 
-        elif item.display_level == DisplayLevel.COLLAPSIBLE:
+        elif item.display_level == ItemDisplayLevel.COLLAPSIBLE:
             # Level 2: part of collapsible group
             if current_group_head is None:
                 current_group_head = item.line_num
@@ -328,7 +370,7 @@ def compute_session_metadata(session_id: str) -> None:
         if len(items_to_update) >= batch_size:
             SessionItem.objects.bulk_update(
                 items_to_update,
-                ['display_level', 'group_head', 'group_tail']
+                ['display_level', 'group_head', 'group_tail', 'kind']
             )
             items_to_update = []
 
@@ -342,7 +384,7 @@ def compute_session_metadata(session_id: str) -> None:
     if items_to_update:
         SessionItem.objects.bulk_update(
             items_to_update,
-            ['display_level', 'group_head', 'group_tail']
+            ['display_level', 'group_head', 'group_tail', 'kind']
         )
 
     # Mark session as computed with current version

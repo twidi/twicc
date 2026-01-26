@@ -100,6 +100,10 @@ Two tables for append-only JSONL sync:
 - Tests: pytest with pytest-django
 - **Language:** All code content (UI strings, comments, variable names) must be in English. Only documentation files (*.md) may contain French.
 
+## Python Patterns
+
+- **Immutable data containers:** Always use `NamedTuple` for simple immutable data structures (return values, decisions, configs). Works with all field types including lists. Prefer over `@dataclass` when mutability is not needed.
+
 ## Key Implementation Notes
 
 - Bootstrap auto-handles: npm install (if needed), frontend build (if outdated), Django migrations

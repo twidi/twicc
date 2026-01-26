@@ -212,6 +212,14 @@ function getItemContent(lineNum) {
 }
 
 /**
+ * Get the kind of an item by its line number.
+ */
+function getItemKind(lineNum) {
+    const item = store.getSessionItem(sessionId.value, lineNum)
+    return item?.kind
+}
+
+/**
  * Convert an array of line numbers to ranges for API calls.
  * e.g., [1, 2, 3, 5, 6, 10] -> [[1, 3], [5, 6], [10, 10]]
  */
@@ -405,7 +413,7 @@ function toggleGroup(groupHeadLineNum) {
                 <DynamicScrollerItem
                     :item="item"
                     :active="active"
-                    :size-dependencies="[getItemContent(item.lineNum), item.isExpanded]"
+                    :size-dependencies="[getItemContent(item.lineNum), getItemKind(item.lineNum), item.isExpanded]"
                     :data-index="index"
                     class="item-wrapper"
                 >
@@ -430,6 +438,7 @@ function toggleGroup(groupHeadLineNum) {
                         />
                         <SessionItem
                             :content="getItemContent(item.lineNum)"
+                            :kind="getItemKind(item.lineNum)"
                             :line-num="item.lineNum"
                         />
                     </div>
@@ -438,6 +447,7 @@ function toggleGroup(groupHeadLineNum) {
                     <SessionItem
                         v-else
                         :content="getItemContent(item.lineNum)"
+                        :kind="getItemKind(item.lineNum)"
                         :line-num="item.lineNum"
                     />
                 </DynamicScrollerItem>

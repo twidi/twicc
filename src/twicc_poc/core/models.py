@@ -1,13 +1,4 @@
-from enum import IntEnum
-
 from django.db import models
-
-
-class DisplayLevel(IntEnum):
-    """Display level for session items, determining visibility in different modes."""
-    ALWAYS = 1       # Always shown in all modes
-    COLLAPSIBLE = 2  # Shown in Normal, grouped in Simplified
-    DEBUG_ONLY = 3   # Only shown in Debug mode
 
 
 class Project(models.Model):
@@ -60,9 +51,10 @@ class SessionItem(models.Model):
     content = models.TextField()
 
     # Display metadata fields
-    display_level = models.PositiveSmallIntegerField(null=True, blank=True)  # DisplayLevel enum value
+    display_level = models.PositiveSmallIntegerField(null=True, blank=True)  # ItemDisplayLevel enum value
     group_head = models.PositiveIntegerField(null=True, blank=True, db_index=True)  # line_num of group start
     group_tail = models.PositiveIntegerField(null=True, blank=True)  # line_num of group end
+    kind = models.CharField(max_length=50, null=True, blank=True)  # Item category/type
 
     class Meta:
         ordering = ["line_num"]

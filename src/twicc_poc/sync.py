@@ -15,8 +15,9 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 
-from twicc_poc.compute import compute_item_metadata_live, compute_metadata
-from twicc_poc.core.models import DisplayLevel, Project, Session, SessionItem
+from twicc_poc.compute import compute_item_metadata, compute_item_metadata_live
+from twicc_poc.core.enums import ItemDisplayLevel
+from twicc_poc.core.models import Project, Session, SessionItem
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -127,8 +128,9 @@ def sync_session_items(session: Session, file_path: Path) -> int:
                     parsed = json.loads(line)
                 except json.JSONDecodeError:
                     parsed = {}
-                metadata = compute_metadata(parsed)
+                metadata = compute_item_metadata(parsed)
                 item.display_level = metadata['display_level']
+                item.kind = metadata['kind']
                 items_to_create.append(item)
 
             # Bulk create all items
@@ -137,7 +139,7 @@ def sync_session_items(session: Session, file_path: Path) -> int:
 
             # Second pass: compute group membership for level 2 items
             for item in items_to_create:
-                if item.display_level == DisplayLevel.COLLAPSIBLE:
+                if item.display_level == ItemDisplayLevel.COLLAPSIBLE:
                     compute_item_metadata_live(session.id, item, item.content)
                     # Need to save the group info
                     SessionItem.objects.filter(
