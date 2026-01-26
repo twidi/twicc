@@ -352,5 +352,3 @@ def compute_session_metadata(session_id: str) -> None:
     # Close the connection to release any locks
     from django.db import connection
     connection.close()
-
-    logger.info(f"Computed metadata for session {session_id}")

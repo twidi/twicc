@@ -33,6 +33,12 @@ _executor: ThreadPoolExecutor | None = None
 # Stop event for graceful shutdown
 _stop_event: asyncio.Event | None = None
 
+# Progress tracking for initial computation
+_initial_total: int | None = None
+_processed_count: int = 0
+_last_logged_percent: int = 0
+_initial_phase_complete: bool = False
+
 
 def get_executor() -> ThreadPoolExecutor:
     """Get or create the ThreadPoolExecutor."""
@@ -58,6 +64,23 @@ def stop_background_task() -> None:
     if _executor is not None:
         _executor.shutdown(wait=False, cancel_futures=True)
         _executor = None
+
+
+def _reset_progress_tracking() -> None:
+    """Reset progress tracking state for a new run."""
+    global _initial_total, _processed_count, _last_logged_percent, _initial_phase_complete
+    _initial_total = None
+    _processed_count = 0
+    _last_logged_percent = 0
+    _initial_phase_complete = False
+
+
+@sync_to_async
+def _count_sessions_to_compute() -> int:
+    """Count the number of sessions needing computation."""
+    return Session.objects.exclude(
+        compute_version=settings.CURRENT_COMPUTE_VERSION
+    ).count()
 
 
 @sync_to_async
@@ -103,12 +126,22 @@ async def start_background_compute_task() -> None:
     Background task that continuously processes sessions needing computation.
 
     Runs until stop event is set. Uses ProcessPoolExecutor for CPU-intensive work.
+
+    Progress logging: During initial computation of existing sessions, logs
+    progress at 10% intervals. Once all initial sessions are processed (100%),
+    stops logging even if new sessions arrive later.
     """
+    global _initial_total, _processed_count, _last_logged_percent, _initial_phase_complete
+
     executor = get_executor()
     stop_event = get_stop_event()
     loop = asyncio.get_event_loop()
 
-    logger.info("Background compute task started")
+    # Reset and initialize progress tracking
+    _reset_progress_tracking()
+    _initial_total = await _count_sessions_to_compute()
+
+    logger.info(f"Background compute task started ({_initial_total} sessions to process)")
 
     while not stop_event.is_set():
         try:
@@ -122,8 +155,6 @@ async def start_background_compute_task() -> None:
                 except asyncio.TimeoutError:
                     pass
                 continue
-
-            logger.info(f"Computing metadata for session {session.id}")
 
             # Run CPU-intensive work in separate process
             # Pass session.id (string), not the object (can't pickle Django models)
@@ -150,7 +181,20 @@ async def start_background_compute_task() -> None:
                 logger.error(f"Error in broadcast_session_updated for {session.id}: {e}")
                 raise
 
-            logger.info(f"Completed metadata computation for session {session.id}")
+            # Progress logging during initial phase only
+            if not _initial_phase_complete and _initial_total and _initial_total > 0:
+                _processed_count += 1
+                current_percent = (_processed_count * 100) // _initial_total
+
+                # Log at 10% intervals
+                if current_percent >= _last_logged_percent + 10:
+                    _last_logged_percent = (current_percent // 10) * 10
+                    logger.info(f"Background compute progress: {_last_logged_percent}% ({_processed_count}/{_initial_total})")
+
+                # Mark initial phase complete at 100%
+                if _processed_count >= _initial_total:
+                    _initial_phase_complete = True
+                    logger.info(f"Background compute: initial processing complete ({_initial_total} sessions)")
 
         except Exception as e:
             logger.error(f"Error in background compute task: {e}", exc_info=True)
