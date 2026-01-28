@@ -129,10 +129,7 @@ def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
     entry_type = parsed_json.get('type')
 
     # DEBUG_ONLY: System messages (except api_error), queue operations, progress
-    if entry_type == 'system':
-        return ItemDisplayLevel.DEBUG_ONLY
-
-    if entry_type in ('queue-operation', 'progress'):
+    if entry_type in ('system', 'queue-operation', 'progress'):
         return ItemDisplayLevel.DEBUG_ONLY
 
     # Everything else is collapsible: meta messages, tool results, thinking/tool_use,
@@ -181,6 +178,10 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
         if _has_visible_content(content):
             return ItemKind.USER_MESSAGE
 
+        # Content array without visible items → CONTENT_ITEMS
+        if isinstance(content, list):
+            return ItemKind.CONTENT_ITEMS
+
         return None
 
     # Assistant messages
@@ -191,6 +192,10 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
         # Only assistant messages with visible content count as ASSISTANT_MESSAGE
         if _has_visible_content(content):
             return ItemKind.ASSISTANT_MESSAGE
+
+        # Content array without visible items → CONTENT_ITEMS
+        if isinstance(content, list):
+            return ItemKind.CONTENT_ITEMS
 
         return None
 

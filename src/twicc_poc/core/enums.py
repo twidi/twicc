@@ -19,4 +19,5 @@ class ItemKind(StrEnum):
     """Kind/category of session items."""
     USER_MESSAGE = "user_message"
     ASSISTANT_MESSAGE = "assistant_message"
+    CONTENT_ITEMS = "content_items"
     API_ERROR = "api_error"

@@ -115,6 +115,13 @@ function toggleJsonView() {
                 :suffix-expanded="suffixExpanded"
                 @toggle-suffix="emit('toggle-suffix')"
             />
+            <Message
+                v-else-if="kind === 'content_items'"
+                :data="parsedContent"
+                role="items"
+                :session-id="sessionId"
+                :line-num="lineNum"
+            />
             <ApiError
                 v-else-if="kind === 'api_error'"
                 :data="parsedContent"

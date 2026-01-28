@@ -10,7 +10,7 @@ const props = defineProps({
     role: {
         type: String,
         required: true,
-        validator: (value) => ['user', 'assistant'].includes(value)
+        validator: (value) => ['user', 'assistant', 'items'].includes(value)
     },
     // Context for store lookups (propagated to ContentList)
     sessionId: {

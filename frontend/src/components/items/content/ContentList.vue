@@ -22,7 +22,7 @@ const props = defineProps({
     role: {
         type: String,
         required: true,
-        validator: (value) => ['user', 'assistant'].includes(value)
+        validator: (value) => ['user', 'assistant', 'items'].includes(value)
     },
     // Context for store lookups
     sessionId: {
@@ -75,7 +75,7 @@ const visibleItems = computed(() => {
     const result = []
 
     // In non-simplified modes, show everything without toggles
-    if (!isSimplifiedMode.value) {
+    if (!isSimplifiedMode.value || props.role === 'items') {
         for (let itemIndex = 0; itemIndex < props.items.length; itemIndex++) {
             result.push({ index: itemIndex, item: props.items[itemIndex], show: true })
         }
