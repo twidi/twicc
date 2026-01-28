@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 
-from twicc_poc.compute import compute_item_metadata, compute_item_metadata_live
+from twicc_poc.compute import compute_item_metadata, compute_item_metadata_live, is_tool_result_item, create_tool_result_link_live
 from twicc_poc.core.enums import ItemDisplayLevel
 from twicc_poc.core.models import Project, Session, SessionItem
 
@@ -116,7 +116,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
 
         if lines:
             # Create SessionItem objects for bulk insert
-            items_to_create = []
+            items_to_create: list[tuple[SessionItem, dict]] = []
             current_line_num = session.last_line
 
             for line in lines:
@@ -134,18 +134,18 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 metadata = compute_item_metadata(parsed)
                 item.display_level = metadata['display_level']
                 item.kind = metadata['kind']
-                items_to_create.append(item)
+                items_to_create.append((item, parsed))
 
             # Bulk create all items
-            SessionItem.objects.bulk_create(items_to_create, ignore_conflicts=True)
+            items_only = [item for item, _ in items_to_create]
+            SessionItem.objects.bulk_create(items_only, ignore_conflicts=True)
 
             # Track line_nums of new items
-            new_line_nums = {item.line_num for item in items_to_create}
+            new_line_nums = {item.line_num for item in items_only}
 
-            # Second pass: compute group membership for COLLAPSIBLE and ALWAYS items
-            # - COLLAPSIBLE: need group_head to know which group they belong to
-            # - ALWAYS: need group_head (prefix) and group_tail (suffix) for connected groups
-            for item in items_to_create:
+            # Second pass: compute group membership and tool_result links
+            for item, parsed in items_to_create:
+                # Group membership for COLLAPSIBLE and ALWAYS items
                 if item.display_level in (ItemDisplayLevel.COLLAPSIBLE, ItemDisplayLevel.ALWAYS):
                     item_modified_lines = compute_item_metadata_live(session.id, item, item.content)
                     modified_line_nums.update(item_modified_lines)
@@ -157,6 +157,10 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                         group_head=item.group_head,
                         group_tail=item.group_tail
                     )
+
+                # Tool result links (tool_result items are DEBUG_ONLY)
+                if is_tool_result_item(parsed):
+                    create_tool_result_link_live(session.id, item, parsed)
 
             # Update session tracking fields
             session.last_line = current_line_num

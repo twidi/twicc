@@ -71,6 +71,67 @@ def _detect_prefix_suffix(parsed_json: dict, kind: ItemKind | None) -> tuple[boo
     return _has_collapsible_prefix(content), _has_collapsible_suffix(content)
 
 
+def get_message_content_list(parsed_json: dict, expected_type: str) -> list | None:
+    """
+    Extract the content array from a message of the expected type.
+    """
+    if parsed_json.get("type") != expected_type:
+        return None
+    message = parsed_json.get('message', None)
+    if not isinstance(message, dict):
+        return None
+    content = message.get('content')
+    if not isinstance(content, list):
+        return None
+    return content
+
+
+def get_tool_use_ids(parsed_json: dict) -> list[str]:
+    """
+    Extract tool_use IDs from an assistant or content_items message.
+
+    Returns a list of tool_use IDs found in the message content array.
+    """
+    content = get_message_content_list(parsed_json, "assistant")
+    if content is None:
+        return []
+    return [
+        item['id']
+        for item in content
+        if isinstance(item, dict) and item.get('type') == 'tool_use' and item.get('id')
+    ]
+
+
+def get_tool_result_id(parsed_json: dict) -> str | None:
+    """
+    Extract the tool_use_id from a standalone tool_result item.
+
+    Returns the tool_use_id string, or None if not a tool_result item.
+    """
+    content = get_message_content_list(parsed_json, "user")
+    if content is None or len(content) != 1:
+        return None
+    first = content[0]
+    if not isinstance(first, dict) or first.get('type') != 'tool_result':
+        return None
+    return first.get('tool_use_id')
+
+
+def is_tool_result_item(parsed_json: dict) -> bool:
+    """
+    Check if an item is a standalone tool_result.
+
+    A tool_result item is a user message whose content array contains
+    a single entry of type "tool_result". These items also have
+    a "toolUseResult" key at root level.
+    """
+    content = get_message_content_list(parsed_json, "user")
+    if content is None or len(content) != 1:
+        return False
+    first = content[0]
+    return isinstance(first, dict) and first.get('type') == 'tool_result'
+
+
 def _has_visible_content(content: str | list) -> bool:
     """
     Check if message content contains user-visible content.
@@ -107,9 +168,10 @@ def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
 
     Classification rules:
     - ALWAYS (1): USER_MESSAGE, ASSISTANT_MESSAGE, API_ERROR kinds
-    - COLLAPSIBLE (2): Meta messages, tool results, thinking/tool_use only,
+    - COLLAPSIBLE (2): Meta messages, thinking/tool_use only,
                        summaries, file snapshots, custom titles
-    - DEBUG_ONLY (3): System messages (except api_error), queue ops, progress
+    - DEBUG_ONLY (3): System messages (except api_error), queue ops, progress,
+                      standalone tool_result items
 
     Args:
         parsed_json: Parsed JSON content of the item
@@ -132,7 +194,11 @@ def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
     if entry_type in ('system', 'queue-operation', 'progress'):
         return ItemDisplayLevel.DEBUG_ONLY
 
-    # Everything else is collapsible: meta messages, tool results, thinking/tool_use,
+    # DEBUG_ONLY: Standalone tool_result items (their data is accessed via SessionItemLink)
+    if is_tool_result_item(parsed_json):
+        return ItemDisplayLevel.DEBUG_ONLY
+
+    # Everything else is collapsible: meta messages, thinking/tool_use,
     # summaries, file snapshots, custom titles, etc.
     return ItemDisplayLevel.COLLAPSIBLE
 
@@ -423,12 +489,13 @@ def compute_session_metadata(session_id: str) -> None:
 
     This function runs in a ThreadPoolExecutor.
     It processes items in batches using iterator() to avoid memory issues.
+    Also builds SessionItemLink entries for tool_use → tool_result relationships.
 
     Args:
         session_id: The session ID
     """
     from django.db import connection
-    from twicc_poc.core.models import Session
+    from twicc_poc.core.models import Session, SessionItemLink
 
     # Ensure this thread has its own database connection
     connection.close()
@@ -439,11 +506,18 @@ def compute_session_metadata(session_id: str) -> None:
         logger.error(f"Session {session_id} not found for metadata computation")
         return
 
+    # Clear existing links for this session (full recompute)
+    SessionItemLink.objects.filter(session=session).delete()
+
     queryset = SessionItem.objects.filter(session=session).order_by('line_num')
 
     state = GroupState()
     items_to_update: list[SessionItem] = []
+    links_to_create: list[SessionItemLink] = []
     batch_size = 50
+
+    # Map tool_use_id → line_num of the item containing the tool_use
+    tool_use_map: dict[str, int] = {}
 
     for item in queryset.iterator(chunk_size=batch_size):
         try:
@@ -456,6 +530,22 @@ def compute_session_metadata(session_id: str) -> None:
         metadata = compute_item_metadata(parsed)
         item.display_level = metadata['display_level']
         item.kind = metadata['kind']
+
+        # Track tool_use IDs from assistant/content_items messages
+        tool_use_ids = get_tool_use_ids(parsed)
+        for tu_id in tool_use_ids:
+            tool_use_map[tu_id] = item.line_num
+
+        # Check if this is a tool_result and create link
+        tool_result_ref = get_tool_result_id(parsed)
+        if tool_result_ref and tool_result_ref in tool_use_map:
+            links_to_create.append(SessionItemLink(
+                session=session,
+                source_line_num=tool_use_map[tool_result_ref],
+                target_line_num=item.line_num,
+                link_type='tool_result',
+                reference=tool_result_ref,
+            ))
 
         # Detect prefix/suffix for ALWAYS items
         has_prefix, has_suffix = False, False
@@ -491,6 +581,11 @@ def compute_session_metadata(session_id: str) -> None:
             )
             items_to_update = []
 
+        # Bulk create links when batch is full
+        if len(links_to_create) >= batch_size:
+            SessionItemLink.objects.bulk_create(links_to_create)
+            links_to_create = []
+
     # Finalize pending groups
     finalized = state.finalize()
     items_to_update.extend(finalized)
@@ -501,6 +596,10 @@ def compute_session_metadata(session_id: str) -> None:
             items_to_update,
             ['display_level', 'group_head', 'group_tail', 'kind']
         )
+
+    # Final bulk create links
+    if links_to_create:
+        SessionItemLink.objects.bulk_create(links_to_create)
 
     session.compute_version = settings.CURRENT_COMPUTE_VERSION
     session.save(update_fields=['compute_version'])
@@ -545,6 +644,45 @@ def _find_open_group_head(session_id: str, before_line_num: int) -> int | None:
             pass
 
     return None
+
+
+def create_tool_result_link_live(session_id: str, item: SessionItem, parsed_json: dict) -> None:
+    """
+    Create a SessionItemLink for a tool_result item during live sync.
+
+    Searches the session for the item containing the matching tool_use
+    and creates the link entry.
+    """
+    from twicc_poc.core.models import SessionItemLink
+
+    tool_use_id = get_tool_result_id(parsed_json)
+    if not tool_use_id:
+        return
+
+    # Find candidates by text search (LIKE), ordered most recent first.
+    # The tool_use_id string could appear in text content (e.g. assistant mentioning it),
+    # so we iterate candidates and verify each one until we find an actual tool_use match.
+    candidates = SessionItem.objects.filter(
+        session_id=session_id,
+        line_num__lt=item.line_num,
+        content__contains=tool_use_id,
+    ).order_by('-line_num')
+
+    for candidate in candidates:
+        try:
+            candidate_parsed = orjson.loads(candidate.content)
+        except orjson.JSONDecodeError:
+            continue
+
+        if tool_use_id in get_tool_use_ids(candidate_parsed):
+            SessionItemLink.objects.get_or_create(
+                session_id=session_id,
+                source_line_num=candidate.line_num,
+                target_line_num=item.line_num,
+                link_type='tool_result',
+                reference=tool_use_id,
+            )
+            return
 
 
 def compute_item_metadata_live(session_id: str, item: SessionItem, content: str) -> set[int]:
