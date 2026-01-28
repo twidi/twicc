@@ -22,6 +22,9 @@ const LOAD_BUFFER = 20
 // Debounce delay for scroll-triggered loading (ms)
 const LOAD_DEBOUNCE_MS = 150
 
+// Minimum item size for the virtual scroller (in pixels)
+const MIN_ITEM_SIZE = 20
+
 // Track pending range to load (accumulated during debounce)
 const pendingLoadRange = ref(null)
 
@@ -203,39 +206,6 @@ async function scrollToBottomUntilStable() {
 }
 
 /**
- * Get the content of an item by its line number.
- * Used by the scroller template and size-dependencies.
- */
-function getItemContent(lineNum) {
-    const item = store.getSessionItem(sessionId.value, lineNum)
-    return item?.content
-}
-
-/**
- * Get the kind of an item by its line number.
- */
-function getItemKind(lineNum) {
-    const item = store.getSessionItem(sessionId.value, lineNum)
-    return item?.kind
-}
-
-/**
- * Get the group_head of an item by its line number.
- */
-function getItemGroupHead(lineNum) {
-    const item = store.getSessionItem(sessionId.value, lineNum)
-    return item?.group_head ?? null
-}
-
-/**
- * Get the group_tail of an item by its line number.
- */
-function getItemGroupTail(lineNum) {
-    const item = store.getSessionItem(sessionId.value, lineNum)
-    return item?.group_tail ?? null
-}
-
-/**
  * Convert an array of line numbers to ranges for API calls.
  * e.g., [1, 2, 3, 5, 6, 10] -> [[1, 3], [5, 6], [10, 10]]
  */
@@ -309,11 +279,8 @@ function onScrollerUpdate(startIndex, endIndex, visibleStartIndex, visibleEndInd
     const lineNumsToLoad = []
     for (let i = bufferedStart; i <= bufferedEnd; i++) {
         const visualItem = visItems[i]
-        if (visualItem) {
-            const sessionItem = store.getSessionItem(sessionId.value, visualItem.lineNum)
-            if (sessionItem && !sessionItem.content) {
-                lineNumsToLoad.push(visualItem.lineNum)
-            }
+        if (visualItem && !visualItem.content) {
+            lineNumsToLoad.push(visualItem.lineNum)
         }
     }
 
@@ -418,7 +385,7 @@ function toggleGroup(groupHeadLineNum) {
             ref="scrollerRef"
             v-else-if="visualItems.length > 0"
             :items="visualItems"
-            :min-item-size="80"
+            :min-item-size="MIN_ITEM_SIZE"
             :buffer="200"
             key-field="lineNum"
             class="session-items"
@@ -429,15 +396,12 @@ function toggleGroup(groupHeadLineNum) {
                 <DynamicScrollerItem
                     :item="item"
                     :active="active"
-                    :size-dependencies="[getItemContent(item.lineNum), getItemKind(item.lineNum), item.isExpanded]"
+                    :size-dependencies="[item.isExpanded, item.prefixExpanded, item.suffixExpanded]"
                     :data-index="index"
                     class="item-wrapper"
                 >
                     <!-- Placeholder (no content loaded yet) -->
-                    <div v-if="!getItemContent(item.lineNum)" class="item-placeholder">
-                        <div class="line-number">{{ item.lineNum }}</div>
-                        <wa-skeleton effect="sheen"></wa-skeleton>
-                    </div>
+                    <wa-skeleton v-if="!item.content" effect="sheen" class="item-placeholder"></wa-skeleton>
 
                     <!-- Group head: show toggle (+ item content if expanded) -->
                     <template v-else-if="item.isGroupHead">
@@ -447,8 +411,8 @@ function toggleGroup(groupHeadLineNum) {
                         />
                         <SessionItem
                             v-if="item.isExpanded"
-                            :content="getItemContent(item.lineNum)"
-                            :kind="getItemKind(item.lineNum)"
+                            :content="item.content"
+                            :kind="item.kind"
                             :session-id="sessionId"
                             :line-num="item.lineNum"
                         />
@@ -457,12 +421,12 @@ function toggleGroup(groupHeadLineNum) {
                     <!-- Regular item (including ALWAYS with prefix/suffix): show item content -->
                     <SessionItem
                         v-else
-                        :content="getItemContent(item.lineNum)"
-                        :kind="getItemKind(item.lineNum)"
+                        :content="item.content"
+                        :kind="item.kind"
                         :session-id="sessionId"
                         :line-num="item.lineNum"
-                        :group-head="getItemGroupHead(item.lineNum)"
-                        :group-tail="getItemGroupTail(item.lineNum)"
+                        :group-head="item.groupHead"
+                        :group-tail="item.groupTail"
                         :prefix-expanded="item.prefixExpanded || false"
                         :suffix-expanded="item.suffixExpanded || false"
                         @toggle-suffix="toggleGroup(item.suffixGroupHead)"
@@ -546,7 +510,7 @@ function toggleGroup(groupHeadLineNum) {
 }
 
 .item-wrapper {
-    padding: var(--wa-space-s) var(--wa-space-l);
+    /* No padding - items manage their own spacing */
 }
 
 .empty-state {
@@ -560,27 +524,8 @@ function toggleGroup(groupHeadLineNum) {
 }
 
 .item-placeholder {
-    display: flex;
-    gap: var(--wa-space-m);
-    padding: var(--wa-space-m);
-    background: var(--wa-color-surface-alt);
-    border-radius: var(--wa-radius-m);
-}
-
-.item-placeholder .line-number {
-    flex-shrink: 0;
-    width: 40px;
-    text-align: right;
-    color: var(--wa-color-text-subtle);
-    font-family: var(--wa-font-mono);
-    font-size: var(--wa-font-size-s);
-    font-weight: 500;
-    user-select: none;
-}
-
-.item-placeholder wa-skeleton {
-    flex: 1;
-    height: 1.5em;
+    padding-block: 2px;
+    height: v-bind(MIN_ITEM_SIZE + 'px');
 }
 
 .compute-pending-state {

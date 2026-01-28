@@ -41,7 +41,6 @@ const errorInfo = computed(() => {
 
 .error-header {
     font-weight: 600;
-    margin-bottom: var(--wa-space-s);
     color: var(--wa-color-danger);
     font-size: var(--wa-font-size-xs);
     text-transform: uppercase;
@@ -53,12 +52,7 @@ const errorInfo = computed(() => {
     color: var(--wa-color-danger);
 }
 
-.error-message {
-    margin-top: var(--wa-space-xs);
-}
-
 .error-detail {
-    margin-top: var(--wa-space-xs);
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-subtle);
 }

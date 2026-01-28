@@ -168,55 +168,45 @@ function toggleInternalGroup(startIndex) {
 </script>
 
 <template>
-    <div class="content-list">
-        <template v-for="entry in visibleItems" :key="entry.index">
-            <!-- Toggle BEFORE the first element of a group -->
-            <GroupToggle
-                v-if="entry.showToggleBefore && entry.toggleType === 'internal'"
-                :expanded="entry.toggleExpanded"
-                @toggle="toggleInternalGroup(entry.groupStartIndex)"
-            />
-            <!-- Toggle for suffix (emits to parent for session-level handling) -->
-            <GroupToggle
-                v-else-if="entry.showToggleBefore && entry.toggleType === 'suffix'"
-                :expanded="entry.toggleExpanded"
-                @toggle="emit('toggle-suffix')"
-            />
+    <template v-for="entry in visibleItems" :key="entry.index">
+        <!-- Toggle BEFORE the first element of a group -->
+        <GroupToggle
+            v-if="entry.showToggleBefore && entry.toggleType === 'internal'"
+            :expanded="entry.toggleExpanded"
+            @toggle="toggleInternalGroup(entry.groupStartIndex)"
+        />
+        <!-- Toggle for suffix (emits to parent for session-level handling) -->
+        <GroupToggle
+            v-else-if="entry.showToggleBefore && entry.toggleType === 'suffix'"
+            :expanded="entry.toggleExpanded"
+            @toggle="emit('toggle-suffix')"
+        />
 
-            <!-- Content element -->
-            <template v-if="entry.show">
-                <TextContent
-                    v-if="entry.item.type === 'text'"
-                    :text="entry.item.text"
-                    :role="role"
-                />
-                <ImageContent
-                    v-else-if="entry.item.type === 'image'"
-                    :source="entry.item.source"
-                    :media-type="entry.item.media_type"
-                    :role="role"
-                />
-                <DocumentContent
-                    v-else-if="entry.item.type === 'document'"
-                    :source="entry.item.source"
-                    :media-type="entry.item.media_type"
-                    :title="entry.item.title"
-                    :role="role"
-                />
-                <UnknownEntry
-                    v-else
-                    :type="entry.item.type"
-                    :data="entry.item"
-                />
-            </template>
+        <!-- Content element -->
+        <template v-if="entry.show">
+            <TextContent
+                v-if="entry.item.type === 'text'"
+                :text="entry.item.text"
+                :role="role"
+            />
+            <ImageContent
+                v-else-if="entry.item.type === 'image'"
+                :source="entry.item.source"
+                :media-type="entry.item.media_type"
+                :role="role"
+            />
+            <DocumentContent
+                v-else-if="entry.item.type === 'document'"
+                :source="entry.item.source"
+                :media-type="entry.item.media_type"
+                :title="entry.item.title"
+                :role="role"
+            />
+            <UnknownEntry
+                v-else
+                :type="entry.item.type"
+                :data="entry.item"
+            />
         </template>
-    </div>
+    </template>
 </template>
-
-<style scoped>
-.content-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wa-space-s);
-}
-</style>

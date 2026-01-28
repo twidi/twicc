@@ -30,7 +30,6 @@ defineProps({
 }
 
 .unknown-type {
-    margin-left: var(--wa-space-xs);
     opacity: 0.7;
 }
 </style>

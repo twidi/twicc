@@ -77,20 +77,21 @@ function toggleJsonView() {
 
 <template>
     <div class="session-item">
-        <div v-if="lineNum !== null" class="line-number">{{ lineNum }}</div>
+        <!-- JSON toggle button (visible on hover) -->
+        <wa-button
+            class="json-toggle"
+            :variant="showJson ? 'warning' : 'neutral'"
+            size="small"
+            @click="toggleJsonView"
+            :title="showJson ? 'Hide JSON' : 'Show JSON'"
+        >
+            <wa-icon name="code"></wa-icon>
+        </wa-button>
 
-        <div class="item-content">
-            <!-- JSON toggle button -->
-            <button
-                class="json-toggle"
-                @click="toggleJsonView"
-                :title="showJson ? 'Hide JSON' : 'Show JSON'"
-            >
-                <wa-icon :name="showJson ? 'code-slash' : 'code'"></wa-icon>
-            </button>
-
-            <!-- JSON view -->
-            <div v-if="showJson" class="json-tree">
+        <!-- JSON view -->
+        <div v-if="showJson" class="json-view">
+            <div class="line-number">{{ lineNum }}</div>
+            <div class="json-tree">
                 <JsonNode
                     :data="parsedContent"
                     :path="'root'"
@@ -98,47 +99,63 @@ function toggleJsonView() {
                     @toggle="toggleCollapse"
                 />
             </div>
-
-            <!-- Formatted view based on kind -->
-            <template v-else>
-                <div class="item-body">
-                    <Message
-                        v-if="kind === 'user_message' || kind === 'assistant_message'"
-                        :data="parsedContent"
-                        :role="kind === 'user_message' ? 'user' : 'assistant'"
-                        :session-id="sessionId"
-                        :line-num="lineNum"
-                        :group-head="groupHead"
-                        :group-tail="groupTail"
-                        :prefix-expanded="prefixExpanded"
-                        :suffix-expanded="suffixExpanded"
-                        @toggle-suffix="emit('toggle-suffix')"
-                    />
-                    <ApiError
-                        v-else-if="kind === 'api_error'"
-                        :data="parsedContent"
-                    />
-                    <UnknownEntry
-                        v-else
-                        :type="entryType"
-                        :data="parsedContent"
-                    />
-                </div>
-            </template>
         </div>
+
+        <!-- Formatted view based on kind -->
+        <template v-else>
+            <Message
+                v-if="kind === 'user_message' || kind === 'assistant_message'"
+                :data="parsedContent"
+                :role="kind === 'user_message' ? 'user' : 'assistant'"
+                :session-id="sessionId"
+                :line-num="lineNum"
+                :group-head="groupHead"
+                :group-tail="groupTail"
+                :prefix-expanded="prefixExpanded"
+                :suffix-expanded="suffixExpanded"
+                @toggle-suffix="emit('toggle-suffix')"
+            />
+            <ApiError
+                v-else-if="kind === 'api_error'"
+                :data="parsedContent"
+            />
+            <UnknownEntry
+                v-else
+                :type="entryType"
+                :data="parsedContent"
+            />
+        </template>
     </div>
 </template>
 
 <style scoped>
 .session-item {
-    display: flex;
-    gap: var(--wa-space-m);
-    padding: var(--wa-space-m);
-    background: var(--wa-color-surface-alt);
-    border-radius: var(--wa-radius-m);
+    position: relative;
     font-family: var(--wa-font-mono);
     font-size: var(--wa-font-size-s);
     line-height: 1.5;
+}
+
+.json-toggle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 1;
+}
+
+.session-item:hover .json-toggle {
+    opacity: 1;
+}
+
+.session-item:hover .json-toggle:hover {
+    opacity: 1;
+}
+
+.json-view {
+    display: flex;
+    gap: var(--wa-space-m);
 }
 
 .line-number {
@@ -150,35 +167,9 @@ function toggleJsonView() {
     user-select: none;
 }
 
-.item-content {
+.json-tree {
     flex: 1;
     min-width: 0;
-    position: relative;
-}
-
-.json-toggle {
-    position: absolute;
-    top: 0;
-    right: 0;
-    background: var(--wa-color-surface);
-    border: 1px solid var(--wa-color-border);
-    border-radius: var(--wa-radius-s);
-    padding: var(--wa-space-xs);
-    cursor: pointer;
-    opacity: 0.6;
-    transition: opacity 0.2s;
-    z-index: 1;
-}
-
-.json-toggle:hover {
-    opacity: 1;
-}
-
-.json-tree {
     overflow: auto;
-}
-
-.item-body {
-    padding-right: var(--wa-space-xl); /* Space for the toggle button */
 }
 </style>

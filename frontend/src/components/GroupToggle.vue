@@ -58,28 +58,13 @@ function handleKeydown(event) {
 .group-toggle {
     display: flex;
     align-items: center;
-    gap: var(--wa-space-xs);
-    padding: var(--wa-space-s) var(--wa-space-m);
-    background: var(--wa-color-surface-alt);
-    border-radius: var(--wa-radius-m);
     cursor: pointer;
     user-select: none;
-    transition: background-color 0.15s ease;
-}
-
-.group-toggle:hover {
-    background: var(--wa-color-surface-hover, rgba(0, 0, 0, 0.05));
 }
 
 .group-toggle:focus {
     outline: 2px solid var(--wa-color-primary);
     outline-offset: 2px;
-}
-
-.group-toggle--expanded {
-    background: var(--wa-color-surface-alt);
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
 }
 
 .toggle-indicator {
