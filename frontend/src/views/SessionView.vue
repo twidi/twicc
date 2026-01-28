@@ -510,7 +510,12 @@ function toggleGroup(groupHeadLineNum) {
 }
 
 .item-wrapper {
-    /* No padding - items manage their own spacing */
+    /* display: flow-root creates a Block Formatting Context so that child margins
+       (e.g. wa-card margins in user messages) don't collapse through and are
+       included in offsetHeight — which DynamicScrollerItem reads for sizing.
+       Unlike overflow:hidden, flow-root won't clip overflowing content
+       (tooltips, dropdowns, etc.). */
+    display: flow-root;
 }
 
 .empty-state {
