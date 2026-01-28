@@ -7,7 +7,7 @@ with the database, and reads new lines from modified JSONL files.
 
 from __future__ import annotations
 
-import json
+import orjson
 import sys
 import time
 from pathlib import Path
@@ -128,8 +128,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 )
                 # Pre-compute display_level (no group info yet)
                 try:
-                    parsed = json.loads(line)
-                except json.JSONDecodeError:
+                    parsed = orjson.loads(line)
+                except orjson.JSONDecodeError:
                     parsed = {}
                 metadata = compute_item_metadata(parsed)
                 item.display_level = metadata['display_level']

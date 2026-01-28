@@ -103,6 +103,7 @@ Two tables for append-only JSONL sync:
 ## Python Patterns
 
 - **Immutable data containers:** Always use `NamedTuple` for simple immutable data structures (return values, decisions, configs). Works with all field types including lists. Prefer over `@dataclass` when mutability is not needed.
+- **JSON parsing:** Use `orjson` instead of the standard `json` module for all JSON operations in the backend. It's ~6x faster and handles the high-volume JSONL file parsing efficiently.
 
 ## Key Implementation Notes
 

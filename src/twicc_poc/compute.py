@@ -8,7 +8,7 @@ and the watcher (single item).
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -442,8 +442,8 @@ def compute_session_metadata(session_id: str) -> None:
 
     for item in queryset.iterator(chunk_size=batch_size):
         try:
-            parsed = json.loads(item.content)
-        except json.JSONDecodeError:
+            parsed = orjson.loads(item.content)
+        except orjson.JSONDecodeError:
             logger.warning(f"Invalid JSON in item {item.session_id}:{item.line_num}")
             parsed = {}
 
@@ -532,11 +532,11 @@ def _find_open_group_head(session_id: str, before_line_num: int) -> int | None:
     # ALWAYS with suffix = check if it has collapsible suffix
     if previous.display_level == ItemDisplayLevel.ALWAYS:
         try:
-            parsed = json.loads(previous.content)
+            parsed = orjson.loads(previous.content)
             _, has_suffix = _detect_prefix_suffix(parsed, previous.kind)
             if has_suffix:
                 return previous.line_num  # ALWAYS item is the head
-        except json.JSONDecodeError:
+        except orjson.JSONDecodeError:
             pass
 
     return None
@@ -557,8 +557,8 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
         Set of line_nums of pre-existing items whose group_tail was updated
     """
     try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
+        parsed = orjson.loads(content)
+    except orjson.JSONDecodeError:
         logger.warning(f"Invalid JSON in item {session_id}:{item.line_num}")
         parsed = {}
 
