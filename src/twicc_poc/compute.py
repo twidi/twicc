@@ -542,7 +542,7 @@ def _find_open_group_head(session_id: str, before_line_num: int) -> int | None:
     return None
 
 
-def compute_item_metadata_live(session_id: str, item: SessionItem, content: str) -> None:
+def compute_item_metadata_live(session_id: str, item: SessionItem, content: str) -> set[int]:
     """
     Compute metadata for a single item during live sync.
 
@@ -552,6 +552,9 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
         session_id: The session ID
         item: The SessionItem object (already has line_num and content set)
         content: The raw JSON content string
+
+    Returns:
+        Set of line_nums of pre-existing items whose group_tail was updated
     """
     try:
         parsed = json.loads(content)
@@ -569,7 +572,10 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
     item.group_tail = None
 
     if item.display_level == ItemDisplayLevel.DEBUG_ONLY:
-        return
+        return set()
+
+    # Track which pre-existing items were modified
+    modified_line_nums: set[int] = set()
 
     # Find if there's an open group before us
     open_group_head = _find_open_group_head(session_id, item.line_num)
@@ -579,6 +585,23 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
             # Join existing group
             item.group_head = open_group_head
             item.group_tail = item.line_num
+
+            # Get line_nums of pre-existing items that will be updated
+            affected_collapsibles = SessionItem.objects.filter(
+                session_id=session_id,
+                group_head=open_group_head,
+                line_num__lt=item.line_num
+            ).values_list('line_num', flat=True)
+            modified_line_nums.update(affected_collapsibles)
+
+            # Check if ALWAYS started this group
+            always_starter = SessionItem.objects.filter(
+                session_id=session_id,
+                line_num=open_group_head,
+                display_level=ItemDisplayLevel.ALWAYS
+            ).exists()
+            if always_starter:
+                modified_line_nums.add(open_group_head)
 
             # Update all items in group with new tail
             SessionItem.objects.filter(
@@ -604,6 +627,23 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
         if has_prefix and open_group_head is not None:
             item.group_head = open_group_head
 
+            # Get line_nums of pre-existing items that will be updated
+            affected_collapsibles = SessionItem.objects.filter(
+                session_id=session_id,
+                group_head=open_group_head,
+                line_num__lt=item.line_num
+            ).values_list('line_num', flat=True)
+            modified_line_nums.update(affected_collapsibles)
+
+            # Check if ALWAYS started this group
+            always_starter = SessionItem.objects.filter(
+                session_id=session_id,
+                line_num=open_group_head,
+                display_level=ItemDisplayLevel.ALWAYS
+            ).exists()
+            if always_starter:
+                modified_line_nums.add(open_group_head)
+
             # Update all items in group with new tail (this item)
             SessionItem.objects.filter(
                 session_id=session_id,
@@ -619,3 +659,5 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
 
         # Suffix: group_tail stays null until next item arrives and connects
         # (will be updated by next item's compute_item_metadata_live)
+
+    return modified_line_nums

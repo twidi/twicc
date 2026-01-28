@@ -2,6 +2,7 @@
 
 import { defineStore } from 'pinia'
 import { DEFAULT_DISPLAY_MODE } from '../constants'
+import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
 
 export const useDataStore = defineStore('data', {
@@ -150,22 +151,54 @@ export const useDataStore = defineStore('data', {
          * If items arrive beyond current array size, extends with placeholders.
          * @param {string} sessionId
          * @param {Array<{line_num: number, content: string}>} newItems
+         * @param {Array<{line_num: number, display_level: number, group_head: number|null, group_tail: number|null, kind: string|null}>|null} updatedMetadata - Metadata of pre-existing items that were modified
          */
-        addSessionItems(sessionId, newItems) {
-            if (!newItems?.length) return
+        addSessionItems(sessionId, newItems, updatedMetadata = null) {
+            let targetArray = this.sessionItems[sessionId]
 
-            const items = this.sessionItems[sessionId]
-            if (!items) {
+            // First, apply metadata updates to pre-existing items
+            if (updatedMetadata?.length && targetArray) {
+                for (const update of updatedMetadata) {
+                    const index = update.line_num - 1
+                    const existingItem = targetArray[index]
+                    if (!existingItem) continue
+
+                    // For user_message or assistant_message that acquires a group_tail,
+                    // check if we need to migrate internal suffix expansion to external group
+                    if (existingItem.kind === 'user_message' || existingItem.kind === 'assistant_message') {
+                        const hadGroupTail = existingItem.group_tail != null
+                        const willHaveGroupTail = update.group_tail != null
+                        if (!hadGroupTail && willHaveGroupTail && existingItem.content) {
+                            this._migrateInternalSuffixToExternal(sessionId, update.line_num, existingItem.content)
+                        }
+                    }
+
+                    // Apply all metadata fields
+                    existingItem.display_level = update.display_level
+                    existingItem.group_head = update.group_head
+                    existingItem.group_tail = update.group_tail
+                    existingItem.kind = update.kind
+                }
+            }
+
+            // Then add new items
+            if (!newItems?.length) {
+                // Even with no new items, metadata updates may require recompute
+                if (updatedMetadata?.length) {
+                    this.recomputeVisualItems(sessionId)
+                }
+                return
+            }
+
+            if (!targetArray) {
                 // Not initialized yet - create array from the items we have
                 // Find max line_num to know array size
                 const maxLineNum = Math.max(...newItems.map(item => item.line_num))
-                this.sessionItems[sessionId] = Array.from(
+                targetArray = this.sessionItems[sessionId] = Array.from(
                     { length: maxLineNum },
                     (_, index) => ({ line_num: index + 1 })
                 )
             }
-
-            const targetArray = this.sessionItems[sessionId]
 
             for (const item of newItems) {
                 const index = item.line_num - 1 // line_num is 1-based, array is 0-based
@@ -180,6 +213,58 @@ export const useDataStore = defineStore('data', {
             }
 
             this.recomputeVisualItems(sessionId)
+        },
+
+        /**
+         * Migrate internal suffix expansion state to external group expansion.
+         *
+         * When an ALWAYS item with an internal suffix acquires a group_tail (because
+         * a COLLAPSIBLE item arrived after it), the suffix becomes external.
+         * If the user had expanded that internal suffix, we need to migrate
+         * that expansion state to the session-level expanded groups.
+         *
+         * @param {string} sessionId
+         * @param {number} lineNum - The line_num of the ALWAYS item
+         * @param {string} contentString - The raw JSON content of the item
+         * @private
+         */
+        _migrateInternalSuffixToExternal(sessionId, lineNum, contentString) {
+            // Check if there are any internal expanded groups for this item
+            const itemInternalGroups = this.localState.sessionInternalExpandedGroups[sessionId]?.[lineNum]
+            if (!itemInternalGroups?.length) return
+
+            // Parse content to find the suffix boundaries
+            let parsed
+            try {
+                parsed = JSON.parse(contentString)
+            } catch {
+                return
+            }
+
+            const content = parsed?.message?.content
+            if (!Array.isArray(content) || content.length === 0) return
+
+            // Use getPrefixSuffixBoundaries with groupTail=true to find where suffix would start
+            // (we pass a truthy value for groupTail since we're checking what WILL become external)
+            const { suffixStartIndex } = getPrefixSuffixBoundaries(content, null, true)
+            if (suffixStartIndex == null) return
+
+            // Check if the suffix was expanded as an internal group
+            if (itemInternalGroups.includes(suffixStartIndex)) {
+                // Migrate: add to session-level expanded groups
+                if (!this.localState.sessionExpandedGroups[sessionId]) {
+                    this.localState.sessionExpandedGroups[sessionId] = []
+                }
+                if (!this.localState.sessionExpandedGroups[sessionId].includes(lineNum)) {
+                    this.localState.sessionExpandedGroups[sessionId].push(lineNum)
+                }
+
+                // Remove from internal groups
+                const idx = itemInternalGroups.indexOf(suffixStartIndex)
+                if (idx >= 0) {
+                    itemInternalGroups.splice(idx, 1)
+                }
+            }
         },
 
         // Initial loading from API

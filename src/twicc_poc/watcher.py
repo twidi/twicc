@@ -14,7 +14,12 @@ from django.conf import settings
 from watchfiles import Change, awatch
 
 from twicc_poc.core.models import Project, Session, SessionItem
-from twicc_poc.core.serializers import serialize_project, serialize_session, serialize_session_item
+from twicc_poc.core.serializers import (
+    serialize_project,
+    serialize_session,
+    serialize_session_item,
+    serialize_session_item_metadata,
+)
 from twicc_poc.sync import check_file_has_content, sync_session_items
 
 logger = logging.getLogger(__name__)
@@ -79,25 +84,41 @@ def check_file_has_content_async(file_path: Path) -> bool:
 
 
 @sync_to_async
-def sync_session_items_async(session: Session, file_path: Path) -> int:
+def sync_session_items_async(session: Session, file_path: Path) -> tuple[list[int], list[int]]:
     """Synchronize session items from a JSONL file (async wrapper).
 
     The session must already be saved to the database.
 
     Returns:
-        The number of new items added (int >= 0)
+        A tuple of:
+        - List of line_nums of new items added (sorted)
+        - List of line_nums of pre-existing items whose metadata was updated (sorted)
     """
     return sync_session_items(session, file_path)
 
 
 @sync_to_async
-def get_new_session_items(session: Session, start_line: int) -> list[dict]:
-    """Get session items added after start_line."""
+def get_session_items(session: Session, line_nums: list[int]) -> list[dict]:
+    """Get full session items (with content) by line_nums."""
+    if not line_nums:
+        return []
     items = SessionItem.objects.filter(
         session=session,
-        line_num__gt=start_line,
+        line_num__in=line_nums,
     ).order_by("line_num")
     return [serialize_session_item(item) for item in items]
+
+
+@sync_to_async
+def get_items_metadata(session: Session, line_nums: list[int]) -> list[dict]:
+    """Get metadata (without content) for specific items by line_nums."""
+    if not line_nums:
+        return []
+    items = SessionItem.objects.filter(
+        session=session,
+        line_num__in=line_nums,
+    ).defer('content').order_by("line_num")
+    return [serialize_session_item_metadata(item) for item in items]
 
 
 @sync_to_async
@@ -225,14 +246,14 @@ async def sync_and_broadcast(
         await sync_to_async(session.save)()
 
         # Now sync items (session is saved, has valid PK)
-        items_result = await sync_session_items_async(session, path)
+        new_line_nums, modified_line_nums = await sync_session_items_async(session, path)
 
         await broadcast_message(channel_layer, {
             "type": "session_added",
             "session": serialize_session(session),
         })
 
-        if items_result > 0:
+        if new_line_nums:
             # Refresh session to get updated values
             session = await refresh_session(session)
 
@@ -242,15 +263,21 @@ async def sync_and_broadcast(
                 "session": serialize_session(session),
             })
 
-            # Broadcast new items
-            new_items = await get_new_session_items(session, 0)
+            # Broadcast new items (with updated metadata of pre-existing items if any)
+            new_items = await get_session_items(session, new_line_nums)
             if new_items:
-                await broadcast_message(channel_layer, {
+                message = {
                     "type": "session_items_added",
                     "session_id": session_id,
                     "project_id": project_id,
                     "items": new_items,
-                })
+                }
+                # Include metadata of pre-existing items that were modified
+                if modified_line_nums:
+                    updated_metadata = await get_items_metadata(session, modified_line_nums)
+                    if updated_metadata:
+                        message["updated_metadata"] = updated_metadata
+                await broadcast_message(channel_layer, message)
 
             # Update project metadata
             await update_project_metadata(project)
@@ -268,10 +295,9 @@ async def sync_and_broadcast(
         # Project should exist if session exists, but handle gracefully
         project, _ = await get_or_create_project(project_id)
 
-    last_line_before = session.last_line
-    items_result = await sync_session_items_async(session, path)
+    new_line_nums, modified_line_nums = await sync_session_items_async(session, path)
 
-    if items_result > 0:
+    if new_line_nums:
         # Refresh session to get updated values
         session = await refresh_session(session)
 
@@ -281,15 +307,21 @@ async def sync_and_broadcast(
             "session": serialize_session(session),
         })
 
-        # Broadcast new items
-        new_items = await get_new_session_items(session, last_line_before)
+        # Broadcast new items (with updated metadata of pre-existing items if any)
+        new_items = await get_session_items(session, new_line_nums)
         if new_items:
-            await broadcast_message(channel_layer, {
+            message = {
                 "type": "session_items_added",
                 "session_id": session_id,
                 "project_id": project_id,
                 "items": new_items,
-            })
+            }
+            # Include metadata of pre-existing items that were modified
+            if modified_line_nums:
+                updated_metadata = await get_items_metadata(session, modified_line_nums)
+                if updated_metadata:
+                    message["updated_metadata"] = updated_metadata
+            await broadcast_message(channel_layer, message)
 
         # Update project metadata
         await update_project_metadata(project)

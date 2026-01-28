@@ -74,7 +74,7 @@ def check_file_has_content(file_path: Path) -> bool:
     return False
 
 
-def sync_session_items(session: Session, file_path: Path) -> int:
+def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], list[int]]:
     """
     Synchronize session items from a JSONL file.
 
@@ -82,19 +82,22 @@ def sync_session_items(session: Session, file_path: Path) -> int:
     The session must already be saved to the database.
 
     Returns:
-        The number of new items added (int >= 0)
+        A tuple of:
+        - List of line_nums of new items added (sorted)
+        - List of line_nums of pre-existing items whose metadata was updated (sorted)
     """
     if not file_path.exists():
-        return 0
+        return [], []
 
     stat = file_path.stat()
     file_mtime = stat.st_mtime
 
     # If mtime hasn't changed, nothing to do
     if session.mtime == file_mtime:
-        return 0
+        return [], []
 
-    new_items_count = 0
+    new_line_nums: set[int] = set()
+    modified_line_nums: set[int] = set()
 
     with open(file_path, "r", encoding="utf-8") as f:
         # Seek to last known position
@@ -106,7 +109,7 @@ def sync_session_items(session: Session, file_path: Path) -> int:
             # Update mtime even if no new content (file may have been touched)
             session.mtime = file_mtime
             session.save(update_fields=["mtime"])
-            return 0
+            return [], []
 
         # Split into lines (filter out empty lines)
         lines = [line for line in new_content.split("\n") if line.strip()]
@@ -135,14 +138,17 @@ def sync_session_items(session: Session, file_path: Path) -> int:
 
             # Bulk create all items
             SessionItem.objects.bulk_create(items_to_create, ignore_conflicts=True)
-            new_items_count = len(items_to_create)
+
+            # Track line_nums of new items
+            new_line_nums = {item.line_num for item in items_to_create}
 
             # Second pass: compute group membership for COLLAPSIBLE and ALWAYS items
             # - COLLAPSIBLE: need group_head to know which group they belong to
             # - ALWAYS: need group_head (prefix) and group_tail (suffix) for connected groups
             for item in items_to_create:
                 if item.display_level in (ItemDisplayLevel.COLLAPSIBLE, ItemDisplayLevel.ALWAYS):
-                    compute_item_metadata_live(session.id, item, item.content)
+                    item_modified_lines = compute_item_metadata_live(session.id, item, item.content)
+                    modified_line_nums.update(item_modified_lines)
                     # Need to save the group info
                     SessionItem.objects.filter(
                         session=session,
@@ -160,7 +166,8 @@ def sync_session_items(session: Session, file_path: Path) -> int:
         session.mtime = file_mtime
         session.save(update_fields=["last_offset", "last_line", "mtime"])
 
-    return new_items_count
+    # Exclude new items from modified_line_nums
+    return sorted(new_line_nums), sorted(modified_line_nums - new_line_nums)
 
 
 def sync_project(
@@ -225,11 +232,11 @@ def sync_project(
             stats["sessions_created"] += 1
 
             # Now sync items (session is saved, has valid PK)
-            items_result = sync_session_items(session, file_path)
+            new_line_nums, _ = sync_session_items(session, file_path)
 
             # Track as non-empty and update stats
             non_empty_session_ids.add(session_id)
-            stats["items_added"] += items_result
+            stats["items_added"] += len(new_line_nums)
 
             # Track max mtime for project
             if session.mtime > max_mtime:
@@ -240,8 +247,8 @@ def sync_project(
             continue
 
         # Session exists in DB, sync items
-        items_result = sync_session_items(session, file_path)
-        stats["items_added"] += items_result
+        new_line_nums, _ = sync_session_items(session, file_path)
+        stats["items_added"] += len(new_line_nums)
 
         # Track as non-empty if it has lines
         if session.last_line > 0:

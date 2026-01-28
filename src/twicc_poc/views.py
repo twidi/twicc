@@ -118,7 +118,7 @@ def session_items_metadata(request, project_id, session_id):
     except Session.DoesNotExist:
         raise Http404("Session not found")
 
-    items = session.items.all()  # Already ordered by line_num (see Meta.ordering)
+    items = session.items.all().defer('content')  # Already ordered by line_num (see Meta.ordering)
     data = [serialize_session_item_metadata(item) for item in items]
     return JsonResponse(data, safe=False)
 

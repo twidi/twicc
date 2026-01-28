@@ -61,7 +61,7 @@ export function useWebSocket() {
             case 'session_items_added':
                 // Only add if we've fetched items for this session
                 if (store.areSessionItemsFetched(msg.session_id)) {
-                    store.addSessionItems(msg.session_id, msg.items)
+                    store.addSessionItems(msg.session_id, msg.items, msg.updated_metadata)
                 }
                 break
         }

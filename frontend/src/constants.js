@@ -22,7 +22,7 @@ export const DISPLAY_MODE = {
     SIMPLIFIED: 'simplified',
 }
 
-export const DEFAULT_DISPLAY_MODE = DISPLAY_MODE.NORMAL
+export const DEFAULT_DISPLAY_MODE = DISPLAY_MODE.SIMPLIFIED
 
 /**
  * Display level values for session items (matches backend ItemDisplayLevel enum).
