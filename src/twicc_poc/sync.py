@@ -137,9 +137,11 @@ def sync_session_items(session: Session, file_path: Path) -> int:
             SessionItem.objects.bulk_create(items_to_create, ignore_conflicts=True)
             new_items_count = len(items_to_create)
 
-            # Second pass: compute group membership for level 2 items
+            # Second pass: compute group membership for COLLAPSIBLE and ALWAYS items
+            # - COLLAPSIBLE: need group_head to know which group they belong to
+            # - ALWAYS: need group_head (prefix) and group_tail (suffix) for connected groups
             for item in items_to_create:
-                if item.display_level == ItemDisplayLevel.COLLAPSIBLE:
+                if item.display_level in (ItemDisplayLevel.COLLAPSIBLE, ItemDisplayLevel.ALWAYS):
                     compute_item_metadata_live(session.id, item, item.content)
                     # Need to save the group info
                     SessionItem.objects.filter(

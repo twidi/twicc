@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from django.conf import settings
 
@@ -26,120 +26,49 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def find_current_group_head(session_id: str, from_line_num: int) -> int | None:
+# =============================================================================
+# Helper Functions for Prefix/Suffix Detection
+# =============================================================================
+
+
+def _get_content_list(parsed_json: dict) -> list | None:
+    """Extract the content list from a user or assistant message."""
+    message = parsed_json.get('message', {})
+    content = message.get('content')
+    return content if isinstance(content, list) else None
+
+
+def _has_collapsible_prefix(content: list) -> bool:
+    """Check if content array starts with a collapsible element."""
+    if not content:
+        return False
+    first = content[0]
+    return isinstance(first, dict) and first.get('type') not in VISIBLE_CONTENT_TYPES
+
+
+def _has_collapsible_suffix(content: list) -> bool:
+    """Check if content array ends with a collapsible element."""
+    if not content:
+        return False
+    last = content[-1]
+    return isinstance(last, dict) and last.get('type') not in VISIBLE_CONTENT_TYPES
+
+
+def _detect_prefix_suffix(parsed_json: dict, kind: ItemKind | None) -> tuple[bool, bool]:
     """
-    Find the group_head of the current open group.
-
-    Looks backward from from_line_num to find the nearest level 2 item.
-    Returns its group_head, or None if no group is open.
-
-    Args:
-        session_id: The session ID
-        from_line_num: Line number to search backward from
+    Detect if an ALWAYS item has collapsible prefix/suffix.
 
     Returns:
-        group_head line_num if in a group, None otherwise
+        (has_prefix, has_suffix) tuple
     """
-    # Look for the most recent level 2 item
-    recent_level2 = SessionItem.objects.filter(
-        session_id=session_id,
-        line_num__lte=from_line_num,
-        display_level=ItemDisplayLevel.COLLAPSIBLE
-    ).order_by('-line_num').first()
+    if kind not in (ItemKind.USER_MESSAGE, ItemKind.ASSISTANT_MESSAGE):
+        return False, False
 
-    if recent_level2 and recent_level2.group_head:
-        return recent_level2.group_head
+    content = _get_content_list(parsed_json)
+    if not content:
+        return False, False
 
-    return None
-
-
-def compute_item_metadata_live(session_id: str, item: SessionItem, content: str) -> None:
-    """
-    Compute metadata for a single item during live sync.
-
-    Unlike compute_session_metadata which processes entire sessions,
-    this function processes one item at a time and handles group
-    membership by querying the database.
-
-    Args:
-        session_id: The session ID
-        item: The SessionItem object (already has line_num and content set)
-        content: The raw JSON content string
-    """
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        logger.warning(f"Invalid JSON in item {session_id}:{item.line_num}")
-        parsed = {}
-
-    metadata = compute_item_metadata(parsed)
-    item.display_level = metadata['display_level']
-    item.kind = metadata['kind']
-
-    if item.display_level == ItemDisplayLevel.ALWAYS:
-        # Level 1: no group membership
-        item.group_head = None
-        item.group_tail = None
-
-    elif item.display_level == ItemDisplayLevel.COLLAPSIBLE:
-        # Level 2: might join or start a group
-        # Check previous item
-        previous = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num=item.line_num - 1
-        ).first()
-
-        if previous and previous.display_level in (ItemDisplayLevel.COLLAPSIBLE, ItemDisplayLevel.DEBUG_ONLY):
-            # Previous item was level 2 or 3 → might be continuing a group
-            existing_head = find_current_group_head(session_id, item.line_num - 1)
-            if existing_head:
-                # Continuing existing group
-                item.group_head = existing_head
-                item.group_tail = item.line_num
-                # Update tail for all level 2 items in this group
-                SessionItem.objects.filter(
-                    session_id=session_id,
-                    group_head=existing_head
-                ).update(group_tail=item.line_num)
-            else:
-                # Previous was level 3 with no group → start new group
-                item.group_head = item.line_num
-                item.group_tail = item.line_num
-        else:
-            # Previous was level 1 or doesn't exist → start new group
-            item.group_head = item.line_num
-            item.group_tail = item.line_num
-
-    else:
-        # Level 3 (DEBUG_ONLY): no group membership
-        item.group_head = None
-        item.group_tail = None
-
-
-def _is_only_tool_result(content: str | list) -> bool:
-    """
-    Check if message content contains only tool_result items.
-
-    Args:
-        content: Message content (string or list of content items)
-
-    Returns:
-        True if content is exclusively tool_result items
-    """
-    if isinstance(content, str):
-        return False
-
-    if not isinstance(content, list) or not content:
-        return False
-
-    for item in content:
-        if isinstance(item, str):
-            return False
-        if isinstance(item, dict):
-            if item.get('type') != 'tool_result':
-                return False
-
-    return True
+    return _has_collapsible_prefix(content), _has_collapsible_suffix(content)
 
 
 def _has_visible_content(content: str | list) -> bool:
@@ -165,6 +94,11 @@ def _has_visible_content(content: str | list) -> bool:
             return True
 
     return False
+
+
+# =============================================================================
+# Item Metadata Computation (display_level, kind)
+# =============================================================================
 
 
 def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
@@ -284,20 +218,198 @@ def compute_item_metadata(parsed_json: dict) -> dict:
     }
 
 
-def _finalize_group(group_items: list[SessionItem], head_line_num: int, tail_line_num: int) -> None:
+# =============================================================================
+# Group State Machine
+# =============================================================================
+
+
+class ItemGroupInfo(NamedTuple):
+    """Group assignment for a single item."""
+    group_head: int | None
+    group_tail: int | None
+    closed_items: list[Any] = []  # Items whose group was just closed
+
+
+class GroupState:
     """
-    Set group_head and group_tail for all level 2 items in a completed group.
+    Tracks group state during sequential item processing.
 
-    Args:
-        group_items: List of SessionItem objects (level 2) in the group
-        head_line_num: line_num of the first level 2 item
-        tail_line_num: line_num of the last level 2 item
+    A group is "open" when:
+    - Previous item was COLLAPSIBLE, or
+    - Previous ALWAYS item had a suffix (potential group start)
+
+    Usage:
+        state = GroupState()
+        for item in items:
+            info = state.process_item(item.line_num, display_level, has_prefix, has_suffix)
+            item.group_head = info.group_head
+            item.group_tail = info.group_tail
+        state.finalize()  # Close any pending group
     """
-    for item in group_items:
-        item.group_head = head_line_num
-        item.group_tail = tail_line_num
+
+    def __init__(self) -> None:
+        # Current open group (COLLAPSIBLE items accumulating)
+        self._group_head: int | None = None
+        self._group_items: list[tuple[int, Any]] = []  # (line_num, item_ref)
+
+        # Pending ALWAYS with suffix (might start a group)
+        self._pending_suffix: tuple[int, Any] | None = None  # (line_num, item_ref)
+
+    def has_open_group(self) -> bool:
+        """Check if there's an open group that the next item could join."""
+        return self._group_head is not None or self._pending_suffix is not None
+
+    def get_current_head(self) -> int | None:
+        """Get the head of the current open group."""
+        if self._group_head is not None:
+            return self._group_head
+        if self._pending_suffix is not None:
+            return self._pending_suffix[0]
+        return None
+
+    def process_item(
+        self,
+        line_num: int,
+        display_level: ItemDisplayLevel,
+        has_prefix: bool,
+        has_suffix: bool,
+        item_ref: Any = None,
+    ) -> ItemGroupInfo:
+        """
+        Process a single item and return its group assignment.
+
+        Args:
+            line_num: The item's line number
+            display_level: ALWAYS, COLLAPSIBLE, or DEBUG_ONLY
+            has_prefix: True if ALWAYS item has collapsible prefix
+            has_suffix: True if ALWAYS item has collapsible suffix
+            item_ref: Reference to item object (for batch updates)
+
+        Returns:
+            ItemGroupInfo with group_head and group_tail assignments
+        """
+        if display_level == ItemDisplayLevel.DEBUG_ONLY:
+            # DEBUG_ONLY: transparent to groups, no participation
+            return ItemGroupInfo(group_head=None, group_tail=None)
+
+        if display_level == ItemDisplayLevel.COLLAPSIBLE:
+            return self._process_collapsible(line_num, item_ref)
+
+        # ALWAYS
+        return self._process_always(line_num, has_prefix, has_suffix, item_ref)
+
+    def _process_collapsible(self, line_num: int, item_ref: Any) -> ItemGroupInfo:
+        """Process a COLLAPSIBLE item."""
+        # Check if we're connecting to a pending ALWAYS suffix
+        if self._pending_suffix is not None:
+            suffix_line, suffix_ref = self._pending_suffix
+            self._pending_suffix = None
+
+            # The ALWAYS suffix starts this group
+            self._group_head = suffix_line
+            self._group_items = [(suffix_line, suffix_ref), (line_num, item_ref)]
+            return ItemGroupInfo(group_head=suffix_line, group_tail=None)
+
+        # Join existing group or start new one
+        if self._group_head is not None:
+            # Continue existing group
+            self._group_items.append((line_num, item_ref))
+            return ItemGroupInfo(group_head=self._group_head, group_tail=None)
+        else:
+            # Start new group
+            self._group_head = line_num
+            self._group_items = [(line_num, item_ref)]
+            return ItemGroupInfo(group_head=line_num, group_tail=None)
+
+    def _process_always(
+        self, line_num: int, has_prefix: bool, has_suffix: bool, item_ref: Any
+    ) -> ItemGroupInfo:
+        """Process an ALWAYS item."""
+        result_head: int | None = None
+        closed_items: list[Any] = []
+        joined_via_prefix = False
+
+        # Handle prefix: can join an open group
+        if has_prefix and self.has_open_group():
+            result_head = self.get_current_head()
+            joined_via_prefix = True
+
+            # Add to group items for tail update (but track that this is the joining ALWAYS)
+            if self._pending_suffix is not None:
+                # Connect pending suffix to this prefix
+                suffix_line, suffix_ref = self._pending_suffix
+                self._group_items = [(suffix_line, suffix_ref)]
+                self._group_head = suffix_line
+                self._pending_suffix = None
+            # Don't add the current ALWAYS to _group_items - it joins but doesn't get group_tail
+
+        # ALWAYS always terminates any group before it
+        if self._group_items:
+            # Determine tail: this item if it joined via prefix, else last item in group
+            if joined_via_prefix:
+                tail = line_num
+            else:
+                tail = self._group_items[-1][0]
+
+            # Update all items in the group (not including current ALWAYS)
+            for _, ref in self._group_items:
+                if ref is not None:
+                    ref.group_tail = tail
+                    closed_items.append(ref)
+
+            # Reset group state
+            self._group_items = []
+            self._group_head = None
+
+        # Also close pending suffix if not joined by this item's prefix
+        if self._pending_suffix is not None and not joined_via_prefix:
+            # Pending suffix was not connected, close it as orphan
+            suffix_line, suffix_ref = self._pending_suffix
+            if suffix_ref is not None:
+                # Suffix stays orphan (group_tail already None)
+                closed_items.append(suffix_ref)
+            self._pending_suffix = None
+
+        # Handle suffix: might start a new group
+        if has_suffix:
+            self._pending_suffix = (line_num, item_ref)
+
+        # ALWAYS item itself doesn't get group_tail from this operation
+        # group_tail for ALWAYS is only set when its suffix connects to something later
+        return ItemGroupInfo(group_head=result_head, group_tail=None, closed_items=closed_items)
+
+    def finalize(self) -> list[Any]:
+        """
+        Finalize any open groups at end of processing.
+
+        Returns:
+            List of item references that were updated (for batch save)
+        """
+        updated = []
+
+        # Close any open COLLAPSIBLE group
+        if self._group_items:
+            tail = self._group_items[-1][0]
+            for _, ref in self._group_items:
+                if ref is not None:
+                    ref.group_tail = tail
+                    updated.append(ref)
+            self._group_items = []
+            self._group_head = None
+
+        # Pending ALWAYS suffix stays orphan (group_tail = None)
+        if self._pending_suffix is not None:
+            _, ref = self._pending_suffix
+            if ref is not None:
+                updated.append(ref)
+            self._pending_suffix = None
+
+        return updated
 
 
+# =============================================================================
+# Batch Processing: compute_session_metadata
+# =============================================================================
 
 
 def compute_session_metadata(session_id: str) -> None:
@@ -314,7 +426,6 @@ def compute_session_metadata(session_id: str) -> None:
     from twicc_poc.core.models import Session
 
     # Ensure this thread has its own database connection
-    # and close any stale connection from a previous run
     connection.close()
 
     try:
@@ -325,9 +436,8 @@ def compute_session_metadata(session_id: str) -> None:
 
     queryset = SessionItem.objects.filter(session=session).order_by('line_num')
 
-    current_group_head: int | None = None
-    group_items: list[SessionItem] = []  # Buffer for current group's level 2 items
-    items_to_update: list[SessionItem] = []  # Accumulate for bulk_update
+    state = GroupState()
+    items_to_update: list[SessionItem] = []
     batch_size = 50
 
     for item in queryset.iterator(chunk_size=batch_size):
@@ -337,34 +447,36 @@ def compute_session_metadata(session_id: str) -> None:
             logger.warning(f"Invalid JSON in item {item.session_id}:{item.line_num}")
             parsed = {}
 
+        # Compute display_level and kind
         metadata = compute_item_metadata(parsed)
         item.display_level = metadata['display_level']
         item.kind = metadata['kind']
 
+        # Detect prefix/suffix for ALWAYS items
+        has_prefix, has_suffix = False, False
         if item.display_level == ItemDisplayLevel.ALWAYS:
-            # Level 1: close previous group if any
-            if group_items:
-                tail = group_items[-1].line_num
-                _finalize_group(group_items, current_group_head, tail)
-                items_to_update.extend(group_items)
-                group_items = []
-                current_group_head = None
-            item.group_head = None
-            item.group_tail = None
+            has_prefix, has_suffix = _detect_prefix_suffix(parsed, item.kind)
 
-        elif item.display_level == ItemDisplayLevel.COLLAPSIBLE:
-            # Level 2: part of collapsible group
-            if current_group_head is None:
-                current_group_head = item.line_num
-            group_items.append(item)
-            continue  # Don't add to items_to_update yet, will be done in finalize
+        # Process through group state machine
+        info = state.process_item(
+            line_num=item.line_num,
+            display_level=item.display_level,
+            has_prefix=has_prefix,
+            has_suffix=has_suffix,
+            item_ref=item,
+        )
+        item.group_head = info.group_head
+        # group_tail is set by GroupState when group closes
 
-        else:
-            # Level 3 (DEBUG_ONLY): no group info, but doesn't break the group
-            item.group_head = None
-            item.group_tail = None
+        # Add any items whose groups were just closed
+        items_to_update.extend(info.closed_items)
 
-        items_to_update.append(item)
+        # Collect current item for batch update (except items still in open group)
+        if item.display_level == ItemDisplayLevel.DEBUG_ONLY:
+            items_to_update.append(item)
+        elif item.display_level == ItemDisplayLevel.ALWAYS and not has_suffix:
+            items_to_update.append(item)
+        # COLLAPSIBLE and ALWAYS-with-suffix are added via closed_items when group closes
 
         # Bulk update when batch is full
         if len(items_to_update) >= batch_size:
@@ -374,23 +486,136 @@ def compute_session_metadata(session_id: str) -> None:
             )
             items_to_update = []
 
-    # Close last group if session ends mid-group
-    if group_items:
-        tail = group_items[-1].line_num
-        _finalize_group(group_items, current_group_head, tail)
-        items_to_update.extend(group_items)
+    # Finalize pending groups
+    finalized = state.finalize()
+    items_to_update.extend(finalized)
 
-    # Final bulk update for remaining items
+    # Final bulk update
     if items_to_update:
         SessionItem.objects.bulk_update(
             items_to_update,
             ['display_level', 'group_head', 'group_tail', 'kind']
         )
 
-    # Mark session as computed with current version
     session.compute_version = settings.CURRENT_COMPUTE_VERSION
     session.save(update_fields=['compute_version'])
 
-    # Close the connection to release any locks
-    from django.db import connection
     connection.close()
+
+
+# =============================================================================
+# Live Processing: compute_item_metadata_live
+# =============================================================================
+
+
+def _find_open_group_head(session_id: str, before_line_num: int) -> int | None:
+    """
+    Find the head of any open group before the given line number.
+
+    Skips DEBUG_ONLY items. Returns None if no open group.
+    """
+    # Look at previous non-DEBUG_ONLY item
+    previous = SessionItem.objects.filter(
+        session_id=session_id,
+        line_num__lt=before_line_num,
+    ).exclude(
+        display_level=ItemDisplayLevel.DEBUG_ONLY
+    ).order_by('-line_num').first()
+
+    if not previous:
+        return None
+
+    # COLLAPSIBLE with group_head = group is open
+    if previous.display_level == ItemDisplayLevel.COLLAPSIBLE and previous.group_head:
+        return previous.group_head
+
+    # ALWAYS with suffix = check if it has collapsible suffix
+    if previous.display_level == ItemDisplayLevel.ALWAYS:
+        try:
+            parsed = json.loads(previous.content)
+            _, has_suffix = _detect_prefix_suffix(parsed, previous.kind)
+            if has_suffix:
+                return previous.line_num  # ALWAYS item is the head
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
+def compute_item_metadata_live(session_id: str, item: SessionItem, content: str) -> None:
+    """
+    Compute metadata for a single item during live sync.
+
+    Unlike batch processing, this queries the database for context.
+
+    Args:
+        session_id: The session ID
+        item: The SessionItem object (already has line_num and content set)
+        content: The raw JSON content string
+    """
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        logger.warning(f"Invalid JSON in item {session_id}:{item.line_num}")
+        parsed = {}
+
+    # Compute display_level and kind
+    metadata = compute_item_metadata(parsed)
+    item.display_level = metadata['display_level']
+    item.kind = metadata['kind']
+
+    # Initialize group fields
+    item.group_head = None
+    item.group_tail = None
+
+    if item.display_level == ItemDisplayLevel.DEBUG_ONLY:
+        return
+
+    # Find if there's an open group before us
+    open_group_head = _find_open_group_head(session_id, item.line_num)
+
+    if item.display_level == ItemDisplayLevel.COLLAPSIBLE:
+        if open_group_head is not None:
+            # Join existing group
+            item.group_head = open_group_head
+            item.group_tail = item.line_num
+
+            # Update all items in group with new tail
+            SessionItem.objects.filter(
+                session_id=session_id,
+                group_head=open_group_head
+            ).update(group_tail=item.line_num)
+
+            # Also update ALWAYS item if it started the group (via suffix)
+            SessionItem.objects.filter(
+                session_id=session_id,
+                line_num=open_group_head,
+                display_level=ItemDisplayLevel.ALWAYS
+            ).update(group_tail=item.line_num)
+        else:
+            # Start new group
+            item.group_head = item.line_num
+            item.group_tail = item.line_num
+
+    elif item.display_level == ItemDisplayLevel.ALWAYS:
+        has_prefix, has_suffix = _detect_prefix_suffix(parsed, item.kind)
+
+        # Handle prefix
+        if has_prefix and open_group_head is not None:
+            item.group_head = open_group_head
+
+            # Update all items in group with new tail (this item)
+            SessionItem.objects.filter(
+                session_id=session_id,
+                group_head=open_group_head
+            ).update(group_tail=item.line_num)
+
+            # Also update ALWAYS item if it started the group
+            SessionItem.objects.filter(
+                session_id=session_id,
+                line_num=open_group_head,
+                display_level=ItemDisplayLevel.ALWAYS
+            ).update(group_tail=item.line_num)
+
+        # Suffix: group_tail stays null until next item arrives and connects
+        # (will be updated by next item's compute_item_metadata_live)

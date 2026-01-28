@@ -5,7 +5,7 @@ import { useDebounceFn } from '@vueuse/core'
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useDataStore } from '../stores/data'
-import { INITIAL_ITEMS_COUNT, DISPLAY_MODES } from '../constants'
+import { INITIAL_ITEMS_COUNT, DISPLAY_MODE } from '../constants'
 import SessionItem from '../components/SessionItem.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import GroupToggle from '../components/GroupToggle.vue'
@@ -220,6 +220,22 @@ function getItemKind(lineNum) {
 }
 
 /**
+ * Get the group_head of an item by its line number.
+ */
+function getItemGroupHead(lineNum) {
+    const item = store.getSessionItem(sessionId.value, lineNum)
+    return item?.group_head ?? null
+}
+
+/**
+ * Get the group_tail of an item by its line number.
+ */
+function getItemGroupTail(lineNum) {
+    const item = store.getSessionItem(sessionId.value, lineNum)
+    return item?.group_tail ?? null
+}
+
+/**
  * Convert an array of line numbers to ranges for API calls.
  * e.g., [1, 2, 3, 5, 6, 10] -> [[1, 3], [5, 6], [10, 10]]
  */
@@ -353,9 +369,9 @@ function toggleGroup(groupHeadLineNum) {
                     size="small"
                     class="mode-selector"
                 >
-                    <wa-option :value="DISPLAY_MODES.DEBUG">Debug</wa-option>
-                    <wa-option :value="DISPLAY_MODES.NORMAL">Normal</wa-option>
-                    <wa-option :value="DISPLAY_MODES.SIMPLIFIED">Simplified</wa-option>
+                    <wa-option :value="DISPLAY_MODE.DEBUG">Debug</wa-option>
+                    <wa-option :value="DISPLAY_MODE.NORMAL">Normal</wa-option>
+                    <wa-option :value="DISPLAY_MODE.SIMPLIFIED">Simplified</wa-option>
                 </wa-select>
             </div>
 
@@ -423,32 +439,33 @@ function toggleGroup(groupHeadLineNum) {
                         <wa-skeleton effect="sheen"></wa-skeleton>
                     </div>
 
-                    <!-- Group head (collapsed): show toggle only -->
-                    <GroupToggle
-                        v-else-if="item.isGroupHead && !item.isExpanded"
-                        :expanded="false"
-                        @toggle="toggleGroup(item.lineNum)"
-                    />
-
-                    <!-- Group head (expanded): show toggle + item content -->
-                    <div v-else-if="item.isGroupHead && item.isExpanded" class="group-expanded">
+                    <!-- Group head: show toggle (+ item content if expanded) -->
+                    <template v-else-if="item.isGroupHead">
                         <GroupToggle
-                            :expanded="true"
+                            :expanded="item.isExpanded"
                             @toggle="toggleGroup(item.lineNum)"
                         />
                         <SessionItem
+                            v-if="item.isExpanded"
                             :content="getItemContent(item.lineNum)"
                             :kind="getItemKind(item.lineNum)"
+                            :session-id="sessionId"
                             :line-num="item.lineNum"
                         />
-                    </div>
+                    </template>
 
-                    <!-- Regular item: show item content -->
+                    <!-- Regular item (including ALWAYS with prefix/suffix): show item content -->
                     <SessionItem
                         v-else
                         :content="getItemContent(item.lineNum)"
                         :kind="getItemKind(item.lineNum)"
+                        :session-id="sessionId"
                         :line-num="item.lineNum"
+                        :group-head="getItemGroupHead(item.lineNum)"
+                        :group-tail="getItemGroupTail(item.lineNum)"
+                        :prefix-expanded="item.prefixExpanded || false"
+                        :suffix-expanded="item.suffixExpanded || false"
+                        @toggle-suffix="toggleGroup(item.suffixGroupHead)"
                     />
                 </DynamicScrollerItem>
             </template>

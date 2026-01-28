@@ -1,6 +1,9 @@
 <script setup>
 import { computed, ref } from 'vue'
 import JsonNode from './JsonNode.vue'
+import Message from './items/Message.vue'
+import ApiError from './items/ApiError.vue'
+import UnknownEntry from './items/UnknownEntry.vue'
 
 const props = defineProps({
     content: {
@@ -11,11 +14,35 @@ const props = defineProps({
         type: String,
         default: null
     },
+    // Context for store lookups (propagated to Message/ContentList)
+    sessionId: {
+        type: String,
+        required: true
+    },
     lineNum: {
         type: Number,
+        required: true
+    },
+    // Group props for ALWAYS items with prefix/suffix
+    groupHead: {
+        type: Number,
         default: null
+    },
+    groupTail: {
+        type: Number,
+        default: null
+    },
+    prefixExpanded: {
+        type: Boolean,
+        default: false
+    },
+    suffixExpanded: {
+        type: Boolean,
+        default: false
     }
 })
+
+const emit = defineEmits(['toggle-suffix'])
 
 // Toggle for showing raw JSON
 const showJson = ref(false)
@@ -31,39 +58,6 @@ const parsedContent = computed(() => {
 
 // Get the entry type from parsed JSON (for unknown kind display)
 const entryType = computed(() => parsedContent.value?.type || 'unknown')
-
-// Get message content array (for user_message and assistant_message)
-const messageContent = computed(() => {
-    const parsed = parsedContent.value
-    const content = parsed?.message?.content
-
-    // If content is a string, treat it as a single text item
-    if (typeof content === 'string') {
-        return [{ type: 'text', text: content }]
-    }
-
-    // If content is an array, return it as-is
-    if (Array.isArray(content)) {
-        return content
-    }
-
-    return []
-})
-
-// Get API error info
-const apiError = computed(() => {
-    const parsed = parsedContent.value
-    if (props.kind !== 'api_error') return null
-
-    const error = parsed?.error?.error?.error
-    return {
-        type: error?.type || 'unknown_error',
-        message: error?.message || 'Unknown error',
-        status: parsed?.error?.status,
-        retryAttempt: parsed?.retryAttempt,
-        maxRetries: parsed?.maxRetries
-    }
-})
 
 // Track collapsed state for JSON view
 const collapsedPaths = ref(new Set())
@@ -107,32 +101,28 @@ function toggleJsonView() {
 
             <!-- Formatted view based on kind -->
             <template v-else>
-                <!-- User message / Assistant message -->
-                <div v-if="kind === 'user_message' || kind === 'assistant_message'" class="message-content">
-                    <template v-for="(entry, idx) in messageContent" :key="idx">
-                        <div v-if="entry.type === 'text'" class="content-text">{{ entry.text }}</div>
-                        <div v-else-if="entry.type === 'image'" class="content-placeholder">[image]</div>
-                        <div v-else-if="entry.type === 'document'" class="content-placeholder">[document]</div>
-                        <div v-else class="content-other">[{{ entry.type }}]</div>
-                    </template>
-                </div>
-
-                <!-- API error -->
-                <div v-else-if="kind === 'api_error'" class="message api-error">
-                    <div class="message-header">API Error</div>
-                    <div class="message-body">
-                        <div class="error-type">{{ apiError.type }}</div>
-                        <div class="error-message">{{ apiError.message }}</div>
-                        <div v-if="apiError.status" class="error-detail">Status: {{ apiError.status }}</div>
-                        <div v-if="apiError.retryAttempt" class="error-detail">
-                            Retry {{ apiError.retryAttempt }}/{{ apiError.maxRetries }}
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Unknown type (kind is null) -->
-                <div v-else class="unknown-type">
-                    Unknown type ({{ entryType }})
+                <div class="item-body">
+                    <Message
+                        v-if="kind === 'user_message' || kind === 'assistant_message'"
+                        :data="parsedContent"
+                        :role="kind === 'user_message' ? 'user' : 'assistant'"
+                        :session-id="sessionId"
+                        :line-num="lineNum"
+                        :group-head="groupHead"
+                        :group-tail="groupTail"
+                        :prefix-expanded="prefixExpanded"
+                        :suffix-expanded="suffixExpanded"
+                        @toggle-suffix="emit('toggle-suffix')"
+                    />
+                    <ApiError
+                        v-else-if="kind === 'api_error'"
+                        :data="parsedContent"
+                    />
+                    <UnknownEntry
+                        v-else
+                        :type="entryType"
+                        :data="parsedContent"
+                    />
                 </div>
             </template>
         </div>
@@ -188,69 +178,7 @@ function toggleJsonView() {
     overflow: auto;
 }
 
-/* Message content (user/assistant) */
-.message-content {
+.item-body {
     padding-right: var(--wa-space-xl); /* Space for the toggle button */
-    font-family: var(--wa-font-sans);
-}
-
-.message-content > * + * {
-    margin-top: var(--wa-space-s);
-}
-
-/* Content items */
-.content-text {
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-.content-placeholder {
-    color: var(--wa-color-text-subtle);
-    font-style: italic;
-}
-
-.content-other {
-    color: var(--wa-color-text-subtle);
-    font-family: var(--wa-font-mono);
-    font-size: var(--wa-font-size-xs);
-}
-
-/* API error */
-.api-error {
-    padding-right: var(--wa-space-xl); /* Space for the toggle button */
-}
-
-.api-error .message-header {
-    font-weight: 600;
-    margin-bottom: var(--wa-space-s);
-    color: var(--wa-color-danger);
-    font-size: var(--wa-font-size-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.api-error .message-body {
-    font-family: var(--wa-font-sans);
-}
-
-.api-error .error-type {
-    font-weight: 600;
-    color: var(--wa-color-danger);
-}
-
-.api-error .error-message {
-    margin-top: var(--wa-space-xs);
-}
-
-.api-error .error-detail {
-    margin-top: var(--wa-space-xs);
-    font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-subtle);
-}
-
-/* Unknown type */
-.unknown-type {
-    padding-right: var(--wa-space-xl); /* Space for the toggle button */
-    color: var(--wa-color-text-subtle);
 }
 </style>

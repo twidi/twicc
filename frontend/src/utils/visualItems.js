@@ -1,38 +1,64 @@
 // frontend/src/utils/visualItems.js
 
+import { DISPLAY_LEVEL, DISPLAY_MODE } from '../constants'
+
 /**
  * Compute visual items list from session items based on display mode and expanded groups.
+ *
+ * In simplified mode, ALWAYS items (display_level 1) may participate in groups:
+ * - group_head != null: item has a connected prefix (part of a group ending at this item)
+ * - group_tail != null: item has a connected suffix (starts a group continuing after)
+ *
+ * COLLAPSIBLE items (display_level 2) can have:
+ * - group_head == line_num: this item starts a group (pure COLLAPSIBLE sequence or ending on ALWAYS prefix)
+ * - group_head pointing to an ALWAYS: this item is part of a group started by an ALWAYS suffix
  *
  * @param {Array} items - Array of session items with metadata
  * @param {string} mode - Display mode: 'debug' | 'normal' | 'simplified'
  * @param {Array} expandedGroups - Array of expanded group_head line numbers
- * @returns {Array} Array of visual items: { lineNum, isGroupHead?, isExpanded? }
+ * @returns {Array} Array of visual items with properties:
+ *   - lineNum: the item's line number
+ *   - isGroupHead?: true if this COLLAPSIBLE starts a group (shows toggle before it)
+ *   - isExpanded?: true if the group is expanded
+ *   - prefixGroupHead?: group_head for prefix (ALWAYS items)
+ *   - prefixExpanded?: true if prefix group is expanded (ALWAYS items)
+ *   - suffixGroupHead?: this item's line_num when it starts a group via suffix (ALWAYS items)
+ *   - suffixExpanded?: true if suffix group is expanded (ALWAYS items)
  */
 export function computeVisualItems(items, mode, expandedGroups = []) {
     if (!items || items.length === 0) return []
 
     const result = []
-    const expandedSet = new Set(expandedGroups)  // Convert to Set for O(1) lookup
+    const expandedSet = new Set(expandedGroups) // Convert to Set for O(1) lookup
+
+    // Build a set of line_nums that are ALWAYS items
+    // Used to detect when a COLLAPSIBLE's group_head points to an ALWAYS
+    const alwaysLineNums = new Set()
+    for (const item of items) {
+        if (item.display_level === DISPLAY_LEVEL.ALWAYS) {
+            alwaysLineNums.add(item.line_num)
+        }
+    }
 
     for (const item of items) {
         // Skip items without display_level (not yet computed)
         if (item.display_level == null) {
             // In debug mode, show anyway; in other modes, skip
-            if (mode === 'debug') {
+            if (mode === DISPLAY_MODE.DEBUG) {
                 result.push({ lineNum: item.line_num })
             }
             continue
         }
 
         // Debug mode: show everything
-        if (mode === 'debug') {
+        if (mode === DISPLAY_MODE.DEBUG) {
             result.push({ lineNum: item.line_num })
             continue
         }
 
         // Normal mode: show levels 1 and 2, hide level 3
-        if (mode === 'normal') {
-            if (item.display_level !== 3) {
+        if (mode === DISPLAY_MODE.NORMAL) {
+            if (item.display_level !== DISPLAY_LEVEL.DEBUG_ONLY) {
                 result.push({ lineNum: item.line_num })
             }
             // level 3: skip entirely
@@ -40,26 +66,52 @@ export function computeVisualItems(items, mode, expandedGroups = []) {
         }
 
         // Simplified mode: groups are collapsible
-        if (item.display_level === 1) {
-            // Level 1: always visible
-            result.push({ lineNum: item.line_num })
-        } else if (item.display_level === 2) {
-            // Level 2: check if head or member
-            const isHead = item.line_num === item.group_head
+        if (item.display_level === DISPLAY_LEVEL.ALWAYS) {
+            // Level 1 (ALWAYS): always visible, but may have group participation
+            const visualItem = { lineNum: item.line_num }
+
+            // Check if this ALWAYS has a connected prefix (group_head points to previous item)
+            if (item.group_head != null) {
+                visualItem.prefixGroupHead = item.group_head
+                visualItem.prefixExpanded = expandedSet.has(item.group_head)
+            }
+
+            // Check if this ALWAYS starts a group with its suffix (group_tail points to following item)
+            if (item.group_tail != null) {
+                // This ALWAYS's suffix starts a group. The group_head for this group is this item's line_num.
+                // Following COLLAPSIBLE items will have group_head pointing here.
+                visualItem.suffixGroupHead = item.line_num
+                visualItem.suffixExpanded = expandedSet.has(item.line_num)
+            }
+
+            result.push(visualItem)
+        } else if (item.display_level === DISPLAY_LEVEL.COLLAPSIBLE) {
+            // Level 2 (COLLAPSIBLE)
+            // Check if this item is its own group_head (starts a group)
+            // or if group_head points to an ALWAYS (part of a group started by ALWAYS suffix)
+            const isOwnGroupHead = item.line_num === item.group_head
+            const groupHeadIsAlways = !isOwnGroupHead && alwaysLineNums.has(item.group_head)
             const isExpanded = expandedSet.has(item.group_head)
 
-            if (isHead) {
-                // Group head: always has a visual entry (shows toggle)
+            if (isOwnGroupHead) {
+                // This COLLAPSIBLE starts a group (may end on ALWAYS prefix or be pure COLLAPSIBLE)
                 result.push({
                     lineNum: item.line_num,
                     isGroupHead: true,
                     isExpanded: isExpanded
                 })
+            } else if (groupHeadIsAlways) {
+                // This COLLAPSIBLE is part of a group started by an ALWAYS's suffix
+                // Only show if that group is expanded
+                if (isExpanded) {
+                    result.push({ lineNum: item.line_num })
+                }
+                // else: hidden (group collapsed, toggle is in the ALWAYS's suffix)
             } else if (isExpanded) {
-                // Group member, group is expanded: visible
+                // Regular group member, show if expanded
                 result.push({ lineNum: item.line_num })
             }
-            // else: group member, group collapsed: no visual entry
+            // else: hidden (group collapsed)
         }
         // Level 3 in simplified mode: never visible (skip)
     }

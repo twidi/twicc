@@ -24,10 +24,15 @@ export const useDataStore = defineStore('data', {
             // Values: 'debug' | 'normal' | 'simplified'
             sessionItemsDisplayMode: DEFAULT_DISPLAY_MODE,
 
-            // Expanded groups - per session
+            // Expanded groups - per session (session-level groups)
             // { sessionId: [groupHeadLineNum, ...] }
             // Using array instead of Set for Vue reactivity
             sessionExpandedGroups: {},
+
+            // Expanded internal groups - per session, per item (content-level groups within ALWAYS items)
+            // { sessionId: { lineNum: [startIndex, ...] } }
+            // Two-level structure allows easy invalidation of entire session
+            sessionInternalExpandedGroups: {},
 
             // Visual items - computed from sessionItems, display mode, and expanded groups
             // { sessionId: [{ lineNum, isGroupHead?, isExpanded? }, ...] }
@@ -77,6 +82,21 @@ export const useDataStore = defineStore('data', {
         isGroupExpanded: (state) => (sessionId, groupHeadLineNum) => {
             const groups = state.localState.sessionExpandedGroups[sessionId]
             return groups ? groups.includes(groupHeadLineNum) : false
+        },
+
+        // Get expanded internal groups for a specific item in a session
+        getInternalExpandedGroups: (state) => (sessionId, lineNum) => {
+            const sessionGroups = state.localState.sessionInternalExpandedGroups[sessionId]
+            if (!sessionGroups) return []
+            return sessionGroups[lineNum] || []
+        },
+
+        // Check if an internal group is expanded
+        isInternalGroupExpanded: (state) => (sessionId, lineNum, startIndex) => {
+            const sessionGroups = state.localState.sessionInternalExpandedGroups[sessionId]
+            if (!sessionGroups) return false
+            const itemGroups = sessionGroups[lineNum]
+            return itemGroups ? itemGroups.includes(startIndex) : false
         },
 
         // Get a single item by lineNum (handles 1-based to 0-based conversion)
@@ -392,6 +412,9 @@ export const useDataStore = defineStore('data', {
                 this.localState.sessions[sessionId].itemsLoading = false
             }
             delete this.sessionItems[sessionId]
+            delete this.localState.sessionExpandedGroups[sessionId]
+            delete this.localState.sessionInternalExpandedGroups[sessionId]
+            delete this.localState.sessionVisualItems[sessionId]
         },
 
         /**
@@ -524,6 +547,33 @@ export const useDataStore = defineStore('data', {
          */
         collapseAllGroups(sessionId) {
             this.localState.sessionExpandedGroups[sessionId] = []
+        },
+
+        /**
+         * Toggle expanded state of an internal group within an ALWAYS item's content.
+         * @param {string} sessionId
+         * @param {number} lineNum - line_num of the ALWAYS item containing the group
+         * @param {number} startIndex - startIndex of the internal group within content array
+         */
+        toggleInternalExpandedGroup(sessionId, lineNum, startIndex) {
+            // Ensure nested structure exists
+            if (!this.localState.sessionInternalExpandedGroups[sessionId]) {
+                this.localState.sessionInternalExpandedGroups[sessionId] = {}
+            }
+            if (!this.localState.sessionInternalExpandedGroups[sessionId][lineNum]) {
+                this.localState.sessionInternalExpandedGroups[sessionId][lineNum] = []
+            }
+
+            const groups = this.localState.sessionInternalExpandedGroups[sessionId][lineNum]
+            const index = groups.indexOf(startIndex)
+
+            if (index >= 0) {
+                // Collapse: remove from array
+                groups.splice(index, 1)
+            } else {
+                // Expand: add to array
+                groups.push(startIndex)
+            }
         },
 
         /**
