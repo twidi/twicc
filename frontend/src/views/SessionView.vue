@@ -6,7 +6,7 @@ import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useDataStore } from '../stores/data'
 import { formatDate } from '../utils/date'
-import { INITIAL_ITEMS_COUNT, DISPLAY_MODE } from '../constants'
+import { INITIAL_ITEMS_COUNT, DISPLAY_MODE, MAX_CONTEXT_TOKENS } from '../constants'
 import SessionItem from '../components/SessionItem.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import GroupToggle from '../components/GroupToggle.vue'
@@ -339,6 +339,37 @@ function getSessionDisplayName() {
     return session.value?.title || sessionId.value
 }
 
+// Format cost as USD string (e.g., "$0.42")
+function formatCost(cost) {
+    if (cost == null) return null
+    return `$${cost.toFixed(2)}`
+}
+
+// Calculate context usage percentage
+const contextUsagePercentage = computed(() => {
+    const usage = session.value?.context_usage
+    if (usage == null) return null
+    return Math.round((usage / MAX_CONTEXT_TOKENS) * 100)
+})
+
+// Get indicator color for context usage based on thresholds
+const contextUsageColor = computed(() => {
+    const pct = contextUsagePercentage.value
+    if (pct == null) return null
+    if (pct > 70) return 'var(--wa-color-danger)'
+    if (pct > 50) return 'var(--wa-color-warning)'
+    return 'var(--wa-color-primary)'
+})
+
+// Calculate indicator width multiplier (1x at 0%, 2x at 80%+)
+const contextUsageIndicatorWidth = computed(() => {
+    const pct = contextUsagePercentage.value
+    if (pct == null) return null
+    // Linear interpolation from 1x (at 0%) to 1.5x (at 80%), capped at 1.5x
+    const multiplier = Math.min(1 + (pct / 80), 1.5)
+    return `calc(var(--track-width) * ${multiplier.toFixed(2)})`
+})
+
 /**
  * Handle display mode change from the selector.
  */
@@ -383,6 +414,19 @@ function toggleGroup(groupHeadLineNum) {
                     <wa-icon name="comment" variant="regular"></wa-icon>
                     {{ session.message_count ?? '??' }} ({{ session.last_line }} lines)
                 </span>
+                <span v-if="session.total_cost != null" class="meta-item">
+                    <wa-icon name="coins" variant="regular"></wa-icon>
+                    {{ formatCost(session.total_cost) }}
+                </span>
+                <wa-progress-ring
+                    v-if="contextUsagePercentage != null"
+                    class="context-usage-ring"
+                    :value="Math.min(contextUsagePercentage, 100)"
+                    :style="{
+                        '--indicator-color': contextUsageColor,
+                        '--indicator-width': contextUsageIndicatorWidth
+                    }"
+                ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
                 <span class="meta-item">
                     <wa-icon name="clock" variant="regular"></wa-icon>
                     {{ formatDate(session.mtime) }}
@@ -545,6 +589,12 @@ function toggleGroup(groupHeadLineNum) {
     display: flex;
     align-items: center;
     gap: var(--wa-space-xs);
+}
+
+.context-usage-ring {
+    --size: 2rem;
+    --track-width: 3px;
+    font-size: var(--wa-font-size-2xs);
 }
 
 .session-items {

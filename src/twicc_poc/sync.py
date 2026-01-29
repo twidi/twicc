@@ -10,6 +10,7 @@ from __future__ import annotations
 import orjson
 import sys
 import time
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,7 @@ from django.conf import settings
 from twicc_poc.compute import (
     compute_item_metadata,
     compute_item_metadata_live,
+    compute_item_cost_and_usage,
     is_tool_result_item,
     create_tool_result_link_live,
     extract_title_from_user_message,
@@ -134,6 +136,14 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Track if we've already set initial title for this session (from first user message ever)
             initial_title_needs_set = session.title is None
 
+            # Load existing message_ids for deduplication of cost computation
+            seen_message_ids: set[str] = set(
+                SessionItem.objects.filter(
+                    session_id=session.id,
+                    message_id__isnull=False,
+                ).values_list('message_id', flat=True)
+            )
+
             for line in lines:
                 current_line_num += 1
                 item = SessionItem(
@@ -149,6 +159,10 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 metadata = compute_item_metadata(parsed)
                 item.display_level = metadata['display_level']
                 item.kind = metadata['kind']
+
+                # Compute cost and context usage (with deduplication)
+                compute_item_cost_and_usage(item, parsed, seen_message_ids)
+
                 items_to_create.append((item, parsed))
 
                 # Handle title extraction
@@ -173,20 +187,27 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Track line_nums of new items
             new_line_nums = {item.line_num for item in items_only}
 
-            # Second pass: compute group membership and tool_result links
+            # Second pass: compute group membership, tool_result links, and update cost/usage fields
             for item, parsed in items_to_create:
+                # Build the update dict for this item (includes cost/usage fields)
+                update_fields = {
+                    'message_id': item.message_id,
+                    'cost': item.cost,
+                    'context_usage': item.context_usage,
+                }
+
                 # Group membership for COLLAPSIBLE and ALWAYS items
                 if item.display_level in (ItemDisplayLevel.COLLAPSIBLE, ItemDisplayLevel.ALWAYS):
                     item_modified_lines = compute_item_metadata_live(session.id, item, item.content)
                     modified_line_nums.update(item_modified_lines)
-                    # Need to save the group info
-                    SessionItem.objects.filter(
-                        session=session,
-                        line_num=item.line_num
-                    ).update(
-                        group_head=item.group_head,
-                        group_tail=item.group_tail
-                    )
+                    update_fields['group_head'] = item.group_head
+                    update_fields['group_tail'] = item.group_tail
+
+                # Update the item in DB with all computed fields
+                SessionItem.objects.filter(
+                    session=session,
+                    line_num=item.line_num
+                ).update(**update_fields)
 
                 # Tool result links (tool_result items are DEBUG_ONLY)
                 if is_tool_result_item(parsed):
@@ -222,10 +243,25 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 else:
                     session.message_count = user_count * 2
 
+            # Update session cost and context usage from the new items
+            # Find last context_usage among new items (most recent non-null value)
+            for item, _ in reversed(items_to_create):
+                if item.context_usage is not None:
+                    session.context_usage = item.context_usage
+                    break
+
+            # Increment total_cost with sum of new items' costs
+            new_items_cost = sum(
+                (item.cost for item, _ in items_to_create if item.cost is not None),
+                Decimal(0)
+            )
+            if new_items_cost > 0:
+                session.total_cost = (session.total_cost or Decimal(0)) + new_items_cost
+
         # Update offset to end of file
         session.last_offset = f.tell()
         session.mtime = file_mtime
-        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count"])
+        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "total_cost"])
 
     # Exclude new items from modified_line_nums
     return sorted(new_line_nums), sorted(modified_line_nums - new_line_nums)

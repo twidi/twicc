@@ -1,7 +1,10 @@
 """
-Background task for computing session metadata.
+Background tasks for the TWICC POC application.
 
-Runs continuously, processing sessions that need metadata computation.
+This module provides background tasks that run continuously:
+- Compute task: Processes sessions that need metadata computation
+- Price sync task: Synchronizes model prices from OpenRouter API
+
 Uses ThreadPoolExecutor to offload work without blocking the event loop.
 
 Note: We use ThreadPoolExecutor instead of ProcessPoolExecutor because:
@@ -23,6 +26,7 @@ from django.conf import settings
 
 from twicc_poc.compute import compute_session_metadata
 from twicc_poc.core.models import Session
+from twicc_poc.core.pricing import sync_model_prices
 from twicc_poc.core.serializers import serialize_session
 
 logger = logging.getLogger(__name__)
@@ -30,8 +34,11 @@ logger = logging.getLogger(__name__)
 # Single worker thread for computation
 _executor: ThreadPoolExecutor | None = None
 
-# Stop event for graceful shutdown
+# Stop event for graceful shutdown (compute task)
 _stop_event: asyncio.Event | None = None
+
+# Stop event for price sync task
+_price_sync_stop_event: asyncio.Event | None = None
 
 # Progress tracking for initial computation
 _initial_total: int | None = None
@@ -49,21 +56,58 @@ def get_executor() -> ThreadPoolExecutor:
 
 
 def get_stop_event() -> asyncio.Event:
-    """Get or create the stop event."""
+    """Get or create the stop event for the compute task."""
     global _stop_event
     if _stop_event is None:
         _stop_event = asyncio.Event()
     return _stop_event
 
 
+def get_price_sync_stop_event() -> asyncio.Event:
+    """Get or create the stop event for the price sync task."""
+    global _price_sync_stop_event
+    if _price_sync_stop_event is None:
+        _price_sync_stop_event = asyncio.Event()
+    return _price_sync_stop_event
+
+
 def stop_background_task() -> None:
-    """Signal the background task to stop and shutdown executor."""
+    """Signal the background compute task to stop and shutdown executor."""
     global _executor, _stop_event
     if _stop_event is not None:
         _stop_event.set()
     if _executor is not None:
         _executor.shutdown(wait=False, cancel_futures=True)
         _executor = None
+
+
+def stop_price_sync_task() -> None:
+    """Signal the price sync task to stop."""
+    global _price_sync_stop_event
+    if _price_sync_stop_event is not None:
+        _price_sync_stop_event.set()
+
+
+async def run_initial_price_sync() -> None:
+    """
+    Run the initial price sync before starting other background tasks.
+
+    This ensures fresh prices are available before the background compute task
+    starts processing sessions. Must be awaited at startup.
+
+    If sync fails, logs a warning but continues - existing prices in DB or
+    DEFAULT_FAMILY_PRICES will be used as fallback.
+    """
+    logger.info("Running initial price sync...")
+    try:
+        stats = await asyncio.to_thread(sync_model_prices)
+        logger.info(
+            f"Initial price sync completed: {stats['created']} created, {stats['unchanged']} unchanged"
+        )
+    except Exception as e:
+        logger.warning(
+            f"Initial price sync failed: {e}. Will use existing DB prices or default family prices."
+        )
 
 
 def _reset_progress_tracking() -> None:
@@ -205,3 +249,43 @@ async def start_background_compute_task() -> None:
                 pass
 
     logger.info("Background compute task stopped")
+
+
+# Interval for price sync: 24 hours in seconds
+PRICE_SYNC_INTERVAL = 24 * 60 * 60
+
+
+async def start_price_sync_task() -> None:
+    """
+    Background task that periodically synchronizes model prices from OpenRouter.
+
+    Runs until stop event is set:
+    - Executes sync_model_prices() immediately on startup
+    - Then waits 24 hours before the next sync
+    - Handles graceful shutdown via stop event
+
+    The sync operation runs in a thread to avoid blocking the event loop,
+    as it involves HTTP requests to the OpenRouter API.
+    """
+    stop_event = get_price_sync_stop_event()
+
+    logger.info("Price sync task started")
+
+    while not stop_event.is_set():
+        try:
+            # Run price sync in a thread to avoid blocking the event loop
+            stats = await asyncio.to_thread(sync_model_prices)
+            logger.info(
+                f"Price sync completed: {stats['created']} created, {stats['unchanged']} unchanged"
+            )
+        except Exception as e:
+            logger.error(f"Price sync failed: {e}", exc_info=True)
+
+        # Wait for the next sync interval (or until stop event is set)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=PRICE_SYNC_INTERVAL)
+        except asyncio.TimeoutError:
+            # Timeout means it's time to sync again
+            pass
+
+    logger.info("Price sync task stopped")

@@ -10,12 +10,19 @@ from __future__ import annotations
 
 import orjson
 import logging
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from django.conf import settings
 
 from twicc_poc.core.enums import ItemDisplayLevel, ItemKind
 from twicc_poc.core.models import SessionItem
+from twicc_poc.core.pricing import (
+    calculate_line_cost,
+    calculate_line_context_usage,
+    extract_model_info,
+    parse_timestamp_to_date,
+)
 
 # Content types considered user-visible (for display_level and kind computation)
 VISIBLE_CONTENT_TYPES = ('text', 'document', 'image')
@@ -579,6 +586,60 @@ class GroupState:
 
 
 # =============================================================================
+# Cost and Context Usage Computation
+# =============================================================================
+
+
+def compute_item_cost_and_usage(
+    item: SessionItem,
+    parsed_json: dict,
+    seen_message_ids: set[str],
+) -> None:
+    """
+    Compute and assign cost, context_usage, and message_id on a SessionItem.
+
+    This function handles deduplication: cost is only assigned if the message_id
+    has not been seen before (Claude Code writes multiple JSONL lines for a single
+    API call with the same message.id due to streaming).
+
+    Modifies the item in place. Also modifies the seen_message_ids set.
+
+    Args:
+        item: The SessionItem to update (must have content already set)
+        parsed_json: The parsed JSON content of the item
+        seen_message_ids: Set of already-seen message IDs for deduplication
+    """
+    message = parsed_json.get("message", {})
+    if not isinstance(message, dict):
+        return
+    usage = message.get("usage")
+
+    if not usage:
+        return
+
+    # Extract and store message_id for deduplication tracking
+    msg_id = message.get("id")
+    if msg_id:
+        item.message_id = msg_id
+
+    # Context usage: always computed when usage data is present
+    item.context_usage = calculate_line_context_usage(usage)
+
+    # Cost: only computed if message_id not already seen (deduplication)
+    if msg_id and msg_id not in seen_message_ids:
+        seen_message_ids.add(msg_id)
+
+        model_info = extract_model_info(message.get("model", ""))
+        if model_info:
+            model_id = f"anthropic/claude-{model_info.family}-{model_info.version}"
+            timestamp = parsed_json.get("timestamp", "")
+            if timestamp:
+                line_date = parse_timestamp_to_date(timestamp)
+                if line_date:
+                    item.cost = calculate_line_cost(usage, model_id, line_date)
+
+
+# =============================================================================
 # Batch Processing: compute_session_metadata
 # =============================================================================
 
@@ -629,6 +690,10 @@ def compute_session_metadata(session_id: str) -> None:
     user_message_count = 0
     last_relevant_kind: ItemKind | None = None
 
+    # Track cost and context usage (deduplication by message_id)
+    seen_message_ids: set[str] = set()
+    last_context_usage: int | None = None
+
     for item in queryset.iterator(chunk_size=batch_size):
         try:
             parsed = orjson.loads(item.content)
@@ -640,6 +705,11 @@ def compute_session_metadata(session_id: str) -> None:
         metadata = compute_item_metadata(parsed)
         item.display_level = metadata['display_level']
         item.kind = metadata['kind']
+
+        # Compute cost and context usage
+        compute_item_cost_and_usage(item, parsed, seen_message_ids)
+        if item.context_usage is not None:
+            last_context_usage = item.context_usage
 
         # Handle title extraction
         if item.kind == ItemKind.USER_MESSAGE and not initial_title_set:
@@ -709,7 +779,7 @@ def compute_session_metadata(session_id: str) -> None:
         if len(items_to_update) >= batch_size:
             SessionItem.objects.bulk_update(
                 items_to_update,
-                ['display_level', 'group_head', 'group_tail', 'kind']
+                ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage']
             )
             items_to_update = []
 
@@ -726,7 +796,7 @@ def compute_session_metadata(session_id: str) -> None:
     if items_to_update:
         SessionItem.objects.bulk_update(
             items_to_update,
-            ['display_level', 'group_head', 'group_tail', 'kind']
+            ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage']
         )
 
     # Final bulk create links
@@ -747,7 +817,19 @@ def compute_session_metadata(session_id: str) -> None:
 
     session.message_count = message_count
     session.compute_version = settings.CURRENT_COMPUTE_VERSION
-    session.save(update_fields=['compute_version', 'message_count'])
+
+    # Set context_usage to last known value
+    session.context_usage = last_context_usage
+
+    # Sum all item costs for total_cost
+    from django.db.models import Sum
+    total_cost = SessionItem.objects.filter(
+        session=session,
+        cost__isnull=False
+    ).aggregate(total=Sum('cost'))['total']
+    session.total_cost = total_cost
+
+    session.save(update_fields=['compute_version', 'message_count', 'context_usage', 'total_cost'])
 
     connection.close()
 

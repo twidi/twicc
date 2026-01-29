@@ -31,19 +31,32 @@ from django.core.management import call_command
 from twicc_poc.core.models import Project, Session
 from twicc_poc.sync import sync_all
 from twicc_poc.watcher import start_watcher, stop_watcher
-from twicc_poc.background import start_background_compute_task, stop_background_task
+from twicc_poc.background import (
+    run_initial_price_sync,
+    start_background_compute_task,
+    start_price_sync_task,
+    stop_background_task,
+    stop_price_sync_task,
+)
 
 
 async def run_server(port: int):
-    """Run the ASGI server with file watcher and background compute task."""
+    """Run the ASGI server with file watcher and background tasks."""
     import uvicorn
     from twicc_poc.asgi import application
+
+    # Run initial price sync before starting background tasks
+    # This ensures prices are available for cost calculation
+    await run_initial_price_sync()
 
     # Start watcher task
     watcher_task = asyncio.create_task(start_watcher())
 
-    # Start background compute task (after initial sync completed in main())
+    # Start background compute task (prices are now available)
     compute_task = asyncio.create_task(start_background_compute_task())
+
+    # Start price sync task (periodic sync every 24h)
+    price_sync_task = asyncio.create_task(start_price_sync_task())
 
     # Configure uvicorn
     config = uvicorn.Config(
@@ -73,6 +86,14 @@ async def run_server(port: int):
         except asyncio.CancelledError:
             pass
 
+        # Clean shutdown of price sync task
+        stop_price_sync_task()
+        price_sync_task.cancel()
+        try:
+            await price_sync_task
+        except asyncio.CancelledError:
+            pass
+
 
 def main():
     print("TWICC POC Starting...")
@@ -98,8 +119,6 @@ def main():
         print(f"Error: Invalid port '{port}'. Must be a number between 1 and 65535.")
         sys.exit(1)
 
-    print("✓ File watcher scheduled")
-    print("✓ Background compute task scheduled")
     print(f"→ Server starting on http://0.0.0.0:{port_int}")
 
     # Run async server

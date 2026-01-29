@@ -26,6 +26,12 @@ function getSessionDisplayName(session) {
     return session.title || session.id
 }
 
+// Format cost as USD string (e.g., "$0.42")
+function formatCost(cost) {
+    if (cost == null) return null
+    return `$${cost.toFixed(2)}`
+}
+
 const emit = defineEmits(['select'])
 
 function handleSelect(session) {
@@ -44,7 +50,8 @@ function handleSelect(session) {
         >
             <div class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</div>
             <div class="session-meta">
-                <span class="session-lines"><wa-icon name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
+                <span class="session-messages"><wa-icon name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
+                <span v-if="session.total_cost != null" class="session-cost"><wa-icon name="coins" variant="regular"></wa-icon> {{ formatCost(session.total_cost) }}</span>
                 <span class="session-mtime"><wa-icon name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime) }}</span>
             </div>
         </div>

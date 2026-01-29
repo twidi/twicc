@@ -25,6 +25,12 @@ export const DISPLAY_MODE = {
 export const DEFAULT_DISPLAY_MODE = DISPLAY_MODE.SIMPLIFIED
 
 /**
+ * Maximum context tokens for Claude (used for context usage percentage calculation).
+ * Value: 200,000 tokens
+ */
+export const MAX_CONTEXT_TOKENS = 200_000
+
+/**
  * Display level values for session items (matches backend ItemDisplayLevel enum).
  * - ALWAYS: Always shown in all modes
  * - COLLAPSIBLE: Shown in Normal, grouped in Simplified

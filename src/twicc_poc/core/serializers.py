@@ -37,6 +37,9 @@ def serialize_session(session):
         "message_count": session.message_count,  # Number of user/assistant messages
         # Boolean indicating if session metadata is up-to-date
         "compute_version_up_to_date": session.compute_version == settings.CURRENT_COMPUTE_VERSION,
+        # Cost and context usage fields
+        "context_usage": session.context_usage,  # Current context usage in tokens
+        "total_cost": float(session.total_cost) if session.total_cost else None,  # Total cost in USD
     }
 
 
