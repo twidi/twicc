@@ -51,7 +51,10 @@ function handleClick() {
 }
 
 wa-switch {
-    margin-block: var(--wa-space-s);
+    --spacing-top: calc(var(--content-card-not-start-item, 1) * var(--wa-space-s));
+    --spacing-bottom: calc(var(--content-card-not-end-item, 1) * var(--wa-space-s));
+    margin-top: var(--spacing-top);
+    margin-bottom: var(--spacing-bottom);
     transition: opacity 0.2s;
     opacity: 0.25;
     &:hover {
@@ -60,6 +63,8 @@ wa-switch {
             opacity: 1;
         }
     }
+    display: flex;
+    width: 100%;
 }
 
 wa-switch:state(checked) {

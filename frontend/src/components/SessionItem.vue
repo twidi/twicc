@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import JsonNode from './JsonNode.vue'
+import JsonViewer from './JsonViewer.vue'
 import Message from './items/Message.vue'
 import ApiError from './items/ApiError.vue'
 import UnknownEntry from './items/UnknownEntry.vue'
@@ -66,6 +66,7 @@ const entryType = computed(() => parsedContent.value?.type || 'unknown')
 // Track collapsed state for JSON view
 const collapsedPaths = ref(new Set())
 
+
 function toggleCollapse(path) {
     if (collapsedPaths.value.has(path)) {
         collapsedPaths.value.delete(path)
@@ -96,7 +97,7 @@ function toggleJsonView() {
         <div v-if="showJson" class="json-view">
             <div class="line-number">{{ lineNum }}</div>
             <div class="json-tree">
-                <JsonNode
+                <JsonViewer
                     :data="parsedContent"
                     :path="'root'"
                     :collapsed-paths="collapsedPaths"
@@ -156,10 +157,18 @@ function toggleJsonView() {
     opacity: 0;
     transition: opacity 0.2s;
     z-index: 1;
+    transform-origin: top center;
+    scale: 0.5;
+    &::part(label) {
+        scale: 1.5;
+    }
+    &[variant="warning"] {
+        opacity: 1 !important;
+    }
 }
 
 .session-item:hover .json-toggle {
-    opacity: 1;
+    opacity: .5;
 }
 
 .session-item:hover .json-toggle:hover {
@@ -190,8 +199,10 @@ function toggleJsonView() {
 
 <style>
 .session-items .item-wrapper {
+    --content-card-spacing: var(--wa-space-l);
     & > .session-item, & > .group-toggle {
-        max-width: 90%;
+        max-width: 85%;
+        margin-left: var(--content-card-spacing);
     }
 }
 
@@ -205,11 +216,14 @@ function toggleJsonView() {
     padding: var(--wa-space-l);
 
     width: max-content;
-    margin-left: auto;
-    margin-top: var(--wa-space-l);
-    margin-bottom: var(--wa-space-l);
-    --user-card-border-color: var(--wa-color-blue-95);
-    --user-card-bg-color: oklch(from var(--user-card-border-color) calc(l * 1.05) c h);
+    margin:
+        var(--content-card-spacing)
+        var(--content-card-spacing)
+        var(--content-card-spacing)
+        auto;
+    --user-card-base-color: var(--wa-color-indigo-95);
+    --user-card-bg-color: oklch(from var(--user-card-base-color) calc(l * 1.00) c h);
+    --user-card-border-color: oklch(from var(--user-card-bg-color) calc(l / 1.05) c h);
     background-color: var(--user-card-bg-color);
     border-color: var(--user-card-border-color);
     box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) var(--wa-shadow-blur-s) var(--wa-shadow-spread-s) var(--user-card-border-color);
@@ -224,7 +238,6 @@ function toggleJsonView() {
         /* define our own properties */
         --assistant-card-border-width: var(--wa-panel-border-width);
         --assistant-card-border-radius: var(--wa-panel-border-radius);
-        --assistant-card-default-shadow: var(--wa-shadow-s);
         --assistant-card-spacing: var(--wa-space-l);
 
         /* by default no radius because default style is only for "inner" (not first/last) rows */
@@ -244,15 +257,27 @@ function toggleJsonView() {
         /* by default no shadow because default style is only for "inner" (not last) rows */
         --assistant-card-shadow: none;
 
+        /* To be able to apply some style differently on components for items at start/middle/end */
+        --content-card-start-item: 0;
+        --content-card-inner-item: 1;
+        --content-card-end-item: 0;
+        --content-card-not-start-item: 1;
+        --content-card-not-inner-item: 0;
+        --content-card-not-end-item: 1;
+
         & > .item-wrapper {
 
             & > .session-item, & > .group-toggle {
+
                 /* common styles */
-                --assistant-card-bg-color: oklch(from var(--wa-color-gray-95) calc(l*1.025) c h);
+                --assistant-card-base-color: var(--wa-color-gray-95);
+                --assistant-card-bg-color: oklch(from var(--assistant-card-base-color) calc(l*1.025) c h);
+                --assistant-card-border-color: oklch(from var(--assistant-card-bg-color) calc(l / 1.05) c h);
                 background: var(--assistant-card-bg-color);
-                border-color: var(--wa-color-surface-border);
+                border-color: var(--assistant-card-border-color);
                 border-style: var(--wa-panel-border-style);
                 padding-inline: var(--wa-space-l);
+                --assistant-card-default-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) var(--wa-shadow-blur-s) var(--wa-shadow-spread-s) var(--assistant-card-border-color);
 
                 border-radius:
                     var(--assistant-card-border-top-left-radius)
@@ -281,6 +306,11 @@ function toggleJsonView() {
         + .vue-recycle-scroller__item-view:not(:has(.session-item[data-kind="user_message"])) {
             /* First non-user after a user message */
             .session-item:first-child, .group-toggle:first-child {
+                --content-card-start-item: 1;
+                --content-card-inner-item: 0;
+                --content-card-not-start-item: 0;
+                --content-card-not-inner-item: 1;
+
                 --assistant-card-border-top-left-radius: var(--assistant-card-border-radius);
                 --assistant-card-border-top-right-radius: var(--assistant-card-border-radius);
                 --assistant-card-border-top-width: var(--assistant-card-border-width);
@@ -292,15 +322,22 @@ function toggleJsonView() {
     .vue-recycle-scroller__item-view:not(:has(.session-item[data-kind="user_message"])) {
         /* Last non-user wih nothing after */
         &:not(:has(+ .vue-recycle-scroller__item-view)),
+        &:not(:has(~ .vue-recycle-scroller__item-view:not([style*="-9999px"]))),
         /* Last non-user before a user message */
         &:has(+ .vue-recycle-scroller__item-view .session-item[data-kind="user_message"])
         {
             .session-item:last-child, .group-toggle:last-child {
+                --content-card-end-item: 1;
+                --content-card-inner-item: 0;
+                --content-card-not-end-item: 0;
+                --content-card-not-inner-item: 1;
+
                 --assistant-card-border-bottom-left-radius: var(--assistant-card-border-radius);
                 --assistant-card-border-bottom-right-radius: var(--assistant-card-border-radius);
                 --assistant-card-border-bottom-width: var(--assistant-card-border-width);
                 --assistant-card-bottom-spacing: var(--assistant-card-spacing);
-                --assistant-card-shadow: var(--assistant-card-default-shadow);;
+                --assistant-card-shadow: var(--assistant-card-default-shadow);
+                margin-bottom: 5px; /* For the shadow to appear on the last element with virtual scroller "cropping" if we don't have this */;
             }
         }
     }
@@ -346,6 +383,30 @@ wa-details {
                 border-top-right-radius: 0;
             }
         }
+    }
+}
+
+/* Common style for wa-detail.items-details */
+wa-details.item-details {
+    font-family: var(--wa-font-mono);
+    font-size: var(--wa-font-size-s);
+    --spacing-top: calc(var(--content-card-not-start-item, 1) * var(--wa-space-l));
+    --spacing-bottom: calc(var(--content-card-not-end-item, 1) * var(--wa-space-l));
+    padding-top: var(--spacing-top);
+    padding-bottom: var(--spacing-bottom);
+
+    .items-details-summary {
+        display: inline;
+    }
+    .items-details-summary-name {
+        color: var(--wa-color-text);
+    }
+    .items-details-summary-separator {
+        color: var(--wa-color-text-subtle);
+    }
+    .items-details-summary-description {
+        color: var(--wa-color-text);
+        font-weight: normal;
     }
 }
 </style>

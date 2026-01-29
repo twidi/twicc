@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import JsonNode from '../../JsonNode.vue'
+import JsonViewer from '../../JsonViewer.vue'
 
 const props = defineProps({
     name: {
@@ -106,15 +106,15 @@ function toggleResultPath(path) {
 
 <template>
     <wa-details class="item-details tool-use" icon-placement="start">
-        <span slot="summary" class="tool-use-summary">
-            <strong class="tool-name">{{ name }}</strong>
+        <span slot="summary" class="items-details-summary">
+            <strong class="items-details-summary-name">{{ name }}</strong>
             <template v-if="description">
-                <span class="tool-separator"> — </span>
-                <span class="tool-description">{{ description }}</span>
+                <span class="items-details-summary-separator"> — </span>
+                <span class="items-details-summary-description">{{ description }}</span>
             </template>
         </span>
         <div v-if="displayInput" class="tool-input">
-            <JsonNode
+            <JsonViewer
                 :data="displayInput"
                 path="root"
                 :collapsed-paths="collapsedPaths"
@@ -138,7 +138,7 @@ function toggleResultPath(path) {
                     No result available
                 </div>
                 <div v-else-if="resultState === 'loaded' && displayResult" class="tool-result-data">
-                    <JsonNode
+                    <JsonViewer
                         :data="displayResult"
                         path="result"
                         :collapsed-paths="resultCollapsedPaths"
@@ -151,29 +151,6 @@ function toggleResultPath(path) {
 </template>
 
 <style scoped>
-.tool-use {
-    font-family: var(--wa-font-mono);
-    font-size: var(--wa-font-size-s);
-    padding-block: var(--wa-space-l);
-}
-
-.tool-use-summary {
-    display: inline;
-}
-
-.tool-name {
-    color: var(--wa-color-text);
-}
-
-.tool-separator {
-    color: var(--wa-color-text-subtle);
-}
-
-.tool-description {
-    color: var(--wa-color-text);
-    font-weight: normal;
-}
-
 .tool-input {
     padding: var(--wa-space-xs) 0;
     overflow-x: auto;

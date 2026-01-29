@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import JsonNode from '../JsonNode.vue'
+import JsonViewer from '../JsonViewer.vue'
 
 defineProps({
     type: {
@@ -29,13 +29,13 @@ function togglePath(path) {
 
 <template>
     <wa-details class="item-details unknown-entry" icon-placement="start">
-        <span slot="summary" class="unknown-summary">
-            <strong class="unknown-label">Unhandled event</strong>
-            <span class="unknown-separator"> — </span>
-            <span class="unknown-type">{{ type }}</span>
+        <span slot="summary" class="items-details-summary">
+            <strong class="items-details-summary-name">Unhandled event</strong>
+            <span class="items-details-summary-separator"> — </span>
+            <span class="items-details-summary-description">{{ type }}</span>
         </span>
         <div v-if="data" class="unknown-data">
-            <JsonNode
+            <JsonViewer
                 :data="data"
                 path="root"
                 :collapsed-paths="collapsedPaths"
@@ -49,29 +49,6 @@ function togglePath(path) {
 </template>
 
 <style scoped>
-.unknown-entry {
-    font-family: var(--wa-font-mono);
-    font-size: var(--wa-font-size-s);
-    padding-block: var(--wa-space-l);
-}
-
-.unknown-summary {
-    display: inline;
-}
-
-.unknown-label {
-    color: var(--wa-color-text);
-}
-
-.unknown-separator {
-    color: var(--wa-color-text-subtle);
-}
-
-.unknown-type {
-    color: var(--wa-color-text);
-    font-weight: normal;
-}
-
 .unknown-data {
     padding: var(--wa-space-xs) 0;
     overflow-x: auto;

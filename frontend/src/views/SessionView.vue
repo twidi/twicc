@@ -26,7 +26,7 @@ const LOAD_DEBOUNCE_MS = 150
 const SORT_THROTTLE_MS = 150
 
 // Minimum item size for the virtual scroller (in pixels)
-const MIN_ITEM_SIZE = 20
+const MIN_ITEM_SIZE = 24
 
 // Track pending range to load (accumulated during debounce)
 const pendingLoadRange = ref(null)
@@ -554,6 +554,7 @@ function toggleGroup(groupHeadLineNum) {
 .session-items {
     flex: 1;
     min-height: 0;
+    padding-bottom: var(--wa-space-2xl);
 }
 
 .item-wrapper {

@@ -111,7 +111,7 @@ function forwardToggle(path) {
 
 <style scoped>
 .json-node {
-    white-space: nowrap;
+    white-space: inherit;
 }
 
 .json-key {
