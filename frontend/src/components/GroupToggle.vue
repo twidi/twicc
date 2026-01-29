@@ -28,29 +28,19 @@ function handleClick() {
     emit('toggle')
 }
 
-function handleKeydown(event) {
-    // Support Enter and Space for keyboard accessibility
-    if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault()
-        emit('toggle')
-    }
-}
 </script>
 
 <template>
-    <div
-        class="group-toggle"
-        :class="{ 'group-toggle--expanded': expanded }"
-        role="button"
-        tabindex="0"
-        :aria-expanded="expanded"
-        :aria-label="expanded ? 'Collapse group' : 'Expand group'"
-        @click="handleClick"
-        @keydown="handleKeydown"
-    >
-        <span class="toggle-indicator">...</span>
-        <!-- Future: show item count -->
-        <!-- <span v-if="itemCount > 0" class="toggle-count">({{ itemCount }})</span> -->
+    <div class="group-toggle">
+        <wa-switch
+            size="small"
+            :checked="expanded"
+            @change="handleClick"
+        >
+            <span class="toggle-label">
+                {{ expanded ? 'Hide' : 'View' }} {{ itemCount }} element{{ itemCount !== 1 ? 's' : '' }}
+            </span>
+        </wa-switch>
     </div>
 </template>
 
@@ -58,26 +48,34 @@ function handleKeydown(event) {
 .group-toggle {
     display: flex;
     align-items: center;
-    cursor: pointer;
-    user-select: none;
 }
 
-.group-toggle:focus {
-    outline: 2px solid var(--wa-color-primary);
-    outline-offset: 2px;
+wa-switch {
+    margin-block: var(--wa-space-s);
+    transition: opacity 0.2s;
+    opacity: 0.25;
+    &:hover {
+        opacity: 0.75;
+        .toggle-label {
+            opacity: 1;
+        }
+    }
 }
 
-.toggle-indicator {
-    font-family: var(--wa-font-mono);
-    font-size: var(--wa-font-size-l);
-    font-weight: 600;
-    color: var(--wa-color-text-subtle);
-    letter-spacing: 0.1em;
+wa-switch:state(checked) {
+    opacity: 1;
+    margin-bottom: calc(var(--wa-space-l) * -1/2);
+    z-index: 1;
+    .toggle-label {
+        opacity: 1;
+    }
 }
 
-.toggle-count {
-    font-family: var(--wa-font-mono);
+.toggle-label {
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-subtle);
+    opacity: 0;
+    transition: opacity 0.2s;
 }
+
 </style>

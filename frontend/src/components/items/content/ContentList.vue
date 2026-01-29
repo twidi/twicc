@@ -109,6 +109,7 @@ const visibleItems = computed(() => {
         let showToggleBefore = false
         let toggleType = null
         let groupStartIndex = null
+        let groupSize = 0
 
         // Check if part of connected prefix (external group ending here)
         if (prefixEndIndex != null && itemIndex <= prefixEndIndex) {
@@ -122,6 +123,7 @@ const visibleItems = computed(() => {
             if (itemIndex === suffixStartIndex) {
                 showToggleBefore = true
                 toggleType = 'suffix'
+                groupSize = props.items.length - suffixStartIndex
             }
         }
         // Otherwise check internal groups
@@ -141,6 +143,7 @@ const visibleItems = computed(() => {
                 if (itemIndex === currentGroup.startIndex) {
                     showToggleBefore = true
                     toggleType = 'internal'
+                    groupSize = currentGroup.endIndex - currentGroup.startIndex + 1
                 }
             }
         }
@@ -159,6 +162,7 @@ const visibleItems = computed(() => {
             show,
             showToggleBefore,
             groupStartIndex,
+            groupSize,
             toggleType,
             toggleExpanded
         })
@@ -178,12 +182,14 @@ function toggleInternalGroup(startIndex) {
         <GroupToggle
             v-if="entry.showToggleBefore && entry.toggleType === 'internal'"
             :expanded="entry.toggleExpanded"
+            :item-count="entry.groupSize"
             @toggle="toggleInternalGroup(entry.groupStartIndex)"
         />
         <!-- Toggle for suffix (emits to parent for session-level handling) -->
         <GroupToggle
             v-else-if="entry.showToggleBefore && entry.toggleType === 'suffix'"
             :expanded="entry.toggleExpanded"
+            :item-count="entry.groupSize"
             @toggle="emit('toggle-suffix')"
         />
 

@@ -246,7 +246,7 @@ function toggleJsonView() {
 
         & > .item-wrapper {
 
-            & > .session-item, .group-toggle {
+            & > .session-item, & > .group-toggle {
                 /* common styles */
                 --assistant-card-bg-color: oklch(from var(--wa-color-gray-95) calc(l*1.025) c h);
                 background: var(--assistant-card-bg-color);
@@ -280,10 +280,12 @@ function toggleJsonView() {
     .vue-recycle-scroller__item-view:has(.session-item[data-kind="user_message"]) {
         + .vue-recycle-scroller__item-view:not(:has(.session-item[data-kind="user_message"])) {
             /* First non-user after a user message */
-            --assistant-card-border-top-left-radius: var(--assistant-card-border-radius);
-            --assistant-card-border-top-right-radius: var(--assistant-card-border-radius);
-            --assistant-card-border-top-width: var(--assistant-card-border-width);
-            --assistant-card-top-spacing: var(--assistant-card-spacing);
+            .session-item:first-child, .group-toggle:first-child {
+                --assistant-card-border-top-left-radius: var(--assistant-card-border-radius);
+                --assistant-card-border-top-right-radius: var(--assistant-card-border-radius);
+                --assistant-card-border-top-width: var(--assistant-card-border-width);
+                --assistant-card-top-spacing: var(--assistant-card-spacing);
+            }
         }
     }
 
@@ -293,11 +295,13 @@ function toggleJsonView() {
         /* Last non-user before a user message */
         &:has(+ .vue-recycle-scroller__item-view .session-item[data-kind="user_message"])
         {
-            --assistant-card-border-bottom-left-radius: var(--assistant-card-border-radius);
-            --assistant-card-border-bottom-right-radius: var(--assistant-card-border-radius);
-            --assistant-card-border-bottom-width: var(--assistant-card-border-width);
-            --assistant-card-bottom-spacing: var(--assistant-card-spacing);
-            --assistant-card-shadow: var(--assistant-card-default-shadow);;
+            .session-item:last-child, .group-toggle:last-child {
+                --assistant-card-border-bottom-left-radius: var(--assistant-card-border-radius);
+                --assistant-card-border-bottom-right-radius: var(--assistant-card-border-radius);
+                --assistant-card-border-bottom-width: var(--assistant-card-border-width);
+                --assistant-card-bottom-spacing: var(--assistant-card-spacing);
+                --assistant-card-shadow: var(--assistant-card-default-shadow);;
+            }
         }
     }
 

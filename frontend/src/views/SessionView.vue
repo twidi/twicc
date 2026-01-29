@@ -407,6 +407,7 @@ function toggleGroup(groupHeadLineNum) {
                     <template v-else-if="item.isGroupHead">
                         <GroupToggle
                             :expanded="item.isExpanded"
+                            :item-count="item.groupSize"
                             @toggle="toggleGroup(item.lineNum)"
                         />
                         <SessionItem

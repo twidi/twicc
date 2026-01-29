@@ -38,9 +38,15 @@ export function computeVisualItems(items, mode, expandedGroups = []) {
     // Build a set of line_nums that are ALWAYS items
     // Used to detect when a COLLAPSIBLE's group_head points to an ALWAYS
     const alwaysLineNums = new Set()
+    // Count items per group (keyed by group_head)
+    const groupSizes = new Map()
     for (const item of items) {
         if (item.display_level === DISPLAY_LEVEL.ALWAYS) {
             alwaysLineNums.add(item.line_num)
+        }
+        // Count items belonging to each group
+        if (item.group_head != null && item.display_level === DISPLAY_LEVEL.COLLAPSIBLE) {
+            groupSizes.set(item.group_head, (groupSizes.get(item.group_head) || 0) + 1)
         }
     }
 
@@ -110,6 +116,7 @@ export function computeVisualItems(items, mode, expandedGroups = []) {
                 // Following COLLAPSIBLE items will have group_head pointing here.
                 visualItem.suffixGroupHead = item.line_num
                 visualItem.suffixExpanded = expandedSet.has(item.line_num)
+                visualItem.suffixGroupSize = groupSizes.get(item.line_num) || 0
             }
 
             result.push(visualItem)
@@ -130,7 +137,8 @@ export function computeVisualItems(items, mode, expandedGroups = []) {
                     groupHead: item.group_head ?? null,
                     groupTail: item.group_tail ?? null,
                     isGroupHead: true,
-                    isExpanded: isExpanded
+                    isExpanded: isExpanded,
+                    groupSize: groupSizes.get(item.group_head) || 0
                 })
             } else if (groupHeadIsAlways) {
                 // This COLLAPSIBLE is part of a group started by an ALWAYS's suffix
