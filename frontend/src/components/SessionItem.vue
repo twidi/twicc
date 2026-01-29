@@ -327,10 +327,10 @@ wa-details {
 }
 /* Same but in different items */
 .session-items {
-    .vue-recycle-scroller__item-view:has(wa-details.tool-use:last-child) {
+    .vue-recycle-scroller__item-view:has(wa-details.item-details:last-child) {
         &:has(
-            + .vue-recycle-scroller__item-view wa-details.tool-use:nth-child(2)  /* 1 is json toggle */
-        ) wa-details.tool-use:last-child {
+            + .vue-recycle-scroller__item-view wa-details.item-details:nth-child(2)  /* 1 is json toggle */
+        ) wa-details.item-details:last-child {
             padding-bottom: 0;
             &::part(base) {
                 border-bottom-left-radius: 0;
@@ -339,7 +339,7 @@ wa-details {
             }
         }
         & + .vue-recycle-scroller__item-view
-        wa-details.tool-use:nth-child(2) {  /* 1 is json toggle */
+        wa-details.item-details:nth-child(2) {  /* 1 is json toggle */
             padding-top: 0;
             &::part(base) {
                 border-top-left-radius: 0;

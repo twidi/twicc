@@ -105,7 +105,7 @@ function toggleResultPath(path) {
 </script>
 
 <template>
-    <wa-details class="tool-use" icon-placement="start">
+    <wa-details class="item-details tool-use" icon-placement="start">
         <span slot="summary" class="tool-use-summary">
             <strong class="tool-name">{{ name }}</strong>
             <template v-if="description">
