@@ -13,7 +13,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from watchfiles import Change, awatch
 
-from twicc_poc.core.models import Project, Session, SessionItem
+from twicc_poc.core.models import Project, Session, SessionItem, SessionType
 from twicc_poc.core.serializers import (
     serialize_project,
     serialize_session,
@@ -23,6 +23,71 @@ from twicc_poc.core.serializers import (
 from twicc_poc.sync import check_file_has_content, sync_session_items
 
 logger = logging.getLogger(__name__)
+
+
+class ParsedPath:
+    """Result of parsing a JSONL file path."""
+    __slots__ = ('project_id', 'session_id', 'type', 'parent_session_id')
+
+    def __init__(
+        self,
+        project_id: str,
+        session_id: str,
+        type: SessionType,
+        parent_session_id: str | None = None,
+    ):
+        self.project_id = project_id
+        self.session_id = session_id
+        self.type = type
+        self.parent_session_id = parent_session_id
+
+
+def parse_jsonl_path(path: Path, projects_dir: Path) -> ParsedPath | None:
+    """
+    Parse a JSONL file path and determine its type.
+
+    Valid paths:
+    - project_id/session_id.jsonl -> Session
+    - project_id/session_id/subagents/agent-xxx.jsonl -> Subagent
+
+    Invalid paths (returns None):
+    - project_id/agent-*.jsonl (old format, ignored)
+    - Any other structure
+    """
+    try:
+        relative = path.relative_to(projects_dir)
+    except ValueError:
+        return None
+
+    parts = relative.parts
+
+    if len(parts) == 2:
+        # Format: project_id/xxx.jsonl
+        project_id, filename = parts
+        if filename.startswith("agent-"):
+            # Old format agents at project level - ignore
+            return None
+        if filename.endswith(".jsonl"):
+            session_id = filename.removesuffix(".jsonl")
+            return ParsedPath(project_id, session_id, SessionType.SESSION)
+
+    elif len(parts) == 4:
+        # Format: project_id/session_id/subagents/agent-xxx.jsonl
+        project_id, parent_session_id, subdir, filename = parts
+        if (
+            subdir == "subagents"
+            and filename.startswith("agent-")
+            and filename.endswith(".jsonl")
+        ):
+            agent_id = filename.removeprefix("agent-").removesuffix(".jsonl")
+            return ParsedPath(
+                project_id,
+                agent_id,
+                SessionType.SUBAGENT,
+                parent_session_id,
+            )
+
+    return None
 
 
 async def broadcast_message(channel_layer, message: dict) -> None:
@@ -133,6 +198,86 @@ def refresh_project(project: Project) -> Project:
     """Refresh project from database."""
     project.refresh_from_db()
     return project
+
+
+@sync_to_async
+def get_or_create_subagent(
+    agent_id: str,
+    project: Project,
+    parent_session: Session,
+) -> tuple[Session, bool]:
+    """Get or create a subagent session in the database."""
+    return Session.objects.get_or_create(
+        id=agent_id,
+        defaults={
+            "project": project,
+            "type": SessionType.SUBAGENT,
+            "parent_session": parent_session,
+            "agent_id": agent_id,
+        },
+    )
+
+
+async def sync_subagent_no_broadcast(
+    path: Path,
+    parsed: ParsedPath,
+    change_type: Change,
+) -> None:
+    """
+    Synchronize a subagent file without broadcasting to WebSocket.
+
+    This is called for files in {session_id}/subagents/agent-*.jsonl.
+    """
+    if change_type == Change.deleted:
+        # Subagent file deleted - mark as archived
+        subagent = await get_session_by_id(parsed.session_id)
+        if subagent and not subagent.archived:
+            subagent.archived = True
+            await sync_to_async(subagent.save)(update_fields=["archived"])
+        return
+
+    # Get parent session - must exist for subagent to be valid
+    parent_session = await get_session_by_id(parsed.parent_session_id)
+    if parent_session is None:
+        # Parent session not yet synced, skip for now
+        # Will be synced when parent session is processed
+        logger.debug(f"Skipping subagent {parsed.session_id}: parent session {parsed.parent_session_id} not found")
+        return
+
+    # Get project
+    project = await get_project_by_id(parsed.project_id)
+    if project is None:
+        logger.debug(f"Skipping subagent {parsed.session_id}: project {parsed.project_id} not found")
+        return
+
+    # Check if subagent already exists
+    existing_subagent = await get_session_by_id(parsed.session_id)
+
+    if existing_subagent is None:
+        # New subagent - check if file has content
+        has_content = await check_file_has_content_async(path)
+        if not has_content:
+            return
+
+        # Create subagent
+        subagent, _ = await get_or_create_subagent(
+            parsed.session_id,
+            project,
+            parent_session,
+        )
+
+        # Sync items
+        await sync_session_items_async(subagent, path)
+        return
+
+    # Subagent exists, sync items
+    subagent = existing_subagent
+    await sync_session_items_async(subagent, path)
+
+    # Handle unarchive if needed
+    if subagent.archived:
+        subagent.archived = False
+        await sync_to_async(subagent.save)(update_fields=["archived"])
 
 
 async def sync_project_and_broadcast(
@@ -387,17 +532,15 @@ async def start_watcher() -> None:
             if not path_str.endswith(".jsonl"):
                 continue
 
-            # Skip agent files
-            if "/agent-" in path_str or path.name.startswith("agent-"):
+            # Parse path to determine type (session or subagent)
+            parsed = parse_jsonl_path(path, projects_dir)
+            if parsed is None:
+                # Invalid path (e.g., old-style agent-*.jsonl at project level)
                 continue
 
-            # Only process files that are direct children of project folders
-            try:
-                relative = path.relative_to(projects_dir)
-                if len(relative.parts) != 2:
-                    continue
-            except ValueError:
-                continue
-
-            # Sync and broadcast session changes
-            await sync_and_broadcast(path, change_type, channel_layer)
+            if parsed.type == SessionType.SESSION:
+                # Regular session - sync and broadcast
+                await sync_and_broadcast(path, change_type, channel_layer)
+            elif parsed.type == SessionType.SUBAGENT:
+                # Subagent - sync WITHOUT broadcast
+                await sync_subagent_no_broadcast(path, parsed, change_type)

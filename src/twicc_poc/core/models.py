@@ -4,6 +4,12 @@ from decimal import Decimal
 from django.db import models
 
 
+class SessionType(models.TextChoices):
+    """Type of session entry."""
+    SESSION = "session", "Session"
+    SUBAGENT = "subagent", "Subagent"
+
+
 # Default prices per family (USD per million tokens) - fallback when no DB price exists
 # Based on Anthropic's published pricing as of January 2026
 DEFAULT_FAMILY_PRICES = {
@@ -47,7 +53,7 @@ class Project(models.Model):
 
 
 class Session(models.Model):
-    """A session corresponds to a *.jsonl file (excluding agent-*.jsonl)"""
+    """A session corresponds to a *.jsonl file, or a subagent file in {session_id}/subagents/"""
 
     id = models.CharField(max_length=255, primary_key=True)
     project = models.ForeignKey(
@@ -66,6 +72,22 @@ class Session(models.Model):
     # Cost and context usage fields (computed from items)
     context_usage = models.PositiveIntegerField(null=True, blank=True)  # Current context usage (last known value in tokens)
     total_cost = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)  # Total session cost in USD
+
+    # Subagent-related fields
+    type = models.CharField(
+        max_length=20,
+        choices=SessionType.choices,
+        default=SessionType.SESSION,
+        db_index=True,
+    )
+    parent_session = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='subagents',
+    )
+    agent_id = models.CharField(max_length=255, null=True, blank=True)  # Short agent ID from filename (e.g., "a6c7d21")
 
     class Meta:
         ordering = ["-mtime"]

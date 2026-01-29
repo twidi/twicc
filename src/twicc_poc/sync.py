@@ -25,7 +25,7 @@ from twicc_poc.compute import (
     extract_title_from_user_message,
 )
 from twicc_poc.core.enums import ItemDisplayLevel, ItemKind
-from twicc_poc.core.models import Project, Session, SessionItem
+from twicc_poc.core.models import Project, Session, SessionItem, SessionType
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -34,6 +34,20 @@ if TYPE_CHECKING:
 def is_session_file(path: Path) -> bool:
     """Check if a path is a valid session file (*.jsonl but not agent-*.jsonl)."""
     return path.suffix == ".jsonl" and not path.name.startswith("agent-")
+
+
+def is_subagent_file(path: Path) -> bool:
+    """Check if a path is a valid subagent file in the correct location.
+
+    Valid subagent files:
+    - Must be in a 'subagents' directory
+    - Must start with 'agent-' and end with '.jsonl'
+    """
+    return (
+        path.suffix == ".jsonl"
+        and path.name.startswith("agent-")
+        and path.parent.name == "subagents"
+    )
 
 
 def get_projects_dir() -> Path:
@@ -62,6 +76,22 @@ def scan_sessions(project_id: str) -> dict[str, Path]:
         f.stem: f
         for f in project_dir.iterdir()
         if f.is_file() and is_session_file(f)
+    }
+
+
+def scan_subagents(project_id: str, session_id: str) -> dict[str, Path]:
+    """
+    Scan a session's subagents folder and return subagent files.
+
+    Returns a dict mapping agent_id (e.g., "a6c7d21") to Path.
+    """
+    subagents_dir = get_projects_dir() / project_id / session_id / "subagents"
+    if not subagents_dir.exists():
+        return {}
+    return {
+        f.stem.removeprefix("agent-"): f
+        for f in subagents_dir.iterdir()
+        if f.is_file() and is_subagent_file(f)
     }
 
 
@@ -267,12 +297,72 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
     return sorted(new_line_nums), sorted(modified_line_nums - new_line_nums)
 
 
+def _sync_session_subagents(
+    project: Project,
+    session: Session,
+    stats: dict[str, int],
+) -> None:
+    """
+    Synchronize subagents for a given session.
+
+    Scans the session's subagents folder and syncs each subagent file.
+    Updates stats in place.
+    """
+    subagent_files = scan_subagents(project.id, session.id)
+    if not subagent_files:
+        return
+
+    # Get existing subagents from database for this session
+    db_subagents = {
+        s.agent_id: s
+        for s in Session.objects.filter(
+            project=project,
+            type=SessionType.SUBAGENT,
+            parent_session=session,
+        )
+    }
+
+    for agent_id, file_path in subagent_files.items():
+        if agent_id in db_subagents:
+            # Subagent exists in DB, sync items
+            subagent = db_subagents[agent_id]
+            new_line_nums, _ = sync_session_items(subagent, file_path)
+            stats["items_added"] += len(new_line_nums)
+        else:
+            # New subagent - check if file has content
+            if not check_file_has_content(file_path):
+                continue
+
+            # Create subagent entry (use agent_id as the primary key)
+            subagent = Session(
+                id=agent_id,
+                project=project,
+                type=SessionType.SUBAGENT,
+                parent_session=session,
+                agent_id=agent_id,
+            )
+            subagent.save()
+            stats["sessions_created"] += 1
+
+            # Sync items
+            new_line_nums, _ = sync_session_items(subagent, file_path)
+            stats["items_added"] += len(new_line_nums)
+
+    # Mark archived subagents (exist in DB but not on disk)
+    disk_agent_ids = set(subagent_files.keys())
+    for agent_id, subagent in db_subagents.items():
+        if agent_id not in disk_agent_ids and not subagent.archived:
+            subagent.archived = True
+            subagent.save(update_fields=["archived"])
+            stats["sessions_archived"] += 1
+
+
 def sync_project(
     project_id: str,
     on_session_progress: Callable[[str, int, int], None] | None = None,
 ) -> dict[str, int]:
     """
-    Synchronize a single project and its sessions.
+    Synchronize a single project, its sessions, and their subagents.
 
     Args:
         project_id: The project folder name.
@@ -280,9 +370,9 @@ def sync_project(
             with (session_id, current_index, total_sessions).
 
     Returns a dict with sync statistics:
-        - sessions_created: number of new sessions
-        - sessions_archived: number of sessions marked as archived
-        - items_added: total number of new session items
+        - sessions_created: number of new sessions (including subagents)
+        - sessions_archived: number of sessions marked as archived (including subagents)
+        - items_added: total number of new session items (including subagent items)
     """
     stats = {
         "sessions_created": 0,
@@ -297,8 +387,11 @@ def sync_project(
     session_files = scan_sessions(project_id)
     disk_session_ids = set(session_files.keys())
 
-    # Get existing sessions from database
-    db_sessions = {s.id: s for s in Session.objects.filter(project=project)}
+    # Get existing sessions from database (only main sessions, not subagents)
+    db_sessions = {
+        s.id: s
+        for s in Session.objects.filter(project=project, type=SessionType.SESSION)
+    }
     db_session_ids = set(db_sessions.keys())
 
     # Track which sessions are non-empty (for counting and mtime)
@@ -324,7 +417,7 @@ def sync_project(
                 continue
 
             # File has content, create and save the session first
-            session = Session(id=session_id, project=project)
+            session = Session(id=session_id, project=project, type=SessionType.SESSION)
             session.save()
             stats["sessions_created"] += 1
 
@@ -338,6 +431,9 @@ def sync_project(
             # Track max mtime for project
             if session.mtime > max_mtime:
                 max_mtime = session.mtime
+
+            # Sync subagents for this session
+            _sync_session_subagents(project, session, stats)
 
             if on_session_progress:
                 on_session_progress(session_id, idx, total_sessions)
@@ -353,6 +449,9 @@ def sync_project(
             # Track max mtime for project (only for non-empty sessions)
             if session.mtime > max_mtime:
                 max_mtime = session.mtime
+
+        # Sync subagents for this session
+        _sync_session_subagents(project, session, stats)
 
         if on_session_progress:
             on_session_progress(session_id, idx, total_sessions)
