@@ -1,7 +1,7 @@
 <script setup>
-import { computed, watch, ref, nextTick } from 'vue'
+import { computed, watch, ref, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
-import { useDebounceFn } from '@vueuse/core'
+import { useDebounceFn, useThrottleFn } from '@vueuse/core'
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useDataStore } from '../stores/data'
@@ -17,10 +17,13 @@ const store = useDataStore()
 const scrollerRef = ref(null)
 
 // Buffer: load N items before/after visible range
-const LOAD_BUFFER = 20
+const LOAD_BUFFER = 50
 
 // Debounce delay for scroll-triggered loading (ms)
 const LOAD_DEBOUNCE_MS = 150
+
+// Throttle delay for DOM order sorting (ms)
+const SORT_THROTTLE_MS = 150
 
 // Minimum item size for the virtual scroller (in pixels)
 const MIN_ITEM_SIZE = 20
@@ -264,10 +267,50 @@ async function executePendingLoad() {
 const debouncedLoad = useDebounceFn(executePendingLoad, LOAD_DEBOUNCE_MS)
 
 /**
+ * Force DOM order to match visual order.
+ * Called on scroller update and throttled on scroll events.
+ */
+function sortScrollerViews() {
+    const recycleScroller = scrollerRef.value?.$refs?.scroller
+    if (recycleScroller?.sortViews) {
+        recycleScroller.sortViews()
+    }
+}
+
+// Throttled version for scroll events (independent of scroller update)
+const throttledSortViews = useThrottleFn(sortScrollerViews, SORT_THROTTLE_MS)
+
+/**
+ * Handle scroll event on the scroller element.
+ * Triggers throttled DOM sorting independently of scroller update.
+ */
+function onScrollerScroll() {
+    throttledSortViews()
+}
+
+// Setup and cleanup scroll listener
+onMounted(() => {
+    const el = scrollerRef.value?.$el
+    if (el) {
+        el.addEventListener('scroll', onScrollerScroll, { passive: true })
+    }
+})
+
+onBeforeUnmount(() => {
+    const el = scrollerRef.value?.$el
+    if (el) {
+        el.removeEventListener('scroll', onScrollerScroll)
+    }
+})
+
+/**
  * Handle scroller update event - triggers lazy loading for visible items.
  * Works with visualItems (filtered list) and maps to actual line numbers.
  */
 function onScrollerUpdate(startIndex, endIndex, visibleStartIndex, visibleEndIndex) {
+    // Force DOM order to match visual order (for CSS sibling selectors)
+    sortScrollerViews()
+
     const visItems = visualItems.value
     if (!visItems || visItems.length === 0) return
 
@@ -386,7 +429,7 @@ function toggleGroup(groupHeadLineNum) {
             v-else-if="visualItems.length > 0"
             :items="visualItems"
             :min-item-size="MIN_ITEM_SIZE"
-            :buffer="200"
+            :buffer="500"
             key-field="lineNum"
             class="session-items"
             :emit-update="true"
@@ -401,7 +444,8 @@ function toggleGroup(groupHeadLineNum) {
                     class="item-wrapper"
                 >
                     <!-- Placeholder (no content loaded yet) -->
-                    <wa-skeleton v-if="!item.content" effect="sheen" class="item-placeholder"></wa-skeleton>
+                    <!-- <wa-skeleton v-if="!item.content" effect="sheen" class="item-placeholder"></wa-skeleton> -->
+                    <div v-if="!item.content" ></div>
 
                     <!-- Group head: show toggle (+ item content if expanded) -->
                     <template v-else-if="item.isGroupHead">
