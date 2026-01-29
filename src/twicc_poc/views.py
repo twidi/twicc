@@ -3,7 +3,10 @@
 from django.conf import settings
 from django.http import FileResponse, Http404, JsonResponse
 
-from twicc_poc.core.models import Project, Session
+import orjson
+
+from twicc_poc.compute import get_message_content_list
+from twicc_poc.core.models import Project, Session, SessionItem, SessionItemLink
 from twicc_poc.core.serializers import (
     serialize_project,
     serialize_session,
@@ -121,6 +124,52 @@ def session_items_metadata(request, project_id, session_id):
     items = session.items.all().defer('content')  # Already ordered by line_num (see Meta.ordering)
     data = [serialize_session_item_metadata(item) for item in items]
     return JsonResponse(data, safe=False)
+
+
+def tool_results(request, project_id, session_id, line_num, tool_id):
+    """GET /api/projects/<id>/sessions/<session_id>/items/<line_num>/tool-results/<tool_id>/
+
+    Returns the tool_result content(s) for a specific tool_use.
+    Uses SessionItemLink to find related tool_result items.
+    """
+    try:
+        session = Session.objects.get(id=session_id, project_id=project_id)
+    except Session.DoesNotExist:
+        raise Http404("Session not found")
+
+    # Find links for this tool_use
+    links = SessionItemLink.objects.filter(
+        session=session,
+        source_line_num=line_num,
+        link_type='tool_result',
+        reference=tool_id,
+    ).values_list('target_line_num', flat=True)
+
+    if not links:
+        return JsonResponse({"results": []})
+
+    # Fetch the target items, ordered by line_num (chronological)
+    items = SessionItem.objects.filter(
+        session=session,
+        line_num__in=links,
+    ).order_by('line_num')
+
+    # Extract tool_result entries from each item's content
+    results = []
+    for item in items:
+        try:
+            parsed = orjson.loads(item.content)
+        except orjson.JSONDecodeError:
+            continue
+
+        content_list = get_message_content_list(parsed, 'user')
+        if not content_list:
+            continue
+        for entry in content_list:
+            if entry.get('type') == 'tool_result' and entry.get('tool_use_id') == tool_id:
+                results.append(entry)
+
+    return JsonResponse({"results": results})
 
 
 def spa_index(request):

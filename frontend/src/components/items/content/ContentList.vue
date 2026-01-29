@@ -7,6 +7,7 @@ import GroupToggle from '../../GroupToggle.vue'
 import TextContent from './TextContent.vue'
 import ImageContent from './ImageContent.vue'
 import DocumentContent from './DocumentContent.vue'
+import ToolUseContent from './ToolUseContent.vue'
 import UnknownEntry from '../UnknownEntry.vue'
 
 const store = useDataStore()
@@ -25,6 +26,10 @@ const props = defineProps({
         validator: (value) => ['user', 'assistant', 'items'].includes(value)
     },
     // Context for store lookups
+    projectId: {
+        type: String,
+        required: true
+    },
     sessionId: {
         type: String,
         required: true
@@ -201,6 +206,15 @@ function toggleInternalGroup(startIndex) {
                 :media-type="entry.item.media_type"
                 :title="entry.item.title"
                 :role="role"
+            />
+            <ToolUseContent
+                v-else-if="entry.item.type === 'tool_use'"
+                :name="entry.item.name"
+                :input="entry.item.input"
+                :tool-id="entry.item.id"
+                :project-id="projectId"
+                :session-id="sessionId"
+                :line-num="lineNum"
             />
             <UnknownEntry
                 v-else

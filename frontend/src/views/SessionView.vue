@@ -413,6 +413,7 @@ function toggleGroup(groupHeadLineNum) {
                             v-if="item.isExpanded"
                             :content="item.content"
                             :kind="item.kind"
+                            :project-id="projectId"
                             :session-id="sessionId"
                             :line-num="item.lineNum"
                         />
@@ -423,6 +424,7 @@ function toggleGroup(groupHeadLineNum) {
                         v-else
                         :content="item.content"
                         :kind="item.kind"
+                        :project-id="projectId"
                         :session-id="sessionId"
                         :line-num="item.lineNum"
                         :group-head="item.groupHead"

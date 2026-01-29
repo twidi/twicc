@@ -13,6 +13,10 @@ const props = defineProps({
         validator: (value) => ['user', 'assistant', 'items'].includes(value)
     },
     // Context for store lookups (propagated to ContentList)
+    projectId: {
+        type: String,
+        required: true
+    },
     sessionId: {
         type: String,
         required: true
@@ -63,6 +67,7 @@ const contentItems = computed(() => {
     <ContentList
         :items="contentItems"
         :role="role"
+        :project-id="projectId"
         :session-id="sessionId"
         :line-num="lineNum"
         :group-head="groupHead"

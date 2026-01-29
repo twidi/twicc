@@ -12,6 +12,7 @@ import '@awesome.me/webawesome/dist/components/option/option.js'
 import '@awesome.me/webawesome/dist/components/select/select.js'
 import '@awesome.me/webawesome/dist/components/skeleton/skeleton.js'
 import '@awesome.me/webawesome/dist/components/spinner/spinner.js'
+import '@awesome.me/webawesome/dist/components/details/details.js'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'

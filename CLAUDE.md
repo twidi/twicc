@@ -116,16 +116,19 @@ Two tables for append-only JSONL sync:
 
 ## Web Awesome Components
 
-**IMPORTANT:** Chaque composant Web Awesome utilisé doit être importé explicitement dans `frontend/src/main.js`. Les imports chargent à la fois le JS du composant et ses styles (via shadow DOM).
+**Version:** Web Awesome 3 (using next, which is > 3). Since version 3, **native** browser events are no longer prefixed with `wa-` (e.g., `@click`, `@focus`, `@input`). However, **custom** Web Awesome events still use the `wa-` prefix (e.g., `@wa-show`, `@wa-hide`, `@wa-after-show`).
+
+**IMPORTANT:** Each Web Awesome component used must be explicitly imported in `frontend/src/main.js`. Imports load both the component JS and its styles (via shadow DOM).
 
 ```javascript
-// Exemple dans main.js
+// Example in main.js
 import '@awesome.me/webawesome/dist/components/button/button.js'
 import '@awesome.me/webawesome/dist/components/callout/callout.js'
 ```
 
-Si un composant `wa-*` apparaît sans style en production (mais fonctionne en dev), c'est probablement qu'il manque l'import dans `main.js`.
+If a `wa-*` component appears unstyled in production (but works in dev), it's likely missing its import in `main.js`.
 
-# Documentation Web Awesome
-Une version "one file" quasi complète de la doc est disponible dans `frontend/node_modules/@awesome.me/webawesome/dist/llms.txt`
-La documentation complete est aussi dans `/home/twidi/dev/webawesome/packages/webawesome/docs/docs/` (`usage.md` et `frameworks/vue.md`) 
+## Web Awesome Documentation
+
+A nearly complete "one file" version of the docs is available at `frontend/node_modules/@awesome.me/webawesome/dist/llms.txt`
+Full documentation is also at `/home/twidi/dev/webawesome/packages/webawesome/docs/docs/` (`usage.md` and `frameworks/vue.md`) 

@@ -15,6 +15,10 @@ const props = defineProps({
         default: null
     },
     // Context for store lookups (propagated to Message/ContentList)
+    projectId: {
+        type: String,
+        required: true
+    },
     sessionId: {
         type: String,
         required: true
@@ -107,6 +111,7 @@ function toggleJsonView() {
                 v-if="kind === 'user_message' || kind === 'assistant_message'"
                 :data="parsedContent"
                 :role="kind === 'user_message' ? 'user' : 'assistant'"
+                :project-id="projectId"
                 :session-id="sessionId"
                 :line-num="lineNum"
                 :group-head="groupHead"
@@ -119,6 +124,7 @@ function toggleJsonView() {
                 v-else-if="kind === 'content_items'"
                 :data="parsedContent"
                 role="items"
+                :project-id="projectId"
                 :session-id="sessionId"
                 :line-num="lineNum"
             />
@@ -297,4 +303,45 @@ function toggleJsonView() {
 
 }
 
+/* Handle many wa-details one after the other */
+wa-details {
+    &:has(+wa-details) {
+        padding-bottom: 0;
+        &::part(base) {
+            border-bottom-left-radius: 0;
+            border-bottom-right-radius: 0;
+            border-bottom-width: 0;
+        }
+    }
+    & + wa-details {
+        padding-top: 0;
+        &::part(base) {
+            border-top-left-radius: 0;
+            border-top-right-radius: 0;
+        }
+    }
+}
+/* Same but in different items */
+.session-items {
+    .vue-recycle-scroller__item-view:has(wa-details.tool-use:last-child) {
+        &:has(
+            + .vue-recycle-scroller__item-view wa-details.tool-use:nth-child(2)  /* 1 is json toggle */
+        ) wa-details.tool-use:last-child {
+            padding-bottom: 0;
+            &::part(base) {
+                border-bottom-left-radius: 0;
+                border-bottom-right-radius: 0;
+                border-bottom-width: 0;
+            }
+        }
+        & + .vue-recycle-scroller__item-view
+        wa-details.tool-use:nth-child(2) {  /* 1 is json toggle */
+            padding-top: 0;
+            &::part(base) {
+                border-top-left-radius: 0;
+                border-top-right-radius: 0;
+            }
+        }
+    }
+}
 </style>
