@@ -625,6 +625,10 @@ def compute_session_metadata(session_id: str) -> None:
     # Track sessions that need title updates (session_id -> title)
     session_titles: dict[str, str] = {}
 
+    # Track message count
+    user_message_count = 0
+    last_relevant_kind: ItemKind | None = None
+
     for item in queryset.iterator(chunk_size=batch_size):
         try:
             parsed = orjson.loads(item.content)
@@ -651,6 +655,13 @@ def compute_session_metadata(session_id: str) -> None:
             target_session_id = parsed.get('sessionId', session_id)
             if custom_title and isinstance(custom_title, str):
                 session_titles[target_session_id] = custom_title
+
+        # Track message count: count user messages and track last relevant kind
+        if item.kind == ItemKind.USER_MESSAGE:
+            user_message_count += 1
+            last_relevant_kind = ItemKind.USER_MESSAGE
+        elif item.kind == ItemKind.ASSISTANT_MESSAGE:
+            last_relevant_kind = ItemKind.ASSISTANT_MESSAGE
 
         # Track tool_use IDs from assistant/content_items messages
         tool_use_ids = get_tool_use_ids(parsed)
@@ -726,8 +737,17 @@ def compute_session_metadata(session_id: str) -> None:
     for target_session_id, title in session_titles.items():
         Session.objects.filter(id=target_session_id).update(title=title)
 
+    # Compute message count: user_count * 2 - 1 if last is user, else user_count * 2
+    if user_message_count == 0:
+        message_count = 0
+    elif last_relevant_kind == ItemKind.USER_MESSAGE:
+        message_count = user_message_count * 2 - 1
+    else:
+        message_count = user_message_count * 2
+
+    session.message_count = message_count
     session.compute_version = settings.CURRENT_COMPUTE_VERSION
-    session.save(update_fields=['compute_version'])
+    session.save(update_fields=['compute_version', 'message_count'])
 
     connection.close()
 

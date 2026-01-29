@@ -34,6 +34,7 @@ def serialize_session(session):
         "mtime": session.mtime,
         "archived": session.archived,
         "title": session.title,  # Session title (from first user message or custom-title)
+        "message_count": session.message_count,  # Number of user/assistant messages
         # Boolean indicating if session metadata is up-to-date
         "compute_version_up_to_date": session.compute_version == settings.CURRENT_COMPUTE_VERSION,
     }

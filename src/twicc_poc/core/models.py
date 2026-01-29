@@ -31,6 +31,7 @@ class Session(models.Model):
     archived = models.BooleanField(default=False)
     compute_version = models.PositiveIntegerField(null=True, blank=True)  # NULL = never computed
     title = models.CharField(max_length=250, null=True, blank=True)  # Session title (from first user message or custom-title)
+    message_count = models.PositiveIntegerField(default=0)  # Number of user/assistant messages (user_count * 2 - 1 if last is user)
 
     class Meta:
         ordering = ["-mtime"]
@@ -64,6 +65,12 @@ class SessionItem(models.Model):
                 fields=["session", "line_num"],
                 name="unique_session_line",
             )
+        ]
+        indexes = [
+            models.Index(
+                fields=["session", "kind", "line_num"],
+                name="idx_session_kind_line",
+            ),
         ]
 
     def __str__(self):

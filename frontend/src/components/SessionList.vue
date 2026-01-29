@@ -50,7 +50,7 @@ function handleSelect(session) {
         >
             <div class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</div>
             <div class="session-meta">
-                <span class="session-lines">{{ session.last_line }} lines</span>
+                <span class="session-lines"><wa-icon name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
                 <span class="session-mtime">{{ formatDate(session.mtime) }}</span>
             </div>
         </div>

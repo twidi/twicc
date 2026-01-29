@@ -386,8 +386,8 @@ function toggleGroup(groupHeadLineNum) {
 
             <div class="session-meta">
                 <span class="meta-item">
-                    <wa-icon name="list-numbers"></wa-icon>
-                    {{ session.last_line }} lines
+                    <wa-icon name="comment" variant="regular"></wa-icon>
+                    {{ session.message_count ?? '??' }} ({{ session.last_line }} lines)
                 </span>
                 <span class="meta-item">
                     <wa-icon name="clock"></wa-icon>
