@@ -33,7 +33,8 @@ def serialize_session(session):
         "last_line": session.last_line,
         "mtime": session.mtime,
         "archived": session.archived,
-        # NEW: Boolean indicating if session metadata is up-to-date
+        "title": session.title,  # Session title (from first user message or custom-title)
+        # Boolean indicating if session metadata is up-to-date
         "compute_version_up_to_date": session.compute_version == settings.CURRENT_COMPUTE_VERSION,
     }
 

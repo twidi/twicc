@@ -27,10 +27,9 @@ function formatDate(timestamp) {
     return date.toLocaleString()
 }
 
-// Truncate session ID for display
-function truncateId(id) {
-    if (id.length <= 12) return id
-    return id.slice(0, 8) + '...'
+// Get display name for session (title if available, otherwise ID)
+function getSessionDisplayName(session) {
+    return session.title || session.id
 }
 
 const emit = defineEmits(['select'])
@@ -49,7 +48,7 @@ function handleSelect(session) {
             :class="{ 'session-item--active': session.id === sessionId }"
             @click="handleSelect(session)"
         >
-            <div class="session-id" :title="session.id">{{ truncateId(session.id) }}</div>
+            <div class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</div>
             <div class="session-meta">
                 <span class="session-lines">{{ session.last_line }} lines</span>
                 <span class="session-mtime">{{ formatDate(session.mtime) }}</span>
@@ -85,11 +84,14 @@ function handleSelect(session) {
     border-left: 3px solid var(--wa-color-brand);
 }
 
-.session-id {
+.session-name {
     font-size: var(--wa-font-size-s);
-    font-family: var(--wa-font-mono);
     font-weight: 500;
     color: var(--wa-color-text);
+    /* Truncate with ellipsis */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .session-meta {

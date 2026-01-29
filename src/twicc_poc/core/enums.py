@@ -21,3 +21,4 @@ class ItemKind(StrEnum):
     ASSISTANT_MESSAGE = "assistant_message"
     CONTENT_ITEMS = "content_items"
     API_ERROR = "api_error"
+    CUSTOM_TITLE = "custom_title"

@@ -340,10 +340,9 @@ function formatDate(timestamp) {
     return date.toLocaleString()
 }
 
-// Truncate session ID for display in header
-function truncateId(id) {
-    if (!id || id.length <= 20) return id
-    return id.slice(0, 8) + '...' + id.slice(-8)
+// Get display name for session header (title if available, otherwise ID)
+function getSessionDisplayName() {
+    return session.value?.title || sessionId.value
 }
 
 /**
@@ -368,7 +367,7 @@ function toggleGroup(groupHeadLineNum) {
         <!-- Header -->
         <header class="session-header" v-if="session">
             <div class="session-title">
-                <h2 :title="sessionId">{{ truncateId(sessionId) }}</h2>
+                <h2 :title="session.title || sessionId">{{ getSessionDisplayName() }}</h2>
             </div>
 
             <!-- Mode selector -->
@@ -524,8 +523,11 @@ function toggleGroup(groupHeadLineNum) {
     margin: 0;
     font-size: var(--wa-font-size-l);
     font-weight: 600;
-    font-family: var(--wa-font-mono);
     color: var(--wa-color-text);
+    /* Truncate with ellipsis */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .session-controls {

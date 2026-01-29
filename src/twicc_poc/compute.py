@@ -20,10 +20,105 @@ from twicc_poc.core.models import SessionItem
 # Content types considered user-visible (for display_level and kind computation)
 VISIBLE_CONTENT_TYPES = ('text', 'document', 'image')
 
+# Maximum length for extracted titles (before truncation)
+TITLE_MAX_LENGTH = 200
+
 if TYPE_CHECKING:
     from twicc_poc.core.models import Session
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Title Extraction from User Messages
+# =============================================================================
+
+
+import re
+
+# Regex patterns for stripping markdown
+_MARKDOWN_PATTERNS = [
+    (re.compile(r'^#{1,6}\s+', re.MULTILINE), ''),  # Headers: # ## ### etc.
+    (re.compile(r'\*\*(.+?)\*\*'), r'\1'),  # Bold: **text**
+    (re.compile(r'__(.+?)__'), r'\1'),  # Bold: __text__
+    (re.compile(r'\*(.+?)\*'), r'\1'),  # Italic: *text*
+    (re.compile(r'_(.+?)_'), r'\1'),  # Italic: _text_
+    (re.compile(r'~~(.+?)~~'), r'\1'),  # Strikethrough: ~~text~~
+    (re.compile(r'`(.+?)`'), r'\1'),  # Inline code: `text`
+    (re.compile(r'^\s*[-*+]\s+', re.MULTILINE), ''),  # Unordered list markers
+    (re.compile(r'^\s*\d+\.\s+', re.MULTILINE), ''),  # Ordered list markers
+    (re.compile(r'^\s*>\s*', re.MULTILINE), ''),  # Blockquotes
+    (re.compile(r'\[([^\]]+)\]\([^)]+\)'), r'\1'),  # Links: [text](url) -> text
+]
+
+
+def _strip_markdown(text: str) -> str:
+    """Remove common markdown formatting from text."""
+    for pattern, replacement in _MARKDOWN_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _extract_text_from_content(content: str | list) -> str | None:
+    """
+    Extract text content from a user message content field.
+
+    Args:
+        content: Either a string or a list of content items
+
+    Returns:
+        The extracted text, or None if no text found
+    """
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get('type') == 'text':
+                text = item.get('text')
+                if isinstance(text, str):
+                    return text
+
+    return None
+
+
+def extract_title_from_user_message(parsed_json: dict) -> str | None:
+    """
+    Extract a title from a user message JSON.
+
+    Extracts text content, strips markdown and whitespace,
+    truncates to TITLE_MAX_LENGTH characters, and adds ellipsis if truncated.
+
+    Args:
+        parsed_json: Parsed JSON content of a user message item
+
+    Returns:
+        Cleaned title string, or None if no text content found
+    """
+    message = parsed_json.get('message', {})
+    content = message.get('content')
+
+    if content is None:
+        return None
+
+    text = _extract_text_from_content(content)
+    if not text:
+        return None
+
+    # Strip markdown and whitespace
+    cleaned = _strip_markdown(text).strip()
+
+    # Collapse multiple whitespace into single space
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+
+    if not cleaned:
+        return None
+
+    # Truncate if needed
+    if len(cleaned) > TITLE_MAX_LENGTH:
+        return cleaned[:TITLE_MAX_LENGTH] + '…'
+
+    return cleaned
 
 
 # =============================================================================
@@ -211,6 +306,7 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
     - USER_MESSAGE: User messages with visible content (text, document, image), not meta
     - ASSISTANT_MESSAGE: Assistant messages with visible content (text, document, image)
     - API_ERROR: System messages with subtype 'api_error'
+    - CUSTOM_TITLE: Items of type 'custom-title' (session title set by Claude)
 
     Args:
         parsed_json: Parsed JSON content of the item
@@ -223,6 +319,10 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
         CURRENT_COMPUTE_VERSION in settings.py to trigger recomputation.
     """
     entry_type = parsed_json.get('type')
+
+    # Custom title (session title set by Claude)
+    if entry_type == 'custom-title':
+        return ItemKind.CUSTOM_TITLE
 
     # API error
     if entry_type == 'system':
@@ -489,7 +589,8 @@ def compute_session_metadata(session_id: str) -> None:
 
     This function runs in a ThreadPoolExecutor.
     It processes items in batches using iterator() to avoid memory issues.
-    Also builds SessionItemLink entries for tool_use → tool_result relationships.
+    Also builds SessionItemLink entries for tool_use → tool_result relationships,
+    and computes session title from first user message or custom-title items.
 
     Args:
         session_id: The session ID
@@ -519,6 +620,11 @@ def compute_session_metadata(session_id: str) -> None:
     # Map tool_use_id → line_num of the item containing the tool_use
     tool_use_map: dict[str, int] = {}
 
+    # Track if we've set the initial title from first user message
+    initial_title_set = False
+    # Track sessions that need title updates (session_id -> title)
+    session_titles: dict[str, str] = {}
+
     for item in queryset.iterator(chunk_size=batch_size):
         try:
             parsed = orjson.loads(item.content)
@@ -530,6 +636,21 @@ def compute_session_metadata(session_id: str) -> None:
         metadata = compute_item_metadata(parsed)
         item.display_level = metadata['display_level']
         item.kind = metadata['kind']
+
+        # Handle title extraction
+        if item.kind == ItemKind.USER_MESSAGE and not initial_title_set:
+            # First user message: set initial title if not already defined
+            title = extract_title_from_user_message(parsed)
+            if title:
+                session_titles[session_id] = title
+                initial_title_set = True
+
+        if item.kind == ItemKind.CUSTOM_TITLE:
+            # Custom title: update the target session's title
+            custom_title = parsed.get('customTitle')
+            target_session_id = parsed.get('sessionId', session_id)
+            if custom_title and isinstance(custom_title, str):
+                session_titles[target_session_id] = custom_title
 
         # Track tool_use IDs from assistant/content_items messages
         tool_use_ids = get_tool_use_ids(parsed)
@@ -600,6 +721,10 @@ def compute_session_metadata(session_id: str) -> None:
     # Final bulk create links
     if links_to_create:
         SessionItemLink.objects.bulk_create(links_to_create)
+
+    # Update session titles
+    for target_session_id, title in session_titles.items():
+        Session.objects.filter(id=target_session_id).update(title=title)
 
     session.compute_version = settings.CURRENT_COMPUTE_VERSION
     session.save(update_fields=['compute_version'])

@@ -15,8 +15,14 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 
-from twicc_poc.compute import compute_item_metadata, compute_item_metadata_live, is_tool_result_item, create_tool_result_link_live
-from twicc_poc.core.enums import ItemDisplayLevel
+from twicc_poc.compute import (
+    compute_item_metadata,
+    compute_item_metadata_live,
+    is_tool_result_item,
+    create_tool_result_link_live,
+    extract_title_from_user_message,
+)
+from twicc_poc.core.enums import ItemDisplayLevel, ItemKind
 from twicc_poc.core.models import Project, Session, SessionItem
 
 if TYPE_CHECKING:
@@ -81,6 +87,10 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
     Reads new lines from the file starting at last_offset.
     The session must already be saved to the database.
 
+    Also handles session title updates:
+    - First USER_MESSAGE sets initial title if not already set
+    - CUSTOM_TITLE items update the title of their target session
+
     Returns:
         A tuple of:
         - List of line_nums of new items added (sorted)
@@ -119,6 +129,11 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             items_to_create: list[tuple[SessionItem, dict]] = []
             current_line_num = session.last_line
 
+            # Track title updates (session_id -> title)
+            session_title_updates: dict[str, str] = {}
+            # Track if we've already set initial title for this session (from first user message ever)
+            initial_title_needs_set = session.title is None
+
             for line in lines:
                 current_line_num += 1
                 item = SessionItem(
@@ -135,6 +150,21 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 item.display_level = metadata['display_level']
                 item.kind = metadata['kind']
                 items_to_create.append((item, parsed))
+
+                # Handle title extraction
+                if item.kind == ItemKind.USER_MESSAGE and initial_title_needs_set:
+                    # First user message in this batch: set initial title
+                    title = extract_title_from_user_message(parsed)
+                    if title:
+                        session_title_updates[session.id] = title
+                        initial_title_needs_set = False
+
+                if item.kind == ItemKind.CUSTOM_TITLE:
+                    # Custom title: update the target session's title
+                    custom_title = parsed.get('customTitle')
+                    target_session_id = parsed.get('sessionId', session.id)
+                    if custom_title and isinstance(custom_title, str):
+                        session_title_updates[target_session_id] = custom_title
 
             # Bulk create all items
             items_only = [item for item, _ in items_to_create]
@@ -161,6 +191,13 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 # Tool result links (tool_result items are DEBUG_ONLY)
                 if is_tool_result_item(parsed):
                     create_tool_result_link_live(session.id, item, parsed)
+
+            # Apply title updates
+            for target_session_id, title in session_title_updates.items():
+                Session.objects.filter(id=target_session_id).update(title=title)
+                # If updating the current session, update the object too
+                if target_session_id == session.id:
+                    session.title = title
 
             # Update session tracking fields
             session.last_line = current_line_num

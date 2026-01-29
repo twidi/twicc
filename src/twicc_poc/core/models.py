@@ -30,6 +30,7 @@ class Session(models.Model):
     mtime = models.FloatField(default=0)
     archived = models.BooleanField(default=False)
     compute_version = models.PositiveIntegerField(null=True, blank=True)  # NULL = never computed
+    title = models.CharField(max_length=250, null=True, blank=True)  # Session title (from first user message or custom-title)
 
     class Meta:
         ordering = ["-mtime"]
