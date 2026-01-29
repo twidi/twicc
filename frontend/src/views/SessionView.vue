@@ -5,6 +5,7 @@ import { useDebounceFn, useThrottleFn } from '@vueuse/core'
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useDataStore } from '../stores/data'
+import { formatDate } from '../utils/date'
 import { INITIAL_ITEMS_COUNT, DISPLAY_MODE } from '../constants'
 import SessionItem from '../components/SessionItem.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
@@ -333,13 +334,6 @@ function onScrollerUpdate(startIndex, endIndex, visibleStartIndex, visibleEndInd
     }
 }
 
-// Format mtime as local datetime
-function formatDate(timestamp) {
-    if (!timestamp) return '-'
-    const date = new Date(timestamp * 1000)
-    return date.toLocaleString()
-}
-
 // Get display name for session header (title if available, otherwise ID)
 function getSessionDisplayName() {
     return session.value?.title || sessionId.value
@@ -390,7 +384,7 @@ function toggleGroup(groupHeadLineNum) {
                     {{ session.message_count ?? '??' }} ({{ session.last_line }} lines)
                 </span>
                 <span class="meta-item">
-                    <wa-icon name="clock"></wa-icon>
+                    <wa-icon name="clock" variant="regular"></wa-icon>
                     {{ formatDate(session.mtime) }}
                 </span>
             </div>

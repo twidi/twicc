@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useDataStore } from '../stores/data'
+import { formatDate } from '../utils/date'
 
 const props = defineProps({
     projectId: {
@@ -19,13 +20,6 @@ const store = useDataStore()
 const sessions = computed(() => {
     return store.getProjectSessions(props.projectId)
 })
-
-// Format mtime as local datetime
-function formatDate(timestamp) {
-    if (!timestamp) return '-'
-    const date = new Date(timestamp * 1000)
-    return date.toLocaleString()
-}
 
 // Get display name for session (title if available, otherwise ID)
 function getSessionDisplayName(session) {
@@ -51,7 +45,7 @@ function handleSelect(session) {
             <div class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</div>
             <div class="session-meta">
                 <span class="session-lines"><wa-icon name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
-                <span class="session-mtime">{{ formatDate(session.mtime) }}</span>
+                <span class="session-mtime"><wa-icon name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime) }}</span>
             </div>
         </div>
         <div v-if="sessions.length === 0" class="empty-state">

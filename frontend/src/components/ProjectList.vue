@@ -1,14 +1,8 @@
 <script setup>
 import { useDataStore } from '../stores/data'
+import { formatDate } from '../utils/date'
 
 const store = useDataStore()
-
-// Format mtime as local datetime
-function formatDate(timestamp) {
-    if (!timestamp) return '-'
-    const date = new Date(timestamp * 1000)
-    return date.toLocaleString()
-}
 
 const emit = defineEmits(['select'])
 
