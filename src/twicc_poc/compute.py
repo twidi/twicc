@@ -27,6 +27,13 @@ from twicc_poc.core.pricing import (
 # Content types considered user-visible (for display_level and kind computation)
 VISIBLE_CONTENT_TYPES = ('text', 'document', 'image')
 
+# XML prefixes for system messages (commands, command outputs)
+# These are user messages that should be treated as debug-only
+_SYSTEM_XML_PREFIXES = (
+    '<command-name>',
+    '<local-command-stdout>',
+)
+
 # Maximum length for extracted titles (before truncation)
 TITLE_MAX_LENGTH = 200
 
@@ -234,6 +241,26 @@ def is_tool_result_item(parsed_json: dict) -> bool:
     return isinstance(first, dict) and first.get('type') == 'tool_result'
 
 
+def _is_system_xml_content(content: str | list) -> bool:
+    """
+    Check if content is a system XML message (command invocation or output).
+
+    These are user messages containing only XML tags like:
+    - <command-name>...</command-name> (slash command invocations)
+    - <local-command-stdout>...</local-command-stdout> (command outputs)
+
+    Args:
+        content: Message content (string or list)
+
+    Returns:
+        True if the content is a system XML message
+    """
+    if isinstance(content, str):
+        stripped = content.lstrip()
+        return any(stripped.startswith(prefix) for prefix in _SYSTEM_XML_PREFIXES)
+    return False
+
+
 def _has_visible_content(content: str | list) -> bool:
     """
     Check if message content contains user-visible content.
@@ -346,6 +373,10 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
 
         message = parsed_json.get('message', {})
         content = message.get('content', [])
+
+        # System XML messages (commands, outputs) are debug-only, no kind
+        if _is_system_xml_content(content):
+            return None
 
         # Only user messages with visible content count as USER_MESSAGE
         if _has_visible_content(content):
