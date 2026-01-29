@@ -852,15 +852,26 @@ def compute_session_metadata(session_id: str) -> None:
     # Set context_usage to last known value
     session.context_usage = last_context_usage
 
-    # Sum all item costs for total_cost
+    # Sum all item costs for self_cost
+    from decimal import Decimal
     from django.db.models import Sum
-    total_cost = SessionItem.objects.filter(
+    self_cost = SessionItem.objects.filter(
         session=session,
         cost__isnull=False
     ).aggregate(total=Sum('cost'))['total']
-    session.total_cost = total_cost
+    session.self_cost = self_cost
 
-    session.save(update_fields=['compute_version', 'message_count', 'context_usage', 'total_cost'])
+    # Sum all subagent total_costs for subagents_cost
+    subagents_cost = Session.objects.filter(
+        parent_session=session,
+        total_cost__isnull=False
+    ).aggregate(total=Sum('total_cost'))['total'] or Decimal(0)
+    session.subagents_cost = subagents_cost
+
+    # Total = self + subagents
+    session.total_cost = (self_cost or Decimal(0)) + subagents_cost
+
+    session.save(update_fields=['compute_version', 'message_count', 'context_usage', 'self_cost', 'subagents_cost', 'total_cost'])
 
     connection.close()
 

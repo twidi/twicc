@@ -31,6 +31,33 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+def _update_parent_session_costs(parent_session_id: str) -> None:
+    """
+    Update the parent session's subagents_cost and total_cost.
+
+    Called when a subagent's cost changes. Recalculates the parent's
+    subagents_cost by summing all subagent total_costs, then updates
+    total_cost = self_cost + subagents_cost.
+
+    Uses F() expressions to avoid race conditions when multiple subagents
+    update simultaneously or when the parent session is being synced.
+    """
+    from django.db.models import F, Sum, Value
+    from django.db.models.functions import Coalesce
+
+    # Sum all subagent total_costs
+    subagents_cost = Session.objects.filter(
+        parent_session_id=parent_session_id,
+        total_cost__isnull=False
+    ).aggregate(total=Sum('total_cost'))['total'] or Decimal(0)
+
+    # Update parent using F() to avoid race conditions with self_cost changes
+    Session.objects.filter(id=parent_session_id).update(
+        subagents_cost=subagents_cost,
+        total_cost=Coalesce(F('self_cost'), Value(Decimal(0))) + subagents_cost,
+    )
+
+
 def is_session_file(path: Path) -> bool:
     """Check if a path is a valid session file (*.jsonl but not agent-*.jsonl)."""
     return path.suffix == ".jsonl" and not path.name.startswith("agent-")
@@ -280,18 +307,25 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                     session.context_usage = item.context_usage
                     break
 
-            # Increment total_cost with sum of new items' costs
+            # Increment self_cost with sum of new items' costs
             new_items_cost = sum(
                 (item.cost for item, _ in items_to_create if item.cost is not None),
                 Decimal(0)
             )
             if new_items_cost > 0:
-                session.total_cost = (session.total_cost or Decimal(0)) + new_items_cost
+                session.self_cost = (session.self_cost or Decimal(0)) + new_items_cost
+
+            # Recalculate total_cost = self_cost + subagents_cost
+            session.total_cost = (session.self_cost or Decimal(0)) + (session.subagents_cost or Decimal(0))
 
         # Update offset to end of file
         session.last_offset = f.tell()
         session.mtime = file_mtime
-        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "total_cost"])
+        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "self_cost", "subagents_cost", "total_cost"])
+
+        # If this is a subagent, propagate cost to parent session
+        if session.type == SessionType.SUBAGENT and session.parent_session_id:
+            _update_parent_session_costs(session.parent_session_id)
 
     # Exclude new items from modified_line_nums
     return sorted(new_line_nums), sorted(modified_line_nums - new_line_nums)

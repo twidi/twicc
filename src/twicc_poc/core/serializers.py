@@ -39,6 +39,8 @@ def serialize_session(session):
         "compute_version_up_to_date": session.compute_version == settings.CURRENT_COMPUTE_VERSION,
         # Cost and context usage fields
         "context_usage": session.context_usage,  # Current context usage in tokens
+        "self_cost": float(session.self_cost) if session.self_cost else None,  # Own items cost in USD
+        "subagents_cost": float(session.subagents_cost) if session.subagents_cost else None,  # Sum of subagents cost
         "total_cost": float(session.total_cost) if session.total_cost else None,  # Total cost in USD
     }
 

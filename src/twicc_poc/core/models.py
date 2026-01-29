@@ -71,7 +71,9 @@ class Session(models.Model):
 
     # Cost and context usage fields (computed from items)
     context_usage = models.PositiveIntegerField(null=True, blank=True)  # Current context usage (last known value in tokens)
-    total_cost = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)  # Total session cost in USD
+    self_cost = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)  # Own items cost in USD
+    subagents_cost = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)  # Sum of subagents total_cost
+    total_cost = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)  # self_cost + subagents_cost
 
     # Subagent-related fields
     type = models.CharField(

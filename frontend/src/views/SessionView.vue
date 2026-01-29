@@ -345,6 +345,26 @@ function formatCost(cost) {
     return `$${cost.toFixed(2)}`
 }
 
+// Format cost display for header
+const formattedTotalCost = computed(() => {
+    const sess = session.value
+    if (!sess || sess.total_cost == null) return null
+    return formatCost(sess.total_cost)
+})
+
+// Cost breakdown (self + subagents) - only shown if subagents have cost
+const formattedCostBreakdown = computed(() => {
+    const sess = session.value
+    if (!sess) return null
+
+    const subagentsCost = sess.subagents_cost
+    if (subagentsCost == null || subagentsCost <= 0) return null
+
+    const self = formatCost(sess.self_cost)
+    const subagents = formatCost(subagentsCost)
+    return `(${self} + ${subagents})`
+})
+
 // Calculate context usage percentage
 const contextUsagePercentage = computed(() => {
     const usage = session.value?.context_usage
@@ -414,9 +434,10 @@ function toggleGroup(groupHeadLineNum) {
                     <wa-icon name="comment" variant="regular"></wa-icon>
                     {{ session.message_count ?? '??' }} ({{ session.last_line }} lines)
                 </span>
-                <span v-if="session.total_cost != null" class="meta-item">
+                <span v-if="formattedTotalCost" class="meta-item">
                     <wa-icon name="coins" variant="regular"></wa-icon>
-                    {{ formatCost(session.total_cost) }}
+                    {{ formattedTotalCost }}
+                    <span v-if="formattedCostBreakdown" class="cost-breakdown">{{ formattedCostBreakdown }}</span>
                 </span>
                 <wa-progress-ring
                     v-if="contextUsagePercentage != null"
@@ -589,6 +610,11 @@ function toggleGroup(groupHeadLineNum) {
     display: flex;
     align-items: center;
     gap: var(--wa-space-xs);
+}
+
+.cost-breakdown {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-subtle);
 }
 
 .context-usage-ring {
