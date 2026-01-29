@@ -107,13 +107,20 @@ onMounted(render)
    Shiki syntax highlighting extras + Mermaid diagrams.
    NOT scoped — must penetrate v-html content.
    ------------------------------------------------------------------- */
+.markdown-body {
+    background: transparent;
+}
 
 /* -- Shiki-generated code blocks ------------------------------------- */
-.markdown-body pre.shiki {
+.markdown-body pre {
     padding: 16px;
     border-radius: 6px;
     overflow-x: auto;
-    background-color: #f6f8fa !important;
+    background: rgb(0 0 0 / .05) !important;
+    margin-top: 1em;
+}
+.markdown-body code, .markdown-body tt {
+    background: rgb(0 0 0 / .075);
 }
 .markdown-body pre.shiki[data-language] {
     padding-top: 36px;

@@ -76,7 +76,7 @@ function toggleJsonView() {
 </script>
 
 <template>
-    <div class="session-item">
+    <div class="session-item" :data-kind="kind">
         <!-- JSON toggle button (visible on hover) -->
         <wa-button
             class="json-toggle"
@@ -179,4 +179,122 @@ function toggleJsonView() {
     min-width: 0;
     overflow: auto;
 }
+</style>
+
+
+<style>
+.session-items .item-wrapper {
+    & > .session-item, & > .group-toggle {
+        max-width: 90%;
+    }
+}
+
+/* Style user message as a whole */
+.session-items .session-item[data-kind="user_message"] {
+    /* style from wa-card except color that we redefine later */
+    border-style: var(--wa-panel-border-style);
+    padding-inline: var(--wa-space-l);
+    border-radius: var(--wa-panel-border-radius);
+    border-width: var(--wa-panel-border-width);
+    padding: var(--wa-space-l);
+
+    width: max-content;
+    margin-left: auto;
+    margin-top: var(--wa-space-l);
+    margin-bottom: var(--wa-space-l);
+    --user-card-border-color: var(--wa-color-blue-95);
+    --user-card-bg-color: oklch(from var(--user-card-border-color) calc(l * 1.05) c h);
+    background-color: var(--user-card-bg-color);
+    border-color: var(--user-card-border-color);
+    box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) var(--wa-shadow-blur-s) var(--wa-shadow-spread-s) var(--user-card-border-color);
+}
+
+/* Style assistant messages in parts, the whole looking like a wa-card
+   But as we have many items, the first one handles the top, the last one handles the bottom, and all have left/right sides
+ */
+.session-items {
+    .vue-recycle-scroller__item-view:not(:has(.session-item[data-kind="user_message"])) {
+
+        /* define our own properties */
+        --assistant-card-border-width: var(--wa-panel-border-width);
+        --assistant-card-border-radius: var(--wa-panel-border-radius);
+        --assistant-card-default-shadow: var(--wa-shadow-s);
+        --assistant-card-spacing: var(--wa-space-l);
+
+        /* by default no radius because default style is only for "inner" (not first/last) rows */
+        --assistant-card-border-top-left-radius: 0;
+        --assistant-card-border-top-right-radius: 0;
+        --assistant-card-border-bottom-left-radius: 0;
+        --assistant-card-border-bottom-right-radius: 0;
+
+        /* by default no top/bottom border because default style is only for "inner" (not first/last) rows */
+        --assistant-card-border-top-width: 0;
+        --assistant-card-border-bottom-width: 0;
+
+        /* by default no block spacing because default style is only for "inner" (not first/last) rows */
+        --assistant-card-top-spacing: 0;
+        --assistant-card-bottom-spacing: 0;
+
+        /* by default no shadow because default style is only for "inner" (not last) rows */
+        --assistant-card-shadow: none;
+
+        & > .item-wrapper {
+
+            & > .session-item, .group-toggle {
+                /* common styles */
+                --assistant-card-bg-color: oklch(from var(--wa-color-gray-95) calc(l*1.025) c h);
+                background: var(--assistant-card-bg-color);
+                border-color: var(--wa-color-surface-border);
+                border-style: var(--wa-panel-border-style);
+                padding-inline: var(--wa-space-l);
+
+                border-radius:
+                    var(--assistant-card-border-top-left-radius)
+                    var(--assistant-card-border-top-right-radius)
+                    var(--assistant-card-border-bottom-right-radius)
+                    var(--assistant-card-border-bottom-left-radius);
+
+                border-width:
+                    var(--assistant-card-border-top-width)
+                    var(--assistant-card-border-width)
+                    var(--assistant-card-border-bottom-width)
+                    var(--assistant-card-border-width);
+
+                padding:
+                    var(--assistant-card-top-spacing)
+                    var(--assistant-card-spacing)
+                    var(--assistant-card-bottom-spacing)
+                    var(--assistant-card-spacing);
+
+                box-shadow: var(--assistant-card-shadow);
+
+            }
+        }
+    }
+    .vue-recycle-scroller__item-view:has(.session-item[data-kind="user_message"]) {
+        + .vue-recycle-scroller__item-view:not(:has(.session-item[data-kind="user_message"])) {
+            /* First non-user after a user message */
+            --assistant-card-border-top-left-radius: var(--assistant-card-border-radius);
+            --assistant-card-border-top-right-radius: var(--assistant-card-border-radius);
+            --assistant-card-border-top-width: var(--assistant-card-border-width);
+            --assistant-card-top-spacing: var(--assistant-card-spacing);
+        }
+    }
+
+    .vue-recycle-scroller__item-view:not(:has(.session-item[data-kind="user_message"])) {
+        /* Last non-user wih nothing after */
+        &:not(:has(+ .vue-recycle-scroller__item-view)),
+        /* Last non-user before a user message */
+        &:has(+ .vue-recycle-scroller__item-view .session-item[data-kind="user_message"])
+        {
+            --assistant-card-border-bottom-left-radius: var(--assistant-card-border-radius);
+            --assistant-card-border-bottom-right-radius: var(--assistant-card-border-radius);
+            --assistant-card-border-bottom-width: var(--assistant-card-border-width);
+            --assistant-card-bottom-spacing: var(--assistant-card-spacing);
+            --assistant-card-shadow: var(--assistant-card-default-shadow);;
+        }
+    }
+
+}
+
 </style>
