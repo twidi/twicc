@@ -70,7 +70,7 @@ function handleSelect(session) {
 }
 
 .session-item:hover {
-    background: var(--wa-color-surface-alt);
+    background: var(--wa-color-surface-lowered);
 }
 
 .session-item--active {
@@ -80,7 +80,7 @@ function handleSelect(session) {
 
 .session-name {
     font-size: var(--wa-font-size-s);
-    font-weight: 500;
+    font-weight: 600;
     color: var(--wa-color-text);
     /* Truncate with ellipsis */
     overflow: hidden;
