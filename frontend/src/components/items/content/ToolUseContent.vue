@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import JsonViewer from '../../JsonViewer.vue'
 
 const props = defineProps({
@@ -29,21 +29,38 @@ const props = defineProps({
     }
 })
 
+// Polling configuration
+const POLLING_DELAY_MS = 3000
+
+// Template ref for the result details element
+const resultDetailsRef = ref(null)
+
 // Tool result state
 const resultState = ref('idle') // 'idle' | 'loading' | 'loaded' | 'error'
 const resultData = ref(null)
 const resultError = ref(null)
+const isPolling = ref(false)
+const pollingIntervalId = ref(null)
+const abortController = ref(null)
 
-async function onResultOpen() {
-    // Only fetch once
-    if (resultState.value !== 'idle') return
-
-    resultState.value = 'loading'
+/**
+ * Fetch tool result from API.
+ * If result is empty and not already polling, starts polling.
+ * If result has data, stops polling.
+ */
+async function fetchResult() {
+    // Don't set loading state if we're polling (to avoid flicker)
+    if (!isPolling.value) {
+        resultState.value = 'loading'
+    }
     resultError.value = null
+
+    // Create new AbortController for this request
+    abortController.value = new AbortController()
 
     try {
         const url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/items/${props.lineNum}/tool-results/${props.toolId}/`
-        const response = await fetch(url)
+        const response = await fetch(url, { signal: abortController.value.signal })
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`)
@@ -52,11 +69,106 @@ async function onResultOpen() {
         const data = await response.json()
         resultData.value = data.results
         resultState.value = 'loaded'
+
+        // If we got data, stop polling
+        if (data.results && data.results.length > 0) {
+            stopPolling()
+        } else if (!isPolling.value) {
+            // No data and not polling yet: start polling
+            startPolling()
+        }
     } catch (err) {
+        // Ignore abort errors (expected when stopping polling)
+        if (err.name === 'AbortError') {
+            return
+        }
         resultError.value = err.message
         resultState.value = 'error'
+        stopPolling()
+    } finally {
+        abortController.value = null
     }
 }
+
+/**
+ * Start polling for results at regular intervals.
+ */
+function startPolling() {
+    if (pollingIntervalId.value) return // Already polling
+    isPolling.value = true
+    pollingIntervalId.value = setInterval(fetchResult, POLLING_DELAY_MS)
+}
+
+/**
+ * Stop polling and reset polling state.
+ * Also aborts any in-flight fetch request.
+ */
+function stopPolling() {
+    // Abort any in-flight request
+    if (abortController.value) {
+        abortController.value.abort()
+        abortController.value = null
+    }
+    if (pollingIntervalId.value) {
+        clearInterval(pollingIntervalId.value)
+        pollingIntervalId.value = null
+    }
+    isPolling.value = false
+}
+
+/**
+ * Handler for when the result details section is opened.
+ * Fetches if idle, or if loaded but empty (to retry).
+ */
+function onResultOpen() {
+    // Fetch if idle, or if loaded but no data (retry)
+    const shouldFetch = resultState.value === 'idle' ||
+        (resultState.value === 'loaded' && (!resultData.value || resultData.value.length === 0))
+
+    if (shouldFetch) {
+        fetchResult()
+    }
+}
+
+/**
+ * Handler for when the result details section is closed.
+ * Stops polling to avoid unnecessary requests.
+ */
+function onResultClose() {
+    stopPolling()
+}
+
+/**
+ * Handler for when the parent tool use details is closed.
+ * Stops polling to avoid unnecessary requests.
+ */
+function onToolUseClose() {
+    stopPolling()
+}
+
+/**
+ * Handler for when the parent tool use details is opened.
+ * If the result section is already open and has no data, triggers a fetch/poll.
+ */
+function onToolUseOpen() {
+    // Check if result details is open (wa-details has an 'open' property)
+    const isResultOpen = resultDetailsRef.value?.open === true
+
+    if (isResultOpen) {
+        // Result is open, check if we need to fetch/poll
+        const shouldFetch = resultState.value === 'idle' ||
+            (resultState.value === 'loaded' && (!resultData.value || resultData.value.length === 0))
+
+        if (shouldFetch) {
+            fetchResult()
+        }
+    }
+}
+
+// Cleanup on unmount (e.g., when changing session, toggling groups)
+onUnmounted(() => {
+    stopPolling()
+})
 
 // Computed for display: single result or array of multiple
 const displayResult = computed(() => {
@@ -105,7 +217,7 @@ function toggleResultPath(path) {
 </script>
 
 <template>
-    <wa-details class="item-details tool-use" icon-placement="start">
+    <wa-details class="item-details tool-use" icon-placement="start" @wa-show="onToolUseOpen" @wa-hide="onToolUseClose">
         <span slot="summary" class="items-details-summary">
             <strong class="items-details-summary-name">{{ name }}</strong>
             <template v-if="description">
@@ -124,7 +236,7 @@ function toggleResultPath(path) {
         <div v-else class="tool-no-input">
             No input parameters
         </div>
-        <wa-details class="tool-result" @wa-show="onResultOpen">
+        <wa-details ref="resultDetailsRef" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
             <span slot="summary">Result</span>
             <div class="tool-result-content">
                 <div v-if="resultState === 'loading'" class="tool-result-loading">
@@ -133,6 +245,10 @@ function toggleResultPath(path) {
                 </div>
                 <div v-else-if="resultState === 'error'" class="tool-result-error">
                     Error loading result: {{ resultError }}
+                </div>
+                <div v-else-if="resultState === 'loaded' && !displayResult && isPolling" class="tool-result-polling">
+                    <wa-spinner></wa-spinner>
+                    <span>Result not yet available. Checking again shortly...</span>
                 </div>
                 <div v-else-if="resultState === 'loaded' && !displayResult" class="tool-result-empty">
                     No result available
@@ -170,7 +286,8 @@ function toggleResultPath(path) {
     padding: var(--wa-space-xs) 0;
 }
 
-.tool-result-loading {
+.tool-result-loading,
+.tool-result-polling {
     display: flex;
     align-items: center;
     gap: var(--wa-space-s);
