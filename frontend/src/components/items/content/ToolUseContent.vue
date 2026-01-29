@@ -273,7 +273,7 @@ function toggleResultPath(path) {
 }
 
 .tool-no-input {
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-style: italic;
     padding: var(--wa-space-xs) 0;
 }
@@ -291,7 +291,7 @@ function toggleResultPath(path) {
     display: flex;
     align-items: center;
     gap: var(--wa-space-s);
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
 }
 
 .tool-result-error {
@@ -299,7 +299,7 @@ function toggleResultPath(path) {
 }
 
 .tool-result-empty {
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-style: italic;
 }
 

@@ -54,6 +54,6 @@ const errorInfo = computed(() => {
 
 .error-detail {
     font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
 }
 </style>

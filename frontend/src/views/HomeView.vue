@@ -82,7 +82,7 @@ async function handleRetry() {
     justify-content: center;
     gap: var(--wa-space-s);
     flex: 1;
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-m);
 }
 </style>

@@ -55,7 +55,7 @@ function togglePath(path) {
 }
 
 .unknown-no-data {
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-style: italic;
     padding: var(--wa-space-xs) 0;
 }

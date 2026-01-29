@@ -78,7 +78,7 @@ wa-switch:state(checked) {
 
 .toggle-label {
     font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     opacity: 0;
     transition: opacity 0.2s;
 }

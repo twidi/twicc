@@ -184,7 +184,7 @@ function toggleJsonView() {
     flex-shrink: 0;
     width: 40px;
     text-align: right;
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-weight: 500;
     user-select: none;
 }
@@ -402,7 +402,7 @@ wa-details.item-details {
         color: var(--wa-color-text);
     }
     .items-details-summary-separator {
-        color: var(--wa-color-text-subtle);
+        color: var(--wa-color-text-quiet);
     }
     .items-details-summary-description {
         color: var(--wa-color-text);

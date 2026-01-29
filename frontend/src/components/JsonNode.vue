@@ -137,7 +137,7 @@ function forwardToggle(path) {
 }
 
 .json-bracket {
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
 }
 
 .json-toggle {
@@ -146,7 +146,7 @@ function forwardToggle(path) {
     height: 16px;
     text-align: center;
     cursor: pointer;
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-weight: bold;
     user-select: none;
 }
@@ -156,7 +156,7 @@ function forwardToggle(path) {
 }
 
 .json-preview {
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-style: italic;
     margin: 0 var(--wa-space-2xs);
 }

@@ -99,14 +99,14 @@ function handleSelect(session) {
     display: flex;
     justify-content: space-between;
     font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     margin-top: var(--wa-space-2xs);
 }
 
 .empty-state {
     text-align: center;
     padding: var(--wa-space-l);
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-s);
 }
 </style>

@@ -186,7 +186,7 @@ function handleBackHome() {
     font-size: var(--wa-font-size-s);
     font-weight: 600;
     text-transform: uppercase;
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     letter-spacing: 0.05em;
 }
 
@@ -203,7 +203,7 @@ function handleBackHome() {
     align-items: center;
     justify-content: center;
     height: 100%;
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-l);
 }
 
@@ -214,7 +214,7 @@ function handleBackHome() {
     justify-content: center;
     gap: var(--wa-space-s);
     padding: var(--wa-space-xl);
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-s);
 }
 </style>

@@ -31,7 +31,7 @@ defineProps({
 }
 
 .placeholder {
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-style: italic;
 }
 </style>

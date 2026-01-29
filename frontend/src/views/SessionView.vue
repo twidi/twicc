@@ -432,7 +432,7 @@ function toggleGroup(groupHeadLineNum) {
             <div class="session-meta">
                 <span class="meta-item">
                     <wa-icon name="comment" variant="regular"></wa-icon>
-                    {{ session.message_count ?? '??' }} ({{ session.last_line }} lines)
+                    {{ session.message_count ?? '??' }} <span class="nb_lines">({{ session.last_line }} lines)</span>
                 </span>
                 <span v-if="formattedTotalCost" class="meta-item">
                     <wa-icon name="coins" variant="regular"></wa-icon>
@@ -603,7 +603,7 @@ function toggleGroup(groupHeadLineNum) {
     gap: var(--wa-space-l);
     margin-top: var(--wa-space-s);
     font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
 }
 
 .meta-item {
@@ -612,9 +612,14 @@ function toggleGroup(groupHeadLineNum) {
     gap: var(--wa-space-xs);
 }
 
+.nb_lines {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+}
+
 .cost-breakdown {
     font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
 }
 
 .context-usage-ring {
@@ -644,7 +649,7 @@ function toggleGroup(groupHeadLineNum) {
     justify-content: center;
     gap: var(--wa-space-s);
     height: 200px;
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-m);
 }
 

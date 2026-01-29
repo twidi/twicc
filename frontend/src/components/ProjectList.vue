@@ -69,12 +69,12 @@ function handleSelect(project) {
     display: flex;
     justify-content: space-between;
     font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
 }
 
 .empty-state {
     text-align: center;
     padding: var(--wa-space-xl);
-    color: var(--wa-color-text-subtle);
+    color: var(--wa-color-text-quiet);
 }
 </style>
