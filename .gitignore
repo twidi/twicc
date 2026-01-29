@@ -226,3 +226,6 @@ data.sqlite-shm
 
 # Development process controller runtime data
 .devctl/
+
+# Git worktrees
+.worktrees/
