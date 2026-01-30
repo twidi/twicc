@@ -52,7 +52,7 @@ function handleSelect(session) {
             <div class="session-meta">
                 <span class="session-messages"><wa-icon name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
                 <span v-if="session.total_cost != null" class="session-cost"><wa-icon name="coins" variant="regular"></wa-icon> {{ formatCost(session.total_cost) }}</span>
-                <span class="session-mtime"><wa-icon name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime) }}</span>
+                <span class="session-mtime"><wa-icon name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
             </div>
         </div>
         <div v-if="sessions.length === 0" class="empty-state">
