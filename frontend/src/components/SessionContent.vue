@@ -28,7 +28,6 @@ const mode = props.parentSessionId ? 'subagent' : 'session'
             :session-id="sessionId"
             :mode="mode"
         />
-        <wa-divider></wa-divider>
         <SessionItemsList
             :session-id="sessionId"
             :parent-session-id="parentSessionId"

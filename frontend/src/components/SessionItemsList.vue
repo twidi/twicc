@@ -480,17 +480,4 @@ function toggleGroup(groupHeadLineNum) {
     margin: 0 auto;
 }
 
-.group-expanded {
-    display: flex;
-    flex-direction: column;
-}
-
-.group-expanded .group-toggle {
-    margin-bottom: 0;
-}
-
-.group-expanded .session-item {
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
-}
 </style>

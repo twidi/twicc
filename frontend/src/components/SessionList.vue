@@ -29,7 +29,7 @@ function getSessionDisplayName(session) {
 // Format cost as USD string (e.g., "$0.42")
 function formatCost(cost) {
     if (cost == null) return null
-    return `$${cost.toFixed(2)}`
+    return `${cost.toFixed(2)}`
 }
 
 const emit = defineEmits(['select'])
@@ -41,20 +41,22 @@ function handleSelect(session) {
 
 <template>
     <div class="session-list">
-        <div
+        <wa-button
             v-for="session in sessions"
             :key="session.id"
+            :appearance="session.id === sessionId ? 'outlined' : 'plain'"
+            :variant="session.id === sessionId ? 'brand' : 'neutral'"
             class="session-item"
             :class="{ 'session-item--active': session.id === sessionId }"
             @click="handleSelect(session)"
         >
             <div class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</div>
             <div class="session-meta">
-                <span class="session-messages"><wa-icon name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
-                <span v-if="session.total_cost != null" class="session-cost"><wa-icon name="coins" variant="regular"></wa-icon> {{ formatCost(session.total_cost) }}</span>
-                <span class="session-mtime"><wa-icon name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
+                <span class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
+                <span v-if="session.total_cost != null" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon> {{ formatCost(session.total_cost) }}</span>
+                <span class="session-mtime"><wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
             </div>
-        </div>
+        </wa-button>
         <div v-if="sessions.length === 0" class="empty-state">
             No sessions
         </div>
@@ -68,26 +70,18 @@ function handleSelect(session) {
     gap: var(--wa-space-xs);
 }
 
-.session-item {
-    padding: var(--wa-space-s) var(--wa-space-m);
-    border-radius: var(--wa-radius-s);
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-    background: transparent;
+.session-item::part(base) {
+    padding-block: var(--wa-space-xl);
+    margin-bottom: var(--wa-shadow-offset-y-s);  /* default if border, enforce for non active items to avoid movement */
 }
-
-.session-item:hover {
-    background: var(--wa-color-surface-lowered);
-}
-
-.session-item--active {
-    background: var(--wa-color-surface-active);
-    border-left: 3px solid var(--wa-color-brand);
+.session-item::part(label) {
+    width: 100%;
+    text-align: left;
 }
 
 .session-name {
     font-size: var(--wa-font-size-s);
-    font-weight: 600;
+    font-weight: 700;
     color: var(--wa-color-text);
     /* Truncate with ellipsis */
     overflow: hidden;

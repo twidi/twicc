@@ -67,7 +67,7 @@ wa-switch {
     width: 100%;
 }
 
-wa-switch:state(checked) {
+.group-toggle:not(:has(+.session-item > .json-view:first-child)) wa-switch:state(checked) {
     opacity: 1;
     margin-bottom: calc(var(--wa-space-l) * -1/2);
     z-index: 1;

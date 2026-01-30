@@ -28,8 +28,8 @@ const config = computed(() => statusConfig[props.status] || statusConfig.CLOSED)
 <style scoped>
 .connection-indicator {
     position: fixed;
-    top: var(--wa-space-s);
-    right: var(--wa-space-s);
+    top: var(--wa-space-2xs);
+    left: var(--wa-space-2xs);
     z-index: 1000;
 }
 

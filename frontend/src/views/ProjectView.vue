@@ -61,9 +61,9 @@ function handleBackHome() {
         <!-- Sidebar -->
         <aside class="sidebar">
             <div class="sidebar-header">
-                <button class="back-button" @click="handleBackHome">
+                <wa-button class="back-button" variant="brand" appearance="outlined" size="small" @click="handleBackHome">
                     <wa-icon name="arrow-left"></wa-icon>
-                </button>
+                </wa-button>
                 <wa-select
                     :value.attr="projectId"
                     @change="handleProjectChange"
@@ -83,8 +83,6 @@ function handleBackHome() {
             <wa-divider></wa-divider>
 
             <div class="sidebar-sessions">
-                <h3 class="sessions-title">Sessions</h3>
-
                 <!-- Error state -->
                 <FetchErrorPanel
                     v-if="didSessionsFailToLoad"
@@ -128,11 +126,11 @@ function handleBackHome() {
 }
 
 .sidebar {
-    width: 280px;
-    min-width: 280px;
+    width: 300px;
+    min-width: 300px;
     height: 100%;
     background: var(--wa-color-surface-alt);
-    border-right: 1px solid var(--wa-color-surface-border);
+    border-right: 4px solid var(--wa-color-surface-border);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -143,25 +141,7 @@ function handleBackHome() {
     display: flex;
     align-items: center;
     gap: var(--wa-space-s);
-    padding: var(--wa-space-m);
-}
-
-.back-button {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border: none;
-    background: transparent;
-    border-radius: var(--wa-radius-s);
-    cursor: pointer;
-    color: var(--wa-color-text);
-    transition: background-color 0.15s ease;
-}
-
-.back-button:hover {
-    background: var(--wa-color-surface-active);
+    padding: var(--wa-space-s);
 }
 
 .project-selector {
@@ -170,24 +150,17 @@ function handleBackHome() {
 
 .sidebar wa-divider {
     flex-shrink: 0;
+    --width: 4px;
+    margin: 0;
 }
 
 .sidebar-sessions {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: var(--wa-space-m);
+    padding: var(--wa-space-s);
     display: flex;
     flex-direction: column;
-}
-
-.sessions-title {
-    margin: 0 0 var(--wa-space-m) 0;
-    font-size: var(--wa-font-size-s);
-    font-weight: 600;
-    text-transform: uppercase;
-    color: var(--wa-color-text-quiet);
-    letter-spacing: 0.05em;
 }
 
 .main-content {

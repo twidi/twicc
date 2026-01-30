@@ -39,7 +39,7 @@ const displayName = computed(() => {
 // Format cost as USD string (e.g., "$0.42")
 function formatCost(cost) {
     if (cost == null) return null
-    return `$${cost.toFixed(2)}`
+    return `${cost.toFixed(2)}`
 }
 
 // Format cost display for header
@@ -105,7 +105,7 @@ function onModeChange(event) {
 
 <template>
     <header class="session-header" v-if="session">
-        <div class="session-title">
+        <div v-if="mode === 'session'" class="session-title">
             <h2 :title="displayName">{{ displayName }}</h2>
         </div>
 
@@ -125,13 +125,30 @@ function onModeChange(event) {
 
         <div class="session-meta">
             <span class="meta-item">
-                <wa-icon name="comment" variant="regular"></wa-icon>
-                {{ session.message_count ?? '??' }} <span class="nb_lines">({{ session.last_line }} lines)</span>
+                <wa-icon auto-width name="comment" variant="regular"></wa-icon>
+                <span>
+                    {{ session.message_count ?? '??' }}
+                    <span class="nb_lines">({{ session.last_line }} lines)</span>
+                </span>
             </span>
             <span v-if="formattedTotalCost" class="meta-item">
-                <wa-icon name="coins" variant="regular"></wa-icon>
-                {{ formattedTotalCost }}
-                <span v-if="formattedCostBreakdown" class="cost-breakdown">{{ formattedCostBreakdown }}</span>
+                <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
+                <span>
+                    {{ formattedTotalCost }}
+                    <span v-if="formattedCostBreakdown" class="cost-breakdown">{{ formattedCostBreakdown }}</span>
+                </span>
+            </span>
+            <span class="meta-item">
+                <wa-icon auto-width name="clock" variant="regular"></wa-icon>
+                <span>
+                    {{ formatDate(session.mtime) }}
+                </span>
+            </span>
+            <span v-if="formattedModel" class="meta-item">
+                <wa-icon auto-width name="robot" variant="classic"></wa-icon>
+                <span>
+                    {{ formattedModel }}
+                </span>
             </span>
             <wa-progress-ring
                 v-if="contextUsagePercentage != null"
@@ -142,16 +159,9 @@ function onModeChange(event) {
                     '--indicator-width': contextUsageIndicatorWidth
                 }"
             ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
-            <span class="meta-item">
-                <wa-icon name="clock" variant="regular"></wa-icon>
-                {{ formatDate(session.mtime) }}
-            </span>
-            <span v-if="formattedModel" class="meta-item">
-                <wa-icon name="robot" variant="classic"></wa-icon>
-                {{ formattedModel }}
-            </span>
         </div>
     </header>
+    <wa-divider></wa-divider>
 </template>
 
 <style scoped>
@@ -159,8 +169,8 @@ function onModeChange(event) {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--wa-space-m);
-    padding: var(--wa-space-l);
+    gap: var(--wa-space-xs);
+    padding: var(--wa-space-xs);
 }
 
 .session-title {
@@ -191,9 +201,7 @@ function onModeChange(event) {
     width: 100%;
     display: flex;
     gap: var(--wa-space-l);
-    margin-top: var(--wa-space-s);
     font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-quiet);
 }
 
 .meta-item {
@@ -201,13 +209,13 @@ function onModeChange(event) {
     align-items: center;
     gap: var(--wa-space-xs);
 }
-
-.nb_lines {
-    font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-quiet);
+.meta-item :deep( > span ) {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5em;
 }
 
-.cost-breakdown {
+.meta-item :deep( > span > span ) {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
 }
@@ -217,4 +225,10 @@ function onModeChange(event) {
     --track-width: 3px;
     font-size: var(--wa-font-size-2xs);
 }
+
+wa-divider {
+    --width: 4px;
+    margin: 0;
+}
+
 </style>

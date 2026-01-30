@@ -324,8 +324,8 @@ function toggleResultPath(path) {
                 <wa-button
                     v-if="agentLinkState !== 'not_found'"
                     size="small"
-                    variant="filled"
-                    appearance="brand"
+                    variant="brand"
+                    appearance="outlined"
                     :loading="agentLinkState === 'loading'"
                     @click.stop="handleViewAgent"
                 >
@@ -376,6 +376,10 @@ function toggleResultPath(path) {
 </template>
 
 <style scoped>
+wa-details::part(content) {
+    padding-top: 0;
+}
+
 wa-details.with-right-button {
     /* Summary layout with button on the right */
     &::part(header) {

@@ -88,6 +88,7 @@ function toggleJsonView() {
     <div class="session-item" :data-kind="kind">
         <!-- JSON toggle button (visible on hover) -->
         <wa-button
+             v-if="!showJson"
             class="json-toggle"
             :variant="showJson ? 'warning' : 'neutral'"
             size="small"
@@ -98,8 +99,17 @@ function toggleJsonView() {
         </wa-button>
 
         <!-- JSON view -->
-        <div v-if="showJson" class="json-view">
-            <div class="line-number">{{ lineNum }}</div>
+        <wa-callout appearance="outlined" variant="neutral" v-if="showJson" class="json-view">
+            <wa-button
+                class="json-toggle"
+                :variant="showJson ? 'warning' : 'neutral'"
+                size="small"
+                @click="toggleJsonView"
+                :title="showJson ? 'Hide JSON' : 'Show JSON'"
+            >
+                <wa-icon name="code"></wa-icon>
+            </wa-button>
+            <wa-tag size="small"  appearance="filled-outlined" variant="brand" class="line-number" title="Line number">{{ lineNum }}</wa-tag>
             <div class="json-tree">
                 <JsonViewer
                     :data="parsedContent"
@@ -108,7 +118,7 @@ function toggleJsonView() {
                     @toggle="toggleCollapse"
                 />
             </div>
-        </div>
+        </wa-callout>
 
         <!-- Formatted view based on kind -->
         <template v-else>
@@ -158,8 +168,8 @@ function toggleJsonView() {
 
 .json-toggle {
     position: absolute;
-    top: 0;
-    right: 0;
+    top: -.75em;
+    right: -1.75em;
     opacity: 0;
     transition: opacity 0.2s;
     z-index: 1;
@@ -183,16 +193,25 @@ function toggleJsonView() {
 
 .json-view {
     display: flex;
-    gap: var(--wa-space-m);
+    background: var(--wa-color-surface-default);
+
+    .json-viewer {
+        position: static;
+    }
+    :deep(.json-viewer-wrap-toggle) {
+        top: -1.51em;
+        opacity: 1;
+    }
+
 }
 
 .line-number {
-    flex-shrink: 0;
-    width: 40px;
-    text-align: right;
-    color: var(--wa-color-text-quiet);
-    font-weight: 500;
-    user-select: none;
+    position: absolute;
+    left: 5px;
+    top: 5px;
+    translate: -50% -50%;
+    height: 2em;
+    padding: 0 0.5em;
 }
 
 .json-tree {
@@ -204,12 +223,21 @@ function toggleJsonView() {
 
 
 <style>
+
+.session-item:has(.json-view:first-child) {
+    padding-top: var(--wa-space-s) !important;
+}
+
+
 .session-items {
     --content-card-spacing: var(--wa-space-l);
     .session-item, .group-toggle {
         max-width: 85%;
         margin-left: var(--content-card-spacing);
     }
+
+    --user-card-base-color: var(--wa-color-indigo-95);
+    --assistant-card-base-color: var(--wa-color-gray-95);
 }
 
 /* Style user message as a whole */
@@ -227,7 +255,6 @@ function toggleJsonView() {
         var(--content-card-spacing)
         var(--content-card-spacing)
         auto;
-    --user-card-base-color: var(--wa-color-indigo-95);
     --user-card-bg-color: oklch(from var(--user-card-base-color) calc(l * 1.00) c h);
     --user-card-border-color: oklch(from var(--user-card-bg-color) calc(l / 1.05) c h);
     background-color: var(--user-card-bg-color);
@@ -274,7 +301,6 @@ function toggleJsonView() {
         & > .session-item, & > .group-toggle {
 
             /* common styles */
-            --assistant-card-base-color: var(--wa-color-gray-95);
             --assistant-card-bg-color: oklch(from var(--assistant-card-base-color) calc(l*1.025) c h);
             --assistant-card-border-color: oklch(from var(--assistant-card-bg-color) calc(l / 1.05) c h);
             background: var(--assistant-card-bg-color);

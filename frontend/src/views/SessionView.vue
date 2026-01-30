@@ -129,10 +129,10 @@ function openSubagentTab(agentId) {
 }
 
 /**
- * Get short display ID for a subagent (first 3 characters).
+ * Get short display ID for a subagent.
  */
-function getShortId(agentId) {
-    return agentId.substring(0, 3)
+function getAgentShortId(agentId) {
+    return agentId.substring(0, 8)
 }
 
 // Watch subagentId to open tab when navigating to a subagent URL
@@ -157,30 +157,40 @@ watch(subagentId, (newSubagentId) => {
             @mode-change="onModeChange"
         />
 
-        <wa-divider v-if="session"></wa-divider>
-
         <!-- Tab system -->
         <wa-tab-group
             v-if="session"
             :active="activeTabId"
             @wa-tab-show="onTabShow"
             class="session-tabs"
+            :class="{ 'one-tab-only': !openSubagentTabs.length }"
         >
             <!-- Tab navigation -->
-            <wa-tab slot="nav" panel="main">Session</wa-tab>
+            <wa-tab slot="nav" panel="main">
+                <wa-button
+                    :appearance="activeTabId === 'main' ? 'outlined' : 'plain'"
+                    :variant="activeTabId === 'main' ? 'brand' : 'neutral'"
+                    size="small"
+                >
+                    Session
+                </wa-button>
+            </wa-tab>
 
             <!-- Subagent tabs with close button -->
             <template v-for="tab in openSubagentTabs" :key="tab.id">
                 <wa-tab slot="nav" :panel="tab.id">
-                    <span class="subagent-tab-content">
-                        <span>Agent {{ getShortId(tab.agentId) }}</span>
-                        <wa-icon
-                            name="xmark"
-                            label="Close tab"
-                            class="tab-close-icon"
-                            @click.stop="closeTab(tab.id)"
-                        ></wa-icon>
-                    </span>
+                    <wa-button
+                        :appearance="activeTabId === tab.id ? 'outlined' : 'plain'"
+                        :variant="activeTabId === tab.id ? 'brand' : 'neutral'"
+                        size="small"
+                    >
+                        <span class="subagent-tab-content">
+                            <span>Agent "{{ getAgentShortId(tab.agentId) }}"</span>
+                            <span class="tab-close-icon" @click.stop="closeTab(tab.id)">
+                                <wa-icon name="xmark" label="Close tab"></wa-icon>
+                            </span>
+                        </span>
+                    </wa-button>
                 </wa-tab>
             </template>
 
@@ -230,6 +240,12 @@ watch(subagentId, (newSubagentId) => {
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    font-size: var(--wa-font-size-s);
+    --indicator-color: transparent;
+    --track-width: 4px;
+    &.one-tab-only::part(tabs) {
+        display: none;
+    }
 }
 
 .session-tabs::part(base) {
@@ -241,10 +257,20 @@ watch(subagentId, (newSubagentId) => {
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
-.session-tabs::part(nav) {
+.session-tabs::part(tabs) {
     padding-left: var(--wa-space-m);
+}
+
+.session-tabs :deep(wa-tab-panel::part(base)) {
+    padding: 0;
+}
+
+wa-tab::part(base) {
+    padding: var(--wa-space-xs);
 }
 
 /* Active tab panel needs to fill available space and handle overflow */
@@ -271,10 +297,16 @@ watch(subagentId, (newSubagentId) => {
 }
 
 .tab-close-icon {
+    aspect-ratio: 1;
+    height: 3em;
+    margin-right: -1em;
+    width: auto;
     font-size: 0.75rem;
     opacity: 0.5;
     cursor: pointer;
     transition: opacity 0.15s ease;
+    display: grid;
+    place-items: center;
 }
 
 .tab-close-icon:hover {
@@ -289,36 +321,5 @@ watch(subagentId, (newSubagentId) => {
     height: 200px;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-m);
-}
-</style>
-
-<style>
-/* Non-scoped styles for shadow DOM parts - scoped styles don't work with ::part() */
-.session-tabs::part(base) {
-    height: 100%;
-    overflow: hidden;
-}
-
-.session-tabs::part(body) {
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-}
-
-.session-tabs wa-tab-panel[active] {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-.session-tabs wa-tab-panel[active]::part(base) {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
 }
 </style>
