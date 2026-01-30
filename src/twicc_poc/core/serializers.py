@@ -26,10 +26,14 @@ def serialize_session(session):
 
     Includes compute_version_up_to_date boolean to indicate if the session's
     metadata has been computed with the current version of rules.
+
+    Works for both regular sessions and subagents. For subagents,
+    parent_session_id will be set; for regular sessions it will be None.
     """
     return {
         "id": session.id,
         "project_id": session.project_id,
+        "parent_session_id": session.parent_session_id,  # None for regular sessions, set for subagents
         "last_line": session.last_line,
         "mtime": session.mtime,
         "archived": session.archived,

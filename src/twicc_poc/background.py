@@ -25,7 +25,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 
 from twicc_poc.compute import compute_session_metadata
-from twicc_poc.core.models import Session, SessionType
+from twicc_poc.core.models import Session
 from twicc_poc.core.pricing import sync_model_prices
 from twicc_poc.core.serializers import serialize_session
 
@@ -219,13 +219,12 @@ async def start_background_compute_task() -> None:
                 logger.error(f"Error in refresh_session for {session.id}: {e}")
                 raise
 
-            # Only broadcast for regular sessions, not subagents
-            if session.type == SessionType.SESSION:
-                try:
-                    await broadcast_session_updated(session)
-                except Exception as e:
-                    logger.error(f"Error in broadcast_session_updated for {session.id}: {e}")
-                    raise
+            # Broadcast for both regular sessions and subagents
+            try:
+                await broadcast_session_updated(session)
+            except Exception as e:
+                logger.error(f"Error in broadcast_session_updated for {session.id}: {e}")
+                raise
 
             # Progress logging during initial phase only
             if not _initial_phase_complete and _initial_total and _initial_total > 0:

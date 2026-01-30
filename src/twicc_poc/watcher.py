@@ -128,9 +128,31 @@ def get_project_by_id(project_id: str) -> Project | None:
 
 
 @sync_to_async
-def get_or_create_session(session_id: str, project: Project) -> tuple[Session, bool]:
-    """Get or create a session in the database."""
-    return Session.objects.get_or_create(id=session_id, defaults={"project": project})
+def create_session(
+    parsed: ParsedPath,
+    project: Project,
+    parent_session: Session | None = None,
+) -> Session:
+    """Create a session or subagent in the database.
+
+    For subagents, parent_session must be provided.
+    Returns the created session.
+    """
+    if parsed.type == SessionType.SUBAGENT:
+        if parent_session is None:
+            raise ValueError("parent_session is required for subagents")
+        return Session.objects.create(
+            id=parsed.session_id,
+            project=project,
+            type=SessionType.SUBAGENT,
+            parent_session=parent_session,
+            agent_id=parsed.session_id,
+        )
+    else:
+        return Session.objects.create(
+            id=parsed.session_id,
+            project=project,
+        )
 
 
 @sync_to_async
@@ -200,86 +222,6 @@ def refresh_project(project: Project) -> Project:
     return project
 
 
-@sync_to_async
-def get_or_create_subagent(
-    agent_id: str,
-    project: Project,
-    parent_session: Session,
-) -> tuple[Session, bool]:
-    """Get or create a subagent session in the database."""
-    return Session.objects.get_or_create(
-        id=agent_id,
-        defaults={
-            "project": project,
-            "type": SessionType.SUBAGENT,
-            "parent_session": parent_session,
-            "agent_id": agent_id,
-        },
-    )
-
-
-async def sync_subagent_no_broadcast(
-    path: Path,
-    parsed: ParsedPath,
-    change_type: Change,
-) -> None:
-    """
-    Synchronize a subagent file without broadcasting to WebSocket.
-
-    This is called for files in {session_id}/subagents/agent-*.jsonl.
-    """
-    if change_type == Change.deleted:
-        # Subagent file deleted - mark as archived
-        subagent = await get_session_by_id(parsed.session_id)
-        if subagent and not subagent.archived:
-            subagent.archived = True
-            await sync_to_async(subagent.save)(update_fields=["archived"])
-        return
-
-    # Get parent session - must exist for subagent to be valid
-    parent_session = await get_session_by_id(parsed.parent_session_id)
-    if parent_session is None:
-        # Parent session not yet synced, skip for now
-        # Will be synced when parent session is processed
-        logger.debug(f"Skipping subagent {parsed.session_id}: parent session {parsed.parent_session_id} not found")
-        return
-
-    # Get project
-    project = await get_project_by_id(parsed.project_id)
-    if project is None:
-        logger.debug(f"Skipping subagent {parsed.session_id}: project {parsed.project_id} not found")
-        return
-
-    # Check if subagent already exists
-    existing_subagent = await get_session_by_id(parsed.session_id)
-
-    if existing_subagent is None:
-        # New subagent - check if file has content
-        has_content = await check_file_has_content_async(path)
-        if not has_content:
-            return
-
-        # Create subagent
-        subagent, _ = await get_or_create_subagent(
-            parsed.session_id,
-            project,
-            parent_session,
-        )
-
-        # Sync items
-        await sync_session_items_async(subagent, path)
-        return
-
-    # Subagent exists, sync items
-    subagent = existing_subagent
-    await sync_session_items_async(subagent, path)
-
-    # Handle unarchive if needed
-    if subagent.archived:
-        subagent.archived = False
-        await sync_to_async(subagent.save)(update_fields=["archived"])
-
-
 async def sync_project_and_broadcast(
     path: Path,
     change_type: Change,
@@ -324,32 +266,33 @@ async def sync_project_and_broadcast(
 
 async def sync_and_broadcast(
     path: Path,
+    parsed: ParsedPath,
     change_type: Change,
     channel_layer,
 ) -> None:
     """
-    Handle a session file change.
+    Handle a session or subagent file change.
 
-    Synchronizes the session with the database and broadcasts updates.
-    Empty sessions (0 lines) are ignored and not created in the database.
+    Synchronizes with the database and broadcasts updates via WebSocket.
+    Empty files (0 lines) are ignored and not created in the database.
     """
-    projects_dir = Path(settings.CLAUDE_PROJECTS_DIR)
+    is_subagent = parsed.type == SessionType.SUBAGENT
 
-    # Extract project_id and session_id from path
-    try:
-        relative_path = path.relative_to(projects_dir)
-        parts = relative_path.parts
-        if len(parts) != 2:
-            # Not a direct child of a project folder
+    # For subagents, verify parent session exists
+    parent_session: Session | None = None
+    if is_subagent:
+        parent_session = await get_session_by_id(parsed.parent_session_id)
+        if parent_session is None:
+            # Parent session not yet synced, skip for now
+            logger.debug(
+                f"Skipping subagent {parsed.session_id}: "
+                f"parent session {parsed.parent_session_id} not found"
+            )
             return
-        project_id = parts[0]
-        session_id = path.stem
-    except ValueError:
-        return
 
     if change_type == Change.deleted:
-        # Session file deleted - mark as archived
-        session = await get_session_by_id(session_id)
+        # File deleted - mark as archived
+        session = await get_session_by_id(parsed.session_id)
         if session and not session.archived:
             session.archived = True
             await sync_to_async(session.save)(update_fields=["archived"])
@@ -357,9 +300,69 @@ async def sync_and_broadcast(
                 "type": "session_updated",
                 "session": serialize_session(session),
             })
-            # Update project metadata
-            project = await get_project_by_id(project_id)
-            if project:
+            # Update project metadata (only for regular sessions)
+            if not is_subagent:
+                project = await get_project_by_id(parsed.project_id)
+                if project:
+                    await update_project_metadata(project)
+                    project = await refresh_project(project)
+                    await broadcast_message(channel_layer, {
+                        "type": "project_updated",
+                        "project": serialize_project(project),
+                    })
+        return
+
+    # Check if session already exists in DB
+    existing_session = await get_session_by_id(parsed.session_id)
+
+    if existing_session is None:
+        # New file - check if it has content before creating
+        has_content = await check_file_has_content_async(path)
+        if not has_content:
+            # Empty file (0 lines) - ignore completely
+            return
+
+        # Ensure project exists first
+        project, project_created = await get_or_create_project(parsed.project_id)
+        if project_created:
+            await broadcast_message(channel_layer, {
+                "type": "project_added",
+                "project": serialize_project(project),
+            })
+
+        # Create session (regular or subagent)
+        session = await create_session(parsed, project, parent_session)
+
+        # Sync items (session is saved, has valid PK)
+        new_line_nums, modified_line_nums = await sync_session_items_async(session, path)
+
+        # Refresh to get computed values
+        session = await refresh_session(session)
+
+        await broadcast_message(channel_layer, {
+            "type": "session_added",
+            "session": serialize_session(session),
+        })
+
+        if new_line_nums:
+            # Broadcast new items (with updated metadata of pre-existing items if any)
+            new_items = await get_session_items(session, new_line_nums)
+            if new_items:
+                message = {
+                    "type": "session_items_added",
+                    "session_id": parsed.session_id,
+                    "project_id": parsed.project_id,
+                    "parent_session_id": parsed.parent_session_id,
+                    "items": new_items,
+                }
+                if modified_line_nums:
+                    updated_metadata = await get_items_metadata(session, modified_line_nums)
+                    if updated_metadata:
+                        message["updated_metadata"] = updated_metadata
+                await broadcast_message(channel_layer, message)
+
+            # Update project metadata (only for regular sessions)
+            if not is_subagent:
                 await update_project_metadata(project)
                 project = await refresh_project(project)
                 await broadcast_message(channel_layer, {
@@ -368,77 +371,12 @@ async def sync_and_broadcast(
                 })
         return
 
-    # Check if session already exists in DB
-    existing_session = await get_session_by_id(session_id)
-
-    if existing_session is None:
-        # New session file - check if it has content before creating
-        has_content = await check_file_has_content_async(path)
-        if not has_content:
-            # Empty file (0 lines) - ignore completely
-            return
-
-        # Ensure project exists first
-        project, project_created = await get_or_create_project(project_id)
-        if project_created:
-            await broadcast_message(channel_layer, {
-                "type": "project_added",
-                "project": serialize_project(project),
-            })
-
-        # File has content, create and save the session first
-        session = Session(id=session_id, project=project)
-        await sync_to_async(session.save)()
-
-        # Now sync items (session is saved, has valid PK)
-        new_line_nums, modified_line_nums = await sync_session_items_async(session, path)
-
-        await broadcast_message(channel_layer, {
-            "type": "session_added",
-            "session": serialize_session(session),
-        })
-
-        if new_line_nums:
-            # Refresh session to get updated values
-            session = await refresh_session(session)
-
-            # Broadcast session update
-            await broadcast_message(channel_layer, {
-                "type": "session_updated",
-                "session": serialize_session(session),
-            })
-
-            # Broadcast new items (with updated metadata of pre-existing items if any)
-            new_items = await get_session_items(session, new_line_nums)
-            if new_items:
-                message = {
-                    "type": "session_items_added",
-                    "session_id": session_id,
-                    "project_id": project_id,
-                    "items": new_items,
-                }
-                # Include metadata of pre-existing items that were modified
-                if modified_line_nums:
-                    updated_metadata = await get_items_metadata(session, modified_line_nums)
-                    if updated_metadata:
-                        message["updated_metadata"] = updated_metadata
-                await broadcast_message(channel_layer, message)
-
-            # Update project metadata
-            await update_project_metadata(project)
-            project = await refresh_project(project)
-            await broadcast_message(channel_layer, {
-                "type": "project_updated",
-                "project": serialize_project(project),
-            })
-        return
-
     # Session exists in DB - sync items
     session = existing_session
-    project = await get_project_by_id(project_id)
+    project = await get_project_by_id(parsed.project_id)
     if project is None:
         # Project should exist if session exists, but handle gracefully
-        project, _ = await get_or_create_project(project_id)
+        project, _ = await get_or_create_project(parsed.project_id)
 
     new_line_nums, modified_line_nums = await sync_session_items_async(session, path)
 
@@ -457,26 +395,27 @@ async def sync_and_broadcast(
         if new_items:
             message = {
                 "type": "session_items_added",
-                "session_id": session_id,
-                "project_id": project_id,
+                "session_id": parsed.session_id,
+                "project_id": parsed.project_id,
+                "parent_session_id": parsed.parent_session_id,
                 "items": new_items,
             }
-            # Include metadata of pre-existing items that were modified
             if modified_line_nums:
                 updated_metadata = await get_items_metadata(session, modified_line_nums)
                 if updated_metadata:
                     message["updated_metadata"] = updated_metadata
             await broadcast_message(channel_layer, message)
 
-        # Update project metadata
-        await update_project_metadata(project)
-        project = await refresh_project(project)
-        await broadcast_message(channel_layer, {
-            "type": "project_updated",
-            "project": serialize_project(project),
-        })
+        # Update project metadata (only for regular sessions)
+        if not is_subagent:
+            await update_project_metadata(project)
+            project = await refresh_project(project)
+            await broadcast_message(channel_layer, {
+                "type": "project_updated",
+                "project": serialize_project(project),
+            })
     elif session.archived:
-        # Session file reappeared - unarchive
+        # File reappeared - unarchive
         session.archived = False
         await sync_to_async(session.save)(update_fields=["archived"])
         await broadcast_message(channel_layer, {
@@ -538,9 +477,5 @@ async def start_watcher() -> None:
                 # Invalid path (e.g., old-style agent-*.jsonl at project level)
                 continue
 
-            if parsed.type == SessionType.SESSION:
-                # Regular session - sync and broadcast
-                await sync_and_broadcast(path, change_type, channel_layer)
-            elif parsed.type == SessionType.SUBAGENT:
-                # Subagent - sync WITHOUT broadcast
-                await sync_subagent_no_broadcast(path, parsed, change_type)
+            # Sync and broadcast (works for both sessions and subagents)
+            await sync_and_broadcast(path, parsed, change_type, channel_layer)
