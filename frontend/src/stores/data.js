@@ -37,7 +37,12 @@ export const useDataStore = defineStore('data', {
 
             // Visual items - computed from sessionItems, display mode, and expanded groups
             // { sessionId: [{ lineNum, isGroupHead?, isExpanded? }, ...] }
-            sessionVisualItems: {}
+            sessionVisualItems: {},
+
+            // Open tabs per session - for tab restoration when returning to a session
+            // { sessionId: { tabs: ['main', 'agent-xxx', ...], activeTab: 'agent-xxx' } }
+            // Note: 'main' is always implicitly open, but included for consistency
+            sessionOpenTabs: {}
         }
     }),
 
@@ -109,7 +114,11 @@ export const useDataStore = defineStore('data', {
 
         // Get visual items for a session
         getSessionVisualItems: (state) => (sessionId) =>
-            state.localState.sessionVisualItems[sessionId] || []
+            state.localState.sessionVisualItems[sessionId] || [],
+
+        // Get open tabs for a session
+        getSessionOpenTabs: (state) => (sessionId) =>
+            state.localState.sessionOpenTabs[sessionId] || null
     },
 
     actions: {
@@ -427,20 +436,14 @@ export const useDataStore = defineStore('data', {
          *   - [min, max]: range (e.g., [10, 20])
          *   - [min, null]: from min onwards (e.g., [10, null])
          *   - [null, max]: up to max (e.g., [null, 10])
-         * @param {Object} options
-         * @param {boolean} options.isInitialLoading - If true, enables UI feedback (loading states, error handling)
+         * @param {string|null} parentSessionId - If provided, this is a subagent request
          */
-        async loadSessionItemsRanges(projectId, sessionId, ranges, { isInitialLoading = false } = {}) {
+        async loadSessionItemsRanges(projectId, sessionId, ranges, parentSessionId = null) {
             if (!ranges?.length) return
 
             // Initialize localState for this session if needed
             if (!this.localState.sessions[sessionId]) {
                 this.localState.sessions[sessionId] = {}
-            }
-
-            // Only set loading if isInitialLoading is true (initial load case)
-            if (isInitialLoading) {
-                this.localState.sessions[sessionId].itemsLoading = true
             }
 
             // Build query params
@@ -456,10 +459,13 @@ export const useDataStore = defineStore('data', {
                 }
             }
 
+            // Build URL (handle subagent case)
+            const baseUrl = parentSessionId
+                ? `/api/projects/${projectId}/sessions/${parentSessionId}/subagent/${sessionId}`
+                : `/api/projects/${projectId}/sessions/${sessionId}`
+
             try {
-                const res = await fetch(
-                    `/api/projects/${projectId}/sessions/${sessionId}/items/?${params}`
-                )
+                const res = await fetch(`${baseUrl}/items/?${params}`)
                 if (!res.ok) {
                     console.error('Failed to load session items ranges:', res.status, res.statusText)
                     if (isInitialLoading) {
@@ -473,13 +479,6 @@ export const useDataStore = defineStore('data', {
                 this.localState.sessions[sessionId].itemsLoadingError = false
             } catch (error) {
                 console.error('Failed to load session items ranges:', error)
-                if (isInitialLoading) {
-                    this.localState.sessions[sessionId].itemsLoadingError = true
-                }
-            } finally {
-                if (isInitialLoading) {
-                    this.localState.sessions[sessionId].itemsLoading = false
-                }
             }
         },
 
@@ -665,13 +664,17 @@ export const useDataStore = defineStore('data', {
          * Load metadata for all items in a session (without content).
          * @param {string} projectId
          * @param {string} sessionId
+         * @param {string|null} parentSessionId - If provided, this is a subagent request
          * @returns {Promise<Array|null>} Array of metadata objects or null on error
          */
-        async loadSessionMetadata(projectId, sessionId) {
+        async loadSessionMetadata(projectId, sessionId, parentSessionId = null) {
+            // Build URL (handle subagent case)
+            const baseUrl = parentSessionId
+                ? `/api/projects/${projectId}/sessions/${parentSessionId}/subagent/${sessionId}`
+                : `/api/projects/${projectId}/sessions/${sessionId}`
+
             try {
-                const res = await fetch(
-                    `/api/projects/${projectId}/sessions/${sessionId}/items/metadata/`
-                )
+                const res = await fetch(`${baseUrl}/items/metadata/`)
                 if (!res.ok) {
                     console.error('Failed to load session metadata:', res.status, res.statusText)
                     return null
@@ -734,6 +737,64 @@ export const useDataStore = defineStore('data', {
 
             // Recompute visual items in case metadata changed
             this.recomputeVisualItems(sessionId)
+        },
+
+        // Tab management actions
+
+        /**
+         * Add a tab to a session's open tabs.
+         * @param {string} sessionId - The session ID
+         * @param {string} tabId - The tab ID to add (e.g., 'agent-xxx')
+         */
+        addSessionTab(sessionId, tabId) {
+            if (!this.localState.sessionOpenTabs[sessionId]) {
+                this.localState.sessionOpenTabs[sessionId] = {
+                    tabs: ['main'],
+                    activeTab: 'main'
+                }
+            }
+            const state = this.localState.sessionOpenTabs[sessionId]
+            if (!state.tabs.includes(tabId)) {
+                state.tabs.push(tabId)
+            }
+        },
+
+        /**
+         * Remove a tab from a session's open tabs.
+         * @param {string} sessionId - The session ID
+         * @param {string} tabId - The tab ID to remove (e.g., 'agent-xxx')
+         */
+        removeSessionTab(sessionId, tabId) {
+            const state = this.localState.sessionOpenTabs[sessionId]
+            if (!state) return
+
+            const index = state.tabs.indexOf(tabId)
+            if (index > -1) {
+                state.tabs.splice(index, 1)
+            }
+        },
+
+        /**
+         * Set the active tab for a session.
+         * @param {string} sessionId - The session ID
+         * @param {string} tabId - The active tab ID
+         */
+        setSessionActiveTab(sessionId, tabId) {
+            if (!this.localState.sessionOpenTabs[sessionId]) {
+                this.localState.sessionOpenTabs[sessionId] = {
+                    tabs: ['main'],
+                    activeTab: 'main'
+                }
+            }
+            this.localState.sessionOpenTabs[sessionId].activeTab = tabId
+        },
+
+        /**
+         * Clear saved tabs for a session.
+         * @param {string} sessionId - The session ID
+         */
+        clearSessionOpenTabs(sessionId) {
+            delete this.localState.sessionOpenTabs[sessionId]
         }
     }
 })

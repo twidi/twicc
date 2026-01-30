@@ -42,17 +42,34 @@ def project_sessions(request, project_id):
     return JsonResponse(data, safe=False)
 
 
-def session_detail(request, project_id, session_id):
-    """GET /api/projects/<id>/sessions/<session_id>/ - Detail of a session."""
+def session_detail(request, project_id, session_id, parent_session_id=None):
+    """GET /api/projects/<id>/sessions/<session_id>/ - Detail of a session.
+
+    Also handles subagent route:
+    GET /api/projects/<id>/sessions/<parent_session_id>/subagent/<session_id>/
+
+    When parent_session_id is provided, validates that session.parent_session_id matches.
+    """
     try:
         session = Session.objects.get(id=session_id, project_id=project_id)
     except Session.DoesNotExist:
         raise Http404("Session not found")
+
+    # Validate parent_session_id if provided
+    if parent_session_id is not None:
+        if session.parent_session_id != parent_session_id:
+            raise Http404("Subagent not found for this parent session")
+
     return JsonResponse(serialize_session(session))
 
 
-def session_items(request, project_id, session_id):
+def session_items(request, project_id, session_id, parent_session_id=None):
     """GET /api/projects/<id>/sessions/<session_id>/items/ - Items of a session.
+
+    Also handles subagent route:
+    GET /api/projects/<id>/sessions/<parent_session_id>/subagent/<session_id>/items/
+
+    When parent_session_id is provided, validates that session.parent_session_id matches.
 
     Query params (optional):
         range: one or more ranges (can be repeated)
@@ -73,6 +90,11 @@ def session_items(request, project_id, session_id):
         session = Session.objects.get(id=session_id, project_id=project_id)
     except Session.DoesNotExist:
         raise Http404("Session not found")
+
+    # Validate parent_session_id if provided
+    if parent_session_id is not None:
+        if session.parent_session_id != parent_session_id:
+            raise Http404("Subagent not found for this parent session")
 
     items = session.items.all()
 
@@ -110,8 +132,13 @@ def session_items(request, project_id, session_id):
     return JsonResponse(data, safe=False)
 
 
-def session_items_metadata(request, project_id, session_id):
+def session_items_metadata(request, project_id, session_id, parent_session_id=None):
     """GET /api/projects/<id>/sessions/<session_id>/items/metadata/ - Metadata of all items.
+
+    Also handles subagent route:
+    GET /api/projects/<id>/sessions/<parent_session_id>/subagent/<session_id>/items/metadata/
+
+    When parent_session_id is provided, validates that session.parent_session_id matches.
 
     Returns all items with metadata fields but WITHOUT content.
     Used for initial session load to build the visual items list.
@@ -120,6 +147,11 @@ def session_items_metadata(request, project_id, session_id):
         session = Session.objects.get(id=session_id, project_id=project_id)
     except Session.DoesNotExist:
         raise Http404("Session not found")
+
+    # Validate parent_session_id if provided
+    if parent_session_id is not None:
+        if session.parent_session_id != parent_session_id:
+            raise Http404("Subagent not found for this parent session")
 
     items = session.items.all().defer('content')  # Already ordered by line_num (see Meta.ordering)
     data = [serialize_session_item_metadata(item) for item in items]

@@ -10,7 +10,18 @@ const routes = [
         component: ProjectView,
         children: [
             { path: '', name: 'project', component: null },
-            { path: 'session/:sessionId', name: 'session', component: SessionView }
+            {
+                path: 'session/:sessionId',
+                name: 'session',
+                component: SessionView,
+                children: [
+                    {
+                        // Subagent route - opens subagent tab within the session
+                        path: 'subagent/:subagentId',
+                        name: 'session-subagent'
+                    }
+                ]
+            }
         ]
     }
 ]
