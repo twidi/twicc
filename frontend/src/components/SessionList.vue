@@ -67,11 +67,12 @@ function handleSelect(session) {
 .session-list {
     display: flex;
     flex-direction: column;
-    gap: var(--wa-space-xs);
+    gap: var(--wa-space-3xs);
 }
 
 .session-item::part(base) {
-    padding-block: var(--wa-space-xl);
+    padding-block: var(--wa-space-xs);
+    height: auto;
     margin-bottom: var(--wa-shadow-offset-y-s);  /* default if border, enforce for non active items to avoid movement */
 }
 .session-item::part(label) {
@@ -91,7 +92,9 @@ function handleSelect(session) {
 
 .session-meta {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
+    gap: var(--wa-space-xs);
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
     margin-top: var(--wa-space-2xs);

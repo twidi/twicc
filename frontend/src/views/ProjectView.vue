@@ -57,9 +57,14 @@ function handleBackHome() {
 </script>
 
 <template>
-    <div class="project-view">
+    <wa-split-panel
+        class="project-view"
+        position-in-pixels="300"
+        primary="start"
+        snap="300px"
+    >
         <!-- Sidebar -->
-        <aside class="sidebar">
+        <aside slot="start" class="sidebar">
             <div class="sidebar-header">
                 <wa-button class="back-button" variant="brand" appearance="outlined" size="small" @click="handleBackHome">
                     <wa-icon name="arrow-left"></wa-icon>
@@ -109,28 +114,25 @@ function handleBackHome() {
         </aside>
 
         <!-- Main content area -->
-        <main class="main-content">
+        <main slot="end" class="main-content">
             <router-view v-if="sessionId" />
             <div v-else class="empty-state">
                 <p>Select a session from the list</p>
             </div>
         </main>
-    </div>
+    </wa-split-panel>
 </template>
 
 <style scoped>
 .project-view {
-    display: flex;
     height: 100vh;
-    overflow: hidden;
+    --min: 150px;
+    --max: 500px;
 }
 
 .sidebar {
-    width: 300px;
-    min-width: 300px;
     height: 100%;
     background: var(--wa-color-surface-alt);
-    border-right: 4px solid var(--wa-color-surface-border);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -139,6 +141,7 @@ function handleBackHome() {
 .sidebar-header {
     flex-shrink: 0;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--wa-space-s);
     padding: var(--wa-space-s);
@@ -146,6 +149,7 @@ function handleBackHome() {
 
 .project-selector {
     flex: 1;
+    min-width: min(200px, 100%);
 }
 
 .sidebar wa-divider {
