@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import orjson
 import logging
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+import xmltodict
 from django.conf import settings
 
 from twicc.core.enums import ItemDisplayLevel, ItemKind
@@ -27,10 +27,9 @@ from twicc.core.pricing import (
 # Content types considered user-visible (for display_level and kind computation)
 VISIBLE_CONTENT_TYPES = ('text', 'document', 'image')
 
-# XML prefixes for system messages (commands, command outputs)
+# XML prefixes for system messages
 # These are user messages that should be treated as debug-only
 _SYSTEM_XML_PREFIXES = (
-    '<command-name>',
     '<local-command-',
 )
 
@@ -83,17 +82,43 @@ def _extract_text_from_content(content: str | list) -> str | None:
     Returns:
         The extracted text, or None if no text found
     """
+    if not content:
+        return None
+
     if isinstance(content, str):
-        return content
+        return content.strip()
 
     if isinstance(content, list):
         for item in content:
             if isinstance(item, dict) and item.get('type') == 'text':
                 text = item.get('text')
                 if isinstance(text, str):
-                    return text
+                    return text.strip()
 
     return None
+
+
+class ParsedCommand(NamedTuple):
+    name: str
+    message: str | None
+    args: str | None
+
+
+def extract_command(text: str) -> ParsedCommand | None:
+    if not text.startswith("<command-"):
+        return None
+    xml_text = f"<root>{text}</root>"
+    try:
+        parsed = xmltodict.parse(xml_text)
+    except Exception:
+        return None
+    if not (name := (root := parsed["root"]).get("command-name")):
+        return None
+    return ParsedCommand(
+        name=name,
+        message=root.get("command-message"),
+        args=root.get("command-args"),
+    )
 
 
 def extract_title_from_user_message(parsed_json: dict) -> str | None:
@@ -119,8 +144,15 @@ def extract_title_from_user_message(parsed_json: dict) -> str | None:
     if not text:
         return None
 
-    # Strip markdown and whitespace
-    cleaned = _strip_markdown(text).strip()
+    if (command := extract_command(text)) is not None:
+        # Use command name as title for command invocations
+        cleaned = command.name
+        if command.args:
+            cleaned += f' {_strip_markdown(command.args)}'
+
+    else:
+        # Strip markdown and whitespace
+        cleaned = _strip_markdown(text).strip()
 
     # Collapse multiple whitespace into single space
     cleaned = re.sub(r'\s+', ' ', cleaned)
@@ -302,7 +334,6 @@ def _is_system_xml_content(content: str | list) -> bool:
     Check if content is a system XML message (command invocation or output).
 
     These are user messages containing only XML tags like:
-    - <command-name>...</command-name> (slash command invocations)
     - <local-command-stdout>...</local-command-stdout> (command outputs)
 
     Args:
@@ -424,19 +455,25 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
 
     # User messages
     if entry_type == 'user':
-        # Meta messages are not user messages
-        if parsed_json.get('isMeta') is True:
-            return ItemKind.SYSTEM
 
         message = parsed_json.get('message', {})
         content = message.get('content', [])
+        text = _extract_text_from_content(content)
+
+        # Commands are shown as user messages
+        if text is not None and extract_command(text):
+            return ItemKind.USER_MESSAGE
+
+        # Meta messages are not user messages
+        if parsed_json.get('isMeta'):
+            return ItemKind.SYSTEM
 
         # System XML messages (commands, outputs) are SYSTEM kind
         if _is_system_xml_content(content):
             return ItemKind.SYSTEM
 
         # Only user messages with visible content count as USER_MESSAGE
-        if _has_visible_content(content):
+        if text or _has_visible_content(content):
             return ItemKind.USER_MESSAGE
 
         # Content array without visible items → CONTENT_ITEMS
