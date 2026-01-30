@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 TwiCC (Twi for Twidi, CC for Claude Code)  - A standalone, self-contained web application to replace the Claude Code CLI. Single process, zero external services, one command to launch.
 
-**Status:** Active development. Original (POC) implementation details are documented in `architecture-decisions.md`.
+**Status:** Active development. Original (POC) implementation details are documented in `docs/2026-01-23-architecture-decisions.md`.
 
 **Quality approach:** We aim to implement everything to the best standards possible. The only shortcuts we allow: no tests and no linting.
 
