@@ -784,6 +784,11 @@ def compute_session_metadata(session_id: str) -> None:
     seen_message_ids: set[str] = set()
     last_context_usage: int | None = None
 
+    # Track runtime environment fields (last seen values)
+    last_cwd: str | None = None
+    last_git_branch: str | None = None
+    last_model: str | None = None
+
     for item in queryset.iterator(chunk_size=batch_size):
         try:
             parsed = orjson.loads(item.content)
@@ -800,6 +805,15 @@ def compute_session_metadata(session_id: str) -> None:
         compute_item_cost_and_usage(item, parsed, seen_message_ids)
         if item.context_usage is not None:
             last_context_usage = item.context_usage
+
+        # Extract runtime environment fields (keep last non-null value)
+        if cwd := parsed.get('cwd'):
+            last_cwd = cwd
+        if git_branch := parsed.get('gitBranch'):
+            last_git_branch = git_branch
+        if (message := parsed.get('message')) and isinstance(message, dict):
+            if model := message.get('model'):
+                last_model = model
 
         # Handle title extraction
         if item.kind == ItemKind.USER_MESSAGE and not initial_title_set:
@@ -950,7 +964,12 @@ def compute_session_metadata(session_id: str) -> None:
     # Total = self + subagents
     session.total_cost = (self_cost or Decimal(0)) + subagents_cost
 
-    session.save(update_fields=['compute_version', 'message_count', 'context_usage', 'self_cost', 'subagents_cost', 'total_cost'])
+    # Update runtime environment fields
+    session.cwd = last_cwd
+    session.git_branch = last_git_branch
+    session.model = last_model
+
+    session.save(update_fields=['compute_version', 'message_count', 'context_usage', 'self_cost', 'subagents_cost', 'total_cost', 'cwd', 'git_branch', 'model'])
 
     connection.close()
 

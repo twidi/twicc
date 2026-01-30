@@ -91,6 +91,11 @@ class Session(models.Model):
     )
     agent_id = models.CharField(max_length=255, null=True, blank=True)  # Short agent ID from filename (e.g., "a6c7d21")
 
+    # Runtime environment fields (last known values from JSONL)
+    cwd = models.CharField(max_length=500, null=True, blank=True)  # Current working directory
+    git_branch = models.CharField(max_length=255, null=True, blank=True)  # Git branch name
+    model = models.CharField(max_length=100, null=True, blank=True)  # Model name (e.g., "claude-opus-4-5-20251101")
+
     class Meta:
         ordering = ["-mtime"]
 

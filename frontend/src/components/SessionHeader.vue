@@ -87,6 +87,13 @@ const contextUsageIndicatorWidth = computed(() => {
     return `calc(var(--track-width) * ${multiplier.toFixed(2)})`
 })
 
+// Format model name for display from pre-parsed family and version
+const formattedModel = computed(() => {
+    const model = session.value?.model
+    if (!model?.family || !model?.version) return null
+    return `${model.family} ${model.version}`
+})
+
 /**
  * Handle display mode change from the selector.
  */
@@ -138,6 +145,10 @@ function onModeChange(event) {
             <span class="meta-item">
                 <wa-icon name="clock" variant="regular"></wa-icon>
                 {{ formatDate(session.mtime) }}
+            </span>
+            <span v-if="formattedModel" class="meta-item">
+                <wa-icon name="robot" variant="classic"></wa-icon>
+                {{ formattedModel }}
             </span>
         </div>
     </header>

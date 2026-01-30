@@ -195,6 +195,11 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Track if we've already set initial title for this session (from first user message ever)
             initial_title_needs_set = session.title is None
 
+            # Track last seen values for runtime environment fields
+            last_cwd: str | None = None
+            last_git_branch: str | None = None
+            last_model: str | None = None
+
             # For subagents: track if we need to create the agent link from first user_message
             # Only do this if the session has no items yet (first sync of this subagent)
             subagent_needs_link = (
@@ -231,6 +236,15 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 compute_item_cost_and_usage(item, parsed, seen_message_ids)
 
                 items_to_create.append((item, parsed))
+
+                # Extract runtime environment fields (keep last non-null value)
+                if cwd := parsed.get('cwd'):
+                    last_cwd = cwd
+                if git_branch := parsed.get('gitBranch'):
+                    last_git_branch = git_branch
+                if (message := parsed.get('message')) and isinstance(message, dict):
+                    if model := message.get('model'):
+                        last_model = model
 
                 # Handle title extraction
                 if item.kind == ItemKind.USER_MESSAGE and initial_title_needs_set:
@@ -364,10 +378,18 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Recalculate total_cost = self_cost + subagents_cost
             session.total_cost = (session.self_cost or Decimal(0)) + (session.subagents_cost or Decimal(0))
 
+            # Update runtime environment fields if changed
+            if last_cwd and last_cwd != session.cwd:
+                session.cwd = last_cwd
+            if last_git_branch and last_git_branch != session.git_branch:
+                session.git_branch = last_git_branch
+            if last_model and last_model != session.model:
+                session.model = last_model
+
         # Update offset to end of file
         session.last_offset = f.tell()
         session.mtime = file_mtime
-        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "self_cost", "subagents_cost", "total_cost"])
+        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "git_branch", "model"])
 
         # If this is a subagent, propagate cost to parent session
         if session.type == SessionType.SUBAGENT and session.parent_session_id:

@@ -9,6 +9,8 @@ the model instance was already fetched from the database.
 
 from django.conf import settings
 
+from twicc_poc.core.pricing import extract_model_info
+
 
 def serialize_project(project):
     """Serialize a Project model to a dictionary."""
@@ -46,6 +48,26 @@ def serialize_session(session):
         "self_cost": float(session.self_cost) if session.self_cost else None,  # Own items cost in USD
         "subagents_cost": float(session.subagents_cost) if session.subagents_cost else None,  # Sum of subagents cost
         "total_cost": float(session.total_cost) if session.total_cost else None,  # Total cost in USD
+        # Runtime environment fields
+        "cwd": session.cwd,  # Current working directory
+        "git_branch": session.git_branch,  # Git branch name
+        "model": _serialize_model(session.model),  # Model info object
+    }
+
+
+def _serialize_model(model: str | None) -> dict | None:
+    """Serialize model info as structured object with raw, family, version."""
+    if not model:
+        return None
+
+    info = extract_model_info(model)
+    if not info:
+        return {"raw": model, "family": None, "version": None}
+
+    return {
+        "raw": model,
+        "family": info.family,  # e.g., "opus"
+        "version": info.version,  # e.g., "4.5"
     }
 
 
