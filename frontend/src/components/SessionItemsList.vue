@@ -35,7 +35,7 @@ const LOAD_BUFFER = 50
 const LOAD_DEBOUNCE_MS = 150
 
 // Minimum item size for the virtual scroller (in pixels)
-const MIN_ITEM_SIZE = 24
+const MIN_ITEM_SIZE = 50
 
 // Track pending range to load (accumulated during debounce)
 const pendingLoadRange = ref(null)
@@ -388,8 +388,8 @@ function toggleGroup(groupHeadLineNum) {
             :items="visualItems"
             :item-key="item => item.lineNum"
             :min-item-height="MIN_ITEM_SIZE"
-            :buffer="500"
-            :unload-buffer="1000"
+            :buffer="1000"
+            :unload-buffer="1500"
             class="session-items"
             @update="onScrollerUpdate"
         >
