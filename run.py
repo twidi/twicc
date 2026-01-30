@@ -28,7 +28,7 @@ django.setup()
 # Now we can import Django-dependent modules
 from django.core.management import call_command
 
-from twicc_poc.core.models import Project, Session
+from twicc_poc.core.models import Project, Session, SessionType
 from twicc_poc.sync import sync_all
 from twicc_poc.watcher import start_watcher, stop_watcher
 from twicc_poc.background import (
@@ -106,8 +106,9 @@ def main():
     # Sync initial
     sync_all()
     projects_count = Project.objects.filter(archived=False).count()
-    sessions_count = Session.objects.filter(archived=False).count()
-    print(f"✓ Data synchronized ({projects_count} projects, {sessions_count} sessions)")
+    sessions_count = Session.objects.filter(archived=False, type=SessionType.SESSION).count()
+    subagents_count = Session.objects.filter(archived=False, type=SessionType.SUBAGENT).count()
+    print(f"✓ Data synchronized ({projects_count} projects, {sessions_count} sessions, {subagents_count} subagents)")
 
     # Parse port
     port = os.environ.get("TWICC_PORT", "3500")

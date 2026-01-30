@@ -110,8 +110,10 @@ def get_or_create_project(project_id: str) -> tuple[Project, bool]:
 @sync_to_async
 def update_project_metadata(project: Project) -> None:
     """Update project sessions_count and mtime from its non-empty sessions."""
-    # Only count sessions with at least 1 line (non-empty)
-    sessions = Session.objects.filter(project=project, archived=False, last_line__gt=0)
+    # Only count sessions (not subagents) with at least 1 line (non-empty)
+    sessions = Session.objects.filter(
+        project=project, archived=False, last_line__gt=0, type=SessionType.SESSION
+    )
     project.sessions_count = sessions.count()
     max_mtime = sessions.order_by("-mtime").values_list("mtime", flat=True).first()
     project.mtime = max_mtime or 0
@@ -361,6 +363,14 @@ async def sync_and_broadcast(
                         message["updated_metadata"] = updated_metadata
                 await broadcast_message(channel_layer, message)
 
+            # For subagents, broadcast parent session update (costs have changed)
+            if is_subagent and parent_session:
+                parent_session = await refresh_session(parent_session)
+                await broadcast_message(channel_layer, {
+                    "type": "session_updated",
+                    "session": serialize_session(parent_session),
+                })
+
             # Update project metadata (only for regular sessions)
             if not is_subagent:
                 await update_project_metadata(project)
@@ -405,6 +415,14 @@ async def sync_and_broadcast(
                 if updated_metadata:
                     message["updated_metadata"] = updated_metadata
             await broadcast_message(channel_layer, message)
+
+        # For subagents, broadcast parent session update (costs have changed)
+        if is_subagent and parent_session:
+            parent_session = await refresh_session(parent_session)
+            await broadcast_message(channel_layer, {
+                "type": "session_updated",
+                "session": serialize_session(parent_session),
+            })
 
         # Update project metadata (only for regular sessions)
         if not is_subagent:

@@ -42,7 +42,12 @@ export const useDataStore = defineStore('data', {
             // Open tabs per session - for tab restoration when returning to a session
             // { sessionId: { tabs: ['main', 'agent-xxx', ...], activeTab: 'agent-xxx' } }
             // Note: 'main' is always implicitly open, but included for consistency
-            sessionOpenTabs: {}
+            sessionOpenTabs: {},
+
+            // Agent links cache - maps tool_id to agent_id for Task tool_use items
+            // { sessionId: { toolId: agentId | null } }
+            // null means explicitly not found (avoid re-fetching)
+            agentLinks: {}
         }
     }),
 
@@ -52,7 +57,7 @@ export const useDataStore = defineStore('data', {
         getProject: (state) => (id) => state.projects[id],
         getProjectSessions: (state) => (projectId) =>
             Object.values(state.sessions)
-                .filter(s => s.project_id === projectId)
+                .filter(s => s.project_id === projectId && !s.parent_session_id)
                 .sort((a, b) => b.mtime - a.mtime),
         getSession: (state) => (id) => state.sessions[id],
         getSessionItems: (state) => (sessionId) => state.sessionItems[sessionId] || [],
@@ -118,7 +123,15 @@ export const useDataStore = defineStore('data', {
 
         // Get open tabs for a session
         getSessionOpenTabs: (state) => (sessionId) =>
-            state.localState.sessionOpenTabs[sessionId] || null
+            state.localState.sessionOpenTabs[sessionId] || null,
+
+        // Get cached agent link for a tool_id in a session
+        // Returns: agentId (string), null (not found), or undefined (not fetched yet)
+        getAgentLink: (state) => (sessionId, toolId) => {
+            const sessionLinks = state.localState.agentLinks[sessionId]
+            if (!sessionLinks) return undefined
+            return sessionLinks.hasOwnProperty(toolId) ? sessionLinks[toolId] : undefined
+        }
     },
 
     actions: {
@@ -499,6 +512,7 @@ export const useDataStore = defineStore('data', {
             delete this.localState.sessionExpandedGroups[sessionId]
             delete this.localState.sessionInternalExpandedGroups[sessionId]
             delete this.localState.sessionVisualItems[sessionId]
+            delete this.localState.agentLinks[sessionId]
         },
 
         /**
@@ -795,6 +809,29 @@ export const useDataStore = defineStore('data', {
          */
         clearSessionOpenTabs(sessionId) {
             delete this.localState.sessionOpenTabs[sessionId]
+        },
+
+        // Agent links cache actions
+
+        /**
+         * Set an agent link in the cache.
+         * @param {string} sessionId - The session ID
+         * @param {string} toolId - The tool_use_id
+         * @param {string|null} agentId - The agent ID or null if not found
+         */
+        setAgentLink(sessionId, toolId, agentId) {
+            if (!this.localState.agentLinks[sessionId]) {
+                this.localState.agentLinks[sessionId] = {}
+            }
+            this.localState.agentLinks[sessionId][toolId] = agentId
+        },
+
+        /**
+         * Clear agent links cache for a session.
+         * @param {string} sessionId - The session ID
+         */
+        clearAgentLinks(sessionId) {
+            delete this.localState.agentLinks[sessionId]
         }
     }
 })

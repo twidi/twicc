@@ -21,6 +21,10 @@ const props = defineProps({
         type: String,
         required: true
     },
+    parentSessionId: {
+        type: String,
+        default: null
+    },
     lineNum: {
         type: Number,
         required: true
@@ -69,6 +73,7 @@ const contentItems = computed(() => {
         :role="role"
         :project-id="projectId"
         :session-id="sessionId"
+        :parent-session-id="parentSessionId"
         :line-num="lineNum"
         :group-head="groupHead"
         :group-tail="groupTail"

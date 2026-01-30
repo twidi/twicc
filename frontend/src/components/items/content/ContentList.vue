@@ -34,6 +34,10 @@ const props = defineProps({
         type: String,
         required: true
     },
+    parentSessionId: {
+        type: String,
+        default: null
+    },
     lineNum: {
         type: Number,
         required: true
@@ -220,6 +224,7 @@ function toggleInternalGroup(startIndex) {
                 :tool-id="entry.item.id"
                 :project-id="projectId"
                 :session-id="sessionId"
+                :parent-session-id="parentSessionId"
                 :line-num="lineNum"
             />
             <UnknownEntry

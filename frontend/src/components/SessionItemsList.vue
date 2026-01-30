@@ -72,6 +72,28 @@ const apiBaseUrl = computed(() => {
 })
 
 /**
+ * Load subagent session details from API and add to store.
+ * Called when opening a subagent tab if the session is not already in the store.
+ * This handles the case of direct URL access before WebSocket has delivered the session.
+ */
+async function loadSubagentSession() {
+    try {
+        const url = `${apiBaseUrl.value}/`
+        const response = await fetch(url)
+        if (!response.ok) {
+            console.error('Failed to load subagent session:', response.status)
+            return null
+        }
+        const sessionData = await response.json()
+        store.addSession(sessionData)
+        return sessionData
+    } catch (error) {
+        console.error('Failed to load subagent session:', error)
+        return null
+    }
+}
+
+/**
  * Load session data: metadata (all items) + initial content (first N and last N).
  * Fetches both in parallel for faster loading.
  */
@@ -134,7 +156,18 @@ async function loadSessionData(lastLine) {
 
 // Load session data when session changes
 watch([() => props.sessionId, session], async ([newSessionId, newSession]) => {
-    if (!newSessionId || !newSession) return
+    if (!newSessionId) return
+
+    // If session is not in store and this is a subagent, load it first
+    // (handles direct URL access before WebSocket delivers the session)
+    if (!newSession && props.parentSessionId) {
+        const loadedSession = await loadSubagentSession()
+        if (!loadedSession) return
+        // The watch will re-trigger with the loaded session
+        return
+    }
+
+    if (!newSession) return
 
     // Don't load if computation is pending
     if (newSession.compute_version_up_to_date === false) {
@@ -427,6 +460,7 @@ function toggleGroup(groupHeadLineNum) {
                             :kind="item.kind"
                             :project-id="projectId"
                             :session-id="sessionId"
+                            :parent-session-id="parentSessionId"
                             :line-num="item.lineNum"
                         />
                     </template>
@@ -438,6 +472,7 @@ function toggleGroup(groupHeadLineNum) {
                         :kind="item.kind"
                         :project-id="projectId"
                         :session-id="sessionId"
+                        :parent-session-id="parentSessionId"
                         :line-num="item.lineNum"
                         :group-head="item.groupHead"
                         :group-tail="item.groupTail"

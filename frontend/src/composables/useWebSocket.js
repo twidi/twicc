@@ -48,6 +48,7 @@ export function useWebSocket() {
                 break
             case 'session_added':
                 // Only add if we've fetched sessions for this project
+                // (subagents are filtered out in getProjectSessions getter)
                 if (store.areProjectSessionsFetched(msg.session.project_id)) {
                     store.addSession(msg.session)
                 }

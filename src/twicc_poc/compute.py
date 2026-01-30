@@ -241,6 +241,62 @@ def is_tool_result_item(parsed_json: dict) -> bool:
     return isinstance(first, dict) and first.get('type') == 'tool_result'
 
 
+def get_task_tool_uses(parsed_json: dict) -> list[str]:
+    """
+    Extract tool_use IDs from "Task" tool calls in an assistant message.
+
+    Returns a list of tool_use IDs for tool_use items where name="Task".
+    """
+    content = get_message_content_list(parsed_json, "assistant")
+    if content is None:
+        return []
+    return [
+        item['id']
+        for item in content
+        if isinstance(item, dict)
+        and item.get('type') == 'tool_use'
+        and item.get('name') == 'Task'
+        and item.get('id')
+    ]
+
+
+def get_tool_result_agent_info(parsed_json: dict) -> tuple[str, str] | None:
+    """
+    Extract (tool_use_id, agent_id) from a tool_result with agentId.
+
+    Checks both the tool_result content and the root-level toolUseResult
+    for the agent_id. Returns None if this is not a Task tool result with an agent.
+
+    Args:
+        parsed_json: Parsed JSONL line
+
+    Returns:
+        Tuple of (tool_use_id, agent_id) if found, None otherwise
+    """
+    # Must be a tool_result item
+    content = get_message_content_list(parsed_json, "user")
+    if content is None or len(content) != 1:
+        return None
+    first = content[0]
+    if not isinstance(first, dict) or first.get('type') != 'tool_result':
+        return None
+
+    tool_use_id = first.get('tool_use_id')
+    if not tool_use_id:
+        return None
+
+    # Check for agentId in the root-level toolUseResult
+    tool_use_result = parsed_json.get('toolUseResult')
+    if not isinstance(tool_use_result, dict):
+        return None
+
+    agent_id = tool_use_result.get('agentId')
+    if not agent_id:
+        return None
+
+    return tool_use_id, agent_id
+
+
 def _is_system_xml_content(content: str | list) -> bool:
     """
     Check if content is a system XML message (command invocation or output).
@@ -711,6 +767,8 @@ def compute_session_metadata(session_id: str) -> None:
 
     # Map tool_use_id → line_num of the item containing the tool_use
     tool_use_map: dict[str, int] = {}
+    # Map tool_use_id → line_num for Task tool_uses (to link to agents)
+    task_tool_use_map: dict[str, int] = {}
 
     # Track if we've set the initial title from first user message
     initial_title_set = False
@@ -769,6 +827,11 @@ def compute_session_metadata(session_id: str) -> None:
         for tu_id in tool_use_ids:
             tool_use_map[tu_id] = item.line_num
 
+        # Track Task tool_use IDs (for agent links)
+        task_tool_use_ids = get_task_tool_uses(parsed)
+        for tu_id in task_tool_use_ids:
+            task_tool_use_map[tu_id] = item.line_num
+
         # Check if this is a tool_result and create link
         tool_result_ref = get_tool_result_id(parsed)
         if tool_result_ref and tool_result_ref in tool_use_map:
@@ -779,6 +842,21 @@ def compute_session_metadata(session_id: str) -> None:
                 link_type='tool_result',
                 reference=tool_result_ref,
             ))
+
+        # Check if this is a Task tool_result with agentId and create agent link
+        agent_info = get_tool_result_agent_info(parsed)
+        if agent_info:
+            tu_id, agent_id = agent_info
+            if tu_id in task_tool_use_map:
+                links_to_create.append(SessionItemLink(
+                    session=session,
+                    source_line_num=task_tool_use_map[tu_id],
+                    target_line_num=None,  # agent links have no target line
+                    link_type='agent',
+                    reference=agent_id,
+                ))
+                # Remove from map to avoid duplicate links
+                del task_tool_use_map[tu_id]
 
         # Detect prefix/suffix for ALWAYS items
         has_prefix, has_suffix = False, False
@@ -937,7 +1015,7 @@ def create_tool_result_link_live(session_id: str, item: SessionItem, parsed_json
         content__contains=tool_use_id,
     ).order_by('-line_num')
 
-    for candidate in candidates:
+    for candidate in candidates.iterator(chunk_size=10):
         try:
             candidate_parsed = orjson.loads(candidate.content)
         except orjson.JSONDecodeError:
@@ -952,6 +1030,170 @@ def create_tool_result_link_live(session_id: str, item: SessionItem, parsed_json
                 reference=tool_use_id,
             )
             return
+
+
+def create_agent_link_live(session_id: str, item: SessionItem, parsed_json: dict) -> None:
+    """
+    Create a SessionItemLink for a Task tool_result with agentId during live sync.
+
+    When a tool_result arrives with an agentId in toolUseResult, this function
+    finds the corresponding Task tool_use and creates an 'agent' link.
+
+    Args:
+        session_id: The session ID
+        item: The SessionItem containing the tool_result
+        parsed_json: The parsed JSON content of the tool_result item
+    """
+    from twicc_poc.core.models import SessionItemLink
+
+    agent_info = get_tool_result_agent_info(parsed_json)
+    if not agent_info:
+        return
+
+    tool_use_id, agent_id = agent_info
+
+    # Check if we already have this agent link
+    if SessionItemLink.objects.filter(
+        session_id=session_id,
+        link_type='agent',
+        reference=agent_id,
+    ).exists():
+        return
+
+    # Find the Task tool_use by searching for the tool_use_id
+    candidates = SessionItem.objects.filter(
+        session_id=session_id,
+        line_num__lt=item.line_num,
+        content__contains=tool_use_id,
+    ).order_by('-line_num')
+
+    for candidate in candidates.iterator(chunk_size=10):
+        try:
+            candidate_parsed = orjson.loads(candidate.content)
+        except orjson.JSONDecodeError:
+            continue
+
+        # Check if this candidate has a Task tool_use with this ID
+        if tool_use_id in get_task_tool_uses(candidate_parsed):
+            SessionItemLink.objects.get_or_create(
+                session_id=session_id,
+                source_line_num=candidate.line_num,
+                target_line_num=None,  # agent links have no target line
+                link_type='agent',
+                reference=agent_id,
+            )
+            return
+
+
+def _extract_task_tool_use_prompt(content: list) -> str | None:
+    """
+    Extract the prompt from a Task tool_use content item.
+
+    Args:
+        content: The content array from an assistant message
+
+    Returns:
+        The prompt string if found, None otherwise
+    """
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get('type') != 'tool_use' or item.get('name') != 'Task':
+            continue
+        inputs = item.get('input', {})
+        if isinstance(inputs, dict):
+            prompt = inputs.get('prompt')
+            if isinstance(prompt, str):
+                return prompt
+    return None
+
+
+def create_agent_link_from_subagent(
+    parent_session_id: str,
+    agent_id: str,
+    agent_prompt: str,
+    agent_timestamp: str,
+) -> bool:
+    """
+    Create a SessionItemLink for a subagent by matching its prompt to a Task tool_use.
+
+    When a new subagent is detected, this function searches the parent session
+    for a Task tool_use with a matching prompt and creates an 'agent' link.
+
+    This allows linking the tool_use to its agent before the tool_result arrives.
+
+    Args:
+        parent_session_id: The parent session ID
+        agent_id: The agent's ID (e.g., "a9785d3")
+        agent_prompt: The prompt from the agent's first user message
+        agent_timestamp: The timestamp from the agent's first message (ISO format)
+
+    Returns:
+        True if the link was created, False otherwise
+    """
+    from datetime import datetime, timedelta
+
+    from twicc_poc.core.models import SessionItemLink
+
+    # Check if we already have this agent link
+    if SessionItemLink.objects.filter(
+        session_id=parent_session_id,
+        link_type='agent',
+        reference=agent_id,
+    ).exists():
+        return False
+
+    # Parse agent timestamp to compute 5-minute limit
+    try:
+        agent_dt = datetime.fromisoformat(agent_timestamp.replace('Z', '+00:00'))
+        min_timestamp = agent_dt - timedelta(minutes=5)
+    except (ValueError, AttributeError):
+        # If we can't parse the timestamp, skip the time limit check
+        min_timestamp = None
+
+    # Search for Task tool_use items in parent session, most recent first
+    # We look for items containing '"name":"Task"' to narrow the search
+    candidates = SessionItem.objects.filter(
+        session_id=parent_session_id,
+        content__contains='"name":"Task"',
+    ).order_by('-line_num')
+
+    for candidate in candidates.iterator(chunk_size=10):
+        try:
+            candidate_parsed = orjson.loads(candidate.content)
+        except orjson.JSONDecodeError:
+            continue
+
+        # Check timestamp - stop if older than 5 minutes before agent creation
+        if min_timestamp is not None:
+            candidate_timestamp = candidate_parsed.get('timestamp')
+            if candidate_timestamp:
+                try:
+                    candidate_dt = datetime.fromisoformat(candidate_timestamp.replace('Z', '+00:00'))
+                    if candidate_dt < min_timestamp:
+                        # Too old, stop searching
+                        return False
+                except (ValueError, AttributeError):
+                    pass
+
+        # Get the content list from assistant message
+        content = get_message_content_list(candidate_parsed, "assistant")
+        if content is None:
+            continue
+
+        # Extract the prompt from Task tool_use
+        prompt = _extract_task_tool_use_prompt(content)
+        if prompt and prompt == agent_prompt:
+            SessionItemLink.objects.get_or_create(
+                session_id=parent_session_id,
+                source_line_num=candidate.line_num,
+                target_line_num=None,  # agent links have no target line
+                link_type='agent',
+                reference=agent_id,
+            )
+            return True
+
+    return False
 
 
 def compute_item_metadata_live(session_id: str, item: SessionItem, content: str) -> set[int]:

@@ -23,6 +23,10 @@ const props = defineProps({
         type: String,
         required: true
     },
+    parentSessionId: {
+        type: String,
+        default: null
+    },
     lineNum: {
         type: Number,
         required: true
@@ -114,6 +118,7 @@ function toggleJsonView() {
                 :role="kind === 'user_message' ? 'user' : 'assistant'"
                 :project-id="projectId"
                 :session-id="sessionId"
+                :parent-session-id="parentSessionId"
                 :line-num="lineNum"
                 :group-head="groupHead"
                 :group-tail="groupTail"
@@ -127,6 +132,7 @@ function toggleJsonView() {
                 role="items"
                 :project-id="projectId"
                 :session-id="sessionId"
+                :parent-session-id="parentSessionId"
                 :line-num="lineNum"
             />
             <ApiError

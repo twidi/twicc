@@ -1,6 +1,11 @@
 <script setup>
 import { computed, ref, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useDataStore } from '../../../stores/data'
 import JsonViewer from '../../JsonViewer.vue'
+
+const router = useRouter()
+const dataStore = useDataStore()
 
 const props = defineProps({
     name: {
@@ -22,6 +27,10 @@ const props = defineProps({
     sessionId: {
         type: String,
         required: true
+    },
+    parentSessionId: {
+        type: String,
+        default: null
     },
     lineNum: {
         type: Number,
@@ -59,7 +68,11 @@ async function fetchResult() {
     abortController.value = new AbortController()
 
     try {
-        const url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/items/${props.lineNum}/tool-results/${props.toolId}/`
+        // Build URL (handles subagent case via parentSessionId)
+        const baseUrl = props.parentSessionId
+            ? `/api/projects/${props.projectId}/sessions/${props.parentSessionId}/subagent/${props.sessionId}`
+            : `/api/projects/${props.projectId}/sessions/${props.sessionId}`
+        const url = `${baseUrl}/items/${props.lineNum}/tool-results/${props.toolId}/`
         const response = await fetch(url, { signal: abortController.value.signal })
 
         if (!response.ok) {
@@ -168,6 +181,10 @@ function onToolUseOpen() {
 // Cleanup on unmount (e.g., when changing session, toggling groups)
 onUnmounted(() => {
     stopPolling()
+    // Abort any in-flight agent link request
+    if (agentLinkAbortController.value) {
+        agentLinkAbortController.value.abort()
+    }
 })
 
 // Computed for display: single result or array of multiple
@@ -188,6 +205,82 @@ const displayInput = computed(() => {
     const { description, ...rest } = props.input
     return Object.keys(rest).length > 0 ? rest : null
 })
+
+// --- View Agent button for Task tool_use ---
+
+// Is this a Task tool_use?
+const isTask = computed(() => props.name === 'Task')
+
+// Agent link state: 'idle' | 'loading' | 'found' | 'not_found'
+const agentLinkState = ref('idle')
+const agentLinkAbortController = ref(null)
+
+/**
+ * Fetch the agent ID for this Task tool_use and navigate to the subagent tab.
+ */
+async function handleViewAgent() {
+    // Only for regular sessions (not subagents)
+    if (props.parentSessionId) return
+
+    // Check cache first
+    const cached = dataStore.getAgentLink(props.sessionId, props.toolId)
+    if (cached !== undefined) {
+        if (cached === null) {
+            // Already fetched, not found
+            agentLinkState.value = 'not_found'
+        } else {
+            // Found in cache, navigate
+            navigateToSubagent(cached)
+        }
+        return
+    }
+
+    // Fetch from API
+    agentLinkState.value = 'loading'
+    agentLinkAbortController.value = new AbortController()
+
+    try {
+        const url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/items/${props.lineNum}/tool-agent-id/${props.toolId}/`
+        const response = await fetch(url, { signal: agentLinkAbortController.value.signal })
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`)
+        }
+
+        const data = await response.json()
+        const agentId = data.agent_id
+
+        // Cache the result
+        dataStore.setAgentLink(props.sessionId, props.toolId, agentId)
+
+        if (agentId) {
+            agentLinkState.value = 'found'
+            navigateToSubagent(agentId)
+        } else {
+            agentLinkState.value = 'not_found'
+        }
+    } catch (err) {
+        if (err.name === 'AbortError') return
+        console.error('Failed to fetch agent link:', err)
+        agentLinkState.value = 'not_found'
+    } finally {
+        agentLinkAbortController.value = null
+    }
+}
+
+/**
+ * Navigate to the subagent tab.
+ */
+function navigateToSubagent(agentId) {
+    router.push({
+        name: 'session-subagent',
+        params: {
+            projectId: props.projectId,
+            sessionId: props.sessionId,
+            subagentId: agentId
+        }
+    })
+}
 
 // Collapsed paths for JsonNode (input)
 const collapsedPaths = ref(new Set())
@@ -217,12 +310,28 @@ function toggleResultPath(path) {
 </script>
 
 <template>
-    <wa-details class="item-details tool-use" icon-placement="start" @wa-show="onToolUseOpen" @wa-hide="onToolUseClose">
+    <wa-details class="item-details tool-use" :class="{'with-right-button' : isTask}" icon-placement="start" @wa-show="onToolUseOpen" @wa-hide="onToolUseClose">
         <span slot="summary" class="items-details-summary">
-            <strong class="items-details-summary-name">{{ name }}</strong>
-            <template v-if="description">
-                <span class="items-details-summary-separator"> — </span>
-                <span class="items-details-summary-description">{{ description }}</span>
+            <span class="items-details-summary-left">
+                <strong class="items-details-summary-name">{{ name }}</strong>
+                <template v-if="description">
+                    <span class="items-details-summary-separator"> — </span>
+                    <span class="items-details-summary-description">{{ description }}</span>
+                </template>
+            </span>
+            <!-- View Agent button for Task tool_use (only in regular sessions) -->
+            <template v-if="isTask && !parentSessionId">
+                <wa-button
+                    v-if="agentLinkState !== 'not_found'"
+                    size="small"
+                    variant="filled"
+                    appearance="brand"
+                    :loading="agentLinkState === 'loading'"
+                    @click.stop="handleViewAgent"
+                >
+                    View Agent
+                </wa-button>
+                <span v-else class="agent-not-found">Agent not found</span>
             </template>
         </span>
         <div v-if="displayInput" class="tool-input">
@@ -267,6 +376,41 @@ function toggleResultPath(path) {
 </template>
 
 <style scoped>
+wa-details.with-right-button {
+    /* Summary layout with button on the right */
+    &::part(header) {
+        padding-right: 6px
+    }
+
+    .items-details-summary {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-m);
+        width: 100%;
+
+        wa-button {
+            margin-block: -1em;
+        }
+    }
+
+    .items-details-summary-left {
+        flex: 1;
+        min-width: 0; /* Allow text wrapping */
+    }
+
+    .items-details-summary-description {
+        /* Description can wrap on multiple lines */
+        word-wrap: break-word;
+    }
+}
+
+.agent-not-found {
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-s);
+    font-style: italic;
+    white-space: nowrap;
+}
+
 .tool-input {
     padding: var(--wa-space-xs) 0;
     overflow-x: auto;

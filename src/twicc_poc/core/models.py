@@ -142,11 +142,15 @@ class SessionItem(models.Model):
 
 class SessionItemLink(models.Model):
     """
-    Links between session items (e.g. tool_use → tool_result).
+    Links between session items (e.g. tool_use → tool_result, tool_use → agent).
 
     Generic link table: source_line_num is the "origin" item,
-    target_line_num is the related item, link_type describes the
-    relationship, and reference provides context (e.g. the tool_use_id).
+    target_line_num is the related item (nullable for agent links),
+    link_type describes the relationship, and reference provides context.
+
+    Link types:
+    - "tool_result": links a tool_use to its tool_result (target_line_num = result line)
+    - "agent": links a Task tool_use to its agent (target_line_num = null, reference = agent_id)
     """
 
     session = models.ForeignKey(
@@ -155,14 +159,14 @@ class SessionItemLink(models.Model):
         related_name="item_links",
     )
     source_line_num = models.PositiveIntegerField()  # e.g. the line with tool_use(s)
-    target_line_num = models.PositiveIntegerField()  # e.g. the line with tool_result
-    link_type = models.CharField(max_length=50)  # e.g. "tool_result"
-    reference = models.CharField(max_length=255)  # e.g. the tool_use_id
+    target_line_num = models.PositiveIntegerField(null=True, blank=True)  # e.g. the line with tool_result (null for agent links)
+    link_type = models.CharField(max_length=50)  # e.g. "tool_result", "agent"
+    reference = models.CharField(max_length=255)  # e.g. the tool_use_id or agent_id
 
     class Meta:
         indexes = [
             models.Index(
-                fields=["session", "source_line_num", "link_type", "reference"],
+                fields=["session", "link_type", "reference", "source_line_num"],
                 name="idx_item_link_lookup",
             ),
         ]

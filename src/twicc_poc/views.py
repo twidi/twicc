@@ -6,7 +6,7 @@ from django.http import FileResponse, Http404, JsonResponse
 import orjson
 
 from twicc_poc.compute import get_message_content_list
-from twicc_poc.core.models import Project, Session, SessionItem, SessionItemLink
+from twicc_poc.core.models import Project, Session, SessionItem, SessionItemLink, SessionType
 from twicc_poc.core.serializers import (
     serialize_project,
     serialize_session,
@@ -32,12 +32,17 @@ def project_detail(request, project_id):
 
 
 def project_sessions(request, project_id):
-    """GET /api/projects/<id>/sessions/ - Sessions of a project."""
+    """GET /api/projects/<id>/sessions/ - Sessions of a project.
+
+    Returns only regular sessions (not subagents).
+    Subagents are accessed via their parent session.
+    """
     try:
         project = Project.objects.get(id=project_id)
     except Project.DoesNotExist:
         raise Http404("Project not found")
-    sessions = project.sessions.all()
+    # Filter out subagents - only return regular sessions
+    sessions = project.sessions.filter(type=SessionType.SESSION)
     data = [serialize_session(s) for s in sessions]
     return JsonResponse(data, safe=False)
 
@@ -49,16 +54,22 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
     GET /api/projects/<id>/sessions/<parent_session_id>/subagent/<session_id>/
 
     When parent_session_id is provided, validates that session.parent_session_id matches.
+    When accessing a subagent via the session endpoint (no parent_session_id in URL), returns 404.
     """
     try:
         session = Session.objects.get(id=session_id, project_id=project_id)
     except Session.DoesNotExist:
         raise Http404("Session not found")
 
-    # Validate parent_session_id if provided
+    # Validate parent_session_id
     if parent_session_id is not None:
+        # Subagent route: validate parent matches
         if session.parent_session_id != parent_session_id:
             raise Http404("Subagent not found for this parent session")
+    else:
+        # Session route: reject subagents (they must be accessed via subagent route)
+        if session.parent_session_id is not None:
+            raise Http404("Session not found")
 
     return JsonResponse(serialize_session(session))
 
@@ -91,10 +102,15 @@ def session_items(request, project_id, session_id, parent_session_id=None):
     except Session.DoesNotExist:
         raise Http404("Session not found")
 
-    # Validate parent_session_id if provided
+    # Validate parent_session_id
     if parent_session_id is not None:
+        # Subagent route: validate parent matches
         if session.parent_session_id != parent_session_id:
             raise Http404("Subagent not found for this parent session")
+    else:
+        # Session route: reject subagents (they must be accessed via subagent route)
+        if session.parent_session_id is not None:
+            raise Http404("Session not found")
 
     items = session.items.all()
 
@@ -148,18 +164,26 @@ def session_items_metadata(request, project_id, session_id, parent_session_id=No
     except Session.DoesNotExist:
         raise Http404("Session not found")
 
-    # Validate parent_session_id if provided
+    # Validate parent_session_id
     if parent_session_id is not None:
+        # Subagent route: validate parent matches
         if session.parent_session_id != parent_session_id:
             raise Http404("Subagent not found for this parent session")
+    else:
+        # Session route: reject subagents (they must be accessed via subagent route)
+        if session.parent_session_id is not None:
+            raise Http404("Session not found")
 
     items = session.items.all().defer('content')  # Already ordered by line_num (see Meta.ordering)
     data = [serialize_session_item_metadata(item) for item in items]
     return JsonResponse(data, safe=False)
 
 
-def tool_results(request, project_id, session_id, line_num, tool_id):
+def tool_results(request, project_id, session_id, line_num, tool_id, parent_session_id=None):
     """GET /api/projects/<id>/sessions/<session_id>/items/<line_num>/tool-results/<tool_id>/
+
+    Also handles subagent route:
+    GET /api/projects/<id>/sessions/<parent_session_id>/subagent/<session_id>/items/<line_num>/tool-results/<tool_id>/
 
     Returns the tool_result content(s) for a specific tool_use.
     Uses SessionItemLink to find related tool_result items.
@@ -168,6 +192,16 @@ def tool_results(request, project_id, session_id, line_num, tool_id):
         session = Session.objects.get(id=session_id, project_id=project_id)
     except Session.DoesNotExist:
         raise Http404("Session not found")
+
+    # Validate parent_session_id
+    if parent_session_id is not None:
+        # Subagent route: validate parent matches
+        if session.parent_session_id != parent_session_id:
+            raise Http404("Subagent not found for this parent session")
+    else:
+        # Session route: reject subagents (they must be accessed via subagent route)
+        if session.parent_session_id is not None:
+            raise Http404("Session not found")
 
     # Find links for this tool_use
     links = SessionItemLink.objects.filter(
@@ -202,6 +236,36 @@ def tool_results(request, project_id, session_id, line_num, tool_id):
                 results.append(entry)
 
     return JsonResponse({"results": results})
+
+
+def tool_agent_id(request, project_id, session_id, line_num, tool_id):
+    """GET /api/projects/<id>/sessions/<session_id>/items/<line_num>/tool-agent-id/<tool_id>/
+
+    Returns the agent_id for a Task tool_use that spawned a subagent.
+    Uses SessionItemLink to find the agent link.
+
+    Only available for regular sessions (not subagents), since subagents cannot spawn subagents.
+    """
+    try:
+        session = Session.objects.get(id=session_id, project_id=project_id)
+    except Session.DoesNotExist:
+        raise Http404("Session not found")
+
+    # Reject subagents - they cannot spawn subagents
+    if session.parent_session_id is not None:
+        raise Http404("Session not found")
+
+    # Find the agent link for this line
+    link = SessionItemLink.objects.filter(
+        session=session,
+        source_line_num=line_num,
+        link_type='agent',
+    ).first()
+
+    if link:
+        return JsonResponse({"agent_id": link.reference})
+    else:
+        return JsonResponse({"agent_id": None})
 
 
 def spa_index(request):

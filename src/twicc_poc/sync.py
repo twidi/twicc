@@ -22,6 +22,8 @@ from twicc_poc.compute import (
     compute_item_cost_and_usage,
     is_tool_result_item,
     create_tool_result_link_live,
+    create_agent_link_live,
+    create_agent_link_from_subagent,
     extract_title_from_user_message,
 )
 from twicc_poc.core.enums import ItemDisplayLevel, ItemKind
@@ -193,6 +195,14 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Track if we've already set initial title for this session (from first user message ever)
             initial_title_needs_set = session.title is None
 
+            # For subagents: track if we need to create the agent link from first user_message
+            # Only do this if the session has no items yet (first sync of this subagent)
+            subagent_needs_link = (
+                session.type == SessionType.SUBAGENT
+                and session.parent_session_id
+                and session.last_line == 0  # No items yet
+            )
+
             # Load existing message_ids for deduplication of cost computation
             seen_message_ids: set[str] = set(
                 SessionItem.objects.filter(
@@ -229,6 +239,40 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                     if title:
                         session_title_updates[session.id] = title
                         initial_title_needs_set = False
+
+                # For subagents: create agent link from first user_message
+                if item.kind == ItemKind.USER_MESSAGE and subagent_needs_link:
+                    # Extract prompt from user message content
+                    message = parsed.get('message', {})
+                    content = message.get('content') if isinstance(message, dict) else None
+                    agent_id = parsed.get('agentId')
+                    timestamp = parsed.get('timestamp')
+
+                    if content and agent_id and timestamp and session.parent_session_id:
+                        # Content can be a string or a list with text entries
+                        if isinstance(content, str):
+                            prompt = content
+                        elif isinstance(content, list):
+                            # Find first text entry
+                            prompt = None
+                            for entry in content:
+                                if isinstance(entry, dict) and entry.get('type') == 'text':
+                                    prompt = entry.get('text')
+                                    break
+                                elif isinstance(entry, str):
+                                    prompt = entry
+                                    break
+                        else:
+                            prompt = None
+
+                        if prompt:
+                            create_agent_link_from_subagent(
+                                parent_session_id=session.parent_session_id,
+                                agent_id=agent_id,
+                                agent_prompt=prompt,
+                                agent_timestamp=timestamp,
+                            )
+                    subagent_needs_link = False  # Only try once
 
                 if item.kind == ItemKind.CUSTOM_TITLE:
                     # Custom title: update the target session's title
@@ -269,6 +313,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 # Tool result links (tool_result items are DEBUG_ONLY)
                 if is_tool_result_item(parsed):
                     create_tool_result_link_live(session.id, item, parsed)
+                    # Also check for agent links (Task tool_result with agentId)
+                    create_agent_link_live(session.id, item, parsed)
 
             # Apply title updates
             for target_session_id, title in session_title_updates.items():
