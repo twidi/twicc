@@ -1,10 +1,9 @@
 <script setup>
-import { computed, watch, ref, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { useDebounceFn, useThrottleFn } from '@vueuse/core'
-import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
-import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
+import { computed, watch, ref, nextTick } from 'vue'
+import { useDebounceFn } from '@vueuse/core'
 import { useDataStore } from '../stores/data'
 import { INITIAL_ITEMS_COUNT } from '../constants'
+import VirtualScroller from './VirtualScroller.vue'
 import SessionItem from './SessionItem.vue'
 import FetchErrorPanel from './FetchErrorPanel.vue'
 import GroupToggle from './GroupToggle.vue'
@@ -26,7 +25,7 @@ const props = defineProps({
 
 const store = useDataStore()
 
-// Reference to the DynamicScroller component
+// Reference to the VirtualScroller component
 const scrollerRef = ref(null)
 
 // Buffer: load N items before/after visible range
@@ -34,9 +33,6 @@ const LOAD_BUFFER = 50
 
 // Debounce delay for scroll-triggered loading (ms)
 const LOAD_DEBOUNCE_MS = 150
-
-// Throttle delay for DOM order sorting (ms)
-const SORT_THROTTLE_MS = 150
 
 // Minimum item size for the virtual scroller (in pixels)
 const MIN_ITEM_SIZE = 24
@@ -244,17 +240,15 @@ async function scrollToBottomUntilStable() {
     const scroller = scrollerRef.value
     if (!scroller) return
 
-    const el = scroller.$el
-    if (!el) return
-
     const maxAttempts = 10
     const delayBetweenAttempts = 50 // ms
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        scroller.scrollToBottom()
+        scroller.scrollToBottom({ behavior: 'auto' })
         await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts))
 
-        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+        const state = scroller.getScrollState()
+        const distanceFromBottom = state.scrollHeight - state.scrollTop - state.clientHeight
         if (distanceFromBottom <= 5) break
     }
 }
@@ -298,10 +292,8 @@ async function executePendingLoad() {
     const ranges = lineNumsToRanges(range.lineNums)
 
     if (ranges.length > 0) {
-        const el = scrollerRef.value?.$el
-        const wasAtBottom = el
-            ? (el.scrollHeight - el.scrollTop - el.clientHeight) <= 20
-            : false
+        const scroller = scrollerRef.value
+        const wasAtBottom = scroller?.isAtBottom?.() ?? false
 
         await store.loadSessionItemsRanges(
             props.projectId,
@@ -310,8 +302,9 @@ async function executePendingLoad() {
             props.parentSessionId
         )
 
-        if (el && wasAtBottom) {
-            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+        if (scroller && wasAtBottom) {
+            const state = scroller.getScrollState()
+            const distanceFromBottom = state.scrollHeight - state.scrollTop - state.clientHeight
             if (distanceFromBottom > 5) {
                 await nextTick()
                 scrollToBottomUntilStable()
@@ -323,50 +316,14 @@ async function executePendingLoad() {
 const debouncedLoad = useDebounceFn(executePendingLoad, LOAD_DEBOUNCE_MS)
 
 /**
- * Force DOM order to match visual order.
- * Called on scroller update and throttled on scroll events.
- */
-function sortScrollerViews() {
-    const recycleScroller = scrollerRef.value?.$refs?.scroller
-    if (recycleScroller?.sortViews) {
-        recycleScroller.sortViews()
-    }
-}
-
-// Throttled version for scroll events (independent of scroller update)
-const throttledSortViews = useThrottleFn(sortScrollerViews, SORT_THROTTLE_MS)
-
-/**
- * Handle scroll event on the scroller element.
- * Triggers throttled DOM sorting independently of scroller update.
- */
-function onScrollerScroll() {
-    throttledSortViews()
-}
-
-// Setup and cleanup scroll listener
-onMounted(() => {
-    const el = scrollerRef.value?.$el
-    if (el) {
-        el.addEventListener('scroll', onScrollerScroll, { passive: true })
-    }
-})
-
-onBeforeUnmount(() => {
-    const el = scrollerRef.value?.$el
-    if (el) {
-        el.removeEventListener('scroll', onScrollerScroll)
-    }
-})
-
-/**
  * Handle scroller update event - triggers lazy loading for visible items.
  * Works with visualItems (filtered list) and maps to actual line numbers.
+ *
+ * @param {{ startIndex: number, endIndex: number, visibleStartIndex: number, visibleEndIndex: number }} payload
+ *   - startIndex/endIndex: indices of items being rendered (with buffer)
+ *   - visibleStartIndex/visibleEndIndex: indices of items actually visible (no buffer)
  */
-function onScrollerUpdate(startIndex, endIndex, visibleStartIndex, visibleEndIndex) {
-    // Force DOM order to match visual order (for CSS sibling selectors)
-    sortScrollerViews()
-
+function onScrollerUpdate({ startIndex, endIndex, visibleStartIndex, visibleEndIndex }) {
     const visItems = visualItems.value
     if (!visItems || visItems.length === 0) return
 
@@ -424,65 +381,57 @@ function toggleGroup(groupHeadLineNum) {
         </div>
 
         <!-- Items list (virtualized) -->
-        <DynamicScroller
+        <VirtualScroller
             :key="sessionId"
             ref="scrollerRef"
             v-else-if="visualItems.length > 0"
             :items="visualItems"
-            :min-item-size="MIN_ITEM_SIZE"
+            :item-key="item => item.lineNum"
+            :min-item-height="MIN_ITEM_SIZE"
             :buffer="500"
-            key-field="lineNum"
+            :unload-buffer="1000"
             class="session-items"
-            :emit-update="true"
             @update="onScrollerUpdate"
         >
-            <template #default="{ item, index, active }">
-                <DynamicScrollerItem
-                    :item="item"
-                    :active="active"
-                    :size-dependencies="[item.isExpanded, item.prefixExpanded, item.suffixExpanded]"
-                    :data-index="index"
-                    class="item-wrapper"
-                >
-                    <!-- Placeholder (no content loaded yet) -->
-                    <div v-if="!item.content" ></div>
+            <template #default="{ item, index }">
+                <!-- Placeholder (no content loaded yet) -->
+                <div v-if="!item.content" :style="{ minHeight: MIN_ITEM_SIZE + 'px' }"></div>
 
-                    <!-- Group head: show toggle (+ item content if expanded) -->
-                    <template v-else-if="item.isGroupHead">
-                        <GroupToggle
-                            :expanded="item.isExpanded"
-                            :item-count="item.groupSize"
-                            @toggle="toggleGroup(item.lineNum)"
-                        />
-                        <SessionItem
-                            v-if="item.isExpanded"
-                            :content="item.content"
-                            :kind="item.kind"
-                            :project-id="projectId"
-                            :session-id="sessionId"
-                            :parent-session-id="parentSessionId"
-                            :line-num="item.lineNum"
-                        />
-                    </template>
-
-                    <!-- Regular item (including ALWAYS with prefix/suffix): show item content -->
+                <!-- Group head: show toggle (+ item content if expanded) -->
+                <template v-else-if="item.isGroupHead">
+                    <GroupToggle
+                        :expanded="item.isExpanded"
+                        :item-count="item.groupSize"
+                        @toggle="toggleGroup(item.lineNum)"
+                    />
                     <SessionItem
-                        v-else
+                        v-if="item.isExpanded"
                         :content="item.content"
                         :kind="item.kind"
                         :project-id="projectId"
                         :session-id="sessionId"
                         :parent-session-id="parentSessionId"
                         :line-num="item.lineNum"
-                        :group-head="item.groupHead"
-                        :group-tail="item.groupTail"
-                        :prefix-expanded="item.prefixExpanded || false"
-                        :suffix-expanded="item.suffixExpanded || false"
-                        @toggle-suffix="toggleGroup(item.suffixGroupHead)"
                     />
-                </DynamicScrollerItem>
+                </template>
+
+                <!-- Regular item (including ALWAYS with prefix/suffix): show item content -->
+                <SessionItem
+                    v-else
+                    :content="item.content"
+                    :kind="item.kind"
+                    :project-id="projectId"
+                    :session-id="sessionId"
+                    :parent-session-id="parentSessionId"
+                    :line-num="item.lineNum"
+                    :group-head="item.groupHead"
+                    :group-tail="item.groupTail"
+                    :prefix-expanded="item.prefixExpanded || false"
+                    :suffix-expanded="item.suffixExpanded || false"
+                    @toggle-suffix="toggleGroup(item.suffixGroupHead)"
+                />
             </template>
-        </DynamicScroller>
+        </VirtualScroller>
 
         <!-- Filtered empty state (all items hidden by current mode) -->
         <div v-else-if="visualItems.length === 0 && items.length > 0" class="empty-state">
@@ -510,15 +459,6 @@ function toggleGroup(groupHeadLineNum) {
     flex: 1;
     min-height: 0;
     padding-bottom: var(--wa-space-2xl);
-}
-
-.item-wrapper {
-    /* display: flow-root creates a Block Formatting Context so that child margins
-       (e.g. wa-card margins in user messages) don't collapse through and are
-       included in offsetHeight — which DynamicScrollerItem reads for sizing.
-       Unlike overflow:hidden, flow-root won't clip overflowing content
-       (tooltips, dropdowns, etc.). */
-    display: flow-root;
 }
 
 .empty-state {

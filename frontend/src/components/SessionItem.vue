@@ -204,9 +204,9 @@ function toggleJsonView() {
 
 
 <style>
-.session-items .item-wrapper {
+.session-items {
     --content-card-spacing: var(--wa-space-l);
-    & > .session-item, & > .group-toggle {
+    .session-item, .group-toggle {
         max-width: 85%;
         margin-left: var(--content-card-spacing);
     }
@@ -239,7 +239,7 @@ function toggleJsonView() {
    But as we have many items, the first one handles the top, the last one handles the bottom, and all have left/right sides
  */
 .session-items {
-    .vue-recycle-scroller__item-view:not(:has(.session-item[data-kind="user_message"])) {
+    .virtual-scroller-item:not(:has(.session-item[data-kind="user_message"])) {
 
         /* define our own properties */
         --assistant-card-border-width: var(--wa-panel-border-width);
@@ -271,45 +271,42 @@ function toggleJsonView() {
         --content-card-not-inner-item: 0;
         --content-card-not-end-item: 1;
 
-        & > .item-wrapper {
+        & > .session-item, & > .group-toggle {
 
-            & > .session-item, & > .group-toggle {
+            /* common styles */
+            --assistant-card-base-color: var(--wa-color-gray-95);
+            --assistant-card-bg-color: oklch(from var(--assistant-card-base-color) calc(l*1.025) c h);
+            --assistant-card-border-color: oklch(from var(--assistant-card-bg-color) calc(l / 1.05) c h);
+            background: var(--assistant-card-bg-color);
+            border-color: var(--assistant-card-border-color);
+            border-style: var(--wa-panel-border-style);
+            padding-inline: var(--wa-space-l);
+            --assistant-card-default-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) var(--wa-shadow-blur-s) var(--wa-shadow-spread-s) var(--assistant-card-border-color);
 
-                /* common styles */
-                --assistant-card-base-color: var(--wa-color-gray-95);
-                --assistant-card-bg-color: oklch(from var(--assistant-card-base-color) calc(l*1.025) c h);
-                --assistant-card-border-color: oklch(from var(--assistant-card-bg-color) calc(l / 1.05) c h);
-                background: var(--assistant-card-bg-color);
-                border-color: var(--assistant-card-border-color);
-                border-style: var(--wa-panel-border-style);
-                padding-inline: var(--wa-space-l);
-                --assistant-card-default-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) var(--wa-shadow-blur-s) var(--wa-shadow-spread-s) var(--assistant-card-border-color);
+            border-radius:
+                var(--assistant-card-border-top-left-radius)
+                var(--assistant-card-border-top-right-radius)
+                var(--assistant-card-border-bottom-right-radius)
+                var(--assistant-card-border-bottom-left-radius);
 
-                border-radius:
-                    var(--assistant-card-border-top-left-radius)
-                    var(--assistant-card-border-top-right-radius)
-                    var(--assistant-card-border-bottom-right-radius)
-                    var(--assistant-card-border-bottom-left-radius);
+            border-width:
+                var(--assistant-card-border-top-width)
+                var(--assistant-card-border-width)
+                var(--assistant-card-border-bottom-width)
+                var(--assistant-card-border-width);
 
-                border-width:
-                    var(--assistant-card-border-top-width)
-                    var(--assistant-card-border-width)
-                    var(--assistant-card-border-bottom-width)
-                    var(--assistant-card-border-width);
+            padding:
+                var(--assistant-card-top-spacing)
+                var(--assistant-card-spacing)
+                var(--assistant-card-bottom-spacing)
+                var(--assistant-card-spacing);
 
-                padding:
-                    var(--assistant-card-top-spacing)
-                    var(--assistant-card-spacing)
-                    var(--assistant-card-bottom-spacing)
-                    var(--assistant-card-spacing);
+            box-shadow: var(--assistant-card-shadow);
 
-                box-shadow: var(--assistant-card-shadow);
-
-            }
         }
     }
-    .vue-recycle-scroller__item-view:has(.session-item[data-kind="user_message"]) {
-        + .vue-recycle-scroller__item-view:not(:has(.session-item[data-kind="user_message"])) {
+    .virtual-scroller-item:has(.session-item[data-kind="user_message"]) {
+        + .virtual-scroller-item:not(:has(.session-item[data-kind="user_message"])) {
             /* First non-user after a user message */
             .session-item:first-child, .group-toggle:first-child {
                 --content-card-start-item: 1;
@@ -325,12 +322,11 @@ function toggleJsonView() {
         }
     }
 
-    .vue-recycle-scroller__item-view:not(:has(.session-item[data-kind="user_message"])) {
+    .virtual-scroller-item:not(:has(.session-item[data-kind="user_message"])) {
         /* Last non-user wih nothing after */
-        &:not(:has(+ .vue-recycle-scroller__item-view)),
-        &:not(:has(~ .vue-recycle-scroller__item-view:not([style*="-9999px"]))),
+        &:not(:has(+ .virtual-scroller-item)),
         /* Last non-user before a user message */
-        &:has(+ .vue-recycle-scroller__item-view .session-item[data-kind="user_message"])
+        &:has(+ .virtual-scroller-item .session-item[data-kind="user_message"])
         {
             .session-item:last-child, .group-toggle:last-child {
                 --content-card-end-item: 1;
@@ -370,9 +366,9 @@ wa-details {
 }
 /* Same but in different items */
 .session-items {
-    .vue-recycle-scroller__item-view:has(wa-details.item-details:last-child) {
+    .virtual-scroller-item:has(wa-details.item-details:last-child) {
         &:has(
-            + .vue-recycle-scroller__item-view wa-details.item-details:nth-child(2)  /* 1 is json toggle */
+            + .virtual-scroller-item wa-details.item-details:nth-child(2)  /* 1 is json toggle */
         ) wa-details.item-details:last-child {
             padding-bottom: 0;
             &::part(base) {
@@ -381,7 +377,7 @@ wa-details {
                 border-bottom-width: 0;
             }
         }
-        & + .vue-recycle-scroller__item-view
+        & + .virtual-scroller-item
         wa-details.item-details:nth-child(2) {  /* 1 is json toggle */
             padding-top: 0;
             &::part(base) {
