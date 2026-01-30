@@ -31,7 +31,7 @@ VISIBLE_CONTENT_TYPES = ('text', 'document', 'image')
 # These are user messages that should be treated as debug-only
 _SYSTEM_XML_PREFIXES = (
     '<command-name>',
-    '<local-command-stdout>',
+    '<local-command-',
 )
 
 # Maximum length for extracted titles (before truncation)
@@ -355,8 +355,7 @@ def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
     - ALWAYS (1): USER_MESSAGE, ASSISTANT_MESSAGE, API_ERROR kinds
     - COLLAPSIBLE (2): Meta messages, thinking/tool_use only,
                        summaries, file snapshots, custom titles
-    - DEBUG_ONLY (3): System messages (except api_error), queue ops, progress,
-                      standalone tool_result items
+    - DEBUG_ONLY (3): SYSTEM kind, standalone tool_result items
 
     Args:
         parsed_json: Parsed JSON content of the item
@@ -373,10 +372,8 @@ def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
     if kind in (ItemKind.USER_MESSAGE, ItemKind.ASSISTANT_MESSAGE, ItemKind.API_ERROR):
         return ItemDisplayLevel.ALWAYS
 
-    entry_type = parsed_json.get('type')
-
-    # DEBUG_ONLY: System messages (except api_error), queue operations, progress
-    if entry_type in ('system', 'queue-operation', 'progress'):
+    # DEBUG_ONLY: SYSTEM kind (system messages, queue-operation, progress, XML commands)
+    if kind == ItemKind.SYSTEM:
         return ItemDisplayLevel.DEBUG_ONLY
 
     # DEBUG_ONLY: Standalone tool_result items (their data is accessed via SessionItemLink)
@@ -396,6 +393,7 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
     - USER_MESSAGE: User messages with visible content (text, document, image), not meta
     - ASSISTANT_MESSAGE: Assistant messages with visible content (text, document, image)
     - API_ERROR: System messages with subtype 'api_error'
+    - SYSTEM: System messages (except api_error), queue-operation, progress
     - CUSTOM_TITLE: Items of type 'custom-title' (session title set by Claude)
 
     Args:
@@ -414,25 +412,28 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
     if entry_type == 'custom-title':
         return ItemKind.CUSTOM_TITLE
 
-    # API error
+    # System types: system (except api_error), queue-operation, progress
+    if entry_type in ('queue-operation', 'progress'):
+        return ItemKind.SYSTEM
+
     if entry_type == 'system':
         subtype = parsed_json.get('subtype')
         if subtype == 'api_error':
             return ItemKind.API_ERROR
-        return None
+        return ItemKind.SYSTEM
 
     # User messages
     if entry_type == 'user':
         # Meta messages are not user messages
         if parsed_json.get('isMeta') is True:
-            return None
+            return ItemKind.SYSTEM
 
         message = parsed_json.get('message', {})
         content = message.get('content', [])
 
-        # System XML messages (commands, outputs) are debug-only, no kind
+        # System XML messages (commands, outputs) are SYSTEM kind
         if _is_system_xml_content(content):
-            return None
+            return ItemKind.SYSTEM
 
         # Only user messages with visible content count as USER_MESSAGE
         if _has_visible_content(content):

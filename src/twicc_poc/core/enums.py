@@ -22,3 +22,4 @@ class ItemKind(StrEnum):
     CONTENT_ITEMS = "content_items"
     API_ERROR = "api_error"
     CUSTOM_TITLE = "custom_title"
+    SYSTEM = "system"
