@@ -28,6 +28,13 @@ const store = useDataStore()
 // Reference to the VirtualScroller component
 const scrollerRef = ref(null)
 
+// Flag to track if we're currently auto-scrolling to bottom
+// Used to handle new items arriving during the scroll retry loop
+const isAutoScrollingToBottom = ref(false)
+
+// Threshold in pixels for "near bottom" detection for auto-scroll
+const AUTO_SCROLL_THRESHOLD = 50
+
 // Buffer: load N items before/after visible range
 const LOAD_BUFFER = 50
 
@@ -232,13 +239,47 @@ watch(() => session.value?.compute_version_up_to_date, (newValue, oldValue) => {
 })
 
 /**
+ * Watch for new items being added to the session.
+ * Auto-scrolls to bottom if user was near bottom (or already auto-scrolling).
+ *
+ * Uses a pre-flush watcher to capture "wasNearBottom" state BEFORE Vue updates the DOM,
+ * then scrolls after the DOM update if needed.
+ */
+watch(
+    () => visualItems.value?.length,
+    async (newLength, oldLength) => {
+        // Only handle additions (not initial load or removals)
+        if (!newLength || !oldLength || newLength <= oldLength) return
+
+        const scroller = scrollerRef.value
+        if (!scroller) return
+
+        // Check if we should auto-scroll:
+        // 1. We're currently in the middle of an auto-scroll operation, OR
+        // 2. User was near the bottom before the new items arrived
+        const shouldAutoScroll = isAutoScrollingToBottom.value || scroller.isAtBottom(AUTO_SCROLL_THRESHOLD)
+
+        if (shouldAutoScroll) {
+            // Wait for Vue to render the new items
+            await nextTick()
+            scrollToBottomUntilStable()
+        }
+    }
+)
+
+/**
  * Scroll to bottom repeatedly until the scroll position stabilizes.
  * This handles the case where items are rendered with dynamic heights
  * that change the total scroll height after scrollToBottom is called.
+ *
+ * Sets isAutoScrollingToBottom flag during the operation so that if new
+ * items arrive while scrolling, we know to continue scrolling.
  */
 async function scrollToBottomUntilStable() {
     const scroller = scrollerRef.value
     if (!scroller) return
+
+    isAutoScrollingToBottom.value = true
 
     const maxAttempts = 10
     const delayBetweenAttempts = 50 // ms
@@ -251,6 +292,8 @@ async function scrollToBottomUntilStable() {
         const distanceFromBottom = state.scrollHeight - state.scrollTop - state.clientHeight
         if (distanceFromBottom <= 5) break
     }
+
+    isAutoScrollingToBottom.value = false
 }
 
 /**
