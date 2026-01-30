@@ -2,8 +2,8 @@
 
 from django.core.management.base import BaseCommand
 
-from twicc_poc.core.models import Project
-from twicc_poc.sync import sync_all_with_progress
+from twicc.core.models import Project
+from twicc.sync import sync_all_with_progress
 
 
 class Command(BaseCommand):

@@ -2,7 +2,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = "poc-insecure-key-do-not-use-in-production"
+SECRET_KEY = "dev-insecure-key-do-not-use-in-production"
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
@@ -10,14 +10,14 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.staticfiles",
     "channels",
-    "twicc_poc.core",
+    "twicc.core",
 ]
 
-MIDDLEWARE = []  # Aucun middleware necessaire pour le POC
+MIDDLEWARE = []
 
-ROOT_URLCONF = "twicc_poc.urls"
+ROOT_URLCONF = "twicc.urls"
 
-ASGI_APPLICATION = "twicc_poc.asgi.application"
+ASGI_APPLICATION = "twicc.asgi.application"
 
 CHANNEL_LAYERS = {
     "default": {
@@ -67,7 +67,7 @@ LOGGING = {
         },
     },
     "loggers": {
-        "twicc_poc": {
+        "twicc": {
             "handlers": ["console"],
             "level": "DEBUG",
             "propagate": False,

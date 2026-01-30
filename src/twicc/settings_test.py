@@ -1,6 +1,6 @@
 """Test settings for pytest-django."""
 
-from twicc_poc.settings import *  # noqa: F401, F403
+from twicc.settings import *  # noqa: F401, F403
 
 # Use in-memory SQLite for tests
 DATABASES = {

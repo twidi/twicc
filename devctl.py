@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Development process controller for TWICC POC.
+Development process controller for TWICC.
 
 Manages frontend (npm run dev) and backend (uv run ./run.py) processes
 as independent background daemons with logging.
@@ -234,7 +234,7 @@ def parse_target(target: str | None) -> list[str]:
 def print_help():
     """Print help message."""
     help_text = """
-devctl.py - Development process controller for TWICC POC
+devctl.py - Development process controller for TWICC
 
 Manages frontend and backend dev servers as background processes with logging.
 Processes run independently and survive after the command exits.

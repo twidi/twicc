@@ -560,7 +560,7 @@ wheels = [
 ]
 
 [[package]]
-name = "twicc-poc"
+name = "twicc"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

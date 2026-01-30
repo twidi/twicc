@@ -19,12 +19,12 @@ import json
 
 import pytest
 
-from twicc_poc.compute import (
+from twicc.compute import (
     compute_item_metadata_live,
     compute_session_metadata,
 )
-from twicc_poc.core.enums import ItemDisplayLevel
-from twicc_poc.core.models import Project, Session, SessionItem
+from twicc.core.enums import ItemDisplayLevel
+from twicc.core.models import Project, Session, SessionItem
 
 
 # =============================================================================

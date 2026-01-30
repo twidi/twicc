@@ -1,5 +1,5 @@
 """
-Background tasks for the TWICC POC application.
+Background tasks for the TWICC application.
 
 This module provides background tasks that run continuously:
 - Compute task: Processes sessions that need metadata computation
@@ -24,10 +24,10 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 
-from twicc_poc.compute import compute_session_metadata
-from twicc_poc.core.models import Session
-from twicc_poc.core.pricing import sync_model_prices
-from twicc_poc.core.serializers import serialize_session
+from twicc.compute import compute_session_metadata
+from twicc.core.models import Session
+from twicc.core.pricing import sync_model_prices
+from twicc.core.serializers import serialize_session
 
 logger = logging.getLogger(__name__)
 

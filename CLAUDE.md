@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Claude Code Web UI - A standalone, self-contained web application to replace the Claude Code CLI. Single process, zero external services, one command to launch.
+TwiCC (Twi for Twidi, CC for Claude Code)  - A standalone, self-contained web application to replace the Claude Code CLI. Single process, zero external services, one command to launch.
 
-**Status:** Proof-of-concept in architecture/planning phase. Implementation details are documented in `architecture-decisions.md`.
+**Status:** Active development. Original (POC) implementation details are documented in `architecture-decisions.md`.
 
-**Quality approach:** Although this is a proof-of-concept, we aim to implement everything to the best standards possible. The goal is to stress-test the system and learn as much as we can for the eventual production implementation. The only shortcuts we allow: no tests and no linting.
+**Quality approach:** We aim to implement everything to the best standards possible. The only shortcuts we allow: no tests and no linting.
 
 **IMPORTANT - Development workflow:** Never start implementing code without being explicitly invited to do so. When the user explains requirements or shares thoughts, wait for them to finish and confirm before writing any code. Ask clarifying questions if needed, but do not assume that an explanation is an invitation to implement.
 

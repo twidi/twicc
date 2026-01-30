@@ -5,9 +5,9 @@ from django.http import FileResponse, Http404, JsonResponse
 
 import orjson
 
-from twicc_poc.compute import get_message_content_list
-from twicc_poc.core.models import Project, Session, SessionItem, SessionItemLink, SessionType
-from twicc_poc.core.serializers import (
+from twicc.compute import get_message_content_list
+from twicc.core.models import Project, Session, SessionItem, SessionItemLink, SessionType
+from twicc.core.serializers import (
     serialize_project,
     serialize_session,
     serialize_session_item,

@@ -14,7 +14,7 @@ from typing import NamedTuple
 
 import httpx
 
-from twicc_poc.core.models import DEFAULT_FAMILY_PRICES, ModelPrice
+from twicc.core.models import DEFAULT_FAMILY_PRICES, ModelPrice
 
 
 # OpenRouter API endpoint for model pricing data

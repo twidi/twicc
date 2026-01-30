@@ -13,14 +13,14 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from watchfiles import Change, awatch
 
-from twicc_poc.core.models import Project, Session, SessionItem, SessionType
-from twicc_poc.core.serializers import (
+from twicc.core.models import Project, Session, SessionItem, SessionType
+from twicc.core.serializers import (
     serialize_project,
     serialize_session,
     serialize_session_item,
     serialize_session_item_metadata,
 )
-from twicc_poc.sync import check_file_has_content, sync_session_items
+from twicc.sync import check_file_has_content, sync_session_items
 
 logger = logging.getLogger(__name__)
 

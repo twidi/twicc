@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Entry point for the TWICC POC application.
+Entry point for the TWICC application.
 
 Handles Django setup, migrations, initial sync, and starts the server
 with file watcher running concurrently.
@@ -20,7 +20,7 @@ src_dir = Path(__file__).resolve().parent / "src"
 sys.path.insert(0, str(src_dir))
 
 # Configure Django before any Django imports
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "twicc_poc.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "twicc.settings")
 
 import django
 django.setup()
@@ -28,10 +28,10 @@ django.setup()
 # Now we can import Django-dependent modules
 from django.core.management import call_command
 
-from twicc_poc.core.models import Project, Session, SessionType
-from twicc_poc.sync import sync_all
-from twicc_poc.watcher import start_watcher, stop_watcher
-from twicc_poc.background import (
+from twicc.core.models import Project, Session, SessionType
+from twicc.sync import sync_all
+from twicc.watcher import start_watcher, stop_watcher
+from twicc.background import (
     run_initial_price_sync,
     start_background_compute_task,
     start_price_sync_task,
@@ -43,7 +43,7 @@ from twicc_poc.background import (
 async def run_server(port: int):
     """Run the ASGI server with file watcher and background tasks."""
     import uvicorn
-    from twicc_poc.asgi import application
+    from twicc.asgi import application
 
     # Run initial price sync before starting background tasks
     # This ensures prices are available for cost calculation
@@ -96,7 +96,7 @@ async def run_server(port: int):
 
 
 def main():
-    print("TWICC POC Starting...")
+    print("TWICC Starting...")
     print("✓ Environment loaded")
 
     # Migrations auto

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 
-from twicc_poc.compute import (
+from twicc.compute import (
     compute_item_metadata,
     compute_item_metadata_live,
     compute_item_cost_and_usage,
@@ -26,8 +26,8 @@ from twicc_poc.compute import (
     create_agent_link_from_subagent,
     extract_title_from_user_message,
 )
-from twicc_poc.core.enums import ItemDisplayLevel, ItemKind
-from twicc_poc.core.models import Project, Session, SessionItem, SessionType
+from twicc.core.enums import ItemDisplayLevel, ItemKind
+from twicc.core.models import Project, Session, SessionItem, SessionType
 
 if TYPE_CHECKING:
     from collections.abc import Callable

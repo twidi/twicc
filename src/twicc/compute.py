@@ -15,9 +15,9 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from django.conf import settings
 
-from twicc_poc.core.enums import ItemDisplayLevel, ItemKind
-from twicc_poc.core.models import SessionItem
-from twicc_poc.core.pricing import (
+from twicc.core.enums import ItemDisplayLevel, ItemKind
+from twicc.core.models import SessionItem
+from twicc.core.pricing import (
     calculate_line_cost,
     calculate_line_context_usage,
     extract_model_info,
@@ -38,7 +38,7 @@ _SYSTEM_XML_PREFIXES = (
 TITLE_MAX_LENGTH = 200
 
 if TYPE_CHECKING:
-    from twicc_poc.core.models import Session
+    from twicc.core.models import Session
 
 logger = logging.getLogger(__name__)
 
@@ -745,7 +745,7 @@ def compute_session_metadata(session_id: str) -> None:
         session_id: The session ID
     """
     from django.db import connection
-    from twicc_poc.core.models import Session, SessionItemLink
+    from twicc.core.models import Session, SessionItemLink
 
     # Ensure this thread has its own database connection
     connection.close()
@@ -1020,7 +1020,7 @@ def create_tool_result_link_live(session_id: str, item: SessionItem, parsed_json
     Searches the session for the item containing the matching tool_use
     and creates the link entry.
     """
-    from twicc_poc.core.models import SessionItemLink
+    from twicc.core.models import SessionItemLink
 
     tool_use_id = get_tool_result_id(parsed_json)
     if not tool_use_id:
@@ -1064,7 +1064,7 @@ def create_agent_link_live(session_id: str, item: SessionItem, parsed_json: dict
         item: The SessionItem containing the tool_result
         parsed_json: The parsed JSON content of the tool_result item
     """
-    from twicc_poc.core.models import SessionItemLink
+    from twicc.core.models import SessionItemLink
 
     agent_info = get_tool_result_agent_info(parsed_json)
     if not agent_info:
@@ -1153,7 +1153,7 @@ def create_agent_link_from_subagent(
     """
     from datetime import datetime, timedelta
 
-    from twicc_poc.core.models import SessionItemLink
+    from twicc.core.models import SessionItemLink
 
     # Check if we already have this agent link
     if SessionItemLink.objects.filter(

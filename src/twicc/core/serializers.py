@@ -9,7 +9,7 @@ the model instance was already fetched from the database.
 
 from django.conf import settings
 
-from twicc_poc.core.pricing import extract_model_info
+from twicc.core.pricing import extract_model_info
 
 
 def serialize_project(project):
