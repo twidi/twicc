@@ -24,7 +24,7 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 
-from twicc.compute import compute_session_metadata
+from twicc.compute import compute_session_metadata, load_project_directories
 from twicc.core.models import Session
 from twicc.core.pricing import sync_model_prices
 from twicc.core.serializers import serialize_session
@@ -184,6 +184,9 @@ async def start_background_compute_task() -> None:
     # Reset and initialize progress tracking
     _reset_progress_tracking()
     _initial_total = await _count_sessions_to_compute()
+
+    # Load project directories cache at startup
+    await sync_to_async(load_project_directories)()
 
     logger.info(f"Background compute task started ({_initial_total} sessions to process)")
 

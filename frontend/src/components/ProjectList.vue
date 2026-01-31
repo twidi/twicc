@@ -22,6 +22,7 @@ function handleSelect(project) {
         >
             <div class="project-info">
                 <div class="project-id">{{ project.id }}</div>
+                <div v-if="project.directory" class="project-directory">{{ project.directory }}</div>
                 <div class="project-meta">
                     <span class="sessions-count">
                         {{ project.sessions_count }} session{{ project.sessions_count !== 1 ? 's' : '' }}
@@ -62,6 +63,12 @@ function handleSelect(project) {
 .project-id {
     font-weight: 600;
     font-size: var(--wa-font-size-m);
+    word-break: break-all;
+}
+
+.project-directory {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
     word-break: break-all;
 }
 

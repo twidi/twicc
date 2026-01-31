@@ -18,6 +18,7 @@ def serialize_project(project):
     """Serialize a Project model to a dictionary."""
     return {
         "id": project.id,
+        "directory": project.directory,
         "sessions_count": project.sessions_count,
         "mtime": project.mtime,
         "archived": project.archived,

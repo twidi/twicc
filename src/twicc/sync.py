@@ -20,6 +20,7 @@ from twicc.compute import (
     compute_item_metadata,
     compute_item_metadata_live,
     compute_item_cost_and_usage,
+    ensure_project_directory,
     is_tool_result_item,
     create_tool_result_link_live,
     create_agent_link_live,
@@ -381,6 +382,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Update runtime environment fields if changed
             if last_cwd and last_cwd != session.cwd:
                 session.cwd = last_cwd
+                # Update project directory from session cwd
+                ensure_project_directory(session.project_id, last_cwd)
             if last_git_branch and last_git_branch != session.git_branch:
                 session.git_branch = last_git_branch
             if last_model and last_model != session.model:

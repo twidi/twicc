@@ -41,6 +41,7 @@ class Project(models.Model):
     """A project corresponds to a subfolder of ~/.claude/projects/"""
 
     id = models.CharField(max_length=255, primary_key=True)
+    directory = models.CharField(max_length=500, null=True, blank=True)  # Actual filesystem path (from session cwd)
     sessions_count = models.PositiveIntegerField(default=0)
     mtime = models.FloatField(default=0)
     archived = models.BooleanField(default=False)

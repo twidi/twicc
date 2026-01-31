@@ -16,7 +16,7 @@ import xmltodict
 from django.conf import settings
 
 from twicc.core.enums import ItemDisplayLevel, ItemKind
-from twicc.core.models import SessionItem
+from twicc.core.models import Project, SessionItem
 from twicc.core.pricing import (
     calculate_line_cost,
     calculate_line_context_usage,
@@ -40,6 +40,56 @@ if TYPE_CHECKING:
     from twicc.core.models import Session
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Project Directory Cache
+# =============================================================================
+
+# Module-level cache: project_id -> directory (can be None)
+_project_directories: dict[str, str | None] = {}
+
+
+def load_project_directories() -> None:
+    """
+    Load all project directories into the cache.
+
+    Should be called once at process startup (watcher or compute background task).
+    """
+    _project_directories.clear()
+    _project_directories.update(
+        Project.objects.values_list('id', 'directory')
+    )
+
+
+def ensure_project_directory(project_id: str, cwd: str) -> None:
+    """
+    Ensure the project's directory is set and up-to-date.
+
+    - If project not in cache: load from DB and cache
+    - If directory differs from cwd: update DB and cache
+    - If directory matches cwd: do nothing
+
+    Args:
+        project_id: The project ID
+        cwd: The current working directory from a session line
+    """
+    # Load project into cache if not present
+    if project_id not in _project_directories:
+        try:
+            directory = Project.objects.values_list('directory', flat=True).get(id=project_id)
+        except Project.DoesNotExist:
+            # Project doesn't exist yet, skip (will be handled when project is created)
+            return
+        _project_directories[project_id] = directory
+
+    # Check if update needed
+    if _project_directories[project_id] == cwd:
+        return
+
+    # Update DB and cache
+    Project.objects.filter(id=project_id).update(directory=cwd)
+    _project_directories[project_id] = cwd
 
 
 # =============================================================================
@@ -1005,6 +1055,10 @@ def compute_session_metadata(session_id: str) -> None:
     session.cwd = last_cwd
     session.git_branch = last_git_branch
     session.model = last_model
+
+    # Update project directory from session cwd
+    if last_cwd:
+        ensure_project_directory(session.project_id, last_cwd)
 
     session.save(update_fields=['compute_version', 'message_count', 'context_usage', 'self_cost', 'subagents_cost', 'total_cost', 'cwd', 'git_branch', 'model'])
 
