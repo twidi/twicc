@@ -9,10 +9,12 @@ const store = useDataStore()
 // Refs for wa-switch elements (needed to sync checked property with Web Components)
 const baseModeSwitch = ref(null)
 const debugSwitch = ref(null)
+const fontSizeSlider = ref(null)
 
 // Settings from store
 const baseDisplayMode = computed(() => store.getBaseDisplayMode)
 const debugEnabled = computed(() => store.isDebugEnabled)
+const fontSize = computed(() => store.getFontSize)
 
 // Computed label for the base mode switch
 const baseModeLabel = computed(() =>
@@ -32,11 +34,19 @@ function syncSwitchState() {
         if (debugSwitch.value && debugSwitch.value.checked !== debugEnabled.value) {
             debugSwitch.value.checked = debugEnabled.value
         }
+        if (fontSizeSlider.value && fontSizeSlider.value.value !== fontSize.value) {
+            fontSizeSlider.value.value = fontSize.value
+        }
     })
 }
 
 // Watch for store changes and sync switches
-watch([isSimplified, debugEnabled], syncSwitchState, { immediate: true })
+watch([isSimplified, debugEnabled, fontSize], syncSwitchState, { immediate: true })
+
+// Apply font size to :root whenever it changes
+watch(fontSize, (size) => {
+    document.documentElement.style.fontSize = `${size}px`
+}, { immediate: true })
 
 /**
  * Toggle between normal and simplified mode.
@@ -51,6 +61,13 @@ function onBaseModeChange(event) {
  */
 function onDebugChange(event) {
     store.setDebugEnabled(event.target.checked)
+}
+
+/**
+ * Handle font size slider change.
+ */
+function onFontSizeChange(event) {
+    store.setFontSize(event.target.value)
 }
 
 /**
@@ -80,6 +97,18 @@ function onPopoverShow() {
                     @change="onDebugChange"
                     size="small"
                 >Debug</wa-switch>
+            </div>
+            <div class="setting-group">
+                <label class="setting-group-label">Font size</label>
+                <wa-slider
+                    ref="fontSizeSlider"
+                    :min.prop="12"
+                    :max.prop="32"
+                    :step.prop="1"
+                    :value.prop="fontSize"
+                    @input="onFontSizeChange"
+                    size="small"
+                ></wa-slider>
             </div>
         </div>
     </wa-popover>

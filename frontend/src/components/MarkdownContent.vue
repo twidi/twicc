@@ -112,6 +112,8 @@ onMounted(render)
    ------------------------------------------------------------------- */
 .markdown-body {
     background: transparent;
+    /* Override github-markdown-css fixed 16px to inherit from :root */
+    font-size: 1rem;
 }
 
 /* -- Shiki-generated code blocks ------------------------------------- */
@@ -133,7 +135,7 @@ markdown-body .highlight pre, .markdown-body pre, .markdown-body code, .markdown
     position: absolute;
     top: 8px;
     left: 16px;
-    font-size: 12px;
+    font-size: var(--wa-font-size-s);
     color: #656d76;
     text-transform: uppercase;
     font-family: var(--wa-font-sans);

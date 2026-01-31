@@ -28,6 +28,9 @@ export const useDataStore = defineStore('data', {
             baseDisplayMode: DEFAULT_DISPLAY_MODE,
             debugEnabled: false,
 
+            // Font size setting (in pixels) - applied to :root to affect rem units
+            fontSize: 16,  // default, range 14-18
+
             // Expanded groups - per session (session-level groups)
             // { sessionId: [groupHeadLineNum, ...] }
             // Using array instead of Set for Vue reactivity
@@ -92,6 +95,9 @@ export const useDataStore = defineStore('data', {
         // Individual settings for the UI
         getBaseDisplayMode: (state) => state.localState.baseDisplayMode,
         isDebugEnabled: (state) => state.localState.debugEnabled,
+
+        // Font size getter
+        getFontSize: (state) => state.localState.fontSize,
 
         // Get expanded groups for a session (returns array)
         getExpandedGroups: (state) => (sessionId) =>
@@ -603,6 +609,14 @@ export const useDataStore = defineStore('data', {
         setDebugEnabled(enabled) {
             this.localState.debugEnabled = enabled
             this.recomputeAllVisualItems()
+        },
+
+        /**
+         * Set the global font size.
+         * @param {number} size - Font size in pixels (14-18)
+         */
+        setFontSize(size) {
+            this.localState.fontSize = size
         },
 
         /**
