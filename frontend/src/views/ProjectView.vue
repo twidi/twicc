@@ -1,7 +1,7 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useDataStore } from '../stores/data'
+import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import SessionList from '../components/SessionList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
@@ -14,23 +14,39 @@ const store = useDataStore()
 const projectId = computed(() => route.params.projectId)
 const sessionId = computed(() => route.params.sessionId || null)
 
+// Detect "All Projects" mode from route name
+const isAllProjectsMode = computed(() =>
+    route.name === 'projects-all' ||
+    route.name === 'projects-session' ||
+    route.name === 'projects-session-subagent'
+)
+
+// Effective project ID for store operations
+const effectiveProjectId = computed(() =>
+    isAllProjectsMode.value ? ALL_PROJECTS_ID : projectId.value
+)
+
 // All projects for the selector (already sorted by mtime desc in store)
 const allProjects = computed(() => store.getProjects)
 
 // Loading and error states for sessions
-const areSessionsLoading = computed(() => store.areSessionsLoading(projectId.value))
-const didSessionsFailToLoad = computed(() => store.didSessionsFailToLoad(projectId.value))
+const areSessionsLoading = computed(() => store.areSessionsLoading(effectiveProjectId.value))
+const didSessionsFailToLoad = computed(() => store.didSessionsFailToLoad(effectiveProjectId.value))
 
-// Load sessions when project changes
-watch(projectId, async (newProjectId) => {
-    if (newProjectId) {
+// Load sessions when project changes or mode changes
+watch([effectiveProjectId, isAllProjectsMode], async ([newProjectId, isAllMode]) => {
+    if (isAllMode) {
+        await store.loadAllSessions({ isInitialLoading: true })
+    } else if (newProjectId) {
         await store.loadSessions(newProjectId, { isInitialLoading: true })
     }
 }, { immediate: true })
 
 // Retry loading sessions
 async function handleRetry() {
-    if (projectId.value) {
+    if (isAllProjectsMode.value) {
+        await store.loadAllSessions({ isInitialLoading: true })
+    } else if (projectId.value) {
         await store.loadSessions(projectId.value, { isInitialLoading: true })
     }
 }
@@ -38,17 +54,26 @@ async function handleRetry() {
 // Handle project change from selector
 function handleProjectChange(event) {
     const newProjectId = event.target.value
-    if (newProjectId && newProjectId !== projectId.value) {
+    if (newProjectId === ALL_PROJECTS_ID) {
+        router.push({ name: 'projects-all' })
+    } else if (newProjectId && newProjectId !== projectId.value) {
         router.push({ name: 'project', params: { projectId: newProjectId } })
     }
 }
 
 // Handle session selection
 function handleSessionSelect(session) {
-    router.push({
-        name: 'session',
-        params: { projectId: projectId.value, sessionId: session.id }
-    })
+    if (isAllProjectsMode.value) {
+        router.push({
+            name: 'projects-session',
+            params: { projectId: session.project_id, sessionId: session.id }
+        })
+    } else {
+        router.push({
+            name: 'session',
+            params: { projectId: projectId.value, sessionId: session.id }
+        })
+    }
 }
 
 // Navigate back to home
@@ -120,11 +145,15 @@ function handleSplitReposition(event) {
                     <wa-icon name="arrow-left"></wa-icon>
                 </wa-button>
                 <wa-select
-                    :value.attr="projectId"
+                    :value.attr="isAllProjectsMode ? ALL_PROJECTS_ID : projectId"
                     @change="handleProjectChange"
                     class="project-selector"
                     size="small"
                 >
+                    <wa-option :value="ALL_PROJECTS_ID">
+                        All Projects
+                    </wa-option>
+                    <wa-divider></wa-divider>
                     <wa-option
                         v-for="p in allProjects"
                         :key="p.id"
@@ -156,8 +185,9 @@ function handleSplitReposition(event) {
                 <!-- Normal content -->
                 <SessionList
                     v-else
-                    :project-id="projectId"
+                    :project-id="effectiveProjectId"
                     :session-id="sessionId"
+                    :show-project-name="isAllProjectsMode"
                     @select="handleSessionSelect"
                 />
             </div>

@@ -8,6 +8,11 @@ import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 const router = useRouter()
 const store = useDataStore()
 
+// Total sessions count (sum of all projects)
+const totalSessionsCount = computed(() =>
+    store.getProjects.reduce((sum, p) => sum + (p.sessions_count || 0), 0)
+)
+
 // Loading and error states
 const isLoading = computed(() => store.isProjectsListLoading)
 const hasError = computed(() => store.didProjectsListFailToLoad)
@@ -25,6 +30,9 @@ async function handleRetry() {
     <div class="home-view">
         <header class="home-header">
             <h1>Claude Code Projects</h1>
+            <router-link :to="{ name: 'projects-all' }" class="view-all-link">
+                View all sessions ({{ totalSessionsCount }})
+            </router-link>
         </header>
         <main class="home-content">
             <!-- Error state -->
@@ -59,6 +67,11 @@ async function handleRetry() {
 }
 
 .home-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--wa-space-s);
     margin-bottom: var(--wa-space-xl);
     flex-shrink: 0;
 }
@@ -68,6 +81,17 @@ async function handleRetry() {
     font-size: var(--wa-font-size-2xl);
     font-weight: 700;
     color: var(--wa-color-text-normal);
+}
+
+.view-all-link {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+    text-decoration: none;
+}
+
+.view-all-link:hover {
+    color: var(--wa-color-text-normal);
+    text-decoration: underline;
 }
 
 .home-content {

@@ -15,6 +15,16 @@ from twicc.core.serializers import (
 )
 
 
+def all_sessions(request):
+    """GET /api/sessions/ - All sessions from all projects.
+
+    Returns only regular sessions (not subagents).
+    """
+    sessions = Session.objects.filter(type=SessionType.SESSION)
+    data = [serialize_session(s) for s in sessions]
+    return JsonResponse(data, safe=False)
+
+
 def project_list(request):
     """GET /api/projects/ - List all projects."""
     projects = Project.objects.all()

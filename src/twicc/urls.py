@@ -5,6 +5,7 @@ from django.urls import path, re_path
 from . import views
 
 urlpatterns = [
+    path("api/sessions/", views.all_sessions),
     path("api/projects/", views.project_list),
     path("api/projects/<str:project_id>/", views.project_detail),
     path("api/projects/<str:project_id>/sessions/", views.project_sessions),

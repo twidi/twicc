@@ -23,6 +23,25 @@ const routes = [
                 ]
             }
         ]
+    },
+    // "All Projects" mode routes (note: plural "projects")
+    {
+        path: '/projects',
+        component: ProjectView,
+        children: [
+            { path: '', name: 'projects-all', component: null },
+            {
+                path: ':projectId/session/:sessionId',
+                name: 'projects-session',
+                component: SessionView,
+                children: [
+                    {
+                        path: 'subagent/:subagentId',
+                        name: 'projects-session-subagent'
+                    }
+                ]
+            }
+        ]
     }
 ]
 

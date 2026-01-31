@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { useDataStore } from '../stores/data'
+import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { formatDate } from '../utils/date'
 
 const props = defineProps({
@@ -11,6 +11,10 @@ const props = defineProps({
     sessionId: {
         type: String,
         default: null
+    },
+    showProjectName: {
+        type: Boolean,
+        default: false
     }
 })
 
@@ -18,6 +22,9 @@ const store = useDataStore()
 
 // Sessions are already sorted by mtime desc in the getter
 const sessions = computed(() => {
+    if (props.projectId === ALL_PROJECTS_ID) {
+        return store.getAllSessions
+    }
     return store.getProjectSessions(props.projectId)
 })
 
@@ -51,6 +58,7 @@ function handleSelect(session) {
             @click="handleSelect(session)"
         >
             <div class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</div>
+            <div v-if="showProjectName" class="session-project">{{ session.project_id }}</div>
             <div class="session-meta">
                 <span class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
                 <span class="session-mtime"><wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
@@ -93,12 +101,24 @@ function handleSelect(session) {
     white-space: nowrap;
 }
 
+.session-project {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+    font-weight: var(--wa-font-weight-body);;
+    /* Truncate with ellipsis */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: var(--wa-space-3xs);
+}
+
 .session-meta {
     display: flex;
     justify-content: space-between;
     gap: var(--wa-space-xs);
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
+    font-weight: var(--wa-font-weight-body);;
     margin-top: var(--wa-space-2xs);
     overflow: hidden;
 }

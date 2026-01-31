@@ -15,6 +15,12 @@ const projectId = computed(() => route.params.projectId)
 const sessionId = computed(() => route.params.sessionId)
 const subagentId = computed(() => route.params.subagentId)
 
+// Detect "All Projects" mode from route name
+const isAllProjectsMode = computed(() =>
+    route.name === 'projects-session' ||
+    route.name === 'projects-session-subagent'
+)
+
 // Session data
 const session = computed(() => store.getSession(sessionId.value))
 
@@ -55,7 +61,7 @@ function onTabShow(event) {
     if (panel === 'main') {
         // Navigate to session without subagent
         router.push({
-            name: 'session',
+            name: isAllProjectsMode.value ? 'projects-session' : 'session',
             params: {
                 projectId: projectId.value,
                 sessionId: sessionId.value
@@ -65,7 +71,7 @@ function onTabShow(event) {
         // Navigate to subagent
         const agentId = panel.replace('agent-', '')
         router.push({
-            name: 'session-subagent',
+            name: isAllProjectsMode.value ? 'projects-session-subagent' : 'session-subagent',
             params: {
                 projectId: projectId.value,
                 sessionId: sessionId.value,
@@ -93,7 +99,7 @@ function closeTab(tabId) {
             // Go to the previous subagent tab (use current tabs, not yet updated)
             const prevTab = tabs[index - 1]
             router.push({
-                name: 'session-subagent',
+                name: isAllProjectsMode.value ? 'projects-session-subagent' : 'session-subagent',
                 params: {
                     projectId: projectId.value,
                     sessionId: sessionId.value,
@@ -103,7 +109,7 @@ function closeTab(tabId) {
         } else {
             // No more subagent tabs, go to main
             router.push({
-                name: 'session',
+                name: isAllProjectsMode.value ? 'projects-session' : 'session',
                 params: {
                     projectId: projectId.value,
                     sessionId: sessionId.value

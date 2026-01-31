@@ -5,6 +5,9 @@ import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
 import { useSettingsStore } from './settings'
 
+// Special project ID for "All Projects" mode
+export const ALL_PROJECTS_ID = '__all__'
+
 export const useDataStore = defineStore('data', {
     state: () => ({
         // Server data
@@ -55,6 +58,10 @@ export const useDataStore = defineStore('data', {
             Object.values(state.sessions)
                 .filter(s => s.project_id === projectId && !s.parent_session_id)
                 .sort((a, b) => b.mtime - a.mtime),
+        getAllSessions: (state) =>
+            Object.values(state.sessions)
+                .filter(s => !s.parent_session_id)
+                .sort((a, b) => b.mtime - a.mtime),
         getSession: (state) => (id) => state.sessions[id],
         getSessionItems: (state) => (sessionId) => state.sessionItems[sessionId] || [],
 
@@ -75,6 +82,8 @@ export const useDataStore = defineStore('data', {
         // Local state getters - fetched
         areProjectSessionsFetched: (state) => (projectId) =>
             state.localState.projects[projectId]?.sessionsFetched ?? false,
+        areAllProjectsSessionsFetched: (state) =>
+            state.localState.projects[ALL_PROJECTS_ID]?.sessionsFetched ?? false,
         areSessionItemsFetched: (state) => (sessionId) =>
             state.localState.sessions[sessionId]?.itemsFetched ?? false,
 
@@ -342,7 +351,9 @@ export const useDataStore = defineStore('data', {
             const changedIds = new Set()
 
             // Skip if already fetched (unless forced)
-            if (!force && this.localState.projects[projectId]?.sessionsFetched) {
+            // Also skip if all sessions have been fetched (we already have everything)
+            if (!force && (this.localState.projects[projectId]?.sessionsFetched ||
+                           this.localState.projects[ALL_PROJECTS_ID]?.sessionsFetched)) {
                 return changedIds
             }
 
@@ -384,6 +395,53 @@ export const useDataStore = defineStore('data', {
                     this.localState.projects[projectId].sessionsLoadingError = true
                 }
                 throw error  // Re-throw for reconciliation retry logic
+            } finally {
+                this.localState.projects[projectId].sessionsLoading = false
+            }
+        },
+        /**
+         * Load all sessions from all projects.
+         * @param {Object} options
+         * @param {boolean} options.isInitialLoading - If true, enables UI feedback
+         * @returns {Promise<void>}
+         */
+        async loadAllSessions({ force = false, isInitialLoading = false } = {}) {
+            // Use a special project ID for "all projects" state
+            const projectId = ALL_PROJECTS_ID
+
+            // Skip if already fetched (unless forced)
+            if (!force && this.localState.projects[projectId]?.sessionsFetched) {
+                return
+            }
+
+            // Initialize localState for this pseudo-project if needed
+            if (!this.localState.projects[projectId]) {
+                this.localState.projects[projectId] = {}
+            }
+            this.localState.projects[projectId].sessionsLoading = true
+
+            try {
+                const res = await fetch('/api/sessions/')
+                if (!res.ok) {
+                    console.error('Failed to load all sessions:', res.status, res.statusText)
+                    if (isInitialLoading) {
+                        this.localState.projects[projectId].sessionsLoadingError = true
+                    }
+                    return
+                }
+                const freshSessions = await res.json()
+                for (const fresh of freshSessions) {
+                    this.sessions[fresh.id] = fresh
+                }
+                // Mark as fetched and clear any previous error
+                this.localState.projects[projectId].sessionsFetched = true
+                this.localState.projects[projectId].sessionsLoadingError = false
+            } catch (error) {
+                console.error('Failed to load all sessions:', error)
+                if (isInitialLoading) {
+                    this.localState.projects[projectId].sessionsLoadingError = true
+                }
+                throw error
             } finally {
                 this.localState.projects[projectId].sessionsLoading = false
             }
