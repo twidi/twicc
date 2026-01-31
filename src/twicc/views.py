@@ -68,11 +68,36 @@ def project_list(request):
 
 
 def project_detail(request, project_id):
-    """GET /api/projects/<id>/ - Detail of a project."""
+    """GET/PUT /api/projects/<id>/ - Detail of a project or update it."""
     try:
         project = Project.objects.get(id=project_id)
     except Project.DoesNotExist:
         raise Http404("Project not found")
+
+    if request.method == "PUT":
+        try:
+            data = orjson.loads(request.body)
+        except orjson.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        # Update allowed fields only
+        if "name" in data:
+            name = data["name"]
+            if name is not None:
+                name = name.strip()
+                if not name:
+                    # Empty after strip means no name
+                    name = None
+                elif len(name) > 25:
+                    return JsonResponse({"error": "Name must be 25 characters or less"}, status=400)
+                elif Project.objects.filter(name=name).exclude(id=project_id).exists():
+                    return JsonResponse({"error": "A project with this name already exists"}, status=400)
+            project.name = name
+        if "color" in data:
+            project.color = data["color"]
+
+        project.save(update_fields=["name", "color"])
+
     return JsonResponse(serialize_project(project))
 
 

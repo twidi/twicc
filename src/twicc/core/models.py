@@ -45,6 +45,8 @@ class Project(models.Model):
     sessions_count = models.PositiveIntegerField(default=0)
     mtime = models.FloatField(default=0)
     archived = models.BooleanField(default=False)
+    name = models.CharField(max_length=25, null=True, blank=True, unique=True)  # User-defined display name
+    color = models.CharField(max_length=50, null=True, blank=True)  # CSS color value (hex, hsl, etc.)
 
     class Meta:
         ordering = ["-mtime"]

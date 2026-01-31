@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { formatDate } from '../utils/date'
+import ProjectBadge from './ProjectBadge.vue'
 
 const props = defineProps({
     projectId: {
@@ -130,7 +131,7 @@ function handleSelect(session) {
             @click="handleSelect(session)"
         >
             <div class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</div>
-            <div v-if="showProjectName" class="session-project">{{ session.project_id }}</div>
+            <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
             <div class="session-meta">
                 <span class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
                 <span class="session-mtime"><wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>

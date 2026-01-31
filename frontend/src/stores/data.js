@@ -46,7 +46,12 @@ export const useDataStore = defineStore('data', {
             // Agent links cache - maps tool_id to agent_id for Task tool_use items
             // { sessionId: { toolId: agentId | null } }
             // null means explicitly not found (avoid re-fetching)
-            agentLinks: {}
+            agentLinks: {},
+
+            // Project display names cache - computed from name, directory, or id
+            // { projectId: displayName }
+            // Updated when project data changes
+            projectDisplayNames: {}
         }
     }),
 
@@ -145,6 +150,37 @@ export const useDataStore = defineStore('data', {
             const sessionLinks = state.localState.agentLinks[sessionId]
             if (!sessionLinks) return undefined
             return sessionLinks.hasOwnProperty(toolId) ? sessionLinks[toolId] : undefined
+        },
+
+        // Get display name for a project (uses cache, computes if missing)
+        getProjectDisplayName: (state) => (projectId) => {
+            // Return from cache if available
+            if (state.localState.projectDisplayNames[projectId]) {
+                return state.localState.projectDisplayNames[projectId]
+            }
+
+            // Compute and cache
+            const project = state.projects[projectId]
+            if (!project) return projectId // Fallback to raw ID if project not loaded
+
+            let displayName
+
+            if (project.name) {
+                // 1. User-defined name takes priority
+                displayName = project.name
+            } else if (project.directory) {
+                // 2. Last part of directory path
+                const parts = project.directory.split('/')
+                displayName = parts[parts.length - 1] || project.directory
+            } else {
+                // 3. Last part of ID after dashes
+                const parts = project.id.split('-')
+                displayName = parts[parts.length - 1] || project.id
+            }
+
+            // Cache it
+            state.localState.projectDisplayNames[projectId] = displayName
+            return displayName
         }
     },
 
@@ -152,10 +188,14 @@ export const useDataStore = defineStore('data', {
         // Projects
         addProject(project) {
             this.$patch({ projects: { [project.id]: project } })
+            // Invalidate display name cache so it gets recomputed
+            delete this.localState.projectDisplayNames[project.id]
         },
         updateProject(project) {
             // $patch does a deep merge: only modified props trigger a re-render
             this.$patch({ projects: { [project.id]: project } })
+            // Invalidate display name cache so it gets recomputed
+            delete this.localState.projectDisplayNames[project.id]
         },
 
         // Sessions

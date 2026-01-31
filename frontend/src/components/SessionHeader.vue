@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useDataStore } from '../stores/data'
 import { formatDate } from '../utils/date'
 import { MAX_CONTEXT_TOKENS } from '../constants'
+import ProjectBadge from './ProjectBadge.vue'
 
 const props = defineProps({
     sessionId: {
@@ -95,7 +96,7 @@ const formattedModel = computed(() => {
     <header class="session-header" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
             <h2 :title="displayName">{{ displayName }}</h2>
-            <div v-if="session.project_id" class="session-project">{{ session.project_id }}</div>
+            <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
         </div>
 
         <div class="session-meta">

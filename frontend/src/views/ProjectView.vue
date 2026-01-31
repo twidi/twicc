@@ -5,6 +5,7 @@ import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import SessionList from '../components/SessionList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
+import ProjectBadge from '../components/ProjectBadge.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,6 +29,13 @@ const effectiveProjectId = computed(() =>
 
 // All projects for the selector (already sorted by mtime desc in store)
 const allProjects = computed(() => store.getProjects)
+
+// Selected project color for display in the closed select
+const selectedProjectColor = computed(() => {
+    if (isAllProjectsMode.value) return null
+    const project = store.getProject(projectId.value)
+    return project?.color || null
+})
 
 // Loading and error states for sessions
 // Only show initial loading spinner when we haven't fetched any sessions yet
@@ -150,6 +158,12 @@ function handleSplitReposition(event) {
                     class="project-selector"
                     size="small"
                 >
+                    <span
+                        v-if="!isAllProjectsMode"
+                        slot="start"
+                        class="selected-project-dot"
+                        :style="selectedProjectColor ? { '--dot-color': selectedProjectColor } : null"
+                    ></span>
                     <wa-option :value="ALL_PROJECTS_ID">
                         All Projects
                     </wa-option>
@@ -158,8 +172,9 @@ function handleSplitReposition(event) {
                         v-for="p in allProjects"
                         :key="p.id"
                         :value="p.id"
+                        :label="store.getProjectDisplayName(p.id)"
                     >
-                        {{ p.id }}
+                        <ProjectBadge :project-id="p.id" />
                     </wa-option>
                 </wa-select>
             </div>
@@ -292,6 +307,17 @@ function handleSplitReposition(event) {
     wa-option {
         max-width: min(400px, calc(100vw - 100px));
     }
+}
+
+.selected-project-dot {
+    width: 0.75em;
+    height: 0.75em;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1px solid;
+    box-sizing: border-box;
+    background-color: var(--dot-color, transparent);
+    border-color: var(--dot-color, var(--wa-color-border-quiet));
 }
 
 .sidebar wa-divider {

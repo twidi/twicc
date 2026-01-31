@@ -22,6 +22,8 @@ def serialize_project(project):
         "sessions_count": project.sessions_count,
         "mtime": project.mtime,
         "archived": project.archived,
+        "name": project.name,
+        "color": project.color,
     }
 
 

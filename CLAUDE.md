@@ -43,6 +43,14 @@ uv run ./devctl.py logs [front|back]        # Show recent logs (--lines=N)
 
 **Log files:** `.devctl/logs/frontend.log` and `.devctl/logs/backend.log` - read these to debug issues.
 
+## Operations Reserved to User
+
+Claude never runs these operations. Instead, notify the user at the end of a task or, if absolutely necessary during your work, pause the task and ask them the permission to do it or to do them manually:
+
+- **Django migrations:** After modifying models, remind the user to run `makemigrations` and `migrate`
+- **Dev server restart:** After backend changes, remind the user to restart via `devctl.py`
+- **Package installation:** After adding dependencies, remind the user to run `npm install` or `uv add`
+
 ## Architecture
 
 ```
@@ -133,4 +141,16 @@ If a `wa-*` component appears unstyled in production (but works in dev), it's li
 ## Web Awesome Documentation
 
 A nearly complete "one file" version of the docs is available at `frontend/node_modules/@awesome.me/webawesome/dist/llms.txt`
-Full documentation is also at `/home/twidi/dev/webawesome/packages/webawesome/docs/docs/` (`usage.md` and `frameworks/vue.md`) 
+Full documentation is also at `/home/twidi/dev/webawesome/packages/webawesome/docs/docs/` (`usage.md` and `frameworks/vue.md`)
+
+## Dialog Forms Pattern
+
+When creating a form inside a `wa-dialog`, refer to `frontend/src/components/ProjectEditDialog.vue` as the reference implementation. Key patterns:
+
+- **Form element:** Wrap content in a `<form>` with `@submit.prevent="handleSave"` and a unique `id`
+- **Submit button outside form:** Use `type="submit"` and set the `form` attribute via `setAttribute()` in a sync function (wa-button doesn't expose `form` as a property)
+- **Focus management:** Use `@wa-after-show` event (not `autofocus` attribute) to focus the first input after the dialog animation completes, and use `setSelectionRange(len, len)` to position cursor at end
+- **Input validation:** Apply `trim()` on text inputs before validation and submission
+- **Uniqueness checks:** Validate client-side first (from store data), backend enforces with unique constraint
+- **Error display:** Use `wa-callout variant="danger"` for validation and API errors
+- **Dialog width:** Use `--width: min(Xpx, calc(100vw - 2rem))` to be responsive
