@@ -5,6 +5,7 @@ description = "Claude Code Web UI"
 requires-python = ">=3.13"
 dependencies = [
     "channels>=4.3.2",
+    "claude-agent-sdk>=0.1.26",
     "daphne>=4.2.1",
     "django>=6.0.1",
     "httpx>=0.28.1",
