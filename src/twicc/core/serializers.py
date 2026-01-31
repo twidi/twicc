@@ -7,6 +7,8 @@ safe to call from async contexts without sync_to_async wrapping, as long as
 the model instance was already fetched from the database.
 """
 
+from functools import lru_cache
+
 from django.conf import settings
 
 from twicc.core.pricing import extract_model_info
@@ -55,6 +57,7 @@ def serialize_session(session):
     }
 
 
+@lru_cache(maxsize=32)
 def _serialize_model(model: str | None) -> dict | None:
     """Serialize model info as structured object with raw, family, version."""
     if not model:

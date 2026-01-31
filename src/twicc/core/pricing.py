@@ -10,6 +10,7 @@ This module provides functions for:
 
 from datetime import date, datetime
 from decimal import Decimal
+from functools import lru_cache
 from typing import NamedTuple
 
 import httpx
@@ -34,6 +35,7 @@ class ModelInfo(NamedTuple):
     version: str
 
 
+@lru_cache(maxsize=32)
 def extract_model_info(raw_name: str) -> ModelInfo | None:
     """
     Extract family and version from a raw model name.
