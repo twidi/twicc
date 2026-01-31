@@ -228,12 +228,17 @@ function toggleJsonView() {
     padding-top: var(--wa-space-s) !important;
 }
 
+.session-items-list {
+    container-type: inline-size;
+    container-name: session-items-list;
+}
 
 .session-items {
-    --content-card-spacing: var(--wa-space-l);
+    --card-spacing: var(--wa-space-l);
+    --max-card-width: 85%;
     .session-item, .group-toggle {
-        max-width: 85%;
-        margin-left: var(--content-card-spacing);
+        max-width: calc(var(--max-card-width) - var(--card-spacing) * 2);
+        margin-left: var(--card-spacing);
     }
 
     --user-card-base-color: var(--wa-color-indigo-95);
@@ -244,16 +249,16 @@ function toggleJsonView() {
 .session-items .session-item[data-kind="user_message"] {
     /* style from wa-card except color that we redefine later */
     border-style: var(--wa-panel-border-style);
-    padding-inline: var(--wa-space-l);
+    padding-inline: var(--card-spacing);
     border-radius: var(--wa-panel-border-radius);
     border-width: var(--wa-panel-border-width);
-    padding: var(--wa-space-l);
+    padding: var(--card-spacing);
 
     width: max-content;
     margin:
-        var(--content-card-spacing)
-        var(--content-card-spacing)
-        var(--content-card-spacing)
+        calc(var(--card-spacing) - 4px)  /* size of box-shadow of previous card */
+        var(--card-spacing)
+        var(--card-spacing)
         auto;
     --user-card-bg-color: oklch(from var(--user-card-base-color) calc(l * 1.00) c h);
     --user-card-border-color: oklch(from var(--user-card-bg-color) calc(l / 1.05) c h);
@@ -271,7 +276,7 @@ function toggleJsonView() {
         /* define our own properties */
         --assistant-card-border-width: var(--wa-panel-border-width);
         --assistant-card-border-radius: var(--wa-panel-border-radius);
-        --assistant-card-spacing: var(--wa-space-l);
+        --assistant-card-spacing: var(--card-spacing);
 
         /* by default no radius because default style is only for "inner" (not first/last) rows */
         --assistant-card-border-top-left-radius: 0;
@@ -306,7 +311,7 @@ function toggleJsonView() {
             background: var(--assistant-card-bg-color);
             border-color: var(--assistant-card-border-color);
             border-style: var(--wa-panel-border-style);
-            padding-inline: var(--wa-space-l);
+            padding-inline: var(--card-spacing);
             --assistant-card-default-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) var(--wa-shadow-blur-s) var(--wa-shadow-spread-s) var(--assistant-card-border-color);
 
             border-radius:
@@ -414,12 +419,16 @@ wa-details {
     }
 }
 
-/* Common style for wa-detail.items-details */
+/* Common style for wa-detail and wa-detail.items-details */
+wa-details {
+    --spacing: min(var(--card-spacing), var(--wa-space-m));
+}
+
 wa-details.item-details {
     font-family: var(--wa-font-mono);
     font-size: var(--wa-font-size-s);
-    --spacing-top: calc(var(--content-card-not-start-item, 1) * var(--wa-space-l));
-    --spacing-bottom: calc(var(--content-card-not-end-item, 1) * var(--wa-space-l));
+    --spacing-top: calc(var(--content-card-not-start-item, 1) * var(--spacing));
+    --spacing-bottom: calc(var(--content-card-not-end-item, 1) * var(--spacing));
     padding-top: var(--spacing-top);
     padding-bottom: var(--spacing-bottom);
 
@@ -435,6 +444,46 @@ wa-details.item-details {
     .items-details-summary-description {
         color: var(--wa-color-text);
         font-weight: normal;
+    }
+}
+
+/* checked "toggles" (usually) before wa-details must have some removed space to keep spacing harmonious */
+.group-toggle:not(:has(+.session-item > .json-view:first-child)) wa-switch:state(checked) {
+    margin-bottom: calc(var(--card-spacing) * -1/4);
+    z-index: 1;
+}
+
+/* Responsive styles for narrow containers */
+@container session-items-list (width <= 800px) {
+    .session-items {
+        --max-card-width: 95%;
+    }
+}
+@container session-items-list (width <= 600px) {
+    .session-items {
+        --card-spacing: var(--wa-space-m) !important;
+    }
+}
+@container session-items-list (width <= 400px) {
+    .session-items {
+        --card-spacing: var(--wa-space-s) !important;
+    }
+    wa-details.item-details {
+        .items-details-summary {
+            flex-direction: column;
+            .items-details-summary-left {
+                 & + :not(wa-button) {
+                    align-self: center;
+                    translate: -2em 0; /* due to arrow and spacing on the left of the summary */
+                }
+                & + wa-button {
+                    align-self: end;
+                    &::part(base) {
+                        margin-bottom: var(--card-spacing);
+                    }
+                }
+            }
+        }
     }
 }
 </style>

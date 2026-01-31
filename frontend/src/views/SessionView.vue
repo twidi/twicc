@@ -261,10 +261,6 @@ watch(subagentId, (newSubagentId) => {
     flex-direction: column;
 }
 
-.session-tabs::part(tabs) {
-    padding-left: var(--wa-space-m);
-}
-
 .session-tabs :deep(wa-tab-panel::part(base)) {
     padding: 0;
 }

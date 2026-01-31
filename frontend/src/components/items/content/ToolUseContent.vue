@@ -310,7 +310,7 @@ function toggleResultPath(path) {
 </script>
 
 <template>
-    <wa-details class="item-details tool-use" :class="{'with-right-button' : isTask}" icon-placement="start" @wa-show="onToolUseOpen" @wa-hide="onToolUseClose">
+    <wa-details class="item-details tool-use" :class="{'with-right-part' : isTask && !parentSessionId}" icon-placement="start" @wa-show="onToolUseOpen" @wa-hide="onToolUseClose">
         <span slot="summary" class="items-details-summary">
             <span class="items-details-summary-left">
                 <strong class="items-details-summary-name">{{ name }}</strong>
@@ -380,8 +380,8 @@ wa-details::part(content) {
     padding-top: 0;
 }
 
-wa-details.with-right-button {
-    /* Summary layout with button on the right */
+wa-details.with-right-part {
+    /* Summary layout with something  on the right */
     &::part(header) {
         padding-right: 6px
     }
@@ -427,7 +427,7 @@ wa-details.with-right-button {
 }
 
 .tool-result {
-    margin-top: var(--wa-space-l);
+    margin-top: var(--card-spacing, var(--wa-space-l));
 }
 
 .tool-result-content {

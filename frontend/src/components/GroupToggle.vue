@@ -65,14 +65,11 @@ wa-switch {
     }
     display: flex;
     width: 100%;
-}
-
-.group-toggle:not(:has(+.session-item > .json-view:first-child)) wa-switch:state(checked) {
-    opacity: 1;
-    margin-bottom: calc(var(--wa-space-l) * -1/2);
-    z-index: 1;
-    .toggle-label {
+    &:state(checked) {
         opacity: 1;
+        .toggle-label {
+            opacity: 1;
+        }
     }
 }
 

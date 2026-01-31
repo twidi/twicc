@@ -200,7 +200,9 @@ function onModeChange(event) {
 .session-meta {
     width: 100%;
     display: flex;
-    gap: var(--wa-space-l);
+    flex-wrap: wrap;
+    column-gap: var(--wa-space-m);
+    row-gap: var(--wa-space-xs);
     font-size: var(--wa-font-size-s);
 }
 
