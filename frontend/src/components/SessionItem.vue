@@ -182,6 +182,9 @@ function toggleJsonView() {
         opacity: 1 !important;
     }
 }
+body:not([data-display-mode="debug"]) .json-toggle {
+    display: none;
+}
 
 .session-item:hover .json-toggle {
     opacity: .5;

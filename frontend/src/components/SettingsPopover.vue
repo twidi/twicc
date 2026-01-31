@@ -1,10 +1,10 @@
 <script setup>
 // SettingsPopover.vue - Settings button with popover panel
 import { computed, ref, watch, nextTick } from 'vue'
-import { useDataStore } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import { DISPLAY_MODE, THEME_MODE } from '../constants'
 
-const store = useDataStore()
+const store = useSettingsStore()
 
 // Theme options for the select
 const themeOptions = [
@@ -54,11 +54,6 @@ function syncSwitchState() {
 
 // Watch for store changes and sync switches
 watch([isSimplified, debugEnabled, fontSize, themeMode], syncSwitchState, { immediate: true })
-
-// Apply font size to :root whenever it changes
-watch(fontSize, (size) => {
-    document.documentElement.style.fontSize = `${size}px`
-}, { immediate: true })
 
 /**
  * Toggle between normal and simplified mode.

@@ -2,19 +2,21 @@
 import { onMounted, watch, computed } from 'vue'
 import { useWebSocket } from './composables/useWebSocket'
 import { useDataStore } from './stores/data'
+import { useSettingsStore } from './stores/settings'
 import ConnectionIndicator from './components/ConnectionIndicator.vue'
 
 // Initialize WebSocket connection for real-time updates
 const { wsStatus } = useWebSocket()
 
 // Load initial data
-const store = useDataStore()
+const dataStore = useDataStore()
 onMounted(async () => {
-    await store.loadProjects({ isInitialLoading: true })
+    await dataStore.loadProjects({ isInitialLoading: true })
 })
 
 // Sync display mode to body data attribute
-const displayMode = computed(() => store.getDisplayMode)
+const settingsStore = useSettingsStore()
+const displayMode = computed(() => settingsStore.getDisplayMode)
 
 // Set initial value and watch for changes
 document.body.dataset.displayMode = displayMode.value

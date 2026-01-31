@@ -1,10 +1,9 @@
 // frontend/src/stores/data.js
 
 import { defineStore } from 'pinia'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE } from '../constants'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
-import { setThemeMode as applyThemeMode } from '../main'
+import { useSettingsStore } from './settings'
 
 export const useDataStore = defineStore('data', {
     state: () => ({
@@ -21,19 +20,6 @@ export const useDataStore = defineStore('data', {
             },
             projects: {},   // { projectId: { sessionsFetched, sessionsLoading, sessionsLoadingError } }
             sessions: {},   // { sessionId: { itemsFetched, itemsLoading, itemsLoadingError } }
-
-            // Display mode settings - global, not per-session
-            // baseDisplayMode: 'normal' | 'simplified' (the mode when debug is off)
-            // debugEnabled: boolean (whether debug mode is active)
-            // Effective display mode is computed: debug if debugEnabled, else baseDisplayMode
-            baseDisplayMode: DEFAULT_DISPLAY_MODE,
-            debugEnabled: false,
-
-            // Font size setting (in pixels) - applied to :root to affect rem units
-            fontSize: 16,  // default, range 14-18
-
-            // Theme mode setting - 'system' | 'light' | 'dark'
-            themeMode: DEFAULT_THEME_MODE,
 
             // Expanded groups - per session (session-level groups)
             // { sessionId: [groupHeadLineNum, ...] }
@@ -91,20 +77,6 @@ export const useDataStore = defineStore('data', {
             state.localState.projects[projectId]?.sessionsFetched ?? false,
         areSessionItemsFetched: (state) => (sessionId) =>
             state.localState.sessions[sessionId]?.itemsFetched ?? false,
-
-        // Display mode getters
-        // Effective display mode: 'debug' if debugEnabled, otherwise baseDisplayMode
-        getDisplayMode: (state) =>
-            state.localState.debugEnabled ? 'debug' : state.localState.baseDisplayMode,
-        // Individual settings for the UI
-        getBaseDisplayMode: (state) => state.localState.baseDisplayMode,
-        isDebugEnabled: (state) => state.localState.debugEnabled,
-
-        // Font size getter
-        getFontSize: (state) => state.localState.fontSize,
-
-        // Theme mode getter
-        getThemeMode: (state) => state.localState.themeMode,
 
         // Get expanded groups for a session (returns array)
         getExpandedGroups: (state) => (sessionId) =>
@@ -578,8 +550,9 @@ export const useDataStore = defineStore('data', {
                 return
             }
 
-            // Compute effective display mode
-            const mode = this.localState.debugEnabled ? 'debug' : this.localState.baseDisplayMode
+            // Get effective display mode from settings store
+            const settingsStore = useSettingsStore()
+            const mode = settingsStore.getDisplayMode
             const expandedGroups = this.localState.sessionExpandedGroups[sessionId] || []
 
             this.localState.sessionVisualItems[sessionId] = computeVisualItems(items, mode, expandedGroups)
@@ -595,45 +568,7 @@ export const useDataStore = defineStore('data', {
             }
         },
 
-        // Display mode and expanded groups actions
-
-        /**
-         * Set base display mode (normal or simplified).
-         * @param {string} mode - 'normal' | 'simplified'
-         */
-        setBaseDisplayMode(mode) {
-            this.localState.baseDisplayMode = mode
-            // Only recompute if debug is not enabled (otherwise no visible change)
-            if (!this.localState.debugEnabled) {
-                this.recomputeAllVisualItems()
-            }
-        },
-
-        /**
-         * Set debug mode enabled/disabled.
-         * @param {boolean} enabled
-         */
-        setDebugEnabled(enabled) {
-            this.localState.debugEnabled = enabled
-            this.recomputeAllVisualItems()
-        },
-
-        /**
-         * Set the global font size.
-         * @param {number} size - Font size in pixels (14-18)
-         */
-        setFontSize(size) {
-            this.localState.fontSize = size
-        },
-
-        /**
-         * Set the theme mode.
-         * @param {string} mode - 'system' | 'light' | 'dark'
-         */
-        setThemeMode(mode) {
-            this.localState.themeMode = mode
-            applyThemeMode(mode)
-        },
+        // Expanded groups actions
 
         /**
          * Toggle expanded state of a group.

@@ -2,28 +2,30 @@
 
 // Theme management
 // Placed before imports to apply theme class as early as possible
-// themeMode can be 'system', 'light', or 'dark'
-let currentThemeMode = 'system'
+// This prevents a flash of wrong theme on page load
+let currentThemeMode = localStorage.getItem('twicc-settings')
+    ? JSON.parse(localStorage.getItem('twicc-settings')).themeMode || 'system'
+    : 'system'
 
 function applyColorScheme() {
-  let isDark
-  if (currentThemeMode === 'system') {
-    isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-  } else {
-    isDark = currentThemeMode === 'dark'
-  }
-  document.documentElement.classList.toggle('wa-dark', isDark)
-  // Also set data-theme for github-markdown-css compatibility
-  document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
+    let isDark
+    if (currentThemeMode === 'system') {
+        isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+    } else {
+        isDark = currentThemeMode === 'dark'
+    }
+    document.documentElement.classList.toggle('wa-dark', isDark)
+    // Also set data-theme for github-markdown-css compatibility
+    document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
 }
 
-// Export function for store to call when theme mode changes
+// Export function for settings store to call when theme mode changes
 export function setThemeMode(mode) {
-  currentThemeMode = mode
-  applyColorScheme()
+    currentThemeMode = mode
+    applyColorScheme()
 }
 
-// Apply initial theme (system preference until store loads)
+// Apply initial theme immediately (before CSS imports)
 applyColorScheme()
 // Listen for system preference changes (only matters when mode is 'system')
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyColorScheme)
@@ -54,8 +56,13 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { router } from './router'
 import App from './App.vue'
+import { initSettings } from './stores/settings'
 
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
+
+// Initialize settings (localStorage persistence, theme, font size, display mode watchers)
+initSettings()
+
 app.mount('#app')
