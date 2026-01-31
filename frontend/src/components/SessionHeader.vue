@@ -95,6 +95,7 @@ const formattedModel = computed(() => {
     <header class="session-header" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
             <h2 :title="displayName">{{ displayName }}</h2>
+            <div v-if="session.project_id" class="session-project">{{ session.project_id }}</div>
         </div>
 
         <div class="session-meta">
@@ -140,10 +141,6 @@ const formattedModel = computed(() => {
 
 <style scoped>
 .session-header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--wa-space-xs);
     padding: var(--wa-space-xs);
 }
 
@@ -158,6 +155,14 @@ const formattedModel = computed(() => {
     font-weight: 600;
     color: var(--wa-color-text-normal);
     /* Truncate with ellipsis */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.session-project {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
