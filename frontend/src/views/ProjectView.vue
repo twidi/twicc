@@ -232,16 +232,23 @@ function handleSplitReposition(event) {
 .sidebar-header {
     flex-shrink: 0;
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     gap: var(--wa-space-s);
     padding: var(--wa-space-s);
-    overflow: hidden;
+    overflow: visible;
 }
 
 .project-selector {
     flex: 1;
+    /* we allow options to be larger than the width of the select */
     min-width: min(200px, 100%);
+    &::part(listbox) {
+        overflow: visible;
+        width: max-content;
+    }
+    wa-option {
+        max-width: min(400px, calc(100vw - 100px));
+    }
 }
 
 .sidebar wa-divider {
@@ -322,12 +329,6 @@ function handleSplitReposition(event) {
 
     .sidebar-toggle .icon-expand {
         display: inline;
-    }
-}
-
-@container sidebar (width <= 100px) {
-    .sidebar-header {
-        display: none;
     }
 }
 
