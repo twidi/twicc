@@ -68,6 +68,9 @@ function handleSelect(session) {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-3xs);
+    min-width: 200px;
+    overflow: auto;
+    padding: var(--wa-space-s);
 }
 
 .session-item::part(base) {
