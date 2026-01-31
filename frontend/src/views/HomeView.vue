@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import ProjectList from '../components/ProjectList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
+import SettingsPopover from '../components/SettingsPopover.vue'
 
 const router = useRouter()
 const store = useDataStore()
@@ -53,6 +54,10 @@ async function handleRetry() {
             <!-- Normal content -->
             <ProjectList v-else @select="handleProjectSelect" />
         </main>
+
+        <div class="home-settings">
+            <SettingsPopover />
+        </div>
     </div>
 </template>
 
@@ -108,5 +113,11 @@ async function handleRetry() {
     flex: 1;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-m);
+}
+
+.home-settings {
+    position: fixed;
+    bottom: var(--wa-space-s);
+    left: var(--wa-space-s);
 }
 </style>
