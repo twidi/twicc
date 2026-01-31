@@ -100,6 +100,7 @@ function handleSelect(session) {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
     margin-top: var(--wa-space-2xs);
+    overflow: hidden;
 }
 
 .empty-state {
