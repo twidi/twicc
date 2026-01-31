@@ -30,24 +30,24 @@ const effectiveProjectId = computed(() =>
 const allProjects = computed(() => store.getProjects)
 
 // Loading and error states for sessions
-const areSessionsLoading = computed(() => store.areSessionsLoading(effectiveProjectId.value))
+// Only show initial loading spinner when we haven't fetched any sessions yet
+const areSessionsFetched = computed(() => store.areProjectSessionsFetched(effectiveProjectId.value))
+const isInitialLoading = computed(() =>
+    store.areSessionsLoading(effectiveProjectId.value) && !areSessionsFetched.value
+)
 const didSessionsFailToLoad = computed(() => store.didSessionsFailToLoad(effectiveProjectId.value))
 
 // Load sessions when project changes or mode changes
-watch([effectiveProjectId, isAllProjectsMode], async ([newProjectId, isAllMode]) => {
-    if (isAllMode) {
-        await store.loadAllSessions({ isInitialLoading: true })
-    } else if (newProjectId) {
+watch(effectiveProjectId, async (newProjectId) => {
+    if (newProjectId) {
         await store.loadSessions(newProjectId, { isInitialLoading: true })
     }
 }, { immediate: true })
 
 // Retry loading sessions
 async function handleRetry() {
-    if (isAllProjectsMode.value) {
-        await store.loadAllSessions({ isInitialLoading: true })
-    } else if (projectId.value) {
-        await store.loadSessions(projectId.value, { isInitialLoading: true })
+    if (effectiveProjectId.value) {
+        await store.loadSessions(effectiveProjectId.value, { force: true, isInitialLoading: true })
     }
 }
 
@@ -167,22 +167,22 @@ function handleSplitReposition(event) {
             <wa-divider></wa-divider>
 
             <div class="sidebar-sessions">
-                <!-- Error state -->
+                <!-- Error state (only for initial load failure) -->
                 <FetchErrorPanel
-                    v-if="didSessionsFailToLoad"
-                    :loading="areSessionsLoading"
+                    v-if="didSessionsFailToLoad && !areSessionsFetched"
+                    :loading="isInitialLoading"
                     @retry="handleRetry"
                 >
                     Failed to load sessions
                 </FetchErrorPanel>
 
-                <!-- Loading state -->
-                <div v-else-if="areSessionsLoading" class="sessions-loading">
+                <!-- Initial loading state (only before first fetch) -->
+                <div v-else-if="isInitialLoading" class="sessions-loading">
                     <wa-spinner></wa-spinner>
                     <span>Loading...</span>
                 </div>
 
-                <!-- Normal content -->
+                <!-- Normal content (shown once we have sessions, handles its own "load more" state) -->
                 <SessionList
                     v-else
                     :project-id="effectiveProjectId"

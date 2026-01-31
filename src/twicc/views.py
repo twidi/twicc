@@ -14,15 +14,50 @@ from twicc.core.serializers import (
     serialize_session_item_metadata,
 )
 
+# Number of sessions to return per page
+SESSIONS_PAGE_SIZE = 50
 
-def all_sessions(request):
-    """GET /api/sessions/ - All sessions from all projects.
 
-    Returns only regular sessions (not subagents).
+def _get_sessions_page(project_id: str | None, before_mtime: str | None) -> dict:
+    """Get a page of sessions with pagination support.
+
+    Args:
+        project_id: Project ID to filter by, or None for all projects.
+        before_mtime: Cursor for pagination - only return sessions with mtime < this value.
+
+    Returns:
+        Dict with "sessions" (list) and "has_more" (bool).
     """
     sessions = Session.objects.filter(type=SessionType.SESSION)
-    data = [serialize_session(s) for s in sessions]
-    return JsonResponse(data, safe=False)
+
+    if project_id is not None:
+        sessions = sessions.filter(project_id=project_id)
+
+    if before_mtime:
+        sessions = sessions.filter(mtime__lt=float(before_mtime))
+
+    # Fetch one extra to detect if there are more
+    sessions = list(sessions.order_by("-mtime")[: SESSIONS_PAGE_SIZE + 1])
+
+    has_more = len(sessions) > SESSIONS_PAGE_SIZE
+    sessions = sessions[:SESSIONS_PAGE_SIZE]
+
+    return {
+        "sessions": [serialize_session(s) for s in sessions],
+        "has_more": has_more,
+    }
+
+
+def all_sessions(request):
+    """GET /api/sessions/ - All sessions from all projects (paginated).
+
+    Returns only regular sessions (not subagents).
+
+    Query params (optional):
+        before_mtime: Cursor for pagination - only return sessions older than this mtime.
+    """
+    before_mtime = request.GET.get("before_mtime")
+    return JsonResponse(_get_sessions_page(None, before_mtime))
 
 
 def project_list(request):
@@ -42,19 +77,21 @@ def project_detail(request, project_id):
 
 
 def project_sessions(request, project_id):
-    """GET /api/projects/<id>/sessions/ - Sessions of a project.
+    """GET /api/projects/<id>/sessions/ - Sessions of a project (paginated).
 
     Returns only regular sessions (not subagents).
     Subagents are accessed via their parent session.
+
+    Query params (optional):
+        before_mtime: Cursor for pagination - only return sessions older than this mtime.
     """
     try:
-        project = Project.objects.get(id=project_id)
+        Project.objects.get(id=project_id)
     except Project.DoesNotExist:
         raise Http404("Project not found")
-    # Filter out subagents - only return regular sessions
-    sessions = project.sessions.filter(type=SessionType.SESSION)
-    data = [serialize_session(s) for s in sessions]
-    return JsonResponse(data, safe=False)
+
+    before_mtime = request.GET.get("before_mtime")
+    return JsonResponse(_get_sessions_page(project_id, before_mtime))
 
 
 def session_detail(request, project_id, session_id, parent_session_id=None):

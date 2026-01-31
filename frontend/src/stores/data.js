@@ -21,7 +21,7 @@ export const useDataStore = defineStore('data', {
                 loading: false,
                 loadingError: false
             },
-            projects: {},   // { projectId: { sessionsFetched, sessionsLoading, sessionsLoadingError } }
+            projects: {},   // { projectId: { sessionsFetched, sessionsLoading, sessionsLoadingError, hasMoreSessions, oldestSessionMtime } }
             sessions: {},   // { sessionId: { itemsFetched, itemsLoading, itemsLoadingError } }
 
             // Expanded groups - per session (session-level groups)
@@ -54,14 +54,22 @@ export const useDataStore = defineStore('data', {
         // Data getters (sorted by mtime descending - most recent first)
         getProjects: (state) => Object.values(state.projects).sort((a, b) => b.mtime - a.mtime),
         getProject: (state) => (id) => state.projects[id],
-        getProjectSessions: (state) => (projectId) =>
-            Object.values(state.sessions)
+        getProjectSessions: (state) => (projectId) => {
+            const oldestMtime = state.localState.projects[projectId]?.oldestSessionMtime
+            return Object.values(state.sessions)
                 .filter(s => s.project_id === projectId && !s.parent_session_id)
-                .sort((a, b) => b.mtime - a.mtime),
-        getAllSessions: (state) =>
-            Object.values(state.sessions)
+                // Filter to only sessions within the fetched range (mtime >= oldestMtime)
+                .filter(s => oldestMtime == null || s.mtime >= oldestMtime)
+                .sort((a, b) => b.mtime - a.mtime)
+        },
+        getAllSessions: (state) => {
+            const oldestMtime = state.localState.projects[ALL_PROJECTS_ID]?.oldestSessionMtime
+            return Object.values(state.sessions)
                 .filter(s => !s.parent_session_id)
-                .sort((a, b) => b.mtime - a.mtime),
+                // Filter to only sessions within the fetched range (mtime >= oldestMtime)
+                .filter(s => oldestMtime == null || s.mtime >= oldestMtime)
+                .sort((a, b) => b.mtime - a.mtime)
+        },
         getSession: (state) => (id) => state.sessions[id],
         getSessionItems: (state) => (sessionId) => state.sessionItems[sessionId] || [],
 
@@ -86,6 +94,10 @@ export const useDataStore = defineStore('data', {
             state.localState.projects[ALL_PROJECTS_ID]?.sessionsFetched ?? false,
         areSessionItemsFetched: (state) => (sessionId) =>
             state.localState.sessions[sessionId]?.itemsFetched ?? false,
+
+        // Local state getters - pagination
+        hasMoreSessions: (state) => (projectId) =>
+            state.localState.projects[projectId]?.hasMoreSessions ?? true,
 
         // Get expanded groups for a session (returns array)
         getExpandedGroups: (state) => (sessionId) =>
@@ -339,41 +351,93 @@ export const useDataStore = defineStore('data', {
             }
         },
         /**
-         * Load sessions for a project from the API.
-         * @param {string} projectId
+         * Ensure localState.projects[projectId] exists with all pagination fields.
+         * @param {string} projectId - Project ID or ALL_PROJECTS_ID
+         * @returns {Object} The project's local state object
+         * @private
+         */
+        _ensureProjectLocalState(projectId) {
+            if (!this.localState.projects[projectId]) {
+                this.localState.projects[projectId] = {
+                    sessionsFetched: false,
+                    sessionsLoading: false,
+                    sessionsLoadingError: false,
+                    hasMoreSessions: true,
+                    oldestSessionMtime: null,
+                }
+            }
+            return this.localState.projects[projectId]
+        },
+
+        /**
+         * Fetch a page of sessions from the API.
+         * @param {string} projectId - Project ID or ALL_PROJECTS_ID
+         * @returns {Promise<{sessions: Array, has_more: boolean}>}
+         * @private
+         */
+        async _fetchSessionsPage(projectId) {
+            const state = this._ensureProjectLocalState(projectId)
+
+            // Build URL based on project type
+            const isAllProjects = projectId === ALL_PROJECTS_ID
+            const baseUrl = isAllProjects
+                ? '/api/sessions/'
+                : `/api/projects/${projectId}/sessions/`
+
+            // Add cursor if we have one (for pagination)
+            const params = new URLSearchParams()
+            if (state.oldestSessionMtime != null) {
+                params.set('before_mtime', state.oldestSessionMtime)
+            }
+
+            const url = params.toString() ? `${baseUrl}?${params}` : baseUrl
+            const res = await fetch(url)
+
+            if (!res.ok) {
+                throw new Error(`Failed to load sessions: ${res.status}`)
+            }
+
+            return await res.json()
+        },
+
+        /**
+         * Load sessions for a project or all projects (with pagination support).
+         * Handles both initial load and "load more" for infinite scroll.
+         *
+         * @param {string} projectId - Project ID or ALL_PROJECTS_ID for all projects
          * @param {Object} options
-         * @param {boolean} options.force - Force reload even if already fetched
+         * @param {boolean} options.force - Reset pagination and reload from beginning
          * @param {boolean} options.isInitialLoading - If true, enables UI feedback (loading states, error handling)
          * @returns {Promise<Set<string>>} Set of session IDs that have changed
          *          (sessions where itemsFetched=true AND mtime changed or new)
          */
         async loadSessions(projectId, { force = false, isInitialLoading = false } = {}) {
             const changedIds = new Set()
+            const state = this._ensureProjectLocalState(projectId)
 
-            // Skip if already fetched (unless forced)
-            // Also skip if all sessions have been fetched (we already have everything)
-            if (!force && (this.localState.projects[projectId]?.sessionsFetched ||
-                           this.localState.projects[ALL_PROJECTS_ID]?.sessionsFetched)) {
+            // Skip if already loading
+            if (state.sessionsLoading) {
                 return changedIds
             }
 
-            // Initialize localState for this project if needed
-            if (!this.localState.projects[projectId]) {
-                this.localState.projects[projectId] = {}
+            // Skip if fully loaded (unless force)
+            if (!force && state.sessionsFetched && !state.hasMoreSessions) {
+                return changedIds
             }
-            this.localState.projects[projectId].sessionsLoading = true
+
+            // Reset pagination state if force
+            if (force) {
+                state.oldestSessionMtime = null
+                state.hasMoreSessions = true
+            }
+
+            state.sessionsLoading = true
 
             try {
-                const res = await fetch(`/api/projects/${projectId}/sessions/`)
-                if (!res.ok) {
-                    console.error('Failed to load sessions:', res.status, res.statusText)
-                    if (isInitialLoading) {
-                        this.localState.projects[projectId].sessionsLoadingError = true
-                    }
-                    return changedIds
-                }
-                const freshSessions = await res.json()
-                for (const fresh of freshSessions) {
+                const data = await this._fetchSessionsPage(projectId)
+
+                // Merge sessions into store and track changes
+                for (const fresh of data.sessions) {
                     const local = this.sessions[fresh.id]
                     const wasItemsFetched = this.localState.sessions[fresh.id]?.itemsFetched
 
@@ -385,65 +449,27 @@ export const useDataStore = defineStore('data', {
                     // Update store
                     this.sessions[fresh.id] = fresh
                 }
-                // Mark as fetched in localState and clear any previous error
-                this.localState.projects[projectId].sessionsFetched = true
-                this.localState.projects[projectId].sessionsLoadingError = false
+
+                // Update pagination state
+                state.sessionsFetched = true
+                state.hasMoreSessions = data.has_more
+
+                // Update cursor (oldest mtime received)
+                if (data.sessions.length > 0) {
+                    const oldestReceived = Math.min(...data.sessions.map(s => s.mtime))
+                    state.oldestSessionMtime = oldestReceived
+                }
+
+                state.sessionsLoadingError = false
                 return changedIds
             } catch (error) {
                 console.error('Failed to load sessions:', error)
                 if (isInitialLoading) {
-                    this.localState.projects[projectId].sessionsLoadingError = true
+                    state.sessionsLoadingError = true
                 }
                 throw error  // Re-throw for reconciliation retry logic
             } finally {
-                this.localState.projects[projectId].sessionsLoading = false
-            }
-        },
-        /**
-         * Load all sessions from all projects.
-         * @param {Object} options
-         * @param {boolean} options.isInitialLoading - If true, enables UI feedback
-         * @returns {Promise<void>}
-         */
-        async loadAllSessions({ force = false, isInitialLoading = false } = {}) {
-            // Use a special project ID for "all projects" state
-            const projectId = ALL_PROJECTS_ID
-
-            // Skip if already fetched (unless forced)
-            if (!force && this.localState.projects[projectId]?.sessionsFetched) {
-                return
-            }
-
-            // Initialize localState for this pseudo-project if needed
-            if (!this.localState.projects[projectId]) {
-                this.localState.projects[projectId] = {}
-            }
-            this.localState.projects[projectId].sessionsLoading = true
-
-            try {
-                const res = await fetch('/api/sessions/')
-                if (!res.ok) {
-                    console.error('Failed to load all sessions:', res.status, res.statusText)
-                    if (isInitialLoading) {
-                        this.localState.projects[projectId].sessionsLoadingError = true
-                    }
-                    return
-                }
-                const freshSessions = await res.json()
-                for (const fresh of freshSessions) {
-                    this.sessions[fresh.id] = fresh
-                }
-                // Mark as fetched and clear any previous error
-                this.localState.projects[projectId].sessionsFetched = true
-                this.localState.projects[projectId].sessionsLoadingError = false
-            } catch (error) {
-                console.error('Failed to load all sessions:', error)
-                if (isInitialLoading) {
-                    this.localState.projects[projectId].sessionsLoadingError = true
-                }
-                throw error
-            } finally {
-                this.localState.projects[projectId].sessionsLoading = false
+                state.sessionsLoading = false
             }
         },
         /**

@@ -99,6 +99,9 @@ class Session(models.Model):
 
     class Meta:
         ordering = ["-mtime"]
+        indexes = [
+            models.Index(fields=["project", "-mtime"], name="idx_session_project_mtime"),
+        ]
 
     def __str__(self):
         return self.id

@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { formatDate } from '../utils/date'
 
@@ -28,6 +28,78 @@ const sessions = computed(() => {
     return store.getProjectSessions(props.projectId)
 })
 
+// Pagination state
+const hasMore = computed(() => store.hasMoreSessions(props.projectId))
+const isLoading = computed(() => store.areSessionsLoading(props.projectId))
+
+// Local error state for "load more" failures (not initial load)
+const loadMoreError = ref(false)
+
+// Sentinel element ref for intersection observer
+const sentinel = ref(null)
+// Container ref for scroll reset
+const listContainer = ref(null)
+let observer = null
+
+// Load more sessions when sentinel becomes visible
+async function loadMore() {
+    if (isLoading.value || !hasMore.value || loadMoreError.value) return
+
+    try {
+        loadMoreError.value = false
+        await store.loadSessions(props.projectId)
+    } catch {
+        // Only show error if we already have some sessions (not initial load)
+        if (sessions.value.length > 0) {
+            loadMoreError.value = true
+        }
+    }
+}
+
+// Retry after error
+async function handleRetry() {
+    loadMoreError.value = false
+    await loadMore()
+}
+
+// Setup intersection observer
+onMounted(() => {
+    observer = new IntersectionObserver(
+        (entries) => {
+            if (entries[0].isIntersecting) {
+                loadMore()
+            }
+        },
+        { rootMargin: '200px' }  // Trigger 200px before reaching the bottom
+    )
+    if (sentinel.value) {
+        observer.observe(sentinel.value)
+    }
+})
+
+// Re-observe when sentinel ref changes or projectId changes
+watch([sentinel, () => props.projectId], ([el]) => {
+    if (observer) {
+        observer.disconnect()
+        if (el) {
+            observer.observe(el)
+        }
+    }
+    // Reset error state when project changes
+    loadMoreError.value = false
+})
+
+// Reset scroll to top when project changes
+watch(() => props.projectId, () => {
+    if (listContainer.value) {
+        listContainer.value.scrollTop = 0
+    }
+})
+
+onUnmounted(() => {
+    observer?.disconnect()
+})
+
 // Get display name for session (title if available, otherwise ID)
 function getSessionDisplayName(session) {
     return session.title || session.id
@@ -47,7 +119,7 @@ function handleSelect(session) {
 </script>
 
 <template>
-    <div class="session-list">
+    <div ref="listContainer" class="session-list">
         <wa-button
             v-for="session in sessions"
             :key="session.id"
@@ -65,7 +137,35 @@ function handleSelect(session) {
                 <span v-if="session.total_cost != null" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon> {{ formatCost(session.total_cost) }}</span>
             </div>
         </wa-button>
-        <div v-if="sessions.length === 0" class="empty-state">
+
+        <!-- Error state for load more -->
+        <div v-if="loadMoreError" class="load-more-error">
+            <wa-callout variant="danger">
+                <span>Failed to load more sessions</span>
+                <wa-button
+                    slot="footer"
+                    variant="danger"
+                    appearance="outlined"
+                    size="small"
+                    :loading="isLoading"
+                    @click="handleRetry"
+                >
+                    <wa-icon name="arrow-rotate-right" slot="prefix"></wa-icon>
+                    Retry
+                </wa-button>
+            </wa-callout>
+        </div>
+
+        <!-- Sentinel for infinite scroll (only when no error) -->
+        <div
+            v-else-if="hasMore"
+            ref="sentinel"
+            class="load-more-sentinel"
+        >
+            <wa-spinner v-if="isLoading" />
+        </div>
+
+        <div v-if="sessions.length === 0 && !isLoading" class="empty-state">
             No sessions
         </div>
     </div>
@@ -121,6 +221,25 @@ function handleSelect(session) {
     font-weight: var(--wa-font-weight-body);;
     margin-top: var(--wa-space-2xs);
     overflow: hidden;
+}
+
+.load-more-sentinel {
+    display: flex;
+    justify-content: center;
+    padding: var(--wa-space-m);
+    min-height: 40px;
+}
+
+.load-more-error {
+    padding: var(--wa-space-s);
+}
+
+.load-more-error wa-callout {
+    --wa-callout-padding: var(--wa-space-s);
+}
+
+.load-more-error wa-callout span {
+    font-size: var(--wa-font-size-s);
 }
 
 .empty-state {
