@@ -2,19 +2,28 @@
 // SettingsPopover.vue - Settings button with popover panel
 import { computed, ref, watch, nextTick } from 'vue'
 import { useDataStore } from '../stores/data'
-import { DISPLAY_MODE } from '../constants'
+import { DISPLAY_MODE, THEME_MODE } from '../constants'
 
 const store = useDataStore()
+
+// Theme options for the select
+const themeOptions = [
+    { value: THEME_MODE.SYSTEM, label: 'System' },
+    { value: THEME_MODE.LIGHT, label: 'Light' },
+    { value: THEME_MODE.DARK, label: 'Dark' },
+]
 
 // Refs for wa-switch elements (needed to sync checked property with Web Components)
 const baseModeSwitch = ref(null)
 const debugSwitch = ref(null)
 const fontSizeSlider = ref(null)
+const themeSelect = ref(null)
 
 // Settings from store
 const baseDisplayMode = computed(() => store.getBaseDisplayMode)
 const debugEnabled = computed(() => store.isDebugEnabled)
 const fontSize = computed(() => store.getFontSize)
+const themeMode = computed(() => store.getThemeMode)
 
 // Computed label for the base mode switch
 const baseModeLabel = computed(() =>
@@ -37,11 +46,14 @@ function syncSwitchState() {
         if (fontSizeSlider.value && fontSizeSlider.value.value !== fontSize.value) {
             fontSizeSlider.value.value = fontSize.value
         }
+        if (themeSelect.value && themeSelect.value.value !== themeMode.value) {
+            themeSelect.value.value = themeMode.value
+        }
     })
 }
 
 // Watch for store changes and sync switches
-watch([isSimplified, debugEnabled, fontSize], syncSwitchState, { immediate: true })
+watch([isSimplified, debugEnabled, fontSize, themeMode], syncSwitchState, { immediate: true })
 
 // Apply font size to :root whenever it changes
 watch(fontSize, (size) => {
@@ -71,6 +83,13 @@ function onFontSizeChange(event) {
 }
 
 /**
+ * Handle theme mode change.
+ */
+function onThemeModeChange(event) {
+    store.setThemeMode(event.target.value)
+}
+
+/**
  * Called when popover opens - sync switch states.
  */
 function onPopoverShow() {
@@ -84,6 +103,21 @@ function onPopoverShow() {
     </wa-button>
     <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
         <div class="settings-content">
+            <div class="setting-group">
+                <label class="setting-group-label">Theme</label>
+                <wa-select
+                    ref="themeSelect"
+                    :value.prop="themeMode"
+                    @change="onThemeModeChange"
+                    size="small"
+                >
+                    <wa-option
+                        v-for="option in themeOptions"
+                        :key="option.value"
+                        :value="option.value"
+                    >{{ option.label }}</wa-option>
+                </wa-select>
+            </div>
             <div class="setting-group">
                 <label class="setting-group-label">Display mode</label>
                 <wa-switch

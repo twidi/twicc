@@ -2,8 +2,9 @@
 import { ref, watch, onMounted, nextTick } from 'vue'
 import { renderMarkdown } from '../utils/markdown.js'
 // Uses the combined version that includes both light and dark
-// Our custom CSS below overrides to use .wa-dark class instead
+// Then override with our theme file that uses [data-theme] without media queries
 import 'github-markdown-css/github-markdown.css'
+import '../styles/github-markdown-themes.css'
 
 const props = defineProps({
     source: {

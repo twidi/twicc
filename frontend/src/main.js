@@ -1,14 +1,31 @@
 // frontend/src/main.js
 
-// Color scheme detection (follows system preference)
+// Theme management
 // Placed before imports to apply theme class as early as possible
+// themeMode can be 'system', 'light', or 'dark'
+let currentThemeMode = 'system'
+
 function applyColorScheme() {
-  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+  let isDark
+  if (currentThemeMode === 'system') {
+    isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+  } else {
+    isDark = currentThemeMode === 'dark'
+  }
   document.documentElement.classList.toggle('wa-dark', isDark)
   // Also set data-theme for github-markdown-css compatibility
   document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
 }
+
+// Export function for store to call when theme mode changes
+export function setThemeMode(mode) {
+  currentThemeMode = mode
+  applyColorScheme()
+}
+
+// Apply initial theme (system preference until store loads)
 applyColorScheme()
+// Listen for system preference changes (only matters when mode is 'system')
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyColorScheme)
 
 // Web Awesome theme and components

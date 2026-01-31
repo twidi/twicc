@@ -1,9 +1,10 @@
 // frontend/src/stores/data.js
 
 import { defineStore } from 'pinia'
-import { DEFAULT_DISPLAY_MODE } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE } from '../constants'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
+import { setThemeMode as applyThemeMode } from '../main'
 
 export const useDataStore = defineStore('data', {
     state: () => ({
@@ -30,6 +31,9 @@ export const useDataStore = defineStore('data', {
 
             // Font size setting (in pixels) - applied to :root to affect rem units
             fontSize: 16,  // default, range 14-18
+
+            // Theme mode setting - 'system' | 'light' | 'dark'
+            themeMode: DEFAULT_THEME_MODE,
 
             // Expanded groups - per session (session-level groups)
             // { sessionId: [groupHeadLineNum, ...] }
@@ -98,6 +102,9 @@ export const useDataStore = defineStore('data', {
 
         // Font size getter
         getFontSize: (state) => state.localState.fontSize,
+
+        // Theme mode getter
+        getThemeMode: (state) => state.localState.themeMode,
 
         // Get expanded groups for a session (returns array)
         getExpandedGroups: (state) => (sessionId) =>
@@ -617,6 +624,15 @@ export const useDataStore = defineStore('data', {
          */
         setFontSize(size) {
             this.localState.fontSize = size
+        },
+
+        /**
+         * Set the theme mode.
+         * @param {string} mode - 'system' | 'light' | 'dark'
+         */
+        setThemeMode(mode) {
+            this.localState.themeMode = mode
+            applyThemeMode(mode)
         },
 
         /**

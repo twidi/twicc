@@ -25,6 +25,20 @@ export const DISPLAY_MODE = {
 export const DEFAULT_DISPLAY_MODE = DISPLAY_MODE.SIMPLIFIED
 
 /**
+ * Theme mode values.
+ * - system: Follow system preference (prefers-color-scheme)
+ * - light: Force light mode
+ * - dark: Force dark mode
+ */
+export const THEME_MODE = {
+    SYSTEM: 'system',
+    LIGHT: 'light',
+    DARK: 'dark',
+}
+
+export const DEFAULT_THEME_MODE = THEME_MODE.SYSTEM
+
+/**
  * Maximum context tokens for Claude (used for context usage percentage calculation).
  * Value: 200,000 tokens
  */
