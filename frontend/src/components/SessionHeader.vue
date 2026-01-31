@@ -182,7 +182,7 @@ function onModeChange(event) {
     margin: 0;
     font-size: var(--wa-font-size-l);
     font-weight: 600;
-    color: var(--wa-color-text);
+    color: var(--wa-color-text-normal);
     /* Truncate with ellipsis */
     overflow: hidden;
     text-overflow: ellipsis;

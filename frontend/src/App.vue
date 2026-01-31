@@ -29,7 +29,25 @@ body {
 
 .app-container {
     min-height: 100vh;
-    background: var(--wa-color-surface-base);
-    color: var(--wa-color-text);
+    background: var(--wa-color-surface-default);
+    color: var(--wa-color-text-normal);
 }
+
+:root {
+    --user-card-base-color: var(--wa-color-indigo-95);
+    --assistant-card-base-color: var(--wa-color-gray-95);
+}
+
+.wa-dark {
+    --wa-color-surface-default: #1b2733;
+
+    --wa-color-neutral-fill-quiet: #141d26;
+    --wa-color-surface-raised: #141d26;
+
+    --wa-color-brand-border-loud: var(--wa-color-brand-50);
+
+    --user-card-base-color: #323b45;
+    --assistant-card-base-color: #252e38;
+}
+
 </style>

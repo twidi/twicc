@@ -1,7 +1,9 @@
 <script setup>
 import { ref, watch, onMounted, nextTick } from 'vue'
 import { renderMarkdown } from '../utils/markdown.js'
-import 'github-markdown-css/github-markdown-light.css'
+// Uses the combined version that includes both light and dark
+// Our custom CSS below overrides to use .wa-dark class instead
+import 'github-markdown-css/github-markdown.css'
 
 const props = defineProps({
     source: {
@@ -105,6 +107,7 @@ onMounted(render)
 /* -------------------------------------------------------------------
    Styles NOT covered by github-markdown-css:
    Shiki syntax highlighting extras + Mermaid diagrams.
+   Dark mode handled via class data-theme="dark" on <html> (set by main.js).
    NOT scoped — must penetrate v-html content.
    ------------------------------------------------------------------- */
 .markdown-body {
@@ -116,11 +119,10 @@ onMounted(render)
     padding: 16px;
     border-radius: 6px;
     overflow-x: auto;
-    background: rgb(0 0 0 / .05) !important;
     margin-top: 1em;
 }
-.markdown-body code, .markdown-body tt {
-    background: rgb(0 0 0 / .075);
+markdown-body .highlight pre, .markdown-body pre, .markdown-body code, .markdown-body tt {
+    font-size: 100%;
 }
 .markdown-body pre.shiki[data-language] {
     padding-top: 36px;
@@ -150,4 +152,18 @@ onMounted(render)
 .markdown-body pre.mermaid-error {
     border-left: 3px solid #d29922;
 }
+
+/* Dark tweak to handle dark mode https://shiki.style/guide/dual-themes */
+.shiki, .shiki span {
+    background-color: var(--wa-color-surface-default) !important;
+}
+html.wa-dark .shiki,
+html.wa-dark .shiki span {
+  color: var(--shiki-dark) !important;
+  /* Optional, if you also want font styles */
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
+}
+
 </style>

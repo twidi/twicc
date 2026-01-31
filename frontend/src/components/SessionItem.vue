@@ -240,9 +240,6 @@ function toggleJsonView() {
         max-width: calc(var(--max-card-width) - var(--card-spacing) * 2);
         margin-left: var(--card-spacing);
     }
-
-    --user-card-base-color: var(--wa-color-indigo-95);
-    --assistant-card-base-color: var(--wa-color-gray-95);
 }
 
 /* Style user message as a whole */
@@ -436,13 +433,13 @@ wa-details.item-details {
         display: inline;
     }
     .items-details-summary-name {
-        color: var(--wa-color-text);
+        color: var(--wa-color-text-normal);
     }
     .items-details-summary-separator {
         color: var(--wa-color-text-quiet);
     }
     .items-details-summary-description {
-        color: var(--wa-color-text);
+        color: var(--wa-color-text-normal);
         font-weight: normal;
     }
 }

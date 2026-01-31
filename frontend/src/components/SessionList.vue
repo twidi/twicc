@@ -86,7 +86,6 @@ function handleSelect(session) {
 .session-name {
     font-size: var(--wa-font-size-s);
     font-weight: 700;
-    color: var(--wa-color-text);
     /* Truncate with ellipsis */
     overflow: hidden;
     text-overflow: ellipsis;

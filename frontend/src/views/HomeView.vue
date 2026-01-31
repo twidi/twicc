@@ -67,7 +67,7 @@ async function handleRetry() {
     margin: 0;
     font-size: var(--wa-font-size-2xl);
     font-weight: 700;
-    color: var(--wa-color-text);
+    color: var(--wa-color-text-normal);
 }
 
 .home-content {

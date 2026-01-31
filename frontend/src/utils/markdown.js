@@ -15,10 +15,14 @@ const md = MarkdownItAsync({
     breaks: true,        // convert \n to <br> (matches pre-wrap behavior)
 })
 
-// Register the shiki async highlighter plugin
+// Register the shiki async highlighter plugin with dual light/dark themes
+// Uses CSS variables that respond to .wa-dark class on <html>
 md.use(
     fromAsyncCodeToHtml(codeToHtml, {
-        theme: 'github-light',
+        themes: {
+            light: 'github-light',
+            dark: 'github-dark',
+        },
     })
 )
 

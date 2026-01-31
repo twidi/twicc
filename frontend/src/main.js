@@ -1,5 +1,16 @@
 // frontend/src/main.js
 
+// Color scheme detection (follows system preference)
+// Placed before imports to apply theme class as early as possible
+function applyColorScheme() {
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+  document.documentElement.classList.toggle('wa-dark', isDark)
+  // Also set data-theme for github-markdown-css compatibility
+  document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
+}
+applyColorScheme()
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyColorScheme)
+
 // Web Awesome theme and components
 import '@awesome.me/webawesome/dist/styles/webawesome.css';
 import '@awesome.me/webawesome/dist/styles/themes/awesome.css'
