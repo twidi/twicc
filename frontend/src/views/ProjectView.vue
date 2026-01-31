@@ -200,8 +200,10 @@ function handleSplitReposition(event) {
     height: 100%;
     --min: 20px;
     --max: 500px;
+    transition: grid-template-columns var(--transition-duration) ease;
     &::part(divider) {
         z-index: 2;
+        transition: opacity var(--transition-duration) ease;
     }
 }
 
@@ -218,6 +220,7 @@ function handleSplitReposition(event) {
 }
 
 .sidebar {
+    --transition-duration: .3s;
     height: 100vh;
     height: 100dvh;
     background: var(--wa-color-surface-default);
@@ -336,7 +339,7 @@ function handleSplitReposition(event) {
 .project-view-wrapper:has(.sidebar-toggle-checkbox:checked) .project-view {
     grid-template-columns: 0 var(--divider-width) auto !important;
     &::part(divider) {
-        visibility: hidden;
+        opacity: 0;
         pointer-events: none;
     }
 }
@@ -369,7 +372,6 @@ function handleSplitReposition(event) {
         height: 100dvh;
         z-index: 100;
         transform: translateX(-100%);
-        --transition-duration: .3s;
         transition: transform var(--transition-duration) ease;
         box-shadow: var(--wa-shadow-xl);
         border-right: solid var(--wa-color-neutral-border-normal) 0.25rem;

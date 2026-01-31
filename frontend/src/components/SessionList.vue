@@ -53,8 +53,8 @@ function handleSelect(session) {
             <div class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</div>
             <div class="session-meta">
                 <span class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
-                <span v-if="session.total_cost != null" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon> {{ formatCost(session.total_cost) }}</span>
                 <span class="session-mtime"><wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
+                <span v-if="session.total_cost != null" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon> {{ formatCost(session.total_cost) }}</span>
             </div>
         </wa-button>
         <div v-if="sessions.length === 0" class="empty-state">
@@ -70,6 +70,7 @@ function handleSelect(session) {
     gap: var(--wa-space-3xs);
     min-width: 200px;
     overflow: auto;
+    overflow-x: hidden;
     padding: var(--wa-space-s);
 }
 
@@ -94,7 +95,6 @@ function handleSelect(session) {
 
 .session-meta {
     display: flex;
-    flex-wrap: wrap;
     justify-content: space-between;
     gap: var(--wa-space-xs);
     font-size: var(--wa-font-size-xs);

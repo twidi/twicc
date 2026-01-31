@@ -131,17 +131,17 @@ function onModeChange(event) {
                     <span class="nb_lines">({{ session.last_line }} lines)</span>
                 </span>
             </span>
+            <span class="meta-item">
+                <wa-icon auto-width name="clock" variant="regular"></wa-icon>
+                <span>
+                    {{ formatDate(session.mtime) }}
+                </span>
+            </span>
             <span v-if="formattedTotalCost" class="meta-item">
                 <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
                 <span>
                     {{ formattedTotalCost }}
                     <span v-if="formattedCostBreakdown" class="cost-breakdown">{{ formattedCostBreakdown }}</span>
-                </span>
-            </span>
-            <span class="meta-item">
-                <wa-icon auto-width name="clock" variant="regular"></wa-icon>
-                <span>
-                    {{ formatDate(session.mtime) }}
                 </span>
             </span>
             <span v-if="formattedModel" class="meta-item">
