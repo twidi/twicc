@@ -21,9 +21,12 @@ export const useDataStore = defineStore('data', {
             projects: {},   // { projectId: { sessionsFetched, sessionsLoading, sessionsLoadingError } }
             sessions: {},   // { sessionId: { itemsFetched, itemsLoading, itemsLoadingError } }
 
-            // Display mode - global, not per-session
-            // Values: 'debug' | 'normal' | 'simplified'
-            sessionItemsDisplayMode: DEFAULT_DISPLAY_MODE,
+            // Display mode settings - global, not per-session
+            // baseDisplayMode: 'normal' | 'simplified' (the mode when debug is off)
+            // debugEnabled: boolean (whether debug mode is active)
+            // Effective display mode is computed: debug if debugEnabled, else baseDisplayMode
+            baseDisplayMode: DEFAULT_DISPLAY_MODE,
+            debugEnabled: false,
 
             // Expanded groups - per session (session-level groups)
             // { sessionId: [groupHeadLineNum, ...] }
@@ -82,8 +85,13 @@ export const useDataStore = defineStore('data', {
         areSessionItemsFetched: (state) => (sessionId) =>
             state.localState.sessions[sessionId]?.itemsFetched ?? false,
 
-        // Display mode getter
-        getDisplayMode: (state) => state.localState.sessionItemsDisplayMode,
+        // Display mode getters
+        // Effective display mode: 'debug' if debugEnabled, otherwise baseDisplayMode
+        getDisplayMode: (state) =>
+            state.localState.debugEnabled ? 'debug' : state.localState.baseDisplayMode,
+        // Individual settings for the UI
+        getBaseDisplayMode: (state) => state.localState.baseDisplayMode,
+        isDebugEnabled: (state) => state.localState.debugEnabled,
 
         // Get expanded groups for a session (returns array)
         getExpandedGroups: (state) => (sessionId) =>
@@ -557,7 +565,8 @@ export const useDataStore = defineStore('data', {
                 return
             }
 
-            const mode = this.localState.sessionItemsDisplayMode
+            // Compute effective display mode
+            const mode = this.localState.debugEnabled ? 'debug' : this.localState.baseDisplayMode
             const expandedGroups = this.localState.sessionExpandedGroups[sessionId] || []
 
             this.localState.sessionVisualItems[sessionId] = computeVisualItems(items, mode, expandedGroups)
@@ -576,11 +585,23 @@ export const useDataStore = defineStore('data', {
         // Display mode and expanded groups actions
 
         /**
-         * Set display mode.
-         * @param {string} mode - 'debug' | 'normal' | 'simplified'
+         * Set base display mode (normal or simplified).
+         * @param {string} mode - 'normal' | 'simplified'
          */
-        setDisplayMode(mode) {
-            this.localState.sessionItemsDisplayMode = mode
+        setBaseDisplayMode(mode) {
+            this.localState.baseDisplayMode = mode
+            // Only recompute if debug is not enabled (otherwise no visible change)
+            if (!this.localState.debugEnabled) {
+                this.recomputeAllVisualItems()
+            }
+        },
+
+        /**
+         * Set debug mode enabled/disabled.
+         * @param {boolean} enabled
+         */
+        setDebugEnabled(enabled) {
+            this.localState.debugEnabled = enabled
             this.recomputeAllVisualItems()
         },
 

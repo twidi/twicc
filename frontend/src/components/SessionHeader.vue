@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useDataStore } from '../stores/data'
 import { formatDate } from '../utils/date'
-import { MAX_CONTEXT_TOKENS, DISPLAY_MODE } from '../constants'
+import { MAX_CONTEXT_TOKENS } from '../constants'
 
 const props = defineProps({
     sessionId: {
@@ -16,15 +16,10 @@ const props = defineProps({
     }
 })
 
-const emit = defineEmits(['modeChange'])
-
 const store = useDataStore()
 
 // Session data from store
 const session = computed(() => store.getSession(props.sessionId))
-
-// Display mode (global, from store) - only used in session mode
-const displayMode = computed(() => store.getDisplayMode)
 
 // Get display name for header
 // - Session mode: title if available, otherwise session ID
@@ -94,33 +89,12 @@ const formattedModel = computed(() => {
     return `${model.family} ${model.version}`
 })
 
-/**
- * Handle display mode change from the selector.
- */
-function onModeChange(event) {
-    const newMode = event.target.value
-    emit('modeChange', newMode)
-}
 </script>
 
 <template>
     <header class="session-header" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
             <h2 :title="displayName">{{ displayName }}</h2>
-        </div>
-
-        <!-- Mode selector (only in session mode) -->
-        <div v-if="mode === 'session'" class="session-controls">
-            <wa-select
-                :value="displayMode"
-                @change="onModeChange"
-                size="small"
-                class="mode-selector"
-            >
-                <wa-option :value="DISPLAY_MODE.DEBUG">Debug</wa-option>
-                <wa-option :value="DISPLAY_MODE.NORMAL">Normal</wa-option>
-                <wa-option :value="DISPLAY_MODE.SIMPLIFIED">Simplified</wa-option>
-            </wa-select>
         </div>
 
         <div class="session-meta">
@@ -187,14 +161,6 @@ function onModeChange(event) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.session-controls {
-    flex-shrink: 0;
-}
-
-.mode-selector {
-    min-width: 120px;
 }
 
 .session-meta {

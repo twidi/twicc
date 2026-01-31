@@ -42,13 +42,6 @@ const activeTabId = computed(() => {
 })
 
 /**
- * Handle display mode change from the header.
- */
-function onModeChange(newMode) {
-    store.setDisplayMode(newMode)
-}
-
-/**
  * Handle tab change event from wa-tab-group.
  * Updates the URL to reflect the new active tab.
  */
@@ -154,7 +147,6 @@ watch(subagentId, (newSubagentId) => {
             v-if="session"
             :session-id="sessionId"
             mode="session"
-            @mode-change="onModeChange"
         />
 
         <!-- Tab system -->

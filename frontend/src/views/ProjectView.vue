@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import SessionList from '../components/SessionList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
+import SettingsPopover from '../components/SettingsPopover.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -161,14 +162,23 @@ function handleSplitReposition(event) {
                 />
             </div>
 
-            <!-- Sidebar Toggle button (label for hidden checkbox, wa-button inside for styling) -->
-            <label for="sidebar-toggle-state" class="sidebar-toggle">
-                <span class="sidebar-backdrop"></span>
-                <wa-button variant="neutral" appearance="filled-outlined" size="small">
-                    <wa-icon class="icon-collapse" name="angles-left"></wa-icon>
-                    <wa-icon class="icon-expand" name="angles-right"></wa-icon>
-                </wa-button>
-            </label>
+            <wa-divider></wa-divider>
+
+            <div class="sidebar-footer">
+                <!-- Sidebar Toggle button (label for hidden checkbox, wa-button inside for styling) -->
+                <label for="sidebar-toggle-state" class="sidebar-toggle">
+                    <span class="sidebar-backdrop"></span>
+                    <wa-button variant="neutral" appearance="filled-outlined" size="small">
+                        <wa-icon class="icon-collapse" name="angles-left"></wa-icon>
+                        <wa-icon class="icon-expand" name="angles-right"></wa-icon>
+                    </wa-button>
+                </label>
+
+                <!-- Placeholder to occupy the same space a the sidebar toggle button that is absolute for goot reasons -->
+                <wa-button variant="neutral" appearance="filled-outlined" size="small" style="visibility: hidden; pointer-events: none"><wa-icon name="angles-left"></wa-icon></wa-button>
+
+                <SettingsPopover />
+            </div>
 
         </aside>
 
@@ -298,7 +308,17 @@ function handleSplitReposition(event) {
     font-size: var(--wa-font-size-s);
 }
 
-/* Sidebar toggle label - positioned at bottom left */
+.sidebar-footer {
+    flex-shrink: 0;
+    display: flex;
+    gap: var(--wa-space-s);
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--wa-space-s);
+    position: relative;
+}
+
+/* Sidebar toggle label */
 .sidebar-toggle {
     position: absolute;
     bottom: var(--wa-space-s);

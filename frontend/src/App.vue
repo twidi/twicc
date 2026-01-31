@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, watch, computed } from 'vue'
 import { useWebSocket } from './composables/useWebSocket'
 import { useDataStore } from './stores/data'
 import ConnectionIndicator from './components/ConnectionIndicator.vue'
@@ -11,6 +11,15 @@ const { wsStatus } = useWebSocket()
 const store = useDataStore()
 onMounted(async () => {
     await store.loadProjects({ isInitialLoading: true })
+})
+
+// Sync display mode to body data attribute
+const displayMode = computed(() => store.getDisplayMode)
+
+// Set initial value and watch for changes
+document.body.dataset.displayMode = displayMode.value
+watch(displayMode, (newMode) => {
+    document.body.dataset.displayMode = newMode
 })
 </script>
 
