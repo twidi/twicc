@@ -1,9 +1,10 @@
 <script setup>
-import { computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useDataStore } from '../stores/data'
-import { formatDate } from '../utils/date'
-import { MAX_CONTEXT_TOKENS } from '../constants'
+import { formatDate, formatDuration } from '../utils/date'
+import { MAX_CONTEXT_TOKENS, PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES } from '../constants'
 import ProjectBadge from './ProjectBadge.vue'
+import ProcessIndicator from './ProcessIndicator.vue'
 
 const props = defineProps({
     sessionId: {
@@ -90,6 +91,71 @@ const formattedModel = computed(() => {
     return `${model.family} ${model.version}`
 })
 
+// Process state for current session
+const processState = computed(() => store.getProcessState(props.sessionId))
+
+/**
+ * Get the color for a process state.
+ * @param {string} state
+ * @returns {string} CSS color variable
+ */
+function getProcessColor(state) {
+    return PROCESS_STATE_COLORS[state] || PROCESS_STATE_COLORS[PROCESS_STATE.DEAD]
+}
+
+/**
+ * Format memory in bytes to a human-readable string.
+ * @param {number|null} bytes
+ * @returns {string}
+ */
+function formatMemory(bytes) {
+    if (bytes == null) return ''
+
+    const kb = bytes / 1024
+    const mb = kb / 1024
+    const gb = mb / 1024
+
+    if (gb >= 1) {
+        return `${gb.toFixed(1)} GB`
+    }
+    if (mb >= 10) {
+        return `${Math.round(mb)} MB`
+    }
+    if (mb >= 1) {
+        return `${mb.toFixed(1)} MB`
+    }
+    return `${Math.round(kb)} KB`
+}
+
+// Only assistant_turn should animate
+const animateStates = ['assistant_turn']
+
+// Timer for updating state durations
+const now = ref(Date.now() / 1000)
+let durationTimer = null
+
+onMounted(() => {
+    durationTimer = setInterval(() => {
+        now.value = Date.now() / 1000
+    }, 1000)
+})
+
+onUnmounted(() => {
+    if (durationTimer) {
+        clearInterval(durationTimer)
+    }
+})
+
+/**
+ * Calculate state duration for a process.
+ * @param {object} procState
+ * @returns {number} Duration in seconds
+ */
+function getStateDuration(procState) {
+    if (!procState?.state_changed_at) return 0
+    return Math.max(0, Math.floor(now.value - procState.state_changed_at))
+}
+
 </script>
 
 <template>
@@ -100,66 +166,96 @@ const formattedModel = computed(() => {
             <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
         </div>
 
-        <div class="session-meta">
+        <div class="meta-wrapper">
+            <div class="session-meta">
 
-            <span id="session-header-messages" class="meta-item">
-                <wa-icon auto-width name="comment" variant="regular"></wa-icon>
-                <span>{{ session.message_count ?? '??' }}</span>
-            </span>
-            <wa-tooltip for="session-header-messages">Number of user and assistant messages</wa-tooltip>
-
-            <span id="session-header-lines" class="meta-item nb_lines">
-                <wa-icon auto-width name="bars"></wa-icon>
-                <span>{{ session.last_line }}</span>
-            </span>
-            <wa-tooltip for="session-header-lines">Lines in the JSONL file</wa-tooltip>
-
-            <span id="session-header-mtime" class="meta-item">
-                <wa-icon auto-width name="clock" variant="regular"></wa-icon>
-                <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
-            </span>
-            <wa-tooltip for="session-header-mtime">Last activity</wa-tooltip>
-
-            <template v-if="formattedTotalCost">
-                <span id="session-header-cost" class="meta-item">
-                    <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
-                    {{ formattedTotalCost }}
+                <span id="session-header-messages" class="meta-item">
+                    <wa-icon auto-width name="comment" variant="regular"></wa-icon>
+                    <span>{{ session.message_count ?? '??' }}</span>
                 </span>
-                <wa-tooltip for="session-header-cost">Total session cost</wa-tooltip>
-            </template>
+                <wa-tooltip for="session-header-messages">Number of user and assistant messages</wa-tooltip>
 
-            <template v-if="formattedCostBreakdown">
-                <span id="session-header-cost-breakdown" class="meta-item">
-                    <span>(
-                    <span>
+                <span id="session-header-lines" class="meta-item nb_lines">
+                    <wa-icon auto-width name="bars"></wa-icon>
+                    <span>{{ session.last_line }}</span>
+                </span>
+                <wa-tooltip for="session-header-lines">Lines in the JSONL file</wa-tooltip>
+
+                <span id="session-header-mtime" class="meta-item">
+                    <wa-icon auto-width name="clock" variant="regular"></wa-icon>
+                    <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
+                </span>
+                <wa-tooltip for="session-header-mtime">Last activity</wa-tooltip>
+
+                <template v-if="formattedTotalCost">
+                    <span id="session-header-cost" class="meta-item">
                         <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
-                        <span class="cost-breakdown">{{ formattedCostBreakdown }}</span>
+                        {{ formattedTotalCost }}
                     </span>
-                    )</span>
-                </span>
-                <wa-tooltip for="session-header-cost-breakdown">Main agent cost + sub-agents cost</wa-tooltip>
-            </template>
+                    <wa-tooltip for="session-header-cost">Total session cost</wa-tooltip>
+                </template>
 
-            <template v-if="formattedModel">
-                <span id="session-header-model" class="meta-item">
-                    <wa-icon auto-width name="robot" variant="classic"></wa-icon>
-                    <span>{{ formattedModel }}</span>
-                </span>
-                <wa-tooltip for="session-header-model">Last used model</wa-tooltip>
-            </template>
+                <template v-if="formattedCostBreakdown">
+                    <span id="session-header-cost-breakdown" class="meta-item">
+                        <span>(
+                        <span>
+                            <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
+                            <span class="cost-breakdown">{{ formattedCostBreakdown }}</span>
+                        </span>
+                        )</span>
+                    </span>
+                    <wa-tooltip for="session-header-cost-breakdown">Main agent cost + sub-agents cost</wa-tooltip>
+                </template>
 
-            <template v-if="contextUsagePercentage != null">
-                <wa-progress-ring
-                    id="session-header-context"
-                    class="context-usage-ring"
-                    :value="Math.min(contextUsagePercentage, 100)"
-                    :style="{
-                        '--indicator-color': contextUsageColor,
-                        '--indicator-width': contextUsageIndicatorWidth
-                    }"
-                ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
-                <wa-tooltip for="session-header-context">Context window usage</wa-tooltip>
-            </template>
+                <template v-if="formattedModel">
+                    <span id="session-header-model" class="meta-item">
+                        <wa-icon auto-width name="robot" variant="classic"></wa-icon>
+                        <span>{{ formattedModel }}</span>
+                    </span>
+                    <wa-tooltip for="session-header-model">Last used model</wa-tooltip>
+                </template>
+
+                <template v-if="contextUsagePercentage != null">
+                    <wa-progress-ring
+                        id="session-header-context"
+                        class="context-usage-ring"
+                        :value="Math.min(contextUsagePercentage, 100)"
+                        :style="{
+                            '--indicator-color': contextUsageColor,
+                            '--indicator-width': contextUsageIndicatorWidth
+                        }"
+                    ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
+                    <wa-tooltip for="session-header-context">Context window usage</wa-tooltip>
+                </template>
+            </div>
+
+            <div
+                v-if="processState"
+                class="process-info"
+                :style="{ color: getProcessColor(processState.state) }"
+            >
+                <span
+                    v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
+                    id="session-header-process-duration"
+                    class="process-duration"
+                >
+                    {{ formatDuration(getStateDuration(processState)) }}
+                </span>
+                <wa-tooltip v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" for="session-header-process-duration">Assistant turn duration</wa-tooltip>
+
+                <span v-if="processState.memory" id="session-header-process-memory" class="process-memory">
+                    {{ formatMemory(processState.memory) }}
+                </span>
+                <wa-tooltip v-if="processState.memory" for="session-header-process-memory">Claude Code memory usage</wa-tooltip>
+
+                <ProcessIndicator
+                    id="session-header-process-indicator"
+                    :state="processState.state"
+                    size="small"
+                    :animate-states="animateStates"
+                />
+                <wa-tooltip for="session-header-process-indicator">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}</wa-tooltip>
+            </div>
         </div>
     </header>
     <wa-divider></wa-divider>
@@ -194,13 +290,27 @@ const formattedModel = computed(() => {
     white-space: nowrap;
 }
 
+.meta-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--wa-space-l);
+}
+
 .session-meta {
-    width: 100%;
     display: flex;
     flex-wrap: wrap;
     column-gap: var(--wa-space-l);
     row-gap: var(--wa-space-xs);
     font-size: var(--wa-font-size-s);
+}
+
+.process-info {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    font-size: var(--wa-font-size-s);
+    white-space: nowrap;
 }
 
 .meta-item {

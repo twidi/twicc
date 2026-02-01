@@ -31,13 +31,13 @@ const color = computed(() => project.value?.color || null)
 .project-badge {
     display: inline-flex;
     align-items: center;
-    gap: 0.4em;
+    gap: var(--wa-space-xs);
     min-width: 0;
 }
 
 .project-badge-dot {
-    width: 0.75em;
-    height: 0.75em;
+    width: var(--wa-space-s);
+    height: var(--wa-space-s);
     border-radius: 50%;
     flex-shrink: 0;
     border: 1px solid;

@@ -208,7 +208,7 @@ function getStateDuration(processState) {
             :class="{ 'session-item--active': session.id === sessionId }"
             @click="handleSelect(session)"
         >
-            <div class="session-name-row">
+            <div>
                 <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
                 <wa-tooltip :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
             </div>
@@ -216,9 +216,23 @@ function getStateDuration(processState) {
             <!-- Process info row (only shown when process is active) -->
             <div
                 v-if="getProcessState(session.id)"
-                class="process-info-row"
+                class="process-info"
                 :style="{ color: getProcessColor(getProcessState(session.id).state) }"
             >
+                <span :id="`process-memory-${session.id}`" class="process-memory">
+                    <template v-if="getProcessState(session.id).memory">
+                        {{ formatMemory(getProcessState(session.id).memory) }}
+                    </template>
+                </span>
+                <wa-tooltip :for="`process-memory-${session.id}`">Claude Code memory usage</wa-tooltip>
+
+                <span :id="`process-duration-${session.id}`" class="process-duration">
+                    <template v-if="getProcessState(session.id).state === PROCESS_STATE.ASSISTANT_TURN && getProcessState(session.id).state_changed_at">
+                        {{ formatDuration(getStateDuration(getProcessState(session.id))) }}
+                    </template>
+                </span>
+                <wa-tooltip :for="`process-duration-${session.id}`">Assistant turn duration</wa-tooltip>
+
                 <ProcessIndicator
                     :id="`process-indicator-${session.id}`"
                     :state="getProcessState(session.id).state"
@@ -226,26 +240,14 @@ function getStateDuration(processState) {
                     :animate-states="animateStates"
                 />
                 <wa-tooltip :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
-                <span :id="`process-memory-${session.id}`" class="process-memory">
-                    <template v-if="getProcessState(session.id).memory">
-                        {{ formatMemory(getProcessState(session.id).memory) }}
-                    </template>
-                </span>
-                <wa-tooltip :for="`process-memory-${session.id}`">Claude Code memory usage</wa-tooltip>
-                <span :id="`process-duration-${session.id}`" class="process-duration">
-                    <template v-if="getProcessState(session.id).state === PROCESS_STATE.ASSISTANT_TURN && getProcessState(session.id).state_changed_at">
-                        {{ formatDuration(getStateDuration(getProcessState(session.id))) }}
-                    </template>
-                </span>
-                <wa-tooltip :for="`process-duration-${session.id}`">Assistant turn duration</wa-tooltip>
             </div>
             <div class="session-meta">
                 <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
                 <wa-tooltip :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
-                <span :id="`session-mtime-${session.id}`" class="session-mtime"><wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
-                <wa-tooltip :for="`session-mtime-${session.id}`">Last activity</wa-tooltip>
                 <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon> {{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
                 <wa-tooltip :for="`session-cost-${session.id}`">Total session cost</wa-tooltip>
+                <span :id="`session-mtime-${session.id}`" class="session-mtime"><wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
+                <wa-tooltip :for="`session-mtime-${session.id}`">Last activity</wa-tooltip>
             </div>
         </wa-button>
 
@@ -287,11 +289,12 @@ function getStateDuration(processState) {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-3xs);
-    min-width: 200px;
     overflow: auto;
     overflow-x: hidden;
     overscroll-behavior: contain;
     padding: var(--wa-space-s);
+    container-type: inline-size;
+    container-name: session-list;
 }
 
 .session-item::part(base) {
@@ -304,10 +307,6 @@ function getStateDuration(processState) {
     text-align: left;
 }
 
-.session-name-row {
-    /* No longer needs relative positioning - indicator moved to process-info-row */
-}
-
 .session-name {
     display: block;
     font-size: var(--wa-font-size-s);
@@ -318,35 +317,33 @@ function getStateDuration(processState) {
     white-space: nowrap;
 }
 
-/* Process info row - shows memory, duration, and indicator */
-.process-info-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    align-items: center;
-    justify-items: start;
-    gap: var(--wa-space-xs);
-    font-size: var(--wa-font-size-xs);
-    font-weight: var(--wa-font-weight-body);
-    margin-top: var(--wa-space-3xs);
-}
-
-.process-memory {
-    justify-self: center;
-}
-
-.process-duration {
-    justify-self: end;
-}
-
 .session-project {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
     font-weight: var(--wa-font-weight-body);;
-    /* Truncate with ellipsis */
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     margin-top: var(--wa-space-3xs);
+    max-width: 100%;
+}
+
+/* Process info row - shows memory, duration, and indicator */
+.process-info {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    align-items: center;
+    justify-items: end;
+    gap: var(--wa-space-xs);
+    font-size: var(--wa-font-size-xs);
+    font-weight: var(--wa-font-weight-body);
+    margin-top: var(--wa-space-3xs);
+    overflow: hidden;
+}
+
+.process-memory {
+    justify-self: start;
+}
+
+.process-duration {
+    justify-self: center;
 }
 
 .session-meta {
@@ -363,10 +360,35 @@ function getStateDuration(processState) {
 }
 
 .session-mtime {
-    justify-self: center;
+    justify-self: end;
 }
 .session-cost {
-    justify-self: end;
+    justify-self: center;
+}
+
+@container session-list (width <= 230px) {
+    /* Hide memory when container is too narrow */
+    .process-memory {
+        display: none;
+    }
+    /* Hide cost when container is too narrow */
+    .session-cost {
+        display: none;
+    }
+}
+
+@container session-list (width <= 170px) {
+    /* Hide duration when container is very narrow (keep only indicator) */
+    .process-duration {
+        display: none;
+    }
+    .process-indicator {
+        justify-self: start;
+    }
+    /* Hide messages when container is very narrow (keep only mtime) */
+    .session-messages {
+        display: none;
+    }
 }
 
 .load-more-sentinel {
