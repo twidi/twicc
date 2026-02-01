@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch, ref, nextTick } from 'vue'
+import { computed, watch, ref, nextTick, onUnmounted } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { useDataStore } from '../stores/data'
 import { INITIAL_ITEMS_COUNT } from '../constants'
@@ -8,6 +8,10 @@ import SessionItem from './SessionItem.vue'
 import FetchErrorPanel from './FetchErrorPanel.vue'
 import GroupToggle from './GroupToggle.vue'
 import MessageInput from './MessageInput.vue'
+import ProcessIndicator from './ProcessIndicator.vue'
+
+// Duration to show temporary indicators (user_turn, dead) in milliseconds
+const TEMPORARY_INDICATOR_DURATION = 10000
 
 const props = defineProps({
     sessionId: {
@@ -34,7 +38,7 @@ const scrollerRef = ref(null)
 const isAutoScrollingToBottom = ref(false)
 
 // Threshold in pixels for "near bottom" detection for auto-scroll
-const AUTO_SCROLL_THRESHOLD = 50
+const AUTO_SCROLL_THRESHOLD = 150
 
 // Buffer: load N items before/after visible range
 const LOAD_BUFFER = 50
@@ -66,6 +70,58 @@ const isComputePending = computed(() => {
 // Loading and error states
 const isLoading = computed(() => store.areSessionItemsLoading(props.sessionId))
 const hasError = computed(() => store.didSessionItemsFailToLoad(props.sessionId))
+
+// Process state for this session (starting, assistant_turn, user_turn, dead)
+const processState = computed(() => store.getProcessState(props.sessionId))
+
+// Timer for temporary indicator display (user_turn, dead)
+let temporaryIndicatorTimer = null
+const showTemporaryIndicator = ref(false)
+
+// Computed: should we show the bottom process indicator?
+// - Always show for starting/assistant_turn
+// - Show for user_turn/dead only for TEMPORARY_INDICATOR_DURATION seconds
+const shouldShowProcessIndicator = computed(() => {
+    if (!processState.value) return false
+    const state = processState.value.state
+    if (state === 'starting' || state === 'assistant_turn') return true
+    if ((state === 'user_turn' || state === 'dead') && showTemporaryIndicator.value) return true
+    return false
+})
+
+// Watch process state changes to manage temporary indicator
+watch(processState, (newState, oldState) => {
+    // Clear any existing timer
+    if (temporaryIndicatorTimer) {
+        clearTimeout(temporaryIndicatorTimer)
+        temporaryIndicatorTimer = null
+    }
+
+    if (!newState) {
+        showTemporaryIndicator.value = false
+        return
+    }
+
+    const state = newState.state
+    if (state === 'user_turn' || state === 'dead') {
+        // Show temporary indicator and start timer
+        showTemporaryIndicator.value = true
+        temporaryIndicatorTimer = setTimeout(() => {
+            showTemporaryIndicator.value = false
+            temporaryIndicatorTimer = null
+        }, TEMPORARY_INDICATOR_DURATION)
+    } else {
+        showTemporaryIndicator.value = false
+    }
+}, { immediate: true })
+
+// Cleanup timer on unmount
+onUnmounted(() => {
+    if (temporaryIndicatorTimer) {
+        clearTimeout(temporaryIndicatorTimer)
+        temporaryIndicatorTimer = null
+    }
+})
 
 // Build base URL for API calls (handles subagent case)
 const apiBaseUrl = computed(() => {
@@ -488,13 +544,23 @@ function toggleGroup(groupHeadLineNum) {
             No items in this session
         </div>
 
-        <!-- Message input (only for main sessions, not subagents) -->
-        <MessageInput
-            v-if="!parentSessionId"
-            :key="sessionId"
-            :session-id="sessionId"
-            :project-id="projectId"
-        />
+        <div class="session-footer">
+            <!-- Process indicator (fixed at bottom of list, visible while scrolling) -->
+            <ProcessIndicator
+                v-if="shouldShowProcessIndicator"
+                :state="processState.state"
+                size="large"
+                class="bottom-process-indicator"
+            />
+
+            <!-- Message input (only for main sessions, not subagents) -->
+            <MessageInput
+                v-if="!parentSessionId"
+                :key="sessionId"
+                :session-id="sessionId"
+                :project-id="projectId"
+            />
+        </div>
     </div>
 </template>
 
@@ -505,6 +571,7 @@ function toggleGroup(groupHeadLineNum) {
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    position: relative;
 }
 
 .session-items {
@@ -534,6 +601,16 @@ function toggleGroup(groupHeadLineNum) {
 
 .compute-pending-state wa-callout {
     max-width: 500px;
+}
+
+.session-footer {
+    position: relative;
+}
+.bottom-process-indicator {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%) translateY(calc(-100% - var(--wa-space-2xs)));
 }
 
 </style>
