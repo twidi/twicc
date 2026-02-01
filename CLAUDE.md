@@ -47,7 +47,7 @@ uv run ./devctl.py logs [front|back]        # Show recent logs (--lines=N)
 
 ## Operations Reserved to User
 
-Claude never runs these operations. Instead, notify the user at the end of a task or, if absolutely necessary during your work, pause the task and ask them the permission to do it or to do them manually:
+Claude never runs these operations on its own initiative. If the user explicitly asks to run one of these operations, do it without asking for confirmation. Otherwise, notify the user at the end of a task or, if absolutely necessary during your work, pause the task and ask them the permission to do it or to do them manually:
 
 - **Django migrations:** After modifying models (and having created the migration yourself), remind the user to run and `migrate`
 - **Dev server restart:** After backend changes, remind the user to restart via `devctl.py`

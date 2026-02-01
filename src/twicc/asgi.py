@@ -17,7 +17,6 @@ from django.urls import path
 
 from twicc.agent.manager import get_process_manager
 from twicc.agent.states import ProcessInfo, serialize_process_info
-from twicc.core.models import Project
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +27,8 @@ def get_project_directory(project_id: str) -> str | None:
 
     Returns None if project not found or has no directory set.
     """
+    from twicc.core.models import Project
+
     try:
         project = Project.objects.get(id=project_id)
         return project.directory

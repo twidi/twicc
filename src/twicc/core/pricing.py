@@ -8,7 +8,7 @@ This module provides functions for:
 - Fetching and synchronizing Anthropic model prices from OpenRouter API
 """
 
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 from typing import NamedTuple
@@ -77,34 +77,6 @@ def extract_model_info(raw_name: str) -> ModelInfo | None:
 
     version = ".".join(version_parts)
     return ModelInfo(family=family, version=version)
-
-
-def parse_timestamp_to_date(timestamp: str) -> date | None:
-    """
-    Parse an ISO timestamp string to a date object.
-
-    Args:
-        timestamp: ISO format timestamp (e.g., "2026-01-22T10:53:42.927Z")
-
-    Returns:
-        date object, or None if parsing fails.
-    """
-    if not timestamp:
-        return None
-
-    try:
-        # Handle ISO format with or without timezone suffix
-        # Remove trailing 'Z' if present and parse
-        clean_timestamp = timestamp.rstrip("Z")
-        # Try to parse with microseconds first, then without
-        for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
-            try:
-                return datetime.strptime(clean_timestamp, fmt).date()
-            except ValueError:
-                continue
-        return None
-    except (ValueError, TypeError):
-        return None
 
 
 def _get_family_from_model_id(model_id: str) -> str | None:

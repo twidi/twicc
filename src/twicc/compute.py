@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import orjson
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import xmltodict
@@ -21,7 +22,6 @@ from twicc.core.pricing import (
     calculate_line_cost,
     calculate_line_context_usage,
     extract_model_info,
-    parse_timestamp_to_date,
 )
 
 # Content types considered user-visible (for display_level and kind computation)
@@ -783,6 +783,51 @@ class GroupState:
 
 
 # =============================================================================
+# Timestamp Parsing
+# =============================================================================
+
+
+def parse_timestamp_to_datetime(timestamp: str) -> datetime | None:
+    """
+    Parse an ISO timestamp string to a datetime object (UTC aware).
+
+    Args:
+        timestamp: ISO format timestamp (e.g., "2026-01-22T10:53:42.927Z")
+
+    Returns:
+        datetime object (UTC aware), or None if parsing fails.
+    """
+    if not timestamp:
+        return None
+
+    try:
+        # Handle 'Z' suffix by converting to +00:00
+        if timestamp.endswith("Z"):
+            timestamp = timestamp[:-1] + "+00:00"
+        return datetime.fromisoformat(timestamp)
+    except (ValueError, TypeError):
+        return None
+
+
+def extract_item_timestamp(parsed_json: dict) -> datetime | None:
+    """
+    Extract timestamp from parsed JSON.
+
+    The timestamp is always present at the root level of JSONL lines.
+
+    Args:
+        parsed_json: The parsed JSON content of the item
+
+    Returns:
+        datetime object (UTC aware), or None if not found or parsing fails.
+    """
+    timestamp_str = parsed_json.get("timestamp")
+    if timestamp_str:
+        return parse_timestamp_to_datetime(timestamp_str)
+    return None
+
+
+# =============================================================================
 # Cost and Context Usage Computation
 # =============================================================================
 
@@ -829,11 +874,9 @@ def compute_item_cost_and_usage(
         model_info = extract_model_info(message.get("model", ""))
         if model_info:
             model_id = f"anthropic/claude-{model_info.family}-{model_info.version}"
-            timestamp = parsed_json.get("timestamp", "")
-            if timestamp:
-                line_date = parse_timestamp_to_date(timestamp)
-                if line_date:
-                    item.cost = calculate_line_cost(usage, model_id, line_date)
+            if timestamp_str := parsed_json.get("timestamp"):
+                if dt := parse_timestamp_to_datetime(timestamp_str):
+                    item.cost = calculate_line_cost(usage, model_id, dt.date())
 
 
 # =============================================================================
@@ -909,6 +952,9 @@ def compute_session_metadata(session_id: str) -> None:
         metadata = compute_item_metadata(parsed)
         item.display_level = metadata['display_level']
         item.kind = metadata['kind']
+
+        # Extract timestamp
+        item.timestamp = extract_item_timestamp(parsed)
 
         # Compute cost and context usage
         compute_item_cost_and_usage(item, parsed, seen_message_ids)
@@ -1012,7 +1058,7 @@ def compute_session_metadata(session_id: str) -> None:
         if len(items_to_update) >= batch_size:
             SessionItem.objects.bulk_update(
                 items_to_update,
-                ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage']
+                ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage', 'timestamp']
             )
             items_to_update = []
 
@@ -1029,7 +1075,7 @@ def compute_session_metadata(session_id: str) -> None:
     if items_to_update:
         SessionItem.objects.bulk_update(
             items_to_update,
-            ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage']
+            ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage', 'timestamp']
         )
 
     # Final bulk create links

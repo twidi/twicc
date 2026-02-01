@@ -21,6 +21,7 @@ from twicc.compute import (
     compute_item_metadata_live,
     compute_item_cost_and_usage,
     ensure_project_directory,
+    extract_item_timestamp,
     is_tool_result_item,
     create_tool_result_link_live,
     create_agent_link_live,
@@ -234,6 +235,9 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 item.display_level = metadata['display_level']
                 item.kind = metadata['kind']
 
+                # Extract timestamp
+                item.timestamp = extract_item_timestamp(parsed)
+
                 # Compute cost and context usage (with deduplication)
                 compute_item_cost_and_usage(item, parsed, seen_message_ids)
 
@@ -304,13 +308,14 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Track line_nums of new items
             new_line_nums = {item.line_num for item in items_only}
 
-            # Second pass: compute group membership, tool_result links, and update cost/usage fields
+            # Second pass: compute group membership, tool_result links, and update cost/usage/timestamp fields
             for item, parsed in items_to_create:
-                # Build the update dict for this item (includes cost/usage fields)
+                # Build the update dict for this item (includes cost/usage/timestamp fields)
                 update_fields = {
                     'message_id': item.message_id,
                     'cost': item.cost,
                     'context_usage': item.context_usage,
+                    'timestamp': item.timestamp,
                 }
 
                 # Group membership for COLLAPSIBLE and ALWAYS items

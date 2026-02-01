@@ -133,6 +133,9 @@ class SessionItem(models.Model):
     cost = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)  # Line cost in USD (null if no usage or duplicate message_id)
     context_usage = models.PositiveIntegerField(null=True, blank=True)  # Total tokens at this point (null if no usage)
 
+    # Timestamp from JSONL line (stored as datetime in UTC)
+    timestamp = models.DateTimeField(null=True, blank=True, db_index=True)
+
     class Meta:
         ordering = ["line_num"]
         constraints = [
