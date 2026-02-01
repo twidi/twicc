@@ -54,6 +54,7 @@ import '@awesome.me/webawesome/dist/components/slider/slider.js'
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome/dist/components/input/input.js'
 import '@awesome.me/webawesome/dist/components/color-picker/color-picker.js'
+import '@awesome.me/webawesome/dist/components/textarea/textarea.js'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'

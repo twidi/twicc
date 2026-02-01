@@ -31,6 +31,7 @@ from django.core.management import call_command
 from twicc.core.models import Project, Session, SessionType
 from twicc.sync import sync_all
 from twicc.watcher import start_watcher, stop_watcher
+from twicc.agent import shutdown_process_manager
 from twicc.background import (
     run_initial_price_sync,
     start_background_compute_task,
@@ -93,6 +94,10 @@ async def run_server(port: int):
             await price_sync_task
         except asyncio.CancelledError:
             pass
+
+        # Clean shutdown of Claude processes
+        # This gracefully terminates any active Claude SDK processes
+        await shutdown_process_manager()
 
 
 def main():

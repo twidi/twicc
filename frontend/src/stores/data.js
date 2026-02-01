@@ -15,6 +15,10 @@ export const useDataStore = defineStore('data', {
         sessions: {},       // { id: { id, project_id, last_line, mtime, archived } }
         sessionItems: {},   // { sessionId: [{ line_num, content }, ...] } - line_num is 1-based
 
+        // Process state for active Claude processes
+        // { sessionId: { state: 'starting'|'assistant_turn'|'user_turn'|'dead', error?: string } }
+        processStates: {},
+
         // Local UI state (separate from server data to avoid being overwritten)
         localState: {
             projectsList: {
@@ -77,6 +81,9 @@ export const useDataStore = defineStore('data', {
         },
         getSession: (state) => (id) => state.sessions[id],
         getSessionItems: (state) => (sessionId) => state.sessionItems[sessionId] || [],
+
+        // Process state getter - returns { state, error? } or null if no active process
+        getProcessState: (state) => (sessionId) => state.processStates[sessionId] || null,
 
         // Local state getters - loading
         isProjectsListLoading: (state) => state.localState.projectsList.loading,
@@ -942,6 +949,40 @@ export const useDataStore = defineStore('data', {
          */
         clearAgentLinks(sessionId) {
             delete this.localState.agentLinks[sessionId]
+        },
+
+        // Process state actions
+
+        /**
+         * Set process state for a session (from WebSocket process_state message).
+         * Removes the entry when state is 'dead'.
+         * @param {string} sessionId
+         * @param {string} state - 'starting' | 'assistant_turn' | 'user_turn' | 'dead'
+         * @param {string|null} error - Error message if state is 'dead' due to error
+         */
+        setProcessState(sessionId, state, error = null) {
+            if (state === 'dead') {
+                // Remove dead processes from the map
+                delete this.processStates[sessionId]
+            } else {
+                this.processStates[sessionId] = { state, error }
+            }
+        },
+
+        /**
+         * Initialize process states from WebSocket active_processes message.
+         * Called on connection to sync with backend.
+         * @param {Array<{session_id: string, project_id: string, state: string}>} processes
+         */
+        setActiveProcesses(processes) {
+            // Clear existing states and rebuild from server data
+            this.processStates = {}
+            for (const p of processes) {
+                // Only add non-dead processes
+                if (p.state !== 'dead') {
+                    this.processStates[p.session_id] = { state: p.state }
+                }
+            }
         }
     }
 })

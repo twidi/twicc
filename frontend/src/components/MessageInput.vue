@@ -1,0 +1,158 @@
+<script setup>
+// MessageInput.vue - Text input for sending messages to Claude
+import { ref, computed } from 'vue'
+import { useDataStore } from '../stores/data'
+import { sendWsMessage } from '../composables/useWebSocket'
+import { useVisualViewport } from '../composables/useVisualViewport'
+
+// Track visual viewport height for mobile keyboard handling
+useVisualViewport()
+
+const props = defineProps({
+    sessionId: {
+        type: String,
+        required: true
+    },
+    projectId: {
+        type: String,
+        required: true
+    }
+})
+
+const store = useDataStore()
+
+// Local state for the textarea
+const messageText = ref('')
+const textareaRef = ref(null)
+const isFocused = ref(false)
+
+// Get process state for this session
+const processState = computed(() => store.getProcessState(props.sessionId))
+
+// Determine if input/button should be disabled
+const isDisabled = computed(() => {
+    const state = processState.value?.state
+    // Disabled during starting and assistant_turn
+    return state === 'starting' || state === 'assistant_turn'
+})
+
+// Button label based on process state
+const buttonLabel = computed(() => {
+    const state = processState.value?.state
+    if (state === 'starting') {
+        return 'Starting...'
+    }
+    if (state === 'assistant_turn') {
+        return 'Claude is working...'
+    }
+    // user_turn, dead, or no process
+    return 'Send'
+})
+
+// Placeholder text based on process state
+const placeholderText = computed(() => {
+    const state = processState.value?.state
+    if (state === 'starting') {
+        return 'Starting Claude process...'
+    }
+    if (state === 'assistant_turn') {
+        return 'Waiting for Claude to respond...'
+    }
+    // user_turn, dead, or no process
+    return 'Type your message...'
+})
+
+/**
+ * Handle textarea input event.
+ */
+function onInput(event) {
+    messageText.value = event.target.value
+}
+
+/**
+ * Handle keyboard shortcuts in textarea.
+ * Cmd/Ctrl+Enter submits the message.
+ */
+function onKeydown(event) {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault()
+        handleSend()
+    }
+}
+
+/**
+ * Send the message via WebSocket.
+ */
+function handleSend() {
+    const text = messageText.value.trim()
+    if (!text || isDisabled.value) return
+
+    const success = sendWsMessage({
+        type: 'send_message',
+        session_id: props.sessionId,
+        project_id: props.projectId,
+        text: text
+    })
+
+    if (success) {
+        // Clear the textarea on successful send
+        messageText.value = ''
+        if (textareaRef.value) {
+            textareaRef.value.value = ''
+        }
+    }
+}
+</script>
+
+<template>
+    <div class="message-input">
+        <wa-textarea
+            ref="textareaRef"
+            :class="{ focused: isFocused }"
+            :value.prop="messageText"
+            :placeholder="placeholderText"
+            rows="3"
+            resize="auto"
+            @input="onInput"
+            @keydown="onKeydown"
+            @focus="isFocused = true"
+            @blur="isFocused = false"
+        ></wa-textarea>
+        <div class="message-input-actions">
+            <wa-button
+                variant="brand"
+                :disabled="isDisabled || !messageText.trim()"
+                @click="handleSend"
+            >
+                <wa-spinner v-if="processState?.state === 'starting' || processState?.state === 'assistant_turn'" slot="prefix"></wa-spinner>
+                {{ buttonLabel }}
+            </wa-button>
+        </div>
+    </div>
+</template>
+
+<style scoped>
+.message-input {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-s);
+    padding: var(--wa-space-s);
+    background: var(--wa-color-surface-raised);
+    border-top: 1px solid var(--wa-color-border-normal);
+}
+
+.message-input wa-textarea::part(textarea) {
+    /* When not focused, limit to initial height (rows="3") so user can read messages */
+    max-height: 4.5em;
+}
+
+.message-input wa-textarea.focused::part(textarea) {
+    /* When focused, allow growth but limit to 40% of visual viewport (accounts for mobile keyboard) */
+    max-height: calc(var(--visual-viewport-height, 100dvh) * 0.4);
+}
+
+.message-input-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+</style>

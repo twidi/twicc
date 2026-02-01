@@ -180,6 +180,7 @@ function handleSelect(session) {
     min-width: 200px;
     overflow: auto;
     overflow-x: hidden;
+    overscroll-behavior: contain;
     padding: var(--wa-space-s);
 }
 

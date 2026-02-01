@@ -1,16 +1,156 @@
 # SDK Integration - Phase 1: Initial Implementation
 
 **Date:** 2026-01-31
-**Status:** Implementation
+**Status:** COMPLETED
 **Author:** Brainstorming session
 
 ## Task Tracking
 
-- [ ] Task 1: Module agent backend
-- [ ] Task 2: Intégration lifecycle serveur
-- [ ] Task 3: WebSocket backend
-- [ ] Task 4: Store frontend
-- [ ] Task 5: UI frontend
+- [x] Task 1: Module agent backend
+- [x] Task 2: Intégration lifecycle serveur
+- [x] Task 3: WebSocket backend
+- [x] Task 4: Store frontend
+- [x] Task 5: UI frontend
+- [x] Task 6: Fix SDK connection issue
+
+---
+
+## Issues
+
+### Issue 1: ProcessTransport is not ready for writing
+
+**Date:** 2026-02-01
+**Status:** Fixed
+
+**Symptom:** When sending a message to resume a session (no active process), the process fails immediately with:
+```
+Failed to start process: ProcessTransport is not ready for writing
+```
+
+**Root cause:** The SDK has two transport modes:
+
+1. **Print mode**: When `connect(prompt)` is called with a string, the `SubprocessCLITransport` runs Claude with `--print -- <prompt>` and immediately closes stdin after process start. This is for one-shot queries.
+
+2. **Streaming mode**: When `connect()` is called without a prompt (or with an `AsyncIterable`), the transport runs Claude with `--input-format stream-json` and keeps stdin open for bidirectional communication.
+
+The problem was that `ClaudeSDKClient` always sets `is_streaming_mode=True` in its internal `Query` object, regardless of how the transport was configured. When `connect(prompt)` was called with a string:
+- Transport entered print mode and closed stdin
+- Query tried to send an `initialize` control request via `transport.write()`
+- `write()` failed because `_stdin_stream` was `None` (stdin was closed)
+
+**Fix:** Changed the sequence in `ClaudeProcess.start()`:
+```python
+# Before (incorrect):
+await self._client.connect(prompt)  # Enters print mode, closes stdin
+
+# After (correct):
+await self._client.connect()  # Enters streaming mode, keeps stdin open
+await self._client.query(prompt)  # Sends message via the streaming protocol
+```
+
+The `query()` method properly formats the prompt as a user message and sends it via the streaming protocol.
+
+---
+
+## Decisions made during implementation
+
+### Task 1: Agent module backend
+
+1. **SDK API clarification**: The SDK uses `ClaudeSDKClient` with:
+   - `connect()` - Initial connection (no prompt for streaming mode)
+   - `query(prompt)` - Send messages (both initial and follow-ups)
+   - `receive_messages()` / `receive_response()` - Async iterator for messages
+   - `disconnect()` - Clean up
+
+   **Important:** Do NOT pass a string prompt to `connect()`. This puts the transport in "print mode" which closes stdin immediately, but `ClaudeSDKClient` always uses streaming mode for the control protocol. Always call `connect()` first, then `query(prompt)` to send messages.
+
+2. **ProcessInfo includes error field**: Added `error: str | None` to `ProcessInfo` to communicate error details when a process dies (useful for WebSocket broadcast to frontend).
+
+3. **ProcessState uses StrEnum**: Changed from `Enum` to `StrEnum` for cleaner JSON serialization (values serialize as strings directly).
+
+4. **State change callback is async**: The `on_state_change` callback passed to `ClaudeProcess.start()` is async to support WebSocket broadcasts that may involve I/O.
+
+5. **Broadcast callback on ProcessManager**: Added `set_broadcast_callback()` method to ProcessManager for WebSocket integration in later tasks.
+
+6. **Lock for thread safety**: ProcessManager uses `asyncio.Lock()` to protect `_processes` dict from concurrent access during send_message and shutdown operations.
+
+### Task 2: Server lifecycle integration
+
+1. **Singleton pattern for ProcessManager**: Used a global `_process_manager` variable with `get_process_manager()` getter function. This follows the same pattern as the watcher module (`_stop_event` with `get_stop_event()`).
+
+2. **Lazy initialization**: The ProcessManager is created on first access via `get_process_manager()`, not at server startup. This aligns with the spec requirement "start fresh, no active processes" - the manager starts empty by default.
+
+3. **Shutdown placement**: ProcessManager shutdown is called after all other task cleanups in `run.py` because:
+   - Claude processes may still be writing to JSONL files
+   - Watcher should stop first to avoid trying to process files during shutdown
+   - The shutdown has its own timeout (5s default) so it won't block indefinitely
+
+4. **No explicit startup task**: Unlike the watcher which runs as a continuous async task, the ProcessManager doesn't need a "start" task - it's event-driven (responds to WebSocket messages). The singleton is accessed as needed by the WebSocket consumer.
+
+### Task 3: WebSocket backend
+
+1. **Broadcast callback setup in connect()**: The ProcessManager's broadcast callback is set in the WebSocket consumer's `connect()` method. This is idempotent (safe to call multiple times) since `set_broadcast_callback` simply overwrites the previous callback.
+
+2. **Error response type**: Added a generic `error` message type for client-side error handling. Format: `{"type": "error", "message": "..."}`. Used for validation errors and ProcessManager exceptions.
+
+3. **Project directory lookup**: Created a local `get_project_directory()` helper with `@sync_to_async` decorator to fetch the project's `directory` field. Returns None if project not found or has no directory, which triggers an error response to the client.
+
+4. **ProcessState serialization**: Since ProcessState is a StrEnum, it serializes directly as a string when included in JSON. No need for `.value` conversion.
+
+5. **Active processes on connect**: The `active_processes` message is sent directly to the connecting client (via `self.send_json`), not broadcast to all clients. This provides the initial state only to the new connection.
+
+### Task 4: Store frontend
+
+1. **Process states in top-level state, not localState**: The `processStates` map is stored in the top-level state (alongside `projects`, `sessions`, `sessionItems`) rather than in `localState`. This is because process states come from the server via WebSocket, making them server data like other top-level state.
+
+2. **Dead processes removed from map**: When a `process_state` message arrives with `state: 'dead'`, the entry is removed from `processStates` rather than kept with a 'dead' state. This simplifies the UI logic - if there's no entry, it means no active process (same as dead). The UI can then treat both "no process" and "dead" identically (textarea/button enabled for auto-resume).
+
+3. **setActiveProcesses clears and rebuilds**: The `setActiveProcesses` action completely clears and rebuilds the `processStates` map rather than merging. This ensures proper sync with server state on reconnection and avoids stale entries.
+
+### Task 5: UI frontend
+
+1. **English labels instead of French**: The spec mentioned French labels ("Envoyer", "Démarrage...", "Claude travaille...") but CLAUDE.md specifies "All code content (UI strings, comments, variable names) must be in English". Following CLAUDE.md, used English labels: "Send", "Starting...", "Claude is working...".
+
+2. **MessageInput only for main sessions**: The message input is only shown for main sessions (when `parentSessionId` is null), not for subagent sessions. Subagents are managed by Claude itself, not by user interaction.
+
+3. **WebSocket send function access**: Created a module-level `sendWsMessage()` function exported from `useWebSocket.js` to allow components to send WebSocket messages without needing to be within the composable context. The send function is set when WebSocket connects and cleared when it disconnects.
+
+4. **Keyboard shortcut**: Added Cmd/Ctrl+Enter to send messages, following common chat application patterns.
+
+5. **Layout with flexbox**: The MessageInput component is placed at the bottom of the session content. Empty states and loading states use `flex: 1` to push the MessageInput to the bottom of the container.
+
+### Task 6: Fix SDK connection issue
+
+1. **SDK transport modes**: The `SubprocessCLITransport` has two modes:
+   - **Print mode** (`connect(prompt)` with string): Runs Claude with `--print -- <prompt>`, closes stdin immediately
+   - **Streaming mode** (`connect()` without prompt): Runs Claude with `--input-format stream-json`, keeps stdin open
+
+2. **ClaudeSDKClient always uses streaming mode**: The `Query` object inside `ClaudeSDKClient` is always created with `is_streaming_mode=True`, which means it will try to send control requests via `transport.write()`. If the transport is in print mode, stdin is closed and the write fails.
+
+3. **Correct usage pattern**: Always call `connect()` first (without a prompt) to enter streaming mode, then call `query(prompt)` to send messages. The `query()` method properly formats the message and sends it via the streaming protocol.
+
+## Resolved questions and doubts
+
+1. **Q: How does the SDK handle resuming sessions?**
+   A: Use `ClaudeAgentOptions(resume=session_id)` - the `resume` parameter takes the session ID to continue.
+
+2. **Q: How to detect when Claude finishes responding?**
+   A: Consume messages via `receive_messages()` and detect `ResultMessage` which indicates completion.
+
+3. **Q: Can we pass prompt in connect()?**
+   A: **NO for string prompts.** Passing a string to `connect(prompt)` puts the transport in "print mode" which closes stdin immediately. Since `ClaudeSDKClient` always uses streaming mode for control protocol, the initialization will fail with "ProcessTransport is not ready for writing". Always call `connect()` first, then `query(prompt)` to send messages.
+
+4. **Fix: Empty string check for project directory**
+   In `asgi.py`, the check `if cwd is None:` was changed to `if not cwd:` to catch both None (project not found) and empty strings (project has `directory=""`). Both cases should trigger the error response "Project not found or has no directory configured".
+
+5. **Fix: Exception propagation in ClaudeProcess.start() and send()**
+   The spec (section 3.1) states "Errors are logged and reported, never propagated". The `raise` statements after `_handle_error()` calls were removed. When a process error occurs, `_handle_error()` logs the error, transitions to DEAD state, cleans up resources, and broadcasts via WebSocket. The caller does not receive an exception.
+
+6. **Fix: Concurrency model in ProcessManager._on_state_change()**
+   The `_on_state_change` callback is called in two contexts: (1) synchronously from `send_message()` while holding the lock, and (2) asynchronously from the message loop background task without the lock. The lock acquisition for dead process cleanup was removed to prevent deadlocks in context 1. The cleanup is safe without a lock because: in asyncio, operations between await points are atomic (no preemption), and the identity check ensures we only delete the exact process instance.
+
+7. **Fix: Dead code removal in ProcessManager.send_message()**
+   With process errors no longer propagating from `start()`, the `try/except` block that cleaned up failed processes became dead code. It was removed. Cleanup now happens via the state change callback, which is called by `_handle_error()` in ClaudeProcess.
 
 ---
 

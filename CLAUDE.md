@@ -12,6 +12,8 @@ TwiCC (Twi for Twidi, CC for Claude Code)  - A standalone, self-contained web ap
 
 **IMPORTANT - Development workflow:** Never start implementing code without being explicitly invited to do so. When the user explains requirements or shares thoughts, wait for them to finish and confirm before writing any code. Ask clarifying questions if needed, but do not assume that an explanation is an invitation to implement.
 
+**IMPORTANT - Git rebase:** Never rebase on remote branches (e.g., `origin/main`) unless explicitly requested. Always rebase on local branches. If the local branch exists, use it.
+
 
 ## Stack
 

@@ -6,6 +6,25 @@ import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useReconciliation } from './useReconciliation'
 
+// Module-level reference to the WebSocket send function
+// Allows components to access it without going through the composable
+let wsSendFn = null
+
+/**
+ * Send a JSON message through the WebSocket connection.
+ * Returns false if not connected.
+ * @param {object} data - The data to send (will be JSON-stringified)
+ * @returns {boolean} - True if message was sent, false if not connected
+ */
+export function sendWsMessage(data) {
+    if (!wsSendFn) {
+        console.warn('WebSocket not initialized, cannot send message')
+        return false
+    }
+    wsSendFn(JSON.stringify(data))
+    return true
+}
+
 export function useWebSocket() {
     const store = useDataStore()
     const route = useRoute()
@@ -66,6 +85,14 @@ export function useWebSocket() {
                     store.addSessionItems(msg.session_id, msg.items, msg.updated_metadata)
                 }
                 break
+            case 'process_state':
+                // Update process state for a session
+                store.setProcessState(msg.session_id, msg.state, msg.error || null)
+                break
+            case 'active_processes':
+                // Initialize process states from server on connection
+                store.setActiveProcesses(msg.processes)
+                break
         }
     }
 
@@ -75,12 +102,18 @@ export function useWebSocket() {
     // - If WebSocket connects late, we may have missed updates
     watch(status, (newStatus, oldStatus) => {
         if (newStatus === 'OPEN') {
+            // Store send function at module level for global access
+            wsSendFn = send
+
             const currentProjectId = route.params.projectId || null
             const currentSessionId = route.params.sessionId || null
             const isReconnection = wasConnected && oldStatus === 'CLOSED'
             console.log(`WebSocket ${isReconnection ? 'reconnected' : 'connected'}, starting reconciliation...`)
             onReconnected(currentProjectId, currentSessionId)
             wasConnected = true
+        } else if (newStatus === 'CLOSED') {
+            // Clear send function when disconnected
+            wsSendFn = null
         }
     })
 

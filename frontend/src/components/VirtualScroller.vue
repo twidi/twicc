@@ -460,6 +460,8 @@ defineExpose({
     /* Disable browser's native scroll anchoring - we manage scroll position manually
        when item heights change above the viewport */
     overflow-anchor: none;
+    /* Prevent scroll chaining to parent (e.g., pull-to-refresh on mobile) */
+    overscroll-behavior: contain;
 
     /* IMPORTANT: Parent must provide explicit height for scrolling to work.
        This fallback only works when the parent has a defined height. */

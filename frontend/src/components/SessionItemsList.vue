@@ -7,6 +7,7 @@ import VirtualScroller from './VirtualScroller.vue'
 import SessionItem from './SessionItem.vue'
 import FetchErrorPanel from './FetchErrorPanel.vue'
 import GroupToggle from './GroupToggle.vue'
+import MessageInput from './MessageInput.vue'
 
 const props = defineProps({
     sessionId: {
@@ -486,6 +487,14 @@ function toggleGroup(groupHeadLineNum) {
         <div v-else class="empty-state">
             No items in this session
         </div>
+
+        <!-- Message input (only for main sessions, not subagents) -->
+        <MessageInput
+            v-if="!parentSessionId"
+            :key="sessionId"
+            :session-id="sessionId"
+            :project-id="projectId"
+        />
     </div>
 </template>
 
@@ -505,22 +514,26 @@ function toggleGroup(groupHeadLineNum) {
 }
 
 .empty-state {
+    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: var(--wa-space-s);
-    height: 200px;
+    min-height: 200px;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-m);
 }
 
 .compute-pending-state {
+    flex: 1;
     padding: var(--wa-space-l);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .compute-pending-state wa-callout {
     max-width: 500px;
-    margin: 0 auto;
 }
 
 </style>
