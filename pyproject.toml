@@ -10,6 +10,7 @@ dependencies = [
     "django>=6.0.1",
     "httpx>=0.28.1",
     "orjson>=3.11.5",
+    "psutil>=7.2.2",
     "python-dotenv>=1.2.1",
     "uvicorn>=0.40.0",
     "watchfiles>=1.1.1",

@@ -1,7 +1,8 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
-import { formatDate } from '../utils/date'
+import { formatDate, formatDuration } from '../utils/date'
+import { PROCESS_STATE, PROCESS_STATE_COLORS } from '../constants'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 
@@ -122,14 +123,78 @@ function handleSelect(session) {
 /**
  * Get process state for a session.
  * @param {string} sessionId
- * @returns {{ state: string, error?: string } | null}
+ * @returns {{ state: string, started_at?: number, state_changed_at?: number, memory?: number, error?: string } | null}
  */
 function getProcessState(sessionId) {
     return store.getProcessState(sessionId)
 }
 
+/**
+ * Get the color for a process state.
+ * @param {string} state
+ * @returns {string} CSS color variable
+ */
+function getProcessColor(state) {
+    return PROCESS_STATE_COLORS[state] || PROCESS_STATE_COLORS[PROCESS_STATE.DEAD]
+}
+
+/**
+ * Format memory in bytes to a human-readable string.
+ * - KB: no decimal (e.g., "512 KB")
+ * - MB < 10: 1 decimal (e.g., "4.6 MB")
+ * - MB >= 10: no decimal (e.g., "420 MB")
+ * - GB: 1 decimal (e.g., "1.5 GB")
+ * @param {number|null} bytes
+ * @returns {string}
+ */
+function formatMemory(bytes) {
+    if (bytes == null) return ''
+
+    const kb = bytes / 1024
+    const mb = kb / 1024
+    const gb = mb / 1024
+
+    if (gb >= 1) {
+        return `${gb.toFixed(1)} GB`
+    }
+    if (mb >= 10) {
+        return `${Math.round(mb)} MB`
+    }
+    if (mb >= 1) {
+        return `${mb.toFixed(1)} MB`
+    }
+    return `${Math.round(kb)} KB`
+}
+
 // Only assistant_turn should animate in session list
 const animateStates = ['assistant_turn']
+
+// Timer for updating state durations
+const now = ref(Date.now() / 1000)  // Current time in seconds
+let durationTimer = null
+
+onMounted(() => {
+    // Update every second for duration display
+    durationTimer = setInterval(() => {
+        now.value = Date.now() / 1000
+    }, 1000)
+})
+
+onUnmounted(() => {
+    if (durationTimer) {
+        clearInterval(durationTimer)
+    }
+})
+
+/**
+ * Calculate state duration for a process.
+ * @param {object} processState
+ * @returns {number} Duration in seconds
+ */
+function getStateDuration(processState) {
+    if (!processState?.state_changed_at) return 0
+    return Math.max(0, Math.floor(now.value - processState.state_changed_at))
+}
 </script>
 
 <template>
@@ -145,16 +210,31 @@ const animateStates = ['assistant_turn']
         >
             <div class="session-name-row">
                 <span class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</span>
+            </div>
+            <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
+            <!-- Process info row (only shown when process is active) -->
+            <div
+                v-if="getProcessState(session.id)"
+                class="process-info-row"
+                :style="{ color: getProcessColor(getProcessState(session.id).state) }"
+            >
                 <ProcessIndicator
-                    v-if="getProcessState(session.id)"
                     :state="getProcessState(session.id).state"
                     size="small"
                     :animate-states="animateStates"
-                    class="process-indicator"
                     :title="getProcessState(session.id).state"
                 />
+                <span class="process-memory">
+                    <template v-if="getProcessState(session.id).memory">
+                        {{ formatMemory(getProcessState(session.id).memory) }}
+                    </template>
+                </span>
+                <span class="process-duration">
+                    <template v-if="getProcessState(session.id).state === PROCESS_STATE.ASSISTANT_TURN && getProcessState(session.id).state_changed_at">
+                        {{ formatDuration(getStateDuration(getProcessState(session.id))) }}
+                    </template>
+                </span>
             </div>
-            <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
             <div class="session-meta">
                 <span class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
                 <span class="session-mtime"><wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
@@ -218,8 +298,7 @@ const animateStates = ['assistant_turn']
 }
 
 .session-name-row {
-    position: relative;
-    padding-right: 20px; /* Reserve space for indicator */
+    /* No longer needs relative positioning - indicator moved to process-info-row */
 }
 
 .session-name {
@@ -232,12 +311,24 @@ const animateStates = ['assistant_turn']
     white-space: nowrap;
 }
 
-/* Process indicator positioning */
-.process-indicator {
-    position: absolute;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
+/* Process info row - shows memory, duration, and indicator */
+.process-info-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    align-items: center;
+    justify-items: start;
+    gap: var(--wa-space-xs);
+    font-size: var(--wa-font-size-xs);
+    font-weight: var(--wa-font-weight-body);
+    margin-top: var(--wa-space-3xs);
+}
+
+.process-memory {
+    justify-self: center;
+}
+
+.process-duration {
+    justify-self: end;
 }
 
 .session-project {
@@ -252,14 +343,23 @@ const animateStates = ['assistant_turn']
 }
 
 .session-meta {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    align-items: center;
+    justify-items: start;
     gap: var(--wa-space-xs);
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
     font-weight: var(--wa-font-weight-body);;
     margin-top: var(--wa-space-2xs);
     overflow: hidden;
+}
+
+.session-mtime {
+    justify-self: center;
+}
+.session-cost {
+    justify-self: end;
 }
 
 .load-more-sentinel {

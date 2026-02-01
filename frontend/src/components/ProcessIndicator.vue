@@ -10,6 +10,8 @@
  *
  * The `animateStates` prop controls which states have a pulse animation.
  */
+import { computed } from 'vue'
+import { PROCESS_STATE, PROCESS_STATE_COLORS } from '../constants'
 
 const props = defineProps({
     /**
@@ -57,12 +59,18 @@ function getIconName(state) {
 function shouldAnimate(state) {
     return props.animateStates.includes(state)
 }
+
+/**
+ * Get the color for the current state.
+ */
+const stateColor = computed(() => PROCESS_STATE_COLORS[props.state] || PROCESS_STATE_COLORS[PROCESS_STATE.DEAD])
 </script>
 
 <template>
     <div
         class="process-indicator"
         :class="`process-indicator--${size}`"
+        :style="{ '--process-color': stateColor }"
     >
         <!-- Spinner for starting -->
         <wa-spinner
@@ -74,10 +82,7 @@ function shouldAnimate(state) {
         <wa-icon
             v-else
             class="process-indicator__icon"
-            :class="[
-                `process-indicator__icon--${state}`,
-                { 'process-indicator--animate': shouldAnimate(state) }
-            ]"
+            :class="{ 'process-indicator--animate': shouldAnimate(state) }"
             :name="getIconName(state)"
         ></wa-icon>
     </div>
@@ -118,22 +123,14 @@ function shouldAnimate(state) {
     --track-width: 4px;
 }
 
-/* Spinner (starting state) */
+/* Spinner (starting state) - uses --process-color from parent */
 .process-indicator__spinner {
-    --indicator-color: var(--wa-color-warning-60);
+    --indicator-color: var(--process-color);
 }
 
-/* Icon colors by state */
-.process-indicator__icon--assistant_turn {
-    color: var(--wa-color-brand-60);
-}
-
-.process-indicator__icon--user_turn {
-    color: var(--wa-color-success-60);
-}
-
-.process-indicator__icon--dead {
-    color: var(--wa-color-danger-60);
+/* Icon color - uses --process-color from parent */
+.process-indicator__icon {
+    color: var(--process-color);
 }
 
 /* Pulse animation (applied when shouldAnimate is true) */

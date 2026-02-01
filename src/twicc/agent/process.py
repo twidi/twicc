@@ -15,7 +15,7 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 
-from .states import ProcessInfo, ProcessState
+from .states import ProcessInfo, ProcessState, get_process_memory
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,9 @@ class ClaudeProcess:
         self.project_id = project_id
         self.cwd = cwd
         self.state = ProcessState.STARTING
-        self.last_activity = time.time()
+        self.started_at = time.time()
+        self.state_changed_at = self.started_at
+        self.last_activity = self.started_at
         self.error: str | None = None
 
         self._client: ClaudeSDKClient | None = None
@@ -68,6 +70,7 @@ class ClaudeProcess:
         """Update state with DEBUG logging."""
         old_state = self.state
         self.state = new_state
+        self.state_changed_at = time.time()
         logger.debug(
             "State transition for session %s: %s -> %s",
             self.session_id,
@@ -75,14 +78,56 @@ class ClaudeProcess:
             new_state.value,
         )
 
+    def get_pid(self) -> int | None:
+        """Get the PID of the underlying Claude CLI subprocess.
+
+        This accesses internal SDK attributes to extract the subprocess PID.
+        May return None if the process is not started or has terminated.
+
+        Returns:
+            Process ID of the Claude CLI subprocess, or None if unavailable
+        """
+        try:
+            if self._client is None:
+                return None
+            # Access internal SDK attributes: ClaudeSDKClient._transport._process.pid
+            transport = getattr(self._client, "_transport", None)
+            if transport is None:
+                return None
+            process = getattr(transport, "_process", None)
+            if process is None:
+                return None
+            return getattr(process, "pid", None)
+        except Exception:
+            return None
+
+    def get_memory_rss(self) -> int | None:
+        """Get RSS memory usage of the Claude CLI subprocess.
+
+        Returns:
+            Memory usage in bytes, or None if unavailable
+        """
+        try:
+            pid = self.get_pid()
+            if pid is None:
+                return None
+            return get_process_memory(pid)
+        except Exception:
+            return None
+
     def get_info(self) -> ProcessInfo:
         """Get an immutable snapshot of the process state."""
+        # Don't query memory for dead processes - the subprocess no longer exists
+        memory_rss = None if self.state == ProcessState.DEAD else self.get_memory_rss()
         return ProcessInfo(
             session_id=self.session_id,
             project_id=self.project_id,
             state=self.state,
+            started_at=self.started_at,
+            state_changed_at=self.state_changed_at,
             last_activity=self.last_activity,
             error=self.error,
+            memory_rss=memory_rss,
         )
 
     async def start(self, prompt: str, on_state_change: StateChangeCallback) -> None:

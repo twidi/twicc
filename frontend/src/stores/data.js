@@ -993,21 +993,28 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          * @param {string} projectId - The project ID this session belongs to
          * @param {string} state - 'starting' | 'assistant_turn' | 'user_turn' | 'dead'
-         * @param {string|null} error - Error message if state is 'dead' due to error
+         * @param {object} extra - Additional fields: started_at, state_changed_at, memory, error
          */
-        setProcessState(sessionId, projectId, state, error = null) {
+        setProcessState(sessionId, projectId, state, extra = {}) {
             if (state === 'dead') {
                 // Remove dead processes from the map
                 delete this.processStates[sessionId]
             } else {
-                this.processStates[sessionId] = { state, project_id: projectId, error }
+                this.processStates[sessionId] = {
+                    state,
+                    project_id: projectId,
+                    started_at: extra.started_at || null,
+                    state_changed_at: extra.state_changed_at || null,
+                    memory: extra.memory || null,
+                    error: extra.error || null,
+                }
             }
         },
 
         /**
          * Initialize process states from WebSocket active_processes message.
          * Called on connection to sync with backend.
-         * @param {Array<{session_id: string, project_id: string, state: string}>} processes
+         * @param {Array<{session_id: string, project_id: string, state: string, started_at?: number, state_changed_at?: number, memory?: number}>} processes
          */
         setActiveProcesses(processes) {
             // Clear existing states and rebuild from server data
@@ -1015,7 +1022,14 @@ export const useDataStore = defineStore('data', {
             for (const p of processes) {
                 // Only add non-dead processes
                 if (p.state !== 'dead') {
-                    this.processStates[p.session_id] = { state: p.state, project_id: p.project_id }
+                    this.processStates[p.session_id] = {
+                        state: p.state,
+                        project_id: p.project_id,
+                        started_at: p.started_at || null,
+                        state_changed_at: p.state_changed_at || null,
+                        memory: p.memory || null,
+                        error: p.error || null,
+                    }
                 }
             }
         }

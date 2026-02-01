@@ -55,3 +55,24 @@ export const DISPLAY_LEVEL = {
     COLLAPSIBLE: 2,
     DEBUG_ONLY: 3,
 }
+
+/**
+ * Process state values (matches backend ProcessState enum).
+ */
+export const PROCESS_STATE = {
+    STARTING: 'starting',
+    ASSISTANT_TURN: 'assistant_turn',
+    USER_TURN: 'user_turn',
+    DEAD: 'dead',
+}
+
+/**
+ * CSS color variables for each process state.
+ * Used for consistent coloring across components (indicators, text, etc.).
+ */
+export const PROCESS_STATE_COLORS = {
+    [PROCESS_STATE.STARTING]: 'var(--wa-color-warning-60)',
+    [PROCESS_STATE.ASSISTANT_TURN]: 'var(--wa-color-brand-60)',
+    [PROCESS_STATE.USER_TURN]: 'var(--wa-color-success-60)',
+    [PROCESS_STATE.DEAD]: 'var(--wa-color-danger-60)',
+}

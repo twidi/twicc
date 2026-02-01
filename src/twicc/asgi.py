@@ -16,7 +16,7 @@ from django.core.asgi import get_asgi_application
 from django.urls import path
 
 from twicc.agent.manager import get_process_manager
-from twicc.agent.states import ProcessInfo
+from twicc.agent.states import ProcessInfo, serialize_process_info
 from twicc.core.models import Project
 
 logger = logging.getLogger(__name__)
@@ -42,14 +42,8 @@ async def broadcast_process_state(info: ProcessInfo) -> None:
     state change notifications.
     """
     channel_layer = get_channel_layer()
-    message = {
-        "type": "process_state",
-        "session_id": info.session_id,
-        "project_id": info.project_id,
-        "state": info.state,  # ProcessState is StrEnum, serializes directly
-    }
-    if info.error is not None:
-        message["error"] = info.error
+    message = serialize_process_info(info)
+    message["type"] = "process_state"
 
     await channel_layer.group_send(
         "updates",
@@ -85,14 +79,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         processes = manager.get_active_processes()
         await self.send_json({
             "type": "active_processes",
-            "processes": [
-                {
-                    "session_id": p.session_id,
-                    "project_id": p.project_id,
-                    "state": p.state,  # ProcessState is StrEnum
-                }
-                for p in processes
-            ],
+            "processes": [serialize_process_info(p) for p in processes],
         })
 
     async def disconnect(self, close_code):
