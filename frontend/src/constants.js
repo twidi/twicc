@@ -39,18 +39,6 @@ export const THEME_MODE = {
 export const DEFAULT_THEME_MODE = THEME_MODE.SYSTEM
 
 /**
- * Process indicator style values for session list.
- * - dots: Colored dots (yellow=starting, blue=working, green=ready, red=dead)
- * - icons: Icons (spinner=starting, robot=working, hand=ready, warning=dead)
- */
-export const PROCESS_INDICATOR = {
-    DOTS: 'dots',
-    ICONS: 'icons',
-}
-
-export const DEFAULT_PROCESS_INDICATOR = PROCESS_INDICATOR.ICONS
-
-/**
  * Maximum context tokens for Claude (used for context usage percentage calculation).
  * Value: 200,000 tokens
  */

@@ -8,7 +8,10 @@ import SessionItem from './SessionItem.vue'
 import FetchErrorPanel from './FetchErrorPanel.vue'
 import GroupToggle from './GroupToggle.vue'
 import MessageInput from './MessageInput.vue'
-import SessionProcessIndicator from './SessionProcessIndicator.vue'
+import ProcessIndicator from './ProcessIndicator.vue'
+
+// All states should animate for the bottom process indicator
+const BOTTOM_INDICATOR_ANIMATE_STATES = ['assistant_turn', 'user_turn', 'dead']
 
 // Duration to show temporary indicators (user_turn, dead) in milliseconds
 const TEMPORARY_INDICATOR_DURATION = 10000
@@ -90,6 +93,7 @@ const shouldShowProcessIndicator = computed(() => {
 })
 
 // Watch process state changes to manage temporary indicator
+// Only show user_turn/dead when the state actually CHANGES (not on initial mount)
 watch(processState, (newState, oldState) => {
     // Clear any existing timer
     if (temporaryIndicatorTimer) {
@@ -103,13 +107,20 @@ watch(processState, (newState, oldState) => {
     }
 
     const state = newState.state
+    const oldStateValue = oldState?.state
+
     if (state === 'user_turn' || state === 'dead') {
-        // Show temporary indicator and start timer
-        showTemporaryIndicator.value = true
-        temporaryIndicatorTimer = setTimeout(() => {
+        // Only show if state actually changed (not on initial mount when already in this state)
+        if (oldState && oldStateValue !== state) {
+            showTemporaryIndicator.value = true
+            temporaryIndicatorTimer = setTimeout(() => {
+                showTemporaryIndicator.value = false
+                temporaryIndicatorTimer = null
+            }, TEMPORARY_INDICATOR_DURATION)
+        } else {
+            // Initial mount or same state - don't show temporary indicator
             showTemporaryIndicator.value = false
-            temporaryIndicatorTimer = null
-        }, TEMPORARY_INDICATOR_DURATION)
+        }
     } else {
         showTemporaryIndicator.value = false
     }
@@ -546,10 +557,11 @@ function toggleGroup(groupHeadLineNum) {
 
         <div class="session-footer">
             <!-- Process indicator (fixed at bottom of list, visible while scrolling) -->
-            <SessionProcessIndicator
+            <ProcessIndicator
                 v-if="shouldShowProcessIndicator"
                 :state="processState.state"
                 size="large"
+                :animate-states="BOTTOM_INDICATOR_ANIMATE_STATES"
                 class="bottom-process-indicator"
             />
 

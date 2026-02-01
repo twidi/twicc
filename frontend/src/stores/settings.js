@@ -3,7 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_PROCESS_INDICATOR, DISPLAY_MODE, THEME_MODE, PROCESS_INDICATOR } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DISPLAY_MODE, THEME_MODE } from '../constants'
 import { useDataStore } from './data'
 import { setThemeMode } from '../main'
 
@@ -19,7 +19,6 @@ const SETTINGS_SCHEMA = {
     debugEnabled: false,
     fontSize: 16,
     themeMode: DEFAULT_THEME_MODE,
-    processIndicator: DEFAULT_PROCESS_INDICATOR,
 }
 
 /**
@@ -32,7 +31,6 @@ const SETTINGS_VALIDATORS = {
     debugEnabled: (v) => typeof v === 'boolean',
     fontSize: (v) => typeof v === 'number' && v >= 12 && v <= 32,
     themeMode: (v) => [THEME_MODE.SYSTEM, THEME_MODE.LIGHT, THEME_MODE.DARK].includes(v),
-    processIndicator: (v) => [PROCESS_INDICATOR.DOTS, PROCESS_INDICATOR.ICONS].includes(v),
 }
 
 /**
@@ -96,7 +94,6 @@ export const useSettingsStore = defineStore('settings', {
         isDebugEnabled: (state) => state.debugEnabled,
         getFontSize: (state) => state.fontSize,
         getThemeMode: (state) => state.themeMode,
-        getProcessIndicator: (state) => state.processIndicator,
     },
 
     actions: {
@@ -141,15 +138,6 @@ export const useSettingsStore = defineStore('settings', {
             }
         },
 
-        /**
-         * Set the process indicator style.
-         * @param {string} style - 'dots' | 'icons'
-         */
-        setProcessIndicator(style) {
-            if (SETTINGS_VALIDATORS.processIndicator(style)) {
-                this.processIndicator = style
-            }
-        },
     },
 })
 
@@ -178,7 +166,6 @@ export function initSettings() {
             debugEnabled: store.debugEnabled,
             fontSize: store.fontSize,
             themeMode: store.themeMode,
-            processIndicator: store.processIndicator,
         }),
         (newSettings) => {
             saveSettings(newSettings)
