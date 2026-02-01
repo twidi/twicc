@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useDataStore } from '../stores/data'
 import { formatDate, formatDuration } from '../utils/date'
 import { MAX_CONTEXT_TOKENS, PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES } from '../constants'
+import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 
@@ -130,6 +131,21 @@ function formatMemory(bytes) {
 // Only assistant_turn should animate
 const animateStates = ['assistant_turn']
 
+// Check if process can be stopped (any state except dead)
+const canStopProcess = computed(() => {
+    const state = processState.value?.state
+    return state && state !== PROCESS_STATE.DEAD
+})
+
+/**
+ * Stop the current process.
+ */
+function handleStopProcess() {
+    if (canStopProcess.value) {
+        killProcess(props.sessionId)
+    }
+}
+
 // Timer for updating state durations
 const now = ref(Date.now() / 1000)
 let durationTimer = null
@@ -255,6 +271,19 @@ function getStateDuration(procState) {
                     :animate-states="animateStates"
                 />
                 <wa-tooltip for="session-header-process-indicator">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}</wa-tooltip>
+
+                <wa-button
+                    v-if="canStopProcess"
+                    id="session-header-stop-button"
+                    variant="danger"
+                    appearance="filled"
+                    size="small"
+                    class="stop-button"
+                    @click="handleStopProcess"
+                >
+                    <wa-icon name="ban" label="Stop"></wa-icon>
+                </wa-button>
+                <wa-tooltip for="session-header-stop-button">Stop the Claude Code process</wa-tooltip>
             </div>
         </div>
     </header>
@@ -351,6 +380,13 @@ body:not([data-display-mode="debug"]) .nb_lines {
 wa-divider {
     --width: 4px;
     margin: 0;
+}
+
+.stop-button {
+    font-size: var(--wa-font-size-3xs);
+    &::part(label) {
+        scale: 1.5;
+    }
 }
 
 </style>

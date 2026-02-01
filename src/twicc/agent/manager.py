@@ -146,6 +146,40 @@ class ProcessManager:
             return None
         return process.get_info()
 
+    async def kill_process(self, session_id: str, reason: str = "manual") -> bool:
+        """Kill a specific process by session ID.
+
+        This terminates the process gracefully. Processes in any state except DEAD
+        can be killed - this includes USER_TURN since the process still consumes
+        memory even when idle.
+
+        Args:
+            session_id: The session identifier of the process to kill
+            reason: Reason for killing (e.g., "manual", "timeout")
+
+        Returns:
+            True if a process was killed, False if not found or already dead
+        """
+        async with self._lock:
+            process = self._processes.get(session_id)
+            if process is None:
+                logger.debug("kill_process: session %s not found", session_id)
+                return False
+
+            # Already dead, nothing to do
+            if process.state == ProcessState.DEAD:
+                logger.debug(
+                    "kill_process: session %s already dead",
+                    session_id,
+                )
+                return False
+
+            logger.info(
+                "Killing process for session %s (reason: %s)", session_id, reason
+            )
+            await process.kill(reason=reason)
+            return True
+
     async def shutdown(self, timeout: float = 5.0) -> None:
         """Shutdown all active processes.
 
@@ -159,11 +193,15 @@ class ProcessManager:
             if not self._processes:
                 return
 
-            logger.info("Shutting down %d active Claude processes", len(self._processes))
+            logger.info(
+                "Shutting down %d active Claude processes", len(self._processes)
+            )
 
             # Create kill tasks for all processes
             kill_tasks = [
-                asyncio.create_task(process.kill(), name=f"kill-{session_id}")
+                asyncio.create_task(
+                    process.kill(reason="shutdown"), name=f"kill-{session_id}"
+                )
                 for session_id, process in self._processes.items()
             ]
 

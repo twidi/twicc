@@ -25,6 +25,20 @@ export function sendWsMessage(data) {
     return true
 }
 
+/**
+ * Kill a running Claude process by session ID.
+ * Only processes in 'starting' or 'assistant_turn' state can be killed.
+ * The state change to 'dead' will be received via the process_state message.
+ * @param {string} sessionId - The session ID of the process to kill
+ * @returns {boolean} - True if message was sent, false if not connected
+ */
+export function killProcess(sessionId) {
+    return sendWsMessage({
+        type: 'kill_process',
+        session_id: sessionId
+    })
+}
+
 export function useWebSocket() {
     const store = useDataStore()
     const route = useRoute()

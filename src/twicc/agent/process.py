@@ -54,6 +54,7 @@ class ClaudeProcess:
         self.state_changed_at = self.started_at
         self.last_activity = self.started_at
         self.error: str | None = None
+        self.kill_reason: str | None = None
 
         self._client: ClaudeSDKClient | None = None
         self._message_loop_task: asyncio.Task[None] | None = None
@@ -128,6 +129,7 @@ class ClaudeProcess:
             last_activity=self.last_activity,
             error=self.error,
             memory_rss=memory_rss,
+            kill_reason=self.kill_reason,
         )
 
     async def start(self, prompt: str, on_state_change: StateChangeCallback) -> None:
@@ -225,17 +227,24 @@ class ClaudeProcess:
             # The error is communicated to the frontend via WebSocket broadcast.
             await self._handle_error(f"Failed to send message: {e}")
 
-    async def kill(self) -> None:
+    async def kill(self, reason: str = "manual") -> None:
         """Terminate the process gracefully.
 
         This cancels the message loop and disconnects from Claude.
         Safe to call multiple times or on an already dead process.
+
+        Args:
+            reason: Reason for killing the process (e.g., "manual", "shutdown")
         """
-        logger.debug("Kill requested for session %s", self.session_id)
+        logger.debug(
+            "Kill requested for session %s (reason: %s)", self.session_id, reason
+        )
 
         if self.state == ProcessState.DEAD:
             logger.debug("Session %s already dead, skipping kill", self.session_id)
             return
+
+        self.kill_reason = reason
 
         # Cancel message loop first
         if self._message_loop_task is not None:
@@ -333,6 +342,7 @@ class ClaudeProcess:
         )
         self._set_state(ProcessState.DEAD)
         self.error = error_message
+        self.kill_reason = "error"
         self.last_activity = time.time()
 
         # Notify BEFORE disconnect to avoid anyio cancel scope interference.

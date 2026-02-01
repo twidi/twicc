@@ -47,6 +47,8 @@ body {
 :root {
     --user-card-base-color: var(--wa-color-indigo-95);
     --assistant-card-base-color: var(--wa-color-gray-95);
+
+    --wa-font-size-3xs: round(calc(var(--wa-font-size-2xs) / 1.125), 1px);
 }
 
 .wa-dark {

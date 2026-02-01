@@ -70,6 +70,7 @@ class ProcessInfo(NamedTuple):
         last_activity: Unix timestamp of last activity
         error: Error message if state is DEAD due to error, None otherwise
         memory_rss: RSS memory usage in bytes, or None if unavailable
+        kill_reason: Reason for death if DEAD (e.g., "manual", "error", "shutdown")
     """
 
     session_id: str
@@ -80,6 +81,7 @@ class ProcessInfo(NamedTuple):
     last_activity: float
     error: str | None = None
     memory_rss: int | None = None
+    kill_reason: str | None = None
 
     @property
     def memory_rss_human(self) -> str | None:
@@ -109,4 +111,6 @@ def serialize_process_info(info: ProcessInfo) -> dict:
         data["error"] = info.error
     if info.memory_rss is not None:
         data["memory"] = info.memory_rss
+    if info.kill_reason is not None:
+        data["kill_reason"] = info.kill_reason
     return data

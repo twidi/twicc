@@ -78,10 +78,12 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         # Send current active processes to the connecting client
         processes = manager.get_active_processes()
-        await self.send_json({
-            "type": "active_processes",
-            "processes": [serialize_process_info(p) for p in processes],
-        })
+        await self.send_json(
+            {
+                "type": "active_processes",
+                "processes": [serialize_process_info(p) for p in processes],
+            }
+        )
 
     async def disconnect(self, close_code):
         """Remove from the updates group on disconnect."""
@@ -93,6 +95,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         Supported message types:
         - ping: heartbeat, responds with pong
         - send_message: send a message to a Claude session
+        - kill_process: kill a running Claude process
         """
         msg_type = content.get("type")
 
@@ -101,6 +104,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         elif msg_type == "send_message":
             await self._handle_send_message(content)
+
+        elif msg_type == "kill_process":
+            await self._handle_kill_process(content)
 
     async def _handle_send_message(self, content: dict) -> None:
         """Handle send_message request from client.
@@ -121,22 +127,30 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         if not session_id or not project_id or not text:
             logger.warning(
                 "send_message missing required fields: session_id=%s, project_id=%s, text=%s",
-                session_id, project_id, bool(text),
+                session_id,
+                project_id,
+                bool(text),
             )
-            await self.send_json({
-                "type": "error",
-                "message": "send_message requires session_id, project_id, and text",
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "message": "send_message requires session_id, project_id, and text",
+                }
+            )
             return
 
         # Get project directory from database
         cwd = await get_project_directory(project_id)
         if not cwd:
-            logger.warning("send_message: project %s not found or has no directory", project_id)
-            await self.send_json({
-                "type": "error",
-                "message": f"Project {project_id} not found or has no directory configured",
-            })
+            logger.warning(
+                "send_message: project %s not found or has no directory", project_id
+            )
+            await self.send_json(
+                {
+                    "type": "error",
+                    "message": f"Project {project_id} not found or has no directory configured",
+                }
+            )
             return
 
         # Send message via ProcessManager
@@ -146,17 +160,55 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         except RuntimeError as e:
             # Process busy or other expected errors
             logger.warning("send_message failed: %s", e)
-            await self.send_json({
-                "type": "error",
-                "message": str(e),
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "message": str(e),
+                }
+            )
         except Exception as e:
             # Unexpected errors - log full traceback
             logger.exception("Unexpected error in send_message")
-            await self.send_json({
-                "type": "error",
-                "message": f"Failed to send message: {e}",
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "message": f"Failed to send message: {e}",
+                }
+            )
+
+    async def _handle_kill_process(self, content: dict) -> None:
+        """Handle kill_process request from client.
+
+        Expected content format:
+        {
+            "type": "kill_process",
+            "session_id": "claude-conv-xxx"
+        }
+
+        Only processes in STARTING or ASSISTANT_TURN state can be killed.
+        The state change to DEAD will be broadcast via process_state message.
+        """
+        session_id = content.get("session_id")
+
+        if not session_id:
+            logger.warning("kill_process missing session_id")
+            await self.send_json(
+                {
+                    "type": "error",
+                    "message": "kill_process requires session_id",
+                }
+            )
+            return
+
+        manager = get_process_manager()
+        killed = await manager.kill_process(session_id, reason="manual")
+
+        if not killed:
+            # Process not found or not in killable state - not an error, just log
+            logger.debug(
+                "kill_process: session %s not killed (not found or not active)",
+                session_id,
+            )
 
     async def broadcast(self, event):
         """Handle broadcast events by sending data to the client."""
@@ -171,7 +223,9 @@ websocket_urlpatterns = [
 django_asgi_app = get_asgi_application()
 
 # Protocol router for HTTP and WebSocket
-application = ProtocolTypeRouter({
-    "http": django_asgi_app,
-    "websocket": URLRouter(websocket_urlpatterns),
-})
+application = ProtocolTypeRouter(
+    {
+        "http": django_asgi_app,
+        "websocket": URLRouter(websocket_urlpatterns),
+    }
+)
