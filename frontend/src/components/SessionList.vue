@@ -1,7 +1,9 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import { formatDate } from '../utils/date'
+import { PROCESS_INDICATOR } from '../constants'
 import ProjectBadge from './ProjectBadge.vue'
 
 const props = defineProps({
@@ -20,6 +22,10 @@ const props = defineProps({
 })
 
 const store = useDataStore()
+const settingsStore = useSettingsStore()
+
+// Process indicator style from settings
+const processIndicator = computed(() => settingsStore.getProcessIndicator)
 
 // Sessions are already sorted by mtime desc in the getter
 const sessions = computed(() => {
@@ -117,6 +123,30 @@ const emit = defineEmits(['select'])
 function handleSelect(session) {
     emit('select', session)
 }
+
+/**
+ * Get process state for a session.
+ * @param {string} sessionId
+ * @returns {{ state: string, error?: string } | null}
+ */
+function getProcessState(sessionId) {
+    return store.getProcessState(sessionId)
+}
+
+/**
+ * Get the icon name for a process state.
+ * @param {string} state - 'starting' | 'assistant_turn' | 'user_turn' | 'dead'
+ * @returns {string} Icon name for wa-icon
+ */
+function getProcessIcon(state) {
+    switch (state) {
+        case 'assistant_turn': return 'robot'
+        case 'user_turn': return 'check'
+        case 'dead': return 'triangle-exclamation'
+        // 'starting' uses wa-spinner component instead of icon
+        default: return null
+    }
+}
 </script>
 
 <template>
@@ -130,7 +160,30 @@ function handleSelect(session) {
             :class="{ 'session-item--active': session.id === sessionId }"
             @click="handleSelect(session)"
         >
-            <div class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</div>
+            <div class="session-name-row">
+                <span class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</span>
+                <!-- Process indicator (dots mode) -->
+                <span
+                    v-if="getProcessState(session.id) && processIndicator === PROCESS_INDICATOR.DOTS"
+                    class="process-indicator process-indicator--dot"
+                    :class="`process-indicator--${getProcessState(session.id).state}`"
+                    :title="getProcessState(session.id).state"
+                ></span>
+                <!-- Process indicator (icons mode - spinner for starting) -->
+                <wa-spinner
+                    v-if="getProcessState(session.id) && processIndicator === PROCESS_INDICATOR.ICONS && getProcessState(session.id).state === 'starting'"
+                    class="process-indicator process-indicator--icon process-indicator--starting"
+                    title="starting"
+                ></wa-spinner>
+                <!-- Process indicator (icons mode - icon for other states) -->
+                <wa-icon
+                    v-if="getProcessState(session.id) && processIndicator === PROCESS_INDICATOR.ICONS && getProcessState(session.id).state !== 'starting'"
+                    class="process-indicator process-indicator--icon"
+                    :class="`process-indicator--${getProcessState(session.id).state}`"
+                    :name="getProcessIcon(getProcessState(session.id).state)"
+                    :title="getProcessState(session.id).state"
+                ></wa-icon>
+            </div>
             <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
             <div class="session-meta">
                 <span class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
@@ -194,7 +247,13 @@ function handleSelect(session) {
     text-align: left;
 }
 
+.session-name-row {
+    position: relative;
+    padding-right: 20px; /* Reserve space for indicator */
+}
+
 .session-name {
+    display: block;
     font-size: var(--wa-font-size-s);
     font-weight: 700;
     /* Truncate with ellipsis */
@@ -202,6 +261,70 @@ function handleSelect(session) {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+/* Process indicator - common styles */
+.process-indicator {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* Dot indicator */
+.process-indicator--dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.process-indicator--dot.process-indicator--starting {
+    background-color: var(--wa-color-warning-60);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.process-indicator--dot.process-indicator--assistant_turn {
+    background-color: var(--wa-color-brand-60);
+    animation: pulse 1s ease-in-out infinite;
+}
+
+.process-indicator--dot.process-indicator--user_turn {
+    background-color: var(--wa-color-success-60);
+}
+
+.process-indicator--dot.process-indicator--dead {
+    background-color: var(--wa-color-danger-60);
+}
+
+/* Icon indicator */
+.process-indicator--icon {
+    font-size: var(--wa-font-size-s);
+}
+
+/* Starting state uses wa-spinner component, style it */
+wa-spinner.process-indicator--starting {
+    --size: 1em;
+    --track-width: 2px;
+    --indicator-color: var(--wa-color-warning-60);
+}
+
+.process-indicator--icon.process-indicator--assistant_turn {
+    color: var(--wa-color-brand-60);
+    animation: pulse 1s ease-in-out infinite;
+}
+
+.process-indicator--icon.process-indicator--user_turn {
+    color: var(--wa-color-success-60);
+}
+
+.process-indicator--icon.process-indicator--dead {
+    color: var(--wa-color-danger-60);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
 
 .session-project {
     font-size: var(--wa-font-size-xs);
