@@ -87,7 +87,7 @@ export function useWebSocket() {
                 break
             case 'process_state':
                 // Update process state for a session
-                store.setProcessState(msg.session_id, msg.state, msg.error || null)
+                store.setProcessState(msg.session_id, msg.project_id, msg.state, msg.error || null)
                 break
             case 'active_processes':
                 // Initialize process states from server on connection

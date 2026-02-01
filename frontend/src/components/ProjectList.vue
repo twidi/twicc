@@ -4,6 +4,7 @@ import { useDataStore } from '../stores/data'
 import { formatDate } from '../utils/date'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import ProjectBadge from './ProjectBadge.vue'
+import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
 
 const store = useDataStore()
 
@@ -42,7 +43,10 @@ function handleEditClick(event, project) {
             @click="handleSelect(project)"
         >
             <div class="project-info">
-                <ProjectBadge :project-id="project.id" class="project-title" />
+                <div class="project-title-row">
+                    <ProjectBadge :project-id="project.id" class="project-title" />
+                    <ProjectProcessIndicator :project-id="project.id" size="small" />
+                </div>
                 <wa-button
                     variant="neutral"
                     appearance="plain"
@@ -97,12 +101,18 @@ function handleEditClick(event, project) {
     gap: var(--wa-space-xs);
 }
 
+.project-title-row {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xl);
+    /* Leave space for the edit button */
+    padding-right: calc(var(--wa-space-s) + 1.5em);
+}
+
 .project-title {
     font-weight: 600;
     font-size: var(--wa-font-size-m);
     min-width: 0;
-    /* Leave space for the edit button */
-    padding-right: calc(var(--wa-space-s) + 1.5em);
 }
 
 .edit-button {

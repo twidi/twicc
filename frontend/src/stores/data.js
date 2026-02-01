@@ -85,6 +85,40 @@ export const useDataStore = defineStore('data', {
         // Process state getter - returns { state, error? } or null if no active process
         getProcessState: (state) => (sessionId) => state.processStates[sessionId] || null,
 
+        /**
+         * Get aggregated process state for a project.
+         * Returns the most important state across all sessions in the project.
+         * Priority: dead > user_turn > starting > assistant_turn
+         * @param {string} projectId - The project ID
+         * @returns {string|null} The most important state or null if no active processes
+         */
+        getProjectProcessState: (state) => (projectId) => {
+            // Priority order (higher = more important)
+            const priority = {
+                assistant_turn: 1,
+                starting: 2,
+                user_turn: 3,
+                dead: 4,
+            }
+
+            let mostImportantState = null
+            let highestPriority = 0
+
+            for (const [sessionId, processState] of Object.entries(state.processStates)) {
+                // Check if this process belongs to the project
+                // Use project_id stored in processState (from WebSocket messages)
+                if (processState.project_id !== projectId) continue
+
+                const statePriority = priority[processState.state] || 0
+                if (statePriority > highestPriority) {
+                    highestPriority = statePriority
+                    mostImportantState = processState.state
+                }
+            }
+
+            return mostImportantState
+        },
+
         // Local state getters - loading
         isProjectsListLoading: (state) => state.localState.projectsList.loading,
         areSessionsLoading: (state) => (projectId) =>
@@ -957,15 +991,16 @@ export const useDataStore = defineStore('data', {
          * Set process state for a session (from WebSocket process_state message).
          * Removes the entry when state is 'dead'.
          * @param {string} sessionId
+         * @param {string} projectId - The project ID this session belongs to
          * @param {string} state - 'starting' | 'assistant_turn' | 'user_turn' | 'dead'
          * @param {string|null} error - Error message if state is 'dead' due to error
          */
-        setProcessState(sessionId, state, error = null) {
+        setProcessState(sessionId, projectId, state, error = null) {
             if (state === 'dead') {
                 // Remove dead processes from the map
                 delete this.processStates[sessionId]
             } else {
-                this.processStates[sessionId] = { state, error }
+                this.processStates[sessionId] = { state, project_id: projectId, error }
             }
         },
 
@@ -980,7 +1015,7 @@ export const useDataStore = defineStore('data', {
             for (const p of processes) {
                 // Only add non-dead processes
                 if (p.state !== 'dead') {
-                    this.processStates[p.session_id] = { state: p.state }
+                    this.processStates[p.session_id] = { state: p.state, project_id: p.project_id }
                 }
             }
         }

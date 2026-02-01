@@ -8,7 +8,7 @@ import SessionItem from './SessionItem.vue'
 import FetchErrorPanel from './FetchErrorPanel.vue'
 import GroupToggle from './GroupToggle.vue'
 import MessageInput from './MessageInput.vue'
-import ProcessIndicator from './ProcessIndicator.vue'
+import SessionProcessIndicator from './SessionProcessIndicator.vue'
 
 // Duration to show temporary indicators (user_turn, dead) in milliseconds
 const TEMPORARY_INDICATOR_DURATION = 10000
@@ -546,7 +546,7 @@ function toggleGroup(groupHeadLineNum) {
 
         <div class="session-footer">
             <!-- Process indicator (fixed at bottom of list, visible while scrolling) -->
-            <ProcessIndicator
+            <SessionProcessIndicator
                 v-if="shouldShowProcessIndicator"
                 :state="processState.state"
                 size="large"

@@ -6,6 +6,7 @@ import SessionList from '../components/SessionList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
 import ProjectBadge from '../components/ProjectBadge.vue'
+import ProjectProcessIndicator from '../components/ProjectProcessIndicator.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -174,7 +175,10 @@ function handleSplitReposition(event) {
                         :value="p.id"
                         :label="store.getProjectDisplayName(p.id)"
                     >
-                        <ProjectBadge :project-id="p.id" />
+                        <span class="project-option">
+                            <ProjectBadge :project-id="p.id" />
+                            <ProjectProcessIndicator :project-id="p.id" size="small" />
+                        </span>
                     </wa-option>
                 </wa-select>
             </div>
@@ -318,6 +322,14 @@ function handleSplitReposition(event) {
     box-sizing: border-box;
     background-color: var(--dot-color, transparent);
     border-color: var(--dot-color, var(--wa-color-border-quiet));
+}
+
+.project-option {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    width: 100%;
+    justify-content: space-between;
 }
 
 .sidebar wa-divider {
