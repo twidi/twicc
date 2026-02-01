@@ -255,18 +255,17 @@ class ClaudeProcess:
                 pass
             self._message_loop_task = None
 
-        # Disconnect from Claude
+        # Disconnect from Claude in an isolated task to prevent anyio cancel
+        # scopes from affecting other coroutines. We await the task here since
+        # kill() is expected to complete the disconnect before returning.
         if self._client is not None:
-            try:
-                await self._client.disconnect()
-                logger.debug("Disconnected successfully for session %s", self.session_id)
-            except Exception as e:
-                logger.warning(
-                    "Error disconnecting Claude client for session %s: %s",
-                    self.session_id,
-                    e,
-                )
+            client = self._client
             self._client = None
+            disconnect_task = asyncio.create_task(
+                self._safe_disconnect(client),
+                name=f"disconnect-{self.session_id}",
+            )
+            await disconnect_task
 
         # Update state
         self._set_state(ProcessState.DEAD)
@@ -345,18 +344,34 @@ class ClaudeProcess:
         self.kill_reason = "error"
         self.last_activity = time.time()
 
-        # Notify BEFORE disconnect to avoid anyio cancel scope interference.
-        # The SDK's disconnect() uses anyio cancel scopes that can cancel
-        # other coroutines running in the same context (like our broadcast).
         await self._notify_state_change()
 
-        # Clean up resources after notification
+        # Clean up resources in an isolated task to prevent the SDK's anyio
+        # cancel scopes from affecting other coroutines (like WebSocket consumers).
+        # Using asyncio.create_task() ensures the disconnect runs in a separate
+        # task context that won't propagate cancellation to our callers.
         if self._client is not None:
-            try:
-                await self._client.disconnect()
-            except Exception:
-                pass
+            client = self._client
             self._client = None
+            asyncio.create_task(
+                self._safe_disconnect(client),
+                name=f"disconnect-{self.session_id}",
+            )
+
+    async def _safe_disconnect(self, client: ClaudeSDKClient) -> None:
+        """Disconnect from Claude in isolation.
+
+        This runs in a separate task to prevent anyio cancel scopes from
+        leaking into other parts of the application.
+        """
+        try:
+            await client.disconnect()
+        except Exception as e:
+            logger.debug(
+                "Error during isolated disconnect for session %s: %s",
+                self.session_id,
+                e,
+            )
 
     async def _notify_state_change(self) -> None:
         """Invoke the state change callback if set."""
