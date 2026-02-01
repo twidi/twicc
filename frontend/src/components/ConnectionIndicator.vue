@@ -10,19 +10,20 @@ const props = defineProps({
 })
 
 const statusConfig = {
-    OPEN: { label: 'Connecté', color: 'var(--wa-color-success)' },
-    CONNECTING: { label: 'Connexion...', color: 'var(--wa-color-warning)' },
-    CLOSING: { label: 'Déconnexion...', color: 'var(--wa-color-warning)' },
-    CLOSED: { label: 'Déconnecté', color: 'var(--wa-color-danger)' }
+    OPEN: { label: 'Connected', color: 'var(--wa-color-success)' },
+    CONNECTING: { label: 'Connecting...', color: 'var(--wa-color-warning)' },
+    CLOSING: { label: 'Disconnecting...', color: 'var(--wa-color-warning)' },
+    CLOSED: { label: 'Disconnected', color: 'var(--wa-color-danger)' }
 }
 
 const config = computed(() => statusConfig[props.status] || statusConfig.CLOSED)
 </script>
 
 <template>
-    <div class="connection-indicator" :title="`WebSocket: ${config.label}`">
+    <div id="connection-indicator" class="connection-indicator">
         <span class="indicator-dot" :style="{ backgroundColor: config.color }"></span>
     </div>
+    <wa-tooltip for="connection-indicator">WebSocket: {{ config.label }}</wa-tooltip>
 </template>
 
 <style scoped>

@@ -119,6 +119,21 @@ export const useDataStore = defineStore('data', {
             return mostImportantState
         },
 
+        /**
+         * Get the count of active processes for a project.
+         * @param {string} projectId - The project ID
+         * @returns {number} The number of active processes
+         */
+        getProjectProcessCount: (state) => (projectId) => {
+            let count = 0
+            for (const processState of Object.values(state.processStates)) {
+                if (processState.project_id === projectId) {
+                    count++
+                }
+            }
+            return count
+        },
+
         // Local state getters - loading
         isProjectsListLoading: (state) => state.localState.projectsList.loading,
         areSessionsLoading: (state) => (projectId) =>

@@ -67,6 +67,16 @@ export const PROCESS_STATE = {
 }
 
 /**
+ * Human-friendly names for each process state.
+ */
+export const PROCESS_STATE_NAMES = {
+    [PROCESS_STATE.STARTING]: 'Starting',
+    [PROCESS_STATE.ASSISTANT_TURN]: 'Assistant turn',
+    [PROCESS_STATE.USER_TURN]: 'User turn',
+    [PROCESS_STATE.DEAD]: 'Dead',
+}
+
+/**
  * CSS color variables for each process state.
  * Used for consistent coloring across components (indicators, text, etc.).
  */

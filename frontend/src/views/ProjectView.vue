@@ -150,10 +150,12 @@ function handleSplitReposition(event) {
             <!-- Sidebar -->
         <aside slot="start" class="sidebar">
             <div class="sidebar-header">
-                <wa-button class="back-button" variant="brand" appearance="outlined" size="small" @click="handleBackHome">
+                <wa-button id="back-button" class="back-button" variant="brand" appearance="outlined" size="small" @click="handleBackHome">
                     <wa-icon name="arrow-left"></wa-icon>
                 </wa-button>
+                <wa-tooltip for="back-button">Back to projects list</wa-tooltip>
                 <wa-select
+                    id="project-selector"
                     :value.attr="isAllProjectsMode ? ALL_PROJECTS_ID : projectId"
                     @change="handleProjectChange"
                     class="project-selector"
@@ -181,6 +183,7 @@ function handleSplitReposition(event) {
                         </span>
                     </wa-option>
                 </wa-select>
+                <wa-tooltip for="project-selector">Select a project</wa-tooltip>
             </div>
 
             <wa-divider></wa-divider>
@@ -215,13 +218,14 @@ function handleSplitReposition(event) {
 
             <div class="sidebar-footer">
                 <!-- Sidebar Toggle button (label for hidden checkbox, wa-button inside for styling) -->
-                <label for="sidebar-toggle-state" class="sidebar-toggle">
+                <label for="sidebar-toggle-state" class="sidebar-toggle" id="sidebar-toggle-label">
                     <span class="sidebar-backdrop"></span>
-                    <wa-button variant="neutral" appearance="filled-outlined" size="small">
+                    <wa-button id="sidebar-toggle-button" variant="neutral" appearance="filled-outlined" size="small">
                         <wa-icon class="icon-collapse" name="angles-left"></wa-icon>
                         <wa-icon class="icon-expand" name="angles-right"></wa-icon>
                     </wa-button>
                 </label>
+                <wa-tooltip for="sidebar-toggle-label">Toggle sidebar</wa-tooltip>
 
                 <!-- Placeholder to occupy the same space a the sidebar toggle button that is absolute for goot reasons -->
                 <wa-button variant="neutral" appearance="filled-outlined" size="small" style="visibility: hidden; pointer-events: none"><wa-icon name="angles-left"></wa-icon></wa-button>

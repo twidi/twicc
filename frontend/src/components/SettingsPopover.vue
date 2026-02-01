@@ -96,6 +96,7 @@ function onPopoverShow() {
     <wa-button id="settings-trigger" variant="neutral" appearance="filled-outlined" size="small">
         <wa-icon name="gear"></wa-icon> Settings
     </wa-button>
+    <wa-tooltip for="settings-trigger">Toggle settings</wa-tooltip>
     <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
         <div class="settings-content">
             <div class="setting-group">

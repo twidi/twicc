@@ -55,7 +55,7 @@ const formattedCostBreakdown = computed(() => {
 
     const self = formatCost(sess.self_cost)
     const subagents = formatCost(subagentsCost)
-    return `(${self} + ${subagents})`
+    return `${self} + ${subagents}`
 })
 
 // Calculate context usage percentage
@@ -95,46 +95,71 @@ const formattedModel = computed(() => {
 <template>
     <header class="session-header" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
-            <h2 :title="displayName">{{ displayName }}</h2>
+            <h2 id="session-header-title">{{ displayName }}</h2>
+            <wa-tooltip for="session-header-title">{{ displayName }}</wa-tooltip>
             <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
         </div>
 
         <div class="session-meta">
-            <span class="meta-item">
+
+            <span id="session-header-messages" class="meta-item">
                 <wa-icon auto-width name="comment" variant="regular"></wa-icon>
-                <span>
-                    {{ session.message_count ?? '??' }}
-                    <span class="nb_lines">({{ session.last_line }} lines)</span>
-                </span>
+                <span>{{ session.message_count ?? '??' }}</span>
             </span>
-            <span class="meta-item">
+            <wa-tooltip for="session-header-messages">Number of user and assistant messages</wa-tooltip>
+
+            <span id="session-header-lines" class="meta-item nb_lines">
+                <wa-icon auto-width name="bars"></wa-icon>
+                <span>{{ session.last_line }}</span>
+            </span>
+            <wa-tooltip for="session-header-lines">Lines in the JSONL file</wa-tooltip>
+
+            <span id="session-header-mtime" class="meta-item">
                 <wa-icon auto-width name="clock" variant="regular"></wa-icon>
-                <span>
-                    {{ formatDate(session.mtime) }}
-                </span>
+                <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
             </span>
-            <span v-if="formattedTotalCost" class="meta-item">
-                <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
-                <span>
+            <wa-tooltip for="session-header-mtime">Last activity</wa-tooltip>
+
+            <template v-if="formattedTotalCost">
+                <span id="session-header-cost" class="meta-item">
+                    <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
                     {{ formattedTotalCost }}
-                    <span v-if="formattedCostBreakdown" class="cost-breakdown">{{ formattedCostBreakdown }}</span>
                 </span>
-            </span>
-            <span v-if="formattedModel" class="meta-item">
-                <wa-icon auto-width name="robot" variant="classic"></wa-icon>
-                <span>
-                    {{ formattedModel }}
+                <wa-tooltip for="session-header-cost">Total session cost</wa-tooltip>
+            </template>
+
+            <template v-if="formattedCostBreakdown">
+                <span id="session-header-cost-breakdown" class="meta-item">
+                    <span>(
+                    <span>
+                        <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
+                        <span class="cost-breakdown">{{ formattedCostBreakdown }}</span>
+                    </span>
+                    )</span>
                 </span>
-            </span>
-            <wa-progress-ring
-                v-if="contextUsagePercentage != null"
-                class="context-usage-ring"
-                :value="Math.min(contextUsagePercentage, 100)"
-                :style="{
-                    '--indicator-color': contextUsageColor,
-                    '--indicator-width': contextUsageIndicatorWidth
-                }"
-            ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
+                <wa-tooltip for="session-header-cost-breakdown">Main agent cost + sub-agents cost</wa-tooltip>
+            </template>
+
+            <template v-if="formattedModel">
+                <span id="session-header-model" class="meta-item">
+                    <wa-icon auto-width name="robot" variant="classic"></wa-icon>
+                    <span>{{ formattedModel }}</span>
+                </span>
+                <wa-tooltip for="session-header-model">Last used model</wa-tooltip>
+            </template>
+
+            <template v-if="contextUsagePercentage != null">
+                <wa-progress-ring
+                    id="session-header-context"
+                    class="context-usage-ring"
+                    :value="Math.min(contextUsagePercentage, 100)"
+                    :style="{
+                        '--indicator-color': contextUsageColor,
+                        '--indicator-width': contextUsageIndicatorWidth
+                    }"
+                ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
+                <wa-tooltip for="session-header-context">Context window usage</wa-tooltip>
+            </template>
         </div>
     </header>
     <wa-divider></wa-divider>
@@ -173,7 +198,7 @@ const formattedModel = computed(() => {
     width: 100%;
     display: flex;
     flex-wrap: wrap;
-    column-gap: var(--wa-space-m);
+    column-gap: var(--wa-space-l);
     row-gap: var(--wa-space-xs);
     font-size: var(--wa-font-size-s);
 }
@@ -183,15 +208,28 @@ const formattedModel = computed(() => {
     align-items: center;
     gap: var(--wa-space-xs);
 }
-.meta-item :deep( > span ) {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5em;
+
+#session-header-cost-breakdown {
+    gap: 0;
+    > span {
+        --parentheses-offset: 1.5px;
+        position: relative;
+        top: calc(-1 * var(--parentheses-offset));
+        gap: 0.2em;
+        > span {
+            position: relative;
+            top: var(--parentheses-offset);
+        }
+    }
 }
 
-.meta-item :deep( > span > span ) {
+#session-header-lines, #session-header-cost-breakdown {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
+}
+
+body:not([data-display-mode="debug"]) .nb_lines {
+    display: none;
 }
 
 .context-usage-ring {

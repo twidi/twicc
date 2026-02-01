@@ -41,16 +41,28 @@ const dataStore = useDataStore()
 // Aggregated process state for this project (most important state)
 const projectState = computed(() => dataStore.getProjectProcessState(props.projectId))
 
+// Count of active processes for this project
+const processCount = computed(() => dataStore.getProjectProcessCount(props.projectId))
+
+// Tooltip text with count
+const tooltipText = computed(() => {
+    const count = processCount.value
+    return `${count} active Claude Code session${count !== 1 ? 's' : ''}`
+})
+
 // Only assistant_turn should animate in this context
 const animateStates = ['assistant_turn']
 </script>
 
 <template>
     <!-- Only render if there's an active process state for this project -->
-    <ProcessIndicator
-        v-if="projectState"
-        :state="projectState"
-        :size="size"
-        :animate-states="animateStates"
-    />
+    <template v-if="projectState">
+        <ProcessIndicator
+            :id="`project-process-${projectId}`"
+            :state="projectState"
+            :size="size"
+            :animate-states="animateStates"
+        />
+        <wa-tooltip :for="`project-process-${projectId}`">{{ tooltipText }}</wa-tooltip>
+    </template>
 </template>

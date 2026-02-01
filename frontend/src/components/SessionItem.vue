@@ -88,28 +88,31 @@ function toggleJsonView() {
     <div class="session-item" :data-kind="kind">
         <!-- JSON toggle button (visible on hover) -->
         <wa-button
-             v-if="!showJson"
+            v-if="!showJson"
+            :id="`json-toggle-${lineNum}`"
             class="json-toggle"
             :variant="showJson ? 'warning' : 'neutral'"
             size="small"
             @click="toggleJsonView"
-            :title="showJson ? 'Hide JSON' : 'Show JSON'"
         >
             <wa-icon name="code"></wa-icon>
         </wa-button>
+        <wa-tooltip v-if="!showJson" :for="`json-toggle-${lineNum}`">Show JSON</wa-tooltip>
 
         <!-- JSON view -->
         <wa-callout appearance="outlined" variant="neutral" v-if="showJson" class="json-view">
             <wa-button
+                :id="`json-toggle-hide-${lineNum}`"
                 class="json-toggle"
                 :variant="showJson ? 'warning' : 'neutral'"
                 size="small"
                 @click="toggleJsonView"
-                :title="showJson ? 'Hide JSON' : 'Show JSON'"
             >
                 <wa-icon name="code"></wa-icon>
             </wa-button>
-            <wa-tag size="small"  appearance="filled-outlined" variant="brand" class="line-number" title="Line number">{{ lineNum }}</wa-tag>
+            <wa-tooltip :for="`json-toggle-hide-${lineNum}`">Hide JSON</wa-tooltip>
+            <wa-tag :id="`line-number-${lineNum}`" size="small"  appearance="filled-outlined" variant="brand" class="line-number">{{ lineNum }}</wa-tag>
+            <wa-tooltip :for="`line-number-${lineNum}`">Line number</wa-tooltip>
             <div class="json-tree">
                 <JsonViewer
                     :data="parsedContent"
@@ -399,7 +402,7 @@ wa-details {
 .session-items {
     .virtual-scroller-item:has(wa-details.item-details:last-child) {
         &:has(
-            + .virtual-scroller-item wa-details.item-details:nth-child(2)  /* 1 is json toggle */
+            + .virtual-scroller-item wa-details.item-details:nth-child(3)  /* 1 is json toggle and 2 its tooltip */
         ) wa-details.item-details:last-child {
             padding-bottom: 0;
             &::part(base) {
@@ -409,7 +412,7 @@ wa-details {
             }
         }
         & + .virtual-scroller-item
-        wa-details.item-details:nth-child(2) {  /* 1 is json toggle */
+        wa-details.item-details:nth-child(3) {  /* 1 is json toggle and 2 its tooltip */
             padding-top: 0;
             &::part(base) {
                 border-top-left-radius: 0;

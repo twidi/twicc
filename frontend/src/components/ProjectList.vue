@@ -48,6 +48,7 @@ function handleEditClick(event, project) {
                     <ProjectProcessIndicator :project-id="project.id" size="small" />
                 </div>
                 <wa-button
+                    :id="`edit-button-${project.id}`"
                     variant="neutral"
                     appearance="plain"
                     size="small"
@@ -56,13 +57,17 @@ function handleEditClick(event, project) {
                 >
                     <wa-icon name="pencil"></wa-icon>
                 </wa-button>
+                <wa-tooltip :for="`edit-button-${project.id}`">Edit project (name and color)</wa-tooltip>
                 <div v-if="project.directory" class="project-directory">{{ project.directory }}</div>
                 <div class="project-meta">
-                    <span class="sessions-count">
+                    <span :id="`sessions-count-${project.id}`" class="sessions-count">
                         {{ project.sessions_count }} session{{ project.sessions_count !== 1 ? 's' : '' }}
                     </span>
-                    <span class="project-mtime">{{ formatDate(project.mtime) }}</span>
-                    <span class="project-cost">{{ project.total_cost != null ? formatCost(project.total_cost) : '-' }}</span>
+                    <wa-tooltip :for="`sessions-count-${project.id}`">Number of sessions</wa-tooltip>
+                    <span :id="`project-mtime-${project.id}`" class="project-mtime">{{ formatDate(project.mtime) }}</span>
+                    <wa-tooltip :for="`project-mtime-${project.id}`">Last activity</wa-tooltip>
+                    <span :id="`project-cost-${project.id}`" class="project-cost">{{ project.total_cost != null ? formatCost(project.total_cost) : '-' }}</span>
+                    <wa-tooltip :for="`project-cost-${project.id}`">Total project cost</wa-tooltip>
                 </div>
             </div>
         </wa-card>

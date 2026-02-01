@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, useId } from 'vue'
 import JsonNode from './JsonNode.vue'
 
 defineProps({
@@ -9,6 +9,9 @@ defineProps({
 })
 
 const emit = defineEmits(['toggle'])
+
+// Unique id for tooltip
+const wrapToggleId = useId()
 
 // Wrap state (default: no wrap, scrollable)
 const wrap = ref(false)
@@ -21,14 +24,15 @@ function forwardToggle(path) {
 <template>
     <div class="json-viewer" :class="{ 'json-viewer--wrap': wrap }">
         <wa-button
+            :id="wrapToggleId"
             class="json-viewer-wrap-toggle"
             variant="text"
             size="small"
             @click="wrap = !wrap"
-            :title="wrap ? 'Disable wrap' : 'Enable wrap'"
         >
             <wa-icon :name="wrap ? 'align-justify' : 'align-left'"></wa-icon>
         </wa-button>
+        <wa-tooltip :for="wrapToggleId">{{ wrap ? 'Disable wrap' : 'Enable wrap' }}</wa-tooltip>
         <JsonNode
             :data="data"
             :path="path"

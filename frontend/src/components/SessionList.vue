@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { formatDate, formatDuration } from '../utils/date'
-import { PROCESS_STATE, PROCESS_STATE_COLORS } from '../constants'
+import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES } from '../constants'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 
@@ -209,7 +209,8 @@ function getStateDuration(processState) {
             @click="handleSelect(session)"
         >
             <div class="session-name-row">
-                <span class="session-name" :title="session.title || session.id">{{ getSessionDisplayName(session) }}</span>
+                <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
+                <wa-tooltip :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
             </div>
             <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
             <!-- Process info row (only shown when process is active) -->
@@ -219,26 +220,32 @@ function getStateDuration(processState) {
                 :style="{ color: getProcessColor(getProcessState(session.id).state) }"
             >
                 <ProcessIndicator
+                    :id="`process-indicator-${session.id}`"
                     :state="getProcessState(session.id).state"
                     size="small"
                     :animate-states="animateStates"
-                    :title="getProcessState(session.id).state"
                 />
-                <span class="process-memory">
+                <wa-tooltip :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
+                <span :id="`process-memory-${session.id}`" class="process-memory">
                     <template v-if="getProcessState(session.id).memory">
                         {{ formatMemory(getProcessState(session.id).memory) }}
                     </template>
                 </span>
-                <span class="process-duration">
+                <wa-tooltip :for="`process-memory-${session.id}`">Claude Code memory usage</wa-tooltip>
+                <span :id="`process-duration-${session.id}`" class="process-duration">
                     <template v-if="getProcessState(session.id).state === PROCESS_STATE.ASSISTANT_TURN && getProcessState(session.id).state_changed_at">
                         {{ formatDuration(getStateDuration(getProcessState(session.id))) }}
                     </template>
                 </span>
+                <wa-tooltip :for="`process-duration-${session.id}`">Assistant turn duration</wa-tooltip>
             </div>
             <div class="session-meta">
-                <span class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
-                <span class="session-mtime"><wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
-                <span class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon> {{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
+                <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
+                <wa-tooltip :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
+                <span :id="`session-mtime-${session.id}`" class="session-mtime"><wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
+                <wa-tooltip :for="`session-mtime-${session.id}`">Last activity</wa-tooltip>
+                <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon> {{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
+                <wa-tooltip :for="`session-cost-${session.id}`">Total session cost</wa-tooltip>
             </div>
         </wa-button>
 
