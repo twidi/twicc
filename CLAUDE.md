@@ -47,7 +47,7 @@ uv run ./devctl.py logs [front|back]        # Show recent logs (--lines=N)
 
 Claude never runs these operations. Instead, notify the user at the end of a task or, if absolutely necessary during your work, pause the task and ask them the permission to do it or to do them manually:
 
-- **Django migrations:** After modifying models, remind the user to run `makemigrations` and `migrate`
+- **Django migrations:** After modifying models (and having created the migration yourself), remind the user to run and `migrate`
 - **Dev server restart:** After backend changes, remind the user to restart via `devctl.py`
 - **Package installation:** After adding dependencies, remind the user to run `npm install` or `uv add`
 

@@ -13,7 +13,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from watchfiles import Change, awatch
 
-from twicc.compute import load_project_directories
+from twicc.compute import load_project_directories, update_project_total_cost
 from twicc.core.models import Project, Session, SessionItem, SessionType
 from twicc.core.serializers import (
     serialize_project,
@@ -110,7 +110,7 @@ def get_or_create_project(project_id: str) -> tuple[Project, bool]:
 
 @sync_to_async
 def update_project_metadata(project: Project) -> None:
-    """Update project sessions_count and mtime from its non-empty sessions."""
+    """Update project sessions_count, mtime, and total_cost from its sessions."""
     # Only count sessions (not subagents) with at least 1 line (non-empty)
     sessions = Session.objects.filter(
         project=project, archived=False, last_line__gt=0, type=SessionType.SESSION
@@ -119,6 +119,9 @@ def update_project_metadata(project: Project) -> None:
     max_mtime = sessions.order_by("-mtime").values_list("mtime", flat=True).first()
     project.mtime = max_mtime or 0
     project.save(update_fields=["sessions_count", "mtime"])
+
+    # Update total_cost
+    update_project_total_cost(project.id)
 
 
 @sync_to_async
@@ -303,16 +306,15 @@ async def sync_and_broadcast(
                 "type": "session_updated",
                 "session": serialize_session(session),
             })
-            # Update project metadata (only for regular sessions)
-            if not is_subagent:
-                project = await get_project_by_id(parsed.project_id)
-                if project:
-                    await update_project_metadata(project)
-                    project = await refresh_project(project)
-                    await broadcast_message(channel_layer, {
-                        "type": "project_updated",
-                        "project": serialize_project(project),
-                    })
+            # Update project metadata (includes total_cost which changes for subagents too)
+            project = await get_project_by_id(parsed.project_id)
+            if project:
+                await update_project_metadata(project)
+                project = await refresh_project(project)
+                await broadcast_message(channel_layer, {
+                    "type": "project_updated",
+                    "project": serialize_project(project),
+                })
         return
 
     # Check if session already exists in DB
@@ -372,14 +374,13 @@ async def sync_and_broadcast(
                     "session": serialize_session(parent_session),
                 })
 
-            # Update project metadata (only for regular sessions)
-            if not is_subagent:
-                await update_project_metadata(project)
-                project = await refresh_project(project)
-                await broadcast_message(channel_layer, {
-                    "type": "project_updated",
-                    "project": serialize_project(project),
-                })
+            # Update project metadata (includes total_cost which changes for subagents too)
+            await update_project_metadata(project)
+            project = await refresh_project(project)
+            await broadcast_message(channel_layer, {
+                "type": "project_updated",
+                "project": serialize_project(project),
+            })
         return
 
     # Session exists in DB - sync items
@@ -425,14 +426,13 @@ async def sync_and_broadcast(
                 "session": serialize_session(parent_session),
             })
 
-        # Update project metadata (only for regular sessions)
-        if not is_subagent:
-            await update_project_metadata(project)
-            project = await refresh_project(project)
-            await broadcast_message(channel_layer, {
-                "type": "project_updated",
-                "project": serialize_project(project),
-            })
+        # Update project metadata (includes total_cost which changes for subagents too)
+        await update_project_metadata(project)
+        project = await refresh_project(project)
+        await broadcast_message(channel_layer, {
+            "type": "project_updated",
+            "project": serialize_project(project),
+        })
     elif session.archived:
         # File reappeared - unarchive
         session.archived = False

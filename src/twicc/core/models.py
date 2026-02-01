@@ -47,6 +47,7 @@ class Project(models.Model):
     archived = models.BooleanField(default=False)
     name = models.CharField(max_length=25, null=True, blank=True, unique=True)  # User-defined display name
     color = models.CharField(max_length=50, null=True, blank=True)  # CSS color value (hex, hsl, etc.)
+    total_cost = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)  # Sum of all sessions total_cost in USD
 
     class Meta:
         ordering = ["-mtime"]

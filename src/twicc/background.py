@@ -25,9 +25,9 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 
 from twicc.compute import compute_session_metadata, load_project_directories
-from twicc.core.models import Session
+from twicc.core.models import Project, Session
 from twicc.core.pricing import sync_model_prices
-from twicc.core.serializers import serialize_session
+from twicc.core.serializers import serialize_project, serialize_session
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +150,15 @@ def refresh_session(session: Session) -> Session:
     return session
 
 
+@sync_to_async
+def get_project(project_id: str) -> Project | None:
+    """Get a project by ID."""
+    try:
+        return Project.objects.get(id=project_id)
+    except Project.DoesNotExist:
+        return None
+
+
 async def broadcast_session_updated(session: Session) -> None:
     """Broadcast session_updated message via WebSocket."""
     channel_layer = get_channel_layer()
@@ -160,6 +169,21 @@ async def broadcast_session_updated(session: Session) -> None:
             "data": {
                 "type": "session_updated",
                 "session": serialize_session(session),
+            },
+        },
+    )
+
+
+async def broadcast_project_updated(project: Project) -> None:
+    """Broadcast project_updated message via WebSocket."""
+    channel_layer = get_channel_layer()
+    await channel_layer.group_send(
+        "updates",
+        {
+            "type": "broadcast",
+            "data": {
+                "type": "project_updated",
+                "project": serialize_project(project),
             },
         },
     )
@@ -227,6 +251,15 @@ async def start_background_compute_task() -> None:
                 await broadcast_session_updated(session)
             except Exception as e:
                 logger.error(f"Error in broadcast_session_updated for {session.id}: {e}")
+                raise
+
+            # Broadcast project update (total_cost has changed)
+            try:
+                project = await get_project(session.project_id)
+                if project:
+                    await broadcast_project_updated(project)
+            except Exception as e:
+                logger.error(f"Error in broadcast_project_updated for project {session.project_id}: {e}")
                 raise
 
             # Progress logging during initial phase only

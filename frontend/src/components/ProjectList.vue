@@ -7,6 +7,12 @@ import ProjectBadge from './ProjectBadge.vue'
 
 const store = useDataStore()
 
+// Format cost as USD string (e.g., "$0.42")
+function formatCost(cost) {
+    if (cost == null) return null
+    return `$${cost.toFixed(2)}`
+}
+
 const emit = defineEmits(['select'])
 
 // Ref for the edit dialog component
@@ -52,6 +58,7 @@ function handleEditClick(event, project) {
                         {{ project.sessions_count }} session{{ project.sessions_count !== 1 ? 's' : '' }}
                     </span>
                     <span class="project-mtime">{{ formatDate(project.mtime) }}</span>
+                    <span class="project-cost">{{ project.total_cost != null ? formatCost(project.total_cost) : '-' }}</span>
                 </div>
             </div>
         </wa-card>

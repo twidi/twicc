@@ -26,6 +26,7 @@ from twicc.compute import (
     create_agent_link_live,
     create_agent_link_from_subagent,
     extract_title_from_user_message,
+    update_project_total_cost,
 )
 from twicc.core.enums import ItemDisplayLevel, ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
@@ -575,6 +576,9 @@ def sync_project(
     if project.archived:
         project.archived = False
     project.save(update_fields=["sessions_count", "mtime", "archived"])
+
+    # Update project total_cost
+    update_project_total_cost(project.id)
 
     return stats
 

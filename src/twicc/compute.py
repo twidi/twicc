@@ -16,7 +16,7 @@ import xmltodict
 from django.conf import settings
 
 from twicc.core.enums import ItemDisplayLevel, ItemKind
-from twicc.core.models import Project, SessionItem
+from twicc.core.models import Project, Session, SessionItem, SessionType
 from twicc.core.pricing import (
     calculate_line_cost,
     calculate_line_context_usage,
@@ -90,6 +90,28 @@ def ensure_project_directory(project_id: str, cwd: str) -> None:
     # Update DB and cache
     Project.objects.filter(id=project_id).update(directory=cwd)
     _project_directories[project_id] = cwd
+
+
+def update_project_total_cost(project_id: str) -> None:
+    """
+    Update a project's total_cost by summing all its sessions' total_costs.
+
+    Only sums costs from non-archived regular sessions (not subagents).
+    Subagent costs are already included in their parent session's total_cost.
+    """
+    from decimal import Decimal
+    from django.db.models import Sum
+
+    total_cost = Session.objects.filter(
+        project_id=project_id,
+        archived=False,
+        type=SessionType.SESSION,
+        total_cost__isnull=False,
+    ).aggregate(total=Sum('total_cost'))['total'] or Decimal(0)
+
+    Project.objects.filter(id=project_id).update(
+        total_cost=total_cost if total_cost > 0 else None
+    )
 
 
 # =============================================================================
@@ -1061,6 +1083,9 @@ def compute_session_metadata(session_id: str) -> None:
         ensure_project_directory(session.project_id, last_cwd)
 
     session.save(update_fields=['compute_version', 'message_count', 'context_usage', 'self_cost', 'subagents_cost', 'total_cost', 'cwd', 'git_branch', 'model'])
+
+    # Update project total_cost
+    update_project_total_cost(session.project_id)
 
     connection.close()
 
