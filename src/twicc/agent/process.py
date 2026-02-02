@@ -67,6 +67,17 @@ class ClaudeProcess:
             cwd,
         )
 
+    def _log_stderr(self, line: str) -> None:
+        """Log stderr output from the Claude CLI subprocess.
+
+        This callback is passed to the SDK to capture stderr lines.
+        """
+        logger.warning(
+            "Claude stderr for session %s: %s",
+            self.session_id,
+            line.rstrip(),
+        )
+
     def _set_state(self, new_state: ProcessState) -> None:
         """Update state with DEBUG logging."""
         old_state = self.state
@@ -158,6 +169,7 @@ class ClaudeProcess:
                 cwd=self.cwd,
                 permission_mode="bypassPermissions",
                 resume=self.session_id,
+                stderr=self._log_stderr,
             )
 
             self._client = ClaudeSDKClient(options=options)
