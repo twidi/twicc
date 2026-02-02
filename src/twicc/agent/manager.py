@@ -332,6 +332,16 @@ class ProcessManager:
             except Exception as e:
                 logger.error("Error broadcasting state change: %s", e)
 
+        # Flush pending title when process becomes safe to write
+        if process.state in (ProcessState.USER_TURN, ProcessState.DEAD):
+            from twicc.titles import flush_pending_title
+
+            # Run sync function in thread pool since file I/O
+            try:
+                await asyncio.to_thread(flush_pending_title, process.session_id)
+            except Exception as e:
+                logger.error("Error flushing pending title: %s", e)
+
         # Clean up dead processes. No lock needed - see docstring for concurrency model.
         if process.state == ProcessState.DEAD:
             if (

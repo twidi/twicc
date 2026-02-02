@@ -1079,6 +1079,51 @@ export const useDataStore = defineStore('data', {
                     }
                 }
             }
+        },
+
+        // Session rename action
+
+        /**
+         * Rename a session.
+         * @param {string} projectId - The project ID
+         * @param {string} sessionId - The session ID
+         * @param {string} newTitle - The new title
+         * @throws {Error} If the rename fails
+         */
+        async renameSession(projectId, sessionId, newTitle) {
+            // Optimistic update
+            const session = this.sessions[sessionId]
+            const oldTitle = session?.title
+
+            if (session) {
+                session.title = newTitle
+            }
+
+            try {
+                const response = await fetch(
+                    `/api/projects/${projectId}/sessions/${sessionId}/`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: newTitle })
+                    }
+                )
+
+                if (!response.ok) {
+                    const data = await response.json()
+                    throw new Error(data.error || 'Failed to rename session')
+                }
+
+                const updatedSession = await response.json()
+                this.sessions[sessionId] = { ...this.sessions[sessionId], ...updatedSession }
+
+            } catch (error) {
+                // Rollback on error
+                if (session && oldTitle !== undefined) {
+                    session.title = oldTitle
+                }
+                throw error
+            }
         }
     }
 })

@@ -120,13 +120,19 @@ def project_sessions(request, project_id):
 
 
 def session_detail(request, project_id, session_id, parent_session_id=None):
-    """GET /api/projects/<id>/sessions/<session_id>/ - Detail of a session.
+    """GET/PATCH /api/projects/<id>/sessions/<session_id>/ - Detail or rename session.
 
     Also handles subagent route:
     GET /api/projects/<id>/sessions/<parent_session_id>/subagent/<session_id>/
 
     When parent_session_id is provided, validates that session.parent_session_id matches.
     When accessing a subagent via the session endpoint (no parent_session_id in URL), returns 404.
+
+    PATCH: Rename a session (not available for subagents).
+        Body: {"title": "New title"}
+        - Title is trimmed and must be non-empty
+        - Max 200 characters
+        - Writes custom-title entry to JSONL file (deferred if process is busy)
     """
     try:
         session = Session.objects.get(id=session_id, project_id=project_id)
@@ -142,6 +148,46 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
         # Session route: reject subagents (they must be accessed via subagent route)
         if session.parent_session_id is not None:
             raise Http404("Session not found")
+
+    if request.method == "PATCH":
+        # Reject subagents (cannot be renamed)
+        if session.type == SessionType.SUBAGENT:
+            return JsonResponse({"error": "Subagents cannot be renamed"}, status=400)
+
+        try:
+            data = orjson.loads(request.body)
+        except orjson.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        if "title" not in data:
+            return JsonResponse({"error": "title field required"}, status=400)
+
+        title = data["title"]
+        if title is not None:
+            title = title.strip()
+            if not title:
+                return JsonResponse({"error": "Title cannot be empty"}, status=400)
+            if len(title) > 200:
+                return JsonResponse({"error": "Title must be 200 characters or less"}, status=400)
+
+        # 1. Update DB immediately
+        session.title = title
+        session.save(update_fields=["title"])
+
+        # 2. Write to JSONL (immediate or deferred)
+        from twicc.agent.manager import get_process_manager
+        from twicc.agent.states import ProcessState
+        from twicc.titles import set_pending_title, write_custom_title_to_jsonl
+
+        manager = get_process_manager()
+        process_info = manager.get_process_info(session_id)
+
+        if process_info and process_info.state in (ProcessState.STARTING, ProcessState.ASSISTANT_TURN):
+            # Process is busy, defer write
+            set_pending_title(session_id, title)
+        else:
+            # Safe to write immediately (no process, user_turn, or dead)
+            write_custom_title_to_jsonl(session_id, title)
 
     return JsonResponse(serialize_session(session))
 

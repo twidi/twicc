@@ -6,6 +6,7 @@ import { MAX_CONTEXT_TOKENS, PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_
 import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
+import SessionRenameDialog from './SessionRenameDialog.vue'
 
 const props = defineProps({
     sessionId: {
@@ -172,16 +173,43 @@ function getStateDuration(procState) {
     return Math.max(0, Math.floor(now.value - procState.state_changed_at))
 }
 
+// Rename dialog
+const renameDialogRef = ref(null)
+
+/**
+ * Open the rename dialog.
+ */
+function openRenameDialog() {
+    renameDialogRef.value?.open()
+}
+
 </script>
 
 <template>
     <header class="session-header" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
             <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+
+            <!-- Rename button (not for drafts or subagents) -->
+            <wa-button
+                v-if="!session.draft && mode === 'session'"
+                id="session-header-rename-button"
+                variant="neutral"
+                appearance="plain"
+                size="small"
+                class="rename-button"
+                @click="openRenameDialog"
+            >
+                <wa-icon name="pencil" label="Rename"></wa-icon>
+            </wa-button>
+            <wa-tooltip for="session-header-rename-button">Rename session</wa-tooltip>
+
             <h2 id="session-header-title">{{ displayName }}</h2>
             <wa-tooltip for="session-header-title">{{ displayName }}</wa-tooltip>
+
             <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
         </div>
+
 
         <!-- Meta row (not shown for draft sessions) -->
         <div v-if="!session.draft" class="session-meta">
@@ -292,6 +320,11 @@ function getStateDuration(procState) {
             </template>
         </div>
     </header>
+    <!-- Rename dialog -->
+    <SessionRenameDialog
+        ref="renameDialogRef"
+        :session="session"
+    />
     <wa-divider></wa-divider>
 </template>
 
@@ -396,10 +429,34 @@ wa-divider {
 }
 
 .stop-button {
+    opacity: 0.6;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
     font-size: var(--wa-font-size-3xs);
     &::part(label) {
         scale: 1.5;
     }
+}
+
+.stop-button:hover {
+    opacity: 1;
+}
+
+.rename-button {
+    opacity: 0.6;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+    font-size: var(--wa-font-size-3xs);
+    &::part(label) {
+        scale: 1.5;
+    }
+    margin-block: calc(-3 * var(--wa-space-2xs));
+    position: relative;
+    top: calc(-1 * var(--wa-space-2xs));
+}
+
+.rename-button:hover {
+    opacity: 1;
 }
 
 </style>
