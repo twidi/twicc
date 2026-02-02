@@ -240,6 +240,11 @@ watch([() => props.sessionId, session], async ([newSessionId, newSession]) => {
 
     if (!newSession) return
 
+    // Don't load data for draft sessions (they have no items yet)
+    if (newSession.draft) {
+        return
+    }
+
     // Don't load if computation is pending
     if (newSession.compute_version_up_to_date === false) {
         return

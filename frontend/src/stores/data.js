@@ -263,6 +263,37 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
+         * Create a draft session for a project.
+         * Draft sessions exist only in the frontend until the first message is sent.
+         * @param {string} projectId - The project ID
+         * @returns {string} The generated session ID (UUID)
+         */
+        createDraftSession(projectId) {
+            const id = crypto.randomUUID()
+            const now = Date.now() / 1000  // Unix timestamp in seconds
+            this.sessions[id] = {
+                id,
+                project_id: projectId,
+                title: 'New session',
+                mtime: now,
+                last_line: 0,
+                draft: true,
+            }
+            return id
+        },
+
+        /**
+         * Delete a draft session.
+         * Only deletes if the session exists and has draft: true.
+         * @param {string} sessionId - The session ID to delete
+         */
+        deleteDraftSession(sessionId) {
+            if (this.sessions[sessionId]?.draft) {
+                delete this.sessions[sessionId]
+            }
+        },
+
+        /**
          * Initialize session items array with placeholders.
          * Placeholders are objects with only line_num (no content).
          * @param {string} sessionId

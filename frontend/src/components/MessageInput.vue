@@ -1,6 +1,7 @@
 <script setup>
 // MessageInput.vue - Text input for sending messages to Claude
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { sendWsMessage } from '../composables/useWebSocket'
 import { useVisualViewport } from '../composables/useVisualViewport'
@@ -19,7 +20,12 @@ const props = defineProps({
     }
 })
 
+const router = useRouter()
 const store = useDataStore()
+
+// Get session data to check if it's a draft
+const session = computed(() => store.getSession(props.sessionId))
+const isDraft = computed(() => session.value?.draft === true)
 
 // Local state for the textarea
 const messageText = ref('')
@@ -62,6 +68,15 @@ const placeholderText = computed(() => {
     return 'Type your message...'
 })
 
+// Autofocus textarea for draft sessions
+onMounted(async () => {
+    if (isDraft.value && textareaRef.value) {
+        // Wait for next tick to ensure the component is fully rendered
+        await nextTick()
+        textareaRef.value.focus()
+    }
+})
+
 /**
  * Handle textarea input event.
  */
@@ -82,6 +97,7 @@ function onKeydown(event) {
 
 /**
  * Send the message via WebSocket.
+ * Backend handles both new and existing sessions with the same message type.
  */
 function handleSend() {
     const text = messageText.value.trim()
@@ -102,6 +118,14 @@ function handleSend() {
         }
     }
 }
+
+/**
+ * Cancel the draft session and navigate back to project.
+ */
+function handleCancel() {
+    store.deleteDraftSession(props.sessionId)
+    router.push({ name: 'project', params: { projectId: props.projectId } })
+}
 </script>
 
 <template>
@@ -119,6 +143,15 @@ function handleSend() {
             @blur="isFocused = false"
         ></wa-textarea>
         <div class="message-input-actions">
+            <!-- Cancel button for draft sessions -->
+            <wa-button
+                v-if="isDraft"
+                variant="neutral"
+                appearance="outlined"
+                @click="handleCancel"
+            >
+                Cancel
+            </wa-button>
             <wa-button
                 variant="brand"
                 :disabled="isDisabled || !messageText.trim()"
@@ -154,5 +187,6 @@ function handleSend() {
 .message-input-actions {
     display: flex;
     justify-content: flex-end;
+    gap: var(--wa-space-s);
 }
 </style>

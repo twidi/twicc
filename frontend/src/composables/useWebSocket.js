@@ -108,10 +108,15 @@ export function useWebSocket() {
                 store.updateProject(msg.project)
                 break
             case 'session_added':
-                // Only add if we've fetched sessions for this project or all projects
-                // (subagents are filtered out in getProjectSessions getter)
-                if (store.areProjectSessionsFetched(msg.session.project_id) ||
+                // Check if this is a draft session being confirmed by the backend
+                const existingSession = store.getSession(msg.session.id)
+                if (existingSession?.draft) {
+                    // Draft session confirmed - update with real data and remove draft flag
+                    store.updateSession({ ...msg.session, draft: false })
+                } else if (store.areProjectSessionsFetched(msg.session.project_id) ||
                     store.areAllProjectsSessionsFetched) {
+                    // Only add if we've fetched sessions for this project or all projects
+                    // (subagents are filtered out in getProjectSessions getter)
                     store.addSession(msg.session)
                 }
                 break

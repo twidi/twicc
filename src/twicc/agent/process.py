@@ -143,15 +143,19 @@ class ClaudeProcess:
             kill_reason=self.kill_reason,
         )
 
-    async def start(self, prompt: str, on_state_change: StateChangeCallback) -> None:
+    async def start(
+        self, prompt: str, on_state_change: StateChangeCallback, resume: bool = True
+    ) -> None:
         """Start the process and send the first message.
 
-        This connects to Claude with the resume option and sends the initial prompt.
-        A background task is started to consume messages and track state changes.
+        This connects to Claude and sends the initial prompt. A background task
+        is started to consume messages and track state changes.
 
         Args:
             prompt: The initial message to send
             on_state_change: Async callback invoked when process state changes
+            resume: If True (default), resume an existing session. If False,
+                   create a new session with the session_id as the custom UUID.
 
         Raises:
             RuntimeError: If the process is already started
@@ -161,16 +165,25 @@ class ClaudeProcess:
 
         self._state_change_callback = on_state_change
 
-        logger.debug("Starting process for session %s", self.session_id)
+        logger.debug(
+            "Starting process for session %s (resume=%s)", self.session_id, resume
+        )
 
         try:
-            # Create options with resume for continuing existing session
+            # Create options - either resume existing session or create new with custom ID
             options = ClaudeAgentOptions(
                 cwd=self.cwd,
                 permission_mode="bypassPermissions",
-                resume=self.session_id,
                 stderr=self._log_stderr,
+                extra_args={}
             )
+
+            if resume:
+                # Resume existing session
+                options.resume = self.session_id
+            else:
+                # New session with custom session ID
+                options.extra_args["session-id"] = self.session_id
 
             self._client = ClaudeSDKClient(options=options)
 

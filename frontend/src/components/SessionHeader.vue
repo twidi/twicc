@@ -177,12 +177,14 @@ function getStateDuration(procState) {
 <template>
     <header class="session-header" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
+            <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
             <h2 id="session-header-title">{{ displayName }}</h2>
             <wa-tooltip for="session-header-title">{{ displayName }}</wa-tooltip>
             <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
         </div>
 
-        <div class="session-meta">
+        <!-- Meta row (not shown for draft sessions) -->
+        <div v-if="!session.draft" class="session-meta">
 
             <span id="session-header-messages" class="meta-item">
                 <wa-icon auto-width name="comment" variant="regular"></wa-icon>
@@ -303,10 +305,17 @@ function getStateDuration(procState) {
 .session-title {
     flex: 1;
     display: flex;
-    justify-content: space-between;
+    justify-content: start;
     align-items: baseline;
     gap: var(--wa-space-m);
     min-width: 0;  /* Allow text truncation */
+}
+
+.draft-tag {
+    flex-shrink: 0;
+    line-height: unset;
+    height: unset;
+    align-self: stretch;
 }
 
 .session-title h2 {
@@ -321,6 +330,7 @@ function getStateDuration(procState) {
 }
 
 .session-project {
+    margin-left: auto;
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
     overflow: hidden;

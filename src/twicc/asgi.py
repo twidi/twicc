@@ -36,6 +36,17 @@ def get_project_directory(project_id: str) -> str | None:
         return None
 
 
+@sync_to_async
+def session_exists(session_id: str) -> bool:
+    """Check if a session exists in the database.
+
+    Returns True if the session exists, False otherwise.
+    """
+    from twicc.core.models import Session
+
+    return Session.objects.filter(id=session_id).exists()
+
+
 async def broadcast_process_state(info: ProcessInfo) -> None:
     """Broadcast a process state change to all connected clients.
 
@@ -94,7 +105,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         Supported message types:
         - ping: heartbeat, responds with pong
-        - send_message: send a message to a Claude session
+        - send_message: send a message to a Claude session (creates new or resumes existing)
         - kill_process: kill a running Claude process
         """
         msg_type = content.get("type")
@@ -118,6 +129,10 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             "project_id": "proj-xyz",
             "text": "The message text"
         }
+
+        This handles both new sessions and existing sessions:
+        - If session exists in database: resume the session
+        - If session doesn't exist: create a new session with the provided session_id
         """
         session_id = content.get("session_id")
         project_id = content.get("project_id")
@@ -153,10 +168,17 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             )
             return
 
-        # Send message via ProcessManager
+        # Check if session exists to determine whether to create new or resume
+        exists = await session_exists(session_id)
+
         manager = get_process_manager()
         try:
-            await manager.send_message(session_id, project_id, cwd, text)
+            if exists:
+                # Session exists: resume it
+                await manager.resume_session(session_id, project_id, cwd, text)
+            else:
+                # Session doesn't exist: create new with client-provided ID
+                await manager.new_session(session_id, project_id, cwd, text)
         except RuntimeError as e:
             # Process busy or other expected errors
             logger.warning("send_message failed: %s", e)

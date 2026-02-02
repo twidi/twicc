@@ -208,14 +208,15 @@ function getStateDuration(processState) {
             :class="{ 'session-item--active': session.id === sessionId }"
             @click="handleSelect(session)"
         >
-            <div>
+            <div class="session-name-row">
+                <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                 <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
                 <wa-tooltip :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
             </div>
             <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
-            <!-- Process info row (only shown when process is active) -->
+            <!-- Process info row (only shown when process is active and not draft) -->
             <div
-                v-if="getProcessState(session.id)"
+                v-if="!session.draft && getProcessState(session.id)"
                 class="process-info"
                 :style="{ color: getProcessColor(getProcessState(session.id).state) }"
             >
@@ -241,7 +242,8 @@ function getStateDuration(processState) {
                 />
                 <wa-tooltip :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
             </div>
-            <div class="session-meta">
+            <!-- Meta row (not shown for draft sessions) -->
+            <div v-if="!session.draft" class="session-meta">
                 <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
                 <wa-tooltip :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
                 <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon> {{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
@@ -298,7 +300,7 @@ function getStateDuration(processState) {
 }
 
 .session-item::part(base) {
-    padding-block: var(--wa-space-xs);
+    padding: var(--wa-space-xs);
     height: auto;
     margin-bottom: var(--wa-shadow-offset-y-s);  /* default if border, enforce for non active items to avoid movement */
 }
@@ -307,8 +309,21 @@ function getStateDuration(processState) {
     text-align: left;
 }
 
+.session-name-row {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    min-width: 0;
+}
+
+.draft-tag {
+    flex-shrink: 0;
+    line-height: unset;
+    height: unset;
+    align-self: stretch;
+}
+
 .session-name {
-    display: block;
     font-size: var(--wa-font-size-s);
     font-weight: 700;
     /* Truncate with ellipsis */

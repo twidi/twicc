@@ -90,6 +90,16 @@ function handleBackHome() {
     router.push({ name: 'home' })
 }
 
+// Create a new draft session and navigate to it
+function handleNewSession() {
+    if (isAllProjectsMode.value || !projectId.value) return
+    const newSessionId = store.createDraftSession(projectId.value)
+    router.push({
+        name: 'session',
+        params: { projectId: projectId.value, sessionId: newSessionId }
+    })
+}
+
 const SIDEBAR_WIDTH = 300
 // Sidebar collapse threshold in pixels
 const SIDEBAR_COLLAPSE_THRESHOLD = 50
@@ -212,6 +222,21 @@ function handleSplitReposition(event) {
                     :show-project-name="isAllProjectsMode"
                     @select="handleSessionSelect"
                 />
+
+                <!-- Floating "New session" button (only in single project mode) -->
+                <wa-button
+                    v-if="!isAllProjectsMode"
+                    id="new-session-button"
+                    class="new-session-button"
+                    variant="brand"
+                    appearance="filled"
+                    size="small"
+                    @click="handleNewSession"
+                >
+                    <wa-icon name="plus"></wa-icon>
+                    <span>New session</span>
+                </wa-button>
+                <wa-tooltip for="new-session-button">Create a new session in this project</wa-tooltip>
             </div>
 
             <wa-divider></wa-divider>
@@ -353,6 +378,7 @@ function handleSplitReposition(event) {
     padding: 0;
     display: flex;
     flex-direction: column;
+    position: relative;
 }
 
 .main-content {
@@ -382,6 +408,30 @@ function handleSplitReposition(event) {
     padding: var(--wa-space-xl);
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-s);
+}
+
+/* Floating "New session" button */
+.new-session-button {
+    position: absolute;
+    bottom: var(--wa-space-s);
+    right: var(--wa-space-s);
+    z-index: 5;
+    &::part(label) {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-xs);
+    }
+}
+
+@container sidebar (width <= 150px) {
+    .new-session-button {
+        &::part(base) {
+            padding: var(--wa-space-s);
+        }
+        & > span {
+            display: none;
+        }
+    }
 }
 
 .sidebar-footer {

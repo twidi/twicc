@@ -34,8 +34,11 @@ class ProcessManager:
     Typical usage:
         manager = ProcessManager()
 
-        # Send a message (auto-creates/resumes process if needed)
-        await manager.send_message(session_id, project_id, cwd, "Hello")
+        # Resume an existing session with a new message
+        await manager.resume_session(session_id, project_id, cwd, "Hello")
+
+        # Create a new session
+        await manager.new_session(session_id, project_id, cwd, "Hello")
 
         # Get active processes
         processes = manager.get_active_processes()
@@ -61,20 +64,20 @@ class ProcessManager:
         """
         self._broadcast_callback = callback
 
-    async def send_message(
+    async def resume_session(
         self,
         session_id: str,
         project_id: str,
         cwd: str,
         text: str,
     ) -> None:
-        """Send a message to a session, auto-resuming if needed.
+        """Resume an existing session with a new message.
 
         If no active process exists for this session, a new one is created
         with the resume option to continue the existing conversation.
 
         Args:
-            session_id: The Claude session identifier
+            session_id: The Claude session identifier (must exist in database)
             project_id: The TwiCC project identifier
             cwd: Working directory for Claude operations
             text: The message text to send
@@ -103,22 +106,85 @@ class ProcessManager:
                         f"Cannot send message: process is in state {process.state}"
                     )
 
-            # Create new process with resume
-            logger.debug(
-                "Creating new process for session %s, project %s",
-                session_id,
-                project_id,
-            )
-            process = ClaudeProcess(session_id, project_id, cwd)
-            self._processes[session_id] = process
+            # Create and start new process with resume
+            await self._start_process(session_id, project_id, cwd, text, resume=True)
 
-            # Broadcast the starting state before starting
-            await self._on_state_change(process)
+    async def new_session(
+        self,
+        session_id: str,
+        project_id: str,
+        cwd: str,
+        text: str,
+    ) -> None:
+        """Create a new session with a client-provided session ID.
 
-            # Start the process. If it fails, it transitions to DEAD state and
-            # broadcasts the error via the callback - it does not raise exceptions.
-            # The callback will clean up the process from _processes.
-            await process.start(text, self._on_state_change)
+        Unlike send_message which auto-resumes existing sessions, this creates
+        a brand new session. The session_id is passed to the Claude CLI via
+        the --session-id flag.
+
+        Args:
+            session_id: The client-provided session UUID
+            project_id: The TwiCC project identifier
+            cwd: Working directory for Claude operations
+            text: The initial message text
+
+        Raises:
+            RuntimeError: If a process already exists for this session_id
+        """
+        async with self._lock:
+            if session_id in self._processes:
+                process = self._processes[session_id]
+                if process.state != ProcessState.DEAD:
+                    raise RuntimeError(
+                        f"Session {session_id} already exists and is active"
+                    )
+                # Dead process, clean it up
+                logger.debug(
+                    "Removing dead process for session %s before creating new",
+                    session_id,
+                )
+                del self._processes[session_id]
+
+            # Create and start new process without resume
+            await self._start_process(session_id, project_id, cwd, text, resume=False)
+
+    async def _start_process(
+        self,
+        session_id: str,
+        project_id: str,
+        cwd: str,
+        text: str,
+        resume: bool,
+    ) -> None:
+        """Create and start a new Claude process.
+
+        This is the common implementation for both resume_session (resume=True)
+        and new_session (resume=False).
+
+        Must be called while holding self._lock.
+
+        Args:
+            session_id: The Claude session identifier
+            project_id: The TwiCC project identifier
+            cwd: Working directory for Claude operations
+            text: The message text to send
+            resume: If True, resume existing session. If False, create new session.
+        """
+        logger.debug(
+            "Creating process for session %s, project %s (resume=%s)",
+            session_id,
+            project_id,
+            resume,
+        )
+        process = ClaudeProcess(session_id, project_id, cwd)
+        self._processes[session_id] = process
+
+        # Broadcast the starting state before starting
+        await self._on_state_change(process)
+
+        # Start the process. If it fails, it transitions to DEAD state and
+        # broadcasts the error via the callback - it does not raise exceptions.
+        await process.start(text, self._on_state_change, resume=resume)
 
     def get_active_processes(self) -> list[ProcessInfo]:
         """Get information about all active (non-dead) processes.
