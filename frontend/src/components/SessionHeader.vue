@@ -182,84 +182,87 @@ function getStateDuration(procState) {
             <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
         </div>
 
-        <div class="meta-wrapper">
-            <div class="session-meta">
+        <div class="session-meta">
 
-                <span id="session-header-messages" class="meta-item">
-                    <wa-icon auto-width name="comment" variant="regular"></wa-icon>
-                    <span>{{ session.message_count ?? '??' }}</span>
+            <span id="session-header-messages" class="meta-item">
+                <wa-icon auto-width name="comment" variant="regular"></wa-icon>
+                <span>{{ session.message_count ?? '??' }}</span>
+            </span>
+            <wa-tooltip for="session-header-messages">Number of user and assistant messages</wa-tooltip>
+
+            <span id="session-header-lines" class="meta-item nb_lines">
+                <wa-icon auto-width name="bars"></wa-icon>
+                <span>{{ session.last_line }}</span>
+            </span>
+            <wa-tooltip for="session-header-lines">Lines in the JSONL file</wa-tooltip>
+
+            <span id="session-header-mtime" class="meta-item">
+                <wa-icon auto-width name="clock" variant="regular"></wa-icon>
+                <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
+            </span>
+            <wa-tooltip for="session-header-mtime">Last activity</wa-tooltip>
+
+            <template v-if="formattedTotalCost">
+                <span id="session-header-cost" class="meta-item">
+                    <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
+                    {{ formattedTotalCost }}
                 </span>
-                <wa-tooltip for="session-header-messages">Number of user and assistant messages</wa-tooltip>
+                <wa-tooltip for="session-header-cost">Total session cost</wa-tooltip>
+            </template>
 
-                <span id="session-header-lines" class="meta-item nb_lines">
-                    <wa-icon auto-width name="bars"></wa-icon>
-                    <span>{{ session.last_line }}</span>
-                </span>
-                <wa-tooltip for="session-header-lines">Lines in the JSONL file</wa-tooltip>
-
-                <span id="session-header-mtime" class="meta-item">
-                    <wa-icon auto-width name="clock" variant="regular"></wa-icon>
-                    <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
-                </span>
-                <wa-tooltip for="session-header-mtime">Last activity</wa-tooltip>
-
-                <template v-if="formattedTotalCost">
-                    <span id="session-header-cost" class="meta-item">
+            <template v-if="formattedCostBreakdown">
+                <span id="session-header-cost-breakdown" class="meta-item">
+                    <span>(
+                    <span>
                         <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
-                        {{ formattedTotalCost }}
+                        <span class="cost-breakdown">{{ formattedCostBreakdown }}</span>
                     </span>
-                    <wa-tooltip for="session-header-cost">Total session cost</wa-tooltip>
-                </template>
+                    )</span>
+                </span>
+                <wa-tooltip for="session-header-cost-breakdown">Main agent cost + sub-agents cost</wa-tooltip>
+            </template>
 
-                <template v-if="formattedCostBreakdown">
-                    <span id="session-header-cost-breakdown" class="meta-item">
-                        <span>(
-                        <span>
-                            <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
-                            <span class="cost-breakdown">{{ formattedCostBreakdown }}</span>
-                        </span>
-                        )</span>
-                    </span>
-                    <wa-tooltip for="session-header-cost-breakdown">Main agent cost + sub-agents cost</wa-tooltip>
-                </template>
+            <template v-if="formattedModel">
+                <span id="session-header-model" class="meta-item">
+                    <wa-icon auto-width name="robot" variant="classic"></wa-icon>
+                    <span>{{ formattedModel }}</span>
+                </span>
+                <wa-tooltip for="session-header-model">Last used model</wa-tooltip>
+            </template>
 
-                <template v-if="formattedModel">
-                    <span id="session-header-model" class="meta-item">
-                        <wa-icon auto-width name="robot" variant="classic"></wa-icon>
-                        <span>{{ formattedModel }}</span>
-                    </span>
-                    <wa-tooltip for="session-header-model">Last used model</wa-tooltip>
-                </template>
+            <template v-if="contextUsagePercentage != null">
+                <wa-progress-ring
+                    id="session-header-context"
+                    class="context-usage-ring"
+                    :value="Math.min(contextUsagePercentage, 100)"
+                    :style="{
+                        '--indicator-color': contextUsageColor,
+                        '--indicator-width': contextUsageIndicatorWidth
+                    }"
+                ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
+                <wa-tooltip for="session-header-context">Context window usage</wa-tooltip>
+            </template>
 
-                <template v-if="contextUsagePercentage != null">
-                    <wa-progress-ring
-                        id="session-header-context"
-                        class="context-usage-ring"
-                        :value="Math.min(contextUsagePercentage, 100)"
-                        :style="{
-                            '--indicator-color': contextUsageColor,
-                            '--indicator-width': contextUsageIndicatorWidth
-                        }"
-                    ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
-                    <wa-tooltip for="session-header-context">Context window usage</wa-tooltip>
-                </template>
-            </div>
-
-            <div
+            <template
                 v-if="processState"
-                class="process-info"
-                :style="{ color: getProcessColor(processState.state) }"
             >
+                <div style="flex-grow: 1"></div>
                 <span
                     v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
                     id="session-header-process-duration"
                     class="process-duration"
+                    :style="{ color: getProcessColor(processState.state) }"
                 >
                     {{ formatDuration(getStateDuration(processState)) }}
                 </span>
                 <wa-tooltip v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" for="session-header-process-duration">Assistant turn duration</wa-tooltip>
 
-                <span v-if="processState.memory" id="session-header-process-memory" class="process-memory">
+                <span
+                    v-if="processState.memory"
+                    id="session-header-process-memory"
+                    class="process-memory"
+                    :style="{ color: getProcessColor(processState.state) }"
+                >
                     {{ formatMemory(processState.memory) }}
                 </span>
                 <wa-tooltip v-if="processState.memory" for="session-header-process-memory">Claude Code memory usage</wa-tooltip>
@@ -284,7 +287,7 @@ function getStateDuration(procState) {
                     <wa-icon name="ban" label="Stop"></wa-icon>
                 </wa-button>
                 <wa-tooltip for="session-header-stop-button">Stop the Claude Code process</wa-tooltip>
-            </div>
+            </template>
         </div>
     </header>
     <wa-divider></wa-divider>
@@ -293,10 +296,16 @@ function getStateDuration(procState) {
 <style scoped>
 .session-header {
     padding: var(--wa-space-xs);
-}
+    gap: var(--wa-space-xs);
+    display: flex;
+    flex-direction: column;}
 
 .session-title {
     flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--wa-space-m);
     min-width: 0;  /* Allow text truncation */
 }
 
@@ -317,11 +326,13 @@ function getStateDuration(procState) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    width: 25%;
+    max-width: max-content;
 }
 
-.meta-wrapper {
+.session-meta {
     display: flex;
-    justify-content: space-between;
+    justify-content: start;
     align-items: center;
     gap: var(--wa-space-l);
 }
@@ -332,14 +343,6 @@ function getStateDuration(procState) {
     column-gap: var(--wa-space-l);
     row-gap: var(--wa-space-xs);
     font-size: var(--wa-font-size-s);
-}
-
-.process-info {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-s);
-    font-size: var(--wa-font-size-s);
-    white-space: nowrap;
 }
 
 .meta-item {
