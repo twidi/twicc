@@ -255,17 +255,10 @@ class ClaudeProcess:
                 pass
             self._message_loop_task = None
 
-        # Disconnect from Claude in an isolated task to prevent anyio cancel
-        # scopes from affecting other coroutines. We await the task here since
-        # kill() is expected to complete the disconnect before returning.
-        if self._client is not None:
-            client = self._client
-            self._client = None
-            disconnect_task = asyncio.create_task(
-                self._safe_disconnect(client),
-                name=f"disconnect-{self.session_id}",
-            )
-            await disconnect_task
+        # Don't call disconnect() - the SDK's anyio cancel scopes leak
+        # cancellation to other asyncio tasks. Just drop the reference.
+        # The underlying Claude CLI process will terminate when its stdin closes.
+        self._client = None
 
         # Update state
         self._set_state(ProcessState.DEAD)
@@ -346,32 +339,11 @@ class ClaudeProcess:
 
         await self._notify_state_change()
 
-        # Clean up resources in an isolated task to prevent the SDK's anyio
-        # cancel scopes from affecting other coroutines (like WebSocket consumers).
-        # Using asyncio.create_task() ensures the disconnect runs in a separate
-        # task context that won't propagate cancellation to our callers.
-        if self._client is not None:
-            client = self._client
-            self._client = None
-            asyncio.create_task(
-                self._safe_disconnect(client),
-                name=f"disconnect-{self.session_id}",
-            )
-
-    async def _safe_disconnect(self, client: ClaudeSDKClient) -> None:
-        """Disconnect from Claude in isolation.
-
-        This runs in a separate task to prevent anyio cancel scopes from
-        leaking into other parts of the application.
-        """
-        try:
-            await client.disconnect()
-        except Exception as e:
-            logger.debug(
-                "Error during isolated disconnect for session %s: %s",
-                self.session_id,
-                e,
-            )
+        # Don't call disconnect() here - the SDK's anyio cancel scopes leak
+        # cancellation to other asyncio tasks even when run in a separate task.
+        # Just drop the reference and let the subprocess die naturally.
+        # The underlying Claude CLI process will terminate when its stdin closes.
+        self._client = None
 
     async def _notify_state_change(self) -> None:
         """Invoke the state change callback if set."""
