@@ -9,6 +9,7 @@ ALLOWED_HOSTS = ["*"]
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.staticfiles",
+    "django_extensions",
     "channels",
     "twicc.core",
 ]

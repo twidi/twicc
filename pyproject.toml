@@ -37,3 +37,9 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 testpaths = ["tests"]
 addopts = "-v"
+
+[dependency-groups]
+dev = [
+    "django-extensions>=4.1",
+    "ipython>=9.10.0",
+]
