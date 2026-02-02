@@ -91,4 +91,11 @@ body {
     position: relative;
 }
 
+/* Add separator line below title in notifications */
+body .Notivue__content-title {
+    border-bottom: 1px solid var(--nv-accent, var(--nv-global-accent));
+    padding-bottom: var(--nv-spacing);
+    margin-bottom: var(--nv-spacing);
+}
+
 </style>

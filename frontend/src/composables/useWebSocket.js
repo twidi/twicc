@@ -5,6 +5,7 @@ import { useWebSocket as useVueWebSocket } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useReconciliation } from './useReconciliation'
+import { toast } from './useToast'
 
 // Module-level reference to the WebSocket send function
 // Allows components to access it without going through the composable
@@ -37,6 +38,33 @@ export function killProcess(sessionId) {
         type: 'kill_process',
         session_id: sessionId
     })
+}
+
+/**
+ * Show toast notification for process state changes.
+ * Only notifies for specific state transitions (started, stopped).
+ */
+function notifyProcessStateChange(store, msg) {
+    const session = store.getSession(msg.session_id)
+    const title = session?.title || 'Unknown'
+    const truncatedTitle = title.length > 50 ? title.slice(0, 50) + '…' : title
+    const sessionLabel = `Session: "${truncatedTitle}"`
+
+    if (msg.state === 'starting') {
+        // Process started
+        toast.success(sessionLabel, { title: 'Claude Code started' })
+    } else if (msg.state === 'dead') {
+        // Process stopped - check if voluntary or error
+        if (msg.kill_reason === 'error') {
+            toast.error(sessionLabel, {
+                title: 'Claude Code terminated due to error',
+                details: msg.error || undefined
+            })
+        } else {
+            // Manual kill or shutdown
+            toast.info(sessionLabel, { title: 'Claude Code terminated' })
+        }
+    }
 }
 
 export function useWebSocket() {
@@ -107,6 +135,8 @@ export function useWebSocket() {
                     memory: msg.memory,
                     error: msg.error,
                 })
+                // Show toast notifications for process state changes
+                notifyProcessStateChange(store, msg)
                 break
             case 'active_processes':
                 // Initialize process states from server on connection

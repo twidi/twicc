@@ -110,7 +110,7 @@ Two tables for append-only JSONL sync:
 
 - Python: ruff (line-length=120), mypy (strict, Python 3.13)
 - Tests: pytest with pytest-django
-- **Language:** All code content (UI strings, comments, variable names) must be in English. Only documentation files (*.md) may contain French.
+- **Language:** All code content (UI strings, comments, variable names) must be in English. Only documentation files (*.md) may contain French. **Important:** Even when the user speaks French, always write UI text and code in English.
 
 ## Python Patterns
 
