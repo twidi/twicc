@@ -58,13 +58,42 @@ import '@awesome.me/webawesome/dist/components/textarea/textarea.js'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { createNotivue } from 'notivue'
 import { router } from './router'
 import App from './App.vue'
 import { initSettings } from './stores/settings'
 
+// Notivue CSS
+import 'notivue/notification.css'
+import 'notivue/animations.css'
+
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
+
+// Configure Notivue toast system
+const notivue = createNotivue({
+    position: 'top-center',
+    limit: 3,
+    enqueue: true,
+    pauseOnHover: true,
+    pauseOnTabChange: false,
+    notifications: {
+        global: {
+            duration: 3000
+        },
+        success: {
+            duration: 3000
+        },
+        error: {
+            duration: 8000
+        },
+        promise: {
+            duration: Infinity
+        }
+    }
+})
+app.use(notivue)
 
 // Initialize settings (localStorage persistence, theme, font size, display mode watchers)
 initSettings()

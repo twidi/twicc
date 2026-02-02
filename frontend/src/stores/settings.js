@@ -19,6 +19,8 @@ const SETTINGS_SCHEMA = {
     debugEnabled: false,
     fontSize: 16,
     themeMode: DEFAULT_THEME_MODE,
+    // Not persisted - computed at runtime based on themeMode and system preference
+    _effectiveTheme: null,
 }
 
 /**
@@ -94,6 +96,11 @@ export const useSettingsStore = defineStore('settings', {
         isDebugEnabled: (state) => state.debugEnabled,
         getFontSize: (state) => state.fontSize,
         getThemeMode: (state) => state.themeMode,
+        /**
+         * Effective theme: always returns 'light' or 'dark', never 'system'.
+         * Takes into account the system preference when themeMode is 'system'.
+         */
+        getEffectiveTheme: (state) => state._effectiveTheme,
     },
 
     actions: {
@@ -138,6 +145,19 @@ export const useSettingsStore = defineStore('settings', {
             }
         },
 
+        /**
+         * Update the effective theme based on themeMode and system preference.
+         * Called internally when themeMode changes or system preference changes.
+         */
+        _updateEffectiveTheme() {
+            if (this.themeMode === THEME_MODE.SYSTEM) {
+                this._effectiveTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
+                    ? THEME_MODE.DARK
+                    : THEME_MODE.LIGHT
+            } else {
+                this._effectiveTheme = this.themeMode
+            }
+        },
     },
 })
 
@@ -160,6 +180,7 @@ export function initSettings() {
     document.documentElement.style.fontSize = `${store.fontSize}px`
 
     // Watch all state changes and save to localStorage
+    // Note: _effectiveTheme is excluded as it's computed at runtime
     watch(
         () => ({
             baseDisplayMode: store.baseDisplayMode,
@@ -176,6 +197,13 @@ export function initSettings() {
     // Watch for theme changes
     watch(() => store.themeMode, (mode) => {
         setThemeMode(mode)
+        store._updateEffectiveTheme()
+    })
+
+    // Initialize effective theme and listen for system preference changes
+    store._updateEffectiveTheme()
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        store._updateEffectiveTheme()
     })
 
     // Watch for font size changes

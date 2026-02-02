@@ -1,8 +1,10 @@
 <script setup>
 import { onMounted, watch, computed } from 'vue'
+import { Notivue, Notification, lightTheme, slateTheme } from 'notivue'
 import { useWebSocket } from './composables/useWebSocket'
 import { useDataStore } from './stores/data'
 import { useSettingsStore } from './stores/settings'
+import { THEME_MODE } from './constants'
 import ConnectionIndicator from './components/ConnectionIndicator.vue'
 
 // Initialize WebSocket connection for real-time updates
@@ -23,6 +25,13 @@ document.body.dataset.displayMode = displayMode.value
 watch(displayMode, (newMode) => {
     document.body.dataset.displayMode = newMode
 })
+
+// Notivue theme - inverted for contrast (dark theme when app is light, and vice-versa)
+const toastTheme = computed(() => {
+    const isDark = settingsStore.getEffectiveTheme === THEME_MODE.DARK
+    // Invert: use light toast theme when app is dark, and vice-versa
+    return isDark ? lightTheme : slateTheme
+})
 </script>
 
 <template>
@@ -30,6 +39,11 @@ watch(displayMode, (newMode) => {
     <div class="app-container">
         <router-view />
     </div>
+
+    <!-- Toast notification system (theme inverted for contrast) -->
+    <Notivue v-slot="item">
+        <Notification :item="item" :theme="toastTheme" />
+    </Notivue>
 </template>
 
 <style>
@@ -61,6 +75,20 @@ body {
 
     --user-card-base-color: #323b45;
     --assistant-card-base-color: #252e38;
+}
+
+/* Reset Web Awesome button styles inside Notivue notifications */
+.Notivue__close {
+    all: unset;
+    cursor: pointer;
+    padding: calc(var(--nv-spacing) / 2);
+    margin: var(--nv-spacing) var(--nv-spacing) var(--nv-spacing) 0;
+    font-weight: 700;
+    line-height: 1;
+    font-size: var(--nv-message-size);
+    color: var(--nv-fg, var(--nv-global-fg));
+    -webkit-tap-highlight-color: transparent;
+    position: relative;
 }
 
 </style>
