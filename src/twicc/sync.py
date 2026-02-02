@@ -199,6 +199,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             initial_title_needs_set = session.title is None
 
             # Track last seen values for runtime environment fields
+            first_cwd: str | None = None  # First cwd in this batch
             last_cwd: str | None = None
             last_git_branch: str | None = None
             last_model: str | None = None
@@ -245,6 +246,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
 
                 # Extract runtime environment fields (keep last non-null value)
                 if cwd := parsed.get('cwd'):
+                    if first_cwd is None:
+                        first_cwd = cwd
                     last_cwd = cwd
                 if git_branch := parsed.get('gitBranch'):
                     last_git_branch = git_branch
@@ -387,9 +390,11 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
 
             # Update runtime environment fields if changed
             if last_cwd and last_cwd != session.cwd:
+                # Update project directory only on first sync (when session.cwd was None)
+                # The first cwd of a session is the project directory (where Claude Code was launched)
+                if session.cwd is None and first_cwd:
+                    ensure_project_directory(session.project_id, first_cwd)
                 session.cwd = last_cwd
-                # Update project directory from session cwd
-                ensure_project_directory(session.project_id, last_cwd)
             if last_git_branch and last_git_branch != session.git_branch:
                 session.git_branch = last_git_branch
             if last_model and last_model != session.model:

@@ -937,6 +937,7 @@ def compute_session_metadata(session_id: str) -> None:
     last_context_usage: int | None = None
 
     # Track runtime environment fields (last seen values)
+    first_cwd: str | None = None  # First cwd = project directory
     last_cwd: str | None = None
     last_git_branch: str | None = None
     last_model: str | None = None
@@ -963,6 +964,8 @@ def compute_session_metadata(session_id: str) -> None:
 
         # Extract runtime environment fields (keep last non-null value)
         if cwd := parsed.get('cwd'):
+            if first_cwd is None:
+                first_cwd = cwd
             last_cwd = cwd
         if git_branch := parsed.get('gitBranch'):
             last_git_branch = git_branch
@@ -1124,9 +1127,9 @@ def compute_session_metadata(session_id: str) -> None:
     session.git_branch = last_git_branch
     session.model = last_model
 
-    # Update project directory from session cwd
-    if last_cwd:
-        ensure_project_directory(session.project_id, last_cwd)
+    # Update project directory from first session cwd (where Claude Code was launched)
+    if first_cwd:
+        ensure_project_directory(session.project_id, first_cwd)
 
     session.save(update_fields=['compute_version', 'message_count', 'context_usage', 'self_cost', 'subagents_cost', 'total_cost', 'cwd', 'git_branch', 'model'])
 
