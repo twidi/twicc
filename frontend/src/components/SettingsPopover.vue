@@ -145,6 +145,12 @@ function onPopoverShow() {
 </template>
 
 <style scoped>
+#settings-trigger {
+    &:hover {
+        z-index: 10;
+    }
+}
+
 .settings-popover {
     --max-width: 280px;
     --arrow-size: 16px;

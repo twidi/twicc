@@ -315,6 +315,10 @@ function handleSplitReposition(event) {
     wa-option {
         max-width: min(400px, calc(100vw - 100px));
     }
+    &:hover {
+        z-index: 10;
+        min-width: min(10rem, calc(100vw - 100px));
+    }
 }
 
 .selected-project-dot {
