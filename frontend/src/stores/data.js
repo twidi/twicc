@@ -48,8 +48,8 @@ export const useDataStore = defineStore('data', {
             sessionOpenTabs: {},
 
             // Agent links cache - maps tool_id to agent_id for Task tool_use items
-            // { sessionId: { toolId: agentId | null } }
-            // null means explicitly not found (avoid re-fetching)
+            // { sessionId: { toolId: agentId } }
+            // Only caches found agents (not-found triggers polling, not caching)
             agentLinks: {},
 
             // Project display names cache - computed from name, directory, or id
@@ -201,11 +201,11 @@ export const useDataStore = defineStore('data', {
             state.localState.sessionOpenTabs[sessionId] || null,
 
         // Get cached agent link for a tool_id in a session
-        // Returns: agentId (string), null (not found), or undefined (not fetched yet)
+        // Returns: agentId (string) or undefined (not in cache)
         getAgentLink: (state) => (sessionId, toolId) => {
             const sessionLinks = state.localState.agentLinks[sessionId]
             if (!sessionLinks) return undefined
-            return sessionLinks.hasOwnProperty(toolId) ? sessionLinks[toolId] : undefined
+            return sessionLinks[toolId]
         },
 
         // Get display name for a project (uses cache, computes if missing)
@@ -983,9 +983,10 @@ export const useDataStore = defineStore('data', {
          * Set an agent link in the cache.
          * @param {string} sessionId - The session ID
          * @param {string} toolId - The tool_use_id
-         * @param {string|null} agentId - The agent ID or null if not found
+         * @param {string} agentId - The agent ID (only cache when found)
          */
         setAgentLink(sessionId, toolId, agentId) {
+            if (!agentId) return // Only cache found agents
             if (!this.localState.agentLinks[sessionId]) {
                 this.localState.agentLinks[sessionId] = {}
             }

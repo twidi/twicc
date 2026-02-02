@@ -181,10 +181,7 @@ function onToolUseOpen() {
 // Cleanup on unmount (e.g., when changing session, toggling groups)
 onUnmounted(() => {
     stopPolling()
-    // Abort any in-flight agent link request
-    if (agentLinkAbortController.value) {
-        agentLinkAbortController.value.abort()
-    }
+    stopAgentPolling()
 })
 
 // Computed for display: single result or array of multiple
@@ -211,32 +208,40 @@ const displayInput = computed(() => {
 // Is this a Task tool_use?
 const isTask = computed(() => props.name === 'Task')
 
-// Agent link state: 'idle' | 'loading' | 'found' | 'not_found'
+// Agent link polling configuration
+const AGENT_POLLING_DELAY_MS = 3000
+const AGENT_POLLING_MAX_ATTEMPTS = 10
+
+// Agent link state: 'idle' | 'loading' | 'retrying' | 'found'
 const agentLinkState = ref('idle')
 const agentLinkAbortController = ref(null)
+const agentPollingIntervalId = ref(null)
+const agentPollingAttempts = ref(0)
 
 /**
- * Fetch the agent ID for this Task tool_use and navigate to the subagent tab.
+ * Fetch the agent ID for this Task tool_use.
+ * If found, navigates to the subagent tab.
+ * If not found and not yet polling, starts polling.
+ * If max attempts reached, stops polling and resets to idle.
  */
-async function handleViewAgent() {
+async function fetchAgentLink() {
     // Only for regular sessions (not subagents)
     if (props.parentSessionId) return
 
-    // Check cache first
+    // Check cache first (only caches found agents, not nulls)
     const cached = dataStore.getAgentLink(props.sessionId, props.toolId)
-    if (cached !== undefined) {
-        if (cached === null) {
-            // Already fetched, not found
-            agentLinkState.value = 'not_found'
-        } else {
-            // Found in cache, navigate
-            navigateToSubagent(cached)
-        }
+    if (cached) {
+        // Found in cache, navigate
+        stopAgentPolling()
+        navigateToSubagent(cached)
         return
     }
 
-    // Fetch from API
-    agentLinkState.value = 'loading'
+    // Don't set loading state if we're polling (to avoid flicker)
+    if (!agentPollingIntervalId.value) {
+        agentLinkState.value = 'loading'
+    }
+
     agentLinkAbortController.value = new AbortController()
 
     try {
@@ -250,22 +255,66 @@ async function handleViewAgent() {
         const data = await response.json()
         const agentId = data.agent_id
 
-        // Cache the result
-        dataStore.setAgentLink(props.sessionId, props.toolId, agentId)
-
         if (agentId) {
+            // Found! Cache it and navigate
+            dataStore.setAgentLink(props.sessionId, props.toolId, agentId)
             agentLinkState.value = 'found'
+            stopAgentPolling()
             navigateToSubagent(agentId)
         } else {
-            agentLinkState.value = 'not_found'
+            // Not found - start or continue polling
+            if (!agentPollingIntervalId.value) {
+                startAgentPolling()
+            } else {
+                // Check if max attempts reached
+                agentPollingAttempts.value++
+                if (agentPollingAttempts.value >= AGENT_POLLING_MAX_ATTEMPTS) {
+                    stopAgentPolling()
+                    agentLinkState.value = 'idle'
+                }
+            }
         }
     } catch (err) {
         if (err.name === 'AbortError') return
         console.error('Failed to fetch agent link:', err)
-        agentLinkState.value = 'not_found'
+        // On error, stop polling and reset to idle
+        stopAgentPolling()
+        agentLinkState.value = 'idle'
     } finally {
         agentLinkAbortController.value = null
     }
+}
+
+/**
+ * Start polling for agent link.
+ */
+function startAgentPolling() {
+    if (agentPollingIntervalId.value) return // Already polling
+    agentLinkState.value = 'retrying'
+    agentPollingAttempts.value = 1 // First attempt already done
+    agentPollingIntervalId.value = setInterval(fetchAgentLink, AGENT_POLLING_DELAY_MS)
+}
+
+/**
+ * Stop polling for agent link.
+ */
+function stopAgentPolling() {
+    if (agentLinkAbortController.value) {
+        agentLinkAbortController.value.abort()
+        agentLinkAbortController.value = null
+    }
+    if (agentPollingIntervalId.value) {
+        clearInterval(agentPollingIntervalId.value)
+        agentPollingIntervalId.value = null
+    }
+    agentPollingAttempts.value = 0
+}
+
+/**
+ * Handle click on View Agent button.
+ */
+function handleViewAgent() {
+    fetchAgentLink()
 }
 
 /**
@@ -322,16 +371,15 @@ function toggleResultPath(path) {
             <!-- View Agent button for Task tool_use (only in regular sessions) -->
             <template v-if="isTask && !parentSessionId">
                 <wa-button
-                    v-if="agentLinkState !== 'not_found'"
                     size="small"
                     variant="brand"
                     appearance="outlined"
                     :loading="agentLinkState === 'loading'"
+                    :disabled="agentLinkState === 'retrying'"
                     @click.stop="handleViewAgent"
                 >
-                    View Agent
+                    {{ agentLinkState === 'retrying' ? 'Retrying...' : 'View Agent' }}
                 </wa-button>
-                <span v-else class="agent-not-found">Agent not found</span>
             </template>
         </span>
         <div v-if="displayInput" class="tool-input">
@@ -395,6 +443,9 @@ wa-details.with-right-part {
         wa-button {
             margin-block: -1em;
         }
+        & > :not(wa-button):last-child {
+            margin-right: var(--spacing);
+        }
     }
 
     .items-details-summary-left {
@@ -406,13 +457,6 @@ wa-details.with-right-part {
         /* Description can wrap on multiple lines */
         word-wrap: break-word;
     }
-}
-
-.agent-not-found {
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-s);
-    font-style: italic;
-    white-space: nowrap;
 }
 
 .tool-input {

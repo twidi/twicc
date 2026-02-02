@@ -11,10 +11,11 @@ from __future__ import annotations
 import orjson
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import Any, NamedTuple
 
 import xmltodict
 from django.conf import settings
+from django.core.exceptions import MultipleObjectsReturned
 
 from twicc.core.enums import ItemDisplayLevel, ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
@@ -35,9 +36,6 @@ _SYSTEM_XML_PREFIXES = (
 
 # Maximum length for extracted titles (before truncation)
 TITLE_MAX_LENGTH = 200
-
-if TYPE_CHECKING:
-    from twicc.core.models import Session
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +142,7 @@ def _strip_markdown(text: str) -> str:
     return text
 
 
-def _extract_text_from_content(content: str | list) -> str | None:
+def extract_text_from_content(content: str | list | None) -> str | None:
     """
     Extract text content from a user message content field.
 
@@ -206,13 +204,10 @@ def extract_title_from_user_message(parsed_json: dict) -> str | None:
     Returns:
         Cleaned title string, or None if no text content found
     """
-    message = parsed_json.get('message', {})
-    content = message.get('content')
-
-    if content is None:
+    if (content := get_message_content(parsed_json)) is None:
         return None
 
-    text = _extract_text_from_content(content)
+    text = extract_text_from_content(content)
     if not text:
         return None
 
@@ -244,13 +239,6 @@ def extract_title_from_user_message(parsed_json: dict) -> str | None:
 # =============================================================================
 
 
-def _get_content_list(parsed_json: dict) -> list | None:
-    """Extract the content list from a user or assistant message."""
-    message = parsed_json.get('message', {})
-    content = message.get('content')
-    return content if isinstance(content, list) else None
-
-
 def _has_collapsible_prefix(content: list) -> bool:
     """Check if content array starts with a collapsible element."""
     if not content:
@@ -277,23 +265,27 @@ def _detect_prefix_suffix(parsed_json: dict, kind: ItemKind | None) -> tuple[boo
     if kind not in (ItemKind.USER_MESSAGE, ItemKind.ASSISTANT_MESSAGE):
         return False, False
 
-    content = _get_content_list(parsed_json)
+    content = get_message_content_list(parsed_json)
     if not content:
         return False, False
 
     return _has_collapsible_prefix(content), _has_collapsible_suffix(content)
 
 
-def get_message_content_list(parsed_json: dict, expected_type: str) -> list | None:
-    """
-    Extract the content array from a message of the expected type.
-    """
-    if parsed_json.get("type") != expected_type:
-        return None
+def get_message_content(parsed_json: dict) -> list | str | None:
     message = parsed_json.get('message', None)
     if not isinstance(message, dict):
         return None
-    content = message.get('content')
+    return message.get('content')
+
+
+def get_message_content_list(parsed_json: dict, expected_type: str | None = None) -> list | None:
+    """
+    Extract the content array from a message of the expected type.
+    """
+    if expected_type is not None and parsed_json.get("type") != expected_type:
+        return None
+    content = get_message_content(parsed_json)
     if not isinstance(content, list):
         return None
     return content
@@ -401,7 +393,7 @@ def get_tool_result_agent_info(parsed_json: dict) -> tuple[str, str] | None:
     return tool_use_id, agent_id
 
 
-def _is_system_xml_content(content: str | list) -> bool:
+def _is_system_xml_content(content: str | list | None) -> bool:
     """
     Check if content is a system XML message (command invocation or output).
 
@@ -420,7 +412,7 @@ def _is_system_xml_content(content: str | list) -> bool:
     return False
 
 
-def _has_visible_content(content: str | list) -> bool:
+def _has_visible_content(content: str | list | None) -> bool:
     """
     Check if message content contains user-visible content.
 
@@ -432,6 +424,9 @@ def _has_visible_content(content: str | list) -> bool:
     Returns:
         True if content is a string or contains at least one visible content item
     """
+    if not content:
+        return False
+
     if isinstance(content, str):
         return True
 
@@ -528,9 +523,8 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
     # User messages
     if entry_type == 'user':
 
-        message = parsed_json.get('message', {})
-        content = message.get('content', [])
-        text = _extract_text_from_content(content)
+        content = get_message_content(parsed_json)
+        text = extract_text_from_content(content)
 
         # Commands are shown as user messages
         if text is not None and extract_command(text):
@@ -556,8 +550,7 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
 
     # Assistant messages
     if entry_type == 'assistant':
-        message = parsed_json.get('message', {})
-        content = message.get('content', [])
+        content = get_message_content(parsed_json)
 
         # Only assistant messages with visible content count as ASSISTANT_MESSAGE
         if _has_visible_content(content):
@@ -1217,7 +1210,7 @@ def create_tool_result_link_live(session_id: str, item: SessionItem, parsed_json
             return
 
 
-def create_agent_link_live(session_id: str, item: SessionItem, parsed_json: dict) -> None:
+def create_agent_link_from_tool_result(session_id: str, item: SessionItem, parsed_json: dict) -> None:
     """
     Create a SessionItemLink for a Task tool_result with agentId during live sync.
 
@@ -1237,12 +1230,16 @@ def create_agent_link_live(session_id: str, item: SessionItem, parsed_json: dict
 
     tool_use_id, agent_id = agent_info
 
+    if is_agent_link_done(session_id, agent_id):
+        return
+
     # Check if we already have this agent link
     if SessionItemLink.objects.filter(
         session_id=session_id,
         link_type='agent',
         reference=agent_id,
     ).exists():
+        mark_agent_link_done(session_id, agent_id)
         return
 
     # Find the Task tool_use by searching for the tool_use_id
@@ -1260,13 +1257,19 @@ def create_agent_link_live(session_id: str, item: SessionItem, parsed_json: dict
 
         # Check if this candidate has a Task tool_use with this ID
         if tool_use_id in get_task_tool_uses(candidate_parsed):
-            SessionItemLink.objects.get_or_create(
-                session_id=session_id,
-                source_line_num=candidate.line_num,
-                target_line_num=None,  # agent links have no target line
-                link_type='agent',
-                reference=agent_id,
-            )
+            try:
+                SessionItemLink.objects.get_or_create(
+                    session_id=session_id,
+                    link_type='agent',
+                    source_line_num=candidate.line_num,
+                    defaults={
+                        "reference": agent_id,
+                        "target_line_num": None,  # agent links have no target line
+                    }
+                )
+                mark_agent_link_done(session_id, agent_id)
+            except MultipleObjectsReturned:  # defensive mode
+                pass
             return
 
 
@@ -1293,11 +1296,40 @@ def _extract_task_tool_use_prompt(content: list) -> str | None:
     return None
 
 
+AGENTS_LINKS_DONE_CACHE: set[tuple[str, str]] = set()
+AGENTS_PROMPT_CACHE: dict[tuple[str, str], str] = {}
+
+
+def mark_agent_link_done(session_id: str, agent_id: str) -> None:
+    """Mark that we've created the agent link for this subagent."""
+    AGENTS_LINKS_DONE_CACHE.add((session_id, agent_id))
+    uncache_agent_prompt(session_id, agent_id)
+
+
+def is_agent_link_done(session_id: str, agent_id: str) -> bool:
+    """Check if we've already created the agent link for this subagent."""
+    return (session_id, agent_id) in AGENTS_LINKS_DONE_CACHE
+
+
+def get_cached_agent_prompt(session_id: str, agent_id: str) -> str | None:
+    """Get the prompt for a subagent from the cache."""
+    return AGENTS_PROMPT_CACHE.get((session_id, agent_id))
+
+
+def cache_agent_prompt(session_id: str, agent_id: str, prompt: str) -> None:
+    """Set the prompt for a subagent in the cache."""
+    AGENTS_PROMPT_CACHE[(session_id, agent_id)] = prompt
+
+
+def uncache_agent_prompt(session_id: str, agent_id: str) -> None:
+    """Clear the prompt for a subagent from the cache."""
+    AGENTS_PROMPT_CACHE.pop((session_id, agent_id), None)
+
+
 def create_agent_link_from_subagent(
     parent_session_id: str,
     agent_id: str,
     agent_prompt: str,
-    agent_timestamp: str,
 ) -> bool:
     """
     Create a SessionItemLink for a subagent by matching its prompt to a Task tool_use.
@@ -1316,9 +1348,10 @@ def create_agent_link_from_subagent(
     Returns:
         True if the link was created, False otherwise
     """
-    from datetime import datetime, timedelta
-
     from twicc.core.models import SessionItemLink
+
+    if is_agent_link_done(parent_session_id, agent_id):
+        return False
 
     # Check if we already have this agent link
     if SessionItemLink.objects.filter(
@@ -1326,15 +1359,10 @@ def create_agent_link_from_subagent(
         link_type='agent',
         reference=agent_id,
     ).exists():
+        mark_agent_link_done(parent_session_id, agent_id)
         return False
 
-    # Parse agent timestamp to compute 5-minute limit
-    try:
-        agent_dt = datetime.fromisoformat(agent_timestamp.replace('Z', '+00:00'))
-        min_timestamp = agent_dt - timedelta(minutes=5)
-    except (ValueError, AttributeError):
-        # If we can't parse the timestamp, skip the time limit check
-        min_timestamp = None
+    agent_prompt = agent_prompt.strip()
 
     # Search for Task tool_use items in parent session, most recent first
     # We look for items containing '"name":"Task"' to narrow the search
@@ -1343,23 +1371,11 @@ def create_agent_link_from_subagent(
         content__contains='"name":"Task"',
     ).order_by('-line_num')
 
-    for candidate in candidates.iterator(chunk_size=10):
+    for index, candidate in enumerate(candidates.iterator(chunk_size=20)):
         try:
             candidate_parsed = orjson.loads(candidate.content)
         except orjson.JSONDecodeError:
             continue
-
-        # Check timestamp - stop if older than 5 minutes before agent creation
-        if min_timestamp is not None:
-            candidate_timestamp = candidate_parsed.get('timestamp')
-            if candidate_timestamp:
-                try:
-                    candidate_dt = datetime.fromisoformat(candidate_timestamp.replace('Z', '+00:00'))
-                    if candidate_dt < min_timestamp:
-                        # Too old, stop searching
-                        return False
-                except (ValueError, AttributeError):
-                    pass
 
         # Get the content list from assistant message
         content = get_message_content_list(candidate_parsed, "assistant")
@@ -1368,15 +1384,23 @@ def create_agent_link_from_subagent(
 
         # Extract the prompt from Task tool_use
         prompt = _extract_task_tool_use_prompt(content)
-        if prompt and prompt == agent_prompt:
-            SessionItemLink.objects.get_or_create(
-                session_id=parent_session_id,
-                source_line_num=candidate.line_num,
-                target_line_num=None,  # agent links have no target line
-                link_type='agent',
-                reference=agent_id,
-            )
-            return True
+        if prompt and prompt.strip() == agent_prompt:
+            try:
+                obj, created = SessionItemLink.objects.get_or_create(
+                    session_id=parent_session_id,
+                    link_type='agent',
+                    source_line_num=candidate.line_num,
+                    defaults={
+                        "reference": agent_id,
+                        "target_line_num": None,  # agent links have no target line
+                    }
+                )
+                if created:
+                    mark_agent_link_done(parent_session_id, agent_id)
+                    logger.debug(f"CREATE LINK FOR AGENT {agent_id} SESSION {parent_session_id}")
+                    return True
+            except MultipleObjectsReturned:  # defensive mode
+                continue
 
     return False
 

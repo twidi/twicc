@@ -7,6 +7,8 @@ with the database, and reads new lines from modified JSONL files.
 
 from __future__ import annotations
 
+import logging
+
 import orjson
 import sys
 import time
@@ -17,16 +19,21 @@ from typing import TYPE_CHECKING
 from django.conf import settings
 
 from twicc.compute import (
+    cache_agent_prompt,
+    create_agent_link_from_tool_result,
+    create_agent_link_from_subagent,
+    create_tool_result_link_live,
+    compute_item_cost_and_usage,
     compute_item_metadata,
     compute_item_metadata_live,
-    compute_item_cost_and_usage,
     ensure_project_directory,
     extract_item_timestamp,
-    is_tool_result_item,
-    create_tool_result_link_live,
-    create_agent_link_live,
-    create_agent_link_from_subagent,
+    extract_text_from_content,
     extract_title_from_user_message,
+    get_cached_agent_prompt,
+    get_message_content,
+    is_agent_link_done,
+    is_tool_result_item,
     update_project_total_cost,
 )
 from twicc.core.enums import ItemDisplayLevel, ItemKind
@@ -204,12 +211,11 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             last_git_branch: str | None = None
             last_model: str | None = None
 
-            # For subagents: track if we need to create the agent link from first user_message
-            # Only do this if the session has no items yet (first sync of this subagent)
+            # For subagents: track if we need to create the link between the agent and the parent session tool use
             subagent_needs_link = (
                 session.type == SessionType.SUBAGENT
                 and session.parent_session_id
-                and session.last_line == 0  # No items yet
+                and not is_agent_link_done(session.parent_session_id, session.id)
             )
 
             # Load existing message_ids for deduplication of cost computation
@@ -264,38 +270,32 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                         initial_title_needs_set = False
 
                 # For subagents: create agent link from first user_message
-                if item.kind == ItemKind.USER_MESSAGE and subagent_needs_link:
-                    # Extract prompt from user message content
-                    message = parsed.get('message', {})
-                    content = message.get('content') if isinstance(message, dict) else None
-                    agent_id = parsed.get('agentId')
-                    timestamp = parsed.get('timestamp')
-
-                    if content and agent_id and timestamp and session.parent_session_id:
-                        # Content can be a string or a list with text entries
-                        if isinstance(content, str):
-                            prompt = content
-                        elif isinstance(content, list):
-                            # Find first text entry
-                            prompt = None
-                            for entry in content:
-                                if isinstance(entry, dict) and entry.get('type') == 'text':
-                                    prompt = entry.get('text')
-                                    break
-                                elif isinstance(entry, str):
-                                    prompt = entry
-                                    break
-                        else:
-                            prompt = None
+                if subagent_needs_link and (agent_id := parsed.get('agentId')):
+                    prompt = get_cached_agent_prompt(session.parent_session_id, agent_id)
+                    if not prompt:
+                        # try to get from db
+                        if (first_user_message := session.items.filter(kind=ItemKind.USER_MESSAGE).first()) is not None:
+                            try:
+                                first_user_message_parsed = orjson.loads(first_user_message.content)
+                            except orjson.JSONDecodeError:
+                                pass
+                            else:
+                                prompt = extract_text_from_content(get_message_content(first_user_message_parsed))
+                        if not prompt:
+                            # not in db so we may be the first one
+                            if item.kind == ItemKind.USER_MESSAGE:
+                                content = get_message_content(parsed)
+                                prompt = extract_text_from_content(content)
 
                         if prompt:
-                            create_agent_link_from_subagent(
+                            cache_agent_prompt(session.parent_session_id, agent_id, prompt)
+                            if create_agent_link_from_subagent(
                                 parent_session_id=session.parent_session_id,
                                 agent_id=agent_id,
                                 agent_prompt=prompt,
-                                agent_timestamp=timestamp,
-                            )
-                    subagent_needs_link = False  # Only try once
+                            ):
+
+                                subagent_needs_link = False
 
                 if item.kind == ItemKind.CUSTOM_TITLE:
                     # Custom title: update the target session's title
@@ -338,7 +338,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 if is_tool_result_item(parsed):
                     create_tool_result_link_live(session.id, item, parsed)
                     # Also check for agent links (Task tool_result with agentId)
-                    create_agent_link_live(session.id, item, parsed)
+                    create_agent_link_from_tool_result(session.id, item, parsed)
 
             # Apply title updates
             for target_session_id, title in session_title_updates.items():
