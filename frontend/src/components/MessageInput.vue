@@ -1,6 +1,6 @@
 <script setup>
 // MessageInput.vue - Text input for sending messages to Claude
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { sendWsMessage } from '../composables/useWebSocket'
@@ -79,14 +79,34 @@ watch(messageText, (newText) => {
     store.setDraftMessage(props.sessionId, newText)
 })
 
-// Autofocus textarea for draft sessions
-onMounted(async () => {
-    if (isDraft.value && textareaRef.value) {
-        // Wait for next tick to ensure the component is fully rendered
+// Autofocus textarea for draft sessions (only once)
+const hasAutoFocused = ref(false)
+
+// Watch both isDraft and textareaRef - focus when both are ready
+watch([isDraft, textareaRef], async ([isDraftSession, textarea]) => {
+    if (isDraftSession && !hasAutoFocused.value && textarea) {
+        hasAutoFocused.value = true
+        // Wait for Vue's next tick
         await nextTick()
-        textareaRef.value.focus()
+        // Wait for the Web Component to be fully rendered (Lit's updateComplete)
+        if (textarea.updateComplete) {
+            await textarea.updateComplete
+        }
+        // Wait until the textarea is visible (offsetParent !== null).
+        // When creating a new session from an empty state (no session was selected),
+        // the parent components (SessionView, SessionItemsList) are mounted for the first time,
+        // and the textarea may not be visible yet. An element with offsetParent === null
+        // cannot receive focus.
+        const maxAttempts = 20
+        for (let i = 0; i < maxAttempts; i++) {
+            if (textarea.offsetParent !== null) {
+                break
+            }
+            await new Promise(resolve => requestAnimationFrame(resolve))
+        }
+        textarea.focus()
     }
-})
+}, { immediate: true })
 
 /**
  * Handle textarea input event.
