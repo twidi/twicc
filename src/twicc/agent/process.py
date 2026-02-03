@@ -4,8 +4,6 @@ Claude process wrapper for a single SDK client instance.
 
 import asyncio
 import logging
-import os
-import signal
 import time
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -385,7 +383,11 @@ class ClaudeProcess:
             await self._kill_system_process(pid)
 
     async def _kill_system_process(self, pid: int) -> None:
-        """Kill the system process by PID, completely isolated from anyio.
+        """Kill the system process and all its children, isolated from anyio.
+
+        Uses psutil to find and kill all child processes recursively (including
+        bash commands spawned by tools). Falls back to single process kill if
+        psutil fails.
 
         Uses SIGTERM first for graceful shutdown, then SIGKILL after timeout.
         Runs in a thread executor to avoid any async context pollution that
@@ -394,42 +396,50 @@ class ClaudeProcess:
         Args:
             pid: Process ID to kill
         """
+        import psutil
 
         def _do_kill() -> None:
             """Synchronous kill logic, runs in a separate thread."""
             try:
-                # Check if process exists
-                os.kill(pid, 0)  # Signal 0 = check existence only
-            except OSError:
-                # Process already dead
+                parent = psutil.Process(pid)
+            except psutil.NoSuchProcess:
                 logger.debug("Process %d already dead", pid)
                 return
 
+            # Get all children recursively BEFORE killing parent
+            # (once parent is dead, children become orphans and harder to find)
             try:
-                # SIGTERM first (graceful termination)
-                logger.debug("Sending SIGTERM to process %d", pid)
-                os.kill(pid, signal.SIGTERM)
+                children = parent.children(recursive=True)
+            except psutil.NoSuchProcess:
+                children = []
 
-                # Wait up to 2 seconds for graceful termination
-                for _ in range(20):  # 20 x 0.1s = 2s
-                    time.sleep(0.1)
-                    try:
-                        os.kill(pid, 0)  # Check if still alive
-                    except OSError:
-                        logger.debug("Process %d terminated gracefully", pid)
-                        return
+            all_procs = children + [parent]  # Kill children first, then parent
+            logger.debug("Killing process %d and %d children", pid, len(children))
 
-                # Still alive after 2s → SIGKILL
-                logger.warning(
-                    "Process %d did not terminate after SIGTERM, sending SIGKILL", pid
-                )
-                os.kill(pid, signal.SIGKILL)
+            # SIGTERM to all processes
+            for proc in all_procs:
+                try:
+                    proc.terminate()  # SIGTERM
+                    logger.debug("Sent SIGTERM to process %d", proc.pid)
+                except psutil.NoSuchProcess:
+                    pass
 
-            except OSError as e:
-                # Process died between checks or permission denied
-                logger.debug("Kill operation for process %d: %s", pid, e)
-            except Exception as e:
-                logger.error("Unexpected error killing process %d: %s", pid, e)
+            # Wait for graceful termination (up to 2 seconds)
+            gone, alive = psutil.wait_procs(all_procs, timeout=2)
+
+            if gone:
+                logger.debug("%d process(es) terminated gracefully", len(gone))
+
+            # SIGKILL any survivors
+            for proc in alive:
+                try:
+                    logger.warning(
+                        "Process %d did not terminate after SIGTERM, sending SIGKILL",
+                        proc.pid,
+                    )
+                    proc.kill()  # SIGKILL
+                except psutil.NoSuchProcess:
+                    pass
 
         # Run in thread executor for complete isolation from async context
         loop = asyncio.get_running_loop()
