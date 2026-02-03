@@ -19,6 +19,7 @@ const titleInputRef = ref(null)
 const localTitle = ref('')
 const isSaving = ref(false)
 const errorMessage = ref('')
+const showContextHint = ref(false)  // Show hint when opened during message send
 
 // Sync form values when session changes
 watch(
@@ -57,9 +58,12 @@ function focusTitleInput() {
 
 /**
  * Open the dialog.
+ * @param {Object} options
+ * @param {boolean} options.showHint - Show contextual hint (when opened during message send)
  */
-function open() {
+function open({ showHint = false } = {}) {
     errorMessage.value = ''
+    showContextHint.value = showHint
     syncFormState()
     if (dialogRef.value) {
         dialogRef.value.open = true
@@ -147,6 +151,11 @@ defineExpose({
         @wa-after-show="focusTitleInput"
     >
         <form v-if="session" id="session-rename-form" class="dialog-content" @submit.prevent="handleSave">
+            <!-- Contextual hint when opened during message send -->
+            <p v-if="showContextHint" class="context-hint">
+                While Claude is working, you may want to give this session a more descriptive name.
+            </p>
+
             <div class="form-group">
                 <label class="form-label">Title</label>
                 <wa-input
@@ -202,6 +211,12 @@ defineExpose({
 
 .form-hint {
     font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+}
+
+.context-hint {
+    margin: 0;
+    font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
 }
 

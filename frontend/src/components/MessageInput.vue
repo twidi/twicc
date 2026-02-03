@@ -23,6 +23,8 @@ const props = defineProps({
 const router = useRouter()
 const store = useDataStore()
 
+const emit = defineEmits(['needs-title'])
+
 // Get session data to check if it's a draft
 const session = computed(() => store.getSession(props.sessionId))
 const isDraft = computed(() => session.value?.draft === true)
@@ -130,6 +132,7 @@ function onKeydown(event) {
  * Send the message via WebSocket.
  * Backend handles both new and existing sessions with the same message type.
  * For draft sessions with a custom title, include the title in the message.
+ * For draft sessions without a title, send the message AND open the rename dialog.
  */
 function handleSend() {
     const text = messageText.value.trim()
@@ -143,9 +146,15 @@ function handleSend() {
         text: text
     }
 
-    // For draft sessions with a custom title (not "New session"), include it
-    if (isDraft.value && session.value?.title && session.value.title !== 'New session') {
+    // For draft sessions with a title, include it
+    if (isDraft.value && session.value?.title) {
         payload.title = session.value.title
+    }
+
+    // For draft sessions without a title, open the rename dialog (non-blocking)
+    // The message is still sent, allowing the agent to start working
+    if (isDraft.value && !session.value?.title) {
+        emit('needs-title')
     }
 
     const success = sendWsMessage(payload)

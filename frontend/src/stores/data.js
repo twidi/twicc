@@ -296,7 +296,7 @@ export const useDataStore = defineStore('data', {
             this.sessions[id] = {
                 id,
                 project_id: projectId,
-                title: 'New session',
+                title: null,  // null = user hasn't set a title yet, UI will display "New session"
                 mtime: now,
                 last_line: 0,
                 draft: true,
@@ -1271,7 +1271,7 @@ export const useDataStore = defineStore('data', {
                     this.sessions[sessionId] = {
                         id: sessionId,
                         project_id: projectId,
-                        title: title || 'New session',
+                        title: title || null,  // null = user hasn't set a title yet
                         mtime: now,
                         last_line: 0,
                         draft: true,

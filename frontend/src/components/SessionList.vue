@@ -103,8 +103,12 @@ onUnmounted(() => {
     observer?.disconnect()
 })
 
-// Get display name for session (title if available, otherwise ID)
+// Get display name for session (title if available, "New session" for drafts, otherwise ID)
 function getSessionDisplayName(session) {
+    // For draft sessions without a title, show "New session"
+    if (session.draft && !session.title) {
+        return 'New session'
+    }
     return session.title || session.id
 }
 

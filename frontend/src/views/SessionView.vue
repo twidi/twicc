@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, watch, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import SessionHeader from '../components/SessionHeader.vue'
@@ -9,6 +9,9 @@ import SessionContent from '../components/SessionContent.vue'
 const route = useRoute()
 const router = useRouter()
 const store = useDataStore()
+
+// Reference to session header for opening rename dialog
+const sessionHeaderRef = ref(null)
 
 // Current session from route params
 const projectId = computed(() => route.params.projectId)
@@ -144,6 +147,15 @@ watch(subagentId, (newSubagentId) => {
         store.setSessionActiveTab(sessionId.value, activeTabId.value)
     }
 }, { immediate: true })
+
+/**
+ * Open the rename dialog for the session.
+ * Called when user sends a message from a draft session without a title.
+ * Shows a contextual hint since the message is being sent in parallel.
+ */
+function handleNeedsTitle() {
+    sessionHeaderRef.value?.openRenameDialog({ showHint: true })
+}
 </script>
 
 <template>
@@ -151,6 +163,7 @@ watch(subagentId, (newSubagentId) => {
         <!-- Main session header (always visible, above tabs) -->
         <SessionHeader
             v-if="session"
+            ref="sessionHeaderRef"
             :session-id="sessionId"
             mode="session"
         />
@@ -197,6 +210,7 @@ watch(subagentId, (newSubagentId) => {
                 <SessionItemsList
                     :session-id="sessionId"
                     :project-id="projectId"
+                    @needs-title="handleNeedsTitle"
                 />
             </wa-tab-panel>
 

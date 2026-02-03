@@ -26,11 +26,15 @@ const store = useDataStore()
 const session = computed(() => store.getSession(props.sessionId))
 
 // Get display name for header
-// - Session mode: title if available, otherwise session ID
+// - Session mode: title if available, "New session" for drafts without title, otherwise session ID
 // - Subagent mode: "Agent {agent_id}"
 const displayName = computed(() => {
     if (props.mode === 'subagent') {
         return `Agent ${props.sessionId}`
+    }
+    // For draft sessions without a title, show "New session"
+    if (session.value?.draft && !session.value?.title) {
+        return 'New session'
     }
     return session.value?.title || props.sessionId
 })
@@ -178,11 +182,17 @@ const renameDialogRef = ref(null)
 
 /**
  * Open the rename dialog.
+ * @param {Object} options
+ * @param {boolean} options.showHint - Show contextual hint (when opened during message send)
  */
-function openRenameDialog() {
-    renameDialogRef.value?.open()
+function openRenameDialog({ showHint = false } = {}) {
+    renameDialogRef.value?.open({ showHint })
 }
 
+// Expose methods for parent components
+defineExpose({
+    openRenameDialog,
+})
 </script>
 
 <template>

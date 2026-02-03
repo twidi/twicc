@@ -33,6 +33,8 @@ const props = defineProps({
 
 const store = useDataStore()
 
+const emit = defineEmits(['needs-title'])
+
 // Reference to the VirtualScroller component
 const scrollerRef = ref(null)
 
@@ -576,6 +578,7 @@ function toggleGroup(groupHeadLineNum) {
                 :key="sessionId"
                 :session-id="sessionId"
                 :project-id="projectId"
+                @needs-title="emit('needs-title')"
             />
         </div>
     </div>
