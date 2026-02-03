@@ -23,8 +23,9 @@ export function formatDate(timestamp, { smart = false } = {}) {
     if (smart) {
         const hoursDiff = (now - date) / (1000 * 60 * 60)
 
-        // Less than 24 hours ago: time only
-        if (hoursDiff < 24 && hoursDiff >= 0) {
+        // Within 24 hours (past or future): time only
+        // We accept future times to handle slight clock desync between backend and frontend
+        if (hoursDiff < 24 && hoursDiff >= -24) {
             return timeStr
         }
 
