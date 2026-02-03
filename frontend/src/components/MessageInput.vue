@@ -1,7 +1,7 @@
 <script setup>
 // MessageInput.vue - Text input for sending messages to Claude
 import { ref, computed, watch, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { sendWsMessage } from '../composables/useWebSocket'
 import { useVisualViewport } from '../composables/useVisualViewport'
@@ -21,7 +21,14 @@ const props = defineProps({
 })
 
 const router = useRouter()
+const route = useRoute()
 const store = useDataStore()
+
+// Detect "All Projects" mode from route name
+const isAllProjectsMode = computed(() =>
+    route.name === 'projects-session' ||
+    route.name === 'projects-session-subagent'
+)
 
 const emit = defineEmits(['needs-title'])
 
@@ -178,13 +185,19 @@ function handleSend() {
 }
 
 /**
- * Cancel the draft session and navigate back to project.
+ * Cancel the draft session and navigate back to project list.
+ * Navigates to 'projects-all' if in All Projects mode, otherwise to 'project'.
  */
 function handleCancel() {
     // Clear draft message from store and IndexedDB
     store.clearDraftMessage(props.sessionId)
     store.deleteDraftSession(props.sessionId)
-    router.push({ name: 'project', params: { projectId: props.projectId } })
+
+    if (isAllProjectsMode.value) {
+        router.push({ name: 'projects-all' })
+    } else {
+        router.push({ name: 'project', params: { projectId: props.projectId } })
+    }
 }
 
 /**
