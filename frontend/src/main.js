@@ -1,34 +1,8 @@
 // frontend/src/main.js
 
-// Theme management
-// Placed before imports to apply theme class as early as possible
-// This prevents a flash of wrong theme on page load
-let currentThemeMode = localStorage.getItem('twicc-settings')
-    ? JSON.parse(localStorage.getItem('twicc-settings')).themeMode || 'system'
-    : 'system'
-
-function applyColorScheme() {
-    let isDark
-    if (currentThemeMode === 'system') {
-        isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-    } else {
-        isDark = currentThemeMode === 'dark'
-    }
-    document.documentElement.classList.toggle('wa-dark', isDark)
-    // Also set data-theme for github-markdown-css compatibility
-    document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
-}
-
-// Export function for settings store to call when theme mode changes
-export function setThemeMode(mode) {
-    currentThemeMode = mode
-    applyColorScheme()
-}
-
-// Apply initial theme immediately (before CSS imports)
-applyColorScheme()
-// Listen for system preference changes (only matters when mode is 'system')
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyColorScheme)
+// Theme management - must be initialized before CSS imports to prevent flash
+import { initTheme } from './utils/theme'
+initTheme()
 
 // Web Awesome theme and components
 import '@awesome.me/webawesome/dist/styles/webawesome.css';

@@ -5,7 +5,7 @@ import { defineStore } from 'pinia'
 import { watch } from 'vue'
 import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
 import { useDataStore } from './data'
-import { setThemeMode } from '../main'
+import { setThemeMode } from '../utils/theme'
 
 const STORAGE_KEY = 'twicc-settings'
 
