@@ -190,9 +190,9 @@ function openRenameDialog() {
         <div v-if="mode === 'session'" class="session-title">
             <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
 
-            <!-- Rename button (not for drafts or subagents) -->
+            <!-- Rename button (not for subagents) -->
             <wa-button
-                v-if="!session.draft && mode === 'session'"
+                v-if="mode === 'session'"
                 id="session-header-rename-button"
                 variant="neutral"
                 appearance="plain"

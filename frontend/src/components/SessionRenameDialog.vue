@@ -84,6 +84,8 @@ function onTitleInput(event) {
 
 /**
  * Save the session title.
+ * For draft sessions: store locally in the session object.
+ * For real sessions: call the API to rename.
  */
 async function handleSave() {
     if (!props.session) return
@@ -100,6 +102,15 @@ async function handleSave() {
         return
     }
 
+    // For draft sessions, just update locally (no API call)
+    if (props.session.draft) {
+        store.updateSession({ ...props.session, title: trimmedTitle })
+        emit('saved')
+        close()
+        return
+    }
+
+    // For real sessions, call the API
     isSaving.value = true
     errorMessage.value = ''
 

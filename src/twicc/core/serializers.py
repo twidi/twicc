@@ -37,7 +37,16 @@ def serialize_session(session):
 
     Works for both regular sessions and subagents. For subagents,
     parent_session_id will be set; for regular sessions it will be None.
+
+    For the title field, pending titles take priority over the database value.
+    This ensures that when a session is created with a custom title, the title
+    is immediately visible even before it's written to the JSONL file.
     """
+    from twicc.titles import get_pending_title
+
+    # Use pending title if available, otherwise use the stored title
+    title = get_pending_title(session.id) or session.title
+
     return {
         "id": session.id,
         "project_id": session.project_id,
@@ -45,7 +54,7 @@ def serialize_session(session):
         "last_line": session.last_line,
         "mtime": session.mtime,
         "archived": session.archived,
-        "title": session.title,  # Session title (from first user message or custom-title)
+        "title": title,  # Session title (from pending, first user message, or custom-title)
         "message_count": session.message_count,  # Number of user/assistant messages
         # Boolean indicating if session metadata is up-to-date
         "compute_version_up_to_date": session.compute_version == settings.CURRENT_COMPUTE_VERSION,

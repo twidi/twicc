@@ -127,16 +127,22 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             "type": "send_message",
             "session_id": "claude-conv-xxx",
             "project_id": "proj-xyz",
-            "text": "The message text"
+            "text": "The message text",
+            "title": "Optional session title"  // Only for new sessions
         }
 
         This handles both new sessions and existing sessions:
         - If session exists in database: resume the session
         - If session doesn't exist: create a new session with the provided session_id
+
+        The optional title field is only used for new sessions (drafts becoming real).
+        If provided, it will be stored as a pending title and written to JSONL
+        when the process becomes safe.
         """
         session_id = content.get("session_id")
         project_id = content.get("project_id")
         text = content.get("text")
+        title = content.get("title")  # Optional, only for new sessions
 
         # Validate required fields
         if not session_id or not project_id or not text:
@@ -153,6 +159,28 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                 }
             )
             return
+
+        # Validate title if provided
+        if title is not None:
+            from twicc.titles import validate_title
+
+            validated_title, title_error = validate_title(title)
+            if title_error:
+                logger.warning(
+                    "send_message: invalid title for session %s: %s",
+                    session_id,
+                    title_error,
+                )
+                await self.send_json(
+                    {
+                        "type": "invalid_title",
+                        "session_id": session_id,
+                        "title": title,
+                        "error": title_error,
+                    }
+                )
+                return
+            title = validated_title
 
         # Get project directory from database
         cwd = await get_project_directory(project_id)
@@ -178,6 +206,12 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                 await manager.resume_session(session_id, project_id, cwd, text)
             else:
                 # Session doesn't exist: create new with client-provided ID
+                # Store title as pending if provided (will be written when process is safe)
+                if title:
+                    from twicc.titles import set_pending_title
+
+                    set_pending_title(session_id, title)
+
                 await manager.new_session(session_id, project_id, cwd, text)
         except RuntimeError as e:
             # Process busy or other expected errors

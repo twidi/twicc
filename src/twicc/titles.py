@@ -17,6 +17,33 @@ logger = logging.getLogger(__name__)
 # Used when a process is in starting/assistant_turn
 _pending_titles: dict[str, str] = {}
 
+# Max title length (matches frontend validation)
+MAX_TITLE_LENGTH = 200
+
+
+def validate_title(title: str | None) -> tuple[str | None, str | None]:
+    """Validate and normalize a session title.
+
+    Args:
+        title: The title to validate (can be None or empty string)
+
+    Returns:
+        A tuple of (normalized_title, error_message).
+        - If valid: (trimmed_title, None)
+        - If invalid: (None, error_message)
+    """
+    if title is None:
+        return None, "Title cannot be empty"
+
+    title = title.strip()
+    if not title:
+        return None, "Title cannot be empty"
+
+    if len(title) > MAX_TITLE_LENGTH:
+        return None, f"Title must be {MAX_TITLE_LENGTH} characters or less"
+
+    return title, None
+
 
 def get_session_jsonl_path(session) -> Path:
     """Get the JSONL file path for a session."""
@@ -55,6 +82,11 @@ def set_pending_title(session_id: str, title: str) -> None:
     """Store a title to be written when the process becomes safe."""
     _pending_titles[session_id] = title
     logger.debug("Set pending title for session %s: %s", session_id, title[:50])
+
+
+def get_pending_title(session_id: str) -> str | None:
+    """Get a pending title for a session without removing it."""
+    return _pending_titles.get(session_id)
 
 
 def pop_pending_title(session_id: str) -> str | None:

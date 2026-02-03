@@ -56,9 +56,8 @@ function notifyProcessStateChange(store, msg) {
     } else if (msg.state === 'dead') {
         // Process stopped - check if voluntary or error
         if (msg.kill_reason === 'error') {
-            toast.error(sessionLabel, {
+            toast.error(`Error: "${msg.error || 'Unknown'}"\n${sessionLabel}`, {
                 title: 'Claude Code terminated due to error',
-                details: msg.error || undefined
             })
         } else {
             // Manual kill or shutdown
@@ -146,6 +145,12 @@ export function useWebSocket() {
             case 'active_processes':
                 // Initialize process states from server on connection
                 store.setActiveProcesses(msg.processes)
+                break
+            case 'invalid_title':
+                // Show error toast for invalid session title
+                toast.error(`Error: "${msg.error || 'Unknown'}"\nSession: "${msg.title}"`, {
+                    title: 'Invalid title',
+                })
                 break
         }
     }

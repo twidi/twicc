@@ -98,17 +98,26 @@ function onKeydown(event) {
 /**
  * Send the message via WebSocket.
  * Backend handles both new and existing sessions with the same message type.
+ * For draft sessions with a custom title, include the title in the message.
  */
 function handleSend() {
     const text = messageText.value.trim()
     if (!text || isDisabled.value) return
 
-    const success = sendWsMessage({
+    // Build the message payload
+    const payload = {
         type: 'send_message',
         session_id: props.sessionId,
         project_id: props.projectId,
         text: text
-    })
+    }
+
+    // For draft sessions with a custom title (not "New session"), include it
+    if (isDraft.value && session.value?.title && session.value.title !== 'New session') {
+        payload.title = session.value.title
+    }
+
+    const success = sendWsMessage(payload)
 
     if (success) {
         // Clear the textarea on successful send

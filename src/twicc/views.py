@@ -162,13 +162,11 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
         if "title" not in data:
             return JsonResponse({"error": "title field required"}, status=400)
 
-        title = data["title"]
-        if title is not None:
-            title = title.strip()
-            if not title:
-                return JsonResponse({"error": "Title cannot be empty"}, status=400)
-            if len(title) > 200:
-                return JsonResponse({"error": "Title must be 200 characters or less"}, status=400)
+        from twicc.titles import set_pending_title, validate_title, write_custom_title_to_jsonl
+
+        title, error = validate_title(data["title"])
+        if error:
+            return JsonResponse({"error": error}, status=400)
 
         # 1. Update DB immediately
         session.title = title
@@ -177,7 +175,6 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
         # 2. Write to JSONL (immediate or deferred)
         from twicc.agent.manager import get_process_manager
         from twicc.agent.states import ProcessState
-        from twicc.titles import set_pending_title, write_custom_title_to_jsonl
 
         manager = get_process_manager()
         process_info = manager.get_process_info(session_id)
