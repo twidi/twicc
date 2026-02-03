@@ -111,13 +111,26 @@ function handleBackHome() {
 }
 
 // Create a new draft session and navigate to it
-function handleNewSession() {
-    if (isAllProjectsMode.value || !projectId.value) return
-    const newSessionId = store.createDraftSession(projectId.value)
-    router.push({
-        name: 'session',
-        params: { projectId: projectId.value, sessionId: newSessionId }
-    })
+// In single project mode: uses current projectId
+// In all projects mode: requires explicit targetProjectId parameter
+function handleNewSession(targetProjectId = null) {
+    const projectIdToUse = targetProjectId || projectId.value
+    if (!projectIdToUse) return
+
+    const newSessionId = store.createDraftSession(projectIdToUse)
+
+    // Navigate to appropriate route based on current mode
+    if (isAllProjectsMode.value) {
+        router.push({
+            name: 'projects-session',
+            params: { projectId: projectIdToUse, sessionId: newSessionId }
+        })
+    } else {
+        router.push({
+            name: 'session',
+            params: { projectId: projectIdToUse, sessionId: newSessionId }
+        })
+    }
 }
 
 const SIDEBAR_WIDTH = 300
@@ -242,7 +255,8 @@ function handleSplitReposition(event) {
                     @select="handleSessionSelect"
                 />
 
-                <!-- Floating "New session" button (only in single project mode) -->
+                <!-- Floating "New session" button -->
+                <!-- In single project mode: direct click creates session -->
                 <wa-button
                     v-if="!isAllProjectsMode"
                     id="new-session-button"
@@ -250,12 +264,39 @@ function handleSplitReposition(event) {
                     variant="brand"
                     appearance="filled"
                     size="small"
-                    @click="handleNewSession"
+                    @click="handleNewSession()"
                 >
                     <wa-icon name="plus"></wa-icon>
                     <span>New session</span>
                 </wa-button>
                 <wa-tooltip for="new-session-button">Create a new session in this project</wa-tooltip>
+
+                <!-- In all projects mode: dropdown to choose project -->
+                <wa-dropdown
+                    v-if="isAllProjectsMode"
+                    id="new-session-dropdown"
+                    class="new-session-dropdown"
+                    placement="top-end"
+                    @wa-select="(e) => handleNewSession(e.detail.item.value)"
+                >
+                    <wa-button
+                        slot="trigger"
+                        variant="brand"
+                        appearance="filled"
+                        size="small"
+                    >
+                        <wa-icon slot="end" name="chevron-up"></wa-icon>
+                        <wa-icon name="plus"></wa-icon>
+                        <span>New session</span>
+                    </wa-button>
+                    <wa-dropdown-item
+                        v-for="p in allProjects"
+                        :key="p.id"
+                        :value="p.id"
+                    >
+                        <ProjectBadge :project-id="p.id" />
+                    </wa-dropdown-item>
+                </wa-dropdown>
             </div>
 
             <wa-divider></wa-divider>
@@ -446,6 +487,45 @@ function handleSplitReposition(event) {
     .new-session-button {
         &::part(base) {
             padding: var(--wa-space-s);
+        }
+        & > span {
+            display: none;
+        }
+    }
+}
+
+/* New session dropdown (for All Projects mode) - floating like the button */
+.new-session-dropdown {
+    /* Override display:contents to allow absolute positioning */
+    display: block;
+    position: absolute;
+    bottom: var(--wa-space-s);
+    right: var(--wa-space-s);
+    z-index: 5;
+    /* Only take the width needed by the trigger button */
+    width: fit-content;
+
+    /* Style the trigger button label */
+    & > wa-button::part(label) {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-xs);
+    }
+
+    /* Limit dropdown panel height for scrolling */
+    &::part(panel) {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+}
+
+@container sidebar (width <= 150px) {
+    .new-session-dropdown > wa-button {
+        &::part(base) {
+            padding: var(--wa-space-s);
+        }
+        &::part(caret) {
+            display: none;
         }
         & > span {
             display: none;
