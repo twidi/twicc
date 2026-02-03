@@ -22,38 +22,44 @@ const errorInfo = computed(() => {
 
 <template>
     <div class="api-error">
-        <div class="error-header">API Error</div>
-        <div class="error-body">
-            <div class="error-type">{{ errorInfo.type }}</div>
-            <div class="error-message">{{ errorInfo.message }}</div>
-            <div v-if="errorInfo.status" class="error-detail">Status: {{ errorInfo.status }}</div>
-            <div v-if="errorInfo.retryAttempt" class="error-detail">
-                Retry {{ errorInfo.retryAttempt }}/{{ errorInfo.maxRetries }}
+        <wa-callout variant="danger" appearance="outlined" size="small">
+            <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+            <div class="error-content">
+                <div class="error-message">Error from Claude: {{ errorInfo.message }}</div>
+                <div v-if="errorInfo.status || errorInfo.retryAttempt" class="error-details">
+                    <span v-if="errorInfo.status">Status: {{ errorInfo.status }}</span>
+                    <span v-if="errorInfo.status && errorInfo.retryAttempt" class="separator">•</span>
+                    <span v-if="errorInfo.retryAttempt">
+                        Retry {{ errorInfo.retryAttempt }}/{{ errorInfo.maxRetries }}
+                    </span>
+                </div>
             </div>
-        </div>
+        </wa-callout>
     </div>
 </template>
 
 <style scoped>
 .api-error {
-    font-family: var(--wa-font-sans);
+    padding-top: var(--wa-space-l);
 }
 
-.error-header {
-    font-weight: 600;
-    color: var(--wa-color-danger);
+.error-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-3xs);
+}
+
+.error-message {
+    color: inherit;
+    font-weight: bold;
+}
+
+.error-details {
     font-size: var(--wa-font-size-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    opacity: 0.8;
 }
 
-.error-type {
-    font-weight: 600;
-    color: var(--wa-color-danger);
-}
-
-.error-detail {
-    font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-quiet);
+.separator {
+    margin: 0 var(--wa-space-2xs);
 }
 </style>
