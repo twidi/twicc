@@ -64,9 +64,29 @@ async function handleRetry() {
 function handleProjectChange(event) {
     const newProjectId = event.target.value
     if (newProjectId === ALL_PROJECTS_ID) {
-        router.push({ name: 'projects-all' })
-    } else if (newProjectId && newProjectId !== projectId.value) {
-        router.push({ name: 'project', params: { projectId: newProjectId } })
+        // If we have a session selected, keep it in "All Projects" mode
+        if (sessionId.value && projectId.value) {
+            const subagentId = route.params.subagentId
+            if (subagentId) {
+                router.push({ name: 'projects-session-subagent', params: { projectId: projectId.value, sessionId: sessionId.value, subagentId } })
+            } else {
+                router.push({ name: 'projects-session', params: { projectId: projectId.value, sessionId: sessionId.value } })
+            }
+        } else {
+            router.push({ name: 'projects-all' })
+        }
+    } else if (newProjectId && newProjectId !== effectiveProjectId.value) {
+        // If we have a session selected that belongs to this project, keep it
+        if (sessionId.value && projectId.value === newProjectId) {
+            const subagentId = route.params.subagentId
+            if (subagentId) {
+                router.push({ name: 'session-subagent', params: { projectId: newProjectId, sessionId: sessionId.value, subagentId } })
+            } else {
+                router.push({ name: 'session', params: { projectId: newProjectId, sessionId: sessionId.value } })
+            }
+        } else {
+            router.push({ name: 'project', params: { projectId: newProjectId } })
+        }
     }
 }
 

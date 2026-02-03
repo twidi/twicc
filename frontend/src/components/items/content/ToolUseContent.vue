@@ -1,11 +1,19 @@
 <script setup>
 import { computed, ref, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../../stores/data'
 import JsonViewer from '../../JsonViewer.vue'
 
+const route = useRoute()
 const router = useRouter()
 const dataStore = useDataStore()
+
+// Detect "All Projects" mode from route name
+const isAllProjectsMode = computed(() =>
+    route.name === 'projects-all' ||
+    route.name === 'projects-session' ||
+    route.name === 'projects-session-subagent'
+)
 
 const props = defineProps({
     name: {
@@ -322,7 +330,7 @@ function handleViewAgent() {
  */
 function navigateToSubagent(agentId) {
     router.push({
-        name: 'session-subagent',
+        name: isAllProjectsMode.value ? 'projects-session-subagent' : 'session-subagent',
         params: {
             projectId: props.projectId,
             sessionId: props.sessionId,
