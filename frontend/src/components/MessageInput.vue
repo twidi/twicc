@@ -1,6 +1,6 @@
 <script setup>
 // MessageInput.vue - Text input for sending messages to Claude
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { sendWsMessage } from '../composables/useWebSocket'
@@ -68,6 +68,17 @@ const placeholderText = computed(() => {
     return 'Type your message...'
 })
 
+// Restore draft message when session changes
+watch(() => props.sessionId, (newId) => {
+    const draft = store.getDraftMessage(newId)
+    messageText.value = draft?.message || ''
+}, { immediate: true })
+
+// Save draft message on each keystroke (debounced in store)
+watch(messageText, (newText) => {
+    store.setDraftMessage(props.sessionId, newText)
+})
+
 // Autofocus textarea for draft sessions
 onMounted(async () => {
     if (isDraft.value && textareaRef.value) {
@@ -120,6 +131,9 @@ function handleSend() {
     const success = sendWsMessage(payload)
 
     if (success) {
+        // Clear draft from store (and IndexedDB)
+        store.clearDraftMessage(props.sessionId)
+
         // Clear the textarea on successful send
         messageText.value = ''
         if (textareaRef.value) {
@@ -132,6 +146,8 @@ function handleSend() {
  * Cancel the draft session and navigate back to project.
  */
 function handleCancel() {
+    // Clear draft message from store and IndexedDB
+    store.clearDraftMessage(props.sessionId)
     store.deleteDraftSession(props.sessionId)
     router.push({ name: 'project', params: { projectId: props.projectId } })
 }

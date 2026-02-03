@@ -4,6 +4,11 @@ import { defineStore } from 'pinia'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
 import { useSettingsStore } from './settings'
+import { saveDraft, deleteDraft, getAllDrafts } from '../utils/draftStorage'
+import { debounce } from '../utils/debounce'
+
+// Map of debounced save functions per session (to avoid mixing debounces)
+const debouncedSaves = new Map()
 
 // Special project ID for "All Projects" mode
 export const ALL_PROJECTS_ID = '__all__'
@@ -55,7 +60,12 @@ export const useDataStore = defineStore('data', {
             // Project display names cache - computed from name, directory, or id
             // { projectId: displayName }
             // Updated when project data changes
-            projectDisplayNames: {}
+            projectDisplayNames: {},
+
+            // Draft messages - unsent messages/titles per session
+            // { sessionId: { message?: string, title?: string } }
+            // Persisted to IndexedDB with debounce
+            draftMessages: {}
         }
     }),
 
@@ -207,6 +217,10 @@ export const useDataStore = defineStore('data', {
             if (!sessionLinks) return undefined
             return sessionLinks[toolId]
         },
+
+        // Get draft message for a session
+        getDraftMessage: (state) => (sessionId) =>
+            state.localState.draftMessages[sessionId] || null,
 
         // Get display name for a project (uses cache, computes if missing)
         getProjectDisplayName: (state) => (projectId) => {
@@ -1123,6 +1137,114 @@ export const useDataStore = defineStore('data', {
                     session.title = oldTitle
                 }
                 throw error
+            }
+        },
+
+        // Draft messages actions
+
+        /**
+         * Get or create a debounced save function for a session.
+         * @param {string} sessionId
+         * @returns {Function} Debounced save function
+         * @private
+         */
+        _getDebouncedSave(sessionId) {
+            if (!debouncedSaves.has(sessionId)) {
+                debouncedSaves.set(sessionId, debounce((draft) => {
+                    saveDraft(sessionId, draft).catch(err =>
+                        console.warn('Failed to save draft to IndexedDB:', err)
+                    )
+                }, 500))
+            }
+            return debouncedSaves.get(sessionId)
+        },
+
+        /**
+         * Set the draft message for a session.
+         * Called by MessageInput on each keystroke.
+         * If message is empty, removes the message key from draft.
+         * If draft becomes empty (no message, no title), clears the entire draft.
+         * @param {string} sessionId
+         * @param {string} message
+         */
+        setDraftMessage(sessionId, message) {
+            const draft = this.localState.draftMessages[sessionId]
+
+            if (!message) {
+                // Message is empty - remove the message key
+                if (draft) {
+                    delete draft.message
+                    // If draft is now empty (no title either), clear it entirely
+                    if (!draft.title) {
+                        this.clearDraftMessage(sessionId)
+                        return
+                    }
+                    // Otherwise persist the draft without message
+                    const debouncedSave = this._getDebouncedSave(sessionId)
+                    debouncedSave({ ...draft })
+                }
+                return
+            }
+
+            // Message has content - save it
+            if (!draft) {
+                this.localState.draftMessages[sessionId] = {}
+            }
+            this.localState.draftMessages[sessionId].message = message
+
+            // Persist to IndexedDB with debounce
+            const debouncedSave = this._getDebouncedSave(sessionId)
+            debouncedSave({ ...this.localState.draftMessages[sessionId] })
+        },
+
+        /**
+         * Set the draft title for a session (draft sessions only).
+         * Called by SessionHeader when title is modified before first message.
+         * @param {string} sessionId
+         * @param {string} title
+         */
+        setDraftTitle(sessionId, title) {
+            if (!this.localState.draftMessages[sessionId]) {
+                this.localState.draftMessages[sessionId] = {}
+            }
+            this.localState.draftMessages[sessionId].title = title
+
+            // Persist to IndexedDB with debounce
+            const debouncedSave = this._getDebouncedSave(sessionId)
+            debouncedSave({ ...this.localState.draftMessages[sessionId] })
+        },
+
+        /**
+         * Clear the draft for a session.
+         * Called after successful message send.
+         * @param {string} sessionId
+         */
+        clearDraftMessage(sessionId) {
+            delete this.localState.draftMessages[sessionId]
+
+            // Cancel any pending debounced save
+            const debouncedSave = debouncedSaves.get(sessionId)
+            if (debouncedSave) {
+                debouncedSave.cancel()
+                debouncedSaves.delete(sessionId)
+            }
+
+            // Delete from IndexedDB
+            deleteDraft(sessionId).catch(err =>
+                console.warn('Failed to delete draft from IndexedDB:', err)
+            )
+        },
+
+        /**
+         * Load all drafts from IndexedDB into local state.
+         * Called at app startup.
+         */
+        async hydrateDraftMessages() {
+            try {
+                const drafts = await getAllDrafts()
+                this.localState.draftMessages = drafts
+            } catch (err) {
+                console.warn('Failed to load drafts from IndexedDB:', err)
             }
         }
     }

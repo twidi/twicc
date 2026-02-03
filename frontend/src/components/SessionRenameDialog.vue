@@ -105,6 +105,8 @@ async function handleSave() {
     // For draft sessions, just update locally (no API call)
     if (props.session.draft) {
         store.updateSession({ ...props.session, title: trimmedTitle })
+        // Also persist to IndexedDB for page refresh recovery
+        store.setDraftTitle(props.session.id, trimmedTitle)
         emit('saved')
         close()
         return

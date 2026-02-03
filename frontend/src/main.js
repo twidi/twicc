@@ -62,6 +62,7 @@ import { createNotivue } from 'notivue'
 import { router } from './router'
 import App from './App.vue'
 import { initSettings } from './stores/settings'
+import { useDataStore } from './stores/data'
 
 // Notivue CSS
 import 'notivue/notification.css'
@@ -97,5 +98,9 @@ app.use(notivue)
 
 // Initialize settings (localStorage persistence, theme, font size, display mode watchers)
 initSettings()
+
+// Hydrate draft messages from IndexedDB (async, non-blocking)
+const dataStore = useDataStore()
+dataStore.hydrateDraftMessages()
 
 app.mount('#app')
