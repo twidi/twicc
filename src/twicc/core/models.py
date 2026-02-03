@@ -44,7 +44,7 @@ class Project(models.Model):
     directory = models.CharField(max_length=500, null=True, blank=True)  # Actual filesystem path (from session cwd)
     sessions_count = models.PositiveIntegerField(default=0)
     mtime = models.FloatField(default=0)
-    archived = models.BooleanField(default=False)
+    stale = models.BooleanField(default=False)  # True if folder/file no longer exists on disk
     name = models.CharField(max_length=25, null=True, blank=True, unique=True)  # User-defined display name
     color = models.CharField(max_length=50, null=True, blank=True)  # CSS color value (hex, hsl, etc.)
     total_cost = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)  # Sum of all sessions total_cost in USD
@@ -68,7 +68,7 @@ class Session(models.Model):
     last_offset = models.PositiveBigIntegerField(default=0)
     last_line = models.PositiveIntegerField(default=0)
     mtime = models.FloatField(default=0)
-    archived = models.BooleanField(default=False)
+    stale = models.BooleanField(default=False)  # True if folder/file no longer exists on disk
     compute_version = models.PositiveIntegerField(null=True, blank=True)  # NULL = never computed
     title = models.CharField(max_length=250, null=True, blank=True)  # Session title (from first user message or custom-title)
     message_count = models.PositiveIntegerField(default=0)  # Number of user/assistant messages (user_count * 2 - 1 if last is user)

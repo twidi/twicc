@@ -110,9 +110,9 @@ def main():
 
     # Sync initial
     sync_all()
-    projects_count = Project.objects.filter(archived=False).count()
-    sessions_count = Session.objects.filter(archived=False, type=SessionType.SESSION).count()
-    subagents_count = Session.objects.filter(archived=False, type=SessionType.SUBAGENT).count()
+    projects_count = Project.objects.filter(stale=False).count()
+    sessions_count = Session.objects.filter(stale=False, type=SessionType.SESSION).count()
+    subagents_count = Session.objects.filter(stale=False, type=SessionType.SUBAGENT).count()
     print(f"✓ Data synchronized ({projects_count} projects, {sessions_count} sessions, {subagents_count} subagents)")
 
     # Parse port

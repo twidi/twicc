@@ -94,7 +94,7 @@ def update_project_total_cost(project_id: str) -> None:
     """
     Update a project's total_cost by summing all its sessions' total_costs.
 
-    Only sums costs from non-archived regular sessions (not subagents).
+    Only sums costs from non-stale regular sessions (not subagents).
     Subagent costs are already included in their parent session's total_cost.
     """
     from decimal import Decimal
@@ -102,7 +102,7 @@ def update_project_total_cost(project_id: str) -> None:
 
     total_cost = Session.objects.filter(
         project_id=project_id,
-        archived=False,
+        stale=False,
         type=SessionType.SESSION,
         total_cost__isnull=False,
     ).aggregate(total=Sum('total_cost'))['total'] or Decimal(0)

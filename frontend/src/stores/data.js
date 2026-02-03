@@ -24,8 +24,8 @@ export const ALL_PROJECTS_ID = '__all__'
 export const useDataStore = defineStore('data', {
     state: () => ({
         // Server data
-        projects: {},       // { id: { id, sessions_count, mtime, archived } }
-        sessions: {},       // { id: { id, project_id, last_line, mtime, archived } }
+        projects: {},       // { id: { id, sessions_count, mtime, stale } }
+        sessions: {},       // { id: { id, project_id, last_line, mtime, stale } }
         sessionItems: {},   // { sessionId: [{ line_num, content }, ...] } - line_num is 1-based
 
         // Process state for active Claude processes

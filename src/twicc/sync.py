@@ -464,13 +464,13 @@ def _sync_session_subagents(
             new_line_nums, _ = sync_session_items(subagent, file_path)
             stats["items_added"] += len(new_line_nums)
 
-    # Mark archived subagents (exist in DB but not on disk)
+    # Mark stale subagents (exist in DB but not on disk)
     disk_agent_ids = set(subagent_files.keys())
     for agent_id, subagent in db_subagents.items():
-        if agent_id not in disk_agent_ids and not subagent.archived:
-            subagent.archived = True
-            subagent.save(update_fields=["archived"])
-            stats["sessions_archived"] += 1
+        if agent_id not in disk_agent_ids and not subagent.stale:
+            subagent.stale = True
+            subagent.save(update_fields=["stale"])
+            stats["sessions_stale"] += 1
 
 
 def sync_project(
@@ -487,12 +487,12 @@ def sync_project(
 
     Returns a dict with sync statistics:
         - sessions_created: number of new sessions (including subagents)
-        - sessions_archived: number of sessions marked as archived (including subagents)
+        - sessions_stale: number of sessions marked as stale (including subagents)
         - items_added: total number of new session items (including subagent items)
     """
     stats = {
         "sessions_created": 0,
-        "sessions_archived": 0,
+        "sessions_stale": 0,
         "items_added": 0,
     }
 
@@ -572,20 +572,20 @@ def sync_project(
         if on_session_progress:
             on_session_progress(session_id, idx, total_sessions)
 
-    # Mark archived sessions (exist in DB but not on disk)
-    archived_session_ids = db_session_ids - disk_session_ids
-    if archived_session_ids:
-        Session.objects.filter(id__in=archived_session_ids, archived=False).update(
-            archived=True
+    # Mark stale sessions (exist in DB but not on disk)
+    stale_session_ids = db_session_ids - disk_session_ids
+    if stale_session_ids:
+        Session.objects.filter(id__in=stale_session_ids, stale=False).update(
+            stale=True
         )
-        stats["sessions_archived"] += len(archived_session_ids)
+        stats["sessions_stale"] += len(stale_session_ids)
 
     # Update project metadata (only count non-empty sessions)
     project.sessions_count = len(non_empty_session_ids)
     project.mtime = max_mtime
-    if project.archived:
-        project.archived = False
-    project.save(update_fields=["sessions_count", "mtime", "archived"])
+    if project.stale:
+        project.stale = False
+    project.save(update_fields=["sessions_count", "mtime", "stale"])
 
     # Update project total_cost
     update_project_total_cost(project.id)
@@ -612,9 +612,9 @@ def sync_all(
     """
     stats = {
         "projects_created": 0,
-        "projects_archived": 0,
+        "projects_stale": 0,
         "sessions_created": 0,
-        "sessions_archived": 0,
+        "sessions_stale": 0,
         "items_added": 0,
     }
 
@@ -630,13 +630,13 @@ def sync_all(
         Project.objects.create(id=project_id)
         stats["projects_created"] += 1
 
-    # Mark archived projects (exist in DB but not on disk)
-    archived_project_ids = db_project_ids - disk_project_ids
-    if archived_project_ids:
-        Project.objects.filter(id__in=archived_project_ids, archived=False).update(
-            archived=True
+    # Mark stale projects (exist in DB but not on disk)
+    stale_project_ids = db_project_ids - disk_project_ids
+    if stale_project_ids:
+        Project.objects.filter(id__in=stale_project_ids, stale=False).update(
+            stale=True
         )
-        stats["projects_archived"] += len(archived_project_ids)
+        stats["projects_stale"] += len(stale_project_ids)
 
     # Sync each project on disk
     projects_to_sync = sorted(disk_project_ids)
@@ -650,7 +650,7 @@ def sync_all(
 
         # Aggregate stats
         stats["sessions_created"] += project_stats["sessions_created"]
-        stats["sessions_archived"] += project_stats["sessions_archived"]
+        stats["sessions_stale"] += project_stats["sessions_stale"]
         stats["items_added"] += project_stats["items_added"]
 
         if on_project_done:
@@ -729,8 +729,8 @@ class ProgressDisplay:
         sessions_info = []
         if stats["sessions_created"]:
             sessions_info.append(f"+{stats['sessions_created']} new")
-        if stats["sessions_archived"]:
-            sessions_info.append(f"-{stats['sessions_archived']} archived")
+        if stats["sessions_stale"]:
+            sessions_info.append(f"-{stats['sessions_stale']} stale")
         if stats["items_added"]:
             sessions_info.append(f"+{stats['items_added']} items")
 
@@ -742,8 +742,8 @@ class ProgressDisplay:
         elapsed = time.time() - self.start_time
         self._write("")
         self._write(f"Sync complete in {self._format_time(elapsed)}")
-        self._write(f"  Projects: {stats['projects_created']} created, {stats['projects_archived']} archived")
-        self._write(f"  Sessions: {stats['sessions_created']} created, {stats['sessions_archived']} archived")
+        self._write(f"  Projects: {stats['projects_created']} created, {stats['projects_stale']} stale")
+        self._write(f"  Sessions: {stats['sessions_created']} created, {stats['sessions_stale']} stale")
         self._write(f"  Items: {stats['items_added']} added")
 
 

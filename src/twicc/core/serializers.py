@@ -21,7 +21,7 @@ def serialize_project(project):
         "directory": project.directory,
         "sessions_count": project.sessions_count,
         "mtime": project.mtime,
-        "archived": project.archived,
+        "stale": project.stale,
         "name": project.name,
         "color": project.color,
         "total_cost": float(project.total_cost) if project.total_cost else None,
@@ -53,7 +53,7 @@ def serialize_session(session):
         "parent_session_id": session.parent_session_id,  # None for regular sessions, set for subagents
         "last_line": session.last_line,
         "mtime": session.mtime,
-        "archived": session.archived,
+        "stale": session.stale,
         "title": title,  # Session title (from pending, first user message, or custom-title)
         "message_count": session.message_count,  # Number of user/assistant messages
         # Boolean indicating if session metadata is up-to-date

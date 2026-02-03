@@ -113,7 +113,7 @@ def update_project_metadata(project: Project) -> None:
     """Update project sessions_count, mtime, and total_cost from its sessions."""
     # Only count sessions (not subagents) with at least 1 line (non-empty)
     sessions = Session.objects.filter(
-        project=project, archived=False, last_line__gt=0, type=SessionType.SESSION
+        project=project, stale=False, last_line__gt=0, type=SessionType.SESSION
     )
     project.sessions_count = sessions.count()
     max_mtime = sessions.order_by("-mtime").values_list("mtime", flat=True).first()
@@ -241,11 +241,11 @@ async def sync_project_and_broadcast(
     project_id = path.name
 
     if change_type == Change.deleted:
-        # Project folder deleted - mark as archived
+        # Project folder deleted - mark as stale
         project = await get_project_by_id(project_id)
-        if project and not project.archived:
-            project.archived = True
-            await sync_to_async(project.save)(update_fields=["archived"])
+        if project and not project.stale:
+            project.stale = True
+            await sync_to_async(project.save)(update_fields=["stale"])
             await broadcast_message(channel_layer, {
                 "type": "project_updated",
                 "project": serialize_project(project),
@@ -260,10 +260,10 @@ async def sync_project_and_broadcast(
             "type": "project_added",
             "project": serialize_project(project),
         })
-    elif project.archived:
-        # Project was archived but folder reappeared
-        project.archived = False
-        await sync_to_async(project.save)(update_fields=["archived"])
+    elif project.stale:
+        # Project was stale but folder reappeared
+        project.stale = False
+        await sync_to_async(project.save)(update_fields=["stale"])
         await broadcast_message(channel_layer, {
             "type": "project_updated",
             "project": serialize_project(project),
@@ -297,11 +297,11 @@ async def sync_and_broadcast(
             return
 
     if change_type == Change.deleted:
-        # File deleted - mark as archived
+        # File deleted - mark as stale
         session = await get_session_by_id(parsed.session_id)
-        if session and not session.archived:
-            session.archived = True
-            await sync_to_async(session.save)(update_fields=["archived"])
+        if session and not session.stale:
+            session.stale = True
+            await sync_to_async(session.save)(update_fields=["stale"])
             await broadcast_message(channel_layer, {
                 "type": "session_updated",
                 "session": serialize_session(session),
@@ -433,10 +433,10 @@ async def sync_and_broadcast(
             "type": "project_updated",
             "project": serialize_project(project),
         })
-    elif session.archived:
-        # File reappeared - unarchive
-        session.archived = False
-        await sync_to_async(session.save)(update_fields=["archived"])
+    elif session.stale:
+        # File reappeared - unstale
+        session.stale = False
+        await sync_to_async(session.save)(update_fields=["stale"])
         await broadcast_message(channel_layer, {
             "type": "session_updated",
             "session": serialize_session(session),
