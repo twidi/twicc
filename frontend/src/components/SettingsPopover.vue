@@ -2,7 +2,7 @@
 // SettingsPopover.vue - Settings button with popover panel
 import { computed, ref, watch, nextTick } from 'vue'
 import { useSettingsStore } from '../stores/settings'
-import { DISPLAY_MODE, THEME_MODE } from '../constants'
+import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
 
 const store = useSettingsStore()
 
@@ -13,17 +13,26 @@ const themeOptions = [
     { value: THEME_MODE.DARK, label: 'Dark' },
 ]
 
+// Session time format options for the select
+const sessionTimeFormatOptions = [
+    { value: SESSION_TIME_FORMAT.TIME, label: 'Time' },
+    { value: SESSION_TIME_FORMAT.RELATIVE_SHORT, label: 'Relative (short)' },
+    { value: SESSION_TIME_FORMAT.RELATIVE_NARROW, label: 'Relative (narrow)' },
+]
+
 // Refs for wa-switch elements (needed to sync checked property with Web Components)
 const baseModeSwitch = ref(null)
 const debugSwitch = ref(null)
 const fontSizeSlider = ref(null)
 const themeSelect = ref(null)
+const sessionTimeFormatSelect = ref(null)
 
 // Settings from store
 const baseDisplayMode = computed(() => store.getBaseDisplayMode)
 const debugEnabled = computed(() => store.isDebugEnabled)
 const fontSize = computed(() => store.getFontSize)
 const themeMode = computed(() => store.getThemeMode)
+const sessionTimeFormat = computed(() => store.getSessionTimeFormat)
 
 // Computed label for the base mode switch
 const baseModeLabel = computed(() =>
@@ -49,11 +58,14 @@ function syncSwitchState() {
         if (themeSelect.value && themeSelect.value.value !== themeMode.value) {
             themeSelect.value.value = themeMode.value
         }
+        if (sessionTimeFormatSelect.value && sessionTimeFormatSelect.value.value !== sessionTimeFormat.value) {
+            sessionTimeFormatSelect.value.value = sessionTimeFormat.value
+        }
     })
 }
 
 // Watch for store changes and sync switches
-watch([isSimplified, debugEnabled, fontSize, themeMode], syncSwitchState, { immediate: true })
+watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat], syncSwitchState, { immediate: true })
 
 /**
  * Toggle between normal and simplified mode.
@@ -82,6 +94,13 @@ function onFontSizeChange(event) {
  */
 function onThemeModeChange(event) {
     store.setThemeMode(event.target.value)
+}
+
+/**
+ * Handle session time format change.
+ */
+function onSessionTimeFormatChange(event) {
+    store.setSessionTimeFormat(event.target.value)
 }
 
 /**
@@ -139,6 +158,21 @@ function onPopoverShow() {
                     @input="onFontSizeChange"
                     size="small"
                 ></wa-slider>
+            </div>
+            <div class="setting-group">
+                <label class="setting-group-label">Session list time display</label>
+                <wa-select
+                    ref="sessionTimeFormatSelect"
+                    :value.prop="sessionTimeFormat"
+                    @change="onSessionTimeFormatChange"
+                    size="small"
+                >
+                    <wa-option
+                        v-for="option in sessionTimeFormatOptions"
+                        :key="option.value"
+                        :value="option.value"
+                    >{{ option.label }}</wa-option>
+                </wa-select>
             </div>
         </div>
     </wa-popover>

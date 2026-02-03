@@ -39,6 +39,20 @@ export const THEME_MODE = {
 export const DEFAULT_THEME_MODE = THEME_MODE.SYSTEM
 
 /**
+ * Session time format values.
+ * - time: Show formatted time (smart format: hour if recent, date otherwise)
+ * - relative_short: Show relative time with short format ("2 hr. ago")
+ * - relative_narrow: Show relative time with narrow format ("2h ago")
+ */
+export const SESSION_TIME_FORMAT = {
+    TIME: 'time',
+    RELATIVE_SHORT: 'relative_short',
+    RELATIVE_NARROW: 'relative_narrow',
+}
+
+export const DEFAULT_SESSION_TIME_FORMAT = SESSION_TIME_FORMAT.TIME
+
+/**
  * Maximum context tokens for Claude (used for context usage percentage calculation).
  * Value: 200,000 tokens
  */

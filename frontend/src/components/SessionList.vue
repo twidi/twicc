@@ -1,8 +1,9 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import { formatDate, formatDuration } from '../utils/date'
-import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES } from '../constants'
+import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES, SESSION_TIME_FORMAT } from '../constants'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 
@@ -22,6 +23,17 @@ const props = defineProps({
 })
 
 const store = useDataStore()
+const settingsStore = useSettingsStore()
+
+// Session time format setting
+const sessionTimeFormat = computed(() => settingsStore.getSessionTimeFormat)
+const useRelativeTime = computed(() =>
+    sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_SHORT ||
+    sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_NARROW
+)
+const relativeTimeFormat = computed(() =>
+    sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_SHORT ? 'short' : 'narrow'
+)
 
 // Sessions are already sorted by mtime desc in the getter
 const sessions = computed(() => {
@@ -199,6 +211,16 @@ function getStateDuration(processState) {
     if (!processState?.state_changed_at) return 0
     return Math.max(0, Math.floor(now.value - processState.state_changed_at))
 }
+
+/**
+ * Convert Unix timestamp (seconds) to Date object for wa-relative-time.
+ * @param {number} timestamp - Unix timestamp in seconds
+ * @returns {Date}
+ */
+function timestampToDate(timestamp) {
+    if (!timestamp) return new Date()
+    return new Date(timestamp * 1000)
+}
 </script>
 
 <template>
@@ -248,12 +270,16 @@ function getStateDuration(processState) {
             </div>
             <!-- Meta row (not shown for draft sessions) -->
             <div v-if="!session.draft" class="session-meta">
-                <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ session.message_count ?? '??' }}</span>
+                <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.message_count ?? '??' }}</span>
                 <wa-tooltip :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
-                <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon> {{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
+                <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon>{{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
                 <wa-tooltip :for="`session-cost-${session.id}`">Total session cost</wa-tooltip>
-                <span :id="`session-mtime-${session.id}`" class="session-mtime"><wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ formatDate(session.mtime, { smart: true }) }}</span>
-                <wa-tooltip :for="`session-mtime-${session.id}`">Last activity</wa-tooltip>
+                <span :id="`session-mtime-${session.id}`" class="session-mtime">
+                    <wa-icon auto-width name="clock" variant="regular"></wa-icon>
+                    <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(session.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
+                    <template v-else>{{ formatDate(session.mtime, { smart: true }) }}</template>
+                </span>
+                <wa-tooltip :for="`session-mtime-${session.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(session.mtime, { smart: true })}` : 'Last activity' }}</wa-tooltip>
             </div>
         </wa-button>
 
@@ -376,6 +402,12 @@ function getStateDuration(processState) {
     font-weight: var(--wa-font-weight-body);;
     margin-top: var(--wa-space-2xs);
     overflow: hidden;
+}
+
+.session-meta > span {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
 }
 
 .session-mtime {

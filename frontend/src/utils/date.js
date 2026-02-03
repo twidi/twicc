@@ -13,9 +13,10 @@ export function formatDate(timestamp, { smart = false } = {}) {
 
     const date = new Date(timestamp * 1000)
     const now = new Date()
+    const locale = navigator.language
 
     // Time formatting (always the same)
-    const timeStr = date.toLocaleTimeString(undefined, {
+    const timeStr = date.toLocaleTimeString(locale, {
         hour: '2-digit',
         minute: '2-digit',
     })
@@ -31,7 +32,7 @@ export function formatDate(timestamp, { smart = false } = {}) {
 
         // Same year: day/month + time
         if (date.getFullYear() === now.getFullYear()) {
-            const dateStr = date.toLocaleDateString(undefined, {
+            const dateStr = date.toLocaleDateString(locale, {
                 day: '2-digit',
                 month: '2-digit',
             })
@@ -39,7 +40,7 @@ export function formatDate(timestamp, { smart = false } = {}) {
         }
 
         // Older: full date with year
-        const dateStr = date.toLocaleDateString(undefined, {
+        const dateStr = date.toLocaleDateString(locale, {
             day: '2-digit',
             month: '2-digit',
             year: 'numeric',
@@ -48,7 +49,7 @@ export function formatDate(timestamp, { smart = false } = {}) {
     }
 
     // Full format (default)
-    const dateStr = date.toLocaleDateString(undefined, {
+    const dateStr = date.toLocaleDateString(locale, {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',

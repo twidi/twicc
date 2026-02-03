@@ -3,7 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DISPLAY_MODE, THEME_MODE } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
 import { useDataStore } from './data'
 import { setThemeMode } from '../main'
 
@@ -19,6 +19,7 @@ const SETTINGS_SCHEMA = {
     debugEnabled: false,
     fontSize: 16,
     themeMode: DEFAULT_THEME_MODE,
+    sessionTimeFormat: DEFAULT_SESSION_TIME_FORMAT,
     // Not persisted - computed at runtime based on themeMode and system preference
     _effectiveTheme: null,
 }
@@ -33,6 +34,7 @@ const SETTINGS_VALIDATORS = {
     debugEnabled: (v) => typeof v === 'boolean',
     fontSize: (v) => typeof v === 'number' && v >= 12 && v <= 32,
     themeMode: (v) => [THEME_MODE.SYSTEM, THEME_MODE.LIGHT, THEME_MODE.DARK].includes(v),
+    sessionTimeFormat: (v) => [SESSION_TIME_FORMAT.TIME, SESSION_TIME_FORMAT.RELATIVE_SHORT, SESSION_TIME_FORMAT.RELATIVE_NARROW].includes(v),
 }
 
 /**
@@ -96,6 +98,7 @@ export const useSettingsStore = defineStore('settings', {
         isDebugEnabled: (state) => state.debugEnabled,
         getFontSize: (state) => state.fontSize,
         getThemeMode: (state) => state.themeMode,
+        getSessionTimeFormat: (state) => state.sessionTimeFormat,
         /**
          * Effective theme: always returns 'light' or 'dark', never 'system'.
          * Takes into account the system preference when themeMode is 'system'.
@@ -146,6 +149,16 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set the session time format.
+         * @param {string} format - 'time' | 'relative'
+         */
+        setSessionTimeFormat(format) {
+            if (SETTINGS_VALIDATORS.sessionTimeFormat(format)) {
+                this.sessionTimeFormat = format
+            }
+        },
+
+        /**
          * Update the effective theme based on themeMode and system preference.
          * Called internally when themeMode changes or system preference changes.
          */
@@ -187,6 +200,7 @@ export function initSettings() {
             debugEnabled: store.debugEnabled,
             fontSize: store.fontSize,
             themeMode: store.themeMode,
+            sessionTimeFormat: store.sessionTimeFormat,
         }),
         (newSettings) => {
             saveSettings(newSettings)
