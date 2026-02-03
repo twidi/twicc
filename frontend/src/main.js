@@ -99,8 +99,11 @@ app.use(notivue)
 // Initialize settings (localStorage persistence, theme, font size, display mode watchers)
 initSettings()
 
-// Hydrate draft messages from IndexedDB (async, non-blocking)
+// Hydrate drafts from IndexedDB (async, non-blocking)
+// Order matters: sessions first, then messages (messages may contain titles for draft sessions)
 const dataStore = useDataStore()
-dataStore.hydrateDraftMessages()
+dataStore.hydrateDraftSessions().then(() => {
+    dataStore.hydrateDraftMessages()
+})
 
 app.mount('#app')

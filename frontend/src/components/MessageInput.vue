@@ -130,8 +130,14 @@ function handleSend() {
     const success = sendWsMessage(payload)
 
     if (success) {
-        // Clear draft from store (and IndexedDB)
+        // Clear draft message from store (and IndexedDB)
         store.clearDraftMessage(props.sessionId)
+
+        // Clear draft session from IndexedDB (if this was a draft session)
+        // Note: The session in the store will be replaced by the real session from backend
+        if (isDraft.value) {
+            store.deleteDraftSession(props.sessionId)
+        }
 
         // Clear the textarea on successful send
         messageText.value = ''

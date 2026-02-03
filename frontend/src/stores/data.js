@@ -4,7 +4,14 @@ import { defineStore } from 'pinia'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
 import { useSettingsStore } from './settings'
-import { saveDraft, deleteDraft, getAllDrafts } from '../utils/draftStorage'
+import {
+    saveDraftMessage,
+    deleteDraftMessage,
+    getAllDraftMessages,
+    saveDraftSession,
+    deleteDraftSession as deleteDraftSessionFromDb,
+    getAllDraftSessions
+} from '../utils/draftStorage'
 import { debounce } from '../utils/debounce'
 
 // Map of debounced save functions per session (to avoid mixing debounces)
@@ -293,17 +300,25 @@ export const useDataStore = defineStore('data', {
                 last_line: 0,
                 draft: true,
             }
+            // Persist to IndexedDB
+            saveDraftSession(id, projectId).catch(err =>
+                console.warn('Failed to save draft session to IndexedDB:', err)
+            )
             return id
         },
 
         /**
-         * Delete a draft session.
+         * Delete a draft session from store and IndexedDB.
          * Only deletes if the session exists and has draft: true.
          * @param {string} sessionId - The session ID to delete
          */
         deleteDraftSession(sessionId) {
             if (this.sessions[sessionId]?.draft) {
                 delete this.sessions[sessionId]
+                // Delete from IndexedDB
+                deleteDraftSessionFromDb(sessionId).catch(err =>
+                    console.warn('Failed to delete draft session from IndexedDB:', err)
+                )
             }
         },
 
@@ -1151,8 +1166,8 @@ export const useDataStore = defineStore('data', {
         _getDebouncedSave(sessionId) {
             if (!debouncedSaves.has(sessionId)) {
                 debouncedSaves.set(sessionId, debounce((draft) => {
-                    saveDraft(sessionId, draft).catch(err =>
-                        console.warn('Failed to save draft to IndexedDB:', err)
+                    saveDraftMessage(sessionId, draft).catch(err =>
+                        console.warn('Failed to save draft message to IndexedDB:', err)
                     )
                 }, 500))
             }
@@ -1230,21 +1245,56 @@ export const useDataStore = defineStore('data', {
             }
 
             // Delete from IndexedDB
-            deleteDraft(sessionId).catch(err =>
-                console.warn('Failed to delete draft from IndexedDB:', err)
+            deleteDraftMessage(sessionId).catch(err =>
+                console.warn('Failed to delete draft message from IndexedDB:', err)
             )
         },
 
         /**
-         * Load all drafts from IndexedDB into local state.
-         * Called at app startup.
+         * Load all draft messages from IndexedDB into local state.
+         * Called at app startup, AFTER hydrateDraftSessions.
+         * Also applies saved titles to draft sessions.
          */
         async hydrateDraftMessages() {
             try {
-                const drafts = await getAllDrafts()
+                const drafts = await getAllDraftMessages()
                 this.localState.draftMessages = drafts
+
+                // Apply saved titles to draft sessions
+                for (const [sessionId, draft] of Object.entries(drafts)) {
+                    if (draft.title && this.sessions[sessionId]?.draft) {
+                        this.sessions[sessionId].title = draft.title
+                    }
+                }
             } catch (err) {
-                console.warn('Failed to load drafts from IndexedDB:', err)
+                console.warn('Failed to load draft messages from IndexedDB:', err)
+            }
+        },
+
+        /**
+         * Load all draft sessions from IndexedDB into the sessions store.
+         * Called at app startup, BEFORE hydrateDraftMessages.
+         * Recreates session objects with: id, project_id, title='New session',
+         * mtime=now, last_line=0, draft=true.
+         * The title may be overwritten later by hydrateDraftMessages if a custom
+         * title was saved in draftMessages.
+         */
+        async hydrateDraftSessions() {
+            try {
+                const draftSessions = await getAllDraftSessions()
+                const now = Date.now() / 1000
+                for (const [sessionId, { projectId }] of Object.entries(draftSessions)) {
+                    this.sessions[sessionId] = {
+                        id: sessionId,
+                        project_id: projectId,
+                        title: 'New session',
+                        mtime: now,
+                        last_line: 0,
+                        draft: true,
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to load draft sessions from IndexedDB:', err)
             }
         }
     }
