@@ -156,6 +156,17 @@ function handleCancel() {
     store.deleteDraftSession(props.sessionId)
     router.push({ name: 'project', params: { projectId: props.projectId } })
 }
+
+/**
+ * Clear the textarea content for existing sessions.
+ */
+function handleClear() {
+    messageText.value = ''
+    store.clearDraftMessage(props.sessionId)
+    if (textareaRef.value) {
+        textareaRef.value.value = ''
+    }
+}
 </script>
 
 <template>
@@ -178,6 +189,15 @@ function handleCancel() {
                 @click="handleCancel"
             >
                 Cancel
+            </wa-button>
+            <!-- Clear button for existing sessions when there's text -->
+            <wa-button
+                v-else-if="messageText.trim()"
+                variant="neutral"
+                appearance="outlined"
+                @click="handleClear"
+            >
+                Clear
             </wa-button>
             <wa-button
                 variant="brand"
