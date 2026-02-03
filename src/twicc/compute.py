@@ -1121,7 +1121,8 @@ def compute_session_metadata(session_id: str) -> None:
     session.model = last_model
 
     # Update project directory from first session cwd (where Claude Code was launched)
-    if first_cwd:
+    # Only for real sessions, not subagents (which may be launched from a different directory)
+    if first_cwd and session.type == SessionType.SESSION:
         ensure_project_directory(session.project_id, first_cwd)
 
     session.save(update_fields=['compute_version', 'message_count', 'context_usage', 'self_cost', 'subagents_cost', 'total_cost', 'cwd', 'git_branch', 'model'])

@@ -392,7 +392,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             if last_cwd and last_cwd != session.cwd:
                 # Update project directory only on first sync (when session.cwd was None)
                 # The first cwd of a session is the project directory (where Claude Code was launched)
-                if session.cwd is None and first_cwd:
+                # Only for real sessions, not subagents (which may be launched from a different directory)
+                if session.cwd is None and first_cwd and session.type == SessionType.SESSION:
                     ensure_project_directory(session.project_id, first_cwd)
                 session.cwd = last_cwd
             if last_git_branch and last_git_branch != session.git_branch:
