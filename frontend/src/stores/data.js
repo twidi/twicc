@@ -309,13 +309,17 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
-         * Delete a draft session from store and IndexedDB.
+         * Delete a draft session from IndexedDB, and optionally from store.
          * Only deletes if the session exists and has draft: true.
          * @param {string} sessionId - The session ID to delete
+         * @param {Object} options - Options
+         * @param {boolean} options.keepInStore - If true, only delete from IndexedDB (keep in store)
          */
-        deleteDraftSession(sessionId) {
+        deleteDraftSession(sessionId, { keepInStore = false } = {}) {
             if (this.sessions[sessionId]?.draft) {
-                delete this.sessions[sessionId]
+                if (!keepInStore) {
+                    delete this.sessions[sessionId]
+                }
                 // Delete from IndexedDB
                 deleteDraftSessionFromDb(sessionId).catch(err =>
                     console.warn('Failed to delete draft session from IndexedDB:', err)

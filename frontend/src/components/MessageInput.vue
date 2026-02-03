@@ -134,10 +134,10 @@ function handleSend() {
         // Clear draft message from store (and IndexedDB)
         store.clearDraftMessage(props.sessionId)
 
-        // Clear draft session from IndexedDB (if this was a draft session)
-        // Note: The session in the store will be replaced by the real session from backend
+        // Clear draft session from IndexedDB only (if this was a draft session)
+        // Keep in store so session stays visible until backend confirms with session_added/updated
         if (isDraft.value) {
-            store.deleteDraftSession(props.sessionId)
+            store.deleteDraftSession(props.sessionId, { keepInStore: true })
         }
 
         // Clear the textarea on successful send
