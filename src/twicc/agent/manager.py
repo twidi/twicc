@@ -34,11 +34,11 @@ class ProcessManager:
     Typical usage:
         manager = ProcessManager()
 
-        # Resume an existing session with a new message
-        await manager.resume_session(session_id, project_id, cwd, "Hello")
+        # Send a message to an existing session
+        await manager.send_to_session(session_id, project_id, cwd, "Hello")
 
         # Create a new session
-        await manager.new_session(session_id, project_id, cwd, "Hello")
+        await manager.create_session(session_id, project_id, cwd, "Hello")
 
         # Get active processes
         processes = manager.get_active_processes()
@@ -64,17 +64,20 @@ class ProcessManager:
         """
         self._broadcast_callback = callback
 
-    async def resume_session(
+    async def send_to_session(
         self,
         session_id: str,
         project_id: str,
         cwd: str,
         text: str,
     ) -> None:
-        """Resume an existing session with a new message.
+        """Send a message to an existing session.
 
         If no active process exists for this session, a new one is created
         with the resume option to continue the existing conversation.
+
+        Messages can be sent during USER_TURN (normal) or ASSISTANT_TURN
+        (Claude Agent SDK queues them and processes after current response).
 
         Args:
             session_id: The Claude session identifier (must exist in database)
@@ -96,12 +99,13 @@ class ProcessManager:
                         session_id,
                     )
                     del self._processes[session_id]
-                elif process.state == ProcessState.USER_TURN:
-                    # Process ready for input, send message
+                elif process.state in (ProcessState.USER_TURN, ProcessState.ASSISTANT_TURN):
+                    # Process ready for input or busy responding - send message
+                    # (SDK queues messages during ASSISTANT_TURN)
                     await process.send(text)
                     return
                 else:
-                    # Process busy (starting or assistant turn)
+                    # Process starting - cannot send yet
                     raise RuntimeError(
                         f"Cannot send message: process is in state {process.state}"
                     )
@@ -109,7 +113,7 @@ class ProcessManager:
             # Create and start new process with resume
             await self._start_process(session_id, project_id, cwd, text, resume=True)
 
-    async def new_session(
+    async def create_session(
         self,
         session_id: str,
         project_id: str,
@@ -118,7 +122,7 @@ class ProcessManager:
     ) -> None:
         """Create a new session with a client-provided session ID.
 
-        Unlike send_message which auto-resumes existing sessions, this creates
+        Unlike send_to_session which handles existing sessions, this creates
         a brand new session. The session_id is passed to the Claude CLI via
         the --session-id flag.
 
@@ -158,8 +162,8 @@ class ProcessManager:
     ) -> None:
         """Create and start a new Claude process.
 
-        This is the common implementation for both resume_session (resume=True)
-        and new_session (resume=False).
+        This is the common implementation for both send_to_session (resume=True)
+        and create_session (resume=False).
 
         Must be called while holding self._lock.
 

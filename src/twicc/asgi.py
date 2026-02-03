@@ -202,8 +202,8 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         manager = get_process_manager()
         try:
             if exists:
-                # Session exists: resume it
-                await manager.resume_session(session_id, project_id, cwd, text)
+                # Session exists: send message to it
+                await manager.send_to_session(session_id, project_id, cwd, text)
             else:
                 # Session doesn't exist: create new with client-provided ID
                 # Store title as pending if provided (will be written when process is safe)
@@ -212,7 +212,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
                     set_pending_title(session_id, title)
 
-                await manager.new_session(session_id, project_id, cwd, text)
+                await manager.create_session(session_id, project_id, cwd, text)
         except RuntimeError as e:
             # Process busy or other expected errors
             logger.warning("send_message failed: %s", e)

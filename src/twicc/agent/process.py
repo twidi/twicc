@@ -234,15 +234,18 @@ class ClaudeProcess:
         if self._client is None:
             raise RuntimeError("Process not started")
 
-        if self.state != ProcessState.USER_TURN:
+        if self.state not in (ProcessState.USER_TURN, ProcessState.ASSISTANT_TURN):
             raise RuntimeError(f"Cannot send message in state {self.state}")
 
         logger.debug("Sending message to session %s", self.session_id)
 
         try:
-            self._set_state(ProcessState.ASSISTANT_TURN)
-            self.last_activity = time.time()
-            await self._notify_state_change()
+            # Only transition and notify if we're not already in ASSISTANT_TURN
+            # (if this case, Claude will queue the message, we stay in ASSISTANT_TURN)
+            if self.state != ProcessState.ASSISTANT_TURN:
+                self._set_state(ProcessState.ASSISTANT_TURN)
+                self.last_activity = time.time()
+                await self._notify_state_change()
 
             await self._client.query(text)
 

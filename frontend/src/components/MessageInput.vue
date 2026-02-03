@@ -37,18 +37,19 @@ const processState = computed(() => store.getProcessState(props.sessionId))
 // Determine if input/button should be disabled
 const isDisabled = computed(() => {
     const state = processState.value?.state
-    // Disabled during starting and assistant_turn
-    return state === 'starting' || state === 'assistant_turn'
+    // Disabled only during starting - we allow sending during assistant_turn
+    // (Claude Agent SDK supports receiving messages while responding)
+    return state === 'starting'
 })
 
 // Button label based on process state
 const buttonLabel = computed(() => {
     const state = processState.value?.state
     if (state === 'starting') {
-        return 'Starting...'
+        return 'Claude is starting...'
     }
     if (state === 'assistant_turn') {
-        return 'Claude is working...'
+        return 'Send while Claude is working'
     }
     // user_turn, dead, or no process
     return 'Send'
@@ -61,7 +62,7 @@ const placeholderText = computed(() => {
         return 'Starting Claude process...'
     }
     if (state === 'assistant_turn') {
-        return 'Waiting for Claude to respond...'
+        return 'You can send a message now. Claude will receive it as soon as possible (while working or after). Note: it will not appear in the conversation history.'
     }
     // user_turn, dead, or no process
     return 'Type your message...'
