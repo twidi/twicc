@@ -100,7 +100,7 @@ app.use(notivue)
 initSettings()
 
 // Hydrate drafts from IndexedDB (async, non-blocking)
-// Order matters: sessions first, then messages (messages may contain titles for draft sessions)
+// Order matters: sessions first so draft messages have their session available
 const dataStore = useDataStore()
 dataStore.hydrateDraftSessions().then(() => {
     dataStore.hydrateDraftMessages()

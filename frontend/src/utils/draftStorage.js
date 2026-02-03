@@ -121,16 +121,32 @@ export async function getAllDraftMessages() {
 /**
  * Save a draft session.
  * @param {string} sessionId - The session ID
- * @param {string} projectId - The project ID this session belongs to
+ * @param {Object} data - The draft session data { projectId, title? }
  * @returns {Promise<void>}
  */
-export async function saveDraftSession(sessionId, projectId) {
+export async function saveDraftSession(sessionId, data) {
     const db = await getDb()
     return new Promise((resolve, reject) => {
         const tx = db.transaction(DRAFT_SESSIONS_STORE, 'readwrite')
         const store = tx.objectStore(DRAFT_SESSIONS_STORE)
-        const request = store.put({ projectId }, sessionId)
+        const request = store.put(data, sessionId)
         request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+    })
+}
+
+/**
+ * Get a draft session.
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<Object|null>} The draft session data or null if not found
+ */
+export async function getDraftSession(sessionId) {
+    const db = await getDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(DRAFT_SESSIONS_STORE, 'readonly')
+        const store = tx.objectStore(DRAFT_SESSIONS_STORE)
+        const request = store.get(sessionId)
+        request.onsuccess = () => resolve(request.result || null)
         request.onerror = () => reject(request.error)
     })
 }

@@ -9,6 +9,7 @@ import {
     deleteDraftMessage,
     getAllDraftMessages,
     saveDraftSession,
+    getDraftSession,
     deleteDraftSession as deleteDraftSessionFromDb,
     getAllDraftSessions
 } from '../utils/draftStorage'
@@ -301,7 +302,7 @@ export const useDataStore = defineStore('data', {
                 draft: true,
             }
             // Persist to IndexedDB
-            saveDraftSession(id, projectId).catch(err =>
+            saveDraftSession(id, { projectId }).catch(err =>
                 console.warn('Failed to save draft session to IndexedDB:', err)
             )
             return id
@@ -1177,56 +1178,45 @@ export const useDataStore = defineStore('data', {
         /**
          * Set the draft message for a session.
          * Called by MessageInput on each keystroke.
-         * If message is empty, removes the message key from draft.
-         * If draft becomes empty (no message, no title), clears the entire draft.
+         * If message is empty, clears the draft entirely.
          * @param {string} sessionId
          * @param {string} message
          */
         setDraftMessage(sessionId, message) {
-            const draft = this.localState.draftMessages[sessionId]
-
             if (!message) {
-                // Message is empty - remove the message key
-                if (draft) {
-                    delete draft.message
-                    // If draft is now empty (no title either), clear it entirely
-                    if (!draft.title) {
-                        this.clearDraftMessage(sessionId)
-                        return
-                    }
-                    // Otherwise persist the draft without message
-                    const debouncedSave = this._getDebouncedSave(sessionId)
-                    debouncedSave({ ...draft })
+                // Message is empty - clear the draft
+                if (this.localState.draftMessages[sessionId]) {
+                    this.clearDraftMessage(sessionId)
                 }
                 return
             }
 
             // Message has content - save it
-            if (!draft) {
-                this.localState.draftMessages[sessionId] = {}
-            }
-            this.localState.draftMessages[sessionId].message = message
+            this.localState.draftMessages[sessionId] = { message }
 
             // Persist to IndexedDB with debounce
             const debouncedSave = this._getDebouncedSave(sessionId)
-            debouncedSave({ ...this.localState.draftMessages[sessionId] })
+            debouncedSave({ message })
         },
 
         /**
          * Set the draft title for a session (draft sessions only).
-         * Called by SessionHeader when title is modified before first message.
+         * Called by SessionRenameDialog when title is modified before first message.
+         * Updates the draft session in IndexedDB with the new title.
          * @param {string} sessionId
          * @param {string} title
          */
         setDraftTitle(sessionId, title) {
-            if (!this.localState.draftMessages[sessionId]) {
-                this.localState.draftMessages[sessionId] = {}
-            }
-            this.localState.draftMessages[sessionId].title = title
+            const session = this.sessions[sessionId]
+            if (!session?.draft) return
 
-            // Persist to IndexedDB with debounce
-            const debouncedSave = this._getDebouncedSave(sessionId)
-            debouncedSave({ ...this.localState.draftMessages[sessionId] })
+            // Update IndexedDB with projectId and title (fire and forget)
+            saveDraftSession(sessionId, {
+                projectId: session.project_id,
+                title
+            }).catch(err =>
+                console.warn('Failed to save draft session title to IndexedDB:', err)
+            )
         },
 
         /**
@@ -1252,20 +1242,12 @@ export const useDataStore = defineStore('data', {
 
         /**
          * Load all draft messages from IndexedDB into local state.
-         * Called at app startup, AFTER hydrateDraftSessions.
-         * Also applies saved titles to draft sessions.
+         * Called at app startup.
          */
         async hydrateDraftMessages() {
             try {
                 const drafts = await getAllDraftMessages()
                 this.localState.draftMessages = drafts
-
-                // Apply saved titles to draft sessions
-                for (const [sessionId, draft] of Object.entries(drafts)) {
-                    if (draft.title && this.sessions[sessionId]?.draft) {
-                        this.sessions[sessionId].title = draft.title
-                    }
-                }
             } catch (err) {
                 console.warn('Failed to load draft messages from IndexedDB:', err)
             }
@@ -1274,20 +1256,18 @@ export const useDataStore = defineStore('data', {
         /**
          * Load all draft sessions from IndexedDB into the sessions store.
          * Called at app startup, BEFORE hydrateDraftMessages.
-         * Recreates session objects with: id, project_id, title='New session',
+         * Recreates session objects with: id, project_id, title (or 'New session'),
          * mtime=now, last_line=0, draft=true.
-         * The title may be overwritten later by hydrateDraftMessages if a custom
-         * title was saved in draftMessages.
          */
         async hydrateDraftSessions() {
             try {
                 const draftSessions = await getAllDraftSessions()
                 const now = Date.now() / 1000
-                for (const [sessionId, { projectId }] of Object.entries(draftSessions)) {
+                for (const [sessionId, { projectId, title }] of Object.entries(draftSessions)) {
                     this.sessions[sessionId] = {
                         id: sessionId,
                         project_id: projectId,
-                        title: 'New session',
+                        title: title || 'New session',
                         mtime: now,
                         last_line: 0,
                         draft: true,
