@@ -4,6 +4,8 @@ Claude process wrapper for a single SDK client instance.
 
 import asyncio
 import logging
+import os
+import signal
 import time
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -175,7 +177,7 @@ class ClaudeProcess:
                 cwd=self.cwd,
                 permission_mode="bypassPermissions",
                 stderr=self._log_stderr,
-                extra_args={}
+                extra_args={},
             )
 
             if resume:
@@ -255,7 +257,7 @@ class ClaudeProcess:
     async def kill(self, reason: str = "manual") -> None:
         """Terminate the process gracefully.
 
-        This cancels the message loop and disconnects from Claude.
+        This cancels the message loop and kills the underlying Claude CLI process.
         Safe to call multiple times or on an already dead process.
 
         Args:
@@ -271,6 +273,9 @@ class ClaudeProcess:
 
         self.kill_reason = reason
 
+        # Get PID BEFORE dropping the client reference
+        pid = self.get_pid()
+
         # Cancel message loop first
         if self._message_loop_task is not None:
             self._message_loop_task.cancel()
@@ -282,8 +287,11 @@ class ClaudeProcess:
 
         # Don't call disconnect() - the SDK's anyio cancel scopes leak
         # cancellation to other asyncio tasks. Just drop the reference.
-        # The underlying Claude CLI process will terminate when its stdin closes.
         self._client = None
+
+        # Kill the system process directly (isolated from anyio context)
+        if pid is not None:
+            await self._kill_system_process(pid)
 
         # Update state
         self._set_state(ProcessState.DEAD)
@@ -357,6 +365,10 @@ class ClaudeProcess:
             self.session_id,
             error_message,
         )
+
+        # Get PID BEFORE dropping the client reference
+        pid = self.get_pid()
+
         self._set_state(ProcessState.DEAD)
         self.error = error_message
         self.kill_reason = "error"
@@ -364,11 +376,64 @@ class ClaudeProcess:
 
         await self._notify_state_change()
 
-        # Don't call disconnect() here - the SDK's anyio cancel scopes leak
-        # cancellation to other asyncio tasks even when run in a separate task.
-        # Just drop the reference and let the subprocess die naturally.
-        # The underlying Claude CLI process will terminate when its stdin closes.
+        # Don't call disconnect() - the SDK's anyio cancel scopes leak
+        # cancellation to other asyncio tasks. Just drop the reference.
         self._client = None
+
+        # Kill the system process directly (isolated from anyio context)
+        if pid is not None:
+            await self._kill_system_process(pid)
+
+    async def _kill_system_process(self, pid: int) -> None:
+        """Kill the system process by PID, completely isolated from anyio.
+
+        Uses SIGTERM first for graceful shutdown, then SIGKILL after timeout.
+        Runs in a thread executor to avoid any async context pollution that
+        could cause cancel scope leaks.
+
+        Args:
+            pid: Process ID to kill
+        """
+
+        def _do_kill() -> None:
+            """Synchronous kill logic, runs in a separate thread."""
+            try:
+                # Check if process exists
+                os.kill(pid, 0)  # Signal 0 = check existence only
+            except OSError:
+                # Process already dead
+                logger.debug("Process %d already dead", pid)
+                return
+
+            try:
+                # SIGTERM first (graceful termination)
+                logger.debug("Sending SIGTERM to process %d", pid)
+                os.kill(pid, signal.SIGTERM)
+
+                # Wait up to 2 seconds for graceful termination
+                for _ in range(20):  # 20 x 0.1s = 2s
+                    time.sleep(0.1)
+                    try:
+                        os.kill(pid, 0)  # Check if still alive
+                    except OSError:
+                        logger.debug("Process %d terminated gracefully", pid)
+                        return
+
+                # Still alive after 2s → SIGKILL
+                logger.warning(
+                    "Process %d did not terminate after SIGTERM, sending SIGKILL", pid
+                )
+                os.kill(pid, signal.SIGKILL)
+
+            except OSError as e:
+                # Process died between checks or permission denied
+                logger.debug("Kill operation for process %d: %s", pid, e)
+            except Exception as e:
+                logger.error("Unexpected error killing process %d: %s", pid, e)
+
+        # Run in thread executor for complete isolation from async context
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _do_kill)
 
     async def _notify_state_change(self) -> None:
         """Invoke the state change callback if set."""
