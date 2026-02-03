@@ -30,7 +30,6 @@ const isDraft = computed(() => session.value?.draft === true)
 // Local state for the textarea
 const messageText = ref('')
 const textareaRef = ref(null)
-const isFocused = ref(false)
 
 // Get process state for this session
 const processState = computed(() => store.getProcessState(props.sessionId))
@@ -157,15 +156,12 @@ function handleCancel() {
     <div class="message-input">
         <wa-textarea
             ref="textareaRef"
-            :class="{ focused: isFocused }"
             :value.prop="messageText"
             :placeholder="placeholderText"
             rows="3"
             resize="auto"
             @input="onInput"
             @keydown="onKeydown"
-            @focus="isFocused = true"
-            @blur="isFocused = false"
         ></wa-textarea>
         <div class="message-input-actions">
             <!-- Cancel button for draft sessions -->
@@ -200,13 +196,10 @@ function handleCancel() {
 }
 
 .message-input wa-textarea::part(textarea) {
-    /* When not focused, limit to initial height (rows="3") so user can read messages */
-    max-height: 4.5em;
-}
-
-.message-input wa-textarea.focused::part(textarea) {
-    /* When focused, allow growth but limit to 40% of visual viewport (accounts for mobile keyboard) */
+    /* Limit height to 40% of visual viewport (accounts for mobile keyboard) */
     max-height: calc(var(--visual-viewport-height, 100dvh) * 0.4);
+    /* Override resize="auto" which sets overflow-y: hidden - we need scrolling when max-height is reached */
+    overflow-y: auto;
 }
 
 .message-input-actions {
