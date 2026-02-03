@@ -193,7 +193,6 @@ function handleSplitReposition(event) {
                         </span>
                     </wa-option>
                 </wa-select>
-                <wa-tooltip for="project-selector">Select a project</wa-tooltip>
             </div>
 
             <wa-divider></wa-divider>
