@@ -50,17 +50,43 @@ const allSessions = computed(() => {
     return store.getProjectSessions(props.projectId)
 })
 
-// Filtered sessions based on search query (searches in title)
+/**
+ * Check if a query matches a text using subsequence matching.
+ * All characters from query must appear in text, in order, but not necessarily consecutive.
+ * Case-insensitive.
+ *
+ * Examples:
+ *   matchSubsequence("vs", "virtual scroller") -> true (v...irtual s...croller)
+ *   matchSubsequence("vscr", "virtual scroller") -> true (v...irtual scr...oller)
+ *   matchSubsequence("xyz", "virtual scroller") -> false
+ *
+ * @param {string} query - The search query
+ * @param {string} text - The text to search in
+ * @returns {boolean} True if query is a subsequence of text
+ */
+function matchSubsequence(query, text) {
+    const lowerQuery = query.toLowerCase()
+    const lowerText = text.toLowerCase()
+
+    let queryIndex = 0
+    for (let i = 0; i < lowerText.length && queryIndex < lowerQuery.length; i++) {
+        if (lowerText[i] === lowerQuery[queryIndex]) {
+            queryIndex++
+        }
+    }
+    return queryIndex === lowerQuery.length
+}
+
+// Filtered sessions based on search query (subsequence matching on title)
 const sessions = computed(() => {
-    const query = props.searchQuery.toLowerCase().trim()
+    const query = props.searchQuery.trim()
     if (!query) return allSessions.value
 
     return allSessions.value.filter(session => {
-        // Get display name: "New session" for drafts without title, otherwise title or id
         const displayName = (session.draft && !session.title)
             ? 'New session'
             : (session.title || session.id)
-        return displayName.toLowerCase().includes(query)
+        return matchSubsequence(query, displayName)
     })
 })
 
