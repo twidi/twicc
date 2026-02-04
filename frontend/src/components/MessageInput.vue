@@ -83,6 +83,18 @@ watch(() => props.sessionId, (newId) => {
     messageText.value = draft?.message || ''
 }, { immediate: true })
 
+// Also restore draft when it arrives after hydration (initial page load)
+// This handles the race condition where the component mounts before IndexedDB is loaded
+watch(
+    () => store.getDraftMessage(props.sessionId),
+    (draft) => {
+        // Only restore if textarea is still empty (don't overwrite user typing)
+        if (!messageText.value && draft?.message) {
+            messageText.value = draft.message
+        }
+    }
+)
+
 // Save draft message on each keystroke (debounced in store)
 watch(messageText, (newText) => {
     store.setDraftMessage(props.sessionId, newText)
