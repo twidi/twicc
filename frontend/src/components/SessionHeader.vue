@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useDataStore } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import { formatDate, formatDuration } from '../utils/date'
 import { MAX_CONTEXT_TOKENS, PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES } from '../constants'
 import { killProcess } from '../composables/useWebSocket'
@@ -21,6 +22,10 @@ const props = defineProps({
 })
 
 const store = useDataStore()
+const settingsStore = useSettingsStore()
+
+// Tooltips setting
+const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 
 // Session data from store
 const session = computed(() => store.getSession(props.sessionId))
@@ -212,10 +217,10 @@ defineExpose({
             >
                 <wa-icon name="pencil" label="Rename"></wa-icon>
             </wa-button>
-            <wa-tooltip for="session-header-rename-button">Rename session</wa-tooltip>
+            <wa-tooltip v-if="tooltipsEnabled" for="session-header-rename-button">Rename session</wa-tooltip>
 
             <h2 id="session-header-title">{{ displayName }}</h2>
-            <wa-tooltip for="session-header-title">{{ displayName }}</wa-tooltip>
+            <wa-tooltip v-if="tooltipsEnabled" for="session-header-title">{{ displayName }}</wa-tooltip>
 
             <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
         </div>
@@ -228,26 +233,26 @@ defineExpose({
                 <wa-icon auto-width name="comment" variant="regular"></wa-icon>
                 <span>{{ session.message_count ?? '??' }}</span>
             </span>
-            <wa-tooltip for="session-header-messages">Number of user and assistant messages</wa-tooltip>
+            <wa-tooltip v-if="tooltipsEnabled" for="session-header-messages">Number of user and assistant messages</wa-tooltip>
 
             <span id="session-header-lines" class="meta-item nb_lines">
                 <wa-icon auto-width name="bars"></wa-icon>
                 <span>{{ session.last_line }}</span>
             </span>
-            <wa-tooltip for="session-header-lines">Lines in the JSONL file</wa-tooltip>
+            <wa-tooltip v-if="tooltipsEnabled" for="session-header-lines">Lines in the JSONL file</wa-tooltip>
 
             <span id="session-header-mtime" class="meta-item">
                 <wa-icon auto-width name="clock" variant="regular"></wa-icon>
                 <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
             </span>
-            <wa-tooltip for="session-header-mtime">Last activity</wa-tooltip>
+            <wa-tooltip v-if="tooltipsEnabled" for="session-header-mtime">Last activity</wa-tooltip>
 
             <template v-if="formattedTotalCost">
                 <span id="session-header-cost" class="meta-item">
                     <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
                     {{ formattedTotalCost }}
                 </span>
-                <wa-tooltip for="session-header-cost">Total session cost</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" for="session-header-cost">Total session cost</wa-tooltip>
             </template>
 
             <template v-if="formattedCostBreakdown">
@@ -259,7 +264,7 @@ defineExpose({
                     </span>
                     )</span>
                 </span>
-                <wa-tooltip for="session-header-cost-breakdown">Main agent cost + sub-agents cost</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" for="session-header-cost-breakdown">Main agent cost + sub-agents cost</wa-tooltip>
             </template>
 
             <template v-if="formattedModel">
@@ -267,7 +272,7 @@ defineExpose({
                     <wa-icon auto-width name="robot" variant="classic"></wa-icon>
                     <span>{{ formattedModel }}</span>
                 </span>
-                <wa-tooltip for="session-header-model">Last used model</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" for="session-header-model">Last used model</wa-tooltip>
             </template>
 
             <template v-if="contextUsagePercentage != null">
@@ -280,7 +285,7 @@ defineExpose({
                         '--indicator-width': contextUsageIndicatorWidth
                     }"
                 ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
-                <wa-tooltip for="session-header-context">Context window usage</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" for="session-header-context">Context window usage</wa-tooltip>
             </template>
 
             <template
@@ -295,7 +300,7 @@ defineExpose({
                 >
                     {{ formatDuration(getStateDuration(processState)) }}
                 </span>
-                <wa-tooltip v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" for="session-header-process-duration">Assistant turn duration</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled && processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" for="session-header-process-duration">Assistant turn duration</wa-tooltip>
 
                 <span
                     v-if="processState.memory"
@@ -305,7 +310,7 @@ defineExpose({
                 >
                     {{ formatMemory(processState.memory) }}
                 </span>
-                <wa-tooltip v-if="processState.memory" for="session-header-process-memory">Claude Code memory usage</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled && processState.memory" for="session-header-process-memory">Claude Code memory usage</wa-tooltip>
 
                 <ProcessIndicator
                     id="session-header-process-indicator"
@@ -313,7 +318,7 @@ defineExpose({
                     size="small"
                     :animate-states="animateStates"
                 />
-                <wa-tooltip for="session-header-process-indicator">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" for="session-header-process-indicator">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}</wa-tooltip>
 
                 <wa-button
                     v-if="canStopProcess"
@@ -326,7 +331,7 @@ defineExpose({
                 >
                     <wa-icon name="ban" label="Stop"></wa-icon>
                 </wa-button>
-                <wa-tooltip for="session-header-stop-button">Stop the Claude Code process</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" for="session-header-stop-button">Stop the Claude Code process</wa-tooltip>
             </template>
         </div>
     </header>

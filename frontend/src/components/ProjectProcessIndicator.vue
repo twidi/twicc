@@ -16,6 +16,7 @@
  */
 import { computed } from 'vue'
 import { useDataStore } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import ProcessIndicator from './ProcessIndicator.vue'
 
 const props = defineProps({
@@ -37,6 +38,10 @@ const props = defineProps({
 })
 
 const dataStore = useDataStore()
+const settingsStore = useSettingsStore()
+
+// Tooltips setting
+const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 
 // Aggregated process state for this project (most important state)
 const projectState = computed(() => dataStore.getProjectProcessState(props.projectId))
@@ -63,6 +68,6 @@ const animateStates = ['assistant_turn']
             :size="size"
             :animate-states="animateStates"
         />
-        <wa-tooltip :for="`project-process-${projectId}`">{{ tooltipText }}</wa-tooltip>
+        <wa-tooltip v-if="tooltipsEnabled" :for="`project-process-${projectId}`">{{ tooltipText }}</wa-tooltip>
     </template>
 </template>

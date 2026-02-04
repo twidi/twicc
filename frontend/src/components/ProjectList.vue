@@ -1,12 +1,17 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useDataStore } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import { formatDate } from '../utils/date'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
 
 const store = useDataStore()
+const settingsStore = useSettingsStore()
+
+// Tooltips setting
+const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 
 // Format cost as USD string (e.g., "$0.42")
 function formatCost(cost) {
@@ -57,17 +62,17 @@ function handleEditClick(event, project) {
                 >
                     <wa-icon name="pencil"></wa-icon>
                 </wa-button>
-                <wa-tooltip :for="`edit-button-${project.id}`">Edit project (name and color)</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`edit-button-${project.id}`">Edit project (name and color)</wa-tooltip>
                 <div v-if="project.directory" class="project-directory">{{ project.directory }}</div>
                 <div class="project-meta">
                     <span :id="`sessions-count-${project.id}`" class="sessions-count">
                         {{ project.sessions_count }} session{{ project.sessions_count !== 1 ? 's' : '' }}
                     </span>
-                    <wa-tooltip :for="`sessions-count-${project.id}`">Number of sessions</wa-tooltip>
+                    <wa-tooltip v-if="tooltipsEnabled" :for="`sessions-count-${project.id}`">Number of sessions</wa-tooltip>
                     <span :id="`project-mtime-${project.id}`" class="project-mtime">{{ formatDate(project.mtime) }}</span>
-                    <wa-tooltip :for="`project-mtime-${project.id}`">Last activity</wa-tooltip>
+                    <wa-tooltip v-if="tooltipsEnabled" :for="`project-mtime-${project.id}`">Last activity</wa-tooltip>
                     <span :id="`project-cost-${project.id}`" class="project-cost">{{ project.total_cost != null ? formatCost(project.total_cost) : '-' }}</span>
-                    <wa-tooltip :for="`project-cost-${project.id}`">Total project cost</wa-tooltip>
+                    <wa-tooltip v-if="tooltipsEnabled" :for="`project-cost-${project.id}`">Total project cost</wa-tooltip>
                 </div>
             </div>
         </wa-card>

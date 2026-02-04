@@ -23,6 +23,7 @@ const sessionTimeFormatOptions = [
 // Refs for wa-switch elements (needed to sync checked property with Web Components)
 const baseModeSwitch = ref(null)
 const debugSwitch = ref(null)
+const tooltipsSwitch = ref(null)
 const fontSizeSlider = ref(null)
 const themeSelect = ref(null)
 const sessionTimeFormatSelect = ref(null)
@@ -33,6 +34,7 @@ const debugEnabled = computed(() => store.isDebugEnabled)
 const fontSize = computed(() => store.getFontSize)
 const themeMode = computed(() => store.getThemeMode)
 const sessionTimeFormat = computed(() => store.getSessionTimeFormat)
+const tooltipsEnabled = computed(() => store.areTooltipsEnabled)
 
 // Computed label for the base mode switch
 const baseModeLabel = computed(() =>
@@ -61,11 +63,14 @@ function syncSwitchState() {
         if (sessionTimeFormatSelect.value && sessionTimeFormatSelect.value.value !== sessionTimeFormat.value) {
             sessionTimeFormatSelect.value.value = sessionTimeFormat.value
         }
+        if (tooltipsSwitch.value && tooltipsSwitch.value.checked !== tooltipsEnabled.value) {
+            tooltipsSwitch.value.checked = tooltipsEnabled.value
+        }
     })
 }
 
 // Watch for store changes and sync switches
-watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat], syncSwitchState, { immediate: true })
+watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled], syncSwitchState, { immediate: true })
 
 /**
  * Toggle between normal and simplified mode.
@@ -104,6 +109,13 @@ function onSessionTimeFormatChange(event) {
 }
 
 /**
+ * Toggle tooltips.
+ */
+function onTooltipsChange(event) {
+    store.setTooltipsEnabled(event.target.checked)
+}
+
+/**
  * Called when popover opens - sync switch states.
  */
 function onPopoverShow() {
@@ -115,7 +127,7 @@ function onPopoverShow() {
     <wa-button id="settings-trigger" variant="neutral" appearance="filled-outlined" size="small">
         <wa-icon name="gear"></wa-icon> Settings
     </wa-button>
-    <wa-tooltip for="settings-trigger">Toggle settings</wa-tooltip>
+    <wa-tooltip v-if="tooltipsEnabled" for="settings-trigger">Toggle settings</wa-tooltip>
     <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
         <div class="settings-content">
             <div class="setting-group">
@@ -173,6 +185,14 @@ function onPopoverShow() {
                         :value="option.value"
                     >{{ option.label }}</wa-option>
                 </wa-select>
+            </div>
+            <div class="setting-group">
+                <label class="setting-group-label">Tooltips</label>
+                <wa-switch
+                    ref="tooltipsSwitch"
+                    @change="onTooltipsChange"
+                    size="small"
+                >Enabled</wa-switch>
             </div>
         </div>
     </wa-popover>

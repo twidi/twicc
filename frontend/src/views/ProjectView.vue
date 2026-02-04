@@ -2,6 +2,7 @@
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import SessionList from '../components/SessionList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
@@ -11,6 +12,10 @@ import ProjectProcessIndicator from '../components/ProjectProcessIndicator.vue'
 const route = useRoute()
 const router = useRouter()
 const store = useDataStore()
+const settingsStore = useSettingsStore()
+
+// Tooltips setting
+const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 
 // Current project from route params
 const projectId = computed(() => route.params.projectId)
@@ -196,7 +201,7 @@ function handleSplitReposition(event) {
                 <wa-button id="back-button" class="back-button" variant="brand" appearance="outlined" size="small" @click="handleBackHome">
                     <wa-icon name="arrow-left"></wa-icon>
                 </wa-button>
-                <wa-tooltip for="back-button">Back to projects list</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" for="back-button">Back to projects list</wa-tooltip>
                 <wa-select
                     id="project-selector"
                     :value.attr="isAllProjectsMode ? ALL_PROJECTS_ID : projectId"
@@ -269,7 +274,7 @@ function handleSplitReposition(event) {
                     <wa-icon name="plus"></wa-icon>
                     <span>New session</span>
                 </wa-button>
-                <wa-tooltip for="new-session-button">Create a new session in this project</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" for="new-session-button">Create a new session in this project</wa-tooltip>
 
                 <!-- In all projects mode: dropdown to choose project -->
                 <wa-dropdown
@@ -310,7 +315,7 @@ function handleSplitReposition(event) {
                         <wa-icon class="icon-expand" name="angles-right"></wa-icon>
                     </wa-button>
                 </label>
-                <wa-tooltip for="sidebar-toggle-label">Toggle sidebar</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" for="sidebar-toggle-label">Toggle sidebar</wa-tooltip>
 
                 <!-- Placeholder to occupy the same space a the sidebar toggle button that is absolute for goot reasons -->
                 <wa-button variant="neutral" appearance="filled-outlined" size="small" style="visibility: hidden; pointer-events: none"><wa-icon name="angles-left"></wa-icon></wa-button>

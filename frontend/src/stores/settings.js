@@ -20,6 +20,7 @@ const SETTINGS_SCHEMA = {
     fontSize: 16,
     themeMode: DEFAULT_THEME_MODE,
     sessionTimeFormat: DEFAULT_SESSION_TIME_FORMAT,
+    tooltipsEnabled: true,
     // Not persisted - computed at runtime based on themeMode and system preference
     _effectiveTheme: null,
 }
@@ -35,6 +36,7 @@ const SETTINGS_VALIDATORS = {
     fontSize: (v) => typeof v === 'number' && v >= 12 && v <= 32,
     themeMode: (v) => [THEME_MODE.SYSTEM, THEME_MODE.LIGHT, THEME_MODE.DARK].includes(v),
     sessionTimeFormat: (v) => [SESSION_TIME_FORMAT.TIME, SESSION_TIME_FORMAT.RELATIVE_SHORT, SESSION_TIME_FORMAT.RELATIVE_NARROW].includes(v),
+    tooltipsEnabled: (v) => typeof v === 'boolean',
 }
 
 /**
@@ -99,6 +101,7 @@ export const useSettingsStore = defineStore('settings', {
         getFontSize: (state) => state.fontSize,
         getThemeMode: (state) => state.themeMode,
         getSessionTimeFormat: (state) => state.sessionTimeFormat,
+        areTooltipsEnabled: (state) => state.tooltipsEnabled,
         /**
          * Effective theme: always returns 'light' or 'dark', never 'system'.
          * Takes into account the system preference when themeMode is 'system'.
@@ -159,6 +162,16 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set tooltips enabled/disabled.
+         * @param {boolean} enabled
+         */
+        setTooltipsEnabled(enabled) {
+            if (SETTINGS_VALIDATORS.tooltipsEnabled(enabled)) {
+                this.tooltipsEnabled = enabled
+            }
+        },
+
+        /**
          * Update the effective theme based on themeMode and system preference.
          * Called internally when themeMode changes or system preference changes.
          */
@@ -201,6 +214,7 @@ export function initSettings() {
             fontSize: store.fontSize,
             themeMode: store.themeMode,
             sessionTimeFormat: store.sessionTimeFormat,
+            tooltipsEnabled: store.tooltipsEnabled,
         }),
         (newSettings) => {
             saveSettings(newSettings)

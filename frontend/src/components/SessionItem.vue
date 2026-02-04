@@ -1,9 +1,13 @@
 <script setup>
 import { computed, ref } from 'vue'
+import { useSettingsStore } from '../stores/settings'
 import JsonViewer from './JsonViewer.vue'
 import Message from './items/Message.vue'
 import ApiError from './items/ApiError.vue'
 import UnknownEntry from './items/UnknownEntry.vue'
+
+const settingsStore = useSettingsStore()
+const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 
 const props = defineProps({
     content: {
@@ -87,17 +91,19 @@ function toggleJsonView() {
 <template>
     <div class="session-item" :data-kind="kind">
         <!-- JSON toggle button (visible on hover) -->
-        <wa-button
-            v-if="!showJson"
-            :id="`json-toggle-${lineNum}`"
-            class="json-toggle"
-            :variant="showJson ? 'warning' : 'neutral'"
-            size="small"
-            @click="toggleJsonView"
-        >
-            <wa-icon name="code"></wa-icon>
-        </wa-button>
-        <wa-tooltip v-if="!showJson" :for="`json-toggle-${lineNum}`">Show JSON</wa-tooltip>
+        <div class="json-toggle-container">
+            <wa-button
+                v-if="!showJson"
+                :id="`json-toggle-${lineNum}`"
+                class="json-toggle"
+                :variant="showJson ? 'warning' : 'neutral'"
+                size="small"
+                @click="toggleJsonView"
+            >
+                <wa-icon name="code"></wa-icon>
+            </wa-button>
+            <wa-tooltip v-if="!showJson && tooltipsEnabled" :for="`json-toggle-${lineNum}`">Show JSON</wa-tooltip>
+        </div>
 
         <!-- JSON view -->
         <wa-callout appearance="outlined" variant="neutral" v-if="showJson" class="json-view">
@@ -110,9 +116,9 @@ function toggleJsonView() {
             >
                 <wa-icon name="code"></wa-icon>
             </wa-button>
-            <wa-tooltip :for="`json-toggle-hide-${lineNum}`">Hide JSON</wa-tooltip>
+            <wa-tooltip v-if="tooltipsEnabled" :for="`json-toggle-hide-${lineNum}`">Hide JSON</wa-tooltip>
             <wa-tag :id="`line-number-${lineNum}`" size="small"  appearance="filled-outlined" variant="brand" class="line-number">{{ lineNum }}</wa-tag>
-            <wa-tooltip :for="`line-number-${lineNum}`">Line number</wa-tooltip>
+            <wa-tooltip v-if="tooltipsEnabled" :for="`line-number-${lineNum}`">Line number</wa-tooltip>
             <div class="json-tree">
                 <JsonViewer
                     :data="parsedContent"
@@ -402,7 +408,7 @@ wa-details {
 .session-items {
     .virtual-scroller-item:has(wa-details.item-details:last-child) {
         &:has(
-            + .virtual-scroller-item wa-details.item-details:nth-child(3)  /* 1 is json toggle and 2 its tooltip */
+            + .virtual-scroller-item wa-details.item-details:nth-child(2)  /* 1 is json toggle and its tooltip */
         ) wa-details.item-details:last-child {
             padding-bottom: 0;
             &::part(base) {
@@ -412,7 +418,7 @@ wa-details {
             }
         }
         & + .virtual-scroller-item
-        wa-details.item-details:nth-child(3) {  /* 1 is json toggle and 2 its tooltip */
+        wa-details.item-details:nth-child(2) {  /* 1 is json toggle and its tooltip */
             padding-top: 0;
             &::part(base) {
                 border-top-left-radius: 0;

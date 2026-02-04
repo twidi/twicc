@@ -27,6 +27,8 @@ const settingsStore = useSettingsStore()
 
 // Session time format setting
 const sessionTimeFormat = computed(() => settingsStore.getSessionTimeFormat)
+// Tooltips setting
+const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 const useRelativeTime = computed(() =>
     sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_SHORT ||
     sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_NARROW
@@ -237,7 +239,7 @@ function timestampToDate(timestamp) {
             <div class="session-name-row">
                 <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                 <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
-                <wa-tooltip :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
             </div>
             <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
             <!-- Process info row (only shown when process is active and not draft) -->
@@ -251,14 +253,14 @@ function timestampToDate(timestamp) {
                         {{ formatMemory(getProcessState(session.id).memory) }}
                     </template>
                 </span>
-                <wa-tooltip :for="`process-memory-${session.id}`">Claude Code memory usage</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`process-memory-${session.id}`">Claude Code memory usage</wa-tooltip>
 
                 <span :id="`process-duration-${session.id}`" class="process-duration">
                     <template v-if="getProcessState(session.id).state === PROCESS_STATE.ASSISTANT_TURN && getProcessState(session.id).state_changed_at">
                         {{ formatDuration(getStateDuration(getProcessState(session.id))) }}
                     </template>
                 </span>
-                <wa-tooltip :for="`process-duration-${session.id}`">Assistant turn duration</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`process-duration-${session.id}`">Assistant turn duration</wa-tooltip>
 
                 <ProcessIndicator
                     :id="`process-indicator-${session.id}`"
@@ -266,20 +268,20 @@ function timestampToDate(timestamp) {
                     size="small"
                     :animate-states="animateStates"
                 />
-                <wa-tooltip :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
             </div>
             <!-- Meta row (not shown for draft sessions) -->
             <div v-if="!session.draft" class="session-meta">
                 <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.message_count ?? '??' }}</span>
-                <wa-tooltip :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
                 <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon>{{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
-                <wa-tooltip :for="`session-cost-${session.id}`">Total session cost</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`session-cost-${session.id}`">Total session cost</wa-tooltip>
                 <span :id="`session-mtime-${session.id}`" class="session-mtime">
                     <wa-icon auto-width name="clock" variant="regular"></wa-icon>
                     <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(session.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
                     <template v-else>{{ formatDate(session.mtime, { smart: true }) }}</template>
                 </span>
-                <wa-tooltip :for="`session-mtime-${session.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(session.mtime, { smart: true })}` : 'Last activity' }}</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`session-mtime-${session.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(session.mtime, { smart: true })}` : 'Last activity' }}</wa-tooltip>
             </div>
         </wa-button>
 

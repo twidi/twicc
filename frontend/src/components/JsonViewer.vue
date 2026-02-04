@@ -1,6 +1,10 @@
 <script setup>
-import { ref, useId } from 'vue'
+import { ref, useId, computed } from 'vue'
+import { useSettingsStore } from '../stores/settings'
 import JsonNode from './JsonNode.vue'
+
+const settingsStore = useSettingsStore()
+const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 
 defineProps({
     data: { required: true },
@@ -26,13 +30,13 @@ function forwardToggle(path) {
         <wa-button
             :id="wrapToggleId"
             class="json-viewer-wrap-toggle"
-            variant="text"
+            variant="neutral"
             size="small"
             @click="wrap = !wrap"
         >
             <wa-icon :name="wrap ? 'align-justify' : 'align-left'"></wa-icon>
         </wa-button>
-        <wa-tooltip :for="wrapToggleId">{{ wrap ? 'Disable wrap' : 'Enable wrap' }}</wa-tooltip>
+        <wa-tooltip v-if="tooltipsEnabled" :for="wrapToggleId">{{ wrap ? 'Disable wrap' : 'Enable wrap' }}</wa-tooltip>
         <JsonNode
             :data="data"
             :path="path"
