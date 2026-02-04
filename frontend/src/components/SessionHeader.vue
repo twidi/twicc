@@ -18,6 +18,14 @@ const props = defineProps({
         type: String,
         default: 'session',
         validator: (value) => ['session', 'subagent'].includes(value)
+    },
+    /**
+     * Whether the header is hidden (for auto-hide on small viewports).
+     * When true, the header slides up and out of view.
+     */
+    hidden: {
+        type: Boolean,
+        default: false
     }
 })
 
@@ -185,6 +193,9 @@ function getStateDuration(procState) {
 // Rename dialog
 const renameDialogRef = ref(null)
 
+// Reference to the header element (for auto-hide height calculation)
+const headerRef = ref(null)
+
 /**
  * Open the rename dialog.
  * @param {Object} options
@@ -194,14 +205,15 @@ function openRenameDialog({ showHint = false } = {}) {
     renameDialogRef.value?.open({ showHint })
 }
 
-// Expose methods for parent components
+// Expose methods and refs for parent components
 defineExpose({
     openRenameDialog,
+    headerRef,
 })
 </script>
 
 <template>
-    <header class="session-header" v-if="session">
+    <header ref="headerRef" class="session-header" :class="{ 'auto-hide-hidden': hidden }" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
             <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
 
@@ -334,18 +346,19 @@ defineExpose({
                 <wa-tooltip v-if="tooltipsEnabled" for="session-header-stop-button">Stop the Claude Code process</wa-tooltip>
             </template>
         </div>
+
+        <wa-divider></wa-divider>
     </header>
+
     <!-- Rename dialog -->
     <SessionRenameDialog
         ref="renameDialogRef"
         :session="session"
     />
-    <wa-divider></wa-divider>
 </template>
 
 <style scoped>
 .session-header {
-    padding: var(--wa-space-xs);
     gap: var(--wa-space-xs);
     display: flex;
     flex-direction: column;
@@ -359,6 +372,8 @@ defineExpose({
     align-items: baseline;
     gap: var(--wa-space-m);
     min-width: 0;  /* Allow text truncation */
+    padding-inline: var(--wa-space-xs);
+    padding-top: var(--wa-space-xs);
 }
 
 .draft-tag {
@@ -395,6 +410,7 @@ defineExpose({
     justify-content: start;
     align-items: center;
     gap: var(--wa-space-l);
+    padding-inline: var(--wa-space-xs);
 }
 
 .session-meta {
@@ -474,6 +490,24 @@ wa-divider {
 
 .rename-button:hover {
     opacity: 1;
+}
+
+/* Auto-hide header on small viewport heights */
+@media (max-height: 800px) {
+    .session-header {
+        transition: transform 0.3s ease, opacity 0.3s ease;
+    }
+
+    .session-header.auto-hide-hidden {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 10;
+        transform: translateY(-100%);
+        opacity: 0;
+        pointer-events: none;
+    }
 }
 
 </style>

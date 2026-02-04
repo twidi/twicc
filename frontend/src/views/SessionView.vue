@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch, ref } from 'vue'
+import { computed, watch, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import SessionHeader from '../components/SessionHeader.vue'
@@ -12,6 +12,57 @@ const store = useDataStore()
 
 // Reference to session header for opening rename dialog
 const sessionHeaderRef = ref(null)
+
+// Reference to session items list for scroll compensation
+const sessionItemsListRef = ref(null)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Auto-hide header on small viewports
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Threshold for small viewport detection (in pixels)
+const SMALL_VIEWPORT_HEIGHT = 800
+
+// Track if we're on a small viewport
+const isSmallViewport = ref(false)
+
+// Track header hidden state
+const isHeaderHidden = ref(false)
+
+/**
+ * Check viewport height and update isSmallViewport.
+ */
+function checkViewportHeight() {
+    isSmallViewport.value = window.innerHeight < SMALL_VIEWPORT_HEIGHT
+    // Reset header visibility when viewport becomes large again
+    if (!isSmallViewport.value && isHeaderHidden.value) {
+        isHeaderHidden.value = false
+    }
+}
+
+/**
+ * Handle scroll direction changes from SessionItemsList.
+ * @param {'up' | 'down'} direction
+ */
+function onScrollDirection(direction) {
+    if (!isSmallViewport.value) return
+
+    if (direction === 'down') {
+        isHeaderHidden.value = true
+    } else if (direction === 'up') {
+        isHeaderHidden.value = false
+    }
+}
+
+// Setup viewport height detection
+onMounted(() => {
+    checkViewportHeight()
+    window.addEventListener('resize', checkViewportHeight)
+})
+
+onUnmounted(() => {
+    window.removeEventListener('resize', checkViewportHeight)
+})
 
 // Current session from route params
 const projectId = computed(() => route.params.projectId)
@@ -166,6 +217,7 @@ function handleNeedsTitle() {
             ref="sessionHeaderRef"
             :session-id="sessionId"
             mode="session"
+            :hidden="isHeaderHidden"
         />
 
         <!-- Tab system -->
@@ -208,9 +260,12 @@ function handleNeedsTitle() {
             <!-- Main session panel -->
             <wa-tab-panel name="main">
                 <SessionItemsList
+                    ref="sessionItemsListRef"
                     :session-id="sessionId"
                     :project-id="projectId"
+                    :track-scroll-direction="isSmallViewport"
                     @needs-title="handleNeedsTitle"
+                    @scroll-direction="onScrollDirection"
                 />
             </wa-tab-panel>
 
@@ -242,6 +297,7 @@ function handleNeedsTitle() {
     flex-direction: column;
     height: 100%;
     overflow: hidden;
+    position: relative;
 }
 
 .session-view > wa-divider {

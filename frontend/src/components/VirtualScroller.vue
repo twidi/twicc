@@ -98,7 +98,12 @@ const emit = defineEmits([
      * Emitted when an item changes size (after initial render or expand/collapse).
      * Payload: { key, height, oldHeight }
      */
-    'item-resized'
+    'item-resized',
+    /**
+     * Emitted on scroll events (passive).
+     * Payload: native scroll Event
+     */
+    'scroll'
 ])
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -420,6 +425,15 @@ function getVisibleRange() {
     return visibleRange.value
 }
 
+/**
+ * Handle scroll events: update internal state and emit to parent.
+ * @param {Event} event - Native scroll event
+ */
+function onScroll(event) {
+    handleScroll(event)
+    emit('scroll', event)
+}
+
 // Expose methods for parent component access via ref
 defineExpose({
     scrollToIndex,
@@ -437,7 +451,7 @@ defineExpose({
     <div
         ref="containerRef"
         class="virtual-scroller"
-        @scroll.passive="handleScroll"
+        @scroll.passive="onScroll"
     >
         <!-- Spacer before rendered items -->
         <div

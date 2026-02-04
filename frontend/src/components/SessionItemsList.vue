@@ -28,12 +28,20 @@ const props = defineProps({
     projectId: {
         type: String,
         required: true
+    },
+    /**
+     * Whether to track scroll direction for auto-hide header feature.
+     * When false, scroll direction detection is skipped for performance.
+     */
+    trackScrollDirection: {
+        type: Boolean,
+        default: false
     }
 })
 
 const store = useDataStore()
 
-const emit = defineEmits(['needs-title'])
+const emit = defineEmits(['needs-title', 'scroll-direction'])
 
 // Reference to the VirtualScroller component
 const scrollerRef = ref(null)
@@ -53,6 +61,15 @@ const LOAD_DEBOUNCE_MS = 150
 
 // Minimum item size for the virtual scroller (in pixels)
 const MIN_ITEM_SIZE = 50
+
+// Scroll direction detection threshold (in pixels)
+const SCROLL_DIRECTION_THRESHOLD = 20
+
+// Track last scroll position for direction detection
+let lastScrollTop = 0
+
+// Track last emitted direction to avoid duplicate emissions
+let lastEmittedDirection = null
 
 // Track pending range to load (accumulated during debounce)
 const pendingLoadRange = ref(null)
@@ -471,6 +488,44 @@ function onScrollerUpdate({ startIndex, endIndex, visibleStartIndex, visibleEndI
 function toggleGroup(groupHeadLineNum) {
     store.toggleExpandedGroup(props.sessionId, groupHeadLineNum)
 }
+
+/**
+ * Handle scroll direction detection.
+ * Emits 'scroll-direction' event with 'up' or 'down' when direction changes.
+ * Only active when trackScrollDirection prop is true (for performance).
+ * @param {Event} event - Scroll event from VirtualScroller
+ */
+function onScroll(event) {
+    // Skip direction detection if not needed (performance optimization)
+    if (!props.trackScrollDirection) return
+
+    const scrollTop = event.target.scrollTop
+    const delta = scrollTop - lastScrollTop
+
+    if (Math.abs(delta) > SCROLL_DIRECTION_THRESHOLD) {
+        const direction = delta > 0 ? 'down' : 'up'
+        lastScrollTop = scrollTop
+
+        // Only emit if direction actually changed
+        if (direction !== lastEmittedDirection) {
+            lastEmittedDirection = direction
+            emit('scroll-direction', direction)
+        }
+    }
+}
+
+/**
+ * Get the scroller element for scroll compensation.
+ * @returns {HTMLElement|null}
+ */
+function getScrollerElement() {
+    return scrollerRef.value?.$el ?? null
+}
+
+// Expose methods for parent components
+defineExpose({
+    getScrollerElement
+})
 </script>
 
 <template>
@@ -510,6 +565,7 @@ function toggleGroup(groupHeadLineNum) {
             :unload-buffer="1500"
             class="session-items"
             @update="onScrollerUpdate"
+            @scroll="onScroll"
         >
             <template #default="{ item, index }">
                 <!-- Placeholder (no content loaded yet) -->
