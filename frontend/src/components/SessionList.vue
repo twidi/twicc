@@ -20,6 +20,10 @@ const props = defineProps({
     showProjectName: {
         type: Boolean,
         default: false
+    },
+    searchQuery: {
+        type: String,
+        default: ''
     }
 })
 
@@ -39,11 +43,25 @@ const relativeTimeFormat = computed(() =>
 )
 
 // Sessions are already sorted by mtime desc in the getter
-const sessions = computed(() => {
+const allSessions = computed(() => {
     if (props.projectId === ALL_PROJECTS_ID) {
         return store.getAllSessions
     }
     return store.getProjectSessions(props.projectId)
+})
+
+// Filtered sessions based on search query (searches in title)
+const sessions = computed(() => {
+    const query = props.searchQuery.toLowerCase().trim()
+    if (!query) return allSessions.value
+
+    return allSessions.value.filter(session => {
+        // Get display name: "New session" for drafts without title, otherwise title or id
+        const displayName = (session.draft && !session.title)
+            ? 'New session'
+            : (session.title || session.id)
+        return displayName.toLowerCase().includes(query)
+    })
 })
 
 // Pagination state
@@ -211,9 +229,14 @@ function timestampToDate(timestamp) {
 
 <template>
     <div class="session-list-container">
-        <!-- Empty state -->
-        <div v-if="sessions.length === 0 && !isLoading" class="empty-state">
+        <!-- Empty state: no sessions at all -->
+        <div v-if="allSessions.length === 0 && !isLoading" class="empty-state">
             No sessions
+        </div>
+
+        <!-- Empty state: no matching sessions (search returned nothing) -->
+        <div v-else-if="sessions.length === 0 && !isLoading" class="empty-state">
+            No matching sessions
         </div>
 
         <!-- Session list with virtual scroller -->
@@ -491,6 +514,6 @@ function timestampToDate(timestamp) {
     text-align: center;
     padding: var(--wa-space-l);
     color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-s);
+    font-size: var(--wa-font-size-l);
 }
 </style>

@@ -328,6 +328,6 @@ wa-tab::part(base) {
     gap: var(--wa-space-s);
     height: 200px;
     color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-m);
+    font-size: var(--wa-font-size-l);
 }
 </style>

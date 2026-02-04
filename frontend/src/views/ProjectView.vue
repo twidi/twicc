@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
@@ -50,6 +50,14 @@ const isInitialLoading = computed(() =>
     store.areSessionsLoading(effectiveProjectId.value) && !areSessionsFetched.value
 )
 const didSessionsFailToLoad = computed(() => store.didSessionsFailToLoad(effectiveProjectId.value))
+
+// Search/filter state for sessions
+const searchQuery = ref('')
+
+// Clear search when project changes
+watch(effectiveProjectId, () => {
+    searchQuery.value = ''
+})
 
 // Load sessions when project changes or mode changes
 watch(effectiveProjectId, async (newProjectId) => {
@@ -198,39 +206,54 @@ function handleSplitReposition(event) {
             <!-- Sidebar -->
         <aside slot="start" class="sidebar">
             <div class="sidebar-header">
-                <wa-button id="back-button" class="back-button" variant="brand" appearance="outlined" size="small" @click="handleBackHome">
-                    <wa-icon name="arrow-left"></wa-icon>
-                </wa-button>
-                <wa-tooltip v-if="tooltipsEnabled" for="back-button">Back to projects list</wa-tooltip>
-                <wa-select
-                    id="project-selector"
-                    :value.attr="isAllProjectsMode ? ALL_PROJECTS_ID : projectId"
-                    @change="handleProjectChange"
-                    class="project-selector"
-                    size="small"
-                >
-                    <span
-                        v-if="!isAllProjectsMode"
-                        slot="start"
-                        class="selected-project-dot"
-                        :style="selectedProjectColor ? { '--dot-color': selectedProjectColor } : null"
-                    ></span>
-                    <wa-option :value="ALL_PROJECTS_ID">
-                        All Projects
-                    </wa-option>
-                    <wa-divider></wa-divider>
-                    <wa-option
-                        v-for="p in allProjects"
-                        :key="p.id"
-                        :value="p.id"
-                        :label="store.getProjectDisplayName(p.id)"
+                <div class="sidebar-header-row">
+                    <wa-button id="back-button" class="back-button" variant="brand" appearance="outlined" size="small" @click="handleBackHome">
+                        <wa-icon name="arrow-left"></wa-icon>
+                    </wa-button>
+                    <wa-tooltip v-if="tooltipsEnabled" for="back-button">Back to projects list</wa-tooltip>
+                    <wa-select
+                        id="project-selector"
+                        :value.attr="isAllProjectsMode ? ALL_PROJECTS_ID : projectId"
+                        @change="handleProjectChange"
+                        class="project-selector"
+                        size="small"
                     >
-                        <span class="project-option">
-                            <ProjectBadge :project-id="p.id" />
-                            <ProjectProcessIndicator :project-id="p.id" size="small" />
-                        </span>
-                    </wa-option>
-                </wa-select>
+                        <span
+                            v-if="!isAllProjectsMode"
+                            slot="start"
+                            class="selected-project-dot"
+                            :style="selectedProjectColor ? { '--dot-color': selectedProjectColor } : null"
+                        ></span>
+                        <wa-option :value="ALL_PROJECTS_ID">
+                            All Projects
+                        </wa-option>
+                        <wa-divider></wa-divider>
+                        <wa-option
+                            v-for="p in allProjects"
+                            :key="p.id"
+                            :value="p.id"
+                            :label="store.getProjectDisplayName(p.id)"
+                        >
+                            <span class="project-option">
+                                <ProjectBadge :project-id="p.id" />
+                                <ProjectProcessIndicator :project-id="p.id" size="small" />
+                            </span>
+                        </wa-option>
+                    </wa-select>
+                </div>
+
+                <div class="sidebar-header-row">
+                    <!-- Search/filter input -->
+                    <wa-input
+                        v-model="searchQuery"
+                        placeholder="Filter sessions..."
+                        size="small"
+                        with-clear
+                        class="session-search"
+                    >
+                        <wa-icon slot="start" name="magnifying-glass"></wa-icon>
+                    </wa-input>
+                </div>
             </div>
 
             <wa-divider></wa-divider>
@@ -257,6 +280,7 @@ function handleSplitReposition(event) {
                     :project-id="effectiveProjectId"
                     :session-id="sessionId"
                     :show-project-name="isAllProjectsMode"
+                    :search-query="searchQuery"
                     @select="handleSessionSelect"
                 />
 
@@ -394,11 +418,24 @@ wa-split-panel::part(divider) {
 .sidebar-header {
     flex-shrink: 0;
     display: flex;
+    flex-direction: column;
+    justify-content: stretch;
+    padding: var(--wa-space-s);
+    gap: var(--wa-space-s);
+    background: var(--main-header-footer-bg-color);
+}
+
+.sidebar-header-row {
+    width: 100%;
+    display: flex;
+    justify-content: stretch;
     align-items: center;
     gap: var(--wa-space-s);
-    padding: var(--wa-space-s);
-    overflow: visible;
-    background: var(--main-header-footer-bg-color);
+}
+
+.session-search {
+    flex: 1;
+    max-width: 100%;
 }
 
 .project-selector {

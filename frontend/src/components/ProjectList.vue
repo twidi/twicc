@@ -148,5 +148,6 @@ function handleEditClick(event, project) {
     text-align: center;
     padding: var(--wa-space-xl);
     color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-l);
 }
 </style>
