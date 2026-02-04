@@ -24,7 +24,6 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 
-from twicc.agent.manager import get_process_manager
 from twicc.compute import compute_session_metadata, load_project_directories
 from twicc.core.models import Project, Session
 from twicc.core.pricing import sync_model_prices
@@ -40,9 +39,6 @@ _stop_event: asyncio.Event | None = None
 
 # Stop event for price sync task
 _price_sync_stop_event: asyncio.Event | None = None
-
-# Stop event for process timeout monitor task
-_process_monitor_stop_event: asyncio.Event | None = None
 
 # Progress tracking for initial computation
 _initial_total: int | None = None
@@ -75,14 +71,6 @@ def get_price_sync_stop_event() -> asyncio.Event:
     return _price_sync_stop_event
 
 
-def get_process_monitor_stop_event() -> asyncio.Event:
-    """Get or create the stop event for the process timeout monitor task."""
-    global _process_monitor_stop_event
-    if _process_monitor_stop_event is None:
-        _process_monitor_stop_event = asyncio.Event()
-    return _process_monitor_stop_event
-
-
 def stop_background_task() -> None:
     """Signal the background compute task to stop and shutdown executor."""
     global _executor, _stop_event
@@ -98,13 +86,6 @@ def stop_price_sync_task() -> None:
     global _price_sync_stop_event
     if _price_sync_stop_event is not None:
         _price_sync_stop_event.set()
-
-
-def stop_process_monitor_task() -> None:
-    """Signal the process timeout monitor task to stop."""
-    global _process_monitor_stop_event
-    if _process_monitor_stop_event is not None:
-        _process_monitor_stop_event.set()
 
 
 async def run_initial_price_sync() -> None:
@@ -345,50 +326,3 @@ async def start_price_sync_task() -> None:
             pass
 
     logger.info("Price sync task stopped")
-
-
-# Interval for process timeout monitor: 30 seconds
-# Frequent enough to catch the 1-minute STARTING timeout accurately
-PROCESS_MONITOR_INTERVAL = 30
-
-
-async def start_process_timeout_monitor_task() -> None:
-    """
-    Background task that monitors process timeouts and auto-stops idle processes.
-
-    Runs until stop event is set:
-    - Checks all active processes every 30 seconds
-    - Kills processes that exceed their state-specific timeout:
-      - STARTING: 1 minute (stuck during startup)
-      - USER_TURN: 15 minutes (idle, waiting for user)
-      - ASSISTANT_TURN: 2 hours (no activity from Claude)
-
-    This helps free up memory from abandoned or stuck processes.
-    """
-    stop_event = get_process_monitor_stop_event()
-
-    logger.info("Process timeout monitor task started")
-
-    while not stop_event.is_set():
-        try:
-            manager = get_process_manager()
-            killed = await manager.check_and_stop_timed_out_processes()
-
-            if killed:
-                logger.info(
-                    "Auto-stopped %d timed out process(es): %s",
-                    len(killed),
-                    ", ".join(killed),
-                )
-
-        except Exception as e:
-            logger.error("Error in process timeout monitor: %s", e, exc_info=True)
-
-        # Wait for the next check interval (or until stop event is set)
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=PROCESS_MONITOR_INTERVAL)
-        except asyncio.TimeoutError:
-            # Timeout means it's time to check again
-            pass
-
-    logger.info("Process timeout monitor task stopped")

@@ -50,11 +50,17 @@ class ProcessManager:
         await manager.shutdown()
     """
 
+    # Interval for timeout monitoring: 30 seconds
+    # Frequent enough to catch the 1-minute STARTING timeout accurately
+    TIMEOUT_MONITOR_INTERVAL = 30
+
     def __init__(self) -> None:
         """Initialize the process manager with empty state."""
         self._processes: dict[str, ClaudeProcess] = {}  # session_id -> process
         self._lock = asyncio.Lock()
         self._broadcast_callback: BroadcastCallback | None = None
+        self._timeout_monitor_task: asyncio.Task[None] | None = None
+        self._stop_event: asyncio.Event | None = None
 
     def set_broadcast_callback(self, callback: BroadcastCallback) -> None:
         """Set the callback for broadcasting state changes.
@@ -193,6 +199,9 @@ class ProcessManager:
         # broadcasts the error via the callback - it does not raise exceptions.
         await process.start(text, self._on_state_change, resume=resume)
 
+        # Ensure timeout monitor is running (starts lazily on first process)
+        self._ensure_timeout_monitor_running()
+
     def get_active_processes(self) -> list[ProcessInfo]:
         """Get information about all active (non-dead) processes.
 
@@ -254,7 +263,7 @@ class ProcessManager:
             return True
 
     async def shutdown(self, timeout: float = 5.0) -> None:
-        """Shutdown all active processes.
+        """Shutdown all active processes and the timeout monitor.
 
         This is called during server shutdown. It attempts graceful termination
         but does not wait indefinitely for Claude to finish responding.
@@ -262,6 +271,18 @@ class ProcessManager:
         Args:
             timeout: Maximum seconds to wait for processes to terminate
         """
+        # Stop the timeout monitor task first
+        if self._stop_event is not None:
+            self._stop_event.set()
+
+        if self._timeout_monitor_task is not None:
+            self._timeout_monitor_task.cancel()
+            try:
+                await self._timeout_monitor_task
+            except asyncio.CancelledError:
+                pass
+            self._timeout_monitor_task = None
+
         async with self._lock:
             if not self._processes:
                 return
@@ -304,6 +325,58 @@ class ProcessManager:
             # Clear all processes
             self._processes.clear()
             logger.info("All Claude processes shut down")
+
+    def _ensure_timeout_monitor_running(self) -> None:
+        """Start the timeout monitor task if not already running.
+
+        Called when a process is started to ensure monitoring is active.
+        The task runs until shutdown() is called.
+        """
+        if self._timeout_monitor_task is not None and not self._timeout_monitor_task.done():
+            return  # Already running
+
+        self._stop_event = asyncio.Event()
+        self._timeout_monitor_task = asyncio.create_task(
+            self._run_timeout_monitor(),
+            name="process-timeout-monitor",
+        )
+        logger.debug("Started process timeout monitor task")
+
+    async def _run_timeout_monitor(self) -> None:
+        """Background task that monitors process timeouts and auto-stops idle processes.
+
+        Runs until stop event is set. Checks all active processes every 30 seconds
+        and kills those that exceed their state-specific timeout:
+        - STARTING: 1 minute (stuck during startup)
+        - USER_TURN: 15 minutes (idle, waiting for user)
+        - ASSISTANT_TURN: 2 hours inactivity or 6 hours absolute
+        """
+        logger.info("Process timeout monitor started")
+
+        while self._stop_event is not None and not self._stop_event.is_set():
+            try:
+                killed = await self.check_and_stop_timed_out_processes()
+
+                if killed:
+                    logger.info(
+                        "Auto-stopped %d timed out process(es): %s",
+                        len(killed),
+                        ", ".join(killed),
+                    )
+
+            except Exception as e:
+                logger.error("Error in process timeout monitor: %s", e, exc_info=True)
+
+            # Wait for the next check interval (or until stop event is set)
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(), timeout=self.TIMEOUT_MONITOR_INTERVAL
+                )
+            except asyncio.TimeoutError:
+                # Timeout means it's time to check again
+                pass
+
+        logger.info("Process timeout monitor stopped")
 
     def touch_process_activity(self, session_id: str) -> bool:
         """Update last_activity timestamp for a process.

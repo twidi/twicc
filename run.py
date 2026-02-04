@@ -36,10 +36,8 @@ from twicc.background import (
     run_initial_price_sync,
     start_background_compute_task,
     start_price_sync_task,
-    start_process_timeout_monitor_task,
     stop_background_task,
     stop_price_sync_task,
-    stop_process_monitor_task,
 )
 
 
@@ -60,9 +58,6 @@ async def run_server(port: int):
 
     # Start price sync task (periodic sync every 24h)
     price_sync_task = asyncio.create_task(start_price_sync_task())
-
-    # Start process timeout monitor task (auto-stop idle/stuck processes)
-    process_monitor_task = asyncio.create_task(start_process_timeout_monitor_task())
 
     # Configure uvicorn
     config = uvicorn.Config(
@@ -100,15 +95,7 @@ async def run_server(port: int):
         except asyncio.CancelledError:
             pass
 
-        # Clean shutdown of process timeout monitor task
-        stop_process_monitor_task()
-        process_monitor_task.cancel()
-        try:
-            await process_monitor_task
-        except asyncio.CancelledError:
-            pass
-
-        # Clean shutdown of Claude processes
+        # Clean shutdown of Claude processes (also stops the internal timeout monitor)
         # This gracefully terminates any active Claude SDK processes
         await shutdown_process_manager()
 
