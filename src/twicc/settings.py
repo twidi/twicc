@@ -56,15 +56,16 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "simple": {
-            "format": "[{levelname}] {name}: {message}",
+        "standard": {
+            "format": "[{asctime} - {levelname:>6} - {name}] {message}",
             "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
         },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "simple",
+            "formatter": "standard",
         },
     },
     "loggers": {
