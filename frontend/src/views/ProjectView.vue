@@ -54,10 +54,38 @@ const didSessionsFailToLoad = computed(() => store.didSessionsFailToLoad(effecti
 // Search/filter state for sessions
 const searchQuery = ref('')
 
+// Reference to SessionList for keyboard navigation
+const sessionListRef = ref(null)
+
 // Clear search when project changes
 watch(effectiveProjectId, () => {
     searchQuery.value = ''
 })
+
+/**
+ * Handle keyboard events from the search input.
+ * Delegates navigation keys to the SessionList component.
+ *
+ * @param {KeyboardEvent} event
+ */
+function handleSearchKeydown(event) {
+    // Navigation keys that should be handled by SessionList
+    const navigationKeys = ['ArrowDown', 'ArrowUp', 'Home', 'End', 'PageUp', 'PageDown', 'Enter', 'Escape']
+
+    if (navigationKeys.includes(event.key) && sessionListRef.value) {
+        const handled = sessionListRef.value.handleKeyNavigation(event)
+        if (handled) {
+            event.preventDefault()
+            return
+        }
+    }
+
+    // Escape not handled by SessionList (no highlight) → clear search field
+    if (event.key === 'Escape' && searchQuery.value) {
+        searchQuery.value = ''
+        event.preventDefault()
+    }
+}
 
 // Load sessions when project changes or mode changes
 watch(effectiveProjectId, async (newProjectId) => {
@@ -250,6 +278,7 @@ function handleSplitReposition(event) {
                         size="small"
                         with-clear
                         class="session-search"
+                        @keydown="handleSearchKeydown"
                     >
                         <wa-icon slot="start" name="magnifying-glass"></wa-icon>
                     </wa-input>
@@ -277,6 +306,7 @@ function handleSplitReposition(event) {
                 <!-- Normal content (shown once we have sessions, handles its own "load more" state) -->
                 <SessionList
                     v-else
+                    ref="sessionListRef"
                     :project-id="effectiveProjectId"
                     :session-id="sessionId"
                     :show-project-name="isAllProjectsMode"

@@ -105,6 +105,12 @@ const SCROLLER_BUFFER = 300
 // Reference to the VirtualScroller component
 const scrollerRef = ref(null)
 
+// Keyboard navigation: highlighted item index (-1 = none)
+const highlightedIndex = ref(-1)
+
+// Number of items to jump for PageUp/PageDown
+const PAGE_SIZE = 10
+
 // Load more sessions when approaching the end of the list
 async function loadMore() {
     if (isLoading.value || !hasMore.value || loadMoreError.value) return
@@ -137,12 +143,18 @@ function onScrollerUpdate({ visibleEndIndex }) {
     }
 }
 
-// Reset scroll to top when project changes
+// Reset scroll to top and highlight when project changes
 watch(() => props.projectId, () => {
     loadMoreError.value = false
+    highlightedIndex.value = -1
     if (scrollerRef.value) {
         scrollerRef.value.scrollToTop()
     }
+})
+
+// Reset highlight when search query changes
+watch(() => props.searchQuery, () => {
+    highlightedIndex.value = -1
 })
 
 // Get display name for session (title if available, "New session" for drafts, otherwise ID)
@@ -251,6 +263,82 @@ function timestampToDate(timestamp) {
     if (!timestamp) return new Date()
     return new Date(timestamp * 1000)
 }
+
+/**
+ * Handle keyboard navigation from the search input.
+ * Navigates through sessions with arrow keys and selects with Enter.
+ *
+ * @param {KeyboardEvent} event - The keyboard event
+ * @returns {boolean} True if the event was handled (should preventDefault)
+ */
+function handleKeyNavigation(event) {
+    const count = sessions.value.length
+    if (count === 0) return false
+
+    const key = event.key
+    let newIndex = highlightedIndex.value
+
+    switch (key) {
+        case 'ArrowDown':
+            // Move down, or start at first item if nothing highlighted
+            newIndex = highlightedIndex.value < 0 ? 0 : Math.min(highlightedIndex.value + 1, count - 1)
+            break
+
+        case 'ArrowUp':
+            // Move up, or go to last item if nothing highlighted
+            newIndex = highlightedIndex.value < 0 ? count - 1 : Math.max(highlightedIndex.value - 1, 0)
+            break
+
+        case 'Home':
+            newIndex = 0
+            break
+
+        case 'End':
+            newIndex = count - 1
+            break
+
+        case 'PageDown':
+            newIndex = highlightedIndex.value < 0 ? PAGE_SIZE - 1 : Math.min(highlightedIndex.value + PAGE_SIZE, count - 1)
+            break
+
+        case 'PageUp':
+            newIndex = highlightedIndex.value < 0 ? 0 : Math.max(highlightedIndex.value - PAGE_SIZE, 0)
+            break
+
+        case 'Enter':
+            // Select the highlighted session
+            if (highlightedIndex.value >= 0 && highlightedIndex.value < count) {
+                handleSelect(sessions.value[highlightedIndex.value])
+                return true
+            }
+            return false
+
+        case 'Escape':
+            // Clear highlight if any, otherwise let parent handle it (e.g., clear search)
+            if (highlightedIndex.value >= 0) {
+                highlightedIndex.value = -1
+                return true
+            }
+            return false
+
+        default:
+            return false
+    }
+
+    // Update highlight and scroll to it
+    if (newIndex !== highlightedIndex.value) {
+        highlightedIndex.value = newIndex
+        if (scrollerRef.value) {
+            scrollerRef.value.scrollToIndex(newIndex, { align: 'center' })
+        }
+    }
+    return true
+}
+
+// Expose methods for parent component access via ref
+defineExpose({
+    handleKeyNavigation,
+})
 </script>
 
 <template>
@@ -278,12 +366,15 @@ function timestampToDate(timestamp) {
             class="session-list"
             @update="onScrollerUpdate"
         >
-            <template #default="{ item: session }">
+            <template #default="{ item: session, index }">
                 <wa-button
                     :appearance="session.id === sessionId ? 'outlined' : 'plain'"
                     :variant="session.id === sessionId ? 'brand' : 'neutral'"
                     class="session-item"
-                    :class="{ 'session-item--active': session.id === sessionId }"
+                    :class="{
+                        'session-item--active': session.id === sessionId,
+                        'session-item--highlighted': index === highlightedIndex
+                    }"
                     @click="handleSelect(session)"
                 >
                     <div class="session-name-row">
@@ -392,6 +483,13 @@ function timestampToDate(timestamp) {
     height: auto;
     margin-bottom: var(--wa-shadow-offset-y-s);  /* default if border, enforce for non active items to avoid movement */
 }
+
+/* Keyboard navigation highlight */
+.session-item--highlighted::part(base) {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
+}
+
 .session-item::part(label) {
     width: 100%;
     text-align: left;
