@@ -315,20 +315,49 @@ function handleSplitReposition(event) {
                 />
 
                 <!-- Floating "New session" button -->
-                <!-- In single project mode: direct click creates session -->
-                <wa-button
+                <!-- In single project mode: split button (main action + dropdown for other projects) -->
+                <wa-button-group
                     v-if="!isAllProjectsMode"
-                    id="new-session-button"
-                    class="new-session-button"
-                    variant="brand"
-                    appearance="accent"
-                    size="small"
-                    @click="handleNewSession()"
+                    class="new-session-split-button"
+                    label="New session actions"
                 >
-                    <wa-icon name="plus"></wa-icon>
-                    <span>New session</span>
-                </wa-button>
+                    <!-- Main button: creates session in current project -->
+                    <wa-button
+                        id="new-session-button"
+                        variant="brand"
+                        appearance="accent"
+                        size="small"
+                        @click="handleNewSession()"
+                    >
+                        <wa-icon name="plus"></wa-icon>
+                        <span>New session</span>
+                    </wa-button>
+
+                    <!-- Dropdown arrow: choose a different project -->
+                    <wa-dropdown
+                        placement="top-end"
+                        @wa-select="(e) => handleNewSession(e.detail.item.value)"
+                    >
+                        <wa-button
+                            id="new-session-project-picker"
+                            slot="trigger"
+                            variant="brand"
+                            appearance="accent"
+                            size="small"
+                        >
+                            <wa-icon name="chevron-up" label="Choose another project"></wa-icon>
+                        </wa-button>
+                        <wa-dropdown-item
+                            v-for="p in allProjects"
+                            :key="p.id"
+                            :value="p.id"
+                        >
+                            <ProjectBadge :project-id="p.id" />
+                        </wa-dropdown-item>
+                    </wa-dropdown>
+                </wa-button-group>
                 <wa-tooltip v-if="tooltipsEnabled" for="new-session-button">Create a new session in this project</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" for="new-session-project-picker">Choose a different project</wa-tooltip>
 
                 <!-- In all projects mode: dropdown to choose project -->
                 <wa-dropdown
@@ -570,16 +599,29 @@ wa-split-panel::part(divider) {
     font-size: var(--wa-font-size-s);
 }
 
-/* Floating "New session" button */
-.new-session-button {
+/* Floating "New session" split button (single project mode) */
+.new-session-split-button {
     position: absolute;
     bottom: var(--wa-space-s);
     right: var(--wa-space-s);
     z-index: 5;
-    &::part(label) {
+
+    /* Style the main button label */
+    & > wa-button::part(label) {
         display: flex;
         align-items: center;
         gap: var(--wa-space-xs);
+    }
+
+    /* Visual separator between main button and dropdown trigger */
+    & wa-dropdown wa-button::part(base) {
+        border-left: 1px solid rgba(255, 255, 255, 0.3);
+    }
+
+    /* Limit dropdown panel height for scrolling */
+    & wa-dropdown::part(panel) {
+        max-height: 300px;
+        overflow-y: auto;
     }
 }
 
@@ -610,14 +652,18 @@ wa-split-panel::part(divider) {
 
 
 @container sidebar (width <= 13rem) {
-    .new-session-button {
-        &::part(base) {
-            padding: var(--wa-space-s);
-        }
-        & > span {
-            display: none;
+    /* Split button in narrow sidebar */
+    .new-session-split-button {
+        & > wa-button {
+            &::part(base) {
+                padding: var(--wa-space-s);
+            }
+            & > span {
+                display: none;
+            }
         }
     }
+    /* Dropdown button in All Projects mode */
     .new-session-dropdown > wa-button {
         &::part(base) {
             padding: var(--wa-space-s);
