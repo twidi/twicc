@@ -552,7 +552,7 @@ function toggleGroup(groupHeadLineNum) {
         </VirtualScroller>
 
         <!-- Draft session empty state -->
-        <div v-else-if="session.draft" class="empty-state">
+        <div v-else-if="session?.draft" class="empty-state">
         </div>
 
         <!-- Empty state -->
