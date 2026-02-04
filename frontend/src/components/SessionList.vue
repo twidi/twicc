@@ -6,6 +6,7 @@ import { formatDate, formatDuration } from '../utils/date'
 import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES, SESSION_TIME_FORMAT } from '../constants'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
+import VirtualScroller from './VirtualScroller.vue'
 
 const props = defineProps({
     projectId: {
@@ -52,13 +53,15 @@ const isLoading = computed(() => store.areSessionsLoading(props.projectId))
 // Local error state for "load more" failures (not initial load)
 const loadMoreError = ref(false)
 
-// Sentinel element ref for intersection observer
-const sentinel = ref(null)
-// Container ref for scroll reset
-const listContainer = ref(null)
-let observer = null
+// Virtual scroller configuration
+// Session items have relatively uniform height (~80-100px)
+const MIN_SESSION_HEIGHT = 70
+const SCROLLER_BUFFER = 300
 
-// Load more sessions when sentinel becomes visible
+// Reference to the VirtualScroller component
+const scrollerRef = ref(null)
+
+// Load more sessions when approaching the end of the list
 async function loadMore() {
     if (isLoading.value || !hasMore.value || loadMoreError.value) return
 
@@ -79,42 +82,23 @@ async function handleRetry() {
     await loadMore()
 }
 
-// Setup intersection observer
-onMounted(() => {
-    observer = new IntersectionObserver(
-        (entries) => {
-            if (entries[0].isIntersecting) {
-                loadMore()
-            }
-        },
-        { rootMargin: '200px' }  // Trigger 200px before reaching the bottom
-    )
-    if (sentinel.value) {
-        observer.observe(sentinel.value)
+/**
+ * Handle virtual scroller update event.
+ * Triggers loading more sessions when user scrolls near the end.
+ */
+function onScrollerUpdate({ visibleEndIndex }) {
+    // Load more when within 10 items of the end
+    if (hasMore.value && !isLoading.value && sessions.value.length - visibleEndIndex < 10) {
+        loadMore()
     }
-})
-
-// Re-observe when sentinel ref changes or projectId changes
-watch([sentinel, () => props.projectId], ([el]) => {
-    if (observer) {
-        observer.disconnect()
-        if (el) {
-            observer.observe(el)
-        }
-    }
-    // Reset error state when project changes
-    loadMoreError.value = false
-})
+}
 
 // Reset scroll to top when project changes
 watch(() => props.projectId, () => {
-    if (listContainer.value) {
-        listContainer.value.scrollTop = 0
+    loadMoreError.value = false
+    if (scrollerRef.value) {
+        scrollerRef.value.scrollToTop()
     }
-})
-
-onUnmounted(() => {
-    observer?.disconnect()
 })
 
 // Get display name for session (title if available, "New session" for drafts, otherwise ID)
@@ -226,66 +210,87 @@ function timestampToDate(timestamp) {
 </script>
 
 <template>
-    <div ref="listContainer" class="session-list">
-        <wa-button
-            v-for="session in sessions"
-            :key="session.id"
-            :appearance="session.id === sessionId ? 'outlined' : 'plain'"
-            :variant="session.id === sessionId ? 'brand' : 'neutral'"
-            class="session-item"
-            :class="{ 'session-item--active': session.id === sessionId }"
-            @click="handleSelect(session)"
+    <div class="session-list-container">
+        <!-- Empty state -->
+        <div v-if="sessions.length === 0 && !isLoading" class="empty-state">
+            No sessions
+        </div>
+
+        <!-- Session list with virtual scroller -->
+        <VirtualScroller
+            v-else
+            ref="scrollerRef"
+            :key="projectId"
+            :items="sessions"
+            :item-key="session => session.id"
+            :min-item-height="MIN_SESSION_HEIGHT"
+            :buffer="SCROLLER_BUFFER"
+            :unload-buffer="SCROLLER_BUFFER * 1.5"
+            class="session-list"
+            @update="onScrollerUpdate"
         >
-            <div class="session-name-row">
-                <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
-                <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
-            </div>
-            <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
-            <!-- Process info row (only shown when process is active and not draft) -->
-            <div
-                v-if="!session.draft && getProcessState(session.id)"
-                class="process-info"
-                :style="{ color: getProcessColor(getProcessState(session.id).state) }"
-            >
-                <span :id="`process-memory-${session.id}`" class="process-memory">
-                    <template v-if="getProcessState(session.id).memory">
-                        {{ formatMemory(getProcessState(session.id).memory) }}
-                    </template>
-                </span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`process-memory-${session.id}`">Claude Code memory usage</wa-tooltip>
+            <template #default="{ item: session }">
+                <wa-button
+                    :appearance="session.id === sessionId ? 'outlined' : 'plain'"
+                    :variant="session.id === sessionId ? 'brand' : 'neutral'"
+                    class="session-item"
+                    :class="{ 'session-item--active': session.id === sessionId }"
+                    @click="handleSelect(session)"
+                >
+                    <div class="session-name-row">
+                        <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+                        <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
+                        <wa-tooltip v-if="tooltipsEnabled" :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
+                    </div>
+                    <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
+                    <!-- Process info row (only shown when process is active and not draft) -->
+                    <div
+                        v-if="!session.draft && getProcessState(session.id)"
+                        class="process-info"
+                        :style="{ color: getProcessColor(getProcessState(session.id).state) }"
+                    >
+                        <span :id="`process-memory-${session.id}`" class="process-memory">
+                            <template v-if="getProcessState(session.id).memory">
+                                {{ formatMemory(getProcessState(session.id).memory) }}
+                            </template>
+                        </span>
+                        <wa-tooltip v-if="tooltipsEnabled" :for="`process-memory-${session.id}`">Claude Code memory usage</wa-tooltip>
 
-                <span :id="`process-duration-${session.id}`" class="process-duration">
-                    <template v-if="getProcessState(session.id).state === PROCESS_STATE.ASSISTANT_TURN && getProcessState(session.id).state_changed_at">
-                        {{ formatDuration(getStateDuration(getProcessState(session.id))) }}
-                    </template>
-                </span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`process-duration-${session.id}`">Assistant turn duration</wa-tooltip>
+                        <span :id="`process-duration-${session.id}`" class="process-duration">
+                            <template v-if="getProcessState(session.id).state === PROCESS_STATE.ASSISTANT_TURN && getProcessState(session.id).state_changed_at">
+                                {{ formatDuration(getStateDuration(getProcessState(session.id))) }}
+                            </template>
+                        </span>
+                        <wa-tooltip v-if="tooltipsEnabled" :for="`process-duration-${session.id}`">Assistant turn duration</wa-tooltip>
 
-                <ProcessIndicator
-                    :id="`process-indicator-${session.id}`"
-                    :state="getProcessState(session.id).state"
-                    size="small"
-                    :animate-states="animateStates"
-                />
-                <wa-tooltip v-if="tooltipsEnabled" :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
-            </div>
-            <!-- Meta row (not shown for draft sessions) -->
-            <div v-if="!session.draft" class="session-meta">
-                <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.message_count ?? '??' }}</span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
-                <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon>{{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-cost-${session.id}`">Total session cost</wa-tooltip>
-                <span :id="`session-mtime-${session.id}`" class="session-mtime">
-                    <wa-icon auto-width name="clock" variant="regular"></wa-icon>
-                    <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(session.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
-                    <template v-else>{{ formatDate(session.mtime, { smart: true }) }}</template>
-                </span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-mtime-${session.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(session.mtime, { smart: true })}` : 'Last activity' }}</wa-tooltip>
-            </div>
-        </wa-button>
+                        <ProcessIndicator
+                            :id="`process-indicator-${session.id}`"
+                            :state="getProcessState(session.id).state"
+                            size="small"
+                            :animate-states="animateStates"
+                        />
+                        <wa-tooltip v-if="tooltipsEnabled" :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
+                    </div>
+                    <!-- Meta row (not shown for draft sessions) -->
+                    <div v-if="!session.draft" class="session-meta">
+                        <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.message_count ?? '??' }}</span>
+                        <wa-tooltip v-if="tooltipsEnabled" :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
 
-        <!-- Error state for load more -->
+                        <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon>{{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
+                        <wa-tooltip v-if="tooltipsEnabled" :for="`session-cost-${session.id}`">Total session cost</wa-tooltip>
+
+                        <span :id="`session-mtime-${session.id}`" class="session-mtime">
+                            <wa-icon auto-width name="clock" variant="regular"></wa-icon>
+                            <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(session.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
+                            <template v-else>{{ formatDate(session.mtime, { smart: true }) }}</template>
+                        </span>
+                        <wa-tooltip v-if="tooltipsEnabled" :for="`session-mtime-${session.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(session.mtime, { smart: true })}` : 'Last activity' }}</wa-tooltip>
+                    </div>
+                </wa-button>
+            </template>
+        </VirtualScroller>
+
+        <!-- Error state for load more (shown after the scroller) -->
         <div v-if="loadMoreError" class="load-more-error">
             <wa-callout variant="danger">
                 <span>Failed to load more sessions</span>
@@ -303,32 +308,34 @@ function timestampToDate(timestamp) {
             </wa-callout>
         </div>
 
-        <!-- Sentinel for infinite scroll (only when no error) -->
-        <div
-            v-else-if="hasMore"
-            ref="sentinel"
-            class="load-more-sentinel"
-        >
-            <wa-spinner v-if="isLoading" />
-        </div>
-
-        <div v-if="sessions.length === 0 && !isLoading" class="empty-state">
-            No sessions
+        <!-- Loading indicator (shown at bottom when loading more) -->
+        <div v-if="isLoading && sessions.length > 0" class="load-more-indicator">
+            <wa-spinner></wa-spinner>
         </div>
     </div>
 </template>
 
 <style scoped>
-.session-list {
+.session-list-container {
     display: flex;
     flex-direction: column;
-    gap: var(--wa-space-3xs);
-    overflow: auto;
-    overflow-x: hidden;
-    overscroll-behavior: contain;
-    padding: var(--wa-space-s);
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
     container-type: inline-size;
     container-name: session-list;
+}
+
+.session-list {
+    flex: 1;
+    min-height: 0;
+    padding: var(--wa-space-s);
+}
+
+.session-item {
+    width: 100%;
+    /* Small gap between items */
+    margin-block: var(--wa-space-3xs);
 }
 
 .session-item::part(base) {
@@ -421,38 +428,51 @@ function timestampToDate(timestamp) {
 
 @container session-list (width <= 230px) {
     /* Hide memory when container is too narrow */
+    .process-info {
+        grid-template-columns: 1fr 1fr;
+    }
+    .process-duration {
+        justify-self: start;
+    }
     .process-memory {
-        display: none;
+        display: none !important;
     }
     /* Hide cost when container is too narrow */
+    .session-meta {
+        grid-template-columns: 1fr 1fr;
+    }
     .session-cost {
-        display: none;
+        display: none !important;
     }
 }
 
 @container session-list (width <= 170px) {
     /* Hide duration when container is very narrow (keep only indicator) */
+    .process-info {
+        grid-template-columns: 1fr;
+    }
     .process-duration {
-        display: none;
+        display: none !important;
     }
     .process-indicator {
         justify-self: start;
     }
     /* Hide messages when container is very narrow (keep only mtime) */
     .session-messages {
-        display: none;
+        display: none !important;
     }
 }
 
-.load-more-sentinel {
+.load-more-indicator {
     display: flex;
     justify-content: center;
-    padding: var(--wa-space-m);
-    min-height: 40px;
+    padding: var(--wa-space-s);
+    flex-shrink: 0;
 }
 
 .load-more-error {
     padding: var(--wa-space-s);
+    flex-shrink: 0;
 }
 
 .load-more-error wa-callout {
@@ -464,6 +484,10 @@ function timestampToDate(timestamp) {
 }
 
 .empty-state {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     text-align: center;
     padding: var(--wa-space-l);
     color: var(--wa-color-text-quiet);

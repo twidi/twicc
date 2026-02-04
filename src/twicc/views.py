@@ -15,7 +15,9 @@ from twicc.core.serializers import (
 )
 
 # Number of sessions to return per page
-SESSIONS_PAGE_SIZE = 50
+# Set high (1000) to effectively load all sessions at once for most users,
+# enabling instant client-side search/filtering without pagination complexity
+SESSIONS_PAGE_SIZE = 1000
 
 
 def _get_sessions_page(project_id: str | None, before_mtime: str | None) -> dict:
