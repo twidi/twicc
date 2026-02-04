@@ -63,6 +63,10 @@ body {
     --assistant-card-base-color: var(--wa-color-gray-95);
 
     --wa-font-size-3xs: round(calc(var(--wa-font-size-2xs) / 1.125), 1px);
+
+    /* --main-header-footer-bg-color: var(--wa-color-surface-raised); */
+    --main-header-footer-bg-color: transparent;
+
 }
 
 .wa-dark {

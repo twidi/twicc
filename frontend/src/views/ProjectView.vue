@@ -267,7 +267,7 @@ function handleSplitReposition(event) {
                     id="new-session-button"
                     class="new-session-button"
                     variant="brand"
-                    appearance="filled"
+                    appearance="accent"
                     size="small"
                     @click="handleNewSession()"
                 >
@@ -287,7 +287,7 @@ function handleSplitReposition(event) {
                     <wa-button
                         slot="trigger"
                         variant="brand"
-                        appearance="filled"
+                        appearance="accent"
                         size="small"
                     >
                         <wa-icon slot="end" name="chevron-up"></wa-icon>
@@ -360,8 +360,14 @@ function handleSplitReposition(event) {
     }
 }
 
+wa-split-panel::part(divider) {
+    /* same color/width as normal dividers */
+    background-color: var(--wa-color-surface-border);
+    width: 4px;
+}
 /* Divider handle: hidden by default, shown only on touch devices */
 .divider-handle {
+    color: var(--wa-color-surface-border);
     display: none;
     scale: 3;
 }
@@ -392,6 +398,7 @@ function handleSplitReposition(event) {
     gap: var(--wa-space-s);
     padding: var(--wa-space-s);
     overflow: visible;
+    background: var(--main-header-footer-bg-color);
 }
 
 .project-selector {
@@ -433,7 +440,7 @@ function handleSplitReposition(event) {
 .sidebar wa-divider {
     flex-shrink: 0;
     --width: 4px;
-    margin: 0;
+    --spacing: 0;
 }
 
 .sidebar-sessions {
@@ -546,6 +553,7 @@ function handleSplitReposition(event) {
     justify-content: space-between;
     padding: var(--wa-space-s);
     position: relative;
+    background: var(--main-header-footer-bg-color);
 }
 
 /* Sidebar toggle label */

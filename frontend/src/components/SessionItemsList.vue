@@ -551,15 +551,13 @@ function toggleGroup(groupHeadLineNum) {
             </template>
         </VirtualScroller>
 
-        <!-- Filtered empty state (all items hidden by current mode) -->
-        <div v-else-if="visualItems.length === 0 && items.length > 0" class="empty-state">
-            <wa-icon name="filter"></wa-icon>
-            <span>No items to display in this mode</span>
+        <!-- Draft session empty state -->
+        <div v-else-if="session.draft" class="empty-state">
         </div>
 
         <!-- Empty state -->
         <div v-else class="empty-state">
-            No items in this session
+            Nothing to show yet
         </div>
 
         <div class="session-footer">
@@ -573,6 +571,7 @@ function toggleGroup(groupHeadLineNum) {
             />
 
             <!-- Message input (only for main sessions, not subagents) -->
+            <wa-divider></wa-divider>
             <MessageInput
                 v-if="!parentSessionId"
                 :key="sessionId"
@@ -608,7 +607,7 @@ function toggleGroup(groupHeadLineNum) {
     gap: var(--wa-space-s);
     min-height: 200px;
     color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-m);
+    font-size: var(--wa-font-size-l);
 }
 
 .compute-pending-state {
@@ -625,6 +624,10 @@ function toggleGroup(groupHeadLineNum) {
 
 .session-footer {
     position: relative;
+    > wa-divider {
+        --width: 4px;
+        --spacing: 0;
+    }
 }
 .bottom-process-indicator {
     position: absolute;

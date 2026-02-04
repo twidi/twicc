@@ -348,7 +348,9 @@ defineExpose({
     padding: var(--wa-space-xs);
     gap: var(--wa-space-xs);
     display: flex;
-    flex-direction: column;}
+    flex-direction: column;
+    background: var(--main-header-footer-bg-color);
+}
 
 .session-title {
     flex: 1;
@@ -440,7 +442,7 @@ body:not([data-display-mode="debug"]) .nb_lines {
 
 wa-divider {
     --width: 4px;
-    margin: 0;
+    --spacing: 0;
 }
 
 .stop-button {

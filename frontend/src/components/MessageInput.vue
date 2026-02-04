@@ -260,8 +260,7 @@ function handleClear() {
     flex-direction: column;
     gap: var(--wa-space-s);
     padding: var(--wa-space-s);
-    background: var(--wa-color-surface-raised);
-    border-top: 1px solid var(--wa-color-border-normal);
+    background: var(--main-header-footer-bg-color);
 }
 
 .message-input wa-textarea::part(textarea) {

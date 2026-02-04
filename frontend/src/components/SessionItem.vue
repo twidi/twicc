@@ -386,6 +386,10 @@ body:not([data-display-mode="debug"]) .json-toggle {
 
 }
 
+.session-items .session-item > *:nth-child(n + 2):not(:last-child) {    /* 1 is json toggle and its tooltip */
+    margin-bottom: var(--wa-space-s);
+}
+
 /* Handle many wa-details one after the other */
 wa-details {
     &:has(+wa-details) {
