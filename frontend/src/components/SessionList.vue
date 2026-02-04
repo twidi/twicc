@@ -4,9 +4,11 @@ import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { formatDate, formatDuration } from '../utils/date'
 import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES, SESSION_TIME_FORMAT } from '../constants'
+import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 import VirtualScroller from './VirtualScroller.vue'
+import SessionRenameDialog from './SessionRenameDialog.vue'
 
 const props = defineProps({
     projectId: {
@@ -232,6 +234,47 @@ function formatMemory(bytes) {
 
 // Only assistant_turn should animate in session list
 const animateStates = ['assistant_turn']
+
+// Session menu handling
+const renameDialogRef = ref(null)
+const sessionToRename = ref(null)
+
+/**
+ * Check if a session's process can be stopped (any state except dead).
+ * @param {string} sessionId
+ * @returns {boolean}
+ */
+function canStopProcess(sessionId) {
+    const state = getProcessState(sessionId)?.state
+    return state && state !== PROCESS_STATE.DEAD
+}
+
+/**
+ * Handle dropdown menu selection for a session.
+ * @param {CustomEvent} event - The wa-select event
+ * @param {Object} session - The session object
+ */
+function handleMenuSelect(event, session) {
+    const action = event.detail.item.value
+    if (action === 'rename') {
+        sessionToRename.value = session
+        nextTick(() => {
+            renameDialogRef.value?.open()
+        })
+    } else if (action === 'stop') {
+        killProcess(session.id)
+    } else if (action === 'delete-draft') {
+        store.deleteDraftSession(session.id)
+    }
+}
+
+/**
+ * Prevent click on dropdown from selecting the session.
+ * @param {Event} event
+ */
+function handleDropdownClick(event) {
+    event.stopPropagation()
+}
 
 // Timer for updating state durations
 const now = ref(Date.now() / 1000)  // Current time in seconds
@@ -478,22 +521,29 @@ defineExpose({
             @keydown="handleListKeydown"
         >
             <template #default="{ item: session, index }">
-                <wa-button
-                    :appearance="session.id === sessionId ? 'outlined' : 'plain'"
-                    :variant="session.id === sessionId ? 'brand' : 'neutral'"
-                    class="session-item"
+                <div
+                    class="session-item-wrapper"
                     :class="{
-                        'session-item--active': session.id === sessionId,
-                        'session-item--highlighted': index === highlightedIndex
+                        'session-item-wrapper--active': session.id === sessionId,
+                        'session-item-wrapper--highlighted': index === highlightedIndex
                     }"
-                    @click="handleSelect(session)"
                 >
-                    <div class="session-name-row">
-                        <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
-                        <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
-                        <wa-tooltip v-if="tooltipsEnabled" :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
-                    </div>
-                    <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
+                    <wa-button
+                        :appearance="session.id === sessionId ? 'outlined' : 'plain'"
+                        :variant="session.id === sessionId ? 'brand' : 'neutral'"
+                        class="session-item"
+                        :class="{
+                            'session-item--active': session.id === sessionId,
+                            'session-item--highlighted': index === highlightedIndex
+                        }"
+                        @click="handleSelect(session)"
+                    >
+                        <div class="session-name-row">
+                            <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+                            <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
+                            <wa-tooltip v-if="tooltipsEnabled" :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
+                        </div>
+                        <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
                     <!-- Process info row (only shown when process is active and not draft) -->
                     <div
                         v-if="!session.draft && getProcessState(session.id)"
@@ -536,8 +586,37 @@ defineExpose({
                             <template v-else>{{ formatDate(session.mtime, { smart: true }) }}</template>
                         </span>
                         <wa-tooltip v-if="tooltipsEnabled" :for="`session-mtime-${session.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(session.mtime, { smart: true })}` : 'Last activity' }}</wa-tooltip>
-                    </div>
-                </wa-button>
+                        </div>
+                    </wa-button>
+                    <!-- Session dropdown menu (outside button to avoid nesting issues) -->
+                    <wa-dropdown
+                        class="session-menu"
+                        placement="bottom-end"
+                        @wa-select="(e) => handleMenuSelect(e, session)"
+                    >
+                        <wa-button
+                            slot="trigger"
+                            variant="neutral"
+                            appearance="plain"
+                            size="small"
+                            class="session-menu-trigger"
+                        >
+                            <wa-icon name="ellipsis" label="Session menu"></wa-icon>
+                        </wa-button>
+                        <wa-dropdown-item value="rename">
+                            <wa-icon slot="icon" name="pencil"></wa-icon>
+                            Rename the session
+                        </wa-dropdown-item>
+                        <wa-dropdown-item v-if="canStopProcess(session.id)" value="stop" variant="danger">
+                            <wa-icon slot="icon" name="ban"></wa-icon>
+                            Stop the Claude Code process
+                        </wa-dropdown-item>
+                        <wa-dropdown-item v-if="session.draft" value="delete-draft" variant="danger">
+                            <wa-icon slot="icon" name="trash"></wa-icon>
+                            Delete draft
+                        </wa-dropdown-item>
+                    </wa-dropdown>
+                </div>
             </template>
         </VirtualScroller>
 
@@ -563,6 +642,12 @@ defineExpose({
         <div v-if="isLoading && sessions.length > 0" class="load-more-indicator">
             <wa-spinner></wa-spinner>
         </div>
+
+        <!-- Rename dialog (shared for all sessions) -->
+        <SessionRenameDialog
+            ref="renameDialogRef"
+            :session="sessionToRename"
+        />
     </div>
 </template>
 
@@ -588,10 +673,15 @@ defineExpose({
     outline: none;
 }
 
-.session-item {
+.session-item-wrapper {
+    position: relative;
     width: 100%;
     /* Small gap between items */
     margin-block: var(--wa-space-3xs);
+}
+
+.session-item {
+    width: 100%;
 }
 
 .session-item::part(base) {
@@ -632,6 +722,34 @@ defineExpose({
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    /* Visual space for dropdown button */
+    margin-right: 1.5rem;
+}
+
+/* Session dropdown menu */
+.session-menu {
+    display: block;
+    position: absolute;
+    top: var(--wa-space-xs);
+    right: 0;
+    z-index: 1;
+}
+
+.session-menu-trigger {
+    opacity: 0.4;
+    transition: opacity 0.15s;
+    font-size: var(--wa-font-size-2xs);
+}
+
+/* Show menu trigger on hover or when dropdown is open */
+.session-item-wrapper:hover .session-menu-trigger,
+.session-item-wrapper--active .session-menu-trigger,
+.session-menu[open] .session-menu-trigger {
+    opacity: 0.6;
+}
+
+.session-menu-trigger:hover {
+    opacity: 1 !important;
 }
 
 .session-project {
