@@ -490,7 +490,7 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
     Classification rules:
     - USER_MESSAGE: User messages with visible content (text, document, image), not meta
     - ASSISTANT_MESSAGE: Assistant messages with visible content (text, document, image)
-    - API_ERROR: System messages with subtype 'api_error'
+    - API_ERROR: System messages with subtype 'api_error', or messages with isApiErrorMessage=true
     - SYSTEM: System messages (except api_error), queue-operation, progress
     - CUSTOM_TITLE: Items of type 'custom-title' (session title set by Claude)
 
@@ -504,6 +504,11 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
         Any modification to this function's logic MUST increment
         CURRENT_COMPUTE_VERSION in settings.py to trigger recomputation.
     """
+    # "Bastard" API error format: type="assistant" but isApiErrorMessage=true
+    # The error text is serialized in content[0].text as a raw string
+    if parsed_json.get('isApiErrorMessage'):
+        return ItemKind.API_ERROR
+
     entry_type = parsed_json.get('type')
 
     # Custom title (session title set by Claude)

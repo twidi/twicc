@@ -8,7 +8,55 @@ const props = defineProps({
     }
 })
 
+/**
+ * Extract error info from the "bastard" API error format.
+ *
+ * This format has isApiErrorMessage=true but type="assistant".
+ * The error is serialized in content[0].text as: "API Error: 500 {json...}"
+ *
+ * @param {Object} data - The parsed JSON data
+ * @returns {Object} Extracted error info
+ */
+function extractBastardErrorInfo(data) {
+    const content = data?.message?.content
+    const textContent = content?.[0]?.text || ''
+
+    // Format: "API Error: 500 {json...}" or "API Error: {json...}"
+    const match = textContent.match(/^API Error:\s*(\d+)?\s*(.*)$/s)
+    if (match) {
+        const [, statusCode, jsonPart] = match
+        try {
+            const parsed = JSON.parse(jsonPart)
+            // Structure: {"type":"error","error":{"type":"api_error","message":"..."}}
+            return {
+                type: parsed?.error?.type || 'unknown_error',
+                message: parsed?.error?.message || textContent,
+                status: statusCode ? parseInt(statusCode) : null,
+                retryAttempt: null,
+                maxRetries: null
+            }
+        } catch {
+            // Invalid JSON, fall through to use raw text
+        }
+    }
+
+    // Fallback: display raw text
+    return {
+        type: 'unknown_error',
+        message: textContent || 'Unknown error',
+        status: null,
+        retryAttempt: null,
+        maxRetries: null
+    }
+}
+
 const errorInfo = computed(() => {
+    // "Bastard" format: error is in content[0].text as a string
+    if (props.data?.isApiErrorMessage) {
+        return extractBastardErrorInfo(props.data)
+    }
+
+    // Classic format: nested error object
     const error = props.data?.error?.error?.error
     return {
         type: error?.type || 'unknown_error',
