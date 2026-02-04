@@ -436,12 +436,15 @@ wa-split-panel::part(divider) {
 .session-search {
     flex: 1;
     max-width: 100%;
+    &:hover {
+        z-index: 10;
+        min-width: min(10rem, calc(100vw - 100px));
+    }
 }
 
 .project-selector {
     flex: 1;
     /* we allow options to be larger than the width of the select */
-    min-width: min(200px, 100%);
     &::part(listbox) {
         overflow: visible;
         width: max-content;
@@ -452,6 +455,24 @@ wa-split-panel::part(divider) {
     &:hover {
         z-index: 10;
         min-width: min(10rem, calc(100vw - 100px));
+    }
+}
+@container sidebar (width <= 13rem) {
+    .project-selector {
+        &::part(form-control-input) {
+            xwidth: min-content;
+        }
+        &::part(combobox) {
+            padding-inline: var(--wa-space-xs);
+        }
+        &::part(display-input) {
+        }
+        .selected-project-dot {
+            margin-inline-end: var(--wa-space-xs);
+        }
+        &::part(expand-icon) {
+            margin-inline-start: var(--wa-space-xs);
+        }
     }
 }
 
@@ -532,17 +553,6 @@ wa-split-panel::part(divider) {
     }
 }
 
-@container sidebar (width <= 150px) {
-    .new-session-button {
-        &::part(base) {
-            padding: var(--wa-space-s);
-        }
-        & > span {
-            display: none;
-        }
-    }
-}
-
 /* New session dropdown (for All Projects mode) - floating like the button */
 .new-session-dropdown {
     /* Override display:contents to allow absolute positioning */
@@ -568,7 +578,16 @@ wa-split-panel::part(divider) {
     }
 }
 
-@container sidebar (width <= 150px) {
+
+@container sidebar (width <= 13rem) {
+    .new-session-button {
+        &::part(base) {
+            padding: var(--wa-space-s);
+        }
+        & > span {
+            display: none;
+        }
+    }
     .new-session-dropdown > wa-button {
         &::part(base) {
             padding: var(--wa-space-s);

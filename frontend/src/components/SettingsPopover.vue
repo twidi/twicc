@@ -125,7 +125,7 @@ function onPopoverShow() {
 
 <template>
     <wa-button id="settings-trigger" variant="neutral" appearance="filled-outlined" size="small">
-        <wa-icon name="gear"></wa-icon> Settings
+        <wa-icon name="gear"></wa-icon><span>Settings</span>
     </wa-button>
     <wa-tooltip v-if="tooltipsEnabled" for="settings-trigger">Toggle settings</wa-tooltip>
     <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
@@ -199,10 +199,9 @@ function onPopoverShow() {
 </template>
 
 <style scoped>
-#settings-trigger {
-    &:hover {
-        z-index: 10;
-    }
+#settings-trigger::part(label) {
+    display: flex;
+    gap: var(--wa-space-s);
 }
 
 .settings-popover {
@@ -229,4 +228,17 @@ function onPopoverShow() {
     margin-bottom: var(--wa-space-2xs);
 }
 
+</style>
+
+<style>
+@container sidebar (width <= 13rem) {
+    #settings-trigger {
+        &::part(base) {
+            padding: var(--wa-space-s);
+        }
+        & > span {
+            display: none;
+        }
+    }
+}
 </style>

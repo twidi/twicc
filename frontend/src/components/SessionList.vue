@@ -405,7 +405,7 @@ function timestampToDate(timestamp) {
 /* Process info row - shows memory, duration, and indicator */
 .process-info {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr auto 0.6fr;
     align-items: center;
     justify-items: end;
     gap: var(--wa-space-xs);
@@ -449,10 +449,10 @@ function timestampToDate(timestamp) {
     justify-self: center;
 }
 
-@container session-list (width <= 230px) {
+@container session-list (width <= 12rem) {
     /* Hide memory when container is too narrow */
     .process-info {
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: auto 0.6fr;
     }
     .process-duration {
         justify-self: start;
@@ -469,7 +469,7 @@ function timestampToDate(timestamp) {
     }
 }
 
-@container session-list (width <= 170px) {
+@container session-list (width <= 9rem) {
     /* Hide duration when container is very narrow (keep only indicator) */
     .process-info {
         grid-template-columns: 1fr;
@@ -477,10 +477,10 @@ function timestampToDate(timestamp) {
     .process-duration {
         display: none !important;
     }
-    .process-indicator {
-        justify-self: start;
-    }
     /* Hide messages when container is very narrow (keep only mtime) */
+    .session-meta {
+        grid-template-columns: 1fr;
+    }
     .session-messages {
         display: none !important;
     }

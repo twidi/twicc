@@ -467,17 +467,17 @@ wa-details.item-details {
 }
 
 /* Responsive styles for narrow containers */
-@container session-items-list (width <= 800px) {
+@container session-items-list (width <= 50rem) {
     .session-items {
         --max-card-width: 95%;
     }
 }
-@container session-items-list (width <= 600px) {
+@container session-items-list (width <= 40rem) {
     .session-items {
         --card-spacing: var(--wa-space-m) !important;
     }
 }
-@container session-items-list (width <= 400px) {
+@container session-items-list (width <= 25rem) {
     .session-items {
         --card-spacing: var(--wa-space-s) !important;
     }
