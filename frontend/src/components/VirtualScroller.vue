@@ -412,12 +412,21 @@ function getScrollState() {
     return composableGetScrollState()
 }
 
+/**
+ * Get the visible range of items (indices actually visible in viewport, without buffer).
+ * @returns {{ start: number, end: number }}
+ */
+function getVisibleRange() {
+    return visibleRange.value
+}
+
 // Expose methods for parent component access via ref
 defineExpose({
     scrollToIndex,
     scrollToTop,
     scrollToBottom,
     getScrollState,
+    getVisibleRange,
     // Additional utility methods that may be useful
     isAtBottom,
     isAtTop,

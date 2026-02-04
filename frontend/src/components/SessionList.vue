@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { formatDate, formatDuration } from '../utils/date'
@@ -157,6 +157,12 @@ watch(() => props.searchQuery, () => {
     highlightedIndex.value = -1
 })
 
+// Reset highlight when selected session changes (e.g., mouse selection)
+// This ensures keyboard navigation restarts from the new selection
+watch(() => props.sessionId, () => {
+    highlightedIndex.value = -1
+})
+
 // Get display name for session (title if available, "New session" for drafts, otherwise ID)
 function getSessionDisplayName(session) {
     // For draft sessions without a title, show "New session"
@@ -265,7 +271,26 @@ function timestampToDate(timestamp) {
 }
 
 /**
- * Handle keyboard navigation from the search input.
+ * Get the starting index for keyboard navigation.
+ * If a session is highlighted, use that. Otherwise, use the selected session's index.
+ * Returns -1 if neither is available.
+ */
+function getNavigationStartIndex() {
+    if (highlightedIndex.value >= 0) {
+        return highlightedIndex.value
+    }
+    // No highlight - try to start from selected session
+    if (props.sessionId) {
+        const selectedIndex = sessions.value.findIndex(s => s.id === props.sessionId)
+        if (selectedIndex >= 0) {
+            return selectedIndex
+        }
+    }
+    return -1
+}
+
+/**
+ * Handle keyboard navigation from the search input or the list itself.
  * Navigates through sessions with arrow keys and selects with Enter.
  *
  * @param {KeyboardEvent} event - The keyboard event
@@ -276,17 +301,18 @@ function handleKeyNavigation(event) {
     if (count === 0) return false
 
     const key = event.key
+    const startIndex = getNavigationStartIndex()
     let newIndex = highlightedIndex.value
 
     switch (key) {
         case 'ArrowDown':
-            // Move down, or start at first item if nothing highlighted
-            newIndex = highlightedIndex.value < 0 ? 0 : Math.min(highlightedIndex.value + 1, count - 1)
+            // Move down from current position, or start at first item
+            newIndex = startIndex < 0 ? 0 : Math.min(startIndex + 1, count - 1)
             break
 
         case 'ArrowUp':
-            // Move up, or go to last item if nothing highlighted
-            newIndex = highlightedIndex.value < 0 ? count - 1 : Math.max(highlightedIndex.value - 1, 0)
+            // Move up from current position, or start at last item
+            newIndex = startIndex < 0 ? count - 1 : Math.max(startIndex - 1, 0)
             break
 
         case 'Home':
@@ -298,11 +324,11 @@ function handleKeyNavigation(event) {
             break
 
         case 'PageDown':
-            newIndex = highlightedIndex.value < 0 ? PAGE_SIZE - 1 : Math.min(highlightedIndex.value + PAGE_SIZE, count - 1)
+            newIndex = startIndex < 0 ? PAGE_SIZE - 1 : Math.min(startIndex + PAGE_SIZE, count - 1)
             break
 
         case 'PageUp':
-            newIndex = highlightedIndex.value < 0 ? 0 : Math.max(highlightedIndex.value - PAGE_SIZE, 0)
+            newIndex = startIndex < 0 ? 0 : Math.max(startIndex - PAGE_SIZE, 0)
             break
 
         case 'Enter':
@@ -329,10 +355,93 @@ function handleKeyNavigation(event) {
     if (newIndex !== highlightedIndex.value) {
         highlightedIndex.value = newIndex
         if (scrollerRef.value) {
-            scrollerRef.value.scrollToIndex(newIndex, { align: 'center' })
+            // For Home/End, use the scroller's native methods which work better
+            // For other navigation, scroll to make the item visible
+            if (key === 'Home') {
+                scrollerRef.value.scrollToTop()
+            } else if (key === 'End') {
+                // scrollToBottom() uses estimated heights for unmeasured items,
+                // which may not scroll far enough. After the initial scroll,
+                // wait for items to be rendered AND measured by ResizeObserver.
+                // ResizeObserver is async and not tied to Vue's nextTick, so we use
+                // a small timeout to allow measurements to complete.
+                scrollerRef.value.scrollToBottom()
+                setTimeout(() => {
+                    scrollerRef.value?.scrollToIndex(newIndex, { align: 'end' })
+                }, 50)
+            } else if (key === 'PageDown' || key === 'PageUp') {
+                // Page navigation may jump to unmeasured items, use delayed correction
+                scrollToIndexIfNeeded(newIndex, { delayedCorrection: true })
+            } else {
+                // For arrow keys, items are usually already measured (adjacent to visible)
+                scrollToIndexIfNeeded(newIndex)
+            }
+
+            // Ensure focus stays on the list after scroll (items may be re-rendered)
+            // Use nextTick to wait for Vue to update the DOM
+            nextTick(() => {
+                scrollerRef.value?.$el?.focus()
+            })
         }
     }
     return true
+}
+
+/**
+ * Scroll to an index only if it's not already fully visible in the viewport.
+ * Uses align 'start' or 'end' depending on scroll direction.
+ *
+ * @param {number} index - The item index to scroll to
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.delayedCorrection=false] - If true, re-scroll after a delay
+ *        to account for items that weren't measured yet (heights were estimated)
+ */
+function scrollToIndexIfNeeded(index, { delayedCorrection = false } = {}) {
+    if (!scrollerRef.value) return
+
+    // Get the actual visible range from the scroller (based on measured heights)
+    // visibleEnd is exclusive and may include a partially visible item at the bottom
+    const { start: visibleStart, end: visibleEnd } = scrollerRef.value.getVisibleRange()
+
+    let scrolled = false
+    let align = null
+
+    if (index < visibleStart) {
+        // Item is above the viewport
+        align = 'start'
+        scrollerRef.value.scrollToIndex(index, { align })
+        scrolled = true
+    } else if (index >= visibleEnd) {
+        // Item is below the viewport
+        align = 'end'
+        scrollerRef.value.scrollToIndex(index, { align })
+        scrolled = true
+    }
+
+    // If we scrolled and correction is requested, re-scroll after items are measured
+    // This handles the case where we scroll to unmeasured items with estimated heights
+    if (scrolled && delayedCorrection && align) {
+        setTimeout(() => {
+            scrollerRef.value?.scrollToIndex(index, { align })
+        }, 50)
+    }
+}
+
+/**
+ * Handle keydown events directly on the session list container.
+ * This allows keyboard navigation when focus is in the list (not just the search input).
+ *
+ * @param {KeyboardEvent} event
+ */
+function handleListKeydown(event) {
+    // Only handle navigation keys
+    const navigationKeys = ['ArrowDown', 'ArrowUp', 'Home', 'End', 'PageUp', 'PageDown', 'Enter', 'Escape']
+    if (!navigationKeys.includes(event.key)) return
+
+    const handled = handleKeyNavigation(event)
+    if (handled) {
+        event.preventDefault()
+    }
 }
 
 // Expose methods for parent component access via ref
@@ -364,7 +473,9 @@ defineExpose({
             :buffer="SCROLLER_BUFFER"
             :unload-buffer="SCROLLER_BUFFER * 1.5"
             class="session-list"
+            tabindex="0"
             @update="onScrollerUpdate"
+            @keydown="handleListKeydown"
         >
             <template #default="{ item: session, index }">
                 <wa-button
@@ -470,6 +581,11 @@ defineExpose({
     flex: 1;
     min-height: 0;
     padding: var(--wa-space-s);
+}
+
+/* Remove default focus outline on the list - we show highlight on items instead */
+.session-list:focus {
+    outline: none;
 }
 
 .session-item {
