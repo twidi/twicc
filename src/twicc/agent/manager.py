@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable, Coroutine
 from typing import Any
+
+from django.conf import settings
 
 from .process import ClaudeProcess
 from .states import ProcessInfo, ProcessState
@@ -301,6 +304,81 @@ class ProcessManager:
             # Clear all processes
             self._processes.clear()
             logger.info("All Claude processes shut down")
+
+    async def check_and_stop_timed_out_processes(self) -> list[str]:
+        """Check all active processes and kill those that exceeded their timeout.
+
+        Timeout rules based on process state:
+        - STARTING: Uses state_changed_at (stuck during startup)
+        - USER_TURN: Uses last_activity (idle, waiting for user)
+        - ASSISTANT_TURN: Uses last_activity (no activity from Claude)
+
+        Returns:
+            List of session_ids that were killed due to timeout
+        """
+        current_time = time.time()
+        killed: list[str] = []
+
+        # Take a snapshot to avoid modification during iteration
+        processes_snapshot = list(self._processes.items())
+
+        for session_id, process in processes_snapshot:
+            timeout: int | None = None
+            reason: str | None = None
+            reference_time: float | None = None
+
+            if process.state == ProcessState.STARTING:
+                # For STARTING, use state_changed_at (when it entered STARTING)
+                timeout = getattr(settings, "PROCESS_TIMEOUT_STARTING", 60)
+                reason = "timeout_starting"
+                reference_time = process.state_changed_at
+            elif process.state == ProcessState.USER_TURN:
+                # For USER_TURN, use last_activity (effectively same as state_changed_at)
+                timeout = getattr(settings, "PROCESS_TIMEOUT_USER_TURN", 15 * 60)
+                reason = "timeout_user_turn"
+                reference_time = process.last_activity
+            elif process.state == ProcessState.ASSISTANT_TURN:
+                # For ASSISTANT_TURN, check both inactivity and absolute duration
+                inactivity_timeout = getattr(
+                    settings, "PROCESS_TIMEOUT_ASSISTANT_TURN", 2 * 60 * 60
+                )
+                absolute_timeout = getattr(
+                    settings, "PROCESS_TIMEOUT_ASSISTANT_TURN_ABSOLUTE", 6 * 60 * 60
+                )
+
+                inactivity_elapsed = current_time - process.last_activity
+                absolute_elapsed = current_time - process.state_changed_at
+
+                # Check absolute timeout first (takes precedence for the reason)
+                if absolute_elapsed > absolute_timeout:
+                    timeout = absolute_timeout
+                    reason = "timeout_assistant_turn_absolute"
+                    reference_time = process.state_changed_at
+                elif inactivity_elapsed > inactivity_timeout:
+                    timeout = inactivity_timeout
+                    reason = "timeout_assistant_turn"
+                    reference_time = process.last_activity
+                else:
+                    continue
+            else:
+                # DEAD - nothing to do
+                continue
+
+            elapsed = current_time - reference_time
+
+            if elapsed > timeout:
+                logger.info(
+                    "Auto-stopping process %s: state=%s, elapsed=%.1fs, timeout=%ds",
+                    session_id,
+                    process.state.value,
+                    elapsed,
+                    timeout,
+                )
+                # kill_process acquires the lock, so we call it outside snapshot iteration
+                if await self.kill_process(session_id, reason=reason):
+                    killed.append(session_id)
+
+        return killed
 
     async def _on_state_change(self, process: ClaudeProcess) -> None:
         """Handle process state change by cleaning up dead processes and broadcasting.

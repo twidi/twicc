@@ -78,3 +78,10 @@ LOGGING = {
 
 # Display levels computation
 CURRENT_COMPUTE_VERSION = 32  # Bump when display rules change to trigger recomputation
+
+# Process auto-stop timeouts (in seconds)
+# Processes are automatically stopped if they remain in a state for too long
+PROCESS_TIMEOUT_STARTING = 60  # 1 minute - process stuck during startup
+PROCESS_TIMEOUT_USER_TURN = 15 * 60  # 15 minutes - idle, waiting for user input
+PROCESS_TIMEOUT_ASSISTANT_TURN = 2 * 60 * 60  # 2 hours - no activity from Claude
+PROCESS_TIMEOUT_ASSISTANT_TURN_ABSOLUTE = 6 * 60 * 60  # 6 hours - max total duration for a turn

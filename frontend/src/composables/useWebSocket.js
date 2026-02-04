@@ -54,10 +54,30 @@ function notifyProcessStateChange(store, msg) {
         // Process started
         toast.success(sessionLabel, { title: 'Claude Code started' })
     } else if (msg.state === 'dead') {
-        // Process stopped - check if voluntary or error
+        // Process stopped - check the reason
         if (msg.kill_reason === 'error') {
             toast.error(`Error: "${msg.error || 'Unknown'}"\n${sessionLabel}`, {
                 title: 'Claude Code terminated due to error',
+            })
+        } else if (msg.kill_reason === 'timeout_starting') {
+            // Starting timeout - something went wrong
+            toast.error(sessionLabel, {
+                title: 'Claude Code stopped: failed to start within 1 minute',
+            })
+        } else if (msg.kill_reason === 'timeout_user_turn') {
+            // User turn timeout - normal cleanup, just info
+            toast.info(sessionLabel, {
+                title: 'Claude Code stopped: inactive for 15 minutes',
+            })
+        } else if (msg.kill_reason === 'timeout_assistant_turn') {
+            // Assistant turn inactivity timeout - might be stuck
+            toast.warning(sessionLabel, {
+                title: 'Claude Code stopped: no activity for 2 hours',
+            })
+        } else if (msg.kill_reason === 'timeout_assistant_turn_absolute') {
+            // Assistant turn absolute timeout - ran too long
+            toast.warning(sessionLabel, {
+                title: 'Claude Code stopped: running for over 6 hours',
             })
         } else {
             // Manual kill or shutdown
