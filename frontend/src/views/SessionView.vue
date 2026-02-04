@@ -29,14 +29,22 @@ const isSmallViewport = ref(false)
 // Track header hidden state
 const isHeaderHidden = ref(false)
 
+// Track footer hidden state (inverted behavior: hidden when scrolling UP)
+const isFooterHidden = ref(false)
+
 /**
  * Check viewport height and update isSmallViewport.
  */
 function checkViewportHeight() {
     isSmallViewport.value = window.innerHeight < SMALL_VIEWPORT_HEIGHT
-    // Reset header visibility when viewport becomes large again
-    if (!isSmallViewport.value && isHeaderHidden.value) {
-        isHeaderHidden.value = false
+    // Reset header and footer visibility when viewport becomes large again
+    if (!isSmallViewport.value) {
+        if (isHeaderHidden.value) {
+            isHeaderHidden.value = false
+        }
+        if (isFooterHidden.value) {
+            isFooterHidden.value = false
+        }
     }
 }
 
@@ -48,9 +56,13 @@ function onScrollDirection(direction) {
     if (!isSmallViewport.value) return
 
     if (direction === 'down') {
+        // Scroll down: hide header, show footer
         isHeaderHidden.value = true
+        isFooterHidden.value = false
     } else if (direction === 'up') {
+        // Scroll up: show header, hide footer
         isHeaderHidden.value = false
+        isFooterHidden.value = true
     }
 }
 
@@ -264,6 +276,7 @@ function handleNeedsTitle() {
                     :session-id="sessionId"
                     :project-id="projectId"
                     :track-scroll-direction="isSmallViewport"
+                    :footer-hidden="isFooterHidden"
                     @needs-title="handleNeedsTitle"
                     @scroll-direction="onScrollDirection"
                 />

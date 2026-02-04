@@ -36,6 +36,15 @@ const props = defineProps({
     trackScrollDirection: {
         type: Boolean,
         default: false
+    },
+    /**
+     * Whether the footer (message input) is hidden (for auto-hide on small viewports).
+     * When true, the footer slides down and out of view.
+     * The ProcessIndicator remains visible as it's positioned above the footer.
+     */
+    footerHidden: {
+        type: Boolean,
+        default: false
     }
 })
 
@@ -616,7 +625,7 @@ defineExpose({
             Nothing to show yet
         </div>
 
-        <div class="session-footer">
+        <div class="session-footer" :class="{ 'auto-hide-hidden': footerHidden }">
             <!-- Process indicator (fixed at bottom of list, visible while scrolling) -->
             <ProcessIndicator
                 v-if="shouldShowProcessIndicator"
@@ -690,6 +699,40 @@ defineExpose({
     top: 0;
     left: 50%;
     transform: translateX(-50%) translateY(calc(-100% - var(--wa-space-2xs)));
+}
+
+/* Auto-hide footer on small viewport heights */
+@media (max-height: 800px) {
+    .session-footer {
+        transition: transform 0.3s ease;
+    }
+
+    /* Apply opacity transition only to divider and message input, not ProcessIndicator */
+    .session-footer > wa-divider,
+    .session-footer > :deep(.message-input) {
+        transition: opacity 0.3s ease;
+    }
+
+    .session-footer.auto-hide-hidden {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 10;
+        transform: translateY(100%);
+        pointer-events: none;
+    }
+
+    .session-footer.auto-hide-hidden > wa-divider,
+    .session-footer.auto-hide-hidden > :deep(.message-input) {
+        opacity: 0;
+    }
+
+    /* Keep the process indicator visible when footer is hidden */
+    .session-footer.auto-hide-hidden .bottom-process-indicator {
+        transform: translateX(-50%) translateY(calc(-100% - var(--wa-space-2xs) - 100%));
+        pointer-events: auto;
+    }
 }
 
 </style>
