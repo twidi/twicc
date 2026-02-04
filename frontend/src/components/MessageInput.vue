@@ -3,7 +3,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
-import { sendWsMessage } from '../composables/useWebSocket'
+import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSocket'
 import { useVisualViewport } from '../composables/useVisualViewport'
 
 // Track visual viewport height for mobile keyboard handling
@@ -131,9 +131,13 @@ watch([isDraft, textareaRef], async ([isDraftSession, textarea]) => {
 
 /**
  * Handle textarea input event.
+ * Also notifies the server that the user is actively drafting (debounced).
  */
 function onInput(event) {
     messageText.value = event.target.value
+    // Notify server that user is actively preparing a message (debounced)
+    // This prevents auto-stop of the process due to inactivity timeout
+    notifyUserDraftUpdated(props.sessionId)
 }
 
 /**

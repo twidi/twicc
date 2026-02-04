@@ -305,6 +305,35 @@ class ProcessManager:
             self._processes.clear()
             logger.info("All Claude processes shut down")
 
+    def touch_process_activity(self, session_id: str) -> bool:
+        """Update last_activity timestamp for a process.
+
+        Called when the user is actively preparing a message (typing, adding images, etc.)
+        to prevent the process from being auto-stopped due to inactivity timeout.
+
+        Works for processes in USER_TURN or ASSISTANT_TURN state.
+
+        Args:
+            session_id: The session identifier
+
+        Returns:
+            True if the process was found and updated, False otherwise
+        """
+        process = self._processes.get(session_id)
+        if process is None:
+            return False
+
+        if process.state not in (ProcessState.USER_TURN, ProcessState.ASSISTANT_TURN):
+            return False
+
+        process.last_activity = time.time()
+        logger.debug(
+            "Touched last_activity for session %s (state=%s)",
+            session_id,
+            process.state.value,
+        )
+        return True
+
     async def check_and_stop_timed_out_processes(self) -> list[str]:
         """Check all active processes and kill those that exceeded their timeout.
 

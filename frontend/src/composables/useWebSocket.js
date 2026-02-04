@@ -1,7 +1,7 @@
 // frontend/src/composables/useWebSocket.js
 
 import { watch } from 'vue'
-import { useWebSocket as useVueWebSocket } from '@vueuse/core'
+import { useWebSocket as useVueWebSocket, useDebounceFn } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useReconciliation } from './useReconciliation'
@@ -10,6 +10,10 @@ import { toast } from './useToast'
 // Module-level reference to the WebSocket send function
 // Allows components to access it without going through the composable
 let wsSendFn = null
+
+// Debounced function for user draft notifications (10 seconds)
+// This prevents spamming the server while still keeping the process alive
+const debouncedDraftNotifications = new Map() // sessionId -> debouncedFn
 
 /**
  * Send a JSON message through the WebSocket connection.
@@ -38,6 +42,30 @@ export function killProcess(sessionId) {
         type: 'kill_process',
         session_id: sessionId
     })
+}
+
+/**
+ * Notify the server that the user is actively preparing a message.
+ * This resets the inactivity timeout for the process.
+ * Debounced to 10 seconds per session to avoid spamming.
+ * @param {string} sessionId - The session ID
+ */
+export function notifyUserDraftUpdated(sessionId) {
+    if (!sessionId) return
+
+    // Get or create debounced function for this session
+    if (!debouncedDraftNotifications.has(sessionId)) {
+        const debouncedFn = useDebounceFn(() => {
+            sendWsMessage({
+                type: 'user_draft_updated',
+                session_id: sessionId
+            })
+        }, 10000) // 10 seconds debounce
+        debouncedDraftNotifications.set(sessionId, debouncedFn)
+    }
+
+    // Call the debounced function
+    debouncedDraftNotifications.get(sessionId)()
 }
 
 /**

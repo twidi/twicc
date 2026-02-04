@@ -119,6 +119,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         elif msg_type == "kill_process":
             await self._handle_kill_process(content)
 
+        elif msg_type == "user_draft_updated":
+            await self._handle_user_draft_updated(content)
+
     async def _handle_send_message(self, content: dict) -> None:
         """Handle send_message request from client.
 
@@ -265,6 +268,28 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                 "kill_process: session %s not killed (not found or not active)",
                 session_id,
             )
+
+    async def _handle_user_draft_updated(self, content: dict) -> None:
+        """Handle user_draft_updated notification from client.
+
+        Expected content format:
+        {
+            "type": "user_draft_updated",
+            "session_id": "claude-conv-xxx"
+        }
+
+        This is sent (debounced) when the user is actively preparing a message
+        (typing text, adding images, etc.). It updates the process's last_activity
+        timestamp to prevent auto-stop due to inactivity timeout.
+        """
+        session_id = content.get("session_id")
+
+        if not session_id:
+            # Silent ignore - this is a fire-and-forget notification
+            return
+
+        manager = get_process_manager()
+        manager.touch_process_activity(session_id)
 
     async def broadcast(self, event):
         """Handle broadcast events by sending data to the client."""
