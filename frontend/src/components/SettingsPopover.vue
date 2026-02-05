@@ -168,98 +168,115 @@ function onPopoverShow() {
     <wa-tooltip v-if="tooltipsEnabled" for="settings-trigger">Toggle settings</wa-tooltip>
     <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
         <div class="settings-content">
-            <div class="setting-group">
-                <label class="setting-group-label">Theme</label>
-                <wa-select
-                    ref="themeSelect"
-                    :value.prop="themeMode"
-                    @change="onThemeModeChange"
-                    size="small"
-                >
-                    <wa-option
-                        v-for="option in themeOptions"
-                        :key="option.value"
-                        :value="option.value"
-                    >{{ option.label }}</wa-option>
-                </wa-select>
-            </div>
-            <div class="setting-group">
-                <label class="setting-group-label">Display mode</label>
-                <wa-switch
-                    ref="baseModeSwitch"
-                    :disabled.prop="debugEnabled"
-                    @change="onBaseModeChange"
-                    size="small"
-                >{{ baseModeLabel }}</wa-switch>
-                <wa-switch
-                    ref="debugSwitch"
-                    @change="onDebugChange"
-                    size="small"
-                >Debug</wa-switch>
-            </div>
-            <div class="setting-group">
-                <label class="setting-group-label">Font size</label>
-                <wa-slider
-                    ref="fontSizeSlider"
-                    :min.prop="12"
-                    :max.prop="32"
-                    :step.prop="1"
-                    :value.prop="fontSize"
-                    @input="onFontSizeChange"
-                    size="small"
-                ></wa-slider>
-            </div>
-            <div class="setting-group">
-                <label class="setting-group-label">Session list time display</label>
-                <wa-select
-                    ref="sessionTimeFormatSelect"
-                    :value.prop="sessionTimeFormat"
-                    @change="onSessionTimeFormatChange"
-                    size="small"
-                >
-                    <wa-option
-                        v-for="option in sessionTimeFormatOptions"
-                        :key="option.value"
-                        :value="option.value"
-                    >{{ option.label }}</wa-option>
-                </wa-select>
-            </div>
-            <div class="setting-group">
-                <label class="setting-group-label">Tooltips</label>
-                <wa-switch
-                    ref="tooltipsSwitch"
-                    @change="onTooltipsChange"
-                    size="small"
-                >Enabled</wa-switch>
-            </div>
-            <div class="setting-group">
-                <label class="setting-group-label">Auto title generation (Haiku)</label>
-                <wa-switch
-                    ref="titleGenerationSwitch"
-                    @change="onTitleGenerationChange"
-                    size="small"
-                >Enabled</wa-switch>
-                <div v-if="titleGenerationEnabled" class="title-prompt-section">
-                    <wa-textarea
-                        ref="titleSystemPromptTextarea"
-                        :value.prop="titleSystemPrompt"
-                        @input="onTitleSystemPromptChange"
-                        size="small"
-                        rows="6"
-                        resize="vertical"
-                        class="title-prompt-textarea"
-                    ></wa-textarea>
-                    <div class="title-prompt-hint">
-                        <span>Use <code>{text}</code> as placeholder for the user message.</span>
-                        <wa-button
-                            v-if="!isDefaultPrompt"
-                            variant="neutral"
-                            appearance="plain"
+            <div class="settings-sections">
+                <!-- Global Section -->
+                <section class="settings-section">
+                    <h3 class="settings-section-title">Global</h3>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Theme</label>
+                        <wa-select
+                            ref="themeSelect"
+                            :value.prop="themeMode"
+                            @change="onThemeModeChange"
                             size="small"
-                            @click="resetTitleSystemPrompt"
-                        >Reset to default</wa-button>
+                        >
+                            <wa-option
+                                v-for="option in themeOptions"
+                                :key="option.value"
+                                :value="option.value"
+                            >{{ option.label }}</wa-option>
+                        </wa-select>
                     </div>
-                </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Font size</label>
+                        <wa-slider
+                            ref="fontSizeSlider"
+                            :min.prop="12"
+                            :max.prop="32"
+                            :step.prop="1"
+                            :value.prop="fontSize"
+                            @input="onFontSizeChange"
+                            size="small"
+                        ></wa-slider>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Tooltips</label>
+                        <wa-switch
+                            ref="tooltipsSwitch"
+                            @change="onTooltipsChange"
+                            size="small"
+                        >Enabled</wa-switch>
+                    </div>
+                </section>
+
+                <!-- Sessions Section -->
+                <section class="settings-section">
+                    <h3 class="settings-section-title">Sessions</h3>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Display mode</label>
+                        <wa-switch
+                            ref="baseModeSwitch"
+                            :disabled.prop="debugEnabled"
+                            @change="onBaseModeChange"
+                            size="small"
+                        >{{ baseModeLabel }}</wa-switch>
+                        <wa-switch
+                            ref="debugSwitch"
+                            @change="onDebugChange"
+                            size="small"
+                        >Debug</wa-switch>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Time display</label>
+                        <wa-select
+                            ref="sessionTimeFormatSelect"
+                            :value.prop="sessionTimeFormat"
+                            @change="onSessionTimeFormatChange"
+                            size="small"
+                            class="session-time-format-select"
+                        >
+                            <wa-option
+                                v-for="option in sessionTimeFormatOptions"
+                                :key="option.value"
+                                :value="option.value"
+                            >{{ option.label }}</wa-option>
+                        </wa-select>
+                    </div>
+                </section>
+
+                <!-- Auto Title Section -->
+                <section class="settings-section">
+                    <h3 class="settings-section-title">Auto title</h3>
+                    <div class="setting-group">
+                        <wa-switch
+                            ref="titleGenerationSwitch"
+                            @change="onTitleGenerationChange"
+                            size="small"
+                        >Enabled (Haiku)</wa-switch>
+                        <div v-if="titleGenerationEnabled" class="title-prompt-section">
+                            <label class="setting-group-label">System prompt</label>
+                            <wa-textarea
+                                ref="titleSystemPromptTextarea"
+                                :value.prop="titleSystemPrompt"
+                                @input="onTitleSystemPromptChange"
+                                size="small"
+                                rows="4"
+                                resize="vertical"
+                                class="title-prompt-textarea"
+                            ></wa-textarea>
+                            <div class="title-prompt-hint">
+                                <span>Use <code>{text}</code> as placeholder.</span>
+                                <wa-button
+                                    v-if="!isDefaultPrompt"
+                                    variant="neutral"
+                                    appearance="outlined"
+                                    size="small"
+                                    @click.stop="resetTitleSystemPrompt"
+                                >Reset to default</wa-button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </div>
         </div>
     </wa-popover>
@@ -272,15 +289,44 @@ function onPopoverShow() {
 }
 
 .settings-popover {
-    --max-width: 400px;
+    --max-width: 90vw;
     --arrow-size: 16px;
+    &::part(body) {
+        width: fit-content;
+    }
 }
 
 .settings-content {
-    padding: var(--wa-space-s);
+    max-height: 90vw;
+    overflow-y: auto;
+}
+
+.settings-sections {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wa-space-m);
+}
+
+.settings-section {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-m);
+    padding: var(--wa-space-s);
+    background: var(--wa-color-surface-alt);
+    border-radius: var(--wa-radius-m);
+    --min-width: 15rem;
+    max-width: 20rem;
+    min-width: var(--min-width);
+    flex: 1 1 var(--min-width); /* grow, shrink, basis */
+}
+
+.settings-section-title {
+    font-size: var(--wa-font-size-s);
+    font-weight: var(--wa-font-weight-bold);
+    color: var(--wa-color-text-loud);
+    margin: 0;
+    padding-bottom: var(--wa-space-xs);
+    border-bottom: 1px solid var(--wa-color-border-subtle);
 }
 
 .setting-group {
@@ -290,9 +336,9 @@ function onPopoverShow() {
 }
 
 .setting-group-label {
-    font-size: var(--wa-font-size-s);
+    font-size: var(--wa-font-size-xs);
     font-weight: var(--wa-font-weight-semibold);
-    margin-bottom: var(--wa-space-2xs);
+    color: var(--wa-color-text-quiet);
 }
 
 .title-prompt-section {
@@ -309,17 +355,20 @@ function onPopoverShow() {
 
 .title-prompt-hint {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--wa-space-s);
+    flex-direction: column;
+    gap: var(--wa-space-xs);
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
-}
 
-.title-prompt-hint code {
-    background: var(--wa-color-surface-alt);
-    padding: 0 var(--wa-space-2xs);
-    border-radius: var(--wa-radius-s);
+    code {
+        background: var(--wa-color-surface);
+        padding: 0 var(--wa-space-2xs);
+        border-radius: var(--wa-radius-s);
+    }
+
+    wa-button {
+        align-self: end;
+    }
 }
 
 </style>
