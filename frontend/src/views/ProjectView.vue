@@ -54,6 +54,9 @@ const didSessionsFailToLoad = computed(() => store.didSessionsFailToLoad(effecti
 // Search/filter state for sessions
 const searchQuery = ref('')
 
+// Show archived sessions filter (persists across project changes)
+const showArchivedSessions = ref(false)
+
 // Reference to SessionList for keyboard navigation
 const sessionListRef = ref(null)
 
@@ -98,6 +101,14 @@ watch(effectiveProjectId, async (newProjectId) => {
 async function handleRetry() {
     if (effectiveProjectId.value) {
         await store.loadSessions(effectiveProjectId.value, { force: true, isInitialLoading: true })
+    }
+}
+
+// Handle session options dropdown selection
+function handleSessionOptionsSelect(event) {
+    const item = event.detail.item
+    if (item.value === 'show-archived') {
+        showArchivedSessions.value = item.checked
     }
 }
 
@@ -329,6 +340,31 @@ function handleSidebarToggle(event) {
                 </div>
 
                 <div class="sidebar-header-row">
+                    <!-- Session list options dropdown -->
+                    <wa-dropdown
+                        placement="bottom-end"
+                        class="session-options-dropdown"
+                        @wa-select="handleSessionOptionsSelect"
+                    >
+                        <wa-button
+                            id="session-options-button"
+                            slot="trigger"
+                            variant="neutral"
+                            appearance="filled-outlined"
+                            size="small"
+                        >
+                            <wa-icon name="sliders"></wa-icon>
+                        </wa-button>
+                        <wa-dropdown-item
+                            type="checkbox"
+                            value="show-archived"
+                            :checked="showArchivedSessions"
+                        >
+                            Show archived sessions
+                        </wa-dropdown-item>
+                    </wa-dropdown>
+                    <wa-tooltip v-if="tooltipsEnabled" for="session-options-button">Session list options</wa-tooltip>
+
                     <!-- Search/filter input -->
                     <wa-input
                         v-model="searchQuery"
@@ -369,6 +405,7 @@ function handleSidebarToggle(event) {
                     :session-id="sessionId"
                     :show-project-name="isAllProjectsMode"
                     :search-query="searchQuery"
+                    :show-archived="showArchivedSessions"
                     @select="handleSessionSelect"
                 />
 
@@ -552,11 +589,16 @@ wa-split-panel::part(divider) {
 
 .session-search {
     flex: 1;
+    min-width: 3.5rem;
     max-width: 100%;
     &:hover {
         z-index: 10;
         min-width: min(10rem, calc(100vw - 100px));
     }
+}
+
+.session-options-dropdown {
+    flex-shrink: 0;
 }
 
 .project-selector {

@@ -26,6 +26,10 @@ const props = defineProps({
     searchQuery: {
         type: String,
         default: ''
+    },
+    showArchived: {
+        type: Boolean,
+        default: false
     }
 })
 
@@ -45,13 +49,16 @@ const relativeTimeFormat = computed(() =>
 )
 
 // Sessions are already sorted by mtime desc in the getter
-// Filter out archived sessions except the currently selected one
+// Filter out archived sessions unless showArchived is enabled
+// Always keep the currently selected session visible (even if archived)
 const allSessions = computed(() => {
     const baseSessions = props.projectId === ALL_PROJECTS_ID
         ? store.getAllSessions
         : store.getProjectSessions(props.projectId)
 
-    return baseSessions.filter(s => !s.archived || s.id === props.sessionId)
+    return baseSessions.filter(s =>
+        props.showArchived || !s.archived || s.id === props.sessionId
+    )
 })
 
 /**
