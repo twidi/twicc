@@ -79,6 +79,9 @@ class ProcessManager:
         project_id: str,
         cwd: str,
         text: str,
+        *,
+        images: list[dict] | None = None,
+        documents: list[dict] | None = None,
     ) -> None:
         """Send a message to an existing session.
 
@@ -93,6 +96,8 @@ class ProcessManager:
             project_id: The TwiCC project identifier
             cwd: Working directory for Claude operations
             text: The message text to send
+            images: Optional list of SDK ImageBlockParam objects
+            documents: Optional list of SDK DocumentBlockParam objects
 
         Raises:
             RuntimeError: If the process cannot be started or message cannot be sent
@@ -111,7 +116,7 @@ class ProcessManager:
                 elif process.state in (ProcessState.USER_TURN, ProcessState.ASSISTANT_TURN):
                     # Process ready for input or busy responding - send message
                     # (SDK queues messages during ASSISTANT_TURN)
-                    await process.send(text)
+                    await process.send(text, images=images, documents=documents)
                     return
                 else:
                     # Process starting - cannot send yet
@@ -120,7 +125,10 @@ class ProcessManager:
                     )
 
             # Create and start new process with resume
-            await self._start_process(session_id, project_id, cwd, text, resume=True)
+            await self._start_process(
+                session_id, project_id, cwd, text, resume=True,
+                images=images, documents=documents
+            )
 
     async def create_session(
         self,
@@ -128,6 +136,9 @@ class ProcessManager:
         project_id: str,
         cwd: str,
         text: str,
+        *,
+        images: list[dict] | None = None,
+        documents: list[dict] | None = None,
     ) -> None:
         """Create a new session with a client-provided session ID.
 
@@ -140,6 +151,8 @@ class ProcessManager:
             project_id: The TwiCC project identifier
             cwd: Working directory for Claude operations
             text: The initial message text
+            images: Optional list of SDK ImageBlockParam objects
+            documents: Optional list of SDK DocumentBlockParam objects
 
         Raises:
             RuntimeError: If a process already exists for this session_id
@@ -159,7 +172,10 @@ class ProcessManager:
                 del self._processes[session_id]
 
             # Create and start new process without resume
-            await self._start_process(session_id, project_id, cwd, text, resume=False)
+            await self._start_process(
+                session_id, project_id, cwd, text, resume=False,
+                images=images, documents=documents
+            )
 
     async def _start_process(
         self,
@@ -168,6 +184,9 @@ class ProcessManager:
         cwd: str,
         text: str,
         resume: bool,
+        *,
+        images: list[dict] | None = None,
+        documents: list[dict] | None = None,
     ) -> None:
         """Create and start a new Claude process.
 
@@ -182,6 +201,8 @@ class ProcessManager:
             cwd: Working directory for Claude operations
             text: The message text to send
             resume: If True, resume existing session. If False, create new session.
+            images: Optional list of SDK ImageBlockParam objects
+            documents: Optional list of SDK DocumentBlockParam objects
         """
         logger.debug(
             "Creating process for session %s, project %s (resume=%s)",
@@ -197,7 +218,10 @@ class ProcessManager:
 
         # Start the process. If it fails, it transitions to DEAD state and
         # broadcasts the error via the callback - it does not raise exceptions.
-        await process.start(text, self._on_state_change, resume=resume)
+        await process.start(
+            text, self._on_state_change, resume=resume,
+            images=images, documents=documents
+        )
 
         # Ensure timeout monitor is running (starts lazily on first process)
         self._ensure_timeout_monitor_running()

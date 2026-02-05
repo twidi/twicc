@@ -81,6 +81,7 @@ initSettings()
 const dataStore = useDataStore()
 dataStore.hydrateDraftSessions().then(() => {
     dataStore.hydrateDraftMessages()
+    dataStore.hydrateAttachments()
 })
 
 app.mount('#app')

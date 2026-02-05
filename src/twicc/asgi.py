@@ -135,7 +135,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             "session_id": "claude-conv-xxx",
             "project_id": "proj-xyz",
             "text": "The message text",
-            "title": "Optional session title"  // Only for new sessions
+            "title": "Optional session title",  // Only for new sessions
+            "images": [...],  // Optional: array of SDK ImageBlockParam objects
+            "documents": [...]  // Optional: array of SDK DocumentBlockParam objects
         }
 
         This handles both new sessions and existing sessions:
@@ -145,11 +147,15 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         The optional title field is only used for new sessions (drafts becoming real).
         If provided, it will be stored as a pending title and written to JSONL
         when the process becomes safe.
+
+        The optional images and documents fields contain attachments in SDK format.
         """
         session_id = content.get("session_id")
         project_id = content.get("project_id")
         text = content.get("text")
         title = content.get("title")  # Optional, only for new sessions
+        images = content.get("images")  # Optional: SDK ImageBlockParam list
+        documents = content.get("documents")  # Optional: SDK DocumentBlockParam list
 
         # Validate required fields
         if not session_id or not project_id or not text:
@@ -210,7 +216,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         try:
             if exists:
                 # Session exists: send message to it
-                await manager.send_to_session(session_id, project_id, cwd, text)
+                await manager.send_to_session(
+                    session_id, project_id, cwd, text, images=images, documents=documents
+                )
             else:
                 # Session doesn't exist: create new with client-provided ID
                 # Store title as pending if provided (will be written when process is safe)
@@ -219,7 +227,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
                     set_pending_title(session_id, title)
 
-                await manager.create_session(session_id, project_id, cwd, text)
+                await manager.create_session(
+                    session_id, project_id, cwd, text, images=images, documents=documents
+                )
         except RuntimeError as e:
             # Process busy or other expected errors
             logger.warning("send_message failed: %s", e)

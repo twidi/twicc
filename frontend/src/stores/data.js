@@ -6,13 +6,20 @@ import { computeVisualItems } from '../utils/visualItems'
 import { useSettingsStore } from './settings'
 import {
     saveDraftMessage,
+    getDraftMessage,
     deleteDraftMessage,
     getAllDraftMessages,
     saveDraftSession,
     getDraftSession,
     deleteDraftSession as deleteDraftSessionFromDb,
-    getAllDraftSessions
+    getAllDraftSessions,
+    saveDraftMedia,
+    deleteDraftMedia,
+    getDraftMediasBySession,
+    deleteAllDraftMediasForSession,
+    getAllDraftMedias
 } from '../utils/draftStorage'
+import { processFile, mediasToSdkFormat } from '../utils/fileUtils'
 import { debounce } from '../utils/debounce'
 
 // Map of debounced save functions per session (to avoid mixing debounces)
@@ -77,7 +84,12 @@ export const useDataStore = defineStore('data', {
 
             // Title suggestions by session ID
             // Format: { sessionId: { suggestion: string, sourcePrompt?: string } }
-            titleSuggestions: {}
+            titleSuggestions: {},
+
+            // Draft attachments - media files pending send per session
+            // { sessionId: Map<mediaId, DraftMedia> }
+            // Stored separately from draftMessages to avoid rewriting large blobs on each keystroke
+            attachments: {}
         }
     }),
 
@@ -241,6 +253,18 @@ export const useDataStore = defineStore('data', {
         // Get the source prompt used for a suggestion (for draft invalidation)
         getTitleSuggestionSourcePrompt: (state) => (sessionId) =>
             state.localState.titleSuggestions[sessionId]?.sourcePrompt || null,
+
+        // Get attachments for a session as an array (preserving order from Map)
+        getAttachments: (state) => (sessionId) => {
+            const map = state.localState.attachments[sessionId]
+            return map ? Array.from(map.values()) : []
+        },
+
+        // Get attachment count for a session
+        getAttachmentCount: (state) => (sessionId) => {
+            const map = state.localState.attachments[sessionId]
+            return map ? map.size : 0
+        },
 
         // Get display name for a project (uses cache, computes if missing)
         getProjectDisplayName: (state) => (projectId) => {
@@ -1362,6 +1386,123 @@ export const useDataStore = defineStore('data', {
          */
         clearTitleSuggestion(sessionId) {
             delete this.localState.titleSuggestions[sessionId]
+        },
+
+        // =========================================================================
+        // Attachment actions (for document upload)
+        // =========================================================================
+
+        /**
+         * Add a file attachment to a session.
+         * Processes the file (validation + encoding) and stores in IndexedDB.
+         * @param {string} sessionId - The session ID
+         * @param {File} file - The file to add
+         * @returns {Promise<DraftMedia>} The processed media object
+         * @throws {Error} If validation fails or file cannot be processed
+         */
+        async addAttachment(sessionId, file) {
+            // Process file (validates and encodes)
+            const media = await processFile(file, sessionId)
+
+            // Save to IndexedDB
+            await saveDraftMedia(media)
+
+            // Update in-memory state
+            if (!this.localState.attachments[sessionId]) {
+                this.localState.attachments[sessionId] = new Map()
+            }
+            this.localState.attachments[sessionId].set(media.id, media)
+
+            // Update draft message with media ID (for order preservation)
+            const draft = await getDraftMessage(sessionId) || {}
+            draft.mediaIds = draft.mediaIds || []
+            draft.mediaIds.push(media.id)
+            await saveDraftMessage(sessionId, draft)
+
+            return media
+        },
+
+        /**
+         * Remove an attachment from a session.
+         * @param {string} sessionId - The session ID
+         * @param {string} mediaId - The media ID to remove
+         */
+        async removeAttachment(sessionId, mediaId) {
+            // Remove from IndexedDB
+            await deleteDraftMedia(mediaId)
+
+            // Remove from in-memory state
+            this.localState.attachments[sessionId]?.delete(mediaId)
+
+            // Update draft message to remove media ID
+            const draft = await getDraftMessage(sessionId)
+            if (draft?.mediaIds) {
+                draft.mediaIds = draft.mediaIds.filter(id => id !== mediaId)
+                await saveDraftMessage(sessionId, draft)
+            }
+        },
+
+        /**
+         * Load attachments for a session from IndexedDB.
+         * Called when entering a session to restore persisted attachments.
+         * @param {string} sessionId - The session ID
+         */
+        async loadAttachmentsForSession(sessionId) {
+            try {
+                const medias = await getDraftMediasBySession(sessionId)
+                if (medias.length > 0) {
+                    this.localState.attachments[sessionId] = new Map(
+                        medias.map(m => [m.id, m])
+                    )
+                }
+            } catch (err) {
+                console.warn('Failed to load attachments from IndexedDB:', err)
+            }
+        },
+
+        /**
+         * Clear all attachments for a session.
+         * Called after successful message send.
+         * @param {string} sessionId - The session ID
+         */
+        async clearAttachmentsForSession(sessionId) {
+            // Remove from IndexedDB
+            await deleteAllDraftMediasForSession(sessionId)
+
+            // Clear in-memory state
+            delete this.localState.attachments[sessionId]
+        },
+
+        /**
+         * Get attachments in Claude SDK format (images and documents separated).
+         * @param {string} sessionId - The session ID
+         * @returns {{ images: Object[], documents: Object[] }} SDK-formatted blocks
+         */
+        getAttachmentsForSdk(sessionId) {
+            const map = this.localState.attachments[sessionId]
+            if (!map || map.size === 0) {
+                return { images: [], documents: [] }
+            }
+            return mediasToSdkFormat(Array.from(map.values()))
+        },
+
+        /**
+         * Load all draft attachments from IndexedDB into local state.
+         * Called at app startup.
+         */
+        async hydrateAttachments() {
+            try {
+                const allMedias = await getAllDraftMedias()
+                // Group by sessionId
+                for (const media of allMedias) {
+                    if (!this.localState.attachments[media.sessionId]) {
+                        this.localState.attachments[media.sessionId] = new Map()
+                    }
+                    this.localState.attachments[media.sessionId].set(media.id, media)
+                }
+            } catch (err) {
+                console.warn('Failed to load attachments from IndexedDB:', err)
+            }
         }
     }
 })

@@ -3,6 +3,8 @@ import { computed, watch, ref, nextTick, onUnmounted } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { useDataStore } from '../stores/data'
 import { INITIAL_ITEMS_COUNT } from '../constants'
+import { isSupportedMimeType, MAX_FILE_SIZE } from '../utils/fileUtils'
+import { toast } from '../composables/useToast'
 import VirtualScroller from './VirtualScroller.vue'
 import SessionItem from './SessionItem.vue'
 import FetchErrorPanel from './FetchErrorPanel.vue'
@@ -93,6 +95,10 @@ let lastEmittedDirection = null
 
 // Track pending range to load (accumulated during debounce)
 const pendingLoadRange = ref(null)
+
+// Drag and drop state
+const isDragOver = ref(false)
+let dragCounter = 0  // Track enter/leave events for nested elements
 
 // Session data
 const session = computed(() => store.getSession(props.sessionId))
@@ -694,6 +700,90 @@ function getScrollerElement() {
     return scrollerRef.value?.$el ?? null
 }
 
+// =============================================================================
+// Drag and Drop Handlers
+// =============================================================================
+
+/**
+ * Handle dragenter event.
+ * Uses a counter to properly handle nested elements.
+ */
+function onDragEnter(event) {
+    event.preventDefault()
+    dragCounter++
+    if (dragCounter === 1) {
+        isDragOver.value = true
+    }
+}
+
+/**
+ * Handle dragleave event.
+ * Uses a counter to properly handle nested elements.
+ */
+function onDragLeave(event) {
+    event.preventDefault()
+    dragCounter--
+    if (dragCounter === 0) {
+        isDragOver.value = false
+    }
+}
+
+/**
+ * Handle dragover event - required to allow drop.
+ */
+function onDragOver(event) {
+    event.preventDefault()
+}
+
+/**
+ * Handle drop event - process dropped files.
+ */
+async function onDrop(event) {
+    event.preventDefault()
+    dragCounter = 0
+    isDragOver.value = false
+
+    const files = event.dataTransfer?.files
+    if (!files || files.length === 0) return
+
+    // Process each file
+    for (const file of files) {
+        await processDroppedFile(file)
+    }
+}
+
+/**
+ * Process a single dropped file.
+ * Validates and adds to attachments if valid.
+ */
+async function processDroppedFile(file) {
+    // Validate MIME type
+    if (!isSupportedMimeType(file.type)) {
+        const extension = file.name.split('.').pop()?.toLowerCase() || 'unknown'
+        toast.error(`Unsupported file type: .${extension}`, {
+            title: 'Cannot attach file'
+        })
+        return
+    }
+
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE) {
+        const sizeMB = (file.size / 1024 / 1024).toFixed(1)
+        toast.error(`File too large: ${sizeMB} MB (max 5 MB)`, {
+            title: 'Cannot attach file'
+        })
+        return
+    }
+
+    try {
+        await store.addAttachment(props.sessionId, file)
+    } catch (error) {
+        toast.error(error.message || 'Failed to process file', {
+            title: 'Cannot attach file'
+        })
+    }
+}
+
 // Expose methods for parent components
 defineExpose({
     getScrollerElement
@@ -701,7 +791,14 @@ defineExpose({
 </script>
 
 <template>
-    <div class="session-items-list">
+    <div
+        class="session-items-list"
+        :class="{ 'drag-over': isDragOver }"
+        @dragenter="onDragEnter"
+        @dragleave="onDragLeave"
+        @dragover="onDragOver"
+        @drop="onDrop"
+    >
         <!-- Compute pending state -->
         <div v-if="isComputePending" class="compute-pending-state">
             <wa-callout variant="warning">
@@ -812,6 +909,14 @@ defineExpose({
                 @needs-title="emit('needs-title')"
             />
         </div>
+
+        <!-- Drop zone overlay -->
+        <div v-if="isDragOver" class="drop-overlay">
+            <div class="drop-overlay-content">
+                <wa-icon name="cloud-upload" style="font-size: 3rem;"></wa-icon>
+                <span>Drop files here</span>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -823,6 +928,33 @@ defineExpose({
     min-height: 0;
     overflow: hidden;
     position: relative;
+}
+
+/* Drop zone visual feedback */
+.session-items-list.drag-over {
+    outline: 3px dashed var(--wa-color-primary);
+    outline-offset: -3px;
+}
+
+.drop-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(var(--wa-color-primary-rgb), 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    pointer-events: none;
+}
+
+.drop-overlay-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--wa-space-m);
+    color: var(--wa-color-primary);
+    font-size: var(--wa-font-size-xl);
+    font-weight: 500;
 }
 
 .session-items {

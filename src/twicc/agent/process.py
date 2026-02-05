@@ -5,7 +5,7 @@ Claude process wrapper for a single SDK client instance.
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
 
 from claude_agent_sdk import (
@@ -143,8 +143,71 @@ class ClaudeProcess:
             kill_reason=self.kill_reason,
         )
 
+    def _build_query_prompt(
+        self,
+        text: str,
+        images: list[dict] | None,
+        documents: list[dict] | None,
+    ) -> str | AsyncIterator[dict]:
+        """Build prompt for SDK query().
+
+        ClaudeSDKClient.query() accepts either:
+        - A plain string (for text-only messages)
+        - An AsyncIterable[dict] (for multimodal messages with images/documents)
+
+        When given a string, the SDK wraps it in the transport message format
+        automatically. When given an AsyncIterable, each yielded dict must be
+        a complete transport message with the structure:
+            {"type": "user", "message": {"role": "user", "content": [...]}, ...}
+
+        Args:
+            text: The message text
+            images: Optional list of SDK ImageBlockParam objects
+            documents: Optional list of SDK DocumentBlockParam objects
+
+        Returns:
+            Either a plain text string or an async iterator yielding a single
+            transport message dict with multimodal content blocks.
+        """
+        has_attachments = (images and len(images) > 0) or (documents and len(documents) > 0)
+
+        if not has_attachments:
+            return text
+
+        # Build content blocks: images first, then documents, then text
+        content_blocks: list[dict] = []
+
+        if images:
+            content_blocks.extend(images)
+
+        if documents:
+            content_blocks.extend(documents)
+
+        content_blocks.append({"type": "text", "text": text})
+
+        logger.debug(
+            "Built multimodal message with %d images, %d documents, and text",
+            len(images) if images else 0,
+            len(documents) if documents else 0,
+        )
+
+        async def _message_stream() -> AsyncIterator[dict]:
+            yield {
+                "type": "user",
+                "message": {"role": "user", "content": content_blocks},
+                "parent_tool_use_id": None,
+            }
+
+        return _message_stream()
+
     async def start(
-        self, prompt: str, on_state_change: StateChangeCallback, resume: bool = True
+        self,
+        prompt: str,
+        on_state_change: StateChangeCallback,
+        resume: bool = True,
+        *,
+        images: list[dict] | None = None,
+        documents: list[dict] | None = None,
     ) -> None:
         """Start the process and send the first message.
 
@@ -156,6 +219,8 @@ class ClaudeProcess:
             on_state_change: Async callback invoked when process state changes
             resume: If True (default), resume an existing session. If False,
                    create a new session with the session_id as the custom UUID.
+            images: Optional list of SDK ImageBlockParam objects
+            documents: Optional list of SDK DocumentBlockParam objects
 
         Raises:
             RuntimeError: If the process is already started
@@ -195,7 +260,10 @@ class ClaudeProcess:
             # always uses streaming mode for the control protocol. We must connect()
             # first, then query() to send messages.
             await self._client.connect()
-            await self._client.query(prompt)
+
+            # Build query prompt: plain string or async iterator for multimodal
+            query_prompt = self._build_query_prompt(prompt, images, documents)
+            await self._client.query(query_prompt)
 
             logger.debug(
                 "Connection established for session %s",
@@ -224,11 +292,19 @@ class ClaudeProcess:
             # The error is communicated to the frontend via WebSocket broadcast.
             await self._handle_error(f"Failed to start process: {e}")
 
-    async def send(self, text: str) -> None:
+    async def send(
+        self,
+        text: str,
+        *,
+        images: list[dict] | None = None,
+        documents: list[dict] | None = None,
+    ) -> None:
         """Send a follow-up message to the process.
 
         Args:
             text: The message text to send
+            images: Optional list of SDK ImageBlockParam objects
+            documents: Optional list of SDK DocumentBlockParam objects
 
         Raises:
             RuntimeError: If the process is not running or not ready for input
@@ -249,7 +325,9 @@ class ClaudeProcess:
                 self.last_activity = time.time()
                 await self._notify_state_change()
 
-            await self._client.query(text)
+            # Build query prompt: plain string or async iterator for multimodal
+            query_prompt = self._build_query_prompt(text, images, documents)
+            await self._client.query(query_prompt)
 
         except Exception as e:
             # Handle error and transition to DEAD state. Do not re-raise as the

@@ -5,6 +5,9 @@ import { useRouter, useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSocket'
 import { useVisualViewport } from '../composables/useVisualViewport'
+import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES } from '../utils/fileUtils'
+import { toast } from '../composables/useToast'
+import AttachmentThumbnails from './AttachmentThumbnails.vue'
 
 // Track visual viewport height for mobile keyboard handling
 useVisualViewport()
@@ -39,6 +42,11 @@ const isDraft = computed(() => session.value?.draft === true)
 // Local state for the textarea
 const messageText = ref('')
 const textareaRef = ref(null)
+const fileInputRef = ref(null)
+
+// Attachments for this session
+const attachments = computed(() => store.getAttachments(props.sessionId))
+const attachmentCount = computed(() => store.getAttachmentCount(props.sessionId))
 
 // Get process state for this session
 const processState = computed(() => store.getProcessState(props.sessionId))
@@ -152,12 +160,95 @@ function onKeydown(event) {
 }
 
 /**
+ * Handle paste event to capture images from clipboard.
+ * Only processes image files from clipboard.
+ */
+async function onPaste(event) {
+    const items = event.clipboardData?.items
+    if (!items) return
+
+    for (const item of items) {
+        // Only handle image files from clipboard
+        if (item.kind === 'file' && SUPPORTED_IMAGE_TYPES.includes(item.type)) {
+            const file = item.getAsFile()
+            if (file) {
+                event.preventDefault()
+                await processFile(file)
+                return // Process only the first image
+            }
+        }
+    }
+}
+
+/**
+ * Process and add a file as an attachment.
+ */
+async function processFile(file) {
+    // Validate MIME type
+    if (!isSupportedMimeType(file.type)) {
+        const extension = file.name.split('.').pop()?.toLowerCase() || 'unknown'
+        toast.error(`Unsupported file type: .${extension}`, {
+            title: 'Cannot attach file'
+        })
+        return
+    }
+
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE) {
+        const sizeMB = (file.size / 1024 / 1024).toFixed(1)
+        toast.error(`File too large: ${sizeMB} MB (max 5 MB)`, {
+            title: 'Cannot attach file'
+        })
+        return
+    }
+
+    try {
+        await store.addAttachment(props.sessionId, file)
+        // Notify server that user is actively preparing a message
+        notifyUserDraftUpdated(props.sessionId)
+    } catch (error) {
+        toast.error(error.message || 'Failed to process file', {
+            title: 'Cannot attach file'
+        })
+    }
+}
+
+/**
+ * Open the file picker dialog.
+ */
+function openFilePicker() {
+    fileInputRef.value?.click()
+}
+
+/**
+ * Handle file selection from the file picker.
+ */
+async function onFileSelected(event) {
+    const files = event.target.files
+    if (!files) return
+
+    for (const file of files) {
+        await processFile(file)
+    }
+
+    // Reset input so the same file can be selected again
+    event.target.value = ''
+}
+
+/**
+ * Remove an attachment by ID.
+ */
+function removeAttachment(attachmentId) {
+    store.removeAttachment(props.sessionId, attachmentId)
+}
+
+/**
  * Send the message via WebSocket.
  * Backend handles both new and existing sessions with the same message type.
  * For draft sessions with a custom title, include the title in the message.
  * For draft sessions without a title, send the message AND open the rename dialog.
  */
-function handleSend() {
+async function handleSend() {
     const text = messageText.value.trim()
     if (!text || isDisabled.value) return
 
@@ -180,11 +271,27 @@ function handleSend() {
         emit('needs-title')
     }
 
+    // Include attachments in SDK format if any
+    if (attachmentCount.value > 0) {
+        const { images, documents } = store.getAttachmentsForSdk(props.sessionId)
+        if (images.length > 0) {
+            payload.images = images
+        }
+        if (documents.length > 0) {
+            payload.documents = documents
+        }
+    }
+
     const success = sendWsMessage(payload)
 
     if (success) {
         // Clear draft message from store (and IndexedDB)
         store.clearDraftMessage(props.sessionId)
+
+        // Clear attachments from store and IndexedDB
+        if (attachmentCount.value > 0) {
+            await store.clearAttachmentsForSession(props.sessionId)
+        }
 
         // Clear draft session from IndexedDB only (if this was a draft session)
         // Keep in store so session stays visible until backend confirms with session_added/updated
@@ -238,7 +345,41 @@ function handleClear() {
             resize="auto"
             @input="onInput"
             @keydown="onKeydown"
+            @paste="onPaste"
         ></wa-textarea>
+
+        <!-- Attachments row: button on left, thumbnails on right -->
+        <div class="message-input-attachments">
+            <!-- Hidden file input -->
+            <input
+                ref="fileInputRef"
+                type="file"
+                multiple
+                accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain"
+                style="display: none;"
+                @change="onFileSelected"
+            />
+
+            <!-- Attach button -->
+            <wa-button
+                variant="neutral"
+                appearance="plain"
+                size="small"
+                @click="openFilePicker"
+                title="Attach files (images, PDF, text)"
+            >
+                <wa-icon slot="prefix" name="paperclip"></wa-icon>
+                Attach
+            </wa-button>
+
+            <!-- Attachment thumbnails -->
+            <AttachmentThumbnails
+                v-if="attachmentCount > 0"
+                :attachments="attachments"
+                @remove="removeAttachment"
+            />
+        </div>
+
         <div class="message-input-actions">
             <!-- Cancel button for draft sessions -->
             <wa-button
@@ -284,6 +425,13 @@ function handleClear() {
     max-height: calc(var(--visual-viewport-height, 100dvh) * 0.4);
     /* Override resize="auto" which sets overflow-y: hidden - we need scrolling when max-height is reached */
     overflow-y: auto;
+}
+
+.message-input-attachments {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    min-height: 32px;
 }
 
 .message-input-actions {
