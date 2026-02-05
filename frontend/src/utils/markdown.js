@@ -15,10 +15,25 @@ const md = MarkdownItAsync({
     breaks: true,        // convert \n to <br> (matches pre-wrap behavior)
 })
 
+// Wrapper around codeToHtml that falls back to 'text' (plain) for unknown languages.
+// Shiki throws an error when encountering unsupported languages (like 'env', 'dotenv', etc.)
+// which would crash the entire markdown render. This wrapper catches those errors.
+async function codeToHtmlWithFallback(code, options) {
+    try {
+        return await codeToHtml(code, options)
+    } catch (error) {
+        // If it's a language-not-found error, retry with 'text' (no highlighting)
+        if (error.message?.includes('is not included in this bundle')) {
+            return await codeToHtml(code, { ...options, lang: 'text' })
+        }
+        throw error
+    }
+}
+
 // Register the shiki async highlighter plugin with dual light/dark themes
 // Uses CSS variables that respond to .wa-dark class on <html>
 md.use(
-    fromAsyncCodeToHtml(codeToHtml, {
+    fromAsyncCodeToHtml(codeToHtmlWithFallback, {
         themes: {
             light: 'github-light',
             dark: 'github-dark',
