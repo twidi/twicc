@@ -88,12 +88,6 @@ const LOAD_DEBOUNCE_MS = 150
 // Minimum item size for the virtual scroller (in pixels)
 const MIN_ITEM_SIZE = 50
 
-// Scroll direction detection threshold (in pixels)
-const SCROLL_DIRECTION_THRESHOLD = 20
-
-// Track last scroll position for direction detection
-let lastScrollTop = 0
-
 // Track last emitted direction to avoid duplicate emissions
 let lastEmittedDirection = null
 
@@ -626,26 +620,68 @@ function toggleGroup(groupHeadLineNum) {
 }
 
 /**
- * Handle scroll direction detection.
+ * Handle physical scroll input (wheel or touch).
+ * Only reacts to user-initiated scrolls, not programmatic scrolls.
  * Emits 'scroll-direction' event with 'up' or 'down' when direction changes.
- * Only active when trackScrollDirection prop is true (for performance).
- * @param {Event} event - Scroll event from VirtualScroller
+ * @param {'up' | 'down'} direction - The scroll direction
  */
-function onScroll(event) {
+function onPhysicalScroll(direction) {
     // Skip direction detection if not needed (performance optimization)
     if (!props.trackScrollDirection) return
 
-    const scrollTop = event.target.scrollTop
-    const delta = scrollTop - lastScrollTop
+    // Only emit if direction actually changed
+    if (direction !== lastEmittedDirection) {
+        lastEmittedDirection = direction
+        emit('scroll-direction', direction)
+    }
+}
 
-    if (Math.abs(delta) > SCROLL_DIRECTION_THRESHOLD) {
-        const direction = delta > 0 ? 'down' : 'up'
-        lastScrollTop = scrollTop
+/**
+ * Handle wheel events for scroll direction detection.
+ * @param {WheelEvent} event
+ */
+function onWheel(event) {
+    if (!props.trackScrollDirection) return
+    // deltaY > 0 means scrolling down, < 0 means scrolling up
+    if (Math.abs(event.deltaY) > 0) {
+        onPhysicalScroll(event.deltaY > 0 ? 'down' : 'up')
+    }
+}
 
-        // Only emit if direction actually changed
-        if (direction !== lastEmittedDirection) {
-            lastEmittedDirection = direction
-            emit('scroll-direction', direction)
+// Track touch position for direction detection
+let lastTouchY = 0
+
+/**
+ * Handle touch start for scroll direction detection.
+ * @param {TouchEvent} event
+ */
+function onTouchStart(event) {
+    if (!props.trackScrollDirection) return
+    if (event.touches.length > 0) {
+        lastTouchY = event.touches[0].clientY
+    }
+}
+
+// Minimum touch movement threshold to detect direction (in pixels)
+const TOUCH_DIRECTION_THRESHOLD = 10
+
+/**
+ * Handle touch move for scroll direction detection.
+ * Compares current position to previous position to detect direction.
+ * @param {TouchEvent} event
+ */
+function onTouchMove(event) {
+    if (!props.trackScrollDirection) return
+    if (event.touches.length > 0) {
+        const touchY = event.touches[0].clientY
+        const delta = lastTouchY - touchY
+        // Only trigger if movement exceeds threshold
+        if (Math.abs(delta) >= TOUCH_DIRECTION_THRESHOLD) {
+            // Update lastTouchY for next comparison
+            lastTouchY = touchY
+            // delta > 0 means finger moved up = scrolling down
+            // delta < 0 means finger moved down = scrolling up
+            onPhysicalScroll(delta > 0 ? 'down' : 'up')
         }
     }
 }
@@ -702,8 +738,10 @@ defineExpose({
             class="session-items"
             :class="{ 'initial-scrolling': isInitialScrolling }"
             @update="onScrollerUpdate"
-            @scroll="onScroll"
             @item-resized="onItemResized"
+            @wheel="onWheel"
+            @touchstart="onTouchStart"
+            @touchmove="onTouchMove"
         >
             <template #default="{ item, index }">
                 <!-- Placeholder (no content loaded yet) -->
