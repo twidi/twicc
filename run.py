@@ -43,6 +43,7 @@ from twicc.background import (
 
 async def run_server(port: int):
     """Run the ASGI server with file watcher and background tasks."""
+    import signal
     import uvicorn
     from twicc.asgi import application
 
@@ -68,36 +69,59 @@ async def run_server(port: int):
     )
     server = uvicorn.Server(config)
 
+    # Set up signal handlers to ensure clean shutdown
+    shutdown_event = asyncio.Event()
+
+    def handle_signal(signum, frame):
+        print(f"\n→ Received signal {signum}, initiating shutdown...")
+        shutdown_event.set()
+        server.should_exit = True
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
     try:
         await server.serve()
     finally:
+        print("→ Server shutdown initiated...")
+
         # Clean shutdown of watcher
+        print("  Stopping watcher...")
         stop_watcher()
         watcher_task.cancel()
         try:
             await watcher_task
         except asyncio.CancelledError:
             pass
+        print("  ✓ Watcher stopped")
 
         # Clean shutdown of background compute task
+        print("  Stopping background compute task...")
         stop_background_task()
         compute_task.cancel()
         try:
             await compute_task
         except asyncio.CancelledError:
             pass
+        print("  ✓ Background compute task stopped")
 
         # Clean shutdown of price sync task
+        print("  Stopping price sync task...")
         stop_price_sync_task()
         price_sync_task.cancel()
         try:
             await price_sync_task
         except asyncio.CancelledError:
             pass
+        print("  ✓ Price sync task stopped")
 
         # Clean shutdown of Claude processes (also stops the internal timeout monitor)
         # This gracefully terminates any active Claude SDK processes
+        print("  Stopping process manager...")
         await shutdown_process_manager()
+        print("  ✓ Process manager stopped")
+
+        print("→ Server shutdown complete")
 
 
 def main():

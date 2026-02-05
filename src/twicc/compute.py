@@ -882,39 +882,93 @@ def compute_item_cost_and_usage(
 # =============================================================================
 
 
-def compute_session_metadata(session_id: str) -> None:
+def compute_session_metadata(session_id: str, result_queue) -> None:
     """
     Compute metadata for all items in a session.
 
-    This function runs in a ThreadPoolExecutor.
-    It processes items in batches using iterator() to avoid memory issues.
-    Also builds SessionItemLink entries for tool_use → tool_result relationships,
-    and computes session title from first user message or custom-title items.
+    Sends all results via result_queue. Does NOT write to the database directly.
+    The caller is responsible for consuming the queue and applying changes.
+
+    In production, the main process consumes the queue and performs all DB writes,
+    eliminating "database is locked" errors.
+
+    For tests, pass a queue.Queue and either:
+    - Inspect the queue contents directly
+    - Call apply_compute_results() to apply changes to DB
 
     Args:
         session_id: The session ID
+        result_queue: Queue to send results (multiprocessing.Queue or queue.Queue)
     """
+    from decimal import Decimal
     from django.db import connection
-    from twicc.core.models import Session, SessionItemLink
+    from django.db.models import Sum
+    from twicc.core.models import Session
 
-    # Ensure this thread has its own database connection
+    # Ensure this process/thread has its own database connection
     connection.close()
 
     try:
         session = Session.objects.get(id=session_id)
     except Session.DoesNotExist:
         logger.error(f"Session {session_id} not found for metadata computation")
+        result_queue.put({
+            'type': 'error',
+            'session_id': session_id,
+            'error': 'Session not found',
+        })
         return
 
-    # Clear existing links for this session (full recompute)
-    SessionItemLink.objects.filter(session=session).delete()
+    # Signal to delete existing links (will be done by consumer)
+    result_queue.put({
+        'type': 'delete_links',
+        'session_id': session_id,
+    })
 
     queryset = SessionItem.objects.filter(session=session).order_by('line_num')
 
     state = GroupState()
     items_to_update: list[SessionItem] = []
-    links_to_create: list[SessionItemLink] = []
+    links_to_create: list[dict] = []
     batch_size = 50
+
+    # Helper to serialize items for queue
+    def serialize_items(items: list[SessionItem]) -> list[dict]:
+        return [
+            {
+                'id': item.id,
+                'display_level': item.display_level,
+                'group_head': item.group_head,
+                'group_tail': item.group_tail,
+                'kind': item.kind,
+                'message_id': item.message_id,
+                'cost': str(item.cost) if item.cost is not None else None,
+                'context_usage': item.context_usage,
+                'timestamp': item.timestamp.isoformat() if item.timestamp else None,
+            }
+            for item in items
+        ]
+
+    # Helper to flush item batch
+    def flush_items(items: list[SessionItem]) -> None:
+        if not items:
+            return
+        result_queue.put({
+            'type': 'batch',
+            'session_id': session_id,
+            'updates': serialize_items(items),
+            'fields': ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage', 'timestamp'],
+        })
+
+    # Helper to flush links batch
+    def flush_links(links: list[dict]) -> None:
+        if not links:
+            return
+        result_queue.put({
+            'type': 'links',
+            'session_id': session_id,
+            'links': links,
+        })
 
     # Map tool_use_id → line_num of the item containing the tool_use
     tool_use_map: dict[str, int] = {}
@@ -1006,26 +1060,26 @@ def compute_session_metadata(session_id: str) -> None:
         # Check if this is a tool_result and create link
         tool_result_ref = get_tool_result_id(parsed)
         if tool_result_ref and tool_result_ref in tool_use_map:
-            links_to_create.append(SessionItemLink(
-                session=session,
-                source_line_num=tool_use_map[tool_result_ref],
-                target_line_num=item.line_num,
-                link_type='tool_result',
-                reference=tool_result_ref,
-            ))
+            links_to_create.append({
+                'session_id': session_id,
+                'source_line_num': tool_use_map[tool_result_ref],
+                'target_line_num': item.line_num,
+                'link_type': 'tool_result',
+                'reference': tool_result_ref,
+            })
 
         # Check if this is a Task tool_result with agentId and create agent link
         agent_info = get_tool_result_agent_info(parsed)
         if agent_info:
             tu_id, agent_id = agent_info
             if tu_id in task_tool_use_map:
-                links_to_create.append(SessionItemLink(
-                    session=session,
-                    source_line_num=task_tool_use_map[tu_id],
-                    target_line_num=None,  # agent links have no target line
-                    link_type='agent',
-                    reference=agent_id,
-                ))
+                links_to_create.append({
+                    'session_id': session_id,
+                    'source_line_num': task_tool_use_map[tu_id],
+                    'target_line_num': None,
+                    'link_type': 'agent',
+                    'reference': agent_id,
+                })
                 # Remove from map to avoid duplicate links
                 del task_tool_use_map[tu_id]
 
@@ -1055,37 +1109,23 @@ def compute_session_metadata(session_id: str) -> None:
             items_to_update.append(item)
         # COLLAPSIBLE and ALWAYS-with-suffix are added via closed_items when group closes
 
-        # Bulk update when batch is full
+        # Flush items batch when full
         if len(items_to_update) >= batch_size:
-            SessionItem.objects.bulk_update(
-                items_to_update,
-                ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage', 'timestamp']
-            )
+            flush_items(items_to_update)
             items_to_update = []
 
-        # Bulk create links when batch is full
+        # Flush links batch when full
         if len(links_to_create) >= batch_size:
-            SessionItemLink.objects.bulk_create(links_to_create)
+            flush_links(links_to_create)
             links_to_create = []
 
     # Finalize pending groups
     finalized = state.finalize()
     items_to_update.extend(finalized)
 
-    # Final bulk update
-    if items_to_update:
-        SessionItem.objects.bulk_update(
-            items_to_update,
-            ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage', 'timestamp']
-        )
-
-    # Final bulk create links
-    if links_to_create:
-        SessionItemLink.objects.bulk_create(links_to_create)
-
-    # Update session titles
-    for target_session_id, title in session_titles.items():
-        Session.objects.filter(id=target_session_id).update(title=title)
+    # Final flush
+    flush_items(items_to_update)
+    flush_links(links_to_create)
 
     # Compute message count: user_count * 2 - 1 if last is user, else user_count * 2
     if user_message_count == 0:
@@ -1095,47 +1135,128 @@ def compute_session_metadata(session_id: str) -> None:
     else:
         message_count = user_message_count * 2
 
-    session.message_count = message_count
-    session.compute_version = settings.CURRENT_COMPUTE_VERSION
-
-    # Set context_usage to last known value
-    session.context_usage = last_context_usage
-
     # Sum all item costs for self_cost
-    from decimal import Decimal
-    from django.db.models import Sum
     self_cost = SessionItem.objects.filter(
         session=session,
         cost__isnull=False
     ).aggregate(total=Sum('cost'))['total']
-    session.self_cost = self_cost
 
     # Sum all subagent total_costs for subagents_cost
     subagents_cost = Session.objects.filter(
         parent_session=session,
         total_cost__isnull=False
     ).aggregate(total=Sum('total_cost'))['total'] or Decimal(0)
-    session.subagents_cost = subagents_cost
 
-    # Total = self + subagents
-    session.total_cost = (self_cost or Decimal(0)) + subagents_cost
+    total_cost = (self_cost or Decimal(0)) + subagents_cost
 
-    # Update runtime environment fields
-    session.cwd = last_cwd
-    session.git_branch = last_git_branch
-    session.model = last_model
+    # Determine project directory update (for real sessions only)
+    project_directory = first_cwd if first_cwd and session.type == SessionType.SESSION else None
 
-    # Update project directory from first session cwd (where Claude Code was launched)
-    # Only for real sessions, not subagents (which may be launched from a different directory)
-    if first_cwd and session.type == SessionType.SESSION:
-        ensure_project_directory(session.project_id, first_cwd)
+    # Send session update via queue
+    result_queue.put({
+        'type': 'session_update',
+        'session_id': session_id,
+        'project_id': session.project_id,
+        'fields': {
+            'compute_version': settings.CURRENT_COMPUTE_VERSION,
+            'message_count': message_count,
+            'context_usage': last_context_usage,
+            'self_cost': str(self_cost) if self_cost else None,
+            'subagents_cost': str(subagents_cost) if subagents_cost else None,
+            'total_cost': str(total_cost) if total_cost else None,
+            'cwd': last_cwd,
+            'git_branch': last_git_branch,
+            'model': last_model,
+        },
+        'titles': session_titles,
+        'project_directory': project_directory,
+    })
 
-    session.save(update_fields=['compute_version', 'message_count', 'context_usage', 'self_cost', 'subagents_cost', 'total_cost', 'cwd', 'git_branch', 'model'])
-
-    # Update project total_cost
-    update_project_total_cost(session.project_id)
+    # Signal completion
+    result_queue.put({
+        'type': 'done',
+        'session_id': session_id,
+    })
 
     connection.close()
+
+
+def apply_compute_results(result_queue) -> None:
+    """
+    Apply compute results from the queue to the database.
+
+    Consumes all messages from the queue and applies corresponding DB operations.
+    Used by tests to apply results after calling compute_session_metadata().
+
+    Args:
+        result_queue: Queue containing compute result messages
+    """
+    import queue as queue_module
+    from decimal import Decimal
+    from twicc.core.models import Session, SessionItem, SessionItemLink
+
+    while True:
+        try:
+            msg = result_queue.get_nowait()
+        except queue_module.Empty:
+            break
+
+        msg_type = msg.get('type')
+
+        if msg_type == 'delete_links':
+            SessionItemLink.objects.filter(session_id=msg['session_id']).delete()
+
+        elif msg_type == 'batch':
+            updates = msg['updates']
+            fields = msg['fields']
+            items = []
+            for upd in updates:
+                item = SessionItem(id=upd['id'])
+                for field in fields:
+                    value = upd.get(field)
+                    if field == 'cost' and value is not None:
+                        value = Decimal(value)
+                    setattr(item, field, value)
+                items.append(item)
+            if items:
+                SessionItem.objects.bulk_update(items, fields)
+
+        elif msg_type == 'links':
+            links = [SessionItemLink(**link_data) for link_data in msg['links']]
+            if links:
+                SessionItemLink.objects.bulk_create(links, ignore_conflicts=True)
+
+        elif msg_type == 'session_update':
+            session_id = msg['session_id']
+            fields = msg['fields']
+
+            # Handle Decimal fields
+            for decimal_field in ('self_cost', 'subagents_cost', 'total_cost'):
+                if decimal_field in fields and fields[decimal_field] is not None:
+                    fields[decimal_field] = Decimal(fields[decimal_field])
+
+            Session.objects.filter(id=session_id).update(**fields)
+
+            # Update titles
+            for target_id, title in msg.get('titles', {}).items():
+                Session.objects.filter(id=target_id).update(title=title)
+
+            # Update project directory
+            project_id = msg.get('project_id')
+            directory = msg.get('project_directory')
+            if project_id and directory:
+                ensure_project_directory(project_id, directory)
+
+            # Update project total_cost
+            if project_id:
+                update_project_total_cost(project_id)
+
+        elif msg_type == 'done':
+            # Processing complete for this session
+            pass
+
+        elif msg_type == 'error':
+            logger.error(f"Compute error for {msg['session_id']}: {msg['error']}")
 
 
 # =============================================================================

@@ -16,10 +16,12 @@ Legend:
 """
 
 import json
+import queue
 
 import pytest
 
 from twicc.compute import (
+    apply_compute_results,
     compute_item_metadata_live,
     compute_session_metadata,
 )
@@ -113,7 +115,9 @@ def get_item_state(item: SessionItem) -> tuple[int | None, int | None]:
 
 def run_batch(session_id: str):
     """Run batch processing."""
-    compute_session_metadata(session_id)
+    result_queue = queue.Queue()
+    compute_session_metadata(session_id, result_queue)
+    apply_compute_results(result_queue)
 
 
 def run_live(session_id: str, items: list[SessionItem]):

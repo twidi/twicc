@@ -5,34 +5,41 @@ This module provides background tasks that run continuously:
 - Compute task: Processes sessions that need metadata computation
 - Price sync task: Synchronizes model prices from OpenRouter API
 
-Uses ThreadPoolExecutor to offload work without blocking the event loop.
-
-Note: We use ThreadPoolExecutor instead of ProcessPoolExecutor because:
-- ProcessPoolExecutor spawns a separate process with its own SQLite connection
-- That connection doesn't inherit Django's timeout/WAL settings properly
-- This causes "database is locked" errors that don't respect busy_timeout
-- ThreadPoolExecutor stays in the same process, sharing the DB connection config
+Architecture for compute task:
+- A separate Process handles CPU-intensive work (JSON parsing, metadata computation)
+- The worker process only READS from the database (WAL mode supports multiple readers)
+- All database WRITES happen in the main process via a Queue
+- This eliminates "database is locked" errors by serializing all writes in the event loop
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import queue
+from decimal import Decimal
+from multiprocessing import Event as MPEvent, Process, Queue
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 
-from twicc.compute import compute_session_metadata, load_project_directories
-from twicc.core.models import Project, Session
+from twicc.compute import load_project_directories
+from twicc.core.models import Project, Session, SessionItem, SessionItemLink
 from twicc.core.pricing import sync_model_prices
 from twicc.core.serializers import serialize_project, serialize_session
 
 logger = logging.getLogger(__name__)
 
-# Single worker thread for computation
-_executor: ThreadPoolExecutor | None = None
+# Worker process for computation
+_compute_process: Process | None = None
+
+# IPC queues for communication with worker process
+_command_queue: Queue | None = None  # main -> worker (session_id to process)
+_result_queue: Queue | None = None   # worker -> main (update batches)
+
+# Multiprocessing event to signal worker process to stop
+_worker_stop_event: MPEvent | None = None
 
 # Stop event for graceful shutdown (compute task)
 _stop_event: asyncio.Event | None = None
@@ -44,15 +51,26 @@ _price_sync_stop_event: asyncio.Event | None = None
 _initial_total: int | None = None
 _processed_count: int = 0
 _last_logged_percent: int = 0
+_last_logged_time: float = 0.0
 _initial_phase_complete: bool = False
 
 
-def get_executor() -> ThreadPoolExecutor:
-    """Get or create the ThreadPoolExecutor."""
-    global _executor
-    if _executor is None:
-        _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="compute")
-    return _executor
+def get_queues() -> tuple[Queue, Queue]:
+    """Get or create the IPC queues for worker communication."""
+    global _command_queue, _result_queue
+    if _command_queue is None:
+        _command_queue = Queue()
+    if _result_queue is None:
+        _result_queue = Queue()
+    return _command_queue, _result_queue
+
+
+def get_worker_stop_event() -> MPEvent:
+    """Get or create the multiprocessing stop event for the worker process."""
+    global _worker_stop_event
+    if _worker_stop_event is None:
+        _worker_stop_event = MPEvent()
+    return _worker_stop_event
 
 
 def get_stop_event() -> asyncio.Event:
@@ -72,13 +90,65 @@ def get_price_sync_stop_event() -> asyncio.Event:
 
 
 def stop_background_task() -> None:
-    """Signal the background compute task to stop and shutdown executor."""
-    global _executor, _stop_event
+    """Signal the background compute task to stop and terminate worker process."""
+    global _compute_process, _command_queue, _result_queue, _stop_event, _worker_stop_event
+    logger.info("stop_background_task: starting shutdown...")
+
+    # Signal asyncio tasks to stop
     if _stop_event is not None:
         _stop_event.set()
-    if _executor is not None:
-        _executor.shutdown(wait=False, cancel_futures=True)
-        _executor = None
+        logger.info("stop_background_task: asyncio stop_event set")
+
+    # Signal worker process to stop via multiprocessing event
+    if _worker_stop_event is not None:
+        _worker_stop_event.set()
+        logger.info("stop_background_task: worker_stop_event set")
+
+    # Send stop signal to worker process via queue (backup)
+    if _command_queue is not None:
+        try:
+            _command_queue.put_nowait(None)  # None = stop signal
+            logger.info("stop_background_task: stop signal sent to queue")
+        except Exception as e:
+            logger.warning(f"stop_background_task: failed to send stop signal to queue: {e}")
+
+    # Wait for worker process to exit gracefully, then terminate if needed
+    if _compute_process is not None and _compute_process.is_alive():
+        logger.info(f"stop_background_task: waiting for worker process (PID: {_compute_process.pid}) to exit...")
+        _compute_process.join(timeout=2.0)
+        if _compute_process.is_alive():
+            logger.warning("stop_background_task: worker process still alive, terminating...")
+            _compute_process.terminate()
+            _compute_process.join(timeout=1.0)
+            if _compute_process.is_alive():
+                logger.error("stop_background_task: worker process did not terminate, killing...")
+                _compute_process.kill()
+                _compute_process.join(timeout=0.5)
+        else:
+            logger.info("stop_background_task: worker process exited gracefully")
+        _compute_process = None
+    else:
+        logger.info("stop_background_task: no worker process to stop")
+
+    # Cancel queue threads to prevent blocking on shutdown
+    # (don't wait for queue data to be flushed)
+    if _command_queue is not None:
+        try:
+            _command_queue.cancel_join_thread()
+            _command_queue.close()
+        except Exception:
+            pass
+    if _result_queue is not None:
+        try:
+            _result_queue.cancel_join_thread()
+            _result_queue.close()
+        except Exception:
+            pass
+
+    _command_queue = None
+    _result_queue = None
+    _worker_stop_event = None
+    logger.info("stop_background_task: shutdown complete")
 
 
 def stop_price_sync_task() -> None:
@@ -86,6 +156,102 @@ def stop_price_sync_task() -> None:
     global _price_sync_stop_event
     if _price_sync_stop_event is not None:
         _price_sync_stop_event.set()
+
+
+# =============================================================================
+# Worker Process Functions (run in separate process)
+# =============================================================================
+
+
+def compute_worker_main(command_queue: Queue, result_queue: Queue, stop_event: MPEvent) -> None:
+    """
+    Main function running in the compute worker process.
+
+    Receives session_ids via command_queue, computes metadata (READ-ONLY DB access),
+    sends update batches via result_queue.
+
+    This function runs in a separate process and must initialize Django itself.
+    """
+    import django
+    django.setup()
+
+    import logging
+    worker_logger = logging.getLogger(__name__)
+
+    from twicc.compute import compute_session_metadata
+
+    worker_logger.info("Compute worker process started")
+
+    while True:
+        try:
+            # Check stop signal before getting command
+            if stop_event.is_set():
+                worker_logger.info("Compute worker received stop signal (event)")
+                break
+
+            # Blocking get with timeout (allows checking for stop signal)
+            try:
+                command = command_queue.get(timeout=0.5)
+            except Exception:
+                continue
+
+            # Check stop event again after getting command
+            if stop_event.is_set():
+                worker_logger.info("Compute worker received stop signal (event)")
+                break
+
+            # None = stop signal (backup method)
+            if command is None:
+                worker_logger.info("Compute worker received stop signal (queue)")
+                break
+
+            session_id = command.get('session_id')
+            if session_id:
+                try:
+                    # This function reads DB and sends batches via result_queue
+                    compute_session_metadata(session_id, result_queue)
+                except Exception as e:
+                    worker_logger.error(f"Error computing session {session_id}: {e}")
+                    result_queue.put({
+                        'type': 'error',
+                        'session_id': session_id,
+                        'error': str(e),
+                    })
+
+        except Exception as e:
+            worker_logger.error(f"Unexpected error in compute worker: {e}")
+
+    # Drain command queue before exiting to prevent blocking
+    worker_logger.info("Compute worker draining command queue...")
+    drained = 0
+    while True:
+        try:
+            command_queue.get_nowait()
+            drained += 1
+        except Exception:
+            break
+    if drained:
+        worker_logger.info(f"Compute worker drained {drained} commands from queue")
+
+    worker_logger.info("Compute worker process stopped")
+
+
+def start_compute_process() -> Process:
+    """Start the compute worker process if not already running."""
+    global _compute_process, _worker_stop_event
+    if _compute_process is None or not _compute_process.is_alive():
+        command_queue, result_queue = get_queues()
+        # Reset stop event for new process
+        _worker_stop_event = MPEvent()
+        _compute_process = Process(
+            target=compute_worker_main,
+            args=(command_queue, result_queue, _worker_stop_event),
+            daemon=True,
+            name="compute-worker",
+        )
+        _compute_process.start()
+        logger.info(f"Started compute worker process (PID: {_compute_process.pid})")
+    return _compute_process
 
 
 async def run_initial_price_sync() -> None:
@@ -110,12 +276,176 @@ async def run_initial_price_sync() -> None:
         )
 
 
+# =============================================================================
+# Result Queue Consumer (runs in main process event loop)
+# =============================================================================
+
+
+@sync_to_async
+def _apply_batch_update(msg: dict) -> None:
+    """Apply a batch of SessionItem updates from the worker."""
+    updates = msg['updates']
+    fields = msg['fields']
+
+    # Reconstruct SessionItem objects for bulk_update
+    items = []
+    for upd in updates:
+        item = SessionItem(id=upd['id'])
+        for field in fields:
+            value = upd.get(field)
+            # Handle Decimal fields (serialized as strings)
+            if field == 'cost' and value is not None:
+                value = Decimal(value)
+            setattr(item, field, value)
+        items.append(item)
+
+    if items:
+        SessionItem.objects.bulk_update(items, fields)
+
+
+@sync_to_async
+def _apply_links_create(msg: dict) -> None:
+    """Create SessionItemLinks from worker data."""
+    links_data = msg['links']
+    links = [SessionItemLink(**link_data) for link_data in links_data]
+    if links:
+        SessionItemLink.objects.bulk_create(links, ignore_conflicts=True)
+
+
+@sync_to_async
+def _apply_session_update(msg: dict) -> None:
+    """Update session fields from worker data."""
+    from twicc.compute import ensure_project_directory, update_project_total_cost
+
+    session_id = msg['session_id']
+    fields = msg['fields']
+
+    # Handle Decimal fields
+    for decimal_field in ('self_cost', 'subagents_cost', 'total_cost'):
+        if decimal_field in fields and fields[decimal_field] is not None:
+            fields[decimal_field] = Decimal(fields[decimal_field])
+
+    Session.objects.filter(id=session_id).update(**fields)
+
+    # Update titles if present
+    if 'titles' in msg:
+        for target_id, title in msg['titles'].items():
+            Session.objects.filter(id=target_id).update(title=title)
+
+    # Update project directory if provided
+    if 'project_directory' in msg:
+        project_id = msg['project_id']
+        directory = msg['project_directory']
+        if project_id and directory:
+            ensure_project_directory(project_id, directory)
+
+    # Update project total_cost
+    if 'project_id' in msg:
+        update_project_total_cost(msg['project_id'])
+
+
+@sync_to_async
+def _delete_session_links(session_id: str) -> None:
+    """Delete all links for a session before recomputing."""
+    SessionItemLink.objects.filter(session_id=session_id).delete()
+
+
+async def _handle_compute_done(session_id: str) -> None:
+    """Handle completion of a session compute - broadcast updates."""
+    try:
+        session = await sync_to_async(Session.objects.get)(id=session_id)
+        await broadcast_session_updated(session)
+
+        project = await get_project(session.project_id)
+        if project:
+            await broadcast_project_updated(project)
+    except Session.DoesNotExist:
+        logger.warning(f"Session {session_id} not found for broadcast")
+    except Exception as e:
+        logger.error(f"Error broadcasting updates for {session_id}: {e}")
+
+
+async def consume_compute_results(stop_event: asyncio.Event) -> None:
+    """
+    Consume results from the compute worker and apply DB writes.
+
+    Runs in the main process event loop. All DB writes happen here,
+    ensuring no concurrent writes with the FileWatcher.
+    """
+    _, result_queue = get_queues()
+
+    while not stop_event.is_set():
+        # Collect available messages (non-blocking)
+        messages = []
+        try:
+            while True:
+                msg = result_queue.get_nowait()
+                messages.append(msg)
+                if len(messages) >= 10:  # Process in batches of max 10
+                    break
+        except queue.Empty:
+            pass
+
+        if not messages:
+            # No messages, yield and wait a bit
+            await asyncio.sleep(0.05)
+            continue
+
+        # Process collected messages
+        for msg in messages:
+            msg_type = msg.get('type')
+
+            try:
+                if msg_type == 'delete_links':
+                    await _delete_session_links(msg['session_id'])
+
+                elif msg_type == 'batch':
+                    await _apply_batch_update(msg)
+
+                elif msg_type == 'links':
+                    await _apply_links_create(msg)
+
+                elif msg_type == 'session_update':
+                    await _apply_session_update(msg)
+
+                elif msg_type == 'done':
+                    await _handle_compute_done(msg['session_id'])
+
+                elif msg_type == 'error':
+                    logger.error(f"Compute error for {msg['session_id']}: {msg['error']}")
+
+            except Exception as e:
+                logger.error(f"Error processing result message {msg_type}: {e}", exc_info=True)
+
+        # Yield to event loop between batches
+        await asyncio.sleep(0)
+
+    # Drain result queue on shutdown to prevent blocking
+    # (may already be closed by stop_background_task, so handle ValueError)
+    logger.info("consume_compute_results: draining result queue...")
+    drained = 0
+    try:
+        while True:
+            try:
+                result_queue.get_nowait()
+                drained += 1
+            except queue.Empty:
+                break
+    except ValueError:
+        # Queue already closed, nothing to drain
+        pass
+    if drained:
+        logger.info(f"consume_compute_results: drained {drained} messages from queue")
+    logger.info("consume_compute_results: stopped")
+
+
 def _reset_progress_tracking() -> None:
     """Reset progress tracking state for a new run."""
-    global _initial_total, _processed_count, _last_logged_percent, _initial_phase_complete
+    global _initial_total, _processed_count, _last_logged_percent, _last_logged_time, _initial_phase_complete
     _initial_total = None
     _processed_count = 0
     _last_logged_percent = 0
+    _last_logged_time = 0.0
     _initial_phase_complete = False
 
 
@@ -193,7 +523,11 @@ async def start_background_compute_task() -> None:
     """
     Background task that continuously processes sessions needing computation.
 
-    Runs until stop event is set. Uses ProcessPoolExecutor for CPU-intensive work.
+    Architecture:
+    - Starts a separate Process for CPU-intensive work (JSON parsing, metadata computation)
+    - The worker process only READS from the database
+    - All database WRITES happen in the main process via consume_compute_results()
+    - This eliminates "database is locked" errors
 
     Progress logging: During initial computation of existing sessions, logs
     progress at 10% intervals. Once all initial sessions are processed (100%),
@@ -201,18 +535,30 @@ async def start_background_compute_task() -> None:
     """
     global _initial_total, _processed_count, _last_logged_percent, _initial_phase_complete
 
-    executor = get_executor()
     stop_event = get_stop_event()
-    loop = asyncio.get_event_loop()
+    command_queue, _ = get_queues()
 
     # Reset and initialize progress tracking
+    import time
+    global _last_logged_time
+
     _reset_progress_tracking()
     _initial_total = await _count_sessions_to_compute()
+    _last_logged_time = time.monotonic()
 
     # Load project directories cache at startup
     await sync_to_async(load_project_directories)()
 
+    # Start the worker process
+    start_compute_process()
+
+    # Start the result consumer as a concurrent task
+    consumer_task = asyncio.create_task(consume_compute_results(stop_event))
+
     logger.info(f"Background compute task started ({_initial_total} sessions to process)")
+
+    # Track sessions currently being processed to avoid duplicates
+    processing_sessions: set[str] = set()
 
     while not stop_event.is_set():
         try:
@@ -227,40 +573,14 @@ async def start_background_compute_task() -> None:
                     pass
                 continue
 
-            # Run CPU-intensive work in separate process
-            # Pass session.id (string), not the object (can't pickle Django models)
-            try:
-                await loop.run_in_executor(
-                    executor,
-                    compute_session_metadata,
-                    session.id
-                )
-            except Exception as e:
-                logger.error(f"Error in compute_session_metadata for {session.id}: {e}")
-                raise
+            # Skip if already being processed
+            if session.id in processing_sessions:
+                await asyncio.sleep(0.1)
+                continue
 
-            # Back in main process: reload session and broadcast update
-            try:
-                session = await refresh_session(session)
-            except Exception as e:
-                logger.error(f"Error in refresh_session for {session.id}: {e}")
-                raise
-
-            # Broadcast for both regular sessions and subagents
-            try:
-                await broadcast_session_updated(session)
-            except Exception as e:
-                logger.error(f"Error in broadcast_session_updated for {session.id}: {e}")
-                raise
-
-            # Broadcast project update (total_cost has changed)
-            try:
-                project = await get_project(session.project_id)
-                if project:
-                    await broadcast_project_updated(project)
-            except Exception as e:
-                logger.error(f"Error in broadcast_project_updated for project {session.project_id}: {e}")
-                raise
+            # Send command to worker process (non-blocking)
+            processing_sessions.add(session.id)
+            command_queue.put({'session_id': session.id})
 
             # Progress logging during initial phase only
             if not _initial_phase_complete and _initial_total and _initial_total > 0:
@@ -270,12 +590,18 @@ async def start_background_compute_task() -> None:
                 # Log at 10% intervals
                 if current_percent >= _last_logged_percent + 10:
                     _last_logged_percent = (current_percent // 10) * 10
-                    logger.info(f"Background compute progress: {_last_logged_percent}% ({_processed_count}/{_initial_total})")
+                    now = time.monotonic()
+                    elapsed = now - _last_logged_time
+                    _last_logged_time = now
+                    logger.info(f"Background compute progress: {_last_logged_percent}% ({_processed_count}/{_initial_total}) [{elapsed:.1f}s]")
 
                 # Mark initial phase complete at 100%
                 if _processed_count >= _initial_total:
                     _initial_phase_complete = True
                     logger.info(f"Background compute: initial processing complete ({_initial_total} sessions)")
+
+            # Small yield to allow result consumer to process
+            await asyncio.sleep(0.01)
 
         except Exception as e:
             logger.error(f"Error in background compute task: {e}", exc_info=True)
@@ -284,6 +610,13 @@ async def start_background_compute_task() -> None:
                 await asyncio.wait_for(stop_event.wait(), timeout=5.0)
             except asyncio.TimeoutError:
                 pass
+
+    # Cleanup
+    consumer_task.cancel()
+    try:
+        await consumer_task
+    except asyncio.CancelledError:
+        pass
 
     logger.info("Background compute task stopped")
 
