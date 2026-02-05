@@ -67,6 +67,8 @@ def serialize_session(session):
         "cwd": session.cwd,  # Current working directory
         "git_branch": session.git_branch,  # Git branch name
         "model": _serialize_model(session.model),  # Model info object
+        # User-controlled fields
+        "archived": session.archived,  # Whether the session is archived
     }
 
 

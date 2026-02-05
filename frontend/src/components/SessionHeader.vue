@@ -205,6 +205,24 @@ function openRenameDialog({ showHint = false } = {}) {
     renameDialogRef.value?.open({ showHint })
 }
 
+/**
+ * Archive the current session.
+ */
+function handleArchive() {
+    if (session.value && !session.value.archived && !session.value.draft) {
+        store.setSessionArchived(session.value.project_id, props.sessionId, true)
+    }
+}
+
+/**
+ * Unarchive the current session.
+ */
+function handleUnarchive() {
+    if (session.value?.archived) {
+        store.setSessionArchived(session.value.project_id, props.sessionId, false)
+    }
+}
+
 // Expose methods and refs for parent components
 defineExpose({
     openRenameDialog,
@@ -215,7 +233,23 @@ defineExpose({
 <template>
     <header ref="headerRef" class="session-header" :class="{ 'auto-hide-hidden': hidden }" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
-            <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+            <wa-tag v-if="session.archived" id="session-header-archived-tag" size="small" variant="neutral" class="archived-tag" @click="handleUnarchive">Archived</wa-tag>
+            <wa-tooltip v-if="tooltipsEnabled && session.archived" for="session-header-archived-tag">Click to unarchive</wa-tooltip>
+            <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+
+            <!-- Archive button (not for drafts or already archived) -->
+            <wa-button
+                v-if="!session.archived && !session.draft"
+                id="session-header-archive-button"
+                variant="neutral"
+                appearance="plain"
+                size="small"
+                class="archive-button"
+                @click="handleArchive"
+            >
+                <wa-icon name="box-archive" label="Archive"></wa-icon>
+            </wa-button>
+            <wa-tooltip v-if="tooltipsEnabled && !session.archived && !session.draft" for="session-header-archive-button">Archive session</wa-tooltip>
 
             <!-- Rename button (not for subagents) -->
             <wa-button
@@ -370,17 +404,22 @@ defineExpose({
     display: flex;
     justify-content: start;
     align-items: baseline;
-    gap: var(--wa-space-m);
+    gap: var(--wa-space-xs);
     min-width: 0;  /* Allow text truncation */
     padding-inline: var(--wa-space-xs);
     padding-top: var(--wa-space-xs);
 }
 
-.draft-tag {
+.draft-tag, .archived-tag {
     flex-shrink: 0;
     line-height: unset;
     height: unset;
     align-self: stretch;
+    margin-bottom: -2px;
+}
+
+.archived-tag {
+    cursor: pointer;
 }
 
 .session-title h2 {
@@ -388,6 +427,7 @@ defineExpose({
     font-size: var(--wa-font-size-l);
     font-weight: 600;
     color: var(--wa-color-text-normal);
+    margin-right: var(--wa-space-xs);
     /* Truncate with ellipsis */
     overflow: hidden;
     text-overflow: ellipsis;
@@ -475,6 +515,7 @@ wa-divider {
     opacity: 1;
 }
 
+.archive-button,
 .rename-button {
     opacity: 0.6;
     transition: opacity 0.15s;
@@ -488,6 +529,7 @@ wa-divider {
     top: calc(-1 * var(--wa-space-2xs));
 }
 
+.archive-button:hover,
 .rename-button:hover {
     opacity: 1;
 }

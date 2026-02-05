@@ -152,41 +152,55 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
             raise Http404("Session not found")
 
     if request.method == "PATCH":
-        # Reject subagents (cannot be renamed)
+        # Reject subagents (cannot be modified)
         if session.type == SessionType.SUBAGENT:
-            return JsonResponse({"error": "Subagents cannot be renamed"}, status=400)
+            return JsonResponse({"error": "Subagents cannot be modified"}, status=400)
 
         try:
             data = orjson.loads(request.body)
         except orjson.JSONDecodeError:
             return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-        if "title" not in data:
-            return JsonResponse({"error": "title field required"}, status=400)
+        # Handle title update
+        if "title" in data:
+            from twicc.titles import set_pending_title, validate_title, write_custom_title_to_jsonl
 
-        from twicc.titles import set_pending_title, validate_title, write_custom_title_to_jsonl
+            title, error = validate_title(data["title"])
+            if error:
+                return JsonResponse({"error": error}, status=400)
 
-        title, error = validate_title(data["title"])
-        if error:
-            return JsonResponse({"error": error}, status=400)
+            # 1. Update DB immediately
+            session.title = title
+            session.save(update_fields=["title"])
 
-        # 1. Update DB immediately
-        session.title = title
-        session.save(update_fields=["title"])
+            # 2. Write to JSONL (immediate or deferred)
+            from twicc.agent.manager import get_process_manager
+            from twicc.agent.states import ProcessState
 
-        # 2. Write to JSONL (immediate or deferred)
-        from twicc.agent.manager import get_process_manager
-        from twicc.agent.states import ProcessState
+            manager = get_process_manager()
+            process_info = manager.get_process_info(session_id)
 
-        manager = get_process_manager()
-        process_info = manager.get_process_info(session_id)
+            if process_info and process_info.state in (ProcessState.STARTING, ProcessState.ASSISTANT_TURN):
+                # Process is busy, defer write
+                set_pending_title(session_id, title)
+            else:
+                # Safe to write immediately (no process, user_turn, or dead)
+                write_custom_title_to_jsonl(session_id, title)
 
-        if process_info and process_info.state in (ProcessState.STARTING, ProcessState.ASSISTANT_TURN):
-            # Process is busy, defer write
-            set_pending_title(session_id, title)
-        else:
-            # Safe to write immediately (no process, user_turn, or dead)
-            write_custom_title_to_jsonl(session_id, title)
+        # Handle archived update
+        if "archived" in data:
+            archived = data["archived"]
+            if not isinstance(archived, bool):
+                return JsonResponse({"error": "archived must be a boolean"}, status=400)
+            session.archived = archived
+            session.save(update_fields=["archived"])
+
+            # Stop process if archiving
+            if archived:
+                from asgiref.sync import async_to_sync
+                from twicc.agent.manager import get_process_manager
+                manager = get_process_manager()
+                async_to_sync(manager.kill_process)(session_id, reason="archived")
 
     return JsonResponse(serialize_session(session))
 

@@ -100,6 +100,9 @@ class Session(models.Model):
     git_branch = models.CharField(max_length=255, null=True, blank=True)  # Git branch name
     model = models.CharField(max_length=100, null=True, blank=True)  # Model name (e.g., "claude-opus-4-5-20251101")
 
+    # User-controlled fields
+    archived = models.BooleanField(default=False)  # User can archive sessions to hide them from default list
+
     class Meta:
         ordering = ["-mtime"]
         indexes = [

@@ -1160,6 +1160,49 @@ export const useDataStore = defineStore('data', {
             }
         },
 
+        /**
+         * Set the archived state of a session.
+         * @param {string} projectId - The project ID
+         * @param {string} sessionId - The session ID
+         * @param {boolean} archived - Whether to archive or unarchive
+         * @throws {Error} If the update fails
+         */
+        async setSessionArchived(projectId, sessionId, archived) {
+            // Optimistic update
+            const session = this.sessions[sessionId]
+            const oldArchived = session?.archived
+
+            if (session) {
+                session.archived = archived
+            }
+
+            try {
+                const response = await fetch(
+                    `/api/projects/${projectId}/sessions/${sessionId}/`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ archived })
+                    }
+                )
+
+                if (!response.ok) {
+                    const data = await response.json()
+                    throw new Error(data.error || 'Failed to update session')
+                }
+
+                const updatedSession = await response.json()
+                this.sessions[sessionId] = { ...this.sessions[sessionId], ...updatedSession }
+
+            } catch (error) {
+                // Rollback on error
+                if (session && oldArchived !== undefined) {
+                    session.archived = oldArchived
+                }
+                throw error
+            }
+        },
+
         // Draft messages actions
 
         /**

@@ -45,11 +45,13 @@ const relativeTimeFormat = computed(() =>
 )
 
 // Sessions are already sorted by mtime desc in the getter
+// Filter out archived sessions except the currently selected one
 const allSessions = computed(() => {
-    if (props.projectId === ALL_PROJECTS_ID) {
-        return store.getAllSessions
-    }
-    return store.getProjectSessions(props.projectId)
+    const baseSessions = props.projectId === ALL_PROJECTS_ID
+        ? store.getAllSessions
+        : store.getProjectSessions(props.projectId)
+
+    return baseSessions.filter(s => !s.archived || s.id === props.sessionId)
 })
 
 /**
@@ -265,6 +267,10 @@ function handleMenuSelect(event, session) {
         killProcess(session.id)
     } else if (action === 'delete-draft') {
         store.deleteDraftSession(session.id)
+    } else if (action === 'archive') {
+        store.setSessionArchived(session.project_id, session.id, true)
+    } else if (action === 'unarchive') {
+        store.setSessionArchived(session.project_id, session.id, false)
     }
 }
 
@@ -539,7 +545,8 @@ defineExpose({
                         @click="handleSelect(session)"
                     >
                         <div class="session-name-row">
-                            <wa-tag v-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+                            <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
+                            <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                             <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
                             <wa-tooltip v-if="tooltipsEnabled" :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
                         </div>
@@ -605,7 +612,15 @@ defineExpose({
                         </wa-button>
                         <wa-dropdown-item value="rename">
                             <wa-icon slot="icon" name="pencil"></wa-icon>
-                            Rename the session
+                            Rename
+                        </wa-dropdown-item>
+                        <wa-dropdown-item v-if="!session.draft && !session.archived" value="archive">
+                            <wa-icon slot="icon" name="box-archive"></wa-icon>
+                            Archive<template v-if="canStopProcess(session.id)"> (and stop the Claude Code process)</template>
+                        </wa-dropdown-item>
+                        <wa-dropdown-item v-if="session.archived" value="unarchive">
+                            <wa-icon slot="icon" name="box-open"></wa-icon>
+                            Unarchive
                         </wa-dropdown-item>
                         <wa-dropdown-item v-if="canStopProcess(session.id)" value="stop" variant="danger">
                             <wa-icon slot="icon" name="ban"></wa-icon>
@@ -708,7 +723,8 @@ defineExpose({
     min-width: 0;
 }
 
-.draft-tag {
+.draft-tag,
+.archived-tag {
     flex-shrink: 0;
     line-height: unset;
     height: unset;
