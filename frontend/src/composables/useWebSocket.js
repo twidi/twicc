@@ -49,10 +49,11 @@ export function killProcess(sessionId) {
  * The result will arrive via WebSocket as title_suggested message.
  * @param {string} sessionId - The session ID
  * @param {string|null} prompt - Optional prompt text (for draft/new sessions)
+ * @param {string} systemPrompt - System prompt with {text} placeholder
  * @returns {boolean} - True if message was sent, false if not connected
  */
-export function requestTitleSuggestion(sessionId, prompt = null) {
-    const message = { type: 'suggest_title', sessionId }
+export function requestTitleSuggestion(sessionId, prompt = null, systemPrompt) {
+    const message = { type: 'suggest_title', sessionId, systemPrompt }
     if (prompt) {
         message.prompt = prompt
     }

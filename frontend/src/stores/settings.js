@@ -3,7 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
 import { useDataStore } from './data'
 import { setThemeMode } from '../utils/theme'
 
@@ -21,6 +21,8 @@ const SETTINGS_SCHEMA = {
     themeMode: DEFAULT_THEME_MODE,
     sessionTimeFormat: DEFAULT_SESSION_TIME_FORMAT,
     tooltipsEnabled: true,
+    titleGenerationEnabled: true,
+    titleSystemPrompt: DEFAULT_TITLE_SYSTEM_PROMPT,
     // Not persisted - computed at runtime based on themeMode and system preference
     _effectiveTheme: null,
 }
@@ -37,6 +39,8 @@ const SETTINGS_VALIDATORS = {
     themeMode: (v) => [THEME_MODE.SYSTEM, THEME_MODE.LIGHT, THEME_MODE.DARK].includes(v),
     sessionTimeFormat: (v) => [SESSION_TIME_FORMAT.TIME, SESSION_TIME_FORMAT.RELATIVE_SHORT, SESSION_TIME_FORMAT.RELATIVE_NARROW].includes(v),
     tooltipsEnabled: (v) => typeof v === 'boolean',
+    titleGenerationEnabled: (v) => typeof v === 'boolean',
+    titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
 }
 
 /**
@@ -102,6 +106,8 @@ export const useSettingsStore = defineStore('settings', {
         getThemeMode: (state) => state.themeMode,
         getSessionTimeFormat: (state) => state.sessionTimeFormat,
         areTooltipsEnabled: (state) => state.tooltipsEnabled,
+        isTitleGenerationEnabled: (state) => state.titleGenerationEnabled,
+        getTitleSystemPrompt: (state) => state.titleSystemPrompt,
         /**
          * Effective theme: always returns 'light' or 'dark', never 'system'.
          * Takes into account the system preference when themeMode is 'system'.
@@ -172,6 +178,33 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Toggle title generation enabled/disabled.
+         * @param {boolean} enabled
+         */
+        setTitleGenerationEnabled(enabled) {
+            if (SETTINGS_VALIDATORS.titleGenerationEnabled(enabled)) {
+                this.titleGenerationEnabled = enabled
+            }
+        },
+
+        /**
+         * Set the title system prompt.
+         * @param {string} prompt - Must contain {text} placeholder
+         */
+        setTitleSystemPrompt(prompt) {
+            if (SETTINGS_VALIDATORS.titleSystemPrompt(prompt)) {
+                this.titleSystemPrompt = prompt
+            }
+        },
+
+        /**
+         * Reset the title system prompt to default.
+         */
+        resetTitleSystemPrompt() {
+            this.titleSystemPrompt = DEFAULT_TITLE_SYSTEM_PROMPT
+        },
+
+        /**
          * Update the effective theme based on themeMode and system preference.
          * Called internally when themeMode changes or system preference changes.
          */
@@ -215,6 +248,8 @@ export function initSettings() {
             themeMode: store.themeMode,
             sessionTimeFormat: store.sessionTimeFormat,
             tooltipsEnabled: store.tooltipsEnabled,
+            titleGenerationEnabled: store.titleGenerationEnabled,
+            titleSystemPrompt: store.titleSystemPrompt,
         }),
         (newSettings) => {
             saveSettings(newSettings)

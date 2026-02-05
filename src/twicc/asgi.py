@@ -302,8 +302,11 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         {
             "type": "suggest_title",
             "sessionId": "claude-conv-xxx",
+            "systemPrompt": "System prompt with {text} placeholder",
             "prompt": "optional prompt text for draft/new sessions"
         }
+
+        Requires systemPrompt from frontend (no fallback).
 
         Modes:
         - prompt provided: Use prompt directly (draft/new session or regenerate)
@@ -312,14 +315,20 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         Always returns the prompt used for generation, so frontend can regenerate.
         """
         from twicc.title_suggest import (
-            generate_title_from_prompt,
+            generate_title,
             get_first_user_message,
         )
 
         session_id = content.get("sessionId")
+        system_prompt = content.get("systemPrompt")
         prompt = content.get("prompt")
 
-        if not session_id:
+        # Require both sessionId and systemPrompt
+        if not session_id or not system_prompt:
+            return
+
+        # Validate systemPrompt contains {text} placeholder
+        if "{text}" not in system_prompt:
             return
 
         # Get prompt: use provided or fetch from DB
@@ -329,7 +338,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         # Generate suggestion if we have a prompt
         suggestion = None
         if prompt:
-            suggestion = await generate_title_from_prompt(prompt)
+            suggestion = await generate_title(prompt, system_prompt)
 
         # Send result back to client (always include prompt for regeneration)
         await self.send_json({

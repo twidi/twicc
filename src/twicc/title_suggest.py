@@ -6,43 +6,30 @@ import logging
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
 
+import orjson
+
 from twicc.compute import extract_text_from_content, get_message_content
 from twicc.core.models import SessionItem
 from twicc.core.enums import ItemKind
-import orjson
 
 logger = logging.getLogger(__name__)
 
 SUGGESTION_TIMEOUT_SECONDS = 15
 
-TITLE_PROMPT = """Summarize the following user message in 5-7 words to create a concise session title.
-Return ONLY the title, nothing else. No quotes, no explanation, no punctuation at the end.
 
-IMPORTANT: The title must be in the same language as the user message. However, do not translate technical terms or words that are already in another language (e.g., if the user writes in French about code, keep English technical terms as-is).
-
-User message:
-{message}"""
-
-
-async def generate_title_from_prompt(prompt: str) -> str | None:
+async def generate_title(user_message: str, system_prompt: str) -> str | None:
     """
-    Generate a title suggestion from a prompt text.
-    Used for draft sessions and new sessions.
-    """
-    return await _call_haiku(prompt, source="prompt")
+    Generate a title suggestion from a user message and system prompt.
 
+    Args:
+        user_message: The user's message text
+        system_prompt: The system prompt with {text} placeholder
 
-async def generate_title_from_session(session_id: str) -> str | None:
+    Returns:
+        The suggested title, or None if generation failed
     """
-    Generate a title suggestion for an existing session.
-    Fetches the first user message from the database.
-    """
-    first_message = await get_first_user_message(session_id)
-    if not first_message:
-        logger.warning("No user message found for session %s", session_id)
-        return None
+    return await _call_haiku(user_message, system_prompt, source="prompt")
 
-    return await _call_haiku(first_message, source=f"session:{session_id}")
 
 
 async def get_first_user_message(session_id: str) -> str | None:
@@ -70,17 +57,22 @@ async def get_first_user_message(session_id: str) -> str | None:
     return await fetch()
 
 
-async def _call_haiku(user_message: str, source: str = "unknown") -> str | None:
+async def _call_haiku(user_message: str, system_prompt: str, source: str = "unknown") -> str | None:
     """
     Call Claude Haiku via the SDK and return the title suggestion.
 
     Uses SDK in streaming mode, sends one message, waits for response, then kills.
+
+    Args:
+        user_message: The user's message text
+        system_prompt: The system prompt with {text} placeholder
+        source: Source identifier for logging
     """
     # Truncate long messages
     if len(user_message) > 2000:
         user_message = user_message[:2000] + "..."
 
-    full_prompt = TITLE_PROMPT.format(message=user_message)
+    full_prompt = system_prompt.replace("{text}", user_message)
 
     options = ClaudeAgentOptions(
         model="haiku",

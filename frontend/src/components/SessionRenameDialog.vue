@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
 import { useDataStore } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import { requestTitleSuggestion } from '../composables/useWebSocket'
 
 const props = defineProps({
@@ -13,6 +14,7 @@ const props = defineProps({
 const emit = defineEmits(['saved'])
 
 const store = useDataStore()
+const settingsStore = useSettingsStore()
 
 const dialogRef = ref(null)
 const titleInputRef = ref(null)
@@ -22,6 +24,10 @@ const isSaving = ref(false)
 const errorMessage = ref('')
 const showContextHint = ref(false)  // Show hint when opened during message send
 const isLoadingSuggestion = ref(false)
+
+// Title generation settings
+const titleGenerationEnabled = computed(() => settingsStore.isTitleGenerationEnabled)
+const titleSystemPrompt = computed(() => settingsStore.getTitleSystemPrompt)
 
 // Computed for the suggestion from store
 const suggestion = computed(() => {
@@ -90,8 +96,12 @@ function open({ showHint = false } = {}) {
 
     if (!props.session) return
 
+    // Skip if title generation is disabled
+    if (!titleGenerationEnabled.value) return
+
     const sessionId = props.session.id
     const existingSuggestion = store.getTitleSuggestion(sessionId)
+    const systemPrompt = titleSystemPrompt.value
 
     if (props.session.draft) {
         // DRAFT: use message from store, redo if message changed
@@ -102,13 +112,13 @@ function open({ showHint = false } = {}) {
 
         if (!existingSuggestion || previousPrompt !== currentPrompt) {
             isLoadingSuggestion.value = true
-            requestTitleSuggestion(sessionId, currentPrompt)
+            requestTitleSuggestion(sessionId, currentPrompt, systemPrompt)
         }
     } else {
         // EXISTING or NEW SESSION: use first message from DB
         if (!existingSuggestion) {
             isLoadingSuggestion.value = true
-            requestTitleSuggestion(sessionId)
+            requestTitleSuggestion(sessionId, null, systemPrompt)
         }
     }
 }
@@ -153,7 +163,7 @@ function regenerateSuggestion() {
 
     if (storedPrompt) {
         isLoadingSuggestion.value = true
-        requestTitleSuggestion(sessionId, storedPrompt)
+        requestTitleSuggestion(sessionId, storedPrompt, titleSystemPrompt.value)
     }
 }
 
@@ -227,8 +237,8 @@ defineExpose({
                 While Claude is working, you may want to give this session a more descriptive name.
             </p>
 
-            <!-- Title suggestion -->
-            <div v-if="isLoadingSuggestion || suggestion" class="suggestion-section">
+            <!-- Title suggestion (only if enabled in settings) -->
+            <div v-if="titleGenerationEnabled && (isLoadingSuggestion || suggestion)" class="suggestion-section">
                 <div class="suggestion-header">
                     <span class="suggestion-label">Suggestion:</span>
                     <wa-button

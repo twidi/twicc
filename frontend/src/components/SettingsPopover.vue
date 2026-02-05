@@ -2,7 +2,7 @@
 // SettingsPopover.vue - Settings button with popover panel
 import { computed, ref, watch, nextTick } from 'vue'
 import { useSettingsStore } from '../stores/settings'
-import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
+import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT } from '../constants'
 
 const store = useSettingsStore()
 
@@ -27,6 +27,8 @@ const tooltipsSwitch = ref(null)
 const fontSizeSlider = ref(null)
 const themeSelect = ref(null)
 const sessionTimeFormatSelect = ref(null)
+const titleGenerationSwitch = ref(null)
+const titleSystemPromptTextarea = ref(null)
 
 // Settings from store
 const baseDisplayMode = computed(() => store.getBaseDisplayMode)
@@ -35,6 +37,11 @@ const fontSize = computed(() => store.getFontSize)
 const themeMode = computed(() => store.getThemeMode)
 const sessionTimeFormat = computed(() => store.getSessionTimeFormat)
 const tooltipsEnabled = computed(() => store.areTooltipsEnabled)
+const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
+const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
+
+// Check if the current prompt is the default
+const isDefaultPrompt = computed(() => titleSystemPrompt.value === DEFAULT_TITLE_SYSTEM_PROMPT)
 
 // Computed label for the base mode switch
 const baseModeLabel = computed(() =>
@@ -66,11 +73,17 @@ function syncSwitchState() {
         if (tooltipsSwitch.value && tooltipsSwitch.value.checked !== tooltipsEnabled.value) {
             tooltipsSwitch.value.checked = tooltipsEnabled.value
         }
+        if (titleGenerationSwitch.value && titleGenerationSwitch.value.checked !== titleGenerationEnabled.value) {
+            titleGenerationSwitch.value.checked = titleGenerationEnabled.value
+        }
+        if (titleSystemPromptTextarea.value && titleSystemPromptTextarea.value.value !== titleSystemPrompt.value) {
+            titleSystemPromptTextarea.value.value = titleSystemPrompt.value
+        }
     })
 }
 
 // Watch for store changes and sync switches
-watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled], syncSwitchState, { immediate: true })
+watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, titleGenerationEnabled, titleSystemPrompt], syncSwitchState, { immediate: true })
 
 /**
  * Toggle between normal and simplified mode.
@@ -113,6 +126,31 @@ function onSessionTimeFormatChange(event) {
  */
 function onTooltipsChange(event) {
     store.setTooltipsEnabled(event.target.checked)
+}
+
+/**
+ * Toggle title generation.
+ */
+function onTitleGenerationChange(event) {
+    store.setTitleGenerationEnabled(event.target.checked)
+}
+
+/**
+ * Handle title system prompt change.
+ */
+function onTitleSystemPromptChange(event) {
+    store.setTitleSystemPrompt(event.target.value)
+}
+
+/**
+ * Reset title system prompt to default.
+ */
+function resetTitleSystemPrompt() {
+    store.resetTitleSystemPrompt()
+    // Sync the textarea value
+    if (titleSystemPromptTextarea.value) {
+        titleSystemPromptTextarea.value.value = DEFAULT_TITLE_SYSTEM_PROMPT
+    }
 }
 
 /**
@@ -194,6 +232,35 @@ function onPopoverShow() {
                     size="small"
                 >Enabled</wa-switch>
             </div>
+            <div class="setting-group">
+                <label class="setting-group-label">Auto title generation (Haiku)</label>
+                <wa-switch
+                    ref="titleGenerationSwitch"
+                    @change="onTitleGenerationChange"
+                    size="small"
+                >Enabled</wa-switch>
+                <div v-if="titleGenerationEnabled" class="title-prompt-section">
+                    <wa-textarea
+                        ref="titleSystemPromptTextarea"
+                        :value.prop="titleSystemPrompt"
+                        @input="onTitleSystemPromptChange"
+                        size="small"
+                        rows="6"
+                        resize="vertical"
+                        class="title-prompt-textarea"
+                    ></wa-textarea>
+                    <div class="title-prompt-hint">
+                        <span>Use <code>{text}</code> as placeholder for the user message.</span>
+                        <wa-button
+                            v-if="!isDefaultPrompt"
+                            variant="neutral"
+                            appearance="plain"
+                            size="small"
+                            @click="resetTitleSystemPrompt"
+                        >Reset to default</wa-button>
+                    </div>
+                </div>
+            </div>
         </div>
     </wa-popover>
 </template>
@@ -205,7 +272,7 @@ function onPopoverShow() {
 }
 
 .settings-popover {
-    --max-width: 280px;
+    --max-width: 400px;
     --arrow-size: 16px;
 }
 
@@ -226,6 +293,33 @@ function onPopoverShow() {
     font-size: var(--wa-font-size-s);
     font-weight: var(--wa-font-weight-semibold);
     margin-bottom: var(--wa-space-2xs);
+}
+
+.title-prompt-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-xs);
+    margin-top: var(--wa-space-xs);
+}
+
+.title-prompt-textarea {
+    font-family: var(--wa-font-family-mono);
+    font-size: var(--wa-font-size-xs);
+}
+
+.title-prompt-hint {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wa-space-s);
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+}
+
+.title-prompt-hint code {
+    background: var(--wa-color-surface-alt);
+    padding: 0 var(--wa-space-2xs);
+    border-radius: var(--wa-radius-s);
 }
 
 </style>
