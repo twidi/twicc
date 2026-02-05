@@ -4,6 +4,13 @@ Development process controller for TWICC.
 
 Manages frontend (npm run dev) and backend (uv run ./run.py) processes
 as independent background daemons with logging.
+
+Port configuration is read from .env file (if present) or uses defaults:
+    TWICC_PORT=3500   (backend)
+    VITE_PORT=5173    (frontend)
+
+This allows running multiple instances in different git worktrees,
+each with its own .env file specifying different ports.
 """
 import os
 import re
@@ -18,30 +25,80 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 DEVCTL_DIR = PROJECT_ROOT / ".devctl"
 LOGS_DIR = DEVCTL_DIR / "logs"
 PIDS_DIR = DEVCTL_DIR / "pids"
+ENV_FILE = PROJECT_ROOT / ".env"
 
-# Expected ports (important for HTTP tunnels)
-FRONTEND_PORT = 5173
-BACKEND_PORT = 3500
+# Default ports
+DEFAULT_BACKEND_PORT = 3500
+DEFAULT_FRONTEND_PORT = 5173
 
-# Process configurations
-PROCESSES = {
-    "front": {
-        "name": "Frontend (Vite)",
-        "cmd": ["npm", "run", "dev"],
-        "cwd": PROJECT_ROOT / "frontend",
-        "log": LOGS_DIR / "frontend.log",
-        "pid": PIDS_DIR / "frontend.pid",
-        "port": FRONTEND_PORT,
-    },
-    "back": {
-        "name": "Backend (Django)",
-        "cmd": ["uv", "run", "./run.py"],
-        "cwd": PROJECT_ROOT,
-        "log": LOGS_DIR / "backend.log",
-        "pid": PIDS_DIR / "backend.pid",
-        "port": BACKEND_PORT,
-    },
-}
+
+def load_env_file() -> dict[str, str]:
+    """Load environment variables from .env file if it exists."""
+    env_vars = {}
+    if ENV_FILE.exists():
+        with open(ENV_FILE) as f:
+            for line in f:
+                line = line.strip()
+                # Skip empty lines and comments
+                if not line or line.startswith("#"):
+                    continue
+                # Parse KEY=VALUE
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    env_vars[key.strip()] = value.strip()
+    return env_vars
+
+
+def get_ports() -> tuple[int, int]:
+    """Get backend and frontend ports from .env file or defaults."""
+    env_vars = load_env_file()
+
+    backend_port = DEFAULT_BACKEND_PORT
+    frontend_port = DEFAULT_FRONTEND_PORT
+
+    if "TWICC_PORT" in env_vars:
+        try:
+            backend_port = int(env_vars["TWICC_PORT"])
+        except ValueError:
+            print(f"Warning: Invalid TWICC_PORT in .env, using default {DEFAULT_BACKEND_PORT}")
+
+    if "VITE_PORT" in env_vars:
+        try:
+            frontend_port = int(env_vars["VITE_PORT"])
+        except ValueError:
+            print(f"Warning: Invalid VITE_PORT in .env, using default {DEFAULT_FRONTEND_PORT}")
+
+    return backend_port, frontend_port
+
+
+def get_process_config() -> dict:
+    """Build process configuration with current port settings."""
+    backend_port, frontend_port = get_ports()
+
+    return {
+        "front": {
+            "name": "Frontend (Vite)",
+            "cmd": ["npm", "run", "dev", "--", "--port", str(frontend_port)],
+            "cwd": PROJECT_ROOT / "frontend",
+            "log": LOGS_DIR / "frontend.log",
+            "pid": PIDS_DIR / "frontend.pid",
+            "port": frontend_port,
+            "env": {
+                "VITE_BACKEND_PORT": str(backend_port),
+            },
+        },
+        "back": {
+            "name": "Backend (Django)",
+            "cmd": ["uv", "run", "./run.py"],
+            "cwd": PROJECT_ROOT,
+            "log": LOGS_DIR / "backend.log",
+            "pid": PIDS_DIR / "backend.pid",
+            "port": backend_port,
+            "env": {
+                "TWICC_PORT": str(backend_port),
+            },
+        },
+    }
 
 
 def ensure_dirs():
@@ -50,9 +107,9 @@ def ensure_dirs():
     PIDS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def is_running(proc_key: str) -> tuple[bool, int | None]:
+def is_running(proc_key: str, processes: dict) -> tuple[bool, int | None]:
     """Check if a process is running. Returns (is_running, pid)."""
-    pid_file = PROCESSES[proc_key]["pid"]
+    pid_file = processes[proc_key]["pid"]
     if not pid_file.exists():
         return False, None
 
@@ -66,9 +123,9 @@ def is_running(proc_key: str) -> tuple[bool, int | None]:
         return False, None
 
 
-def verify_port(proc_key: str, log_start_pos: int, timeout: float = 5.0) -> bool:
+def verify_port(proc_key: str, log_start_pos: int, processes: dict, timeout: float = 5.0) -> bool:
     """Verify that process started on the expected port by checking NEW log lines only."""
-    config = PROCESSES[proc_key]
+    config = processes[proc_key]
     expected_port = config.get("port")
     if not expected_port:
         return True  # No port check needed
@@ -110,10 +167,10 @@ def verify_port(proc_key: str, log_start_pos: int, timeout: float = 5.0) -> bool
     return False
 
 
-def start(proc_key: str) -> bool:
+def start(proc_key: str, processes: dict) -> bool:
     """Start a process as a detached daemon."""
-    config = PROCESSES[proc_key]
-    running, pid = is_running(proc_key)
+    config = processes[proc_key]
+    running, pid = is_running(proc_key, processes)
 
     if running:
         print(f"  {config['name']}: already running (PID {pid})")
@@ -129,12 +186,18 @@ def start(proc_key: str) -> bool:
     # Open log file in append mode
     log_file = open(config["log"], "a")
 
+    # Prepare environment with custom variables
+    proc_env = os.environ.copy()
+    if "env" in config:
+        proc_env.update(config["env"])
+
     # Start detached process
     proc = subprocess.Popen(
         config["cmd"],
         cwd=config["cwd"],
         stdout=log_file,
         stderr=subprocess.STDOUT,
+        env=proc_env,
         start_new_session=True,  # Detach from parent
     )
 
@@ -147,7 +210,7 @@ def start(proc_key: str) -> bool:
     expected_port = config.get("port")
     if expected_port:
         print(f"    Verifying port {expected_port}...", end=" ", flush=True)
-        if verify_port(proc_key, log_start_pos):
+        if verify_port(proc_key, log_start_pos, processes):
             print("OK")
         else:
             print("FAILED")
@@ -156,10 +219,10 @@ def start(proc_key: str) -> bool:
     return True
 
 
-def stop(proc_key: str) -> bool:
+def stop(proc_key: str, processes: dict) -> bool:
     """Stop a process and all its children (process group)."""
-    config = PROCESSES[proc_key]
-    running, pid = is_running(proc_key)
+    config = processes[proc_key]
+    running, pid = is_running(proc_key, processes)
 
     if not running:
         print(f"  {config['name']}: not running")
@@ -184,20 +247,27 @@ def stop(proc_key: str) -> bool:
             return False
 
 
-def status():
+def status(processes: dict):
     """Show status of all processes."""
+    backend_port, frontend_port = get_ports()
+    print(f"Port configuration: frontend={frontend_port}, backend={backend_port}")
+    if ENV_FILE.exists():
+        print(f"  (from {ENV_FILE})")
+    else:
+        print("  (defaults, no .env file)")
+    print()
     print("Process status:")
-    for key, config in PROCESSES.items():
-        running, pid = is_running(key)
+    for key, config in processes.items():
+        running, pid = is_running(key, processes)
         if running:
-            print(f"  {config['name']}: running (PID {pid})")
+            print(f"  {config['name']}: running (PID {pid}) on port {config['port']}")
         else:
             print(f"  {config['name']}: stopped")
 
 
-def logs(proc_key: str, lines: int = 50):
+def logs(proc_key: str, processes: dict, lines: int = 50):
     """Show last N lines of logs for a process."""
-    config = PROCESSES[proc_key]
+    config = processes[proc_key]
     log_file = config["log"]
 
     if not log_file.exists():
@@ -221,11 +291,11 @@ def logs(proc_key: str, lines: int = 50):
         print("  (empty)")
 
 
-def parse_target(target: str | None) -> list[str]:
+def parse_target(target: str | None, processes: dict) -> list[str]:
     """Parse target argument into list of process keys."""
     if target is None or target == "all":
-        return list(PROCESSES.keys())
-    if target in PROCESSES:
+        return list(processes.keys())
+    if target in processes:
         return [target]
     print(f"Error: Unknown target '{target}'. Use: front, back, or all")
     sys.exit(1)
@@ -246,30 +316,46 @@ COMMANDS:
     start [target]     Start process(es) in background
     stop [target]      Stop running process(es)
     restart [target]   Stop then start process(es)
-    status             Show running status of all processes
+    status             Show running status and port configuration
     logs <target>      Show recent log output
     help, --help, -h   Show this help message
 
 TARGETS:
-    front              Frontend dev server (npm run dev in frontend/)
+    front              Frontend dev server (npm run dev)
     back               Backend server (uv run ./run.py)
     all                Both frontend and backend (default for start/stop/restart)
 
 OPTIONS:
     --lines=N          Number of log lines to show (default: 50)
 
+PORT CONFIGURATION:
+    Ports are configured via .env file in the project root.
+    If no .env file exists, defaults are used.
+
+    Create a .env file with:
+        TWICC_PORT=3500   # Backend port (default: 3500)
+        VITE_PORT=5173    # Frontend port (default: 5173)
+
+    This is useful for running multiple instances in different git worktrees.
+    Each worktree can have its own .env with different ports.
+
+    Example for a secondary worktree:
+        TWICC_PORT=3600
+        VITE_PORT=5273
+
 EXAMPLES:
-    uv run ./devctl.py start all       # Start both servers
+    uv run ./devctl.py start           # Start both servers
     uv run ./devctl.py start back      # Start only backend
     uv run ./devctl.py stop front      # Stop frontend
     uv run ./devctl.py restart back    # Restart backend
-    uv run ./devctl.py status          # Check what's running
+    uv run ./devctl.py status          # Check what's running and port config
     uv run ./devctl.py logs back       # Show last 50 lines of backend logs
     uv run ./devctl.py logs front --lines=100
 
 FILES:
-    .devctl/logs/frontend.log    Frontend stdout/stderr
-    .devctl/logs/backend.log     Backend stdout/stderr
+    .env                          Port configuration (optional)
+    .devctl/logs/frontend.log     Frontend stdout/stderr
+    .devctl/logs/backend.log      Backend stdout/stderr
     .devctl/pids/                 PID files for running processes
 """
     print(help_text.strip())
@@ -283,33 +369,38 @@ def main():
     command = sys.argv[1]
     target = sys.argv[2] if len(sys.argv) > 2 else None
 
+    # Build process config with current port settings
+    processes = get_process_config()
+
     if command == "start":
-        targets = parse_target(target)
-        print("Starting processes...")
+        targets = parse_target(target, processes)
+        backend_port, frontend_port = get_ports()
+        print(f"Starting processes (frontend:{frontend_port}, backend:{backend_port})...")
         for key in targets:
-            start(key)
+            start(key, processes)
 
     elif command == "stop":
-        targets = parse_target(target)
+        targets = parse_target(target, processes)
         print("Stopping processes...")
         for key in targets:
-            stop(key)
+            stop(key, processes)
 
     elif command == "restart":
-        targets = parse_target(target)
-        print("Restarting processes...")
+        targets = parse_target(target, processes)
+        backend_port, frontend_port = get_ports()
+        print(f"Restarting processes (frontend:{frontend_port}, backend:{backend_port})...")
         for key in targets:
-            stop(key)
-            start(key)
+            stop(key, processes)
+            start(key, processes)
 
     elif command == "status":
-        status()
+        status(processes)
 
     elif command == "logs":
         if target is None:
             print("Error: logs requires a target (front or back)")
             sys.exit(1)
-        if target not in PROCESSES:
+        if target not in processes:
             print(f"Error: Unknown target '{target}'. Use: front or back")
             sys.exit(1)
 
@@ -323,7 +414,7 @@ def main():
                     print("Error: --lines must be a number")
                     sys.exit(1)
 
-        logs(target, lines)
+        logs(target, processes, lines)
 
     else:
         print(f"Error: Unknown command '{command}'")

@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
+// Backend port for proxy (passed by devctl.py via environment)
+const backendPort = process.env.VITE_BACKEND_PORT || '3500'
+
 export default defineConfig(({ command }) => ({
     plugins: [
         vue({
@@ -20,8 +23,8 @@ export default defineConfig(({ command }) => ({
     },
     server: {
         proxy: {
-            '/api': 'http://localhost:3500',
-            '/ws': { target: 'ws://localhost:3500', ws: true }
+            '/api': `http://localhost:${backendPort}`,
+            '/ws': { target: `ws://localhost:${backendPort}`, ws: true }
         }
     }
 }))

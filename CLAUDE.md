@@ -37,13 +37,32 @@ Script to manage frontend and backend dev servers as background processes. Use t
 uv run ./devctl.py start [front|back|all]   # Start process(es)
 uv run ./devctl.py stop [front|back|all]    # Stop process(es)
 uv run ./devctl.py restart [front|back|all] # Restart process(es)
-uv run ./devctl.py status                   # Check running status
+uv run ./devctl.py status                   # Check running status and port config
 uv run ./devctl.py logs [front|back]        # Show recent logs (--lines=N)
 ```
 
-**Expected ports:** Frontend on 5173, Backend on 3500. The script verifies correct port binding after start.
+**Default ports:** Frontend on 5173, Backend on 3500. The script verifies correct port binding after start.
 
 **Log files:** `.devctl/logs/frontend.log` and `.devctl/logs/backend.log` - read these to debug issues.
+
+### Multi-Worktree Support
+
+You can run multiple instances of the app in different git worktrees, each with its own ports. Configure ports via a `.env` file in the worktree root:
+
+```env
+# Backend port (Uvicorn server)
+TWICC_PORT=3600
+
+# Frontend port (Vite dev server)
+VITE_PORT=5273
+```
+
+Each worktree has its own:
+- `.env` file with port configuration
+- `.devctl/` directory (logs, PIDs)
+- `data.sqlite` database
+
+To copy the main database to a new worktree: `cp /path/to/main/data.sqlite ./data.sqlite`
 
 ## Operations Reserved to User
 

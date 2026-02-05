@@ -1508,7 +1508,6 @@ def create_agent_link_from_subagent(
                 )
                 if created:
                     mark_agent_link_done(parent_session_id, agent_id)
-                    logger.debug(f"CREATE LINK FOR AGENT {agent_id} SESSION {parent_session_id}")
                     return True
             except MultipleObjectsReturned:  # defensive mode
                 continue
