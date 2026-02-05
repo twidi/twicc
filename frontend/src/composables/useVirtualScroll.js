@@ -79,6 +79,14 @@ export function useVirtualScroll(options) {
      */
     let isProgrammaticScroll = false
 
+    /**
+     * Flag to track if we should stick to the bottom during height changes.
+     * When true, batchUpdateItemHeights will always scroll to bottom after updates.
+     * Used during initial scroll-to-bottom operations where we want to stay at bottom
+     * until all items have finished resizing.
+     */
+    let stickToBottom = false
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Computed: Positions
     // ═══════════════════════════════════════════════════════════════════════════
@@ -308,51 +316,161 @@ export function useVirtualScroll(options) {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Update the height of an item in the cache.
-     * If the item is above the viewport and its height changed, adjust scrollTop
-     * to maintain the visual position of content.
+     * Update the height of an item in the cache (single item version).
+     * For better performance with multiple items, use batchUpdateItemHeights.
      *
      * @param {*} key - The item key
      * @param {number} newHeight - The new measured height
-     * @returns {{ key: any, height: number, oldHeight: number | undefined }} Change info for event emission
+     * @returns {{ key: any, height: number, oldHeight: number | undefined } | null} Change info for event emission
      */
     function updateItemHeight(key, newHeight) {
-        // Reject 0 height values - these occur when items are measured while hidden
-        // (e.g., in inactive wa-tab-panel with display: none). Such measurements
-        // would corrupt the height cache and break rendering.
-        if (newHeight === 0) {
-            return null
+        // Delegate to batch function for single item
+        const results = batchUpdateItemHeights(new Map([[key, newHeight]]))
+        return results.length > 0 ? results[0] : null
+    }
+
+    /**
+     * Update multiple item heights at once with anchor-based scroll preservation.
+     * This is the core function for handling batched ResizeObserver updates.
+     *
+     * ANCHOR-BASED SCROLLING:
+     * Instead of correcting scrollTop after changes (which causes jumps),
+     * we anchor on a visible item and maintain its visual position.
+     *
+     * Algorithm:
+     * 1. Capture the "anchor" - the first item visible at the top of viewport
+     * 2. Calculate offset = how far scrollTop is into that anchor item
+     * 3. Apply all height changes to the cache
+     * 4. Restore: newScrollTop = newAnchorTop + offset
+     *
+     * @param {Map<any, number>} updates - Map of itemKey → newHeight
+     * @returns {Array<{key: any, height: number, oldHeight: number | undefined} | null>} Array of changes
+     */
+    function batchUpdateItemHeights(updates) {
+        const container = containerRef.value
+        const results = []
+
+        // Filter out zero heights and unchanged values
+        const actualUpdates = new Map()
+        for (const [key, newHeight] of updates) {
+            // Reject 0 height values - these occur when items are measured while hidden
+            if (newHeight === 0) {
+                continue
+            }
+            const oldHeight = heightCache.get(key)
+            if (oldHeight !== newHeight) {
+                actualUpdates.set(key, { newHeight, oldHeight })
+            }
         }
 
-        const oldHeight = heightCache.get(key)
-
-        // No change, no action needed
-        if (oldHeight === newHeight) {
-            return null
+        // If no actual changes, return empty
+        if (actualUpdates.size === 0) {
+            return []
         }
 
-        // Update the cache
-        heightCache.set(key, newHeight)
+        // If no container or programmatic scroll, just apply without anchor logic
+        if (!container || isProgrammaticScroll) {
+            for (const [key, { newHeight, oldHeight }] of actualUpdates) {
+                heightCache.set(key, newHeight)
+                results.push({ key, height: newHeight, oldHeight })
+            }
+            return results
+        }
 
-        // Scroll correction: only if item existed before and is above viewport
-        // and we're not in a programmatic scroll operation
-        if (oldHeight !== undefined && !isProgrammaticScroll) {
-            const container = containerRef.value
-            if (container) {
-                // Find this item's position to check if it's above the viewport
-                const posArray = positions.value
-                const pos = posArray.find(p => p.key === key)
+        // If stickToBottom is enabled, apply updates and scroll to bottom
+        if (stickToBottom) {
+            for (const [key, { newHeight, oldHeight }] of actualUpdates) {
+                heightCache.set(key, newHeight)
+                results.push({ key, height: newHeight, oldHeight })
+            }
+            // Scroll to bottom after applying updates
+            const maxScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
+            if (Number.isFinite(maxScrollTop) && maxScrollTop >= 0) {
+                container.scrollTop = maxScrollTop
+                scrollTop.value = maxScrollTop
+            }
+            return results
+        }
 
-                if (pos && pos.top < scrollTop.value) {
-                    const delta = newHeight - oldHeight
-                    container.scrollTop += delta
-                    // Also update our local scrollTop ref to match
-                    scrollTop.value = container.scrollTop
+        // ══════════════════════════════════════════════════════════════════
+        // ANCHOR-BASED SCROLLING
+        // ══════════════════════════════════════════════════════════════════
+
+        const currentScrollTop = container.scrollTop
+        const posArray = positions.value
+
+        // Edge case: empty list or no positions
+        if (posArray.length === 0) {
+            for (const [key, { newHeight, oldHeight }] of actualUpdates) {
+                heightCache.set(key, newHeight)
+                results.push({ key, height: newHeight, oldHeight })
+            }
+            return results
+        }
+
+        // 1. CAPTURE THE ANCHOR before any modifications
+        // Find the first item whose bottom is past scrollTop (i.e., visible at top)
+        const anchorIndex = findIndexAtPosition(currentScrollTop)
+        const anchorItem = posArray[anchorIndex]
+
+        // Safety check
+        if (!anchorItem) {
+            for (const [key, { newHeight, oldHeight }] of actualUpdates) {
+                heightCache.set(key, newHeight)
+                results.push({ key, height: newHeight, oldHeight })
+            }
+            return results
+        }
+
+        const anchorKey = anchorItem.key
+        const anchorOriginalTop = anchorItem.top
+        // Offset = how far into the anchor item the viewport starts
+        const offsetInAnchor = currentScrollTop - anchorOriginalTop
+
+        // Check if we were at the bottom (special case)
+        const wasAtBottom = isAtBottom(5)
+
+        // 2. APPLY all height changes to the cache
+        for (const [key, { newHeight, oldHeight }] of actualUpdates) {
+            heightCache.set(key, newHeight)
+            results.push({ key, height: newHeight, oldHeight })
+        }
+
+        // 3. RESTORE scroll position relative to anchor
+        // The positions computed will auto-recompute due to reactivity
+        const newPosArray = positions.value
+
+        // Special case: if we were at bottom, stay at bottom
+        if (wasAtBottom) {
+            const maxScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
+            if (Number.isFinite(maxScrollTop) && maxScrollTop >= 0) {
+                container.scrollTop = maxScrollTop
+                scrollTop.value = maxScrollTop
+            }
+            return results
+        }
+
+        // Find the anchor in the new positions
+        const newAnchorItem = newPosArray.find(p => p.key === anchorKey)
+
+        if (newAnchorItem) {
+            const newScrollTop = newAnchorItem.top + offsetInAnchor
+
+            // Safety checks
+            if (Number.isFinite(newScrollTop) && newScrollTop >= 0) {
+                // Clamp to valid range
+                const maxScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
+                const clampedScrollTop = Math.min(newScrollTop, maxScrollTop)
+
+                // Only update if there's an actual difference (avoid micro-corrections)
+                if (Math.abs(clampedScrollTop - currentScrollTop) > 0.5) {
+                    container.scrollTop = clampedScrollTop
+                    scrollTop.value = clampedScrollTop
                 }
             }
         }
 
-        return { key, height: newHeight, oldHeight }
+        return results
     }
 
     /**
@@ -562,6 +680,23 @@ export function useVirtualScroll(options) {
     }
 
     /**
+     * Enable "stick to bottom" mode.
+     * While enabled, any height changes will automatically scroll to bottom.
+     * Use this during initial scroll-to-bottom operations.
+     */
+    function enableStickToBottom() {
+        stickToBottom = true
+    }
+
+    /**
+     * Disable "stick to bottom" mode.
+     * Call this when the scroll position has stabilized.
+     */
+    function disableStickToBottom() {
+        stickToBottom = false
+    }
+
+    /**
      * Check if the scroller is currently at or near the top.
      *
      * @param {number} [threshold=5] - Pixel threshold for "at top" detection
@@ -648,6 +783,7 @@ export function useVirtualScroll(options) {
 
         // Height management
         updateItemHeight,
+        batchUpdateItemHeights,
         removeItemHeight,
         clearHeightCache,
         getItemHeight,
@@ -663,6 +799,10 @@ export function useVirtualScroll(options) {
         getScrollState,
         isAtBottom,
         isAtTop,
+
+        // Stick to bottom mode (for initial scroll operations)
+        enableStickToBottom,
+        disableStickToBottom,
 
         // Viewport management
         updateViewportHeight,

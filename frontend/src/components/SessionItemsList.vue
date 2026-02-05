@@ -59,6 +59,23 @@ const scrollerRef = ref(null)
 // Used to handle new items arriving during the scroll retry loop
 const isAutoScrollingToBottom = ref(false)
 
+// Flag to track if we're in the initial scroll phase (scroller hidden until positioned)
+// This prevents visible jumping when the scroller first appears at top then scrolls to bottom
+const isInitialScrolling = ref(false)
+
+// Callback to resolve when scroll stabilizes (set by scrollToBottomUntilStable)
+let onStabilizedCallback = null
+
+// Timeout ID for the stability debounce
+let stabilityTimeoutId = null
+
+// Promise that resolves when current scroll-to-bottom operation completes
+// Used to prevent concurrent calls to scrollToBottomUntilStable
+let scrollToBottomPromise = null
+
+// Delay in ms to wait for no more resize events before considering stable
+const STABILITY_DEBOUNCE_MS = 100
+
 // Threshold in pixels for "near bottom" detection for auto-scroll
 const AUTO_SCROLL_THRESHOLD = 150
 
@@ -154,11 +171,15 @@ watch(processState, (newState, oldState) => {
     }
 }, { immediate: true })
 
-// Cleanup timer on unmount
+// Cleanup timers on unmount
 onUnmounted(() => {
     if (temporaryIndicatorTimer) {
         clearTimeout(temporaryIndicatorTimer)
         temporaryIndicatorTimer = null
+    }
+    if (stabilityTimeoutId) {
+        clearTimeout(stabilityTimeoutId)
+        stabilityTimeoutId = null
     }
 })
 
@@ -193,8 +214,11 @@ async function loadSubagentSession() {
 }
 
 /**
- * Load session data: metadata (all items) + initial content (first N and last N).
+ * Load session data: metadata (all items) + initial content (last N items).
  * Fetches both in parallel for faster loading.
+ *
+ * We only load the last N items initially since sessions open at the bottom.
+ * Items at the top will be lazy-loaded when the user scrolls up.
  */
 async function loadSessionData(lastLine) {
     const sId = props.sessionId
@@ -207,14 +231,14 @@ async function loadSessionData(lastLine) {
     store.localState.sessions[sId].itemsLoading = true
 
     try {
-        // Build ranges for initial content
+        // Build range for initial content: only load last N items
+        // Sessions open at the bottom, so we don't need the first items initially
         const ranges = []
-        if (lastLine <= INITIAL_ITEMS_COUNT * 2) {
+        if (lastLine <= INITIAL_ITEMS_COUNT) {
             // Small session: load everything
             ranges.push([1, lastLine])
         } else {
-            // Large session: load first N and last N
-            ranges.push([1, INITIAL_ITEMS_COUNT])
+            // Large session: load only last N items
             ranges.push([lastLine - INITIAL_ITEMS_COUNT + 1, lastLine])
         }
 
@@ -282,13 +306,16 @@ watch([() => props.sessionId, session], async ([newSessionId, newSession]) => {
     if (!lastLine) return
 
     // Only initialize and load if not already done
-    if (!store.areSessionItemsFetched(newSessionId)) {
+    const isFirstLoad = !store.areSessionItemsFetched(newSessionId)
+    if (isFirstLoad) {
         await loadSessionData(lastLine)
     }
 
     // Always scroll to end of session (with retry until stable)
+    // Mark as initial scroll to hide scroller until positioned (only on first load)
+    // When returning to an already-loaded session, items are already sized so no resize events will fire
     await nextTick()
-    scrollToBottomUntilStable()
+    scrollToBottomUntilStable({ isInitial: isFirstLoad })
 }, { immediate: true })
 
 // Retry loading session data after error
@@ -311,8 +338,9 @@ async function handleRetry() {
     await loadSessionData(lastLine)
 
     // Scroll to bottom after successful load
+    // Mark as initial scroll to hide scroller until positioned
     await nextTick()
-    scrollToBottomUntilStable()
+    scrollToBottomUntilStable({ isInitial: true })
 }
 
 /**
@@ -327,8 +355,9 @@ async function onComputeCompleted() {
 
     await loadSessionData(lastLine)
 
+    // Mark as initial scroll to hide scroller until positioned
     await nextTick()
-    scrollToBottomUntilStable()
+    scrollToBottomUntilStable({ isInitial: true })
 }
 
 // Watch for session compute completion
@@ -369,32 +398,130 @@ watch(
 )
 
 /**
- * Scroll to bottom repeatedly until the scroll position stabilizes.
- * This handles the case where items are rendered with dynamic heights
- * that change the total scroll height after scrollToBottom is called.
+ * Handle item resize events from VirtualScroller.
+ * Used to detect when items have finished resizing for scroll stability detection.
+ */
+function onItemResized() {
+    // If we're waiting for stability, reset the debounce timer
+    if (onStabilizedCallback) {
+        // Clear existing timeout
+        if (stabilityTimeoutId) {
+            clearTimeout(stabilityTimeoutId)
+        }
+
+        // Set new timeout - if no more resizes happen within STABILITY_DEBOUNCE_MS,
+        // we consider it stable
+        // Note: The actual scrolling to bottom is handled by stickToBottom mode in the composable
+        stabilityTimeoutId = setTimeout(() => {
+            stabilityTimeoutId = null
+            if (onStabilizedCallback) {
+                const callback = onStabilizedCallback
+                onStabilizedCallback = null
+                callback()
+            }
+        }, STABILITY_DEBOUNCE_MS)
+    }
+}
+
+/**
+ * Scroll to bottom and wait until the scroll position stabilizes.
+ *
+ * Algorithm:
+ * 1. Enable "stick to bottom" mode - any height changes will automatically scroll to bottom
+ * 2. Scroll to bottom immediately
+ * 3. Wait for item-resized events to stop (debounced)
+ * 4. Disable "stick to bottom" mode
+ *
+ * The key insight: instead of trying to scroll after each resize event,
+ * we let the composable's stickToBottom mode handle it automatically.
+ * This ensures we stay at the bottom even as items resize.
  *
  * Sets isAutoScrollingToBottom flag during the operation so that if new
  * items arrive while scrolling, we know to continue scrolling.
+ *
+ * @param {Object} [options] - Options for the scroll operation
+ * @param {boolean} [options.isInitial=false] - Whether this is the initial scroll after session load
+ *   When true, the scroller is kept invisible until scroll is stable to prevent visual jumping
  */
-async function scrollToBottomUntilStable() {
+async function scrollToBottomUntilStable(options = {}) {
+    const { isInitial = false } = options
     const scroller = scrollerRef.value
     if (!scroller) return
 
-    isAutoScrollingToBottom.value = true
-
-    const maxAttempts = 10
-    const delayBetweenAttempts = 50 // ms
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        scroller.scrollToBottom({ behavior: 'auto' })
-        await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts))
-
-        const state = scroller.getScrollState()
-        const distanceFromBottom = state.scrollHeight - state.scrollTop - state.clientHeight
-        if (distanceFromBottom <= 5) break
+    // If a scroll operation is already in progress, wait for it to complete
+    // This prevents concurrent calls from interfering with each other
+    if (scrollToBottomPromise) {
+        await scrollToBottomPromise
+        // After waiting, the previous operation already scrolled to bottom,
+        // so we can return early unless this is an initial scroll that needs visibility handling
+        if (!isInitial) return
     }
 
-    isAutoScrollingToBottom.value = false
+    // Create a new promise for this operation and store it
+    let resolveScrollPromise
+    scrollToBottomPromise = new Promise(resolve => {
+        resolveScrollPromise = resolve
+    })
+
+    try {
+        isAutoScrollingToBottom.value = true
+
+        // For initial scroll, hide the scroller until we're positioned
+        if (isInitial) {
+            isInitialScrolling.value = true
+        }
+
+        // Enable stick to bottom mode - the composable will automatically
+        // scroll to bottom whenever heights change
+        scroller.enableStickToBottom()
+
+        // Scroll to bottom immediately
+        scroller.scrollToBottom({ behavior: 'auto' })
+
+        // Wait for stability: no more resize events for STABILITY_DEBOUNCE_MS
+        await new Promise(resolve => {
+            onStabilizedCallback = resolve
+
+            // IMPORTANT: Don't start the timer immediately!
+            // We need to wait for Vue to render and ResizeObserver to fire.
+            // Use requestAnimationFrame + setTimeout to ensure we start AFTER
+            // the initial batch of resize events has a chance to arrive.
+            requestAnimationFrame(() => {
+                setTimeout(() => {
+                    // Start the stability timer only after giving resize events a chance to fire
+                    // If no resize events have arrived by now and reset this timer,
+                    // we're already stable
+                    if (!stabilityTimeoutId) {
+                        stabilityTimeoutId = setTimeout(() => {
+                            stabilityTimeoutId = null
+                            if (onStabilizedCallback) {
+                                const callback = onStabilizedCallback
+                                onStabilizedCallback = null
+                                callback()
+                            }
+                        }, STABILITY_DEBOUNCE_MS)
+                    }
+                }, 0)
+            })
+        })
+
+        // Disable stick to bottom mode now that we're stable
+        scroller.disableStickToBottom()
+
+        // Final scroll to bottom to ensure we're at the very bottom
+        scroller.scrollToBottom({ behavior: 'auto' })
+
+        isAutoScrollingToBottom.value = false
+
+        // Reveal the scroller now that we're positioned at the bottom
+        if (isInitial) {
+            isInitialScrolling.value = false
+        }
+    } finally {
+        // Clear the promise and resolve it so any waiters can proceed
+        scrollToBottomPromise = null
+        resolveScrollPromise()
+    }
 }
 
 /**
@@ -573,8 +700,10 @@ defineExpose({
             :buffer="1000"
             :unload-buffer="1500"
             class="session-items"
+            :class="{ 'initial-scrolling': isInitialScrolling }"
             @update="onScrollerUpdate"
             @scroll="onScroll"
+            @item-resized="onItemResized"
         >
             <template #default="{ item, index }">
                 <!-- Placeholder (no content loaded yet) -->
@@ -662,6 +791,13 @@ defineExpose({
     flex: 1;
     min-height: 0;
     padding-bottom: var(--wa-space-2xl);
+}
+
+/* Hide scroller during initial scroll to bottom to prevent visible jumping.
+   Using visibility:hidden keeps the element in the layout and scrollable,
+   but invisible until we're positioned at the bottom. */
+.session-items.initial-scrolling {
+    visibility: hidden;
 }
 
 .empty-state {

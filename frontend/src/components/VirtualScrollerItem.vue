@@ -2,13 +2,15 @@
 /**
  * VirtualScrollerItem - Wrapper for items in the VirtualScroller.
  *
- * This component wraps each rendered item and uses a shared ResizeObserver
- * (provided by the parent VirtualScroller) to detect size changes, emitting
- * @resized when the item's height changes.
+ * This component wraps each rendered item and registers with the shared
+ * ResizeObserver (provided by the parent VirtualScroller) for size tracking.
  *
  * The shared ResizeObserver pattern is critical for performance - using a single
  * observer for all items is dramatically more efficient than one per item.
  * See: https://github.com/WICG/resize-observer/issues/59
+ *
+ * Size changes are handled directly by the parent VirtualScroller's ResizeObserver
+ * callback, which batches all updates for anchor-based scroll preservation.
  *
  * IMPORTANT: The parent container MUST be a VirtualScroller that provides the
  * shared observer via Vue's provide/inject mechanism.
@@ -36,31 +38,13 @@ const props = defineProps({
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Events
-// ═══════════════════════════════════════════════════════════════════════════
-
-const emit = defineEmits([
-    /**
-     * Emitted when the item's height changes.
-     * Payload: (newHeight: number, oldHeight: number | undefined)
-     */
-    'resized'
-])
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Refs and State
+// Refs
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * Reference to the item wrapper element.
  */
 const itemRef = ref(null)
-
-/**
- * Current measured height of the item.
- * Initialized as undefined per spec (no measurement yet).
- */
-let currentHeight = undefined
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Shared ResizeObserver (Injected from Parent)
@@ -88,27 +72,9 @@ onMounted(() => {
         return
     }
 
-    resizeObserverContext.register(itemRef.value, (entry) => {
-        // Use borderBoxSize for accurate height including padding/border
-        // Fallback to contentRect.height if borderBoxSize not available
-        const newHeight = entry.borderBoxSize
-            ? entry.borderBoxSize[0]?.blockSize ?? entry.contentRect.height
-            : entry.contentRect.height
-
-        // Ignore 0 height measurements - these occur when the item is in a hidden
-        // parent (e.g., inactive wa-tab-panel with display: none). Caching 0 heights
-        // corrupts the height cache and breaks rendering when the item becomes visible.
-        // We skip the emit entirely so the parent doesn't cache invalid values.
-        if (newHeight === 0) {
-            return
-        }
-
-        if (newHeight !== currentHeight) {
-            const oldHeight = currentHeight
-            currentHeight = newHeight
-            emit('resized', newHeight, oldHeight)
-        }
-    })
+    // Register with the shared observer, passing our key
+    // The parent VirtualScroller handles all resize callbacks and batches updates
+    resizeObserverContext.register(itemRef.value, props.itemKey)
 })
 
 onUnmounted(() => {

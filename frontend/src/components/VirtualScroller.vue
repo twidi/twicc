@@ -133,33 +133,67 @@ let lastKnownViewportHeight = 0
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Map of observed elements to their resize callbacks.
+ * Map of observed elements to their item keys.
  * Using a single ResizeObserver is dramatically more performant than creating
  * one per item (25% of animation time vs excellent performance).
  * See: https://github.com/WICG/resize-observer/issues/59
  */
-const itemCallbacks = new Map()
+const itemKeys = new Map()
 
 /**
  * Single ResizeObserver instance shared by all VirtualScrollerItem children.
  * Created lazily when items register (only on client-side).
+ *
+ * This observer batches all size changes and applies them together using
+ * anchor-based scrolling to prevent visual jumps.
  */
 let itemObserver = null
 
 /**
- * Creates the shared ResizeObserver lazily.
+ * Creates the shared ResizeObserver lazily with batched processing.
  * This ensures we don't create the observer during SSR.
+ *
+ * The observer collects all size changes from a single frame and applies
+ * them together via batchUpdateItemHeights for smooth anchor-based scrolling.
  */
 function getItemObserver() {
     if (itemObserver) return itemObserver
     if (typeof ResizeObserver === 'undefined') return null
 
     itemObserver = new ResizeObserver((entries) => {
+        // Collect all height updates from this batch
+        const updates = new Map()
+
         for (const entry of entries) {
-            const callback = itemCallbacks.get(entry.target)
-            if (callback) callback(entry)
+            const key = itemKeys.get(entry.target)
+            if (key === undefined) continue
+
+            // Use borderBoxSize for accurate height including padding/border
+            const newHeight = entry.borderBoxSize
+                ? entry.borderBoxSize[0]?.blockSize ?? entry.contentRect.height
+                : entry.contentRect.height
+
+            // Collect all updates (filtering of 0 heights is done in batchUpdateItemHeights)
+            updates.set(key, newHeight)
+        }
+
+        if (updates.size > 0) {
+            // Apply all updates at once with anchor-based scroll preservation
+            const changes = batchUpdateItemHeights(updates)
+
+            // Emit events for each actual change
+            for (const change of changes) {
+                if (change) {
+                    emit('item-resized', {
+                        key: change.key,
+                        height: change.height,
+                        oldHeight: change.oldHeight,
+                    })
+                }
+            }
         }
     })
+
     return itemObserver
 }
 
@@ -167,13 +201,13 @@ function getItemObserver() {
  * Register an element to be observed for size changes.
  *
  * @param {HTMLElement} element - The element to observe
- * @param {function} callback - Called with ResizeObserverEntry when size changes
+ * @param {*} key - The item key for this element
  */
-function registerItemObserver(element, callback) {
+function registerItemObserver(element, key) {
     const observer = getItemObserver()
     if (!observer) return
 
-    itemCallbacks.set(element, callback)
+    itemKeys.set(element, key)
     observer.observe(element, { box: 'border-box' })
 }
 
@@ -185,7 +219,7 @@ function registerItemObserver(element, callback) {
 function unregisterItemObserver(element) {
     if (!itemObserver) return
 
-    itemCallbacks.delete(element)
+    itemKeys.delete(element)
     itemObserver.unobserve(element)
 }
 
@@ -210,7 +244,7 @@ const {
     visibleRange,
     spacerBeforeHeight,
     spacerAfterHeight,
-    updateItemHeight,
+    batchUpdateItemHeights,
     handleScroll,
     scrollToIndex: composableScrollToIndex,
     scrollToTop: composableScrollToTop,
@@ -221,6 +255,8 @@ const {
     isAtBottom,
     isAtTop,
     invalidateZeroHeights,
+    enableStickToBottom: composableEnableStickToBottom,
+    disableStickToBottom: composableDisableStickToBottom,
 } = useVirtualScroll({
     items: toRef(props, 'items'),
     itemKey: props.itemKey,
@@ -278,24 +314,9 @@ watch(
     { immediate: true }
 )
 
-/**
- * Callback for VirtualScrollerItem when an item is resized.
- * Updates the height cache and emits the @item-resized event.
- *
- * @param {*} key - The item key
- * @param {number} height - The new measured height
- * @param {number|undefined} oldHeight - The previous height (undefined if first measure)
- */
-function onItemResized(key, height, oldHeight) {
-    const result = updateItemHeight(key, height)
-    if (result) {
-        emit('item-resized', {
-            key: result.key,
-            height: result.height,
-            oldHeight: result.oldHeight,
-        })
-    }
-}
+// NOTE: Item resize handling is now done directly in the ResizeObserver callback
+// (getItemObserver function) which batches all updates and emits events.
+// The VirtualScrollerItem no longer emits @resized events.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ResizeObserver for Container
@@ -369,7 +390,7 @@ onUnmounted(() => {
         itemObserver.disconnect()
         itemObserver = null
     }
-    itemCallbacks.clear()
+    itemKeys.clear()
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -434,6 +455,21 @@ function onScroll(event) {
     emit('scroll', event)
 }
 
+/**
+ * Enable "stick to bottom" mode.
+ * While enabled, any height changes will automatically scroll to bottom.
+ */
+function enableStickToBottom() {
+    composableEnableStickToBottom()
+}
+
+/**
+ * Disable "stick to bottom" mode.
+ */
+function disableStickToBottom() {
+    composableDisableStickToBottom()
+}
+
 // Expose methods for parent component access via ref
 defineExpose({
     scrollToIndex,
@@ -444,6 +480,9 @@ defineExpose({
     // Additional utility methods that may be useful
     isAtBottom,
     isAtTop,
+    // Stick to bottom mode control
+    enableStickToBottom,
+    disableStickToBottom,
 })
 </script>
 
@@ -464,7 +503,6 @@ defineExpose({
             v-for="{ item, index, key } in renderedItems"
             :key="key"
             :item-key="key"
-            @resized="(height, oldHeight) => onItemResized(key, height, oldHeight)"
         >
             <slot :item="item" :index="index" />
         </VirtualScrollerItem>
