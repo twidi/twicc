@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
@@ -174,20 +174,56 @@ function handleNewSession(targetProjectId = null) {
     }
 }
 
-const SIDEBAR_WIDTH = 300
+// Sidebar state persistence
+const SIDEBAR_STORAGE_KEY = 'twicc-sidebar-state'
+const DEFAULT_SIDEBAR_WIDTH = 300
 // Sidebar collapse threshold in pixels
 const SIDEBAR_COLLAPSE_THRESHOLD = 50
 // Mobile breakpoint (must match CSS media query)
 const MOBILE_BREAKPOINT = 640
 
+// Load sidebar state from localStorage
+function loadSidebarState() {
+    try {
+        const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY)
+        if (stored) {
+            const parsed = JSON.parse(stored)
+            return {
+                open: typeof parsed.open === 'boolean' ? parsed.open : true,
+                width: typeof parsed.width === 'number' && parsed.width > 0 ? parsed.width : DEFAULT_SIDEBAR_WIDTH,
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to load sidebar state from localStorage:', e)
+    }
+    return { open: true, width: DEFAULT_SIDEBAR_WIDTH }
+}
+
+// Save sidebar state to localStorage
+function saveSidebarState(state) {
+    try {
+        localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(state))
+    } catch (e) {
+        console.warn('Failed to save sidebar state to localStorage:', e)
+    }
+}
+
+// Current sidebar state (non-reactive, applied once at mount)
+const sidebarState = loadSidebarState()
+
 // Check if we're on mobile (for initial sidebar state)
 const isMobile = () => window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`).matches
 
-// Initial checkbox state: on mobile, checked = open, so check when no session
-// On desktop, checked = closed, so never check initially (sidebar always open)
+// Initial checkbox state:
+// - On mobile: checked = open, so check when no session
+// - On desktop: checked = closed, so check if sidebar was closed (inverted logic)
 const initialSidebarChecked = computed(() => {
     if (typeof window === 'undefined') return false
-    return isMobile() && !sessionId.value
+    if (isMobile()) {
+        return !sessionId.value
+    }
+    // Desktop: checkbox checked means closed, so invert the stored "open" state
+    return !sidebarState.open
 })
 
 // On mobile, close sidebar when session changes
@@ -202,28 +238,50 @@ watch(sessionId, (newSessionId) => {
     }
 })
 
-// Handle split panel reposition: auto-collapse when dragged to threshold
+// Apply stored sidebar width once on mount
+onMounted(() => {
+    const splitPanel = document.querySelector('.project-view')
+    if (splitPanel && sidebarState.width !== DEFAULT_SIDEBAR_WIDTH) {
+        splitPanel.positionInPixels = sidebarState.width
+    }
+})
+
+// Handle split panel reposition: auto-collapse when dragged to threshold, and persist width
 function handleSplitReposition(event) {
     const checkbox = document.getElementById('sidebar-toggle-state')
     if (!checkbox) return
 
-    if (event.target.positionInPixels <= SIDEBAR_COLLAPSE_THRESHOLD) {
+    const newWidth = event.target.positionInPixels
+
+    if (newWidth <= SIDEBAR_COLLAPSE_THRESHOLD) {
+        // Auto-collapse: mark as closed, reset width to stored value
         checkbox.checked = true
+        saveSidebarState({ open: false, width: sidebarState.width })
         requestAnimationFrame(() => {
-            event.target.positionInPixels = SIDEBAR_WIDTH;
-        });
+            event.target.positionInPixels = sidebarState.width
+        })
+    } else {
+        // Normal resize: update stored width
+        sidebarState.width = newWidth
+        saveSidebarState({ open: true, width: newWidth })
     }
+}
+
+// Handle sidebar toggle (called when checkbox changes)
+function handleSidebarToggle(event) {
+    const isOpen = !event.target.checked  // checked = closed on desktop
+    saveSidebarState({ open: isOpen, width: sidebarState.width })
 }
 </script>
 
 <template>
     <div class="project-view-wrapper">
         <!-- Hidden checkbox for pure CSS sidebar toggle -->
-        <input type="checkbox" id="sidebar-toggle-state" class="sidebar-toggle-checkbox" :checked="initialSidebarChecked"/>
+        <input type="checkbox" id="sidebar-toggle-state" class="sidebar-toggle-checkbox" :checked="initialSidebarChecked" @change="handleSidebarToggle"/>
 
         <wa-split-panel
             class="project-view"
-            :position-in-pixels="SIDEBAR_WIDTH"
+            :position-in-pixels="DEFAULT_SIDEBAR_WIDTH"
             primary="start"
             snap="50px 150px 300px 400px"
             @wa-reposition="handleSplitReposition"
