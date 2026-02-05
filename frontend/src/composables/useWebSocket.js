@@ -45,6 +45,21 @@ export function killProcess(sessionId) {
 }
 
 /**
+ * Request a title suggestion for a session.
+ * The result will arrive via WebSocket as title_suggested message.
+ * @param {string} sessionId - The session ID
+ * @param {string|null} prompt - Optional prompt text (for draft/new sessions)
+ * @returns {boolean} - True if message was sent, false if not connected
+ */
+export function requestTitleSuggestion(sessionId, prompt = null) {
+    const message = { type: 'suggest_title', sessionId }
+    if (prompt) {
+        message.prompt = prompt
+    }
+    return sendWsMessage(message)
+}
+
+/**
  * Notify the server that the user is actively preparing a message.
  * This resets the inactivity timeout for the process.
  * Debounced to 10 seconds per session to avoid spamming.
@@ -199,6 +214,10 @@ export function useWebSocket() {
                 toast.error(`Error: "${msg.error || 'Unknown'}"\nSession: "${msg.title}"`, {
                     title: 'Invalid title',
                 })
+                break
+            case 'title_suggested':
+                // Handle title suggestion response
+                store.handleTitleSuggested(msg)
                 break
         }
     }

@@ -1,6 +1,7 @@
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, computed } from 'vue'
 import { useDataStore } from '../stores/data'
+import { requestTitleSuggestion } from '../composables/useWebSocket'
 
 const props = defineProps({
     session: {
@@ -20,6 +21,13 @@ const localTitle = ref('')
 const isSaving = ref(false)
 const errorMessage = ref('')
 const showContextHint = ref(false)  // Show hint when opened during message send
+const isLoadingSuggestion = ref(false)
+
+// Computed for the suggestion from store
+const suggestion = computed(() => {
+    if (!props.session) return null
+    return store.getTitleSuggestion(props.session.id)
+})
 
 // Sync form values when session changes
 watch(
@@ -30,6 +38,16 @@ watch(
         }
     },
     { immediate: true }
+)
+
+// Watch for suggestion arrival
+watch(
+    () => props.session && store.getTitleSuggestion(props.session.id),
+    (newSuggestion) => {
+        if (newSuggestion && isLoadingSuggestion.value) {
+            isLoadingSuggestion.value = false
+        }
+    }
 )
 
 /**
@@ -65,8 +83,33 @@ function open({ showHint = false } = {}) {
     errorMessage.value = ''
     showContextHint.value = showHint
     syncFormState()
+
     if (dialogRef.value) {
         dialogRef.value.open = true
+    }
+
+    if (!props.session) return
+
+    const sessionId = props.session.id
+    const existingSuggestion = store.getTitleSuggestion(sessionId)
+
+    if (props.session.draft) {
+        // DRAFT: use message from store, redo if message changed
+        const currentPrompt = store.getDraftMessage(sessionId)?.message?.trim()
+        const previousPrompt = store.getTitleSuggestionSourcePrompt(sessionId)
+
+        if (!currentPrompt) return  // No message, no suggestion
+
+        if (!existingSuggestion || previousPrompt !== currentPrompt) {
+            isLoadingSuggestion.value = true
+            requestTitleSuggestion(sessionId, currentPrompt)
+        }
+    } else {
+        // EXISTING or NEW SESSION: use first message from DB
+        if (!existingSuggestion) {
+            isLoadingSuggestion.value = true
+            requestTitleSuggestion(sessionId)
+        }
     }
 }
 
@@ -84,6 +127,34 @@ function close() {
  */
 function onTitleInput(event) {
     localTitle.value = event.target.value
+}
+
+/**
+ * Apply the suggested title to the input field.
+ * Keep the suggestion in store so user can still regenerate or see it.
+ */
+function applySuggestion() {
+    if (suggestion.value) {
+        localTitle.value = suggestion.value
+        if (titleInputRef.value) {
+            titleInputRef.value.value = suggestion.value
+        }
+    }
+}
+
+/**
+ * Request a new title suggestion using the stored prompt.
+ */
+function regenerateSuggestion() {
+    if (!props.session) return
+
+    const sessionId = props.session.id
+    const storedPrompt = store.getTitleSuggestionSourcePrompt(sessionId)
+
+    if (storedPrompt) {
+        isLoadingSuggestion.value = true
+        requestTitleSuggestion(sessionId, storedPrompt)
+    }
 }
 
 /**
@@ -156,6 +227,30 @@ defineExpose({
                 While Claude is working, you may want to give this session a more descriptive name.
             </p>
 
+            <!-- Title suggestion -->
+            <div v-if="isLoadingSuggestion || suggestion" class="suggestion-section">
+                <div class="suggestion-header">
+                    <span class="suggestion-label">Suggestion:</span>
+                    <wa-button
+                        v-if="suggestion"
+                        variant="neutral"
+                        appearance="plain"
+                        size="small"
+                        class="regenerate-button"
+                        @click="regenerateSuggestion"
+                    >
+                        <wa-icon name="rotate" label="Regenerate"></wa-icon>
+                    </wa-button>
+                </div>
+                <div v-if="isLoadingSuggestion" class="suggestion-loading">
+                    <wa-spinner size="small"></wa-spinner>
+                    <span>Generating...</span>
+                </div>
+                <a v-else href="#" class="suggestion-link" @click.prevent="applySuggestion">
+                    {{ suggestion }}
+                </a>
+            </div>
+
             <div class="form-group">
                 <label class="form-label">Title</label>
                 <wa-input
@@ -218,6 +313,59 @@ defineExpose({
     margin: 0;
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
+}
+
+.suggestion-section {
+    margin-bottom: var(--wa-space-m);
+}
+
+.suggestion-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-s);
+    font-size: var(--wa-font-size-s);
+}
+
+.suggestion-header {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+}
+
+.suggestion-label {
+    color: var(--wa-color-text-quiet);
+}
+
+.suggestion-loading {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    color: var(--wa-color-text-quiet);
+}
+
+.suggestion-link {
+    color: var(--wa-color-brand);
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.suggestion-link:hover {
+    text-decoration: underline;
+}
+
+.regenerate-button {
+    opacity: 0.6;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+    font-size: var(--wa-font-size-3xs);
+    &::part(label) {
+        scale: 1.5;
+    }
+    margin-block: calc(-3 * var(--wa-space-2xs));
+}
+
+.regenerate-button:hover {
+    opacity: 1;
 }
 
 .dialog-footer {

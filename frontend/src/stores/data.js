@@ -73,7 +73,11 @@ export const useDataStore = defineStore('data', {
             // Draft messages - unsent messages/titles per session
             // { sessionId: { message?: string, title?: string } }
             // Persisted to IndexedDB with debounce
-            draftMessages: {}
+            draftMessages: {},
+
+            // Title suggestions by session ID
+            // Format: { sessionId: { suggestion: string, sourcePrompt?: string } }
+            titleSuggestions: {}
         }
     }),
 
@@ -229,6 +233,14 @@ export const useDataStore = defineStore('data', {
         // Get draft message for a session
         getDraftMessage: (state) => (sessionId) =>
             state.localState.draftMessages[sessionId] || null,
+
+        // Get stored title suggestion for a session
+        getTitleSuggestion: (state) => (sessionId) =>
+            state.localState.titleSuggestions[sessionId]?.suggestion || null,
+
+        // Get the source prompt used for a suggestion (for draft invalidation)
+        getTitleSuggestionSourcePrompt: (state) => (sessionId) =>
+            state.localState.titleSuggestions[sessionId]?.sourcePrompt || null,
 
         // Get display name for a project (uses cache, computes if missing)
         getProjectDisplayName: (state) => (projectId) => {
@@ -1323,6 +1335,33 @@ export const useDataStore = defineStore('data', {
             } catch (err) {
                 console.warn('Failed to load draft sessions from IndexedDB:', err)
             }
+        },
+
+        // Title suggestion actions
+
+        /**
+         * Handle title_suggested message from WebSocket.
+         * Always stores sourcePrompt (for regeneration), and suggestion if available.
+         * @param {Object} data - { sessionId, suggestion, sourcePrompt }
+         */
+        handleTitleSuggested(data) {
+            const { sessionId, suggestion, sourcePrompt } = data
+            // Always store sourcePrompt for regeneration capability
+            // Store suggestion only if we got one
+            if (sourcePrompt) {
+                this.localState.titleSuggestions[sessionId] = {
+                    suggestion: suggestion || null,
+                    sourcePrompt
+                }
+            }
+        },
+
+        /**
+         * Clear title suggestion for a session (after use).
+         * @param {string} sessionId
+         */
+        clearTitleSuggestion(sessionId) {
+            delete this.localState.titleSuggestions[sessionId]
         }
     }
 })

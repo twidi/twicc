@@ -107,6 +107,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         - ping: heartbeat, responds with pong
         - send_message: send a message to a Claude session (creates new or resumes existing)
         - kill_process: kill a running Claude process
+        - suggest_title: request a title suggestion for a session
         """
         msg_type = content.get("type")
 
@@ -121,6 +122,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         elif msg_type == "user_draft_updated":
             await self._handle_user_draft_updated(content)
+
+        elif msg_type == "suggest_title":
+            await self._handle_suggest_title(content)
 
     async def _handle_send_message(self, content: dict) -> None:
         """Handle send_message request from client.
@@ -290,6 +294,50 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         manager = get_process_manager()
         manager.touch_process_activity(session_id)
+
+    async def _handle_suggest_title(self, content: dict) -> None:
+        """Handle title suggestion request.
+
+        Expected content format:
+        {
+            "type": "suggest_title",
+            "sessionId": "claude-conv-xxx",
+            "prompt": "optional prompt text for draft/new sessions"
+        }
+
+        Modes:
+        - prompt provided: Use prompt directly (draft/new session or regenerate)
+        - sessionId only: Fetch first message from DB (existing session)
+
+        Always returns the prompt used for generation, so frontend can regenerate.
+        """
+        from twicc.title_suggest import (
+            generate_title_from_prompt,
+            get_first_user_message,
+        )
+
+        session_id = content.get("sessionId")
+        prompt = content.get("prompt")
+
+        if not session_id:
+            return
+
+        # Get prompt: use provided or fetch from DB
+        if not prompt:
+            prompt = await get_first_user_message(session_id)
+
+        # Generate suggestion if we have a prompt
+        suggestion = None
+        if prompt:
+            suggestion = await generate_title_from_prompt(prompt)
+
+        # Send result back to client (always include prompt for regeneration)
+        await self.send_json({
+            "type": "title_suggested",
+            "sessionId": session_id,
+            "suggestion": suggestion,  # Can be None
+            "sourcePrompt": prompt,    # Always included for regeneration
+        })
 
     async def broadcast(self, event):
         """Handle broadcast events by sending data to the client."""

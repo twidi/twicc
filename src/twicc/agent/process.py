@@ -175,7 +175,9 @@ class ClaudeProcess:
                 cwd=self.cwd,
                 permission_mode="bypassPermissions",
                 stderr=self._log_stderr,
-                extra_args={},
+                extra_args={
+                    "chrome": None
+                },
             )
 
             if resume:
