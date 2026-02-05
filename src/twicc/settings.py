@@ -31,10 +31,11 @@ DATABASES = {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "data.sqlite",
         "OPTIONS": {
-            "timeout": 20,
+            "timeout": 30,
             "init_command": """
                 PRAGMA journal_mode=WAL;
                 PRAGMA synchronous=NORMAL;
+                PRAGMA busy_timeout=30000;
                 PRAGMA mmap_size=134217728;
                 PRAGMA journal_size_limit=27103364;
                 PRAGMA cache_size=2000;
@@ -78,7 +79,7 @@ LOGGING = {
 }
 
 # Display levels computation
-CURRENT_COMPUTE_VERSION = 35  # Bump when display rules change to trigger recomputation
+CURRENT_COMPUTE_VERSION = 40  # Bump when display rules change to trigger recomputation
 
 # Process auto-stop timeouts (in seconds)
 # Processes are automatically stopped if they remain in a state for too long

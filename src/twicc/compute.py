@@ -886,7 +886,8 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     """
     Compute metadata for all items in a session.
 
-    Sends all results via result_queue. Does NOT write to the database directly.
+    Sends all results via result_queue as a single message per session.
+    Does NOT write to the database directly.
     The caller is responsible for consuming the queue and applying changes.
 
     In production, the main process consumes the queue and performs all DB writes,
@@ -912,27 +913,23 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         session = Session.objects.get(id=session_id)
     except Session.DoesNotExist:
         logger.error(f"Session {session_id} not found for metadata computation")
-        result_queue.put({
+        result_queue.put(orjson.dumps({
             'type': 'error',
             'session_id': session_id,
             'error': 'Session not found',
-        })
+        }))
         return
-
-    # Signal to delete existing links (will be done by consumer)
-    result_queue.put({
-        'type': 'delete_links',
-        'session_id': session_id,
-    })
 
     queryset = SessionItem.objects.filter(session=session).order_by('line_num')
 
     state = GroupState()
     items_to_update: list[SessionItem] = []
     links_to_create: list[dict] = []
+    all_item_updates: list[dict] = []  # Accumulate all item updates
+    all_links: list[dict] = []  # Accumulate all links
     batch_size = 50
 
-    # Helper to serialize items for queue
+    # Helper to serialize items
     def serialize_items(items: list[SessionItem]) -> list[dict]:
         return [
             {
@@ -949,26 +946,15 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             for item in items
         ]
 
-    # Helper to flush item batch
+    # Helper to flush item batch to accumulator
     def flush_items(items: list[SessionItem]) -> None:
-        if not items:
-            return
-        result_queue.put({
-            'type': 'batch',
-            'session_id': session_id,
-            'updates': serialize_items(items),
-            'fields': ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage', 'timestamp'],
-        })
+        if items:
+            all_item_updates.extend(serialize_items(items))
 
-    # Helper to flush links batch
+    # Helper to flush links batch to accumulator
     def flush_links(links: list[dict]) -> None:
-        if not links:
-            return
-        result_queue.put({
-            'type': 'links',
-            'session_id': session_id,
-            'links': links,
-        })
+        if links:
+            all_links.extend(links)
 
     # Map tool_use_id → line_num of the item containing the tool_use
     tool_use_map: dict[str, int] = {}
@@ -1123,7 +1109,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     finalized = state.finalize()
     items_to_update.extend(finalized)
 
-    # Final flush
+    # Final flush to accumulators
     flush_items(items_to_update)
     flush_links(links_to_create)
 
@@ -1152,12 +1138,15 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     # Determine project directory update (for real sessions only)
     project_directory = first_cwd if first_cwd and session.type == SessionType.SESSION else None
 
-    # Send session update via queue
-    result_queue.put({
-        'type': 'session_update',
+    # Send ALL results as a single message (serialized with orjson for speed)
+    result_queue.put(orjson.dumps({
+        'type': 'session_complete',
         'session_id': session_id,
         'project_id': session.project_id,
-        'fields': {
+        'item_updates': all_item_updates,
+        'item_fields': ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage', 'timestamp'],
+        'links': all_links,
+        'session_fields': {
             'compute_version': settings.CURRENT_COMPUTE_VERSION,
             'message_count': message_count,
             'context_usage': last_context_usage,
@@ -1170,13 +1159,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         },
         'titles': session_titles,
         'project_directory': project_directory,
-    })
-
-    # Signal completion
-    result_queue.put({
-        'type': 'done',
-        'session_id': session_id,
-    })
+    }))
 
     connection.close()
 
@@ -1197,63 +1180,64 @@ def apply_compute_results(result_queue) -> None:
 
     while True:
         try:
-            msg = result_queue.get_nowait()
+            raw_msg = result_queue.get_nowait()
         except queue_module.Empty:
             break
 
+        # Deserialize from orjson bytes
+        msg = orjson.loads(raw_msg)
         msg_type = msg.get('type')
 
-        if msg_type == 'delete_links':
-            SessionItemLink.objects.filter(session_id=msg['session_id']).delete()
+        if msg_type == 'session_complete':
+            # New unified message type - all data in one message
+            session_id = msg['session_id']
 
-        elif msg_type == 'batch':
-            updates = msg['updates']
-            fields = msg['fields']
-            items = []
-            for upd in updates:
-                item = SessionItem(id=upd['id'])
-                for field in fields:
-                    value = upd.get(field)
-                    if field == 'cost' and value is not None:
-                        value = Decimal(value)
-                    setattr(item, field, value)
-                items.append(item)
-            if items:
-                SessionItem.objects.bulk_update(items, fields)
+            # 1. Delete existing links
+            SessionItemLink.objects.filter(session_id=session_id).delete()
 
-        elif msg_type == 'links':
-            links = [SessionItemLink(**link_data) for link_data in msg['links']]
-            if links:
+            # 2. Apply item updates
+            item_updates = msg.get('item_updates', [])
+            item_fields = msg.get('item_fields', [])
+            if item_updates and item_fields:
+                items = []
+                for upd in item_updates:
+                    item = SessionItem(id=upd['id'])
+                    for field in item_fields:
+                        value = upd.get(field)
+                        if field == 'cost' and value is not None:
+                            value = Decimal(value)
+                        setattr(item, field, value)
+                    items.append(item)
+                if items:
+                    SessionItem.objects.bulk_update(items, item_fields)
+
+            # 3. Create links
+            links_data = msg.get('links', [])
+            if links_data:
+                links = [SessionItemLink(**link_data) for link_data in links_data]
                 SessionItemLink.objects.bulk_create(links, ignore_conflicts=True)
 
-        elif msg_type == 'session_update':
-            session_id = msg['session_id']
-            fields = msg['fields']
+            # 4. Update session fields
+            session_fields = msg.get('session_fields', {})
+            if session_fields:
+                for decimal_field in ('self_cost', 'subagents_cost', 'total_cost'):
+                    if decimal_field in session_fields and session_fields[decimal_field] is not None:
+                        session_fields[decimal_field] = Decimal(session_fields[decimal_field])
+                Session.objects.filter(id=session_id).update(**session_fields)
 
-            # Handle Decimal fields
-            for decimal_field in ('self_cost', 'subagents_cost', 'total_cost'):
-                if decimal_field in fields and fields[decimal_field] is not None:
-                    fields[decimal_field] = Decimal(fields[decimal_field])
-
-            Session.objects.filter(id=session_id).update(**fields)
-
-            # Update titles
+            # 5. Update titles
             for target_id, title in msg.get('titles', {}).items():
                 Session.objects.filter(id=target_id).update(title=title)
 
-            # Update project directory
+            # 6. Update project directory
             project_id = msg.get('project_id')
-            directory = msg.get('project_directory')
-            if project_id and directory:
-                ensure_project_directory(project_id, directory)
+            project_directory = msg.get('project_directory')
+            if project_id and project_directory:
+                ensure_project_directory(project_id, project_directory)
 
-            # Update project total_cost
+            # 7. Update project total_cost
             if project_id:
                 update_project_total_cost(project_id)
-
-        elif msg_type == 'done':
-            # Processing complete for this session
-            pass
 
         elif msg_type == 'error':
             logger.error(f"Compute error for {msg['session_id']}: {msg['error']}")

@@ -350,6 +350,68 @@ def _delete_session_links(session_id: str) -> None:
     SessionItemLink.objects.filter(session_id=session_id).delete()
 
 
+@sync_to_async
+def _apply_session_complete(msg: dict) -> None:
+    """
+    Apply all results for a session in one go.
+
+    This handles the new 'session_complete' message type that contains
+    all updates for a session in a single message.
+    """
+    from twicc.compute import ensure_project_directory, update_project_total_cost
+
+    session_id = msg['session_id']
+
+    # 1. Delete existing links
+    SessionItemLink.objects.filter(session_id=session_id).delete()
+
+    # 2. Apply item updates
+    item_updates = msg.get('item_updates', [])
+    item_fields = msg.get('item_fields', [])
+    if item_updates and item_fields:
+        items = []
+        for upd in item_updates:
+            item = SessionItem(id=upd['id'])
+            for field in item_fields:
+                value = upd.get(field)
+                if field == 'cost' and value is not None:
+                    value = Decimal(value)
+                setattr(item, field, value)
+            items.append(item)
+        if items:
+            SessionItem.objects.bulk_update(items, item_fields)
+
+    # 3. Create links
+    links_data = msg.get('links', [])
+    if links_data:
+        links = [SessionItemLink(**link_data) for link_data in links_data]
+        SessionItemLink.objects.bulk_create(links, ignore_conflicts=True)
+
+    # 4. Update session fields
+    session_fields = msg.get('session_fields', {})
+    if session_fields:
+        # Handle Decimal fields
+        for decimal_field in ('self_cost', 'subagents_cost', 'total_cost'):
+            if decimal_field in session_fields and session_fields[decimal_field] is not None:
+                session_fields[decimal_field] = Decimal(session_fields[decimal_field])
+        Session.objects.filter(id=session_id).update(**session_fields)
+
+    # 5. Update titles
+    titles = msg.get('titles', {})
+    for target_id, title in titles.items():
+        Session.objects.filter(id=target_id).update(title=title)
+
+    # 6. Update project directory
+    project_id = msg.get('project_id')
+    project_directory = msg.get('project_directory')
+    if project_id and project_directory:
+        ensure_project_directory(project_id, project_directory)
+
+    # 7. Update project total_cost
+    if project_id:
+        update_project_total_cost(project_id)
+
+
 async def _handle_compute_done(session_id: str) -> None:
     """Handle completion of a session compute - broadcast updates."""
     try:
@@ -372,6 +434,8 @@ async def consume_compute_results(stop_event: asyncio.Event) -> None:
     Runs in the main process event loop. All DB writes happen here,
     ensuring no concurrent writes with the FileWatcher.
     """
+    import orjson
+
     _, result_queue = get_queues()
 
     while not stop_event.is_set():
@@ -379,7 +443,9 @@ async def consume_compute_results(stop_event: asyncio.Event) -> None:
         messages = []
         try:
             while True:
-                msg = result_queue.get_nowait()
+                raw_msg = result_queue.get_nowait()
+                # Deserialize from orjson bytes
+                msg = orjson.loads(raw_msg)
                 messages.append(msg)
                 if len(messages) >= 10:  # Process in batches of max 10
                     break
@@ -396,7 +462,12 @@ async def consume_compute_results(stop_event: asyncio.Event) -> None:
             msg_type = msg.get('type')
 
             try:
-                if msg_type == 'delete_links':
+                if msg_type == 'session_complete':
+                    # New unified message type - all data in one message
+                    await _apply_session_complete(msg)
+                    await _handle_compute_done(msg['session_id'])
+
+                elif msg_type == 'delete_links':
                     await _delete_session_links(msg['session_id'])
 
                 elif msg_type == 'batch':
