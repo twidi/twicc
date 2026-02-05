@@ -11,7 +11,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django_extensions",
     "channels",
-    "twicc.core",
+    "twicc.core.apps.CoreConfig",
 ]
 
 MIDDLEWARE = []
