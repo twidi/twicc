@@ -189,7 +189,7 @@ function handleNewSession(targetProjectId = null) {
 const SIDEBAR_STORAGE_KEY = 'twicc-sidebar-state'
 const DEFAULT_SIDEBAR_WIDTH = 300
 // Sidebar collapse threshold in pixels
-const SIDEBAR_COLLAPSE_THRESHOLD = 50
+const SIDEBAR_COLLAPSE_THRESHOLD = 120
 // Mobile breakpoint (must match CSS media query)
 const MOBILE_BREAKPOINT = 640
 
@@ -249,16 +249,23 @@ watch(sessionId, (newSessionId) => {
     }
 })
 
-// Apply stored sidebar width once on mount
+// Apply stored sidebar width and body class once on mount
 onMounted(() => {
     const splitPanel = document.querySelector('.project-view')
     if (splitPanel && sidebarState.width !== DEFAULT_SIDEBAR_WIDTH) {
         splitPanel.positionInPixels = sidebarState.width
     }
+    // Set initial sidebar-closed class on body
+    updateSidebarClosedClass(!sidebarState.open)
 })
+
+// Guard flag to ignore reposition events triggered by width restore after auto-collapse
+let ignoringReposition = false
 
 // Handle split panel reposition: auto-collapse when dragged to threshold, and persist width
 function handleSplitReposition(event) {
+    if (ignoringReposition) return
+
     const checkbox = document.getElementById('sidebar-toggle-state')
     if (!checkbox) return
 
@@ -268,13 +275,20 @@ function handleSplitReposition(event) {
         // Auto-collapse: mark as closed, reset width to stored value
         checkbox.checked = true
         saveSidebarState({ open: false, width: sidebarState.width })
+        updateSidebarClosedClass(true)
+        // Restore width, ignoring the resulting reposition event
+        ignoringReposition = true
         requestAnimationFrame(() => {
             event.target.positionInPixels = sidebarState.width
+            requestAnimationFrame(() => {
+                ignoringReposition = false
+            })
         })
     } else {
         // Normal resize: update stored width
         sidebarState.width = newWidth
         saveSidebarState({ open: true, width: newWidth })
+        updateSidebarClosedClass(false)
     }
 }
 
@@ -282,6 +296,15 @@ function handleSplitReposition(event) {
 function handleSidebarToggle(event) {
     const isOpen = !event.target.checked  // checked = closed on desktop
     saveSidebarState({ open: isOpen, width: sidebarState.width })
+    updateSidebarClosedClass(!isOpen)
+}
+
+// Toggle body class to indicate sidebar is closed (desktop only).
+// Used by child components (e.g. MessageInput) to adjust layout
+// when the sidebar toggle button overlaps their content.
+function updateSidebarClosedClass(closed) {
+    if (isMobile()) return
+    document.body.classList.toggle('sidebar-closed', closed)
 }
 </script>
 
@@ -294,7 +317,7 @@ function handleSidebarToggle(event) {
             class="project-view"
             :position-in-pixels="DEFAULT_SIDEBAR_WIDTH"
             primary="start"
-            snap="50px 150px 300px 400px"
+            snap="125px 220px 300px 400px"
             @wa-reposition="handleSplitReposition"
         >
             <!-- Divider handle for touch devices -->
