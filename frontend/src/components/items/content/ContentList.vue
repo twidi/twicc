@@ -2,10 +2,11 @@
 import { computed } from 'vue'
 import { useDataStore } from '../../../stores/data'
 import { DISPLAY_MODE } from '../../../constants'
+import { sdkBlockToMediaItem } from '../../../utils/fileUtils'
 import { getInternalCollapsibleGroups, getPrefixSuffixBoundaries, isVisibleItem } from '../../../utils/contentVisibility'
 import GroupToggle from '../../GroupToggle.vue'
 import TextContent from './TextContent.vue'
-import ImageContent from './ImageContent.vue'
+import MediaThumbnailGroup from '../../MediaThumbnailGroup.vue'
 import DocumentContent from './DocumentContent.vue'
 import ToolUseContent from './ToolUseContent.vue'
 import UnknownEntry from '../UnknownEntry.vue'
@@ -175,6 +176,29 @@ const visibleItems = computed(() => {
     return result
 })
 
+// =============================================================================
+// Media grouping: collect all image items into a single thumbnail group
+// =============================================================================
+
+// Collect all image items from the content array (for grouping into thumbnails)
+const allImageItems = computed(() => {
+    return props.items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => item.type === 'image')
+})
+
+// Convert image items to normalized MediaItem format for MediaThumbnailGroup
+const mediaGroupData = computed(() => {
+    return allImageItems.value
+        .map(({ item }) => sdkBlockToMediaItem(item))
+        .filter(mediaItem => mediaItem !== null)
+})
+
+// Index of the first image in the items array (render thumbnail group at this position)
+const firstImageIndex = computed(() => {
+    return allImageItems.value.length > 0 ? allImageItems.value[0].index : -1
+})
+
 function toggleInternalGroup(startIndex) {
     store.toggleInternalExpandedGroup(props.sessionId, props.lineNum, startIndex)
 }
@@ -204,16 +228,17 @@ function toggleInternalGroup(startIndex) {
                 :text="entry.item.text"
                 :role="role"
             />
-            <ImageContent
-                v-else-if="entry.item.type === 'image'"
-                :source="entry.item.source"
-                :media-type="entry.item.media_type"
-                :role="role"
+            <!-- First image: render all images as a grouped thumbnail strip -->
+            <MediaThumbnailGroup
+                v-else-if="entry.item.type === 'image' && entry.index === firstImageIndex"
+                :items="mediaGroupData"
             />
+            <!-- Subsequent images: already rendered in the group above, skip -->
+            <template v-else-if="entry.item.type === 'image'">
+            </template>
             <DocumentContent
                 v-else-if="entry.item.type === 'document'"
                 :source="entry.item.source"
-                :media-type="entry.item.media_type"
                 :title="entry.item.title"
                 :role="role"
             />

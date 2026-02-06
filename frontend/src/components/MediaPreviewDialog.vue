@@ -1,11 +1,11 @@
 <script setup>
-// AttachmentPreviewDialog.vue - Full-size preview of image and text attachments
+// MediaPreviewDialog.vue - Full-size preview dialog for media items (images, text, PDF).
 // Supports prev/next navigation via arrow keys and buttons.
+// Accepts a normalized MediaItem[] format shared by both draft attachments and conversation messages.
 import { ref, computed, onBeforeUnmount } from 'vue'
-import { FILE_TYPES, mediaToDataUrl } from '../utils/fileUtils'
 
 const props = defineProps({
-    attachments: {
+    items: {
         type: Array,
         default: () => []
     }
@@ -14,44 +14,38 @@ const props = defineProps({
 const dialogRef = ref(null)
 const currentIndex = ref(0)
 
-// Current attachment based on index
-const currentAttachment = computed(() => {
-    if (props.attachments.length === 0) return null
-    return props.attachments[currentIndex.value] || null
+// Current item based on index
+const currentItem = computed(() => {
+    if (props.items.length === 0) return null
+    return props.items[currentIndex.value] || null
 })
 
 // Navigation state
 const hasPrev = computed(() => currentIndex.value > 0)
-const hasNext = computed(() => currentIndex.value < props.attachments.length - 1)
-const hasNavigation = computed(() => props.attachments.length > 1)
-
-// Get the data URL for image preview
-const imageSrc = computed(() => {
-    if (currentAttachment.value?.type === FILE_TYPES.IMAGE) {
-        return mediaToDataUrl(currentAttachment.value)
-    }
-    return null
-})
-
-// Get the text content for text preview
-const textContent = computed(() => {
-    if (currentAttachment.value?.type === FILE_TYPES.TXT) {
-        return currentAttachment.value.data
-    }
-    return null
-})
+const hasNext = computed(() => currentIndex.value < props.items.length - 1)
+const hasNavigation = computed(() => props.items.length > 1)
 
 // Dialog title (filename + position indicator)
 const dialogTitle = computed(() => {
-    const name = currentAttachment.value?.name || 'Preview'
+    const item = currentItem.value
+    if (!item) return 'Preview'
+
+    let name = item.name
+    if (!name) {
+        if (item.type === 'image') name = 'Image'
+        else if (item.type === 'pdf') name = 'PDF'
+        else if (item.type === 'txt') name = 'Text'
+        else name = 'Preview'
+    }
+
     if (hasNavigation.value) {
-        return `${name} (${currentIndex.value + 1}/${props.attachments.length})`
+        return `${name} (${currentIndex.value + 1}/${props.items.length})`
     }
     return name
 })
 
 /**
- * Navigate to previous attachment.
+ * Navigate to previous item.
  */
 function prev() {
     if (hasPrev.value) {
@@ -60,7 +54,7 @@ function prev() {
 }
 
 /**
- * Navigate to next attachment.
+ * Navigate to next item.
  */
 function next() {
     if (hasNext.value) {
@@ -83,7 +77,7 @@ function onKeyDown(event) {
         currentIndex.value = 0
     } else if (event.key === 'End') {
         event.preventDefault()
-        currentIndex.value = props.attachments.length - 1
+        currentIndex.value = props.items.length - 1
     }
 }
 
@@ -120,7 +114,7 @@ defineExpose({ open, close })
     <wa-dialog
         ref="dialogRef"
         :label="dialogTitle"
-        class="attachment-preview-dialog"
+        class="media-preview-dialog"
         light-dismiss
     >
         <div class="preview-content">
@@ -138,17 +132,26 @@ defineExpose({ open, close })
 
             <!-- Image preview -->
             <img
-                v-if="currentAttachment?.type === FILE_TYPES.IMAGE"
-                :src="imageSrc"
-                :alt="currentAttachment?.name"
+                v-if="currentItem?.type === 'image'"
+                :src="currentItem.src"
+                :alt="currentItem.name || 'Image'"
                 class="preview-image"
             />
 
             <!-- Text preview -->
             <pre
-                v-else-if="currentAttachment?.type === FILE_TYPES.TXT"
+                v-else-if="currentItem?.type === 'txt' && currentItem.textContent"
                 class="preview-text"
-            >{{ textContent }}</pre>
+            >{{ currentItem.textContent }}</pre>
+
+            <!-- PDF placeholder -->
+            <div
+                v-else-if="currentItem?.type === 'pdf'"
+                class="preview-placeholder"
+            >
+                <wa-icon name="file-pdf" style="font-size: 3rem;"></wa-icon>
+                <span>PDF preview not yet supported</span>
+            </div>
 
             <!-- Next button -->
             <button
@@ -174,23 +177,23 @@ defineExpose({ open, close })
  *   so we don't need to set our own viewport constraints on the panel.
  * - The image constrains itself to the available space inside the dialog
  *   using max-width/max-height with 100%.
- * - The body part has no overflow:hidden — images are never truncated.
+ * - The body part has no overflow:hidden - images are never truncated.
  */
-.attachment-preview-dialog {
+.media-preview-dialog {
     --width: fit-content;
 }
 
-.attachment-preview-dialog::part(header) {
+.media-preview-dialog::part(header) {
     overflow: hidden;
 }
 
-.attachment-preview-dialog::part(title) {
+.media-preview-dialog::part(title) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.attachment-preview-dialog::part(body) {
+.media-preview-dialog::part(body) {
     padding: 0;
 }
 
@@ -220,6 +223,16 @@ defineExpose({ open, close })
     max-width: calc(90vw - 2rem);
     max-height: calc(90vh - 100px);
     overflow: auto;
+}
+
+.preview-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--wa-space-m);
+    padding: var(--wa-space-xl);
+    color: var(--wa-color-text-quiet);
+    font-style: italic;
 }
 
 /* Navigation buttons - overlaid on content edges */

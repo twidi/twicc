@@ -1,11 +1,7 @@
 <script setup>
 defineProps({
     source: {
-        type: String,
-        default: null
-    },
-    mediaType: {
-        type: String,
+        type: Object,
         default: null
     },
     title: {
