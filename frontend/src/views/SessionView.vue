@@ -357,7 +357,7 @@ function handleDevToolsPanelReposition(event) {
     } else {
         // Normal resize: update stored height
         devToolsPanelState.height = newHeight
-        saveDevToolsPanelState({ open: true, height: newHeight })
+        saveDevToolsPanelState({ open: devToolsPanelState.open, height: newHeight })
     }
 }
 
