@@ -6,6 +6,9 @@ import { useSettingsStore } from '../stores/settings'
 import SessionHeader from '../components/SessionHeader.vue'
 import SessionItemsList from '../components/SessionItemsList.vue'
 import SessionContent from '../components/SessionContent.vue'
+import DevToolsGitPanel from '../components/DevToolsGitPanel.vue'
+import DevToolsFilesPanel from '../components/DevToolsFilesPanel.vue'
+import DevToolsTerminalPanel from '../components/DevToolsTerminalPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -488,13 +491,13 @@ function handleDevToolsTabShow(event) {
                         </wa-tab>
 
                         <wa-tab-panel name="git">
-                            <div class="devtools-panel-placeholder">Git (coming soon)</div>
+                            <DevToolsGitPanel />
                         </wa-tab-panel>
                         <wa-tab-panel name="files">
-                            <div class="devtools-panel-placeholder">Files (coming soon)</div>
+                            <DevToolsFilesPanel />
                         </wa-tab-panel>
                         <wa-tab-panel name="terminal">
-                            <div class="devtools-panel-placeholder">Terminal (coming soon)</div>
+                            <DevToolsTerminalPanel />
                         </wa-tab-panel>
                     </wa-tab-group>
                 </div>
@@ -705,15 +708,6 @@ wa-tab::part(base) {
         }
     }
 
-}
-
-.devtools-panel-placeholder {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-s);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
