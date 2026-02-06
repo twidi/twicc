@@ -322,6 +322,19 @@ function handleDevToolsPanelToggle(event) {
     const isOpen = event.target.checked  // checked = open (NOT inverted like sidebar)
     saveDevToolsPanelState({ open: isOpen, height: devToolsPanelState.height })
 }
+
+// Handle devtools tab switch: update button appearance/variant to match active state
+function handleDevToolsTabShow(event) {
+    const tabGroup = event.target.closest('wa-tab-group')
+    if (!tabGroup) return
+    tabGroup.querySelectorAll('wa-tab').forEach(tab => {
+        const button = tab.querySelector('wa-button')
+        if (!button) return
+        const isActive = tab.getAttribute('panel') === event.detail?.name
+        button.setAttribute('appearance', isActive ? 'outlined' : 'plain')
+        button.setAttribute('variant', isActive ? 'brand' : 'neutral')
+    })
+}
 </script>
 
 <template>
@@ -418,9 +431,27 @@ function handleDevToolsPanelToggle(event) {
             <!-- DevTools Panel -->
             <aside slot="end" class="devtools-panel">
                 <div class="devtools-panel-content">
-                    <div class="devtools-panel-placeholder">
-                        Dev Tools Panel (coming soon)
-                    </div>
+                    <wa-tab-group class="devtools-tabs" active="git" @wa-tab-show="handleDevToolsTabShow">
+                        <wa-tab slot="nav" panel="git">
+                            <wa-button appearance="outlined" variant="brand" size="small">Git</wa-button>
+                        </wa-tab>
+                        <wa-tab slot="nav" panel="files">
+                            <wa-button appearance="plain" variant="neutral" size="small">Files</wa-button>
+                        </wa-tab>
+                        <wa-tab slot="nav" panel="terminal">
+                            <wa-button appearance="plain" variant="neutral" size="small">Terminal</wa-button>
+                        </wa-tab>
+
+                        <wa-tab-panel name="git">
+                            <div class="devtools-panel-placeholder">Git (coming soon)</div>
+                        </wa-tab-panel>
+                        <wa-tab-panel name="files">
+                            <div class="devtools-panel-placeholder">Files (coming soon)</div>
+                        </wa-tab-panel>
+                        <wa-tab-panel name="terminal">
+                            <div class="devtools-panel-placeholder">Terminal (coming soon)</div>
+                        </wa-tab-panel>
+                    </wa-tab-group>
                 </div>
 
                 <label for="devtools-panel-toggle-state" class="devtools-panel-toggle" id="devtools-panel-toggle-label">
@@ -600,6 +631,35 @@ wa-tab::part(base) {
     padding: 0;
     display: flex;
     flex-direction: column;
+}
+
+.devtools-tabs {
+    flex: 1;
+    min-height: 0;
+    font-size: var(--wa-font-size-s);
+    --indicator-color: transparent;
+    --track-width: 4px;
+
+    &::part(base) {
+        height: 100%;
+        flex-direction: column;
+    }
+
+    &::part(body) {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    wa-tab-panel {
+        height: 100%;
+
+        &::part(base) {
+            height: 100%;
+            padding: 0;
+        }
+    }
+
 }
 
 .devtools-panel-placeholder {
