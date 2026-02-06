@@ -12,6 +12,8 @@ from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.layers import get_channel_layer
 from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.sessions import SessionMiddlewareStack
+from django.conf import settings
 from django.core.asgi import get_asgi_application
 from django.urls import path
 
@@ -79,7 +81,20 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
     """
 
     async def connect(self):
-        """Accept connection, add to updates group, and send active processes."""
+        """Accept connection, add to updates group, and send active processes.
+
+        If password protection is enabled, rejects unauthenticated WebSocket
+        connections. The session is populated by SessionMiddlewareStack from
+        the browser's session cookie (sent during the HTTP upgrade handshake).
+        """
+        # Check authentication if password protection is enabled
+        if settings.TWICC_PASSWORD:
+            session = self.scope.get("session", {})
+            if not session.get("authenticated"):
+                logger.warning("WebSocket connection rejected: not authenticated")
+                await self.close()
+                return
+
         await self.channel_layer.group_add("updates", self.channel_name)
         await self.accept()
 
@@ -371,9 +386,13 @@ websocket_urlpatterns = [
 django_asgi_app = get_asgi_application()
 
 # Protocol router for HTTP and WebSocket
+# SessionMiddlewareStack reads the session cookie from the WebSocket
+# HTTP upgrade request, making session data available in the consumer's scope.
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
-        "websocket": URLRouter(websocket_urlpatterns),
+        "websocket": SessionMiddlewareStack(
+            URLRouter(websocket_urlpatterns)
+        ),
     }
 )

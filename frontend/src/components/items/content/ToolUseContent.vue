@@ -2,6 +2,7 @@
 import { computed, ref, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../../stores/data'
+import { apiFetch } from '../../../utils/api'
 import JsonViewer from '../../JsonViewer.vue'
 
 const route = useRoute()
@@ -81,7 +82,7 @@ async function fetchResult() {
             ? `/api/projects/${props.projectId}/sessions/${props.parentSessionId}/subagent/${props.sessionId}`
             : `/api/projects/${props.projectId}/sessions/${props.sessionId}`
         const url = `${baseUrl}/items/${props.lineNum}/tool-results/${props.toolId}/`
-        const response = await fetch(url, { signal: abortController.value.signal })
+        const response = await apiFetch(url, { signal: abortController.value.signal })
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`)
@@ -254,7 +255,7 @@ async function fetchAgentLink() {
 
     try {
         const url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/items/${props.lineNum}/tool-agent-id/${props.toolId}/`
-        const response = await fetch(url, { signal: agentLinkAbortController.value.signal })
+        const response = await apiFetch(url, { signal: agentLinkAbortController.value.signal })
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`)

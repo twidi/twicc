@@ -5,6 +5,7 @@ import { useDataStore } from '../stores/data'
 import { INITIAL_ITEMS_COUNT } from '../constants'
 import { isSupportedMimeType, MAX_FILE_SIZE } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
+import { apiFetch } from '../utils/api'
 import VirtualScroller from './VirtualScroller.vue'
 import SessionItem from './SessionItem.vue'
 import FetchErrorPanel from './FetchErrorPanel.vue'
@@ -199,7 +200,7 @@ const apiBaseUrl = computed(() => {
 async function loadSubagentSession() {
     try {
         const url = `${apiBaseUrl.value}/`
-        const response = await fetch(url)
+        const response = await apiFetch(url)
         if (!response.ok) {
             console.error('Failed to load subagent session:', response.status)
             return null

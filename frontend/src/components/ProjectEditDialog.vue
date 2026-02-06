@@ -2,6 +2,7 @@
 // ProjectEditDialog.vue - Dialog for editing project name and color
 import { ref, watch, nextTick } from 'vue'
 import { useDataStore } from '../stores/data'
+import { apiFetch } from '../utils/api'
 
 const props = defineProps({
     project: {
@@ -132,7 +133,7 @@ async function handleSave() {
 
     let response
     try {
-        response = await fetch(`/api/projects/${props.project.id}/`, {
+        response = await apiFetch(`/api/projects/${props.project.id}/`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

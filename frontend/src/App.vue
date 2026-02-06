@@ -1,19 +1,42 @@
 <script setup>
 import { onMounted, watch, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { Notivue, Notification, lightTheme, slateTheme } from 'notivue'
 import { useWebSocket } from './composables/useWebSocket'
 import { useDataStore } from './stores/data'
 import { useSettingsStore } from './stores/settings'
+import { useAuthStore } from './stores/auth'
 import { THEME_MODE } from './constants'
 import ConnectionIndicator from './components/ConnectionIndicator.vue'
 
+const route = useRoute()
+const authStore = useAuthStore()
+
+// Only show the main app UI (WebSocket, data loading) when authenticated
+const isAuthenticated = computed(() => !authStore.needsLogin)
+const isLoginPage = computed(() => route.name === 'login')
+
 // Initialize WebSocket connection for real-time updates
+// (only connects when authenticated, see useWebSocket)
 const { wsStatus } = useWebSocket()
 
 // Load initial data
 const dataStore = useDataStore()
 onMounted(async () => {
-    await dataStore.loadProjects({ isInitialLoading: true })
+    // Wait for auth check before loading data
+    if (!authStore.isReady) {
+        await authStore.checkAuth()
+    }
+    if (isAuthenticated.value) {
+        await dataStore.loadProjects({ isInitialLoading: true })
+    }
+})
+
+// Reload data when authentication state changes (after login)
+watch(isAuthenticated, async (newVal) => {
+    if (newVal) {
+        await dataStore.loadProjects({ isInitialLoading: true })
+    }
 })
 
 // Sync display mode to body data attribute
@@ -35,7 +58,7 @@ const toastTheme = computed(() => {
 </script>
 
 <template>
-    <ConnectionIndicator :status="wsStatus" />
+    <ConnectionIndicator v-if="!isLoginPage" :status="wsStatus" />
     <div class="app-container">
         <router-view />
     </div>

@@ -3,8 +3,14 @@ from django.conf.urls.static import static
 from django.urls import path, re_path
 
 from . import views
+from .auth import views as auth_views
 
 urlpatterns = [
+    # Auth endpoints (always accessible, no auth required)
+    path("api/auth/check/", auth_views.auth_check),
+    path("api/auth/login/", auth_views.login),
+    path("api/auth/logout/", auth_views.logout),
+    # API endpoints
     path("api/sessions/", views.all_sessions),
     path("api/projects/", views.project_list),
     path("api/projects/<str:project_id>/", views.project_detail),

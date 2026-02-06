@@ -21,6 +21,7 @@ import {
 } from '../utils/draftStorage'
 import { processFile, mediasToSdkFormat } from '../utils/fileUtils'
 import { debounce } from '../utils/debounce'
+import { apiFetch } from '../utils/api'
 
 // Map of debounced save functions per session (to avoid mixing debounces)
 const debouncedSaves = new Map()
@@ -541,7 +542,7 @@ export const useDataStore = defineStore('data', {
             const changedIds = new Set()
             this.localState.projectsList.loading = true
             try {
-                const res = await fetch('/api/projects/')
+                const res = await apiFetch('/api/projects/')
                 if (!res.ok) {
                     console.error('Failed to load projects:', res.status, res.statusText)
                     if (isInitialLoading) {
@@ -616,7 +617,7 @@ export const useDataStore = defineStore('data', {
             }
 
             const url = params.toString() ? `${baseUrl}?${params}` : baseUrl
-            const res = await fetch(url)
+            const res = await apiFetch(url)
 
             if (!res.ok) {
                 throw new Error(`Failed to load sessions: ${res.status}`)
@@ -720,7 +721,7 @@ export const useDataStore = defineStore('data', {
             }
 
             try {
-                const res = await fetch(`/api/projects/${projectId}/sessions/${sessionId}/items/`)
+                const res = await apiFetch(`/api/projects/${projectId}/sessions/${sessionId}/items/`)
                 if (!res.ok) {
                     console.error('Failed to load session items:', res.status, res.statusText)
                     if (isInitialLoading) {
@@ -780,7 +781,7 @@ export const useDataStore = defineStore('data', {
                 : `/api/projects/${projectId}/sessions/${sessionId}`
 
             try {
-                const res = await fetch(`${baseUrl}/items/?${params}`)
+                const res = await apiFetch(`${baseUrl}/items/?${params}`)
                 if (!res.ok) {
                     console.error('Failed to load session items ranges:', res.status, res.statusText)
                     if (isInitialLoading) {
@@ -983,7 +984,7 @@ export const useDataStore = defineStore('data', {
                 : `/api/projects/${projectId}/sessions/${sessionId}`
 
             try {
-                const res = await fetch(`${baseUrl}/items/metadata/`)
+                const res = await apiFetch(`${baseUrl}/items/metadata/`)
                 if (!res.ok) {
                     console.error('Failed to load session metadata:', res.status, res.statusText)
                     return null
@@ -1198,7 +1199,7 @@ export const useDataStore = defineStore('data', {
             }
 
             try {
-                const response = await fetch(
+                const response = await apiFetch(
                     `/api/projects/${projectId}/sessions/${sessionId}/`,
                     {
                         method: 'PATCH',
@@ -1241,7 +1242,7 @@ export const useDataStore = defineStore('data', {
             }
 
             try {
-                const response = await fetch(
+                const response = await apiFetch(
                     `/api/projects/${projectId}/sessions/${sessionId}/`,
                     {
                         method: 'PATCH',
@@ -1284,7 +1285,7 @@ export const useDataStore = defineStore('data', {
             }
 
             try {
-                const response = await fetch(
+                const response = await apiFetch(
                     `/api/projects/${projectId}/sessions/${sessionId}/`,
                     {
                         method: 'PATCH',

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -8,13 +9,29 @@ ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
+    "django.contrib.sessions",
     "django.contrib.staticfiles",
     "django_extensions",
     "channels",
     "twicc.core.apps.CoreConfig",
 ]
 
-MIDDLEWARE = []
+MIDDLEWARE = [
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "twicc.auth.middleware.PasswordAuthMiddleware",
+]
+
+# Password protection
+# Set TWICC_PASSWORD in .env to enable password protection.
+# If not set or empty, the app is accessible without authentication.
+TWICC_PASSWORD = os.environ.get("TWICC_PASSWORD", "")
+
+# Session settings
+SESSION_ENGINE = "django.contrib.sessions.backends.db"
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 30  # 30 days
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_SAVE_EVERY_REQUEST = True  # Refresh expiry on each request
 
 ROOT_URLCONF = "twicc.urls"
 
