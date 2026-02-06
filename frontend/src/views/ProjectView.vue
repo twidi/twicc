@@ -258,7 +258,6 @@ onMounted(() => {
     }
     // Set initial sidebar-closed class on body
     if (isMobile()) {
-        // Mobile: sidebar closed when a session is selected
         updateSidebarClosedClass(!!sessionId.value)
     } else {
         updateSidebarClosedClass(!sidebarState.open)
@@ -268,8 +267,10 @@ onMounted(() => {
 // Guard flag to ignore reposition events triggered by width restore after auto-collapse
 let ignoringReposition = false
 
-// Handle split panel reposition: auto-collapse when dragged to threshold, and persist width
+// Handle split panel reposition: auto-collapse when dragged to threshold, and persist width.
+// Ignored on mobile where the split panel is not used (sidebar is an overlay).
 function handleSplitReposition(event) {
+    if (isMobile()) return
     if (ignoringReposition) return
 
     const checkbox = document.getElementById('sidebar-toggle-state')
