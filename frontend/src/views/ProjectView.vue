@@ -247,6 +247,7 @@ watch(sessionId, (newSessionId) => {
     if (checkbox) {
         checkbox.checked = false
     }
+    updateSidebarClosedClass(true)
 })
 
 // Apply stored sidebar width and body class once on mount
@@ -256,7 +257,12 @@ onMounted(() => {
         splitPanel.positionInPixels = sidebarState.width
     }
     // Set initial sidebar-closed class on body
-    updateSidebarClosedClass(!sidebarState.open)
+    if (isMobile()) {
+        // Mobile: sidebar closed when a session is selected
+        updateSidebarClosedClass(!!sessionId.value)
+    } else {
+        updateSidebarClosedClass(!sidebarState.open)
+    }
 })
 
 // Guard flag to ignore reposition events triggered by width restore after auto-collapse
@@ -294,16 +300,22 @@ function handleSplitReposition(event) {
 
 // Handle sidebar toggle (called when checkbox changes)
 function handleSidebarToggle(event) {
-    const isOpen = !event.target.checked  // checked = closed on desktop
-    saveSidebarState({ open: isOpen, width: sidebarState.width })
-    updateSidebarClosedClass(!isOpen)
+    const checked = event.target.checked
+    if (isMobile()) {
+        // Mobile: checked = open
+        updateSidebarClosedClass(!checked)
+    } else {
+        // Desktop: checked = closed
+        const isOpen = !checked
+        saveSidebarState({ open: isOpen, width: sidebarState.width })
+        updateSidebarClosedClass(checked)
+    }
 }
 
-// Toggle body class to indicate sidebar is closed (desktop only).
+// Toggle body class to indicate sidebar is closed.
 // Used by child components (e.g. MessageInput) to adjust layout
 // when the sidebar toggle button overlaps their content.
 function updateSidebarClosedClass(closed) {
-    if (isMobile()) return
     document.body.classList.toggle('sidebar-closed', closed)
 }
 </script>
