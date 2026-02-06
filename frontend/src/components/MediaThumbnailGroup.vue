@@ -129,8 +129,13 @@ function getIconName(item) {
     border-radius: var(--wa-border-radius-s);
     border: 1px solid var(--wa-color-border-neutral-tertiary);
     background: var(--wa-color-surface-secondary);
-    overflow: hidden;
     flex-shrink: 0;
+}
+
+.media-thumbnail .thumbnail-image,
+.media-thumbnail .thumbnail-icon {
+    border-radius: inherit;
+    overflow: hidden;
 }
 
 .media-thumbnail.can-preview {
@@ -159,25 +164,25 @@ function getIconName(item) {
 
 .thumbnail-remove {
     position: absolute;
-    top: -4px;
-    right: -4px;
+    top: -6px;
+    right: -6px;
     width: 18px;
     height: 18px;
     border-radius: 50%;
     border: none;
-    background: var(--wa-color-surface-danger);
-    color: var(--wa-color-text-on-danger);
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.65rem;
-    opacity: 0;
-    transition: opacity 0.15s ease;
+    font-size: 0.6rem;
+    padding: 0;
+    box-shadow: none;
 }
 
-.media-thumbnail:hover .thumbnail-remove {
-    opacity: 1;
+.thumbnail-remove:hover {
+    background: rgba(0, 0, 0, 0.8);
 }
 
 .thumbnail-name {

@@ -348,65 +348,66 @@ function handleClear() {
             @paste="onPaste"
         ></wa-textarea>
 
-        <!-- Attachments row: button on left, thumbnails on right -->
-        <div class="message-input-attachments">
-            <!-- Hidden file input -->
-            <input
-                ref="fileInputRef"
-                type="file"
-                multiple
-                accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain"
-                style="display: none;"
-                @change="onFileSelected"
-            />
+        <div class="message-input-toolbar">
+            <!-- Attachments row: button on left, thumbnails on right -->
+            <div class="message-input-attachments">
+                <!-- Hidden file input -->
+                <input
+                    ref="fileInputRef"
+                    type="file"
+                    multiple
+                    accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain"
+                    style="display: none;"
+                    @change="onFileSelected"
+                />
 
-            <!-- Attach button -->
-            <wa-button
-                variant="neutral"
-                appearance="plain"
-                size="small"
-                @click="openFilePicker"
-                title="Attach files (images, PDF, text)"
-            >
-                <wa-icon slot="prefix" name="paperclip"></wa-icon>
-                Attach
-            </wa-button>
+                <!-- Attach button -->
+                <wa-button
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    @click="openFilePicker"
+                    title="Attach files (images, PDF, text)"
+                >
+                    <wa-icon name="paperclip"></wa-icon>
+                </wa-button>
 
-            <!-- Attachment thumbnails -->
-            <AttachmentThumbnails
-                v-if="attachmentCount > 0"
-                :attachments="attachments"
-                @remove="removeAttachment"
-            />
-        </div>
+                <!-- Attachment thumbnails -->
+                <AttachmentThumbnails
+                    v-if="attachmentCount > 0"
+                    :attachments="attachments"
+                    @remove="removeAttachment"
+                />
+            </div>
 
-        <div class="message-input-actions">
-            <!-- Cancel button for draft sessions -->
-            <wa-button
-                v-if="isDraft"
-                variant="neutral"
-                appearance="outlined"
-                @click="handleCancel"
-            >
-                Cancel
-            </wa-button>
-            <!-- Clear button for existing sessions when there's text -->
-            <wa-button
-                v-else-if="messageText.trim()"
-                variant="neutral"
-                appearance="outlined"
-                @click="handleClear"
-            >
-                Clear
-            </wa-button>
-            <wa-button
-                variant="brand"
-                :disabled="isDisabled || !messageText.trim()"
-                @click="handleSend"
-            >
-                <wa-spinner v-if="processState?.state === 'starting' || processState?.state === 'assistant_turn'" slot="prefix"></wa-spinner>
-                {{ buttonLabel }}
-            </wa-button>
+            <div class="message-input-actions">
+                <!-- Cancel button for draft sessions -->
+                <wa-button
+                    v-if="isDraft"
+                    variant="neutral"
+                    appearance="outlined"
+                    @click="handleCancel"
+                >
+                    Cancel
+                </wa-button>
+                <!-- Clear button for existing sessions when there's text -->
+                <wa-button
+                    v-else-if="messageText.trim()"
+                    variant="neutral"
+                    appearance="outlined"
+                    @click="handleClear"
+                >
+                    Clear
+                </wa-button>
+                <wa-button
+                    variant="brand"
+                    :disabled="isDisabled || !messageText.trim()"
+                    @click="handleSend"
+                >
+                    <wa-spinner v-if="processState?.state === 'starting' || processState?.state === 'assistant_turn'" slot="prefix"></wa-spinner>
+                    {{ buttonLabel }}
+                </wa-button>
+            </div>
         </div>
     </div>
 </template>
@@ -427,16 +428,33 @@ function handleClear() {
     overflow-y: auto;
 }
 
+.message-input-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+}
+
 .message-input-attachments {
     display: flex;
     align-items: center;
     gap: var(--wa-space-s);
     min-height: 32px;
+    flex: 1;
+    min-width: 0;
 }
 
 .message-input-actions {
     display: flex;
-    justify-content: flex-end;
     gap: var(--wa-space-s);
+    flex-shrink: 0;
+}
+
+</style>
+
+<style>
+/* When sidebar is closed, the sidebar toggle button overlaps
+   the attach button area. Add left padding to make room. */
+body.sidebar-closed .message-input-toolbar {
+    padding-left: var(--wa-space-3xl);
 }
 </style>
