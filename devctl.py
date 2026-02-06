@@ -167,6 +167,29 @@ def verify_port(proc_key: str, log_start_pos: int, processes: dict, timeout: flo
     return False
 
 
+def npm_install(processes: dict) -> bool:
+    """Run npm install in the frontend directory if needed."""
+    frontend_dir = processes["front"]["cwd"]
+    node_modules = frontend_dir / "node_modules"
+
+    if node_modules.exists():
+        return True
+
+    print("  Installing frontend dependencies (npm install)...", end=" ", flush=True)
+    result = subprocess.run(
+        ["npm", "install"],
+        cwd=frontend_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print("FAILED")
+        print(f"    {result.stderr.strip()}")
+        return False
+    print("OK")
+    return True
+
+
 def start(proc_key: str, processes: dict) -> bool:
     """Start a process as a detached daemon."""
     config = processes[proc_key]
@@ -177,6 +200,11 @@ def start(proc_key: str, processes: dict) -> bool:
         return True
 
     ensure_dirs()
+
+    # Ensure frontend dependencies are installed before starting Vite
+    if proc_key == "front":
+        if not npm_install(processes):
+            return False
 
     # Remember log file position before starting (to only check new lines)
     log_start_pos = 0

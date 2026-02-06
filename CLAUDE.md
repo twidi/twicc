@@ -45,9 +45,19 @@ uv run ./devctl.py logs [front|back]        # Show recent logs (--lines=N)
 
 **Log files:** `.devctl/logs/frontend.log` and `.devctl/logs/backend.log` - read these to debug issues.
 
-### Multi-Worktree Support
+### Worktree Support
 
-You can run multiple instances of the app in different git worktrees, each with its own ports. Configure ports via a `.env` file in the worktree root:
+The application is able to run in multiple worktrees, each worktree has its own:
+- instances of the backend and frontend servers
+- `.env` file with port configuration
+- `.devctl/` directory (logs, PIDs)
+- `data.sqlite` database (3 files: `data.sqlite`, `data.sqlite-shm`, `data.sqlite-wal`)
+ 
+If you are in a worktree and asked to run the dev servers, you MUST:
+- copy the database file from the main worktree to the worktree root: `cp /path/to/main/worktree/data.sqlite* ./` (ONLY IF IT DOESN'T EXIST IN THE WORKTREE ROOT YET)
+- configure ports to use to run the servers, ONLY IF THEY ARE NOT ALREADY CONFIGURED IN THE WORKTREE ROOT `.env` FILE:
+  - find available ports on the system that we'll use for the frontend and backend servers
+  - configure those ports in a `.env` file in the worktree root like in this example:
 
 ```env
 # Backend port (Uvicorn server)
@@ -57,16 +67,13 @@ TWICC_PORT=3600
 VITE_PORT=5273
 ```
 
-Each worktree has its own:
-- `.env` file with port configuration
-- `.devctl/` directory (logs, PIDs)
-- `data.sqlite` database
-
-To copy the main database to a new worktree: `cp /path/to/main/data.sqlite ./data.sqlite`
+Always check your current working directory before starting the servers so you'll know if you are in a worktree or not. 
+When the user asks to start the servers, if you are in a worktree, you MUST proceed as described above. And give them the localhost urls for the frontend and backend servers based on the ports configured in the worktree `.env` file (e.g., `Frontend: http://localhost:5273`, `Backend: http://localhost:3600`).
+When the user asks you to exit/kill/delete (etc...) a worktree, you MUST run the "stop all" command to kill the processes, even if you didn't start them yourself.
 
 ## Operations Reserved to User
 
-Claude never runs these operations on its own initiative. If the user explicitly asks to run one of these operations, do it without asking for confirmation. Otherwise, notify the user at the end of a task or, if absolutely necessary during your work, pause the task and ask them the permission to do it or to do them manually:
+Claude never runs these operations on its own initiative. If the user explicitly asks you to run one of these operations, do it without asking for confirmation. Otherwise, notify the user at the end of a task or, if absolutely necessary during your work, pause the task and ask them the permission to do it or to do them manually:
 
 - **Django migrations:** After modifying models (and having created the migration yourself), remind the user to run and `migrate`
 - **Dev server restart:** After backend changes, remind the user to restart via `devctl.py`
