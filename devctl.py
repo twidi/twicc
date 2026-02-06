@@ -192,14 +192,24 @@ def start(proc_key: str, processes: dict) -> bool:
         proc_env.update(config["env"])
 
     # Start detached process
+    # stdin must be redirected to DEVNULL to prevent child processes
+    # (especially Vite's readline interface for CLI shortcuts) from
+    # modifying the parent terminal settings. Without this, killing
+    # the process leaves the terminal in a corrupted state (raw mode)
+    # because readline doesn't get a chance to restore terminal settings.
     proc = subprocess.Popen(
         config["cmd"],
         cwd=config["cwd"],
+        stdin=subprocess.DEVNULL,
         stdout=log_file,
         stderr=subprocess.STDOUT,
         env=proc_env,
         start_new_session=True,  # Detach from parent
     )
+
+    # Close the log file handle in the parent process;
+    # the child has its own copy of the file descriptor
+    log_file.close()
 
     # Save PID
     config["pid"].write_text(str(proc.pid))
