@@ -1,9 +1,10 @@
 """
 Background tasks for the TWICC application.
 
-This module provides background tasks that run continuously:
-- Compute task: Processes sessions that need metadata computation
-- Price sync task: Synchronizes model prices from OpenRouter API
+This module provides background tasks:
+- Compute task: Processes existing sessions that need metadata computation at startup, then stops.
+  New sessions created by the watcher get compute_version set at creation time.
+- Price sync task: Synchronizes model prices from OpenRouter API (runs continuously)
 
 Architecture for compute task:
 - A separate Process handles CPU-intensive work (JSON parsing, metadata computation)
@@ -47,12 +48,11 @@ _stop_event: asyncio.Event | None = None
 # Stop event for price sync task
 _price_sync_stop_event: asyncio.Event | None = None
 
-# Progress tracking for initial computation
-_initial_total: int | None = None
+# Progress tracking for computation
+_total_to_compute: int | None = None
 _processed_count: int = 0
 _last_logged_percent: int = 0
 _last_logged_time: float = 0.0
-_initial_phase_complete: bool = False
 
 
 def get_queues() -> tuple[Queue, Queue]:
@@ -512,12 +512,11 @@ async def consume_compute_results(stop_event: asyncio.Event) -> None:
 
 def _reset_progress_tracking() -> None:
     """Reset progress tracking state for a new run."""
-    global _initial_total, _processed_count, _last_logged_percent, _last_logged_time, _initial_phase_complete
-    _initial_total = None
+    global _total_to_compute, _processed_count, _last_logged_percent, _last_logged_time
+    _total_to_compute = None
     _processed_count = 0
     _last_logged_percent = 0
     _last_logged_time = 0.0
-    _initial_phase_complete = False
 
 
 @sync_to_async
@@ -592,7 +591,7 @@ async def broadcast_project_updated(project: Project) -> None:
 
 async def start_background_compute_task() -> None:
     """
-    Background task that continuously processes sessions needing computation.
+    Background task that processes existing sessions needing computation at startup.
 
     Architecture:
     - Starts a separate Process for CPU-intensive work (JSON parsing, metadata computation)
@@ -600,11 +599,13 @@ async def start_background_compute_task() -> None:
     - All database WRITES happen in the main process via consume_compute_results()
     - This eliminates "database is locked" errors
 
-    Progress logging: During initial computation of existing sessions, logs
-    progress at 10% intervals. Once all initial sessions are processed (100%),
-    stops logging even if new sessions arrive later.
+    This task processes all sessions with outdated or missing compute_version,
+    then stops. New sessions created by the watcher get compute_version set
+    at creation time, so they don't need background reprocessing.
+
+    Progress logging: Logs progress at 10% intervals during processing.
     """
-    global _initial_total, _processed_count, _last_logged_percent, _initial_phase_complete
+    global _total_to_compute, _processed_count, _last_logged_percent
 
     stop_event = get_stop_event()
     command_queue, _ = get_queues()
@@ -614,8 +615,12 @@ async def start_background_compute_task() -> None:
     global _last_logged_time
 
     _reset_progress_tracking()
-    _initial_total = await _count_sessions_to_compute()
+    _total_to_compute = await _count_sessions_to_compute()
     _last_logged_time = time.monotonic()
+
+    if _total_to_compute == 0:
+        logger.info("Background compute: no sessions to process")
+        return
 
     # Load project directories cache at startup
     await sync_to_async(load_project_directories)()
@@ -626,10 +631,10 @@ async def start_background_compute_task() -> None:
     # Start the result consumer as a concurrent task
     consumer_task = asyncio.create_task(consume_compute_results(stop_event))
 
-    logger.info(f"Background compute task started ({_initial_total} sessions to process)")
+    logger.info(f"Background compute task started ({_total_to_compute} sessions to process)")
 
-    # Track sessions currently being processed to avoid duplicates
-    processing_sessions: set[str] = set()
+    # Track sessions sent to worker to avoid sending duplicates
+    sent_sessions: set[str] = set()
 
     while not stop_event.is_set():
         try:
@@ -637,26 +642,22 @@ async def start_background_compute_task() -> None:
             session = await get_next_session_to_compute()
 
             if session is None:
-                # Nothing to compute, wait before checking again
-                try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    pass
-                continue
+                # All sessions processed, we're done
+                break
 
-            # Skip if already being processed
-            if session.id in processing_sessions:
+            # Skip if already sent to worker
+            if session.id in sent_sessions:
                 await asyncio.sleep(0.1)
                 continue
 
             # Send command to worker process (non-blocking)
-            processing_sessions.add(session.id)
+            sent_sessions.add(session.id)
             command_queue.put({'session_id': session.id})
 
-            # Progress logging during initial phase only
-            if not _initial_phase_complete and _initial_total and _initial_total > 0:
+            # Progress logging
+            if _total_to_compute and _total_to_compute > 0:
                 _processed_count += 1
-                current_percent = (_processed_count * 100) // _initial_total
+                current_percent = (_processed_count * 100) // _total_to_compute
 
                 # Log at 10% intervals
                 if current_percent >= _last_logged_percent + 10:
@@ -664,12 +665,7 @@ async def start_background_compute_task() -> None:
                     now = time.monotonic()
                     elapsed = now - _last_logged_time
                     _last_logged_time = now
-                    logger.info(f"Background compute progress: {_last_logged_percent}% ({_processed_count}/{_initial_total}) [{elapsed:.1f}s]")
-
-                # Mark initial phase complete at 100%
-                if _processed_count >= _initial_total:
-                    _initial_phase_complete = True
-                    logger.info(f"Background compute: initial processing complete ({_initial_total} sessions)")
+                    logger.info(f"Background compute progress: {_last_logged_percent}% ({_processed_count}/{_total_to_compute}) [{elapsed:.1f}s]")
 
             # Small yield to allow result consumer to process
             await asyncio.sleep(0.01)
@@ -682,14 +678,36 @@ async def start_background_compute_task() -> None:
             except asyncio.TimeoutError:
                 pass
 
-    # Cleanup
+    logger.info(f"Background compute: all sessions sent to worker ({_processed_count}/{_total_to_compute})")
+
+    # Wait for the worker to finish processing remaining results.
+    # The consumer needs time to apply all DB writes from the result queue.
+    # We wait until the result queue is empty and give it a moment to finalize.
+    _, result_queue = get_queues()
+    while not stop_event.is_set():
+        try:
+            if result_queue.empty():
+                # Give consumer one last chance to process any in-flight messages
+                await asyncio.sleep(0.2)
+                if result_queue.empty():
+                    break
+            await asyncio.sleep(0.1)
+        except (ValueError, OSError):
+            # Queue already closed
+            break
+
+    # Stop the consumer task
+    stop_event.set()
     consumer_task.cancel()
     try:
         await consumer_task
     except asyncio.CancelledError:
         pass
 
-    logger.info("Background compute task stopped")
+    # Stop the worker process
+    stop_background_task()
+
+    logger.info("Background compute task completed")
 
 
 # Interval for price sync: 24 hours in seconds

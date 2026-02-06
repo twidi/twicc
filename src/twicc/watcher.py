@@ -153,11 +153,13 @@ def create_session(
             type=SessionType.SUBAGENT,
             parent_session=parent_session,
             agent_id=parsed.session_id,
+            compute_version=settings.CURRENT_COMPUTE_VERSION,
         )
     else:
         return Session.objects.create(
             id=parsed.session_id,
             project=project,
+            compute_version=settings.CURRENT_COMPUTE_VERSION,
         )
 
 
