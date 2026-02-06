@@ -939,7 +939,7 @@ defineExpose({
 .drop-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(var(--wa-color-primary-rgb), 0.1);
+    background: rgba(0, 0, 0, 0.5);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -952,7 +952,7 @@ defineExpose({
     flex-direction: column;
     align-items: center;
     gap: var(--wa-space-m);
-    color: var(--wa-color-primary);
+    color: white;
     font-size: var(--wa-font-size-xl);
     font-weight: 500;
 }

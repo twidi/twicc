@@ -31,26 +31,17 @@ function onRemove(index) {
     }
 }
 
-/**
- * Label for the button.
- */
-const buttonLabel = computed(() => {
-    const count = props.attachments.length
-    return `${count} file${count > 1 ? 's' : ''}`
-})
 </script>
 
 <template>
     <div class="attachment-thumbnails-container">
-        <wa-button
+        <button
             id="attachments-popover-trigger"
-            variant="neutral"
-            appearance="outlined"
-            size="medium"
+            class="attachments-badge-trigger"
+            :title="`${attachments.length} file${attachments.length > 1 ? 's' : ''} attached`"
         >
-            <wa-icon name="images" slot="prefix"></wa-icon>
-            {{ buttonLabel }}
-        </wa-button>
+            <wa-badge variant="primary" pill>{{ attachments.length }}</wa-badge>
+        </button>
         <wa-popover
             for="attachments-popover-trigger"
             placement="top"
@@ -83,6 +74,19 @@ const buttonLabel = computed(() => {
     display: flex;
     align-items: center;
     margin-left: calc(-1 * var(--wa-space-2xs));
+}
+
+.attachments-badge-trigger {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    box-shadow: none;
+    background: var(--wa-color-brand);
+    height: 1.5rem;
+    min-width: 1.5rem;
 }
 
 .attachments-popover {
