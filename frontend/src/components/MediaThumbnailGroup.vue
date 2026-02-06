@@ -51,11 +51,25 @@ function openPreview(itemIndex) {
 }
 
 /**
- * Handle remove button click.
+ * Handle remove button click on thumbnail.
  */
 function handleRemove(event, index) {
     event.stopPropagation()
     emit('remove', index)
+}
+
+/**
+ * Handle remove event from the preview dialog.
+ * The dialog emits the index within previewableItems,
+ * so we translate it back to the index within the full items array.
+ */
+function handleDialogRemove(previewIndex) {
+    const previewItem = previewableItems.value[previewIndex]
+    if (!previewItem) return
+    const originalIndex = props.items.indexOf(previewItem)
+    if (originalIndex >= 0) {
+        emit('remove', originalIndex)
+    }
 }
 
 /**
@@ -112,6 +126,8 @@ function getIconName(item) {
     <MediaPreviewDialog
         ref="previewDialogRef"
         :items="previewableItems"
+        :removable="removable"
+        @remove="handleDialogRemove"
     />
 </template>
 

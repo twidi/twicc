@@ -8,8 +8,14 @@ const props = defineProps({
     items: {
         type: Array,
         default: () => []
+    },
+    removable: {
+        type: Boolean,
+        default: false
     }
 })
+
+const emit = defineEmits(['remove'])
 
 const dialogRef = ref(null)
 const currentIndex = ref(0)
@@ -63,6 +69,32 @@ function next() {
 }
 
 /**
+ * Remove the current item.
+ * Emits 'remove' with the current index so the parent can handle deletion.
+ * If this was the last item, close the dialog.
+ * If we were at the end, move back one position.
+ */
+function removeCurrent() {
+    if (!props.removable || props.items.length === 0) return
+
+    const index = currentIndex.value
+
+    // If this is the last remaining item, close the dialog
+    if (props.items.length === 1) {
+        emit('remove', index)
+        close()
+        return
+    }
+
+    // If we're at the last position, move back so we don't overshoot
+    if (currentIndex.value >= props.items.length - 1) {
+        currentIndex.value = props.items.length - 2
+    }
+
+    emit('remove', index)
+}
+
+/**
  * Handle keyboard navigation.
  */
 function onKeyDown(event) {
@@ -78,6 +110,11 @@ function onKeyDown(event) {
     } else if (event.key === 'End') {
         event.preventDefault()
         currentIndex.value = props.items.length - 1
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (props.removable) {
+            event.preventDefault()
+            removeCurrent()
+        }
     }
 }
 
@@ -165,6 +202,19 @@ defineExpose({ open, close })
                 <wa-icon name="chevron-right"></wa-icon>
             </button>
         </div>
+
+        <!-- Remove button in footer -->
+        <wa-button
+            v-if="removable"
+            slot="footer"
+            variant="danger"
+            appearance="outlined"
+            size="small"
+            @click="removeCurrent"
+        >
+            <wa-icon name="trash" slot="prefix"></wa-icon>
+            Remove
+        </wa-button>
     </wa-dialog>
 </template>
 
@@ -273,5 +323,11 @@ defineExpose({ open, close })
 
 .nav-next {
     right: var(--wa-space-xs);
+}
+
+.media-preview-dialog::part(footer) {
+    display: flex;
+    justify-content: center;
+    padding: var(--wa-space-xs) var(--wa-space-m);
 }
 </style>
