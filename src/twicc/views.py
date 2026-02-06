@@ -407,6 +407,52 @@ def tool_agent_id(request, project_id, session_id, line_num, tool_id):
         return JsonResponse({"agent_id": None})
 
 
+def directory_tree(request, project_id, session_id):
+    """GET /api/projects/<id>/sessions/<session_id>/directory-tree/ - Directory tree listing."""
+    from twicc.file_tree import get_directory_tree, validate_session_path
+
+    session, dir_path, error = validate_session_path(
+        project_id, session_id, request.GET.get("path")
+    )
+    if error:
+        return error
+
+    show_hidden = request.GET.get("show_hidden") == "1"
+    show_ignored = request.GET.get("show_ignored") == "1"
+
+    tree = get_directory_tree(dir_path, show_hidden=show_hidden, show_ignored=show_ignored)
+    return JsonResponse(tree)
+
+
+def file_search(request, project_id, session_id):
+    """GET /api/projects/<id>/sessions/<session_id>/file-search/ - Fuzzy file search."""
+    from twicc.file_tree import search_files, validate_session_path
+
+    session, dir_path, error = validate_session_path(
+        project_id, session_id, request.GET.get("path")
+    )
+    if error:
+        return error
+
+    query = request.GET.get("q", "").strip()
+    show_hidden = request.GET.get("show_hidden") == "1"
+    show_ignored = request.GET.get("show_ignored") == "1"
+
+    try:
+        max_results = int(request.GET.get("limit", 50))
+        max_results = max(1, min(max_results, 200))
+    except (ValueError, TypeError):
+        max_results = 50
+
+    tree = search_files(
+        dir_path, query,
+        max_results=max_results,
+        show_hidden=show_hidden,
+        show_ignored=show_ignored,
+    )
+    return JsonResponse(tree)
+
+
 def spa_index(request):
     """Catch-all for Vue Router - serves index.html."""
     index_path = settings.BASE_DIR / "frontend" / "dist" / "index.html"

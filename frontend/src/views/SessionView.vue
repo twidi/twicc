@@ -285,7 +285,7 @@ function handleNeedsTitle() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const DEVTOOLS_PANEL_STORAGE_KEY = 'twicc-devtools-panel-state'
-const DEFAULT_DEVTOOLS_PANEL_HEIGHT = 500
+const DEFAULT_DEVTOOLS_PANEL_HEIGHT = 600
 const DEVTOOLS_PANEL_COLLAPSE_THRESHOLD = 70
 const MOBILE_BREAKPOINT = 640
 
@@ -371,13 +371,17 @@ function handleDevToolsPanelToggle(event) {
 }
 
 // Handle devtools tab switch: update button appearance/variant to match active state
+const activeDevToolsTab = ref('git')
+
 function handleDevToolsTabShow(event) {
     const tabGroup = event.target.closest('wa-tab-group')
     if (!tabGroup) return
+    const activeName = event.detail?.name
+    activeDevToolsTab.value = activeName
     tabGroup.querySelectorAll('wa-tab').forEach(tab => {
         const button = tab.querySelector('wa-button')
         if (!button) return
-        const isActive = tab.getAttribute('panel') === event.detail?.name
+        const isActive = tab.getAttribute('panel') === activeName
         button.setAttribute('appearance', isActive ? 'outlined' : 'plain')
         button.setAttribute('variant', isActive ? 'brand' : 'neutral')
     })
@@ -399,13 +403,13 @@ function handleDevToolsTabShow(event) {
         />
 
         <!-- Split panel: main content (start) + devtools panel (end) -->
-        <wa-split-panel
+            <wa-split-panel
             v-if="session"
             class="session-content-split"
             :position-in-pixels="DEFAULT_DEVTOOLS_PANEL_HEIGHT"
             primary="end"
             orientation="vertical"
-            snap="75px 300px 600px 900x"
+            snap="70px 300px 450px 600px 750px"
             snap-threshold="30"
             @wa-reposition="handleDevToolsPanelReposition"
         >
@@ -494,7 +498,7 @@ function handleDevToolsTabShow(event) {
                             <DevToolsGitPanel />
                         </wa-tab-panel>
                         <wa-tab-panel name="files">
-                            <DevToolsFilesPanel />
+                            <DevToolsFilesPanel :project-id="session?.project_id" :session-id="session?.id" :git-directory="session?.git_directory" :project-directory="store.getProject(session?.project_id)?.directory" :active="activeDevToolsTab === 'files'" />
                         </wa-tab-panel>
                         <wa-tab-panel name="terminal">
                             <DevToolsTerminalPanel />

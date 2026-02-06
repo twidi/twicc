@@ -25,6 +25,9 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/<str:parent_session_id>/subagent/<str:session_id>/items/", views.session_items),
     path("api/projects/<str:project_id>/sessions/<str:parent_session_id>/subagent/<str:session_id>/items/metadata/", views.session_items_metadata),
     path("api/projects/<str:project_id>/sessions/<str:parent_session_id>/subagent/<str:session_id>/items/<int:line_num>/tool-results/<str:tool_id>/", views.tool_results),
+    # File system endpoints (scoped to project + session for security)
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/directory-tree/", views.directory_tree),
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/file-search/", views.file_search),
     # Catch-all for Vue Router (must be last)
     re_path(r"^(?!api/|static/|ws/).*$", views.spa_index),
 ]
