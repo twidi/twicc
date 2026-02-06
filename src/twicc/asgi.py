@@ -88,9 +88,12 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         the browser's session cookie (sent during the HTTP upgrade handshake).
         """
         # Check authentication if password protection is enabled
-        if settings.TWICC_PASSWORD:
+        if settings.TWICC_PASSWORD_HASH:
             session = self.scope.get("session", {})
-            if not session.get("authenticated"):
+            # Session.get() triggers a synchronous DB load, so we must
+            # wrap it with sync_to_async in this async consumer.
+            is_authenticated = await sync_to_async(session.get)("authenticated")
+            if not is_authenticated:
                 logger.warning("WebSocket connection rejected: not authenticated")
                 await self.close()
                 return

@@ -1,9 +1,9 @@
 """Password authentication middleware.
 
-When TWICC_PASSWORD is set, all requests (except login, static files)
+When TWICC_PASSWORD_HASH is set, all requests (except login, static files)
 require an authenticated session. Unauthenticated requests get a 401 response.
 
-When TWICC_PASSWORD is empty/unset, all requests pass through (no protection).
+When TWICC_PASSWORD_HASH is empty/unset, all requests pass through (no protection).
 """
 
 import logging
@@ -30,11 +30,11 @@ class PasswordAuthMiddleware:
 
     def __init__(self, get_response):
         self.get_response = get_response
-        self.password_required = bool(settings.TWICC_PASSWORD)
+        self.password_required = bool(settings.TWICC_PASSWORD_HASH)
         if self.password_required:
             logger.info("Password protection enabled")
         else:
-            logger.info("Password protection disabled (TWICC_PASSWORD not set)")
+            logger.info("Password protection disabled (TWICC_PASSWORD_HASH not set)")
 
     def __call__(self, request):
         # No password configured = no protection

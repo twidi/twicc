@@ -12,32 +12,25 @@ import ConnectionIndicator from './components/ConnectionIndicator.vue'
 const route = useRoute()
 const authStore = useAuthStore()
 
-// Only show the main app UI (WebSocket, data loading) when authenticated
 const isAuthenticated = computed(() => !authStore.needsLogin)
 const isLoginPage = computed(() => route.name === 'login')
 
-// Initialize WebSocket connection for real-time updates
-// (only connects when authenticated, see useWebSocket)
-const { wsStatus } = useWebSocket()
+// Initialize WebSocket connection for real-time updates.
+// Connection is deferred until authenticated (see useWebSocket).
+const { wsStatus, openWs, closeWs } = useWebSocket()
 
-// Load initial data
+// Load initial data and connect WebSocket when authenticated
 const dataStore = useDataStore()
-onMounted(async () => {
-    // Wait for auth check before loading data
-    if (!authStore.isReady) {
-        await authStore.checkAuth()
-    }
-    if (isAuthenticated.value) {
-        await dataStore.loadProjects({ isInitialLoading: true })
-    }
-})
 
-// Reload data when authentication state changes (after login)
-watch(isAuthenticated, async (newVal) => {
-    if (newVal) {
+// React to authentication state changes (initial check + after login)
+watch(isAuthenticated, async (authenticated) => {
+    if (authenticated) {
         await dataStore.loadProjects({ isInitialLoading: true })
+        openWs()
+    } else {
+        closeWs()
     }
-})
+}, { immediate: true })
 
 // Sync display mode to body data attribute
 const settingsStore = useSettingsStore()

@@ -1,7 +1,12 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+# Load .env file (idempotent: no-op if already loaded by run.py)
+load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = "dev-insecure-key-do-not-use-in-production"
 DEBUG = True
@@ -22,9 +27,10 @@ MIDDLEWARE = [
 ]
 
 # Password protection
-# Set TWICC_PASSWORD in .env to enable password protection.
+# Set TWICC_PASSWORD_HASH in .env to enable password protection.
+# Generate a hash with: python -c "import hashlib; print(hashlib.sha256(b'your_password').hexdigest())"
 # If not set or empty, the app is accessible without authentication.
-TWICC_PASSWORD = os.environ.get("TWICC_PASSWORD", "")
+TWICC_PASSWORD_HASH = os.environ.get("TWICC_PASSWORD_HASH", "")
 
 # Session settings
 SESSION_ENGINE = "django.contrib.sessions.backends.db"

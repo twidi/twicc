@@ -12,6 +12,17 @@ const routes = [
         component: LoginView,
         meta: { public: true },
     },
+    {
+        path: '/logout',
+        name: 'logout',
+        meta: { public: true },
+        beforeEnter: async () => {
+            const authStore = useAuthStore()
+            await authStore.logout()
+            return { name: 'login' }
+        },
+        component: LoginView, // never rendered, redirect happens in beforeEnter
+    },
     { path: '/', name: 'home', component: HomeView },
     {
         path: '/project/:projectId',
@@ -58,17 +69,24 @@ export const router = createRouter({
     routes
 })
 
-// Navigation guard: redirect to login if not authenticated
+// Navigation guard: redirect to login if not authenticated,
+// and redirect away from login if no password is needed.
 router.beforeEach(async (to) => {
-    // Always allow access to public routes (login page)
-    if (to.meta.public) return true
-
     const authStore = useAuthStore()
 
     // Wait for initial auth check if not done yet
     if (!authStore.isReady) {
         await authStore.checkAuth()
     }
+
+    // On login page: redirect to home if no login is needed
+    // (no password configured, or already authenticated)
+    if (to.name === 'login' && !authStore.needsLogin) {
+        return { name: 'home' }
+    }
+
+    // Public routes (login, logout) are always accessible
+    if (to.meta.public) return true
 
     // Redirect to login if authentication is needed
     if (authStore.needsLogin) {

@@ -32,43 +32,50 @@ async function handleSubmit() {
 
 <template>
     <div class="login-backdrop">
-        <div class="login-dialog">
+        <wa-card class="login-card">
             <div class="login-header">
+                <wa-icon name="terminal" class="login-icon"></wa-icon>
                 <h1 class="login-title">TWICC</h1>
-                <p class="login-subtitle">Password required</p>
+                <p class="login-subtitle">Password required to continue</p>
             </div>
 
-            <form @submit.prevent="handleSubmit" class="login-form">
-                <wa-input
-                    type="password"
-                    placeholder="Enter password"
-                    :value="password"
-                    @input="password = $event.target.value"
-                    @wa-input="password = $event.target.value"
-                    autofocus
-                    :disabled="loading"
-                    size="large"
-                    class="login-input"
-                >
-                    <wa-icon slot="prefix" name="lock" variant="solid"></wa-icon>
-                </wa-input>
+            <wa-divider></wa-divider>
 
-                <div v-if="error" class="login-error">
-                    {{ error }}
+            <form @submit.prevent="handleSubmit" class="login-form">
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <wa-input
+                        type="password"
+                        placeholder="Enter password"
+                        :value="password"
+                        @input="password = $event.target.value"
+                        @wa-input="password = $event.target.value"
+                        autofocus
+                        :disabled="loading"
+                        size="small"
+                    >
+                        <wa-icon slot="prefix" name="lock" variant="solid"></wa-icon>
+                    </wa-input>
                 </div>
+
+                <wa-callout v-if="error" variant="danger" appearance="filled" size="small" class="login-error">
+                    <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                    {{ error }}
+                </wa-callout>
 
                 <wa-button
                     type="submit"
                     variant="brand"
-                    size="large"
+                    size="medium"
                     :loading="loading"
                     :disabled="!password || loading"
                     class="login-button"
                 >
+                    <wa-icon slot="prefix" name="right-to-bracket"></wa-icon>
                     Sign in
                 </wa-button>
             </form>
-        </div>
+        </wa-card>
     </div>
 </template>
 
@@ -83,56 +90,58 @@ async function handleSubmit() {
     z-index: 9999;
 }
 
-.login-dialog {
-    background: var(--wa-color-surface-raised);
-    border: 1px solid var(--wa-color-neutral-border-quiet);
-    border-radius: var(--wa-border-radius-xl);
-    padding: var(--wa-space-2xl) var(--wa-space-2xl) var(--wa-space-xl);
+.login-card {
     width: 100%;
-    max-width: 360px;
-    box-shadow: var(--wa-shadow-lg);
+    max-width: 380px;
+    --padding: var(--wa-space-xl);
 }
 
 .login-header {
     text-align: center;
-    margin-bottom: var(--wa-space-xl);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+}
+
+.login-icon {
+    font-size: var(--wa-font-size-2xl);
+    color: var(--wa-color-brand);
 }
 
 .login-title {
     font-size: var(--wa-font-size-xl);
     font-weight: 700;
-    color: var(--wa-color-text-normal);
-    margin: 0 0 var(--wa-space-2xs);
+    color: var(--wa-color-text-loud);
+    margin: 0;
     letter-spacing: 0.05em;
 }
 
 .login-subtitle {
-    font-size: var(--wa-font-size-sm);
-    color: var(--wa-color-text-subtle);
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
     margin: 0;
 }
 
 .login-form {
     display: flex;
     flex-direction: column;
-    gap: var(--wa-space-md);
+    gap: var(--wa-space-m);
 }
 
-.login-input {
-    width: 100%;
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-xs);
 }
 
-.login-input::part(base) {
-    width: 100%;
+.form-label {
+    font-size: var(--wa-font-size-s);
+    font-weight: var(--wa-font-weight-semibold);
 }
 
 .login-error {
-    color: var(--wa-color-danger);
-    font-size: var(--wa-font-size-sm);
-    text-align: center;
-    padding: var(--wa-space-2xs) var(--wa-space-sm);
-    background: var(--wa-color-danger-fill-quiet);
-    border-radius: var(--wa-border-radius-md);
+    margin: 0;
 }
 
 .login-button {

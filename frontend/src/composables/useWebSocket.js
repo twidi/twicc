@@ -139,8 +139,12 @@ export function useWebSocket() {
     let wasConnected = false
 
     // Use wss:// for https, ws:// for http
+    // immediate: false — connection is deferred until openWs() is called by App.vue
+    // after authentication is confirmed. This prevents WebSocket errors when the
+    // backend rejects unauthenticated connections.
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const { status, send } = useVueWebSocket(`${wsProtocol}//${location.host}/ws/`, {
+    const { status, send, open, close } = useVueWebSocket(`${wsProtocol}//${location.host}/ws/`, {
+        immediate: false,
         autoReconnect: {
             retries: Infinity,
             delay: 1000,
@@ -244,5 +248,5 @@ export function useWebSocket() {
         }
     })
 
-    return { wsStatus: status, send }
+    return { wsStatus: status, send, openWs: open, closeWs: close }
 }
