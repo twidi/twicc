@@ -428,8 +428,10 @@ function handleClear() {
                     appearance="outlined"
                     @click="handleCancel"
                     size="small"
+                    class="cancel-button"
                 >
-                    Cancel
+                    <wa-icon name="xmark" variant="classic"></wa-icon>
+                    <span>Cancel</span>
                 </wa-button>
                 <!-- Clear button for existing sessions when there's text -->
                 <wa-button
@@ -438,17 +440,20 @@ function handleClear() {
                     appearance="outlined"
                     @click="handleClear"
                     size="small"
+                    class="clear-button"
                 >
-                    Clear
+                    <wa-icon name="xmark" variant="classic"></wa-icon>
+                    <span>Clear</span>
                 </wa-button>
                 <wa-button
                     variant="brand"
                     :disabled="isDisabled || !messageText.trim()"
                     @click="handleSend"
                     size="small"
+                    class="send-button"
                 >
-                    <wa-spinner v-if="processState?.state === 'starting' || processState?.state === 'assistant_turn'" slot="prefix"></wa-spinner>
-                    {{ buttonLabel }}
+                    <wa-icon name="paper-plane" variant="classic"></wa-icon>
+                    <span>{{ buttonLabel }}</span>
                 </wa-button>
             </div>
         </div>
@@ -476,20 +481,53 @@ function handleClear() {
     align-items: center;
     justify-content: space-between;
     gap: var(--wa-space-s);
+    @media (width < 640px) {
+        padding-left: calc(2.75rem + var(--wa-space-s) + 2.75rem + var(--wa-space-s));
+    }
+}
+
+/* When sidebar is closed, the sidebar toggle button overlaps
+   the attach button area. Add left padding to make room. */
+body.sidebar-closed .message-input-toolbar {
+    @media (width >= 640px) {
+        padding-left: 3.5rem;
+    }
 }
 
 .message-input-attachments {
     display: flex;
     align-items: center;
     gap: var(--wa-space-s);
-    min-height: 32px;
     min-width: 0;
+    @media (width < 640px) {
+        gap: var(--wa-space-xs);
+    }
 }
 
 .message-input-actions {
     display: flex;
     gap: var(--wa-space-s);
     flex-shrink: 0;
+
+    .cancel-button, .clear-button, .send-button {
+        wa-icon {
+            display: none;
+        }
+        & > span {
+            display: inline-block;
+        }
+        @media (width < 400px) {
+            &::part(base) {
+                padding-inline: var(--wa-space-s);
+            }
+            wa-icon {
+                display: inline-flex;
+            }
+            & > span {
+                display: none;
+            }
+        }
+    }
 }
 
 .attachments-badge-trigger {
@@ -517,12 +555,4 @@ function handleClear() {
     margin-top: var(--wa-space-l);
 }
 
-</style>
-
-<style>
-/* When sidebar is closed, the sidebar toggle button overlaps
-   the attach button area. Add left padding to make room. */
-body.sidebar-closed .message-input-toolbar {
-    padding-left: 3.5rem;
-}
 </style>

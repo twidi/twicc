@@ -890,7 +890,7 @@ wa-split-panel::part(divider) {
     /* Sidebar becomes a fixed drawer */
     .sidebar {
         --sidebar-width: min(300px, 80vw);
-        position: fixed;
+        position: absolute;
         left: 0;
         top: 0;
         width: var(--sidebar-width);

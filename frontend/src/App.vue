@@ -59,6 +59,8 @@ body {
 }
 
 :root {
+    overflow: hidden;
+
     --user-card-base-color: var(--wa-color-indigo-95);
     --assistant-card-base-color: var(--wa-color-gray-95);
 
