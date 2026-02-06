@@ -28,6 +28,34 @@ const debouncedSaves = new Map()
 // Special project ID for "All Projects" mode
 export const ALL_PROJECTS_ID = '__all__'
 
+/**
+ * Sort sessions by display priority:
+ * 1. Sessions with active process first (by mtime descending)
+ * 2. Pinned sessions without process (by mtime descending)
+ * 3. Remaining sessions (by mtime descending)
+ *
+ * @param {Object} processStates - Map of sessionId -> processState
+ * @returns {function} Comparator function for Array.sort()
+ */
+function sessionSortComparator(processStates) {
+    return (a, b) => {
+        // 1. Sessions with active process first
+        const aHasProcess = processStates[a.id] != null
+        const bHasProcess = processStates[b.id] != null
+        if (aHasProcess !== bHasProcess) return aHasProcess ? -1 : 1
+
+        // 2. Pinned sessions next (only when neither has a process)
+        if (!aHasProcess) {
+            const aPinned = a.pinned || false
+            const bPinned = b.pinned || false
+            if (aPinned !== bPinned) return aPinned ? -1 : 1
+        }
+
+        // 3. Within each group, sort by mtime descending
+        return b.mtime - a.mtime
+    }
+}
+
 export const useDataStore = defineStore('data', {
     state: () => ({
         // Server data
@@ -103,7 +131,7 @@ export const useDataStore = defineStore('data', {
                 .filter(s => s.project_id === projectId && !s.parent_session_id)
                 // Filter to only sessions within the fetched range (mtime >= oldestMtime)
                 .filter(s => oldestMtime == null || s.mtime >= oldestMtime)
-                .sort((a, b) => b.mtime - a.mtime)
+                .sort(sessionSortComparator(state.processStates))
         },
         getAllSessions: (state) => {
             const oldestMtime = state.localState.projects[ALL_PROJECTS_ID]?.oldestSessionMtime
@@ -111,7 +139,7 @@ export const useDataStore = defineStore('data', {
                 .filter(s => !s.parent_session_id)
                 // Filter to only sessions within the fetched range (mtime >= oldestMtime)
                 .filter(s => oldestMtime == null || s.mtime >= oldestMtime)
-                .sort((a, b) => b.mtime - a.mtime)
+                .sort(sessionSortComparator(state.processStates))
         },
         getSession: (state) => (id) => state.sessions[id],
         getSessionItems: (state) => (sessionId) => state.sessionItems[sessionId] || [],
@@ -1234,6 +1262,49 @@ export const useDataStore = defineStore('data', {
                 // Rollback on error
                 if (session && oldArchived !== undefined) {
                     session.archived = oldArchived
+                }
+                throw error
+            }
+        },
+
+        /**
+         * Set the pinned state of a session.
+         * @param {string} projectId - The project ID
+         * @param {string} sessionId - The session ID
+         * @param {boolean} pinned - Whether to pin or unpin
+         * @throws {Error} If the update fails
+         */
+        async setSessionPinned(projectId, sessionId, pinned) {
+            // Optimistic update
+            const session = this.sessions[sessionId]
+            const oldPinned = session?.pinned
+
+            if (session) {
+                session.pinned = pinned
+            }
+
+            try {
+                const response = await fetch(
+                    `/api/projects/${projectId}/sessions/${sessionId}/`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pinned })
+                    }
+                )
+
+                if (!response.ok) {
+                    const data = await response.json()
+                    throw new Error(data.error || 'Failed to update session')
+                }
+
+                const updatedSession = await response.json()
+                this.sessions[sessionId] = { ...this.sessions[sessionId], ...updatedSession }
+
+            } catch (error) {
+                // Rollback on error
+                if (session && oldPinned !== undefined) {
+                    session.pinned = oldPinned
                 }
                 throw error
             }

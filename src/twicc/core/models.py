@@ -106,6 +106,7 @@ class Session(models.Model):
 
     # User-controlled fields
     archived = models.BooleanField(default=False)  # User can archive sessions to hide them from default list
+    pinned = models.BooleanField(default=False)  # User can pin sessions to keep them at the top of the list
 
     class Meta:
         ordering = ["-mtime"]

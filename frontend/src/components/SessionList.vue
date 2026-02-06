@@ -278,6 +278,10 @@ function handleMenuSelect(event, session) {
         store.setSessionArchived(session.project_id, session.id, true)
     } else if (action === 'unarchive') {
         store.setSessionArchived(session.project_id, session.id, false)
+    } else if (action === 'pin') {
+        store.setSessionPinned(session.project_id, session.id, true)
+    } else if (action === 'unpin') {
+        store.setSessionPinned(session.project_id, session.id, false)
     }
 }
 
@@ -552,6 +556,7 @@ defineExpose({
                         @click="handleSelect(session)"
                     >
                         <div class="session-name-row">
+                            <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
                             <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
                             <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                             <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
@@ -620,6 +625,14 @@ defineExpose({
                         <wa-dropdown-item value="rename">
                             <wa-icon slot="icon" name="pencil"></wa-icon>
                             Rename
+                        </wa-dropdown-item>
+                        <wa-dropdown-item v-if="!session.draft && !session.pinned" value="pin">
+                            <wa-icon slot="icon" name="thumbtack"></wa-icon>
+                            Pin
+                        </wa-dropdown-item>
+                        <wa-dropdown-item v-if="session.pinned" value="unpin">
+                            <wa-icon slot="icon" name="thumbtack" class="unpinned-menu-icon"></wa-icon>
+                            Unpin
                         </wa-dropdown-item>
                         <wa-dropdown-item v-if="!session.draft && !session.archived" value="archive">
                             <wa-icon slot="icon" name="box-archive"></wa-icon>
@@ -728,6 +741,17 @@ defineExpose({
     align-items: center;
     gap: var(--wa-space-xs);
     min-width: 0;
+}
+
+.pinned-icon {
+    flex-shrink: 0;
+    font-size: var(--wa-font-size-2xs);
+    color: var(--wa-color-fill-loud);
+    transform: rotate(30deg);
+}
+
+.unpinned-menu-icon {
+    opacity: 0.5;
 }
 
 .draft-tag,

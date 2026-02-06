@@ -202,6 +202,14 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
                 manager = get_process_manager()
                 async_to_sync(manager.kill_process)(session_id, reason="archived")
 
+        # Handle pinned update
+        if "pinned" in data:
+            pinned = data["pinned"]
+            if not isinstance(pinned, bool):
+                return JsonResponse({"error": "pinned must be a boolean"}, status=400)
+            session.pinned = pinned
+            session.save(update_fields=["pinned"])
+
     return JsonResponse(serialize_session(session))
 
 

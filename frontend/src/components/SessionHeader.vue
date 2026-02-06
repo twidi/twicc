@@ -235,6 +235,15 @@ function handleUnarchive() {
     }
 }
 
+/**
+ * Toggle the pinned state of the current session.
+ */
+function handleTogglePin() {
+    if (session.value && !session.value.draft) {
+        store.setSessionPinned(session.value.project_id, props.sessionId, !session.value.pinned)
+    }
+}
+
 // Expose methods and refs for parent components
 defineExpose({
     openRenameDialog,
@@ -248,6 +257,20 @@ defineExpose({
             <wa-tag v-if="session.archived" id="session-header-archived-tag" size="small" variant="neutral" class="archived-tag" @click="handleUnarchive">Archived</wa-tag>
             <wa-tooltip v-if="tooltipsEnabled && session.archived" for="session-header-archived-tag">Click to unarchive</wa-tooltip>
             <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+
+            <!-- Pin/Unpin button (not for drafts) -->
+            <wa-button
+                v-if="!session.draft"
+                id="session-header-pin-button"
+                :variant="session.pinned ? 'brand' : 'neutral'"
+                appearance="plain"
+                size="small"
+                :class="['pin-button', { 'pin-button--active': session.pinned }]"
+                @click="handleTogglePin"
+            >
+                <wa-icon name="thumbtack" :label="session.pinned ? 'Unpin' : 'Pin'"></wa-icon>
+            </wa-button>
+            <wa-tooltip v-if="tooltipsEnabled && !session.draft" for="session-header-pin-button">{{ session.pinned ? 'Unpin session' : 'Pin session' }}</wa-tooltip>
 
             <!-- Archive button (not for drafts or already archived) -->
             <wa-button
@@ -563,6 +586,7 @@ wa-divider {
     opacity: 1;
 }
 
+.pin-button,
 .archive-button,
 .rename-button {
     opacity: 0.6;
@@ -577,6 +601,19 @@ wa-divider {
     top: calc(-1 * var(--wa-space-2xs));
 }
 
+.pin-button {
+    &::part(label) {
+        transform: rotate(30deg);
+    }
+    &.pin-button--active {
+        opacity: 1;
+        &::part(base) {
+            color: var(--wa-color-fill-loud);
+        }
+    }
+}
+
+.pin-button:hover,
 .archive-button:hover,
 .rename-button:hover {
     opacity: 1;

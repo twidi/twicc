@@ -70,6 +70,7 @@ def serialize_session(session):
         "model": _serialize_model(session.model),  # Model info object
         # User-controlled fields
         "archived": session.archived,  # Whether the session is archived
+        "pinned": session.pinned,  # Whether the session is pinned
     }
 
 
