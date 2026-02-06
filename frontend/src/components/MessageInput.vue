@@ -5,9 +5,9 @@ import { useRouter, useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSocket'
 import { useVisualViewport } from '../composables/useVisualViewport'
-import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES } from '../utils/fileUtils'
+import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
-import AttachmentThumbnails from './AttachmentThumbnails.vue'
+import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
 
 // Track visual viewport height for mobile keyboard handling
 useVisualViewport()
@@ -47,6 +47,9 @@ const fileInputRef = ref(null)
 // Attachments for this session
 const attachments = computed(() => store.getAttachments(props.sessionId))
 const attachmentCount = computed(() => store.getAttachmentCount(props.sessionId))
+
+// Convert DraftMedia objects to normalized MediaItem format for the thumbnail group
+const mediaItems = computed(() => attachments.value.map(a => draftMediaToMediaItem(a)))
 
 // Get process state for this session
 const processState = computed(() => store.getProcessState(props.sessionId))
@@ -236,10 +239,14 @@ async function onFileSelected(event) {
 }
 
 /**
- * Remove an attachment by ID.
+ * Remove an attachment by index (from MediaThumbnailGroup).
+ * Translates the index back to the DraftMedia id for the store.
  */
-function removeAttachment(attachmentId) {
-    store.removeAttachment(props.sessionId, attachmentId)
+function removeAttachmentByIndex(index) {
+    const attachment = attachments.value[index]
+    if (attachment) {
+        store.removeAttachment(props.sessionId, attachment.id)
+    }
 }
 
 /**
@@ -379,13 +386,38 @@ function handleClear() {
                     <wa-icon name="paperclip"></wa-icon>
                 </wa-button>
 
-                <!-- Attachment thumbnails -->
-                <AttachmentThumbnails
-                    v-if="attachmentCount > 0"
-                    :attachments="attachments"
-                    @remove="removeAttachment"
-                    @remove-all="removeAllAttachments"
-                />
+                <!-- Attachment badge + popover -->
+                <template v-if="attachmentCount > 0">
+                    <button
+                        id="attachments-popover-trigger"
+                        class="attachments-badge-trigger"
+                        :title="`${attachmentCount} file${attachmentCount > 1 ? 's' : ''} attached`"
+                    >
+                        <wa-badge variant="primary" pill>{{ attachmentCount }}</wa-badge>
+                    </button>
+                    <wa-popover
+                        for="attachments-popover-trigger"
+                        placement="top"
+                        class="attachments-popover"
+                    >
+                        <MediaThumbnailGroup
+                            :items="mediaItems"
+                            removable
+                            @remove="removeAttachmentByIndex"
+                        />
+                        <div class="popover-actions">
+                            <wa-button
+                                variant="danger"
+                                appearance="outlined"
+                                size="small"
+                                @click="removeAllAttachments"
+                            >
+                                <wa-icon name="trash" slot="prefix"></wa-icon>
+                                Remove all
+                            </wa-button>
+                        </div>
+                    </wa-popover>
+                </template>
             </div>
 
             <div class="message-input-actions">
@@ -395,6 +427,7 @@ function handleClear() {
                     variant="neutral"
                     appearance="outlined"
                     @click="handleCancel"
+                    size="small"
                 >
                     Cancel
                 </wa-button>
@@ -404,6 +437,7 @@ function handleClear() {
                     variant="neutral"
                     appearance="outlined"
                     @click="handleClear"
+                    size="small"
                 >
                     Clear
                 </wa-button>
@@ -411,6 +445,7 @@ function handleClear() {
                     variant="brand"
                     :disabled="isDisabled || !messageText.trim()"
                     @click="handleSend"
+                    size="small"
                 >
                     <wa-spinner v-if="processState?.state === 'starting' || processState?.state === 'assistant_turn'" slot="prefix"></wa-spinner>
                     {{ buttonLabel }}
@@ -439,6 +474,7 @@ function handleClear() {
 .message-input-toolbar {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: var(--wa-space-s);
 }
 
@@ -447,7 +483,6 @@ function handleClear() {
     align-items: center;
     gap: var(--wa-space-s);
     min-height: 32px;
-    flex: 1;
     min-width: 0;
 }
 
@@ -457,12 +492,37 @@ function handleClear() {
     flex-shrink: 0;
 }
 
+.attachments-badge-trigger {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    box-shadow: none;
+    background: var(--wa-color-brand);
+    height: 1.5rem;
+    min-width: 1.5rem;
+    margin-bottom: 0;
+}
+
+.attachments-popover {
+    --max-width: min(400px, 90vw);
+    --arrow-size: 16px;
+}
+
+.popover-actions {
+    display: flex;
+    justify-content: center;
+    margin-top: var(--wa-space-l);
+}
+
 </style>
 
 <style>
 /* When sidebar is closed, the sidebar toggle button overlaps
    the attach button area. Add left padding to make room. */
 body.sidebar-closed .message-input-toolbar {
-    padding-left: var(--wa-space-3xl);
+    padding-left: 3.5rem;
 }
 </style>
