@@ -39,6 +39,8 @@ from twicc.compute import (
 from twicc.core.enums import ItemDisplayLevel, ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -151,6 +153,78 @@ def check_file_has_content(file_path: Path) -> bool:
     return False
 
 
+def _sync_session_items_raw(session: Session, file_path: Path) -> list[int]:
+    """
+    Read new lines from a JSONL file and insert them as raw SessionItem rows.
+
+    No JSON parsing is done. All metadata computation is deferred to the
+    background compute task (compute_session_metadata).
+
+    Used by sync_project/sync_all for the initial sync where speed matters
+    and metadata will be computed in background anyway.
+
+    Args:
+        session: The session (must already be saved to the database)
+        file_path: Path to the JSONL file
+
+    Returns:
+        List of line_nums of new items added
+    """
+    if not file_path.exists():
+        return []
+
+    stat = file_path.stat()
+    file_mtime = stat.st_mtime
+
+    # If mtime hasn't changed, nothing to do
+    if session.mtime == file_mtime:
+        return []
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        # Seek to last known position
+        f.seek(session.last_offset)
+
+        # Read remaining content
+        new_content = f.read()
+        if not new_content:
+            # Update mtime even if no new content (file may have been touched)
+            session.mtime = file_mtime
+            session.save(update_fields=["mtime"])
+            return []
+
+        # Split into lines (filter out empty lines)
+        lines = [line for line in new_content.split("\n") if line.strip()]
+
+        if lines:
+            # Create SessionItem objects for bulk insert (raw content only)
+            current_line_num = session.last_line
+            items_to_create: list[SessionItem] = []
+
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    line = "{}"
+                current_line_num += 1
+                items_to_create.append(SessionItem(
+                    session=session,
+                    line_num=current_line_num,
+                    content=line,
+                ))
+
+            # Bulk create all items
+            SessionItem.objects.bulk_create(items_to_create, ignore_conflicts=True)
+
+            # Update session tracking fields
+            session.last_line = current_line_num
+
+        # Update offset to end of file
+        session.last_offset = f.tell()
+        session.mtime = file_mtime
+        session.save(update_fields=["last_offset", "last_line", "mtime"])
+
+    return [item.line_num for item in items_to_create] if lines else []
+
+
 def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], list[int]]:
     """
     Synchronize session items from a JSONL file.
@@ -227,6 +301,9 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             )
 
             for line in lines:
+                line = line.strip()
+                if not line:
+                    line = "{}"
                 current_line_num += 1
                 item = SessionItem(
                     session=session,
@@ -441,10 +518,15 @@ def _sync_session_subagents(
 
     for agent_id, file_path in subagent_files.items():
         if agent_id in db_subagents:
-            # Subagent exists in DB, sync items
+            # Subagent exists in DB, sync items (raw insert only)
             subagent = db_subagents[agent_id]
-            new_line_nums, _ = sync_session_items(subagent, file_path)
+            new_line_nums = _sync_session_items_raw(subagent, file_path)
             stats["items_added"] += len(new_line_nums)
+
+            # If new items were added, reset compute_version to trigger background recompute
+            if new_line_nums and subagent.compute_version is not None:
+                subagent.compute_version = None
+                subagent.save(update_fields=["compute_version"])
         else:
             # New subagent - check if file has content
             if not check_file_has_content(file_path):
@@ -461,8 +543,8 @@ def _sync_session_subagents(
             subagent.save()
             stats["sessions_created"] += 1
 
-            # Sync items
-            new_line_nums, _ = sync_session_items(subagent, file_path)
+            # Sync items (raw insert only, compute_version is already NULL for new sessions)
+            new_line_nums = _sync_session_items_raw(subagent, file_path)
             stats["items_added"] += len(new_line_nums)
 
     # Mark stale subagents (exist in DB but not on disk)
@@ -491,6 +573,8 @@ def sync_project(
         - sessions_stale: number of sessions marked as stale (including subagents)
         - items_added: total number of new session items (including subagent items)
     """
+    project_start = time.monotonic()
+
     stats = {
         "sessions_created": 0,
         "sessions_stale": 0,
@@ -519,6 +603,8 @@ def sync_project(
     total_sessions = len(sessions_to_sync)
     max_mtime = 0.0
 
+    logger.info(f"  Syncing project {project_id} ({total_sessions} sessions)")
+
     for idx, session_id in enumerate(sessions_to_sync, start=1):
         file_path = session_files[session_id]
 
@@ -538,8 +624,8 @@ def sync_project(
             session.save()
             stats["sessions_created"] += 1
 
-            # Now sync items (session is saved, has valid PK)
-            new_line_nums, _ = sync_session_items(session, file_path)
+            # Sync items (raw insert only, compute_version is already NULL for new sessions)
+            new_line_nums = _sync_session_items_raw(session, file_path)
 
             # Track as non-empty and update stats
             non_empty_session_ids.add(session_id)
@@ -556,9 +642,14 @@ def sync_project(
                 on_session_progress(session_id, idx, total_sessions)
             continue
 
-        # Session exists in DB, sync items
-        new_line_nums, _ = sync_session_items(session, file_path)
+        # Session exists in DB, sync items (raw insert only)
+        new_line_nums = _sync_session_items_raw(session, file_path)
         stats["items_added"] += len(new_line_nums)
+
+        # If new items were added, reset compute_version to trigger background recompute
+        if new_line_nums and session.compute_version is not None:
+            session.compute_version = None
+            session.save(update_fields=["compute_version"])
 
         # Track as non-empty if it has lines
         if session.last_line > 0:
@@ -591,6 +682,12 @@ def sync_project(
     # Update project total_cost
     update_project_total_cost(project.id)
 
+    elapsed = time.monotonic() - project_start
+    logger.info(
+        f"  ✓ Project {project_id} done in {elapsed:.1f}s — "
+        f"{stats['items_added']} items, {stats['sessions_created']} new sessions"
+    )
+
     return stats
 
 
@@ -611,6 +708,8 @@ def sync_all(
 
     Returns aggregate statistics.
     """
+    sync_start = time.monotonic()
+
     stats = {
         "projects_created": 0,
         "projects_stale": 0,
@@ -643,6 +742,8 @@ def sync_all(
     projects_to_sync = sorted(disk_project_ids)
     total_projects = len(projects_to_sync)
 
+    logger.info(f"Sync started — {total_projects} projects found")
+
     for idx, project_id in enumerate(projects_to_sync, start=1):
         if on_project_start:
             on_project_start(project_id, idx, total_projects)
@@ -656,6 +757,13 @@ def sync_all(
 
         if on_project_done:
             on_project_done(project_id, project_stats)
+
+    elapsed = time.monotonic() - sync_start
+    logger.info(
+        f"✓ Sync complete in {elapsed:.1f}s — "
+        f"{stats['sessions_created']} sessions created, "
+        f"{stats['items_added']} items added"
+    )
 
     return stats
 
