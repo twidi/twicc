@@ -1,10 +1,21 @@
 <script setup>
 // SettingsPopover.vue - Settings button with popover panel
 import { computed, ref, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
+import { useAuthStore } from '../stores/auth'
 import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT } from '../constants'
 
+const router = useRouter()
 const store = useSettingsStore()
+const authStore = useAuthStore()
+
+// Show logout button only when password-based auth is active
+const showLogout = computed(() => authStore.passwordRequired && authStore.authenticated)
+
+function handleLogout() {
+    router.push({ name: 'logout' })
+}
 
 // Theme options for the select
 const themeOptions = [
@@ -168,6 +179,16 @@ function onPopoverShow() {
     <wa-tooltip v-if="tooltipsEnabled" for="settings-trigger">Toggle settings</wa-tooltip>
     <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
         <div class="settings-content">
+            <wa-button
+                v-if="showLogout"
+                class="logout-button"
+                variant="danger"
+                appearance="plain"
+                size="small"
+                @click="handleLogout"
+            >
+                <wa-icon name="right-from-bracket"></wa-icon>
+            </wa-button>
             <div class="settings-sections">
                 <!-- Global Section -->
                 <section class="settings-section">
@@ -299,6 +320,13 @@ function onPopoverShow() {
 .settings-content {
     max-height: 90vw;
     overflow-y: auto;
+}
+
+.logout-button {
+    position: absolute;
+    top: var(--wa-space-s);
+    right: var(--wa-space-s);
+    z-index: 1;
 }
 
 .settings-sections {
