@@ -135,13 +135,13 @@ function getIconName(item) {
 .media-thumbnail-group {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--wa-space-xs);
+    gap: var(--wa-space-s);
 }
 
 .media-thumbnail {
     position: relative;
-    width: 48px;
-    height: 48px;
+    width: 96px;
+    height: 96px;
     border-radius: var(--wa-border-radius-s);
     border: 1px solid var(--wa-color-border-neutral-tertiary);
     background: var(--wa-color-surface-secondary);
@@ -180,10 +180,10 @@ function getIconName(item) {
 
 .thumbnail-remove {
     position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 18px;
-    height: 18px;
+    top: -10px;
+    right: -10px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     border: none;
     background: rgba(0, 0, 0, 0.5);

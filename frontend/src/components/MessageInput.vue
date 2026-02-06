@@ -243,6 +243,13 @@ function removeAttachment(attachmentId) {
 }
 
 /**
+ * Remove all attachments.
+ */
+function removeAllAttachments() {
+    store.clearAttachmentsForSession(props.sessionId)
+}
+
+/**
  * Send the message via WebSocket.
  * Backend handles both new and existing sessions with the same message type.
  * For draft sessions with a custom title, include the title in the message.
@@ -377,6 +384,7 @@ function handleClear() {
                     v-if="attachmentCount > 0"
                     :attachments="attachments"
                     @remove="removeAttachment"
+                    @remove-all="removeAllAttachments"
                 />
             </div>
 
