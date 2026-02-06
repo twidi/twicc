@@ -97,8 +97,12 @@ class Session(models.Model):
 
     # Runtime environment fields (last known values from JSONL)
     cwd = models.CharField(max_length=500, null=True, blank=True)  # Current working directory
-    git_branch = models.CharField(max_length=255, null=True, blank=True)  # Git branch name
+    cwd_git_branch = models.CharField(max_length=255, null=True, blank=True)  # Git branch from cwd (unreliable for worktrees)
     model = models.CharField(max_length=100, null=True, blank=True)  # Model name (e.g., "claude-opus-4-5-20251101")
+
+    # Resolved git directory and branch (from filesystem analysis of tool_use paths)
+    git_directory = models.CharField(max_length=500, null=True, blank=True)  # Resolved git root directory
+    git_branch = models.CharField(max_length=255, null=True, blank=True)  # Resolved branch name (or commit hash for detached HEAD)
 
     # User-controlled fields
     archived = models.BooleanField(default=False)  # User can archive sessions to hide them from default list
@@ -138,6 +142,10 @@ class SessionItem(models.Model):
 
     # Timestamp from JSONL line (stored as datetime in UTC)
     timestamp = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    # Resolved git directory and branch (from filesystem analysis of tool_use paths)
+    git_directory = models.CharField(max_length=500, null=True, blank=True)  # Resolved git root directory
+    git_branch = models.CharField(max_length=255, null=True, blank=True)  # Resolved branch name (or commit hash for detached HEAD)
 
     class Meta:
         ordering = ["line_num"]

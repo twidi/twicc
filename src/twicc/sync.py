@@ -282,7 +282,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Track last seen values for runtime environment fields
             first_cwd: str | None = None  # First cwd in this batch
             last_cwd: str | None = None
-            last_git_branch: str | None = None
+            last_cwd_git_branch: str | None = None
             last_model: str | None = None
 
             # For subagents: track if we need to create the link between the agent and the parent session tool use
@@ -332,8 +332,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                     if first_cwd is None:
                         first_cwd = cwd
                     last_cwd = cwd
-                if git_branch := parsed.get('gitBranch'):
-                    last_git_branch = git_branch
+                if cwd_git_branch := parsed.get('gitBranch'):
+                    last_cwd_git_branch = cwd_git_branch
                 if (message := parsed.get('message')) and isinstance(message, dict):
                     if model := message.get('model'):
                         last_model = model
@@ -473,15 +473,15 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 if session.cwd is None and first_cwd and session.type == SessionType.SESSION:
                     ensure_project_directory(session.project_id, first_cwd)
                 session.cwd = last_cwd
-            if last_git_branch and last_git_branch != session.git_branch:
-                session.git_branch = last_git_branch
+            if last_cwd_git_branch and last_cwd_git_branch != session.cwd_git_branch:
+                session.cwd_git_branch = last_cwd_git_branch
             if last_model and last_model != session.model:
                 session.model = last_model
 
         # Update offset to end of file
         session.last_offset = f.tell()
         session.mtime = file_mtime
-        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "git_branch", "model"])
+        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "model"])
 
         # If this is a subagent, propagate cost to parent session
         if session.type == SessionType.SUBAGENT and session.parent_session_id:

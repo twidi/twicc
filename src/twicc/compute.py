@@ -8,9 +8,12 @@ and the watcher (single item).
 
 from __future__ import annotations
 
+import os
 import orjson
 import logging
+from collections import Counter
 from datetime import datetime
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import xmltodict
@@ -110,6 +113,225 @@ def update_project_total_cost(project_id: str) -> None:
     Project.objects.filter(id=project_id).update(
         total_cost=total_cost if total_cost > 0 else None
     )
+
+
+# =============================================================================
+# Git Directory Resolution
+# =============================================================================
+
+# Tools whose input contains file paths for git resolution
+_TOOL_PATH_FIELDS: dict[str, str] = {
+    'Read': 'file_path',
+    'Edit': 'file_path',
+    'Write': 'file_path',
+    'Grep': 'path',
+    'Glob': 'path',
+}
+
+# Module-level cache for live compute: directory path → (git_directory, git_branch) or None
+_git_resolution_cache: dict[str, tuple[str, str] | None] = {}
+
+
+def _resolve_git_from_path(dir_path: str) -> tuple[str, str] | None:
+    """
+    Walk up from dir_path to find a .git entry and resolve git directory and branch.
+
+    Args:
+        dir_path: An absolute directory path to start from
+
+    Returns:
+        (git_directory, git_branch) tuple, or None if no .git found
+    """
+    traversed: list[str] = []
+    current = dir_path
+
+    while True:
+        # Check cache for this directory
+        if current in _git_resolution_cache:
+            result = _git_resolution_cache[current]
+            # Cache all traversed intermediate paths
+            for path in traversed:
+                _git_resolution_cache[path] = result
+            return result
+
+        traversed.append(current)
+
+        git_path = os.path.join(current, '.git')
+        try:
+            if os.path.isdir(git_path):
+                # Main repo: .git is a directory
+                branch = _read_head_branch(os.path.join(git_path, 'HEAD'))
+                result = (current, branch) if branch is not None else None
+                # Cache all traversed paths
+                for path in traversed:
+                    _git_resolution_cache[path] = result
+                return result
+
+            elif os.path.isfile(git_path):
+                # Worktree: .git is a file containing "gitdir: /path/to/.git/worktrees/name"
+                result = _resolve_worktree_git(current, git_path)
+                # Cache all traversed paths
+                for path in traversed:
+                    _git_resolution_cache[path] = result
+                return result
+
+        except OSError:
+            # Permission error or other OS issue, skip this level
+            pass
+
+        # Move up one directory
+        parent = os.path.dirname(current)
+        if parent == current:
+            # Reached filesystem root without finding .git
+            for path in traversed:
+                _git_resolution_cache[path] = None
+            return None
+        current = parent
+
+
+def _resolve_worktree_git(git_directory: str, git_file_path: str) -> tuple[str, str] | None:
+    """
+    Resolve git branch from a worktree's .git file.
+
+    The .git file contains something like:
+        gitdir: /home/user/project/.git/worktrees/worktree-name
+
+    The HEAD file in that gitdir path contains the branch reference.
+
+    Args:
+        git_directory: The directory containing the .git file (the worktree root)
+        git_file_path: Path to the .git file
+
+    Returns:
+        (git_directory, git_branch) tuple, or None on error
+    """
+    try:
+        with open(git_file_path, 'r') as f:
+            content = f.read().strip()
+    except OSError:
+        return None
+
+    if not content.startswith('gitdir: '):
+        return None
+
+    gitdir = content[len('gitdir: '):]
+    head_path = os.path.join(gitdir, 'HEAD')
+    branch = _read_head_branch(head_path)
+    if branch is None:
+        return None
+    return (git_directory, branch)
+
+
+def _read_head_branch(head_path: str) -> str | None:
+    """
+    Read a git HEAD file and extract the branch name or commit hash.
+
+    HEAD contains either:
+    - "ref: refs/heads/feature/upload" → branch = "feature/upload"
+    - A raw commit hash (40 hex chars) → detached HEAD, return the hash
+
+    Args:
+        head_path: Path to the HEAD file
+
+    Returns:
+        Branch name or commit hash, or None on error
+    """
+    try:
+        with open(head_path, 'r') as f:
+            content = f.read().strip()
+    except OSError:
+        return None
+
+    if content.startswith('ref: refs/heads/'):
+        return content[len('ref: refs/heads/'):]
+    elif content.startswith('ref: '):
+        # Other ref (unlikely but handle it)
+        return content[len('ref: '):]
+    elif len(content) >= 7 and all(c in '0123456789abcdef' for c in content):
+        # Detached HEAD: raw commit hash
+        return content
+    return None
+
+
+def extract_paths_from_tool_uses(parsed_json: dict) -> list[str]:
+    """
+    Extract file/directory paths from tool_use blocks in an assistant message.
+
+    Only considers Read, Edit, Write, Grep, and Glob tools.
+    Only returns absolute paths (starting with /).
+
+    Args:
+        parsed_json: Parsed JSON content of an assistant message
+
+    Returns:
+        List of absolute paths found in tool_use inputs
+    """
+    content = get_message_content_list(parsed_json, "assistant")
+    if content is None:
+        return []
+
+    paths = []
+    for item in content:
+        if not isinstance(item, dict) or item.get('type') != 'tool_use':
+            continue
+        tool_name = item.get('name')
+        if tool_name not in _TOOL_PATH_FIELDS:
+            continue
+        field_name = _TOOL_PATH_FIELDS[tool_name]
+        inputs = item.get('input')
+        if not isinstance(inputs, dict):
+            continue
+        path = inputs.get(field_name)
+        if isinstance(path, str) and path.startswith('/'):
+            paths.append(path)
+    return paths
+
+
+def resolve_git_for_item(parsed_json: dict) -> tuple[str, str] | None:
+    """
+    Resolve git directory and branch for a session item.
+
+    Extracts paths from tool_use blocks, resolves each to a git root,
+    and returns the most common resolution.
+
+    Args:
+        parsed_json: Parsed JSON content of the item
+
+    Returns:
+        (git_directory, git_branch) tuple, or None if no paths or no git found
+    """
+    paths = extract_paths_from_tool_uses(parsed_json)
+    if not paths:
+        return None
+
+    resolutions: list[tuple[str, str]] = []
+    for path in paths:
+        # Use the directory part of the path (for files)
+        dir_path = os.path.dirname(path) if not os.path.isdir(path) else path
+        result = _resolve_git_from_path(dir_path)
+        if result is not None:
+            resolutions.append(result)
+
+    if not resolutions:
+        return None
+
+    if len(resolutions) == 1:
+        return resolutions[0]
+
+    # Multiple resolutions: use the most frequent git_directory
+    counter = Counter(r[0] for r in resolutions)
+    most_common_dir = counter.most_common(1)[0][0]
+    # Return the first resolution matching the most common directory
+    for r in resolutions:
+        if r[0] == most_common_dir:
+            return r
+
+    return resolutions[0]  # Fallback (shouldn't reach here)
+
+
+def clear_git_resolution_cache() -> None:
+    """Clear the module-level git resolution cache."""
+    _git_resolution_cache.clear()
 
 
 # =============================================================================
@@ -942,6 +1164,8 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
                 'cost': str(item.cost) if item.cost is not None else None,
                 'context_usage': item.context_usage,
                 'timestamp': item.timestamp.isoformat() if item.timestamp else None,
+                'git_directory': item.git_directory,
+                'git_branch': item.git_branch,
             }
             for item in items
         ]
@@ -977,8 +1201,12 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     # Track runtime environment fields (last seen values)
     first_cwd: str | None = None  # First cwd = project directory
     last_cwd: str | None = None
-    last_git_branch: str | None = None
+    last_cwd_git_branch: str | None = None
     last_model: str | None = None
+
+    # Track resolved git directory/branch (from tool_use paths)
+    last_resolved_git_directory: str | None = None
+    last_resolved_git_branch: str | None = None
 
     for item in queryset.iterator(chunk_size=batch_size):
         try:
@@ -1005,11 +1233,24 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             if first_cwd is None:
                 first_cwd = cwd
             last_cwd = cwd
-        if git_branch := parsed.get('gitBranch'):
-            last_git_branch = git_branch
+        if cwd_git_branch := parsed.get('gitBranch'):
+            last_cwd_git_branch = cwd_git_branch
         if (message := parsed.get('message')) and isinstance(message, dict):
             if model := message.get('model'):
                 last_model = model
+
+        # Resolve git directory/branch from tool_use paths
+        if item.git_directory is not None:
+            # Already resolved (recompute protection) — preserve and track
+            last_resolved_git_directory = item.git_directory
+            last_resolved_git_branch = item.git_branch
+        else:
+            # Attempt resolution from tool_use paths
+            git_resolution = resolve_git_for_item(parsed)
+            if git_resolution is not None:
+                item.git_directory, item.git_branch = git_resolution
+                last_resolved_git_directory = item.git_directory
+                last_resolved_git_branch = item.git_branch
 
         # Handle title extraction
         if item.kind == ItemKind.USER_MESSAGE and not initial_title_set:
@@ -1144,7 +1385,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         'session_id': session_id,
         'project_id': session.project_id,
         'item_updates': all_item_updates,
-        'item_fields': ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage', 'timestamp'],
+        'item_fields': ['display_level', 'group_head', 'group_tail', 'kind', 'message_id', 'cost', 'context_usage', 'timestamp', 'git_directory', 'git_branch'],
         'links': all_links,
         'session_fields': {
             'compute_version': settings.CURRENT_COMPUTE_VERSION,
@@ -1154,7 +1395,9 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             'subagents_cost': str(subagents_cost) if subagents_cost else None,
             'total_cost': str(total_cost) if total_cost else None,
             'cwd': last_cwd,
-            'git_branch': last_git_branch,
+            'cwd_git_branch': last_cwd_git_branch,
+            'git_directory': last_resolved_git_directory,
+            'git_branch': last_resolved_git_branch,
             'model': last_model,
         },
         'titles': session_titles,
@@ -1539,6 +1782,16 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
     metadata = compute_item_metadata(parsed)
     item.display_level = metadata['display_level']
     item.kind = metadata['kind']
+
+    # Resolve git directory/branch from tool_use paths
+    git_resolution = resolve_git_for_item(parsed)
+    if git_resolution is not None:
+        item.git_directory, item.git_branch = git_resolution
+        # Update session-level git fields
+        Session.objects.filter(id=session_id).update(
+            git_directory=git_resolution[0],
+            git_branch=git_resolution[1],
+        )
 
     # Initialize group fields
     item.group_head = None

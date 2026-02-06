@@ -65,7 +65,8 @@ def serialize_session(session):
         "total_cost": float(session.total_cost) if session.total_cost else None,  # Total cost in USD
         # Runtime environment fields
         "cwd": session.cwd,  # Current working directory
-        "git_branch": session.git_branch,  # Git branch name
+        "git_branch": session.git_branch or session.cwd_git_branch,  # Resolved branch, fallback to cwd
+        "git_directory": session.git_directory,  # Resolved git root directory
         "model": _serialize_model(session.model),  # Model info object
         # User-controlled fields
         "archived": session.archived,  # Whether the session is archived
@@ -124,5 +125,7 @@ def serialize_session_item_metadata(item):
         "group_head": item.group_head,
         "group_tail": item.group_tail,
         "kind": item.kind,
+        "git_directory": item.git_directory,
+        "git_branch": item.git_branch,
         # NO content field - that's the whole point
     }

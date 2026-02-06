@@ -103,6 +103,18 @@ const contextUsageIndicatorWidth = computed(() => {
     return `calc(var(--track-width) * ${multiplier.toFixed(2)})`
 })
 
+// Display directory: git_directory if available, otherwise cwd
+const displayDirectory = computed(() => {
+    return session.value?.git_directory || session.value?.cwd || null
+})
+
+// Tooltip for directory: indicate whether it's the resolved git directory or cwd fallback
+const displayDirectoryTooltip = computed(() => {
+    if (session.value?.git_directory) return 'Git working directory'
+    if (session.value?.cwd) return 'Working directory (cwd)'
+    return null
+})
+
 // Format model name for display from pre-parsed family and version
 const formattedModel = computed(() => {
     const model = session.value?.model
@@ -271,6 +283,20 @@ defineExpose({
             <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
         </div>
 
+        <!-- Git info row: directory @ branch (not shown for draft sessions) -->
+        <div v-if="!session.draft && (displayDirectory || session.git_branch)" class="session-git-info">
+            <span v-if="displayDirectory" id="session-header-git-directory" class="git-info-item">
+                <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
+                <span>{{ displayDirectory }}</span>
+            </span>
+            <wa-tooltip v-if="tooltipsEnabled && displayDirectory" for="session-header-git-directory">{{ displayDirectoryTooltip }}</wa-tooltip>
+
+            <span v-if="session.git_branch" id="session-header-git-branch" class="git-info-item">
+                <wa-icon auto-width name="code-branch"></wa-icon>
+                <span>{{ session.git_branch }}</span>
+            </span>
+            <wa-tooltip v-if="tooltipsEnabled && session.git_branch" for="session-header-git-branch">Git branch</wa-tooltip>
+        </div>
 
         <!-- Meta row (not shown for draft sessions) -->
         <div v-if="!session.draft" class="session-meta">
@@ -445,12 +471,34 @@ defineExpose({
     max-width: max-content;
 }
 
+.session-git-info {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--wa-space-l);
+    row-gap: var(--wa-space-3xs);
+    padding-inline: var(--wa-space-m);
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+    overflow: hidden;
+    margin-top: var(--wa-space-xs);
+}
+
+.git-info-item {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .session-meta {
     display: flex;
     justify-content: start;
     align-items: center;
     gap: var(--wa-space-l);
-    padding-inline: var(--wa-space-xs);
+    padding-inline: var(--wa-space-m);
 }
 
 .session-meta {
