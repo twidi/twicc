@@ -66,12 +66,8 @@ const isDisabled = computed(() => {
 const buttonLabel = computed(() => {
     const state = processState.value?.state
     if (state === 'starting') {
-        return 'Claude is starting...'
+        return 'Starting...'
     }
-    if (state === 'assistant_turn') {
-        return 'Send while Claude is working'
-    }
-    // user_turn, dead, or no process
     return 'Send'
 })
 
