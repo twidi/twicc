@@ -162,7 +162,8 @@ If a `wa-*` component appears unstyled in production (but works in dev), it's li
 ## Web Awesome Documentation
 
 A nearly complete "one file" version of the docs is available at `frontend/node_modules/@awesome.me/webawesome/dist/llms.txt`
-Full documentation is also at `/home/twidi/dev/webawesome/packages/webawesome/docs/docs/` (`usage.md` and `frameworks/vue.md`)
+Full documentation is also at `./frontend/node_modules/@awesome.me/webawesome/dist/skills/` (`references/components/`, `references/usage.md` and `references/frameworks/vue.md`)
+
 
 ## Dialog Forms Pattern
 
