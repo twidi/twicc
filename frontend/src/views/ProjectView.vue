@@ -250,11 +250,55 @@ watch(sessionId, (newSessionId) => {
     updateSidebarClosedClass(true)
 })
 
+// Reset sidebar to default width on divider double-click.
+// wa-split-panel's drag handler calls preventDefault() on mousedown, which prevents
+// native dblclick events from firing. We detect double-clicks manually by tracking
+// rapid consecutive pointerdown events on the split panel host element, filtering
+// only those whose composedPath includes the shadow DOM divider.
+function resetSidebarToDefault() {
+    if (isMobile()) return
+    const splitPanel = document.querySelector('.project-view')
+    if (splitPanel) {
+        ignoringReposition = true
+        splitPanel.positionInPixels = DEFAULT_SIDEBAR_WIDTH
+        requestAnimationFrame(() => {
+            ignoringReposition = false
+        })
+        sidebarState.width = DEFAULT_SIDEBAR_WIDTH
+        saveSidebarState({ open: true, width: DEFAULT_SIDEBAR_WIDTH })
+        updateSidebarClosedClass(false)
+    }
+}
+
+const DOUBLE_CLICK_DELAY = 400 // ms
+let lastDividerPointerDown = 0
+
+function handleSplitPanelPointerDown(event) {
+    // Only react to pointerdown events that originate from the divider
+    // (check composedPath to see through shadow DOM boundary)
+    const splitPanel = event.currentTarget
+    const path = event.composedPath()
+    if (!path.includes(splitPanel.divider)) return
+
+    const now = Date.now()
+    if (now - lastDividerPointerDown < DOUBLE_CLICK_DELAY) {
+        lastDividerPointerDown = 0
+        resetSidebarToDefault()
+    } else {
+        lastDividerPointerDown = now
+    }
+}
+
 // Apply stored sidebar width and body class once on mount
 onMounted(() => {
     const splitPanel = document.querySelector('.project-view')
-    if (splitPanel && sidebarState.width !== DEFAULT_SIDEBAR_WIDTH) {
-        splitPanel.positionInPixels = sidebarState.width
+    if (splitPanel) {
+        if (sidebarState.width !== DEFAULT_SIDEBAR_WIDTH) {
+            splitPanel.positionInPixels = sidebarState.width
+        }
+        // Listen for pointerdown on the host element (capture phase) to detect
+        // double-clicks on the divider. Native dblclick is blocked by the drag handler.
+        splitPanel.addEventListener('pointerdown', handleSplitPanelPointerDown, true)
     }
     // Set initial sidebar-closed class on body
     if (isMobile()) {
@@ -330,7 +374,8 @@ function updateSidebarClosedClass(closed) {
             class="project-view"
             :position-in-pixels="DEFAULT_SIDEBAR_WIDTH"
             primary="start"
-            snap="125px 220px 300px 400px"
+            snap="125px 200px 300px 400px"
+            snap-threshold="30"
             @wa-reposition="handleSplitReposition"
         >
             <!-- Divider handle for touch devices -->

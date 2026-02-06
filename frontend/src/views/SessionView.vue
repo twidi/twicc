@@ -71,22 +71,66 @@ function onScrollDirection(direction) {
     }
 }
 
+// Reset devtools panel to default height on divider double-click.
+// wa-split-panel's drag handler calls preventDefault() on mousedown, which prevents
+// native dblclick events from firing. We detect double-clicks manually by tracking
+// rapid consecutive pointerdown events on the split panel host element, filtering
+// only those whose composedPath includes the shadow DOM divider.
+function resetDevToolsPanelToDefault() {
+    if (isMobile()) return
+    const splitPanel = document.querySelector('.session-content-split')
+    if (splitPanel) {
+        ignoringDevToolsReposition = true
+        splitPanel.positionInPixels = DEFAULT_DEVTOOLS_PANEL_HEIGHT
+        requestAnimationFrame(() => {
+            ignoringDevToolsReposition = false
+        })
+        devToolsPanelState.height = DEFAULT_DEVTOOLS_PANEL_HEIGHT
+        saveDevToolsPanelState({ open: true, height: DEFAULT_DEVTOOLS_PANEL_HEIGHT })
+    }
+}
+
+const DOUBLE_CLICK_DELAY = 400 // ms
+let lastDevToolsDividerPointerDown = 0
+
+function handleDevToolsSplitPanelPointerDown(event) {
+    // Only react to pointerdown events that originate from the divider
+    // (check composedPath to see through shadow DOM boundary)
+    const splitPanel = event.currentTarget
+    const path = event.composedPath()
+    if (!path.includes(splitPanel.divider)) return
+
+    const now = Date.now()
+    if (now - lastDevToolsDividerPointerDown < DOUBLE_CLICK_DELAY) {
+        lastDevToolsDividerPointerDown = 0
+        resetDevToolsPanelToDefault()
+    } else {
+        lastDevToolsDividerPointerDown = now
+    }
+}
+
 // Setup viewport height detection + restore devtools panel height
 onMounted(() => {
     checkViewportHeight()
     window.addEventListener('resize', checkViewportHeight)
 
     // Restore devtools panel height from localStorage (mirrors sidebar pattern)
-    if (devToolsPanelState.height !== DEFAULT_DEVTOOLS_PANEL_HEIGHT) {
-        const splitPanel = document.querySelector('.session-content-split')
-        if (splitPanel) {
+    const splitPanel = document.querySelector('.session-content-split')
+    if (splitPanel) {
+        if (devToolsPanelState.height !== DEFAULT_DEVTOOLS_PANEL_HEIGHT) {
             splitPanel.positionInPixels = devToolsPanelState.height
         }
+        // Listen for pointerdown on the host element (capture phase) to detect
+        // double-clicks on the divider. Native dblclick is blocked by the drag handler.
+        splitPanel.addEventListener('pointerdown', handleDevToolsSplitPanelPointerDown, true)
     }
 })
 
 onUnmounted(() => {
     window.removeEventListener('resize', checkViewportHeight)
+    // Clean up divider pointerdown listener
+    const splitPanel = document.querySelector('.session-content-split')
+    splitPanel?.removeEventListener('pointerdown', handleDevToolsSplitPanelPointerDown, true)
 })
 
 // Current session from route params
@@ -238,7 +282,7 @@ function handleNeedsTitle() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const DEVTOOLS_PANEL_STORAGE_KEY = 'twicc-devtools-panel-state'
-const DEFAULT_DEVTOOLS_PANEL_HEIGHT = 250
+const DEFAULT_DEVTOOLS_PANEL_HEIGHT = 500
 const DEVTOOLS_PANEL_COLLAPSE_THRESHOLD = 70
 const MOBILE_BREAKPOINT = 640
 
@@ -358,7 +402,8 @@ function handleDevToolsTabShow(event) {
             :position-in-pixels="DEFAULT_DEVTOOLS_PANEL_HEIGHT"
             primary="end"
             orientation="vertical"
-            snap="50px 150px 250px 400px"
+            snap="75px 300px 600px 900x"
+            snap-threshold="30"
             @wa-reposition="handleDevToolsPanelReposition"
         >
             <wa-icon slot="divider" name="grip-lines" class="divider-handle"></wa-icon>
