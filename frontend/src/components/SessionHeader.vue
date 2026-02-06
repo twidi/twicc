@@ -557,7 +557,8 @@ defineExpose({
     color: var(--wa-color-text-quiet);
 }
 
-body:not([data-display-mode="debug"]) .nb_lines {
+body:not([data-display-mode="debug"]) .nb_lines,
+body:not([data-display-mode="debug"]) #session-header-cost-breakdown {
     display: none;
 }
 
