@@ -622,6 +622,13 @@ defineExpose({
                         >
                             <wa-icon name="ellipsis" label="Session menu"></wa-icon>
                         </wa-button>
+                        <!-- Quick action: Archive + stop (only when process is running and session is archivable) -->
+                        <wa-dropdown-item v-if="canStopProcess(session.id) && !session.draft && !session.archived" value="archive">
+                            <wa-icon slot="icon" name="box-archive"></wa-icon>
+                            Archive (and stop the Claude Code process)
+                        </wa-dropdown-item>
+                        <wa-divider v-if="canStopProcess(session.id) && !session.draft && !session.archived"></wa-divider>
+                        <!-- Standard actions -->
                         <wa-dropdown-item value="rename">
                             <wa-icon slot="icon" name="pencil"></wa-icon>
                             Rename
@@ -634,22 +641,26 @@ defineExpose({
                             <wa-icon slot="icon" name="thumbtack" class="unpinned-menu-icon"></wa-icon>
                             Unpin
                         </wa-dropdown-item>
-                        <wa-dropdown-item v-if="!session.draft && !session.archived" value="archive">
+                        <wa-dropdown-item v-if="!canStopProcess(session.id) && !session.draft && !session.archived" value="archive">
                             <wa-icon slot="icon" name="box-archive"></wa-icon>
-                            Archive<template v-if="canStopProcess(session.id)"> (and stop the Claude Code process)</template>
+                            Archive
                         </wa-dropdown-item>
                         <wa-dropdown-item v-if="session.archived" value="unarchive">
                             <wa-icon slot="icon" name="box-open"></wa-icon>
                             Unarchive
                         </wa-dropdown-item>
-                        <wa-dropdown-item v-if="canStopProcess(session.id)" value="stop" variant="danger">
-                            <wa-icon slot="icon" name="ban"></wa-icon>
-                            Stop the Claude Code process
-                        </wa-dropdown-item>
-                        <wa-dropdown-item v-if="session.draft" value="delete-draft" variant="danger">
-                            <wa-icon slot="icon" name="trash"></wa-icon>
-                            Delete draft
-                        </wa-dropdown-item>
+                        <!-- Danger actions -->
+                        <template v-if="canStopProcess(session.id) || session.draft">
+                            <wa-divider></wa-divider>
+                            <wa-dropdown-item v-if="canStopProcess(session.id)" value="stop" variant="danger">
+                                <wa-icon slot="icon" name="ban"></wa-icon>
+                                Stop the Claude Code process
+                            </wa-dropdown-item>
+                            <wa-dropdown-item v-if="session.draft" value="delete-draft" variant="danger">
+                                <wa-icon slot="icon" name="trash"></wa-icon>
+                                Delete draft
+                            </wa-dropdown-item>
+                        </template>
                     </wa-dropdown>
                 </div>
             </template>
