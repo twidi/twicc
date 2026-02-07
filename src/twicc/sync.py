@@ -404,6 +404,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                     modified_line_nums.update(item_modified_lines)
                     update_fields['group_head'] = item.group_head
                     update_fields['group_tail'] = item.group_tail
+                    update_fields['git_directory'] = item.git_directory
+                    update_fields['git_branch'] = item.git_branch
 
                 # Update the item in DB with all computed fields
                 SessionItem.objects.filter(
