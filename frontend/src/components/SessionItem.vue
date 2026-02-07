@@ -94,7 +94,7 @@ function toggleJsonView() {
         <div class="json-toggle-container">
             <wa-button
                 v-if="!showJson"
-                :id="`json-toggle-${lineNum}`"
+                :id="`json-toggle-${sessionId}-${lineNum}`"
                 class="json-toggle"
                 :variant="showJson ? 'warning' : 'neutral'"
                 size="small"
@@ -102,13 +102,13 @@ function toggleJsonView() {
             >
                 <wa-icon name="code"></wa-icon>
             </wa-button>
-            <wa-tooltip v-if="!showJson && tooltipsEnabled" :for="`json-toggle-${lineNum}`">Show JSON</wa-tooltip>
+            <wa-tooltip v-if="!showJson && tooltipsEnabled" :for="`json-toggle-${sessionId}-${lineNum}`">Show JSON</wa-tooltip>
         </div>
 
         <!-- JSON view -->
         <wa-callout appearance="outlined" variant="neutral" v-if="showJson" class="json-view">
             <wa-button
-                :id="`json-toggle-hide-${lineNum}`"
+                :id="`json-toggle-hide-${sessionId}-${lineNum}`"
                 class="json-toggle"
                 :variant="showJson ? 'warning' : 'neutral'"
                 size="small"
@@ -116,9 +116,9 @@ function toggleJsonView() {
             >
                 <wa-icon name="code"></wa-icon>
             </wa-button>
-            <wa-tooltip v-if="tooltipsEnabled" :for="`json-toggle-hide-${lineNum}`">Hide JSON</wa-tooltip>
-            <wa-tag :id="`line-number-${lineNum}`" size="small"  appearance="filled-outlined" variant="brand" class="line-number">{{ lineNum }}</wa-tag>
-            <wa-tooltip v-if="tooltipsEnabled" :for="`line-number-${lineNum}`">Line number</wa-tooltip>
+            <wa-tooltip v-if="tooltipsEnabled" :for="`json-toggle-hide-${sessionId}-${lineNum}`">Hide JSON</wa-tooltip>
+            <wa-tag :id="`line-number-${sessionId}-${lineNum}`" size="small"  appearance="filled-outlined" variant="brand" class="line-number">{{ lineNum }}</wa-tag>
+            <wa-tooltip v-if="tooltipsEnabled" :for="`line-number-${sessionId}-${lineNum}`">Line number</wa-tooltip>
             <div class="json-tree">
                 <JsonViewer
                     :data="parsedContent"

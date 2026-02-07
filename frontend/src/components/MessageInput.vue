@@ -385,14 +385,14 @@ function handleClear() {
                 <!-- Attachment badge + popover -->
                 <template v-if="attachmentCount > 0">
                     <button
-                        id="attachments-popover-trigger"
+                        :id="`attachments-popover-trigger-${sessionId}`"
                         class="attachments-badge-trigger"
                         :title="`${attachmentCount} file${attachmentCount > 1 ? 's' : ''} attached`"
                     >
                         <wa-badge variant="primary" pill>{{ attachmentCount }}</wa-badge>
                     </button>
                     <wa-popover
-                        for="attachments-popover-trigger"
+                        :for="`attachments-popover-trigger-${sessionId}`"
                         placement="top"
                         class="attachments-popover"
                     >

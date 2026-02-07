@@ -794,8 +794,14 @@ function updateSidebarClosedClass(closed) {
 
         <!-- Main content area -->
         <main slot="end" class="main-content">
-            <router-view v-if="sessionId" />
-            <div v-else class="empty-state">
+            <div v-show="sessionId" class="session-content">
+                <router-view v-slot="{ Component }">
+                    <KeepAlive :max="5">
+                        <component :is="Component" :key="route.params.sessionId" />
+                    </KeepAlive>
+                </router-view>
+            </div>
+            <div v-if="!sessionId" class="empty-state">
                 <p>Select a session from the list</p>
             </div>
         </main>
@@ -972,6 +978,10 @@ wa-split-panel::part(divider) {
     overflow: hidden;
     background: var(--wa-color-surface-default);
     z-index: 1;
+}
+
+.session-content {
+    height: 100%;
 }
 
 .empty-state {

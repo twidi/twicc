@@ -87,6 +87,27 @@ export function useVirtualScroll(options) {
      */
     let stickToBottom = false
 
+    /**
+     * Suspended state for KeepAlive support.
+     * When the scroller's container is detached from the DOM (e.g., by Vue's KeepAlive),
+     * the browser resets scrollTop to 0. We save the scroll anchor (visible item + offset)
+     * before this happens and freeze all reactive recalculations to prevent renderRange/spacer
+     * corruption.
+     *
+     * The anchor-based approach is more robust than saving raw scrollTop because:
+     * - It survives viewport size changes while suspended (e.g., window resize)
+     * - It doesn't depend on exact pixel positions that may shift if items are re-measured
+     *
+     * - `suspended`: reactive ref — true when the scroller is in a detached/hidden state.
+     *   MUST be a ref (not a plain let) because the renderRange watchEffect reads it:
+     *   if it were a plain variable, Vue wouldn't track it as a dependency, and
+     *   setting suspended=false in resume() would NOT re-trigger the watchEffect,
+     *   leaving renderRange frozen and items unrendered.
+     * - `savedAnchor`: { index, key, offset } — the first visible item and pixel offset into it
+     */
+    const suspended = ref(false)
+    let savedAnchor = null
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Computed: Positions
     // ═══════════════════════════════════════════════════════════════════════════
@@ -200,6 +221,11 @@ export function useVirtualScroll(options) {
             return
         }
 
+        // When suspended, keep the current renderRange frozen.
+        // `suspended` is a ref so Vue tracks it as a dependency here:
+        // when resume() sets it to false, this watchEffect will re-run.
+        if (suspended.value) return
+
         // Calculate zones with both buffers
         const loadTop = Math.max(0, scrollTop.value - buffer)
         const loadBottom = scrollTop.value + viewportHeight.value + buffer
@@ -291,7 +317,7 @@ export function useVirtualScroll(options) {
         const posArray = positions.value
         const { start } = renderRange.value
 
-        if (start <= 0 || posArray.length === 0) return 0
+        if (start <= 0 || start >= posArray.length || posArray.length === 0) return 0
         // The top of the first rendered item IS the total height of items before it
         return posArray[start].top
     })
@@ -304,7 +330,7 @@ export function useVirtualScroll(options) {
         const posArray = positions.value
         const { end } = renderRange.value
 
-        if (end >= posArray.length || posArray.length === 0) return 0
+        if (end <= 0 || end >= posArray.length || posArray.length === 0) return 0
         // Total height minus the bottom position of the last rendered item
         const lastRenderedPos = posArray[end - 1]
         const lastRenderedBottom = lastRenderedPos.top + lastRenderedPos.height
@@ -349,6 +375,13 @@ export function useVirtualScroll(options) {
     function batchUpdateItemHeights(updates) {
         const container = containerRef.value
         const results = []
+
+        // When suspended (container detached by KeepAlive), skip all updates.
+        // The height cache retains its valid values, and any 0-height measurements
+        // from detached items would be filtered out anyway.
+        if (suspended.value) {
+            return results
+        }
 
         // Filter out zero heights and unchanged values
         const actualUpdates = new Map()
@@ -525,12 +558,17 @@ export function useVirtualScroll(options) {
      * @param {Event} event - The scroll event
      */
     function handleScroll(event) {
+        // Ignore scroll events while suspended (container is detached).
+        // The browser may fire a scroll event when resetting scrollTop to 0 during detach.
+        if (suspended.value) return
+
         if (rafId !== null) {
             cancelAnimationFrame(rafId)
         }
 
         rafId = requestAnimationFrame(() => {
             rafId = null
+            if (suspended.value) return
             const target = event?.target || containerRef.value
             if (target) {
                 scrollTop.value = target.scrollTop
@@ -713,10 +751,157 @@ export function useVirtualScroll(options) {
     /**
      * Update the viewport height. Called by the component's ResizeObserver.
      *
+     * While suspended (KeepAlive detached), height changes are ignored to
+     * prevent renderRange/spacer corruption from 0-height resize events.
+     *
      * @param {number} height - The new viewport height
      */
     function updateViewportHeight(height) {
+        // While suspended, ignore all height changes. The browser fires
+        // ResizeObserver with 0 when elements are detached, which would
+        // corrupt renderRange and spacer calculations.
+        if (suspended.value) return
+
         viewportHeight.value = height
+    }
+
+    /**
+     * Suspend the scroller (called before KeepAlive detaches the DOM).
+     *
+     * Captures the scroll anchor: the first item visible at the top of the
+     * viewport and the pixel offset into it. This is more robust than saving
+     * raw scrollTop because it survives viewport size changes.
+     *
+     * Must be called from onDeactivated BEFORE the browser detaches the DOM
+     * and resets scrollTop to 0.
+     */
+    function suspend() {
+        if (suspended.value) return
+
+        const posArray = positions.value
+        if (posArray.length > 0) {
+            const currentScrollTop = scrollTop.value
+            const anchorIndex = findIndexAtPosition(currentScrollTop)
+            const anchorItem = posArray[anchorIndex]
+            if (anchorItem) {
+                savedAnchor = {
+                    index: anchorIndex,
+                    key: anchorItem.key,
+                    offset: currentScrollTop - anchorItem.top,
+                }
+            }
+        }
+
+        suspended.value = true
+        // Reset stickToBottom which may have been left true if a
+        // scrollToBottomUntilStable was interrupted by deactivation.
+        stickToBottom = false
+    }
+
+    /**
+     * Resume the scroller (called after KeepAlive reattaches the DOM).
+     *
+     * Restores the scroll position from the saved anchor: finds the anchor
+     * item in the (possibly recomputed) positions array and scrolls to
+     * anchorTop + offset.
+     *
+     * Must be called from onActivated AFTER the DOM is reattached and the
+     * container is visible again.
+     */
+    function resume() {
+        if (!suspended.value) return
+
+        suspended.value = false
+
+        const container = containerRef.value
+        if (!container) return
+
+        // Update viewportHeight from the now-visible container
+        viewportHeight.value = container.clientHeight
+
+        if (savedAnchor) {
+            const posArray = positions.value
+
+            // Try to find the anchor by key first (more reliable if items shifted)
+            let anchorItem = posArray.find(p => p.key === savedAnchor.key)
+
+            // Fallback to index if key not found (item may have been removed)
+            if (!anchorItem && savedAnchor.index < posArray.length) {
+                anchorItem = posArray[savedAnchor.index]
+            }
+
+            if (anchorItem) {
+                const targetScrollTop = anchorItem.top + savedAnchor.offset
+                const maxScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
+                const clampedScrollTop = Math.max(0, Math.min(targetScrollTop, maxScrollTop))
+
+                container.scrollTop = clampedScrollTop
+                scrollTop.value = clampedScrollTop
+            }
+
+            savedAnchor = null
+        }
+    }
+
+    /**
+     * Get the current scroll anchor (the first visible item and pixel offset into it).
+     * Returns null if there are no items.
+     *
+     * This is used by parent components (like SessionItemsList) to save scroll state
+     * before the VirtualScroller might be destroyed and recreated (e.g., by v-if/v-else-if
+     * conditions inside a KeepAlive boundary).
+     *
+     * @returns {{ index: number, key: any, offset: number } | null}
+     */
+    function getScrollAnchor() {
+        const posArray = positions.value
+        if (posArray.length === 0) return null
+
+        const currentScrollTop = scrollTop.value
+        const anchorIndex = findIndexAtPosition(currentScrollTop)
+        const anchorItem = posArray[anchorIndex]
+        if (!anchorItem) return null
+
+        return {
+            index: anchorIndex,
+            key: anchorItem.key,
+            offset: currentScrollTop - anchorItem.top,
+        }
+    }
+
+    /**
+     * Scroll to a previously saved anchor position.
+     * The anchor is resolved by key first, then by index as fallback.
+     *
+     * This is used by parent components to restore scroll state after the
+     * VirtualScroller has been recreated.
+     *
+     * @param {{ index: number, key: any, offset: number }} anchor - The anchor to restore
+     */
+    function scrollToAnchor(anchor) {
+        if (!anchor) return
+
+        const container = containerRef.value
+        if (!container) return
+
+        const posArray = positions.value
+
+        // Try to find the anchor by key first (more reliable if items shifted)
+        let anchorItem = posArray.find(p => p.key === anchor.key)
+
+        // Fallback to index if key not found (item may have been removed)
+        if (!anchorItem && anchor.index < posArray.length) {
+            anchorItem = posArray[anchor.index]
+        }
+
+        if (anchorItem) {
+            const targetScrollTop = anchorItem.top + anchor.offset
+            const maxScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
+            const clampedScrollTop = Math.max(0, Math.min(targetScrollTop, maxScrollTop))
+
+            container.scrollTop = clampedScrollTop
+            scrollTop.value = clampedScrollTop
+        }
     }
 
     /**
@@ -807,5 +992,11 @@ export function useVirtualScroll(options) {
         // Viewport management
         updateViewportHeight,
         syncScrollPosition,
+
+        // KeepAlive support
+        suspend,
+        resume,
+        getScrollAnchor,
+        scrollToAnchor,
     }
 }

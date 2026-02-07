@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch, ref, nextTick, onUnmounted } from 'vue'
+import { computed, watch, ref, nextTick, inject, onActivated, onDeactivated } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { useDataStore } from '../stores/data'
 import { INITIAL_ITEMS_COUNT } from '../constants'
@@ -54,6 +54,22 @@ const props = defineProps({
 const store = useDataStore()
 
 const emit = defineEmits(['needs-title', 'scroll-direction'])
+
+// KeepAlive active state (provided by SessionView)
+const sessionActive = inject('sessionActive', ref(true))
+
+// Track whether items were added while the session was inactive,
+// and whether the user was near the bottom before deactivation.
+// Used on reactivation to decide if we should auto-scroll to bottom.
+let itemCountAtDeactivation = null
+let wasNearBottomAtDeactivation = false
+
+// Saved scroll anchor for KeepAlive restore.
+// Acts as a safety net: the VirtualScroller's composable handles suspend/resume
+// internally via v-show, but SessionItemsList also captures the anchor in case
+// the VirtualScroller needs to be restored from this level (e.g., if items changed
+// while inactive and the composable's anchor is stale).
+let savedScrollAnchor = null
 
 // Reference to the VirtualScroller component
 const scrollerRef = ref(null)
@@ -123,6 +139,21 @@ const hasError = computed(() => store.didSessionItemsFailToLoad(props.sessionId)
 // Process state for this session (starting, assistant_turn, user_turn, dead)
 const processState = computed(() => store.getProcessState(props.sessionId))
 
+/**
+ * Whether the VirtualScroller should be visible.
+ * Uses v-show (not v-if) to keep the component alive across KeepAlive cycles,
+ * preserving the composable's height cache and scroll state.
+ *
+ * The scroller is shown when:
+ * - Not in compute pending state
+ * - No loading error
+ * - Not currently loading
+ * - There are items to display
+ */
+const showVirtualScroller = computed(() => {
+    return !isComputePending.value && !hasError.value && !isLoading.value && (visualItems.value?.length > 0)
+})
+
 // Timer for temporary indicator display (user_turn, dead)
 let temporaryIndicatorTimer = null
 const showTemporaryIndicator = ref(false)
@@ -140,6 +171,7 @@ const shouldShowProcessIndicator = computed(() => {
 
 // Watch process state changes to manage temporary indicator
 // Only show user_turn/dead when the state actually CHANGES (not on initial mount)
+// Guarded: skip timer creation when inactive (KeepAlive deactivated)
 watch(processState, (newState, oldState) => {
     // Clear any existing timer
     if (temporaryIndicatorTimer) {
@@ -151,6 +183,9 @@ watch(processState, (newState, oldState) => {
         showTemporaryIndicator.value = false
         return
     }
+
+    // Skip timer creation when inactive (DOM is detached)
+    if (!sessionActive.value) return
 
     const state = newState.state
     const oldStateValue = oldState?.state
@@ -172,8 +207,8 @@ watch(processState, (newState, oldState) => {
     }
 }, { immediate: true })
 
-// Cleanup timers on unmount
-onUnmounted(() => {
+// Cleanup timers when deactivated (KeepAlive moves DOM to detached storage)
+onDeactivated(() => {
     if (temporaryIndicatorTimer) {
         clearTimeout(temporaryIndicatorTimer)
         temporaryIndicatorTimer = null
@@ -182,6 +217,41 @@ onUnmounted(() => {
         clearTimeout(stabilityTimeoutId)
         stabilityTimeoutId = null
     }
+
+    // Capture state for reactivation: track item count and scroll position
+    itemCountAtDeactivation = visualItems.value?.length ?? null
+    const scroller = scrollerRef.value
+    wasNearBottomAtDeactivation = scroller ? scroller.isAtBottom(AUTO_SCROLL_THRESHOLD) : false
+
+    // Save scroll anchor as safety net for restoration after reactivation
+    savedScrollAnchor = scroller ? scroller.getScrollAnchor() : null
+})
+
+// On reactivation: restore scroll position or auto-scroll to bottom
+onActivated(async () => {
+    // Wait for Vue to render after reactivation
+    await nextTick()
+
+    // If items were added while inactive and user was near bottom, scroll to bottom
+    if (
+        itemCountAtDeactivation !== null
+        && visualItems.value?.length > itemCountAtDeactivation
+        && wasNearBottomAtDeactivation
+    ) {
+        scrollToBottomUntilStable()
+    } else if (savedScrollAnchor) {
+        // Restore the scroll position from the saved anchor (safety net).
+        // With v-show, the composable's suspend/resume handles this internally,
+        // but this fallback covers edge cases where the composable state is lost.
+        const scroller = scrollerRef.value
+        if (scroller) {
+            scroller.scrollToAnchor(savedScrollAnchor)
+        }
+    }
+
+    itemCountAtDeactivation = null
+    wasNearBottomAtDeactivation = false
+    savedScrollAnchor = null
 })
 
 // Build base URL for API calls (handles subagent case)
@@ -312,6 +382,9 @@ watch([() => props.sessionId, session], async ([newSessionId, newSession]) => {
         await loadSessionData(lastLine)
     }
 
+    // Skip DOM-manipulating scroll when inactive (KeepAlive deactivated)
+    if (!sessionActive.value) return
+
     // Always scroll to end of session (with retry until stable)
     // Mark as initial scroll to hide scroller until positioned (only on first load)
     // When returning to an already-loaded session, items are already sized so no resize events will fire
@@ -356,6 +429,9 @@ async function onComputeCompleted() {
 
     await loadSessionData(lastLine)
 
+    // Skip DOM-manipulating scroll when inactive (KeepAlive deactivated)
+    if (!sessionActive.value) return
+
     // Mark as initial scroll to hide scroller until positioned
     await nextTick()
     scrollToBottomUntilStable({ isInitial: true })
@@ -381,6 +457,10 @@ watch(
     async (newLength, oldLength) => {
         // Only handle additions (not initial load or removals)
         if (!newLength || !oldLength || newLength <= oldLength) return
+
+        // Skip DOM-manipulating scroll when inactive (KeepAlive deactivated).
+        // The reactivation handler will check if items were added and scroll if needed.
+        if (!sessionActive.value) return
 
         const scroller = scrollerRef.value
         if (!scroller) return
@@ -823,11 +903,26 @@ defineExpose({
             <span>Loading...</span>
         </div>
 
-        <!-- Items list (virtualized) -->
+        <!-- Draft session empty state -->
+        <div v-else-if="session?.draft && !visualItems.length" class="empty-state">
+        </div>
+
+        <!-- Empty state (no items and not a special state above) -->
+        <div v-else-if="!visualItems.length" class="empty-state">
+            Nothing to show yet
+        </div>
+
+        <!--
+            Items list (virtualized).
+            IMPORTANT: Uses v-show instead of v-if/v-else-if to keep the VirtualScroller
+            mounted across KeepAlive deactivation/activation cycles. Without this, the
+            v-else-if chain causes the VirtualScroller to be destroyed and recreated,
+            losing the composable's height cache and scroll state.
+            See spec: "Problems Encountered > VirtualScroller Scroll Position Loss"
+        -->
         <VirtualScroller
-            :key="sessionId"
             ref="scrollerRef"
-            v-else-if="visualItems.length > 0"
+            v-show="showVirtualScroller"
             :items="visualItems"
             :item-key="item => item.lineNum"
             :min-item-height="MIN_ITEM_SIZE"
@@ -881,15 +976,6 @@ defineExpose({
             </template>
         </VirtualScroller>
 
-        <!-- Draft session empty state -->
-        <div v-else-if="session?.draft" class="empty-state">
-        </div>
-
-        <!-- Empty state -->
-        <div v-else class="empty-state">
-            Nothing to show yet
-        </div>
-
         <div class="session-footer" :class="{ 'auto-hide-hidden': footerHidden }">
             <!-- Process indicator (fixed at bottom of list, visible while scrolling) -->
             <ProcessIndicator
@@ -904,7 +990,6 @@ defineExpose({
             <wa-divider></wa-divider>
             <MessageInput
                 v-if="!parentSessionId"
-                :key="sessionId"
                 :session-id="sessionId"
                 :project-id="projectId"
                 @needs-title="emit('needs-title')"

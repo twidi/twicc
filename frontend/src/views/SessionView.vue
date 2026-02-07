@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch, ref, onMounted, onUnmounted } from 'vue'
+import { computed, watch, ref, readonly, provide, onActivated, onDeactivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
@@ -23,6 +23,48 @@ const sessionHeaderRef = ref(null)
 
 // Reference to session items list for scroll compensation
 const sessionItemsListRef = ref(null)
+
+// Reference to the split panel element (devtools / session content split)
+const splitPanelRef = ref(null)
+
+// Reference to the devtools panel toggle checkbox
+const devtoolsCheckboxRef = ref(null)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// KeepAlive lifecycle: active state, listener setup/teardown, panel restore
+// ═══════════════════════════════════════════════════════════════════════════
+
+const isActive = ref(true)
+
+onActivated(() => {
+    isActive.value = true
+
+    // Check viewport height and start listening for resize events
+    checkViewportHeight()
+    window.addEventListener('resize', checkViewportHeight)
+
+    // Restore devtools panel height from localStorage (mirrors sidebar pattern)
+    if (splitPanelRef.value) {
+        if (devToolsPanelState.height !== DEFAULT_DEVTOOLS_PANEL_HEIGHT) {
+            splitPanelRef.value.positionInPixels = devToolsPanelState.height
+        }
+        // Listen for pointerdown on the host element (capture phase) to detect
+        // double-clicks on the divider. Native dblclick is blocked by the drag handler.
+        splitPanelRef.value.addEventListener('pointerdown', handleDevToolsSplitPanelPointerDown, true)
+    }
+})
+
+onDeactivated(() => {
+    isActive.value = false
+
+    // Stop listening for resize events while deactivated
+    window.removeEventListener('resize', checkViewportHeight)
+
+    // Clean up divider pointerdown listener
+    splitPanelRef.value?.removeEventListener('pointerdown', handleDevToolsSplitPanelPointerDown, true)
+})
+
+provide('sessionActive', readonly(isActive))
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Auto-hide header/footer on small viewports (behind feature flag)
@@ -89,10 +131,9 @@ function onScrollDirection(direction) {
 // only those whose composedPath includes the shadow DOM divider.
 function resetDevToolsPanelToDefault() {
     if (isMobile()) return
-    const splitPanel = document.querySelector('.session-content-split')
-    if (splitPanel) {
+    if (splitPanelRef.value) {
         ignoringDevToolsReposition = true
-        splitPanel.positionInPixels = DEFAULT_DEVTOOLS_PANEL_HEIGHT
+        splitPanelRef.value.positionInPixels = DEFAULT_DEVTOOLS_PANEL_HEIGHT
         requestAnimationFrame(() => {
             ignoringDevToolsReposition = false
         })
@@ -120,33 +161,15 @@ function handleDevToolsSplitPanelPointerDown(event) {
     }
 }
 
-// Setup viewport height detection + restore devtools panel height
-onMounted(() => {
-    checkViewportHeight()
-    window.addEventListener('resize', checkViewportHeight)
-
-    // Restore devtools panel height from localStorage (mirrors sidebar pattern)
-    const splitPanel = document.querySelector('.session-content-split')
-    if (splitPanel) {
-        if (devToolsPanelState.height !== DEFAULT_DEVTOOLS_PANEL_HEIGHT) {
-            splitPanel.positionInPixels = devToolsPanelState.height
-        }
-        // Listen for pointerdown on the host element (capture phase) to detect
-        // double-clicks on the divider. Native dblclick is blocked by the drag handler.
-        splitPanel.addEventListener('pointerdown', handleDevToolsSplitPanelPointerDown, true)
-    }
-})
-
-onUnmounted(() => {
-    window.removeEventListener('resize', checkViewportHeight)
-    // Clean up divider pointerdown listener
-    const splitPanel = document.querySelector('.session-content-split')
-    splitPanel?.removeEventListener('pointerdown', handleDevToolsSplitPanelPointerDown, true)
-})
-
 // Current session from route params
-const projectId = computed(() => route.params.projectId)
-const sessionId = computed(() => route.params.sessionId)
+// IMPORTANT: projectId and sessionId are captured at creation time (not reactive
+// computeds from route.params) because with KeepAlive, the route changes globally
+// when switching sessions. If these were reactive, ALL cached SessionView instances
+// would see the NEW session's params, breaking deactivation hooks and item lookups.
+// The KeepAlive key (route.params.sessionId) ensures each instance gets the correct
+// value at creation time and keeps it permanently.
+const projectId = ref(route.params.projectId)
+const sessionId = ref(route.params.sessionId)
 const subagentId = computed(() => route.params.subagentId)
 
 // Detect "All Projects" mode from route name
@@ -348,14 +371,13 @@ function handleDevToolsPanelReposition(event) {
     if (isMobile()) return
     if (ignoringDevToolsReposition) return
 
-    const checkbox = document.getElementById('devtools-panel-toggle-state')
-    if (!checkbox) return
+    if (!devtoolsCheckboxRef.value) return
 
     const newHeight = event.target.positionInPixels
 
     if (newHeight <= DEVTOOLS_PANEL_COLLAPSE_THRESHOLD) {
         // Auto-collapse: mark as closed, reset height to stored value
-        checkbox.checked = false
+        devtoolsCheckboxRef.value.checked = false
         saveDevToolsPanelState({ open: false, height: devToolsPanelState.height })
         // Restore height, ignoring the resulting reposition event
         ignoringDevToolsReposition = true
@@ -399,7 +421,7 @@ function handleDevToolsTabShow(event) {
 <template>
     <div class="session-view">
         <!-- Hidden checkbox for pure CSS devtools panel toggle -->
-        <input type="checkbox" id="devtools-panel-toggle-state" class="devtools-panel-toggle-checkbox" :checked="initialDevToolsPanelChecked" @change="handleDevToolsPanelToggle"/>
+        <input ref="devtoolsCheckboxRef" type="checkbox" :id="`devtools-panel-toggle-state-${sessionId}`" class="devtools-panel-toggle-checkbox" :checked="initialDevToolsPanelChecked" @change="handleDevToolsPanelToggle"/>
 
         <!-- Main session header (always visible, above tabs) -->
         <SessionHeader
@@ -412,6 +434,7 @@ function handleDevToolsTabShow(event) {
 
         <!-- Split panel: main content (start) + devtools panel (end) -->
             <wa-split-panel
+            ref="splitPanelRef"
             v-if="session"
             class="session-content-split"
             :position-in-pixels="DEFAULT_DEVTOOLS_PANEL_HEIGHT"
@@ -514,14 +537,14 @@ function handleDevToolsTabShow(event) {
                     </wa-tab-group>
                 </div>
 
-                <label for="devtools-panel-toggle-state" class="devtools-panel-toggle" id="devtools-panel-toggle-label">
+                <label :for="`devtools-panel-toggle-state-${sessionId}`" class="devtools-panel-toggle" :id="`devtools-panel-toggle-label-${sessionId}`">
                     <span class="devtools-panel-backdrop"></span>
                     <wa-button variant="neutral" appearance="filled-outlined" size="small">
                         <wa-icon class="icon-collapse" name="angles-down"></wa-icon>
                         <wa-icon class="icon-expand" name="angles-up"></wa-icon>
                     </wa-button>
                 </label>
-                <wa-tooltip v-if="tooltipsEnabled" for="devtools-panel-toggle-label">Toggle dev tools panel</wa-tooltip>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`devtools-panel-toggle-label-${sessionId}`">Toggle dev tools panel</wa-tooltip>
             </aside>
         </wa-split-panel>
 

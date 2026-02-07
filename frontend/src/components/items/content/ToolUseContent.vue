@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onUnmounted } from 'vue'
+import { computed, ref, inject, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../../stores/data'
 import { apiFetch } from '../../../utils/api'
@@ -191,6 +191,58 @@ function onToolUseOpen() {
 onUnmounted(() => {
     stopPolling()
     stopAgentPolling()
+})
+
+// KeepAlive active state (provided by SessionView)
+const sessionActive = inject('sessionActive', ref(true))
+
+// Track whether polling was suspended by deactivation (to resume on reactivation)
+let resultPollingPaused = false
+let agentPollingPausedAttempts = 0 // 0 = not paused, >0 = paused with this many attempts done
+
+watch(sessionActive, (active) => {
+    if (active) {
+        // Reactivated: resume polling only if it was suspended and still needed
+        if (resultPollingPaused) {
+            resultPollingPaused = false
+            // Resume only if result is still empty (polling is self-limiting)
+            if (!resultData.value || resultData.value.length === 0) {
+                startPolling()
+            }
+        }
+        if (agentPollingPausedAttempts > 0) {
+            const savedAttempts = agentPollingPausedAttempts
+            agentPollingPausedAttempts = 0
+            // Resume only if agent link was not found and max attempts not reached
+            if (agentLinkState.value === 'retrying' && savedAttempts < AGENT_POLLING_MAX_ATTEMPTS) {
+                agentPollingAttempts.value = savedAttempts
+                agentPollingIntervalId.value = setInterval(fetchAgentLink, AGENT_POLLING_DELAY_MS)
+            }
+        }
+    } else {
+        // Deactivated: pause active polling intervals without resetting state
+        if (pollingIntervalId.value) {
+            resultPollingPaused = true
+            clearInterval(pollingIntervalId.value)
+            pollingIntervalId.value = null
+            // Keep isPolling.value = true so the UI still shows "checking again shortly..."
+        }
+        if (agentPollingIntervalId.value) {
+            agentPollingPausedAttempts = agentPollingAttempts.value
+            clearInterval(agentPollingIntervalId.value)
+            agentPollingIntervalId.value = null
+            // Abort any in-flight agent request
+            if (agentLinkAbortController.value) {
+                agentLinkAbortController.value.abort()
+                agentLinkAbortController.value = null
+            }
+        }
+        // Abort any in-flight result request
+        if (abortController.value) {
+            abortController.value.abort()
+            abortController.value = null
+        }
+    }
 })
 
 // Computed for display: single result or array of multiple

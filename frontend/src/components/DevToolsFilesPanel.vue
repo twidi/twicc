@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick, shallowRef } from 'vue'
+import { ref, computed, watch, inject, nextTick, shallowRef } from 'vue'
 import { apiFetch } from '../utils/api'
 import FileTree from './FileTree.vue'
 
@@ -25,6 +25,13 @@ const props = defineProps({
         default: false,
     },
 })
+
+// KeepAlive active state (provided by SessionView)
+const sessionActive = inject('sessionActive', ref(true))
+
+// Track whether the fetch watcher was skipped while inactive.
+// On reactivation, if this is true, the watcher's current values are re-fetched.
+let fetchSkippedWhileInactive = false
 
 // ─── Root directory selection ────────────────────────────────────────────────
 
@@ -163,6 +170,10 @@ const searchResponded = ref(false)  // true once the first search response has a
 watch(
     () => [props.projectId, props.sessionId, directory.value, showHidden.value, showIgnored.value],
     ([newProjectId, newSessionId, newDir]) => {
+        if (!sessionActive.value) {
+            fetchSkippedWhileInactive = true
+            return
+        }
         fetchTree(newProjectId, newSessionId, newDir)
         // Re-run the active search if any, so results reflect new options
         if (isSearching.value && searchQuery.value.trim()) {
@@ -173,6 +184,19 @@ watch(
     },
     { immediate: true }
 )
+
+// On reactivation, re-fetch if the watcher was skipped while inactive
+watch(sessionActive, (active) => {
+    if (active && fetchSkippedWhileInactive) {
+        fetchSkippedWhileInactive = false
+        fetchTree(props.projectId, props.sessionId, directory.value)
+        if (isSearching.value && searchQuery.value.trim()) {
+            doSearch(searchQuery.value.trim())
+        } else {
+            clearSearch(false)
+        }
+    }
+})
 
 let searchDebounceTimer = null
 

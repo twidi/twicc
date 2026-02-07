@@ -21,7 +21,7 @@
  * NOTE: This component is client-only (SSR is not supported due to
  * ResizeObserver and DOM measurement requirements).
  */
-import { ref, computed, watch, onMounted, onUnmounted, toRef, nextTick, provide } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, toRef, nextTick, provide } from 'vue'
 import { useVirtualScroll } from '../composables/useVirtualScroll'
 import VirtualScrollerItem from './VirtualScrollerItem.vue'
 import { RESIZE_OBSERVER_KEY } from './virtualScrollerKeys.js'
@@ -257,6 +257,10 @@ const {
     invalidateZeroHeights,
     enableStickToBottom: composableEnableStickToBottom,
     disableStickToBottom: composableDisableStickToBottom,
+    suspend: composableSuspend,
+    resume: composableResume,
+    getScrollAnchor: composableGetScrollAnchor,
+    scrollToAnchor: composableScrollToAnchor,
 } = useVirtualScroll({
     items: toRef(props, 'items'),
     itemKey: props.itemKey,
@@ -394,6 +398,27 @@ onUnmounted(() => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
+// KeepAlive Lifecycle
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * When KeepAlive deactivates this component, the DOM is about to be detached.
+ * We must save the scroll anchor NOW, while scrollTop is still valid.
+ * After detachment, the browser resets scrollTop to 0.
+ */
+onDeactivated(() => {
+    composableSuspend()
+})
+
+/**
+ * When KeepAlive reactivates this component, the DOM has been reattached.
+ * Restore the scroll position from the saved anchor.
+ */
+onActivated(() => {
+    composableResume()
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Exposed Methods
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -470,6 +495,40 @@ function disableStickToBottom() {
     composableDisableStickToBottom()
 }
 
+/**
+ * Suspend the scroller (save scroll anchor before KeepAlive detachment).
+ * Called automatically by onDeactivated, but can also be called manually.
+ */
+function suspend() {
+    composableSuspend()
+}
+
+/**
+ * Resume the scroller (restore scroll position after KeepAlive reattachment).
+ * Called automatically by onActivated, but can also be called manually.
+ */
+function resume() {
+    composableResume()
+}
+
+/**
+ * Get the current scroll anchor (first visible item + offset).
+ * Used by parent components to save scroll state before VirtualScroller destruction.
+ * @returns {{ index: number, key: any, offset: number } | null}
+ */
+function getScrollAnchor() {
+    return composableGetScrollAnchor()
+}
+
+/**
+ * Scroll to a previously saved anchor position.
+ * Used by parent components to restore scroll state after VirtualScroller recreation.
+ * @param {{ index: number, key: any, offset: number }} anchor
+ */
+function scrollToAnchor(anchor) {
+    composableScrollToAnchor(anchor)
+}
+
 // Expose methods for parent component access via ref
 defineExpose({
     scrollToIndex,
@@ -483,6 +542,11 @@ defineExpose({
     // Stick to bottom mode control
     enableStickToBottom,
     disableStickToBottom,
+    // KeepAlive support (also called automatically via onActivated/onDeactivated)
+    suspend,
+    resume,
+    getScrollAnchor,
+    scrollToAnchor,
 })
 </script>
 
