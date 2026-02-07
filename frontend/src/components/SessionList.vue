@@ -757,7 +757,7 @@ defineExpose({
 .pinned-icon {
     flex-shrink: 0;
     font-size: var(--wa-font-size-2xs);
-    color: var(--wa-color-fill-loud);
+    color: var(--wa-color-yellow-80) !important;
     transform: rotate(30deg);
 }
 

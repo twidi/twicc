@@ -609,7 +609,7 @@ wa-divider {
     &.pin-button--active {
         opacity: 1;
         &::part(base) {
-            color: var(--wa-color-fill-loud);
+            color: var(--wa-color-yellow-80);
         }
     }
 }
