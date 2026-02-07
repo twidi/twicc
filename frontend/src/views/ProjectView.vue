@@ -82,6 +82,17 @@ const showArchivedSessions = ref(false)
 // Reference to SessionList for keyboard navigation
 const sessionListRef = ref(null)
 
+// Reference to the search input for focus management
+const searchInputRef = ref(null)
+
+/**
+ * Focus the search input field.
+ * Called when SessionList emits 'focus-search' (e.g., ArrowUp from first item).
+ */
+function focusSearchInput() {
+    searchInputRef.value?.focus()
+}
+
 // Clear search when project changes
 watch(effectiveProjectId, () => {
     searchQuery.value = ''
@@ -89,16 +100,20 @@ watch(effectiveProjectId, () => {
 
 /**
  * Handle keyboard events from the search input.
- * Delegates navigation keys to the SessionList component.
+ * Only delegates ArrowDown, Enter, and Escape to the SessionList component.
+ * All other keys (Home, End, PageUp, PageDown, ArrowUp) keep their default
+ * text input behavior so the user can navigate within the search field.
  *
  * @param {KeyboardEvent} event
  */
 function handleSearchKeydown(event) {
-    // Navigation keys that should be handled by SessionList
-    const navigationKeys = ['ArrowDown', 'ArrowUp', 'Home', 'End', 'PageUp', 'PageDown', 'Enter', 'Escape']
+    // From the search input, only these keys should be delegated to SessionList.
+    // Other navigation keys (Home, End, PageUp, PageDown, ArrowUp) must keep
+    // their default text input behavior (cursor movement, text selection, etc.).
+    const navigationKeys = ['ArrowDown', 'Enter', 'Escape']
 
     if (navigationKeys.includes(event.key) && sessionListRef.value) {
-        const handled = sessionListRef.value.handleKeyNavigation(event)
+        const handled = sessionListRef.value.handleKeyNavigation(event, { fromSearch: true })
         if (handled) {
             event.preventDefault()
             return
@@ -470,6 +485,7 @@ function updateSidebarClosedClass(closed) {
 
                     <!-- Search/filter input -->
                     <wa-input
+                        ref="searchInputRef"
                         v-model="searchQuery"
                         placeholder="Filter sessions..."
                         size="small"
@@ -510,6 +526,7 @@ function updateSidebarClosedClass(closed) {
                     :search-query="searchQuery"
                     :show-archived="showArchivedSessions"
                     @select="handleSessionSelect"
+                    @focus-search="focusSearchInput"
                 />
 
                 <!-- Floating "New session" button -->

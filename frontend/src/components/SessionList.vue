@@ -188,7 +188,7 @@ function formatCost(cost) {
     return `${cost.toFixed(2)}`
 }
 
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'focus-search'])
 
 function handleSelect(session) {
     emit('select', session)
@@ -349,14 +349,21 @@ function getNavigationStartIndex() {
  * Navigates through sessions with arrow keys and selects with Enter.
  *
  * @param {KeyboardEvent} event - The keyboard event
+ * @param {Object} [options] - Navigation options
+ * @param {boolean} [options.fromSearch=false] - True when called from the search input.
+ *   When true, navigation ignores the selected session and always starts from scratch
+ *   (e.g., ArrowDown goes to the first item, not relative to the active session).
  * @returns {boolean} True if the event was handled (should preventDefault)
  */
-function handleKeyNavigation(event) {
+function handleKeyNavigation(event, { fromSearch = false } = {}) {
     const count = sessions.value.length
     if (count === 0) return false
 
     const key = event.key
-    const startIndex = getNavigationStartIndex()
+    // When coming from the search input with no highlight, always start from
+    // scratch (-1) so that ArrowDown goes to the first item, not relative to
+    // the currently selected session.
+    const startIndex = (fromSearch && highlightedIndex.value < 0) ? -1 : getNavigationStartIndex()
     let newIndex = highlightedIndex.value
 
     switch (key) {
@@ -366,6 +373,12 @@ function handleKeyNavigation(event) {
             break
 
         case 'ArrowUp':
+            // If already at the first item, move focus back to the search input
+            if (startIndex === 0) {
+                highlightedIndex.value = -1
+                emit('focus-search')
+                return true
+            }
             // Move up from current position, or start at last item
             newIndex = startIndex < 0 ? count - 1 : Math.max(startIndex - 1, 0)
             break
@@ -383,6 +396,12 @@ function handleKeyNavigation(event) {
             break
 
         case 'PageUp':
+            // If already at the first item, move focus back to the search input
+            if (startIndex === 0) {
+                highlightedIndex.value = -1
+                emit('focus-search')
+                return true
+            }
             newIndex = startIndex < 0 ? 0 : Math.max(startIndex - PAGE_SIZE, 0)
             break
 
