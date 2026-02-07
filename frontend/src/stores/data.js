@@ -31,7 +31,7 @@ export const ALL_PROJECTS_ID = '__all__'
 
 /**
  * Sort sessions by display priority:
- * 1. Sessions with active process first (by mtime descending)
+ * 1. Sessions with active process first (by started_at descending for stable ordering)
  * 2. Pinned sessions without process (by mtime descending)
  * 3. Remaining sessions (by mtime descending)
  *
@@ -41,18 +41,25 @@ export const ALL_PROJECTS_ID = '__all__'
 function sessionSortComparator(processStates) {
     return (a, b) => {
         // 1. Sessions with active process first
-        const aHasProcess = processStates[a.id] != null
-        const bHasProcess = processStates[b.id] != null
+        const aProcess = processStates[a.id]
+        const bProcess = processStates[b.id]
+        const aHasProcess = aProcess != null
+        const bHasProcess = bProcess != null
         if (aHasProcess !== bHasProcess) return aHasProcess ? -1 : 1
 
-        // 2. Pinned sessions next (only when neither has a process)
-        if (!aHasProcess) {
-            const aPinned = a.pinned || false
-            const bPinned = b.pinned || false
-            if (aPinned !== bPinned) return aPinned ? -1 : 1
+        // 2. Among active sessions: sort by started_at descending (most recently started first)
+        //    This gives a stable order since started_at never changes during process lifetime,
+        //    avoiding rapid swapping when multiple sessions update frequently.
+        if (aHasProcess && bHasProcess) {
+            return (bProcess.started_at || 0) - (aProcess.started_at || 0)
         }
 
-        // 3. Within each group, sort by mtime descending
+        // 3. Pinned sessions next (only when neither has a process)
+        const aPinned = a.pinned || false
+        const bPinned = b.pinned || false
+        if (aPinned !== bPinned) return aPinned ? -1 : 1
+
+        // 4. Within each group, sort by mtime descending
         return b.mtime - a.mtime
     }
 }
