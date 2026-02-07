@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
@@ -8,6 +8,7 @@ import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
 import ProjectBadge from '../components/ProjectBadge.vue'
 import ProjectProcessIndicator from '../components/ProjectProcessIndicator.vue'
+import SessionRenameDialog from '../components/SessionRenameDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,6 +17,27 @@ const settingsStore = useSettingsStore()
 
 // Tooltips setting
 const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Shared Rename Dialog (single instance for both sidebar and session header)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const renameDialogRef = ref(null)
+const sessionToRename = ref(null)
+
+/**
+ * Open the rename dialog for a session.
+ * Provided to child components via provide/inject.
+ * @param {Object} session - The session object to rename
+ * @param {Object} [options] - Options passed to the dialog's open method
+ * @param {boolean} [options.showHint] - Show contextual hint (for needs-title flow)
+ */
+function openRenameDialog(session, options = {}) {
+    sessionToRename.value = session
+    renameDialogRef.value?.open({ ...options, session })
+}
+
+provide('openRenameDialog', openRenameDialog)
 
 // Current project from route params
 const projectId = computed(() => route.params.projectId)
@@ -592,6 +614,12 @@ function updateSidebarClosedClass(closed) {
             </div>
         </main>
     </wa-split-panel>
+
+    <!-- Shared rename dialog (single instance for sidebar + session header) -->
+    <SessionRenameDialog
+        ref="renameDialogRef"
+        :session="sessionToRename"
+    />
     </div>
 </template>
 

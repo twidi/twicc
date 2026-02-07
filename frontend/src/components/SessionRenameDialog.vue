@@ -16,6 +16,7 @@ const emit = defineEmits(['saved'])
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 
+const formId = computed(() => `session-rename-form-${props.session?.id || 'none'}`)
 const dialogRef = ref(null)
 const titleInputRef = ref(null)
 
@@ -84,26 +85,36 @@ function focusTitleInput() {
  * Open the dialog.
  * @param {Object} options
  * @param {boolean} options.showHint - Show contextual hint (when opened during message send)
+ * @param {Object} options.session - The session to rename (used immediately since props
+ *     may not be updated yet when called synchronously after setting the parent ref)
  */
-function open({ showHint = false } = {}) {
+function open({ showHint = false, session = null } = {}) {
     errorMessage.value = ''
     showContextHint.value = showHint
+
+    // Use the session passed directly, falling back to props.session
+    // (props.session may not be updated yet in the same tick)
+    const currentSession = session || props.session
+
+    if (currentSession) {
+        localTitle.value = currentSession.title || ''
+    }
     syncFormState()
 
     if (dialogRef.value) {
         dialogRef.value.open = true
     }
 
-    if (!props.session) return
+    if (!currentSession) return
 
     // Skip if title generation is disabled
     if (!titleGenerationEnabled.value) return
 
-    const sessionId = props.session.id
+    const sessionId = currentSession.id
     const existingSuggestion = store.getTitleSuggestion(sessionId)
     const systemPrompt = titleSystemPrompt.value
 
-    if (props.session.draft) {
+    if (currentSession.draft) {
         // DRAFT: use message from store, redo if message changed
         const currentPrompt = store.getDraftMessage(sessionId)?.message?.trim()
         const previousPrompt = store.getTitleSuggestionSourcePrompt(sessionId)
@@ -231,7 +242,7 @@ defineExpose({
         @wa-show="syncFormState"
         @wa-after-show="focusTitleInput"
     >
-        <form v-if="session" id="session-rename-form" class="dialog-content" @submit.prevent="handleSave">
+        <form v-if="session" :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <!-- Contextual hint when opened during message send -->
             <p v-if="showContextHint" class="context-hint">
                 While Claude is working, you may want to give this session a more descriptive name.
@@ -284,7 +295,7 @@ defineExpose({
             <wa-button variant="neutral" appearance="outlined" @click="close" :disabled="isSaving">
                 Cancel
             </wa-button>
-            <wa-button type="submit" form="session-rename-form" variant="brand" :disabled="isSaving">
+            <wa-button type="submit" :form="formId" variant="brand" :disabled="isSaving">
                 <wa-spinner v-if="isSaving" slot="prefix"></wa-spinner>
                 Save
             </wa-button>

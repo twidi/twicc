@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, inject } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { formatDate, formatDuration } from '../utils/date'
@@ -8,7 +8,6 @@ import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 import VirtualScroller from './VirtualScroller.vue'
-import SessionRenameDialog from './SessionRenameDialog.vue'
 
 const props = defineProps({
     projectId: {
@@ -245,8 +244,7 @@ function formatMemory(bytes) {
 const animateStates = ['assistant_turn']
 
 // Session menu handling
-const renameDialogRef = ref(null)
-const sessionToRename = ref(null)
+const openRenameDialog = inject('openRenameDialog')
 
 /**
  * Check if a session's process can be stopped (any state except dead).
@@ -266,10 +264,7 @@ function canStopProcess(sessionId) {
 function handleMenuSelect(event, session) {
     const action = event.detail.item.value
     if (action === 'rename') {
-        sessionToRename.value = session
-        nextTick(() => {
-            renameDialogRef.value?.open()
-        })
+        openRenameDialog(session)
     } else if (action === 'stop') {
         killProcess(session.id)
     } else if (action === 'delete-draft') {
@@ -689,11 +684,6 @@ defineExpose({
             <wa-spinner></wa-spinner>
         </div>
 
-        <!-- Rename dialog (shared for all sessions) -->
-        <SessionRenameDialog
-            ref="renameDialogRef"
-            :session="sessionToRename"
-        />
     </div>
 </template>
 

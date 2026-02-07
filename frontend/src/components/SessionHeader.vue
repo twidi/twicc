@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, inject } from 'vue'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { formatDate, formatDuration } from '../utils/date'
@@ -7,7 +7,6 @@ import { MAX_CONTEXT_TOKENS, PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_
 import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
-import SessionRenameDialog from './SessionRenameDialog.vue'
 
 const props = defineProps({
     sessionId: {
@@ -202,8 +201,8 @@ function getStateDuration(procState) {
     return Math.max(0, Math.floor(now.value - procState.state_changed_at))
 }
 
-// Rename dialog
-const renameDialogRef = ref(null)
+// Rename dialog (provided by ProjectView)
+const injectedOpenRenameDialog = inject('openRenameDialog')
 
 // Reference to the header element (for auto-hide height calculation)
 const headerRef = ref(null)
@@ -214,7 +213,9 @@ const headerRef = ref(null)
  * @param {boolean} options.showHint - Show contextual hint (when opened during message send)
  */
 function openRenameDialog({ showHint = false } = {}) {
-    renameDialogRef.value?.open({ showHint })
+    if (session.value) {
+        injectedOpenRenameDialog(session.value, { showHint })
+    }
 }
 
 /**
@@ -433,11 +434,6 @@ defineExpose({
         <wa-divider></wa-divider>
     </header>
 
-    <!-- Rename dialog -->
-    <SessionRenameDialog
-        ref="renameDialogRef"
-        :session="session"
-    />
 </template>
 
 <style scoped>
