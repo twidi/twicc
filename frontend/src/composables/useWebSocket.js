@@ -4,12 +4,21 @@ import { watch } from 'vue'
 import { useWebSocket as useVueWebSocket, useDebounceFn } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
+import { useAuthStore } from '../stores/auth'
 import { useReconciliation } from './useReconciliation'
 import { toast } from './useToast'
+import { router } from '../router'
+
+// WebSocket close code sent by backend when authentication fails
+const WS_CLOSE_AUTH_FAILURE = 4001
 
 // Module-level reference to the WebSocket send function
 // Allows components to access it without going through the composable
 let wsSendFn = null
+
+// Track whether the last close was due to auth failure.
+// When true, auto-reconnect is suppressed until explicitly reset.
+let lastCloseWasAuthFailure = false
 
 // Debounced function for user draft notifications (10 seconds)
 // This prevents spamming the server while still keeping the process alive
@@ -146,15 +155,23 @@ export function useWebSocket() {
     const { status, send, open, close } = useVueWebSocket(`${wsProtocol}//${location.host}/ws/`, {
         immediate: false,
         autoReconnect: {
-            retries: Infinity,
+            // Don't reconnect if the last close was an auth failure.
+            // For all other cases, always retry (equivalent to Infinity).
+            retries: () => !lastCloseWasAuthFailure,
             delay: 1000,
-            maxDelay: 30000
         },
         heartbeat: {
             message: JSON.stringify({ type: 'ping' }),
             responseMessage: JSON.stringify({ type: 'pong' }),
             interval: 30000,
             pongTimeout: 5000
+        },
+        onDisconnected(ws, event) {
+            if (event.code === WS_CLOSE_AUTH_FAILURE) {
+                console.warn('WebSocket closed with auth failure code (4001), stopping reconnection')
+                lastCloseWasAuthFailure = true
+                handleWsAuthFailure()
+            }
         },
         onMessage(ws, event) {
             try {
@@ -166,8 +183,40 @@ export function useWebSocket() {
         }
     })
 
+    /**
+     * Handle WebSocket authentication failure.
+     * Re-checks auth state to confirm, then either redirects to login
+     * or reconnects if the session is actually still valid.
+     */
+    async function handleWsAuthFailure() {
+        const authStore = useAuthStore()
+        // Re-check auth state — the session might still be valid
+        // (e.g., transient WS issue, not a real auth problem)
+        await authStore.checkAuthOnce()
+        if (authStore.needsLogin) {
+            authStore.handleUnauthorized()
+            const currentPath = router.currentRoute.value.fullPath
+            if (router.currentRoute.value.name !== 'login') {
+                router.replace({ name: 'login', query: { redirect: currentPath } })
+            }
+        } else {
+            // Auth is actually fine, the WS close was spurious — reconnect
+            lastCloseWasAuthFailure = false
+            open()
+        }
+    }
+
     function handleMessage(msg) {
         switch (msg.type) {
+            case 'auth_failure':
+                // Fallback for auth rejection: the backend sends this message
+                // before closing with code 4001. Some proxies (e.g. Vite dev
+                // proxy) strip the close code, so this message ensures we
+                // detect auth failure even when the close code is lost.
+                console.warn('WebSocket received auth_failure message, treating as auth rejection')
+                lastCloseWasAuthFailure = true
+                handleWsAuthFailure()
+                break
             case 'project_added':
                 store.addProject(msg.project)
                 break
@@ -248,5 +297,14 @@ export function useWebSocket() {
         }
     })
 
-    return { wsStatus: status, send, openWs: open, closeWs: close }
+    /**
+     * Open WebSocket, resetting the auth failure flag.
+     * Called by App.vue when authentication is confirmed.
+     */
+    function openWs() {
+        lastCloseWasAuthFailure = false
+        open()
+    }
+
+    return { wsStatus: status, send, openWs, closeWs: close }
 }

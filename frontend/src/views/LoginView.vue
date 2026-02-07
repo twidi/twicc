@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
@@ -10,6 +10,36 @@ const password = ref('')
 const error = ref('')
 const loading = ref(false)
 
+/**
+ * Redirect to the originally requested page (from ?redirect=) or home.
+ */
+function redirectAway() {
+    const redirect = router.currentRoute.value.query.redirect || '/'
+    router.replace(redirect)
+}
+
+// Periodically re-check auth while on the login page.
+// Handles two scenarios:
+// 1. Backend wasn't ready when we landed here, now it's ready and has no password
+// 2. Password was removed from config while we're on the login page
+let recheckInterval = null
+
+onMounted(() => {
+    recheckInterval = setInterval(async () => {
+        await authStore.checkAuthOnce()
+        if (!authStore.needsLogin) {
+            redirectAway()
+        }
+    }, 3000)
+})
+
+onUnmounted(() => {
+    if (recheckInterval) {
+        clearInterval(recheckInterval)
+        recheckInterval = null
+    }
+})
+
 async function handleSubmit() {
     error.value = ''
     loading.value = true
@@ -17,9 +47,7 @@ async function handleSubmit() {
     try {
         const result = await authStore.login(password.value)
         if (result.success) {
-            // Redirect to the originally requested page, or home
-            const redirect = router.currentRoute.value.query.redirect || '/'
-            router.replace(redirect)
+            redirectAway()
         } else {
             error.value = result.error
             password.value = ''

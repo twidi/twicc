@@ -22,6 +22,10 @@ from twicc.agent.states import ProcessInfo, serialize_process_info
 
 logger = logging.getLogger(__name__)
 
+# WebSocket close code for authentication failure.
+# 4000-4999 range is reserved for application use by the WebSocket spec.
+WS_CLOSE_AUTH_FAILURE = 4001
+
 
 @sync_to_async
 def get_project_directory(project_id: str) -> str | None:
@@ -95,7 +99,16 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             is_authenticated = await sync_to_async(session.get)("authenticated")
             if not is_authenticated:
                 logger.warning("WebSocket connection rejected: not authenticated")
-                await self.close()
+                # Accept first so we can send a message and a close code.
+                # Closing before accept causes the close code to be lost
+                # (the WebSocket handshake is never completed).
+                await self.accept()
+                # Send an auth_failure message as a fallback: some proxies
+                # (notably Vite's dev proxy via node-http-proxy) may strip
+                # the WebSocket close code, delivering 1006 instead of 4001.
+                # The client handles both the message and the close code.
+                await self.send_json({"type": "auth_failure"})
+                await self.close(code=WS_CLOSE_AUTH_FAILURE)
                 return
 
         await self.channel_layer.group_add("updates", self.channel_name)

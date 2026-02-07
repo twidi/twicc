@@ -14,6 +14,7 @@ const authStore = useAuthStore()
 
 const isAuthenticated = computed(() => !authStore.needsLogin)
 const isLoginPage = computed(() => route.name === 'login')
+const isConnecting = computed(() => authStore.isConnecting)
 
 // Initialize WebSocket connection for real-time updates.
 // Connection is deferred until authenticated (see useWebSocket).
@@ -51,7 +52,15 @@ const toastTheme = computed(() => {
 </script>
 
 <template>
-    <ConnectionIndicator v-if="!isLoginPage" :status="wsStatus" />
+    <!-- Connecting overlay: shown while waiting for backend during auth check retry -->
+    <div v-if="isConnecting" class="connecting-backdrop">
+        <div class="connecting-content">
+            <wa-spinner></wa-spinner>
+            <p class="connecting-text">Connecting to server...</p>
+        </div>
+    </div>
+
+    <ConnectionIndicator v-if="!isLoginPage && !isConnecting" :status="wsStatus" />
     <div class="app-container">
         <router-view />
     </div>
@@ -63,6 +72,30 @@ const toastTheme = computed(() => {
 </template>
 
 <style>
+.connecting-backdrop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--wa-color-surface-default);
+    z-index: 10000;
+}
+
+.connecting-content {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--wa-space-m);
+}
+
+.connecting-text {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+    margin: 0;
+}
+
 body {
     margin: 0;
     padding: 0;
