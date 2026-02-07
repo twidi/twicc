@@ -25,8 +25,11 @@ const sessionHeaderRef = ref(null)
 const sessionItemsListRef = ref(null)
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Auto-hide header on small viewports
+// Auto-hide header/footer on small viewports (behind feature flag)
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Whether auto-hide is enabled (from settings)
+const autoHideEnabled = computed(() => settingsStore.isAutoHideHeaderFooterEnabled)
 
 // Threshold for small viewport detection (in pixels)
 const SMALL_VIEWPORT_HEIGHT = 800
@@ -39,6 +42,11 @@ const isHeaderHidden = ref(false)
 
 // Track footer hidden state (inverted behavior: hidden when scrolling UP)
 const isFooterHidden = ref(false)
+
+// Effective values: only apply when feature flag is enabled
+const effectiveHeaderHidden = computed(() => autoHideEnabled.value && isHeaderHidden.value)
+const effectiveFooterHidden = computed(() => autoHideEnabled.value && isFooterHidden.value)
+const effectiveTrackScrollDirection = computed(() => autoHideEnabled.value && isSmallViewport.value)
 
 /**
  * Check viewport height and update isSmallViewport.
@@ -61,7 +69,7 @@ function checkViewportHeight() {
  * @param {'up' | 'down'} direction
  */
 function onScrollDirection(direction) {
-    if (!isSmallViewport.value) return
+    if (!autoHideEnabled.value || !isSmallViewport.value) return
 
     if (direction === 'down') {
         // Scroll down: hide header, show footer
@@ -399,7 +407,7 @@ function handleDevToolsTabShow(event) {
             ref="sessionHeaderRef"
             :session-id="sessionId"
             mode="session"
-            :hidden="isHeaderHidden"
+            :hidden="effectiveHeaderHidden"
         />
 
         <!-- Split panel: main content (start) + devtools panel (end) -->
@@ -458,8 +466,8 @@ function handleDevToolsTabShow(event) {
                             ref="sessionItemsListRef"
                             :session-id="sessionId"
                             :project-id="projectId"
-                            :track-scroll-direction="isSmallViewport"
-                            :footer-hidden="isFooterHidden"
+                            :track-scroll-direction="effectiveTrackScrollDirection"
+                            :footer-hidden="effectiveFooterHidden"
                             @needs-title="handleNeedsTitle"
                             @scroll-direction="onScrollDirection"
                         />
