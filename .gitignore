@@ -224,6 +224,9 @@ data.sqlite-shm
 # JSONL data files (if generated locally)
 *.jsonl
 
+# SDK debug logs
+logs/
+
 # Development process controller runtime data
 .devctl/
 

@@ -15,6 +15,7 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 
+from .sdk_logger import patch_client as patch_client_for_logging
 from .states import ProcessInfo, ProcessState, get_process_memory
 
 logger = logging.getLogger(__name__)
@@ -253,6 +254,7 @@ class ClaudeProcess:
                 options.extra_args["session-id"] = self.session_id
 
             self._client = ClaudeSDKClient(options=options)
+            patch_client_for_logging(self._client, self.session_id)
 
             # Connect without prompt to enter streaming mode, then send the message
             # via query(). The SDK's connect(prompt) with a string puts the transport
