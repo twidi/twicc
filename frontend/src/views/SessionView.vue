@@ -418,7 +418,10 @@ function handleNeedsTitle() {
                 <GitPanel />
             </wa-tab-panel>
             <wa-tab-panel name="terminal">
-                <TerminalPanel />
+                <TerminalPanel
+                    :session-id="session?.id"
+                    :active="activeTabId === 'terminal'"
+                />
             </wa-tab-panel>
         </wa-tab-group>
 

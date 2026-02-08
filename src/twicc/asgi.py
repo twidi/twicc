@@ -22,6 +22,7 @@ from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 from twicc.agent.manager import get_process_manager
 from twicc.agent.states import ProcessInfo, serialize_process_info
 from twicc.background import get_usage_message_for_connection
+from twicc.terminal import terminal_application
 
 logger = logging.getLogger(__name__)
 
@@ -490,6 +491,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
 
 websocket_urlpatterns = [
+    path("ws/terminal/<str:session_id>/", terminal_application),
     path("ws/", UpdatesConsumer.as_asgi()),
 ]
 
