@@ -29,6 +29,14 @@ export const SUPPORTED_MIME_TYPES = [
 /** Maximum file size in bytes (5 MB - Claude API limit) */
 export const MAX_FILE_SIZE = 5 * 1024 * 1024
 
+/**
+ * Maximum image dimension in pixels (width or height).
+ * Anthropic recommends 1568px as the optimal max — beyond this, the API
+ * downscales server-side anyway. Resizing client-side saves bandwidth and
+ * avoids the API 400 error for images exceeding 2000px.
+ */
+export const MAX_IMAGE_DIMENSION = 1568
+
 /** File type categories */
 export const FILE_TYPES = {
     IMAGE: 'image',
@@ -141,6 +149,56 @@ export function fileToText(file) {
 }
 
 // =============================================================================
+// Image Resizing
+// =============================================================================
+
+/**
+ * Resize an image if either dimension exceeds MAX_IMAGE_DIMENSION.
+ * Preserves aspect ratio. Output format: JPEG stays JPEG, everything else
+ * becomes PNG (lossless — ideal for screenshots with text/UI).
+ *
+ * @param {string} base64Data - The base64 encoded image data (no data URL prefix)
+ * @param {string} mimeType - The original MIME type (e.g., 'image/png')
+ * @returns {Promise<{ data: string, mimeType: string }>} Resized base64 data and output MIME type
+ */
+export function resizeImageIfNeeded(base64Data, mimeType) {
+    return new Promise((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => {
+            const { width, height } = img
+
+            // No resize needed — return original data unchanged
+            if (width <= MAX_IMAGE_DIMENSION && height <= MAX_IMAGE_DIMENSION) {
+                resolve({ data: base64Data, mimeType })
+                return
+            }
+
+            // Compute new dimensions preserving aspect ratio
+            const scale = Math.min(MAX_IMAGE_DIMENSION / width, MAX_IMAGE_DIMENSION / height)
+            const newWidth = Math.round(width * scale)
+            const newHeight = Math.round(height * scale)
+
+            // Draw on canvas at new size
+            const canvas = document.createElement('canvas')
+            canvas.width = newWidth
+            canvas.height = newHeight
+            const ctx = canvas.getContext('2d')
+            ctx.drawImage(img, 0, 0, newWidth, newHeight)
+
+            // JPEG in → JPEG out ; everything else → PNG (lossless)
+            const outputMimeType = mimeType === 'image/jpeg' ? 'image/jpeg' : 'image/png'
+            const quality = outputMimeType === 'image/jpeg' ? 0.92 : undefined
+            const dataUrl = canvas.toDataURL(outputMimeType, quality)
+            const resizedBase64 = dataUrl.split(',')[1]
+
+            resolve({ data: resizedBase64, mimeType: outputMimeType })
+        }
+        img.onerror = () => reject(new Error('Failed to load image for resizing'))
+        img.src = `data:${mimeType};base64,${base64Data}`
+    })
+}
+
+// =============================================================================
 // Processing
 // =============================================================================
 
@@ -172,6 +230,7 @@ export async function processFile(file, sessionId) {
 
     const type = getFileType(file.type)
     let data
+    let mimeType = file.type
 
     if (type === FILE_TYPES.TXT) {
         // Text files: store as plain text (will be sent as type: 'text')
@@ -179,6 +238,13 @@ export async function processFile(file, sessionId) {
     } else {
         // Images and PDFs: store as base64
         data = await fileToBase64(file)
+
+        // Resize images that exceed the API dimension limit
+        if (type === FILE_TYPES.IMAGE) {
+            const resized = await resizeImageIfNeeded(data, mimeType)
+            data = resized.data
+            mimeType = resized.mimeType
+        }
     }
 
     return {
@@ -186,7 +252,7 @@ export async function processFile(file, sessionId) {
         sessionId,
         name: file.name || `file.${type}`,
         type,
-        mimeType: file.type,
+        mimeType,
         data,
         createdAt: Date.now()
     }
