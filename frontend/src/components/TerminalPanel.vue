@@ -2,17 +2,17 @@
 </script>
 
 <template>
-    <div class="devtools-git-panel">
-        <div class="devtools-panel-placeholder">Git (coming soon)</div>
+    <div class="terminal-panel">
+        <div class="panel-placeholder">Terminal (coming soon)</div>
     </div>
 </template>
 
 <style scoped>
-.devtools-git-panel {
+.terminal-panel {
     height: 100%;
 }
 
-.devtools-panel-placeholder {
+.panel-placeholder {
     display: flex;
     align-items: center;
     justify-content: center;

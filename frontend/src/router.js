@@ -30,7 +30,7 @@ const routes = [
         path: '/project/:projectId',
         component: ProjectView,
         children: [
-            { path: '', name: 'project', component: null },
+            { path: '', name: 'project', component: { render: () => null } },
             {
                 path: 'session/:sessionId',
                 name: 'session',
@@ -39,8 +39,13 @@ const routes = [
                     {
                         // Subagent route - opens subagent tab within the session
                         path: 'subagent/:subagentId',
-                        name: 'session-subagent'
-                    }
+                        name: 'session-subagent',
+                        component: { render: () => null }
+                    },
+                    // Tool tabs - open as tabs within the session
+                    { path: 'files', name: 'session-files', component: { render: () => null } },
+                    { path: 'git', name: 'session-git', component: { render: () => null } },
+                    { path: 'terminal', name: 'session-terminal', component: { render: () => null } },
                 ]
             }
         ]
@@ -50,7 +55,7 @@ const routes = [
         path: '/projects',
         component: ProjectView,
         children: [
-            { path: '', name: 'projects-all', component: null },
+            { path: '', name: 'projects-all', component: { render: () => null } },
             {
                 path: ':projectId/session/:sessionId',
                 name: 'projects-session',
@@ -58,8 +63,12 @@ const routes = [
                 children: [
                     {
                         path: 'subagent/:subagentId',
-                        name: 'projects-session-subagent'
-                    }
+                        name: 'projects-session-subagent',
+                        component: { render: () => null }
+                    },
+                    { path: 'files', name: 'projects-session-files', component: { render: () => null } },
+                    { path: 'git', name: 'projects-session-git', component: { render: () => null } },
+                    { path: 'terminal', name: 'projects-session-terminal', component: { render: () => null } },
                 ]
             }
         ]

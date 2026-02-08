@@ -10,11 +10,7 @@ const router = useRouter()
 const dataStore = useDataStore()
 
 // Detect "All Projects" mode from route name
-const isAllProjectsMode = computed(() =>
-    route.name === 'projects-all' ||
-    route.name === 'projects-session' ||
-    route.name === 'projects-session-subagent'
-)
+const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
 
 const props = defineProps({
     name: {

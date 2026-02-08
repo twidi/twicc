@@ -142,11 +142,7 @@ const projectId = computed(() => route.params.projectId)
 const sessionId = computed(() => route.params.sessionId || null)
 
 // Detect "All Projects" mode from route name
-const isAllProjectsMode = computed(() =>
-    route.name === 'projects-all' ||
-    route.name === 'projects-session' ||
-    route.name === 'projects-session-subagent'
-)
+const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
 
 // Effective project ID for store operations
 const effectiveProjectId = computed(() =>

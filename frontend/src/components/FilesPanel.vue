@@ -822,7 +822,7 @@ function handleTreeKeydown(event) {
 </script>
 
 <template>
-    <div class="devtools-files-panel">
+    <div class="files-panel">
         <wa-split-panel
             class="files-split-panel"
             :position-in-pixels="250"
@@ -978,7 +978,7 @@ function handleTreeKeydown(event) {
 </template>
 
 <style scoped>
-.devtools-files-panel {
+.files-panel {
     height: 100%;
     overflow: hidden;
 }

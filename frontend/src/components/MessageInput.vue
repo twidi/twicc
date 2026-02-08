@@ -28,10 +28,7 @@ const route = useRoute()
 const store = useDataStore()
 
 // Detect "All Projects" mode from route name
-const isAllProjectsMode = computed(() =>
-    route.name === 'projects-session' ||
-    route.name === 'projects-session-subagent'
-)
+const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
 
 const emit = defineEmits(['needs-title'])
 
