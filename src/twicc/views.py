@@ -1,5 +1,7 @@
 """API views and SPA catch-all for serving the frontend."""
 
+import os
+
 from django.conf import settings
 from django.http import FileResponse, Http404, JsonResponse
 
@@ -451,6 +453,35 @@ def file_search(request, project_id, session_id):
         show_ignored=show_ignored,
     )
     return JsonResponse(tree)
+
+
+def file_content(request, project_id, session_id):
+    """GET /api/projects/<id>/sessions/<session_id>/file-content/ - Read file content."""
+    from twicc.file_content import get_file_content
+    from twicc.file_tree import validate_session_path
+
+    file_path = request.GET.get("path")
+    if not file_path:
+        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+
+    # Validate that the file's directory is within allowed session paths
+    dir_path = os.path.dirname(os.path.normpath(file_path))
+    session, dir_path, error = validate_session_path(
+        project_id, session_id, dir_path
+    )
+    if error:
+        return error
+
+    # Now check the file itself exists
+    normalized = os.path.normpath(file_path)
+    if not os.path.isfile(normalized):
+        return JsonResponse({"error": "File not found"}, status=404)
+
+    result = get_file_content(normalized)
+    if result.get("error"):
+        return JsonResponse(result, status=400)
+
+    return JsonResponse(result)
 
 
 def spa_index(request):

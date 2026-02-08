@@ -2,6 +2,7 @@
 import { ref, computed, watch, inject, nextTick, shallowRef } from 'vue'
 import { apiFetch } from '../utils/api'
 import FileTree from './FileTree.vue'
+import FileContentViewer from './FileContentViewer.vue'
 
 const props = defineProps({
     projectId: {
@@ -962,10 +963,13 @@ function handleTreeKeydown(event) {
 
             <!-- File content (right panel) -->
             <div slot="end" class="files-content-panel">
-                <div v-if="selectedFile" class="panel-placeholder">
-                    {{ selectedFile }}
-                </div>
-                <div v-else class="panel-placeholder">
+                <FileContentViewer
+                    v-show="selectedFile"
+                    :project-id="projectId"
+                    :session-id="sessionId"
+                    :file-path="selectedAbsPath"
+                />
+                <div v-show="!selectedFile" class="panel-placeholder">
                     Select a file
                 </div>
             </div>

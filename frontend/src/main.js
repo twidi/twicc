@@ -36,6 +36,7 @@ import '@awesome.me/webawesome/dist/components/relative-time/relative-time.js'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { createNotivue } from 'notivue'
+import { install as VueMonacoEditorPlugin } from '@guolao/vue-monaco-editor'
 import { router } from './router'
 import App from './App.vue'
 import { initSettings } from './stores/settings'
@@ -48,6 +49,11 @@ import 'notivue/animations.css'
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
+app.use(VueMonacoEditorPlugin, {
+    paths: {
+        vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs'
+    }
+})
 
 // Configure Notivue toast system
 const notivue = createNotivue({
