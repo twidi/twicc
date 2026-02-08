@@ -11,6 +11,7 @@ import SessionItem from './SessionItem.vue'
 import FetchErrorPanel from './FetchErrorPanel.vue'
 import GroupToggle from './GroupToggle.vue'
 import MessageInput from './MessageInput.vue'
+import PendingRequestForm from './PendingRequestForm.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 
 // All states should animate for the bottom process indicator
@@ -138,6 +139,12 @@ const hasError = computed(() => store.didSessionItemsFailToLoad(props.sessionId)
 
 // Process state for this session (starting, assistant_turn, user_turn, dead)
 const processState = computed(() => store.getProcessState(props.sessionId))
+
+// Pending request for this session (tool approval or ask user question)
+const pendingRequest = computed(() => store.getPendingRequest(props.sessionId))
+
+// Whether any pending request is active (hides MessageInput, shows PendingRequestForm)
+const hasPendingRequest = computed(() => pendingRequest.value != null)
 
 /**
  * Whether the VirtualScroller should be visible.
@@ -986,10 +993,16 @@ defineExpose({
                 class="bottom-process-indicator"
             />
 
-            <!-- Message input (only for main sessions, not subagents) -->
+            <!-- Pending request form (replaces MessageInput when Claude requests approval or asks a question) -->
             <wa-divider></wa-divider>
+            <PendingRequestForm
+                v-if="hasPendingRequest"
+                :session-id="sessionId"
+                :pending-request="pendingRequest"
+            />
+            <!-- Message input (only for main sessions, not subagents, hidden during pending requests) -->
             <MessageInput
-                v-if="!parentSessionId"
+                v-else-if="!parentSessionId && !hasPendingRequest"
                 :session-id="sessionId"
                 :project-id="projectId"
                 @needs-title="emit('needs-title')"
@@ -1099,9 +1112,10 @@ defineExpose({
         transition: transform 0.3s ease;
     }
 
-    /* Apply opacity transition only to divider and message input, not ProcessIndicator */
+    /* Apply opacity transition only to divider and input area, not ProcessIndicator */
     .session-footer > wa-divider,
-    .session-footer > :deep(.message-input) {
+    .session-footer > :deep(.message-input),
+    .session-footer > :deep(.pending-request-form) {
         transition: opacity 0.3s ease;
     }
 
@@ -1116,7 +1130,8 @@ defineExpose({
     }
 
     .session-footer.auto-hide-hidden > wa-divider,
-    .session-footer.auto-hide-hidden > :deep(.message-input) {
+    .session-footer.auto-hide-hidden > :deep(.message-input),
+    .session-footer.auto-hide-hidden > :deep(.pending-request-form) {
         opacity: 0;
     }
 

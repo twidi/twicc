@@ -17,6 +17,7 @@
     "@guolao/vue-monaco-editor": "^1.6.0",
     "@shikijs/markdown-it": "^3.21.0",
     "@vueuse/core": "^14.1.0",
+    "diff": "^8.0.3",
     "dompurify": "^3.3.1",
     "github-markdown-css": "^5.8.1",
     "markdown-it": "^14.1.0",

@@ -5,6 +5,9 @@ Claude process wrapper for a single SDK client instance.
 import asyncio
 import logging
 import time
+import uuid
+
+import orjson
 from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
 
@@ -12,16 +15,29 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     ClaudeSDKError,
-    ResultMessage,
+    HookMatcher,
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ResultMessage, ToolPermissionContext,
 )
 
 from .sdk_logger import patch_client as patch_client_for_logging
-from .states import ProcessInfo, ProcessState, get_process_memory
+from .states import PendingRequest, ProcessInfo, ProcessState, get_process_memory
 
 logger = logging.getLogger(__name__)
 
 # Type alias for the state change callback
 StateChangeCallback = Callable[["ClaudeProcess"], Coroutine[Any, Any, None]]
+
+
+async def _dummy_hook(input_data: dict, tool_use_id: str, context: Any) -> dict:
+    """SDK PreToolUse hook required to keep the stream open for can_use_tool callbacks.
+
+    The Python SDK requires at least one PreToolUse hook registered for the
+    can_use_tool callback to fire during streaming mode. This hook approves
+    all tool uses unconditionally (actual permission logic is in can_use_tool).
+    """
+    return {"continue_": True}
 
 
 class ClaudeProcess:
@@ -60,6 +76,8 @@ class ClaudeProcess:
         self._client: ClaudeSDKClient | None = None
         self._message_loop_task: asyncio.Task[None] | None = None
         self._state_change_callback: StateChangeCallback | None = None
+        self._pending_request: PendingRequest | None = None
+        self._pending_request_future: asyncio.Future[PermissionResultAllow | PermissionResultDeny] | None = None
 
         logger.debug(
             "ClaudeProcess created for session %s, project %s, cwd=%s",
@@ -128,6 +146,11 @@ class ClaudeProcess:
         except Exception:
             return None
 
+    @property
+    def pending_request(self) -> PendingRequest | None:
+        """The active pending request, if Claude is waiting for user input."""
+        return self._pending_request
+
     def get_info(self) -> ProcessInfo:
         """Get an immutable snapshot of the process state."""
         # Don't query memory for dead processes - the subprocess no longer exists
@@ -142,23 +165,110 @@ class ClaudeProcess:
             error=self.error,
             memory_rss=memory_rss,
             kill_reason=self.kill_reason,
+            pending_request=self._pending_request,
         )
+
+    async def _handle_pending_request(
+        self,
+        tool_name: str,
+        input_data: dict,
+        context: ToolPermissionContext,
+    ) -> PermissionResultAllow | PermissionResultDeny:
+        """SDK can_use_tool callback: creates a pending request and waits for resolution.
+
+        Called by the SDK when Claude wants to use a tool that requires permission,
+        or when Claude asks a clarifying question via AskUserQuestion. This method
+        blocks (via an asyncio Future) until the frontend resolves the request.
+
+        Args:
+            tool_name: The tool Claude wants to use (e.g., "Bash", "AskUserQuestion")
+            input_data: The tool's input parameters
+            context: SDK ToolPermissionContext (unused)
+
+        Returns:
+            PermissionResultAllow or PermissionResultDeny from the user's response
+        """
+        logger.debug(
+            "can_use_tool called: tool_name=%s, input_data=%s, suggestions=%s",
+            tool_name,
+            orjson.dumps(input_data, option=orjson.OPT_INDENT_2).decode(),
+            getattr(context, "suggestions", None),
+        )
+
+        request_id = str(uuid.uuid4())
+
+        if tool_name == "AskUserQuestion":
+            request_type = "ask_user_question"
+        else:
+            request_type = "tool_approval"
+
+        self._pending_request = PendingRequest(
+            request_id=request_id,
+            request_type=request_type,
+            tool_name=tool_name,
+            tool_input=input_data,
+            created_at=time.time(),
+        )
+
+        # Create a Future for the response
+        self._pending_request_future = asyncio.get_event_loop().create_future()
+
+        # Notify frontend via state change callback (broadcasts WebSocket message)
+        await self._notify_state_change()
+
+        # Block here until frontend responds
+        response = await self._pending_request_future
+
+        # Clear pending state
+        self._pending_request = None
+        self._pending_request_future = None
+
+        # Notify that pending request is resolved
+        await self._notify_state_change()
+
+        return response
+
+    def resolve_pending_request(
+        self, response: PermissionResultAllow | PermissionResultDeny
+    ) -> bool:
+        """Resolve the pending request with the user's response.
+
+        Called by ProcessManager when a WebSocket response arrives from the frontend.
+
+        Args:
+            response: The permission result to send back to the SDK
+
+        Returns:
+            True if resolved, False if no pending request or already resolved.
+        """
+        if self._pending_request_future is None or self._pending_request_future.done():
+            return False
+        self._pending_request_future.set_result(response)
+        return True
+
+    def _cancel_pending_request_future(self) -> None:
+        """Cancel any active pending request Future to avoid asyncio warnings.
+
+        Called during process death (error or kill) to ensure the Future is not
+        left unawaited.
+        """
+        if self._pending_request_future is not None and not self._pending_request_future.done():
+            self._pending_request_future.cancel()
+        self._pending_request = None
+        self._pending_request_future = None
 
     def _build_query_prompt(
         self,
         text: str,
         images: list[dict] | None,
         documents: list[dict] | None,
-    ) -> str | AsyncIterator[dict]:
-        """Build prompt for SDK query().
+    ) -> AsyncIterator[dict]:
+        """Build prompt for SDK query() as an async generator.
 
-        ClaudeSDKClient.query() accepts either:
-        - A plain string (for text-only messages)
-        - An AsyncIterable[dict] (for multimodal messages with images/documents)
+        Always returns an async generator yielding a single transport message,
+        which is required for streaming mode (needed by the can_use_tool callback).
 
-        When given a string, the SDK wraps it in the transport message format
-        automatically. When given an AsyncIterable, each yielded dict must be
-        a complete transport message with the structure:
+        Each yielded dict is a complete transport message with the structure:
             {"type": "user", "message": {"role": "user", "content": [...]}, ...}
 
         Args:
@@ -167,15 +277,8 @@ class ClaudeProcess:
             documents: Optional list of SDK DocumentBlockParam objects
 
         Returns:
-            Either a plain text string or an async iterator yielding a single
-            transport message dict with multimodal content blocks.
+            An async iterator yielding a single transport message dict.
         """
-        has_attachments = (images and len(images) > 0) or (documents and len(documents) > 0)
-
-        if not has_attachments:
-            return text
-
-        # Build content blocks: images first, then documents, then text
         content_blocks: list[dict] = []
 
         if images:
@@ -185,12 +288,6 @@ class ClaudeProcess:
             content_blocks.extend(documents)
 
         content_blocks.append({"type": "text", "text": text})
-
-        logger.debug(
-            "Built multimodal message with %d images, %d documents, and text",
-            len(images) if images else 0,
-            len(documents) if documents else 0,
-        )
 
         async def _message_stream() -> AsyncIterator[dict]:
             yield {
@@ -240,6 +337,8 @@ class ClaudeProcess:
             options = ClaudeAgentOptions(
                 cwd=self.cwd,
                 permission_mode="bypassPermissions",
+                can_use_tool=self._handle_pending_request,
+                hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_dummy_hook])]},
                 stderr=self._log_stderr,
                 extra_args={
                     "chrome": None
@@ -263,7 +362,7 @@ class ClaudeProcess:
             # first, then query() to send messages.
             await self._client.connect()
 
-            # Build query prompt: plain string or async iterator for multimodal
+            # Build query prompt as async generator (streaming mode)
             query_prompt = self._build_query_prompt(prompt, images, documents)
             await self._client.query(query_prompt)
 
@@ -327,7 +426,7 @@ class ClaudeProcess:
                 self.last_activity = time.time()
                 await self._notify_state_change()
 
-            # Build query prompt: plain string or async iterator for multimodal
+            # Build query prompt as async generator (streaming mode)
             query_prompt = self._build_query_prompt(text, images, documents)
             await self._client.query(query_prompt)
 
@@ -355,6 +454,9 @@ class ClaudeProcess:
             return
 
         self.kill_reason = reason
+
+        # Cancel any pending request Future to avoid asyncio warnings
+        self._cancel_pending_request_future()
 
         # Get PID BEFORE dropping the client reference
         pid = self.get_pid()
@@ -448,6 +550,9 @@ class ClaudeProcess:
             self.session_id,
             error_message,
         )
+
+        # Cancel any pending request Future to avoid asyncio warnings
+        self._cancel_pending_request_future()
 
         # Get PID BEFORE dropping the client reference
         pid = self.get_pid()

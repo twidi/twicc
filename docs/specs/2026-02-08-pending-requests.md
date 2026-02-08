@@ -1,7 +1,7 @@
 # Pending Requests: Tool Approval & Clarifying Questions
 
 **Date:** 2026-02-08
-**Status:** DRAFT
+**Status:** COMPLETED
 **SDK Reference:** https://platform.claude.com/docs/en/agent-sdk/user-input
 
 ## Overview
@@ -770,13 +770,63 @@ Test the full flow with a real Claude session.
 
 ## Task tracking
 
-- [ ] Task 1: PendingRequest dataclass and ProcessInfo serialization
-- [ ] Task 2: `can_use_tool` callback and Future mechanism in ClaudeProcess
-- [ ] Task 3: Always-streaming `_build_query_prompt` and dummy hook
-- [ ] Task 4: ProcessManager — resolve method and timeout exemption
-- [ ] Task 5: WebSocket handler for `pending_request_response`
-- [ ] Task 6: Frontend store — pending request in process state
-- [ ] Task 7: Tool approval form UI
-- [ ] Task 8: Ask user question form UI
-- [ ] Task 9: Session list indicator
+- [x] Task 1: PendingRequest dataclass and ProcessInfo serialization
+- [x] Task 2: `can_use_tool` callback and Future mechanism in ClaudeProcess
+- [x] Task 3: Always-streaming `_build_query_prompt` and dummy hook
+- [x] Task 4: ProcessManager — resolve method and timeout exemption
+- [x] Task 5: WebSocket handler for `pending_request_response`
+- [x] Task 6: Frontend store — pending request in process state
+- [x] Task 7: Tool approval form UI
+- [x] Task 8: Ask user question form UI
+- [x] Task 9: Session list indicator
 - [ ] Task 10: End-to-end testing
+
+## Decisions made during implementation
+
+### Task 1
+- **Used `@dataclass(frozen=True)` for `PendingRequest`**: The spec says `@dataclass` and CLAUDE.md prefers `NamedTuple` for immutable data. Used `frozen=True` to get immutability (matching the project's preference for immutable data containers) while still using `@dataclass` as the spec prescribes. This is appropriate because `PendingRequest` holds a `dict` field (`tool_input`) which `NamedTuple` would not protect from mutation either, and `@dataclass` provides clearer semantics for a data structure that is created, passed around, and discarded (not used as a dict key or in sets).
+
+### Task 2
+- **Extracted `_cancel_pending_request_future()` as a helper method**: Both `_handle_error()` and `kill()` need to cancel any active pending request Future. Rather than duplicating the cancel-and-clear logic, a small private method `_cancel_pending_request_future()` handles it. This method cancels the Future (if active and not already done), then clears both `_pending_request` and `_pending_request_future` to `None`.
+- **Tests for ClaudeProcess pending request mechanism**: Added 18 tests covering `_handle_pending_request()`, `resolve_pending_request()`, `_cancel_pending_request_future()`, `kill()`, `_handle_error()`, `get_info()`, and the `pending_request` property. Since `pytest-asyncio` is not available in the project, async tests use `asyncio.run()` wrapping an inner `async def run()` coroutine. `AsyncMock` from `unittest.mock` is used for the state change callback where exact call tracking is not needed. Tests verify both the happy path and edge cases (no pending request, already-resolved Future, already-cancelled Future).
+
+### Task 3
+- **No decisions needed**: The implementation follows the spec exactly. `_build_query_prompt()` always returns an async generator, the `_dummy_hook` is a module-level async function, and `ClaudeAgentOptions` now uses `permission_mode="default"` with `can_use_tool` and `hooks` set. Added 6 tests covering `_dummy_hook` and the various `_build_query_prompt` paths (text-only, images, documents, both, and empty lists).
+
+### Task 4
+- **`resolve_pending_request()` is async but calls a sync method**: The spec defines the manager's `resolve_pending_request()` as `async` (the ASGI handler calls it with `await`), but the underlying `process.resolve_pending_request()` is synchronous. Kept it `async` as specified to match the expected usage from the ASGI handler and maintain consistency with other manager methods.
+- **Timeout exemption checks `pending_request` before state**: The pending request check is placed at the top of the loop iteration, before any state-based logic. This means any process with a pending request is exempt regardless of its state, which is correct since a pending request indicates the SDK is blocked waiting for user input.
+
+### Task 5
+- **Used `manager.get_process_info()` instead of `manager._processes.get()`**: The spec accesses `manager._processes.get(session_id)` directly to retrieve the original questions for `ask_user_question` responses. Instead, used the existing public method `manager.get_process_info(session_id)` which returns a `ProcessInfo` containing the `pending_request` field. This avoids accessing a private attribute from outside the class.
+- **Added validation for missing `session_id` and `request_type`**: The handler returns early with a warning log if either required field is missing, matching the validation pattern used by other handlers in `asgi.py` (e.g., `_handle_kill_process` validates `session_id`).
+- **Tests use a `_FakeConsumer` pattern**: Since `UpdatesConsumer` requires Django Channels infrastructure (channel layer, scope, etc.) to instantiate, tests use a lightweight `_FakeConsumer` class that binds the real `_handle_pending_request_response` method via descriptor protocol. This exercises the actual handler code without needing a full WebSocket consumer setup.
+
+### Task 6
+- **Import alias to avoid name collision**: The store imports `respondToPendingRequest` from `useWebSocket.js` as `sendPendingRequestResponse` to avoid a naming collision with the store's own `respondToPendingRequest` action. The store action delegates to the WebSocket function as specified.
+- **`setActiveProcesses` also includes `pending_request`**: The `setActiveProcesses` action (used on WebSocket connection to sync with backend) was updated to include `pending_request` from each process entry, matching the `setProcessState` changes. This ensures pending requests are restored on reconnection.
+- **No frontend tests**: The project has no frontend test infrastructure (no vitest, no test files), and CLAUDE.md explicitly states "no tests and no linting" as an allowed shortcut.
+
+### Task 7
+- **Created a separate `PendingRequestForm.vue` component**: Rather than integrating the form directly into `SessionItemsList.vue`, created a dedicated component at `frontend/src/components/PendingRequestForm.vue`. This keeps `SessionItemsList.vue` (already large at ~1000 lines) focused on its current responsibilities, and the pending request form is self-contained with its own state management (responding flag, deny reason).
+- **Two-step deny flow**: Clicking "Deny" first reveals an optional reason text input (with Cancel to go back), then clicking "Deny" again sends the denial. This avoids accidental denials and gives the user a chance to explain why, while keeping the default flow fast (no reason needed). The deny reason input supports Enter to submit and Escape to cancel.
+- **Specialized formatting per tool type**: Bash shows `command` and `description` directly. Write shows `file_path` with collapsible content (showing line count). Edit shows `file_path` with collapsible diff-like view (old/new strings with colored borders). All other tools show raw JSON in a collapsible details section. This mirrors the spec's recommendation for readability.
+- **`hasPendingRequest` computed hides MessageInput for any pending request type**: Although Task 7 only handles `tool_approval`, the `MessageInput` is hidden whenever any `pending_request` is present (including future `ask_user_question` from Task 8). This prevents showing the message input when Claude is waiting for a question answer, even before the question form UI is implemented.
+- **No new Web Awesome imports needed**: All components used (`wa-button`, `wa-icon`, `wa-spinner`, `wa-details`, `wa-input`, `wa-badge`, `wa-divider`) are already imported in `main.js` or used without explicit import (like `wa-badge` in `MessageInput.vue`).
+
+### Task 8
+- **Unified `hasPendingRequest` computed replaces `hasToolApprovalRequest`**: Task 7 introduced `hasToolApprovalRequest` (checking for `request_type === 'tool_approval'`) and a separate `hasPendingRequest` (checking for non-null). With Task 8, the `PendingRequestForm` component handles both variants internally via `requestType` conditional rendering. The `v-if` in `SessionItemsList.vue` now uses `hasPendingRequest` directly, and the `hasToolApprovalRequest` computed was removed as it is no longer needed.
+- **"Other" is mutually exclusive with predefined options for single-select, replaces all for multi-select**: For single-select questions, selecting "Other" clears the predefined selection, and selecting a predefined option deactivates "Other". For multi-select questions, activating "Other" clears all predefined selections (since mixing predefined options and free text would produce ambiguous answer values). The answer value is always either the selected label(s) or the free text, never a mix.
+- **Reactive objects (`reactive({})`) for per-question state**: Used `reactive({})` for `questionSelections`, `otherTexts`, and `otherActive` instead of a single reactive array, since the number of questions is dynamic and the state for each question is independent. Keys are question indices (0-based). State is cleared by deleting all keys when the pending request changes.
+- **Submit requires all questions answered**: The submit button is disabled until every question has an answer (either a predefined option selected or "Other" text typed). This prevents submitting incomplete responses to Claude.
+- **Native `<button>` elements for option chips**: Used plain HTML `<button>` elements styled as chips rather than `wa-button` components. This provides more layout flexibility (each chip can display label + description stacked vertically) and avoids the complexity of customizing Web Awesome button internals. The chips use the same design token variables for consistency.
+
+### Task 9
+- **Placed indicator next to `ProcessIndicator` in the process info row**: The pending request indicator (a pulsing "hand" icon in warning/orange color) is placed immediately to the left of the existing `ProcessIndicator` in the third column of the process info grid row. This placement is natural because pending requests are a process-level concept, and the process info row is already the visual anchor for process state. A wrapper `<span class="process-indicator-cell">` groups both icons with a small gap.
+- **Used `store.getPendingRequest(session.id)` for reactivity**: The indicator uses the store's `getPendingRequest` getter (which reads from `processStates[sessionId]?.pending_request`) to conditionally render. When the pending request is resolved or the process dies (clearing `processStates`), the indicator disappears reactively with no additional cleanup needed.
+- **Pulsing animation for attention**: The hand icon uses a 1.5-second ease-in-out pulse animation (opacity oscillating between 1 and 0.3) to draw the user's eye without being overly distracting. This is similar to but distinct from the `ProcessIndicator`'s own pulse animation (which uses a 1-second cycle and different opacity range).
+- **Tooltip describes the action needed**: The tooltip reads "Waiting for your response" to clearly communicate that user input is required, without over-specifying the type of pending request (tool approval vs. clarifying question).
+
+## Resolved questions and doubts
+
+(none so far)

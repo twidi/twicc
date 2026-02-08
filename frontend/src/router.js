@@ -3,6 +3,7 @@ import HomeView from './views/HomeView.vue'
 import ProjectView from './views/ProjectView.vue'
 import SessionView from './views/SessionView.vue'
 import LoginView from './views/LoginView.vue'
+import JsonTestView from './views/JsonTestView.vue'
 import { useAuthStore } from './stores/auth'
 
 const routes = [
@@ -24,6 +25,7 @@ const routes = [
         component: LoginView, // never rendered, redirect happens in beforeEnter
     },
     { path: '/', name: 'home', component: HomeView },
+    { path: '/json-test', name: 'json-test', component: JsonTestView, meta: { public: true } },
     {
         path: '/project/:projectId',
         component: ProjectView,

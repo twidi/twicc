@@ -597,13 +597,22 @@ defineExpose({
                         </span>
                         <wa-tooltip v-if="tooltipsEnabled" :for="`process-duration-${session.id}`">Assistant turn duration</wa-tooltip>
 
-                        <ProcessIndicator
-                            :id="`process-indicator-${session.id}`"
-                            :state="getProcessState(session.id).state"
-                            size="small"
-                            :animate-states="animateStates"
-                        />
-                        <wa-tooltip v-if="tooltipsEnabled" :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
+                        <span class="process-indicator-cell">
+                            <wa-icon
+                                v-if="store.getPendingRequest(session.id)"
+                                :id="`pending-request-${session.id}`"
+                                name="hand"
+                                class="pending-request-indicator"
+                            ></wa-icon>
+                            <wa-tooltip v-if="tooltipsEnabled && store.getPendingRequest(session.id)" :for="`pending-request-${session.id}`">Waiting for your response</wa-tooltip>
+                            <ProcessIndicator
+                                :id="`process-indicator-${session.id}`"
+                                :state="getProcessState(session.id).state"
+                                size="small"
+                                :animate-states="animateStates"
+                            />
+                            <wa-tooltip v-if="tooltipsEnabled" :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
+                        </span>
                     </div>
                     <!-- Meta row (not shown for draft sessions) -->
                     <div v-if="!session.draft" class="session-meta">
@@ -846,6 +855,24 @@ defineExpose({
 
 .process-duration {
     justify-self: center;
+}
+
+.process-indicator-cell {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--wa-space-2xs);
+}
+
+.pending-request-indicator {
+    color: var(--wa-color-warning-60);
+    font-size: var(--wa-font-size-xs);
+    animation: pending-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pending-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
 }
 
 .session-meta {

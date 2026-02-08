@@ -22,6 +22,7 @@ import {
 import { processFile, mediasToSdkFormat } from '../utils/fileUtils'
 import { debounce } from '../utils/debounce'
 import { apiFetch } from '../utils/api'
+import { respondToPendingRequest as sendPendingRequestResponse } from '../composables/useWebSocket'
 
 // Map of debounced save functions per session (to avoid mixing debounces)
 const debouncedSaves = new Map()
@@ -156,8 +157,12 @@ export const useDataStore = defineStore('data', {
         getSession: (state) => (id) => state.sessions[id],
         getSessionItems: (state) => (sessionId) => state.sessionItems[sessionId] || [],
 
-        // Process state getter - returns { state, error? } or null if no active process
+        // Process state getter - returns { state, error?, pending_request? } or null if no active process
         getProcessState: (state) => (sessionId) => state.processStates[sessionId] || null,
+
+        // Pending request getter - returns the pending_request object or null
+        getPendingRequest: (state) => (sessionId) =>
+            state.processStates[sessionId]?.pending_request || null,
 
         /**
          * Get aggregated process state for a project.
@@ -1155,7 +1160,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          * @param {string} projectId - The project ID this session belongs to
          * @param {string} state - 'starting' | 'assistant_turn' | 'user_turn' | 'dead'
-         * @param {object} extra - Additional fields: started_at, state_changed_at, memory, error
+         * @param {object} extra - Additional fields: started_at, state_changed_at, memory, error, pending_request
          */
         setProcessState(sessionId, projectId, state, extra = {}) {
             if (state === 'dead') {
@@ -1169,6 +1174,7 @@ export const useDataStore = defineStore('data', {
                     state_changed_at: extra.state_changed_at || null,
                     memory: extra.memory || null,
                     error: extra.error || null,
+                    pending_request: extra.pending_request || null,
                 }
             }
         },
@@ -1191,9 +1197,24 @@ export const useDataStore = defineStore('data', {
                         state_changed_at: p.state_changed_at || null,
                         memory: p.memory || null,
                         error: p.error || null,
+                        pending_request: p.pending_request || null,
                     }
                 }
             }
+        },
+
+        /**
+         * Respond to a pending request on a session's process.
+         * Sends the response via WebSocket.
+         * @param {string} sessionId - The session ID
+         * @param {string} requestId - The pending request ID
+         * @param {object} responseData - The response payload:
+         *   For tool approval: { request_type: 'tool_approval', decision: 'allow'|'deny', message?, updated_input? }
+         *   For ask user question: { request_type: 'ask_user_question', answers: { questionText: selectedLabel, ... } }
+         * @returns {boolean} True if the message was sent
+         */
+        respondToPendingRequest(sessionId, requestId, responseData) {
+            return sendPendingRequestResponse(sessionId, requestId, responseData)
         },
 
         // Session rename action

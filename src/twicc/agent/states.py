@@ -2,6 +2,7 @@
 Process state definitions for Claude agent processes.
 """
 
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import NamedTuple
 
@@ -42,6 +43,29 @@ def get_process_memory(pid: int) -> int | None:
         return None
 
 
+@dataclass(frozen=True)
+class PendingRequest:
+    """A request from Claude that is waiting for user response.
+
+    Represents either a tool approval request (Claude wants to use a tool and needs
+    permission) or a clarifying question (Claude needs the user to choose between
+    options via the AskUserQuestion tool).
+
+    Attributes:
+        request_id: UUID unique to this request
+        request_type: Either "tool_approval" or "ask_user_question"
+        tool_name: SDK tool name (e.g., "Bash", "Write", "AskUserQuestion")
+        tool_input: SDK tool input data (parameters for tool approval, questions for ask_user_question)
+        created_at: Unix timestamp when the request was created
+    """
+
+    request_id: str
+    request_type: str
+    tool_name: str
+    tool_input: dict
+    created_at: float
+
+
 class ProcessState(StrEnum):
     """State of a Claude process in its lifecycle.
 
@@ -71,6 +95,7 @@ class ProcessInfo(NamedTuple):
         error: Error message if state is DEAD due to error, None otherwise
         memory_rss: RSS memory usage in bytes, or None if unavailable
         kill_reason: Reason for death if DEAD (e.g., "manual", "error", "shutdown")
+        pending_request: Active pending request if Claude is waiting for user input, None otherwise
     """
 
     session_id: str
@@ -82,6 +107,7 @@ class ProcessInfo(NamedTuple):
     error: str | None = None
     memory_rss: int | None = None
     kill_reason: str | None = None
+    pending_request: PendingRequest | None = None
 
     @property
     def memory_rss_human(self) -> str | None:
@@ -113,4 +139,12 @@ def serialize_process_info(info: ProcessInfo) -> dict:
         data["memory"] = info.memory_rss
     if info.kill_reason is not None:
         data["kill_reason"] = info.kill_reason
+    if info.pending_request is not None:
+        data["pending_request"] = {
+            "request_id": info.pending_request.request_id,
+            "request_type": info.pending_request.request_type,
+            "tool_name": info.pending_request.tool_name,
+            "tool_input": info.pending_request.tool_input,
+            "created_at": info.pending_request.created_at,
+        }
     return data

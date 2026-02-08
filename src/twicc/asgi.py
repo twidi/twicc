@@ -17,6 +17,8 @@ from django.conf import settings
 from django.core.asgi import get_asgi_application
 from django.urls import path
 
+from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+
 from twicc.agent.manager import get_process_manager
 from twicc.agent.states import ProcessInfo, serialize_process_info
 from twicc.background import get_usage_message_for_connection
@@ -143,6 +145,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         - ping: heartbeat, responds with pong
         - send_message: send a message to a Claude session (creates new or resumes existing)
         - kill_process: kill a running Claude process
+        - pending_request_response: respond to a pending tool approval or clarifying question
         - suggest_title: request a title suggestion for a session
         """
         msg_type = content.get("type")
@@ -158,6 +161,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         elif msg_type == "user_draft_updated":
             await self._handle_user_draft_updated(content)
+
+        elif msg_type == "pending_request_response":
+            await self._handle_pending_request_response(content)
 
         elif msg_type == "suggest_title":
             await self._handle_suggest_title(content)
@@ -340,6 +346,90 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         manager = get_process_manager()
         manager.touch_process_activity(session_id)
+
+    async def _handle_pending_request_response(self, content: dict) -> None:
+        """Handle a pending request response from the user.
+
+        Routes the user's decision (tool approval or clarifying question answer)
+        to the correct process via the ProcessManager.
+
+        Expected content for tool approval:
+        {
+            "type": "pending_request_response",
+            "session_id": "...",
+            "request_id": "...",
+            "request_type": "tool_approval",
+            "decision": "allow" | "deny",
+            "message": "optional reason for deny",
+            "updated_input": { ... }  // optional, for approve with modifications
+        }
+
+        Expected content for ask_user_question:
+        {
+            "type": "pending_request_response",
+            "session_id": "...",
+            "request_id": "...",
+            "request_type": "ask_user_question",
+            "answers": {
+                "question text": "selected label or free text",
+                ...
+            }
+        }
+        """
+        session_id = content.get("session_id")
+        request_type = content.get("request_type")
+
+        if not session_id or not request_type:
+            logger.warning(
+                "pending_request_response missing required fields: session_id=%s, request_type=%s",
+                session_id,
+                request_type,
+            )
+            return
+
+        manager = get_process_manager()
+
+        if request_type == "tool_approval":
+            decision = content.get("decision")
+            if decision == "allow":
+                updated_input = content.get("updated_input")
+                response = PermissionResultAllow(updated_input=updated_input)
+            else:
+                message = content.get("message", "User denied this action")
+                response = PermissionResultDeny(message=message)
+
+        elif request_type == "ask_user_question":
+            answers = content.get("answers", {})
+            # Retrieve original questions from the process's pending request
+            process_info = manager.get_process_info(session_id)
+            if process_info is None or process_info.pending_request is None:
+                logger.warning(
+                    "pending_request_response: no pending request for session %s",
+                    session_id,
+                )
+                return
+            original_input = process_info.pending_request.tool_input
+            response = PermissionResultAllow(
+                updated_input={
+                    "questions": original_input.get("questions", []),
+                    "answers": answers,
+                }
+            )
+
+        else:
+            logger.warning(
+                "pending_request_response: unknown request_type %r",
+                request_type,
+            )
+            return
+
+        resolved = await manager.resolve_pending_request(session_id, response)
+        if not resolved:
+            logger.warning(
+                "pending_request_response: failed to resolve for session %s "
+                "(no pending request or already resolved)",
+                session_id,
+            )
 
     async def _handle_suggest_title(self, content: dict) -> None:
         """Handle title suggestion request.

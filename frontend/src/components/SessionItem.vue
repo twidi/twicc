@@ -170,7 +170,6 @@ function toggleJsonView() {
 <style scoped>
 .session-item {
     position: relative;
-    font-family: var(--wa-font-mono);
     font-size: var(--wa-font-size-s);
     line-height: 1.5;
 }
@@ -438,7 +437,6 @@ wa-details {
 }
 
 wa-details.item-details {
-    font-family: var(--wa-font-mono);
     font-size: var(--wa-font-size-s);
     --spacing-top: calc(var(--content-card-not-start-item, 1) * var(--spacing));
     --spacing-bottom: calc(var(--content-card-not-end-item, 1) * var(--spacing));

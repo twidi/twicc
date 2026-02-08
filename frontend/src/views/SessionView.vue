@@ -626,7 +626,6 @@ function handleDevToolsTabShow(event) {
     flex: 1;
     min-height: 0;
     overflow: hidden;
-    font-size: var(--wa-font-size-s);
     --indicator-color: transparent;
     --track-width: 4px;
     &.one-tab-only::part(tabs) {
