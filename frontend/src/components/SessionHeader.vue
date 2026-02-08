@@ -204,6 +204,20 @@ function getStateDuration(procState) {
     return Math.max(0, Math.floor(now.value - procState.state_changed_at))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Compact header mode on small viewports
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Track expanded state of the compact header overlay
+const isCompactExpanded = ref(false)
+
+// Auto-collapse when the header is hidden by auto-hide (scroll-based)
+watch(() => props.hidden, (newHidden) => {
+    if (newHidden) {
+        isCompactExpanded.value = false
+    }
+})
+
 // Rename dialog (provided by ProjectView)
 const injectedOpenRenameDialog = inject('openRenameDialog')
 
@@ -256,7 +270,7 @@ defineExpose({
 </script>
 
 <template>
-    <header ref="headerRef" class="session-header" :class="{ 'auto-hide-hidden': hidden }" v-if="session">
+    <header ref="headerRef" class="session-header" :class="{ 'auto-hide-hidden': hidden, 'compact-expanded': isCompactExpanded }" :data-session-type="mode" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
             <wa-tag v-if="session.archived" :id="`session-header-${sessionId}-archived-tag`" size="small" variant="neutral" class="archived-tag" @click="handleUnarchive">Archived</wa-tag>
             <wa-tooltip v-if="tooltipsEnabled && session.archived" :for="`session-header-${sessionId}-archived-tag`">Click to unarchive</wa-tooltip>
@@ -290,7 +304,7 @@ defineExpose({
             </wa-button>
             <wa-tooltip v-if="tooltipsEnabled && !session.archived && !session.draft" :for="`session-header-${sessionId}-archive-button`">Archive session</wa-tooltip>
 
-            <!-- Rename button (not for subagents) -->
+            <!-- Rename button (only for main session) -->
             <wa-button
                 v-if="mode === 'session'"
                 :id="`session-header-${sessionId}-rename-button`"
@@ -308,133 +322,173 @@ defineExpose({
             <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-title`">{{ displayName }}</wa-tooltip>
 
             <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
-        </div>
 
-        <!-- Git info row: directory @ branch (not shown for draft sessions) -->
-        <div v-if="!session.draft && (displayDirectory || session.git_branch)" class="session-git-info">
-            <span v-if="displayDirectory" :id="`session-header-${sessionId}-git-directory`" class="git-info-item">
-                <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
-                <span>{{ displayDirectory }}</span>
-            </span>
-            <wa-tooltip v-if="tooltipsEnabled && displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }}</wa-tooltip>
+            <!-- Context usage ring duplicate for compact mode (visible only on small viewports when not expanded) -->
+            <wa-progress-ring
+                v-if="contextUsagePercentage != null"
+                class="context-usage-ring compact-context-ring"
+                :value="Math.min(contextUsagePercentage, 100)"
+                :style="{
+                    '--indicator-color': contextUsageColor,
+                    '--indicator-width': contextUsageIndicatorWidth
+                }"
+            ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
 
-            <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item">
-                <wa-icon auto-width name="code-branch"></wa-icon>
-                <span>{{ session.git_branch }}</span>
-            </span>
-            <wa-tooltip v-if="tooltipsEnabled && session.git_branch" :for="`session-header-${sessionId}-git-branch`">Git branch</wa-tooltip>
-        </div>
-
-        <!-- Meta row (not shown for draft sessions) -->
-        <div v-if="!session.draft" class="session-meta">
-
-            <span :id="`session-header-${sessionId}-messages`" class="meta-item">
-                <wa-icon auto-width name="comment" variant="regular"></wa-icon>
-                <span>{{ session.message_count ?? '??' }}</span>
-            </span>
-            <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-messages`">Number of user and assistant messages</wa-tooltip>
-
-            <span :id="`session-header-${sessionId}-lines`" class="meta-item nb_lines">
-                <wa-icon auto-width name="bars"></wa-icon>
-                <span>{{ session.last_line }}</span>
-            </span>
-            <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-lines`">Lines in the JSONL file</wa-tooltip>
-
-            <span :id="`session-header-${sessionId}-mtime`" class="meta-item">
-                <wa-icon auto-width name="clock" variant="regular"></wa-icon>
-                <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
-            </span>
-            <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-mtime`">Last activity</wa-tooltip>
-
-            <template v-if="formattedTotalCost">
-                <span :id="`session-header-${sessionId}-cost`" class="meta-item">
-                    <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
-                    {{ formattedTotalCost }}
-                </span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-cost`">Total session cost</wa-tooltip>
-            </template>
-
-            <template v-if="formattedCostBreakdown">
-                <span :id="`session-header-${sessionId}-cost-breakdown`" class="meta-item cost-breakdown-item">
-                    <span>(
-                    <span>
-                        <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
-                        <span class="cost-breakdown">{{ formattedCostBreakdown }}</span>
-                    </span>
-                    )</span>
-                </span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-cost-breakdown`">Main agent cost + sub-agents cost</wa-tooltip>
-            </template>
-
-            <template v-if="formattedModel">
-                <span :id="`session-header-${sessionId}-model`" class="meta-item">
-                    <wa-icon auto-width name="robot" variant="classic"></wa-icon>
-                    <span>{{ formattedModel }}</span>
-                </span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-model`">Last used model</wa-tooltip>
-            </template>
-
-            <template v-if="contextUsagePercentage != null">
-                <wa-progress-ring
-                    :id="`session-header-${sessionId}-context`"
-                    class="context-usage-ring"
-                    :value="Math.min(contextUsagePercentage, 100)"
-                    :style="{
-                        '--indicator-color': contextUsageColor,
-                        '--indicator-width': contextUsageIndicatorWidth
-                    }"
-                ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-context`">Context window usage</wa-tooltip>
-            </template>
-
-            <template
-                v-if="processState"
+            <!-- Compact mode: expand/collapse toggle (only visible on small viewports via CSS) -->
+            <wa-button
+                v-if="!session.draft"
+                class="compact-toggle-button"
+                variant="neutral"
+                appearance="plain"
+                size="small"
+                @click="isCompactExpanded = !isCompactExpanded"
             >
-                <div style="flex-grow: 1"></div>
-                <span
-                    v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
-                    :id="`session-header-${sessionId}-process-duration`"
-                    class="process-duration"
-                    :style="{ color: getProcessColor(processState.state) }"
-                >
-                    {{ formatDuration(getStateDuration(processState)) }}
-                </span>
-                <wa-tooltip v-if="tooltipsEnabled && processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">Assistant turn duration</wa-tooltip>
-
-                <span
-                    v-if="processState.memory"
-                    :id="`session-header-${sessionId}-process-memory`"
-                    class="process-memory"
-                    :style="{ color: getProcessColor(processState.state) }"
-                >
-                    {{ formatMemory(processState.memory) }}
-                </span>
-                <wa-tooltip v-if="tooltipsEnabled && processState.memory" :for="`session-header-${sessionId}-process-memory`">Claude Code memory usage</wa-tooltip>
-
-                <ProcessIndicator
-                    :id="`session-header-${sessionId}-process-indicator`"
-                    :state="processState.state"
-                    size="small"
-                    :animate-states="animateStates"
-                />
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-process-indicator`">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}</wa-tooltip>
-
-                <wa-button
-                    v-if="canStopProcess"
-                    :id="`session-header-${sessionId}-stop-button`"
-                    variant="danger"
-                    appearance="filled"
-                    size="small"
-                    class="stop-button"
-                    @click="handleStopProcess"
-                >
-                    <wa-icon name="ban" label="Stop"></wa-icon>
-                </wa-button>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-stop-button`">Stop the Claude Code process</wa-tooltip>
-            </template>
+                <wa-icon :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'" label="Toggle details"></wa-icon>
+            </wa-button>
         </div>
+
+        <!-- Collapsible rows: git info + meta (overlay on small viewports) -->
+        <div class="session-collapsible-rows">
+
+            <!-- Git info row: directory @ branch (not shown for draft sessions) -->
+            <div v-if="!session.draft && (displayDirectory || session.git_branch)" class="session-git-info">
+                <span v-if="displayDirectory" :id="`session-header-${sessionId}-git-directory`" class="git-info-item">
+                    <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
+                    <span>{{ displayDirectory }}</span>
+                </span>
+                <wa-tooltip v-if="tooltipsEnabled && displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }}</wa-tooltip>
+
+                <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item">
+                    <wa-icon auto-width name="code-branch"></wa-icon>
+                    <span>{{ session.git_branch }}</span>
+                </span>
+                <wa-tooltip v-if="tooltipsEnabled && session.git_branch" :for="`session-header-${sessionId}-git-branch`">Git branch</wa-tooltip>
+            </div>
+
+            <!-- Meta row (not shown for draft sessions) -->
+            <div v-if="!session.draft" class="session-meta">
+
+                <span :id="`session-header-${sessionId}-messages`" class="meta-item">
+                    <wa-icon auto-width name="comment" variant="regular"></wa-icon>
+                    <span>{{ session.message_count ?? '??' }}</span>
+                </span>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-messages`">Number of user and assistant messages</wa-tooltip>
+
+                <span :id="`session-header-${sessionId}-lines`" class="meta-item nb_lines">
+                    <wa-icon auto-width name="bars"></wa-icon>
+                    <span>{{ session.last_line }}</span>
+                </span>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-lines`">Lines in the JSONL file</wa-tooltip>
+
+                <span :id="`session-header-${sessionId}-mtime`" class="meta-item">
+                    <wa-icon auto-width name="clock" variant="regular"></wa-icon>
+                    <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
+                </span>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-mtime`">Last activity</wa-tooltip>
+
+                <template v-if="formattedTotalCost">
+                    <span :id="`session-header-${sessionId}-cost`" class="meta-item">
+                        <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
+                        {{ formattedTotalCost }}
+                    </span>
+                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-cost`">Total session cost</wa-tooltip>
+                </template>
+
+                <template v-if="formattedCostBreakdown">
+                    <span :id="`session-header-${sessionId}-cost-breakdown`" class="meta-item cost-breakdown-item">
+                        <span>(
+                        <span>
+                            <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
+                            <span class="cost-breakdown">{{ formattedCostBreakdown }}</span>
+                        </span>
+                        )</span>
+                    </span>
+                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-cost-breakdown`">Main agent cost + sub-agents cost</wa-tooltip>
+                </template>
+
+                <template v-if="formattedModel">
+                    <span :id="`session-header-${sessionId}-model`" class="meta-item">
+                        <wa-icon auto-width name="robot" variant="classic"></wa-icon>
+                        <span>{{ formattedModel }}</span>
+                    </span>
+                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-model`">Last used model</wa-tooltip>
+                </template>
+
+                <template v-if="contextUsagePercentage != null">
+                    <wa-progress-ring
+                        :id="`session-header-${sessionId}-context`"
+                        class="context-usage-ring"
+                        :value="Math.min(contextUsagePercentage, 100)"
+                        :style="{
+                            '--indicator-color': contextUsageColor,
+                            '--indicator-width': contextUsageIndicatorWidth
+                        }"
+                    ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
+                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-context`">Context window usage</wa-tooltip>
+                </template>
+
+                <template
+                    v-if="processState"
+                >
+                    <div style="flex-grow: 1"></div>
+                    <span
+                        v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
+                        :id="`session-header-${sessionId}-process-duration`"
+                        class="process-duration"
+                        :style="{ color: getProcessColor(processState.state) }"
+                    >
+                        {{ formatDuration(getStateDuration(processState)) }}
+                    </span>
+                    <wa-tooltip v-if="tooltipsEnabled && processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">Assistant turn duration</wa-tooltip>
+
+                    <span
+                        v-if="processState.memory"
+                        :id="`session-header-${sessionId}-process-memory`"
+                        class="process-memory"
+                        :style="{ color: getProcessColor(processState.state) }"
+                    >
+                        {{ formatMemory(processState.memory) }}
+                    </span>
+                    <wa-tooltip v-if="tooltipsEnabled && processState.memory" :for="`session-header-${sessionId}-process-memory`">Claude Code memory usage</wa-tooltip>
+
+                    <ProcessIndicator
+                        :id="`session-header-${sessionId}-process-indicator`"
+                        :state="processState.state"
+                        size="small"
+                        :animate-states="animateStates"
+                    />
+                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-process-indicator`">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}</wa-tooltip>
+
+                    <wa-button
+                        v-if="canStopProcess"
+                        :id="`session-header-${sessionId}-stop-button`"
+                        variant="danger"
+                        appearance="filled"
+                        size="small"
+                        class="stop-button"
+                        @click="handleStopProcess"
+                    >
+                        <wa-icon name="ban" label="Stop"></wa-icon>
+                    </wa-button>
+                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-stop-button`">Stop the Claude Code process</wa-tooltip>
+                </template>
+            </div>
+
+        </div><!-- /.session-collapsible-rows -->
 
         <wa-divider></wa-divider>
+
+        <!-- Compact mode toggle for non main session headers (no .session-title row to host it) -->
+        <wa-button
+            v-if="mode !== 'session'"
+            class="compact-toggle-button compact-toggle-button--non-main-session"
+            variant="neutral"
+            appearance="plain"
+            size="small"
+            @click="isCompactExpanded = !isCompactExpanded"
+        >
+            <wa-icon :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'" label="Toggle details"></wa-icon>
+        </wa-button>
     </header>
 
 </template>
@@ -445,6 +499,7 @@ defineExpose({
     display: flex;
     flex-direction: column;
     background: var(--main-header-footer-bg-color);
+    position: relative;
 }
 
 .session-title {
@@ -490,6 +545,7 @@ defineExpose({
     text-overflow: ellipsis;
     white-space: nowrap;
     width: 25%;
+    min-width: 3rem;
     max-width: max-content;
 }
 
@@ -567,6 +623,12 @@ body:not([data-display-mode="debug"]) .cost-breakdown-item {
     font-size: var(--wa-font-size-2xs);
 }
 
+/* Compact context ring: hidden by default, shown in compact mode when not expanded */
+.compact-context-ring {
+    display: none;
+    align-self: center;
+}
+
 wa-divider {
     --width: 4px;
     --spacing: 0;
@@ -617,6 +679,105 @@ wa-divider {
 .archive-button:hover,
 .rename-button:hover {
     opacity: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Compact header mode — toggle button + collapsible rows
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Toggle button: hidden by default, shown only on small viewports */
+.compact-toggle-button {
+    display: none;
+    flex-shrink: 0;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+    font-size: var(--wa-font-size-3xs);
+    &::part(label) {
+        scale: 1.5;
+    }
+    margin-block: calc(-3 * var(--wa-space-2xs));
+    position: relative;
+    top: calc(-1 * var(--wa-space-2xs));
+}
+
+.compact-toggle-button:hover {
+    opacity: 1;
+}
+
+/* Non main session toggle: positioned absolutely below the header */
+.compact-toggle-button--non-main-session {
+    position: absolute;
+    bottom: calc( -1 * var(--wa-space-xs));
+    right: var(--wa-space-xs);
+    transform: translateX(0) translateY(100%);
+    z-index: 19;
+    margin: 0;
+    top: auto;
+}
+
+/* Collapsible rows wrapper: transparent on large viewports */
+.session-collapsible-rows {
+    display: contents;
+}
+
+@media (max-height: 800px) {
+    /* Show the compact toggle button */
+    .compact-toggle-button {
+        display: inline-flex;
+    }
+
+    /* Dont show divider when compact mode is active */
+    .session-header wa-divider {
+        display: none;
+    }
+
+    /* Add some padding on the bottom of the first line */
+    .session-header:not(.compact-expanded) .session-title wa-progress-ring {
+        position: relative;
+        top: calc(-1 * var(--wa-space-2xs));
+    }
+
+    /* Show the compact context ring when not expanded */
+    .session-header:not(.compact-expanded) .compact-context-ring {
+        display: inline-flex;
+    }
+
+    /* Collapsible rows become an overlay panel */
+    .session-collapsible-rows {
+        display: flex;
+        flex-direction: column;
+        gap: var(--wa-space-xs);
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 20;
+        background: var(--wa-color-surface-default);
+        box-shadow: var(--wa-shadow-s);
+        padding-bottom: var(--wa-space-xs);
+
+        /* Hidden by default */
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-8px);
+        transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+    }
+    .session-header:not([data-session-type="session"]) .session-collapsible-rows {
+        z-index: 19;
+    }
+
+
+    /* When expanded: reveal the overlay */
+    .session-header.compact-expanded .session-collapsible-rows {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+    }
+
+    .session-header.compact-expanded .compact-toggle-button--non-main-session {
+        bottom: -100%;
+    }
+
 }
 
 /* Auto-hide header on small viewport heights */
