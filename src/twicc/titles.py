@@ -191,10 +191,50 @@ def flush_pending_title(session_id: str) -> None:
     Only removes the pending title from memory if the write succeeds.
     If it fails, the title stays pending and will be retried on the next
     state change.
+
+    After a successful write, performs a delayed re-verification to catch
+    cases where Claude CLI corrupts our line after our initial verification
+    passed (e.g. late buffer flush from the subprocess).
     """
     title = get_pending_title(session_id)
-    if title:
-        logger.debug("Flushing pending title for session %s", session_id)
+    if not title:
+        return
+
+    logger.debug("Flushing pending title for session %s", session_id)
+    success = write_custom_title_to_jsonl(session_id, title)
+    if not success:
+        logger.error(
+            "Keeping pending title for session %s for retry on next state change",
+            session_id,
+        )
+        return
+
+    # Write succeeded and was verified. But Claude CLI may still corrupt
+    # our line with a late buffer flush. Wait and re-verify.
+    time.sleep(0.5)
+
+    from twicc.core.models import Session
+
+    try:
+        session = Session.objects.get(id=session_id)
+    except Session.DoesNotExist:
+        pop_pending_title(session_id)
+        return
+
+    jsonl_path = get_session_jsonl_path(session)
+    entry = {"type": "custom-title", "customTitle": title, "sessionId": session_id}
+    entry_json = json.dumps(entry)
+
+    if _verify_title_in_jsonl(jsonl_path, entry_json):
+        # Confirmed present after delay — safe to pop
+        pop_pending_title(session_id)
+        logger.debug("Delayed re-verification passed for session %s", session_id)
+    else:
+        # Line was corrupted after our initial write — rewrite it
+        logger.warning(
+            "Delayed re-verification failed for session %s, rewriting title",
+            session_id,
+        )
         success = write_custom_title_to_jsonl(session_id, title)
         if success:
             pop_pending_title(session_id)

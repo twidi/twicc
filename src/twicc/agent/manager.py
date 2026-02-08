@@ -567,12 +567,15 @@ class ProcessManager:
             except Exception as e:
                 logger.error("Error broadcasting state change: %s", e)
 
-        # Flush pending title when process becomes safe to write
+        # Flush pending title when process becomes safe to write.
+        # We add a small delay to let Claude CLI finish flushing its own I/O
+        # buffers to the JSONL file — the ResultMessage arrives via the SDK stream
+        # before Claude CLI has necessarily finished writing to disk.
         if process.state in (ProcessState.USER_TURN, ProcessState.DEAD):
             from twicc.titles import flush_pending_title
 
-            # Run sync function in thread pool since file I/O
             try:
+                await asyncio.sleep(0.5)
                 await asyncio.to_thread(flush_pending_title, process.session_id)
             except Exception as e:
                 logger.error("Error flushing pending title: %s", e)
