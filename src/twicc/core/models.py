@@ -167,39 +167,52 @@ class SessionItem(models.Model):
         return f"{self.session_id}:{self.line_num}"
 
 
-class SessionItemLink(models.Model):
-    """
-    Links between session items (e.g. tool_use → tool_result, tool_use → agent).
-
-    Generic link table: source_line_num is the "origin" item,
-    target_line_num is the related item (nullable for agent links),
-    link_type describes the relationship, and reference provides context.
-
-    Link types:
-    - "tool_result": links a tool_use to its tool_result (target_line_num = result line)
-    - "agent": links a Task tool_use to its agent (target_line_num = null, reference = agent_id)
-    """
+class ToolResultLink(models.Model):
+    """Links a tool_use to its tool_result within a session."""
 
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
-        related_name="item_links",
+        related_name="tool_result_links",
     )
-    source_line_num = models.PositiveIntegerField()  # e.g. the line with tool_use(s)
-    target_line_num = models.PositiveIntegerField(null=True, blank=True)  # e.g. the line with tool_result (null for agent links)
-    link_type = models.CharField(max_length=50)  # e.g. "tool_result", "agent"
-    reference = models.CharField(max_length=255)  # e.g. the tool_use_id or agent_id
+    tool_use_line_num = models.PositiveIntegerField()  # Line containing the tool_use
+    tool_result_line_num = models.PositiveIntegerField()  # Line containing the tool_result
+    tool_use_id = models.CharField(max_length=255)  # The tool_use ID
 
     class Meta:
         indexes = [
             models.Index(
-                fields=["session", "link_type", "reference", "source_line_num"],
-                name="idx_item_link_lookup",
+                fields=["session", "tool_use_line_num", "tool_use_id"],
+                name="idx_tool_result_link_lookup",
             ),
         ]
 
     def __str__(self):
-        return f"{self.session_id}:{self.source_line_num}->{self.target_line_num} ({self.link_type})"
+        return f"{self.session_id}:{self.tool_use_line_num}->{self.tool_result_line_num} ({self.tool_use_id})"
+
+
+class AgentLink(models.Model):
+    """Links a Task tool_use to its spawned subagent within a session."""
+
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="agent_links",
+    )
+    tool_use_line_num = models.PositiveIntegerField()  # Line containing the assistant message with Task tool_use
+    tool_use_id = models.CharField(max_length=255)  # The specific Task tool_use ID
+    agent_id = models.CharField(max_length=255)  # The subagent ID
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["session", "tool_use_id"],
+                name="idx_agent_link_lookup",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.session_id}:{self.tool_use_line_num} -> agent {self.agent_id} ({self.tool_use_id})"
 
 
 class ModelPrice(models.Model):

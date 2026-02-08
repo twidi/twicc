@@ -26,7 +26,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 
 from twicc.compute import load_project_directories
-from twicc.core.models import Project, Session, SessionItem, SessionItemLink
+from twicc.core.models import AgentLink, Project, Session, SessionItem, ToolResultLink
 from twicc.core.pricing import sync_model_prices
 from twicc.core.usage import compute_period_costs, fetch_and_save_usage, has_oauth_credentials
 from twicc.core.models import UsageSnapshot
@@ -325,11 +325,16 @@ def _apply_batch_update(msg: dict) -> None:
 
 @sync_to_async
 def _apply_links_create(msg: dict) -> None:
-    """Create SessionItemLinks from worker data."""
-    links_data = msg['links']
-    links = [SessionItemLink(**link_data) for link_data in links_data]
-    if links:
-        SessionItemLink.objects.bulk_create(links, ignore_conflicts=True)
+    """Create ToolResultLinks and AgentLinks from worker data."""
+    tool_result_links_data = msg.get('tool_result_links', [])
+    if tool_result_links_data:
+        links = [ToolResultLink(**d) for d in tool_result_links_data]
+        ToolResultLink.objects.bulk_create(links, ignore_conflicts=True)
+
+    agent_links_data = msg.get('agent_links', [])
+    if agent_links_data:
+        links = [AgentLink(**d) for d in agent_links_data]
+        AgentLink.objects.bulk_create(links, ignore_conflicts=True)
 
 
 @sync_to_async
@@ -367,7 +372,8 @@ def _apply_session_update(msg: dict) -> None:
 @sync_to_async
 def _delete_session_links(session_id: str) -> None:
     """Delete all links for a session before recomputing."""
-    SessionItemLink.objects.filter(session_id=session_id).delete()
+    ToolResultLink.objects.filter(session_id=session_id).delete()
+    AgentLink.objects.filter(session_id=session_id).delete()
 
 
 @sync_to_async
@@ -383,7 +389,8 @@ def _apply_session_complete(msg: dict) -> None:
     session_id = msg['session_id']
 
     # 1. Delete existing links
-    SessionItemLink.objects.filter(session_id=session_id).delete()
+    ToolResultLink.objects.filter(session_id=session_id).delete()
+    AgentLink.objects.filter(session_id=session_id).delete()
 
     # 2. Apply item updates
     item_updates = msg.get('item_updates', [])
@@ -402,10 +409,15 @@ def _apply_session_complete(msg: dict) -> None:
             SessionItem.objects.bulk_update(items, item_fields)
 
     # 3. Create links
-    links_data = msg.get('links', [])
-    if links_data:
-        links = [SessionItemLink(**link_data) for link_data in links_data]
-        SessionItemLink.objects.bulk_create(links, ignore_conflicts=True)
+    tool_result_links_data = msg.get('tool_result_links', [])
+    if tool_result_links_data:
+        links = [ToolResultLink(**d) for d in tool_result_links_data]
+        ToolResultLink.objects.bulk_create(links, ignore_conflicts=True)
+
+    agent_links_data = msg.get('agent_links', [])
+    if agent_links_data:
+        links = [AgentLink(**d) for d in agent_links_data]
+        AgentLink.objects.bulk_create(links, ignore_conflicts=True)
 
     # 4. Update session fields
     session_fields = msg.get('session_fields', {})

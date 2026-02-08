@@ -8,7 +8,7 @@ from django.http import FileResponse, Http404, JsonResponse
 import orjson
 
 from twicc.compute import get_message_content_list
-from twicc.core.models import Project, Session, SessionItem, SessionItemLink, SessionType
+from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType, ToolResultLink
 from twicc.core.serializers import (
     serialize_project,
     serialize_session,
@@ -327,7 +327,7 @@ def tool_results(request, project_id, session_id, line_num, tool_id, parent_sess
     GET /api/projects/<id>/sessions/<parent_session_id>/subagent/<session_id>/items/<line_num>/tool-results/<tool_id>/
 
     Returns the tool_result content(s) for a specific tool_use.
-    Uses SessionItemLink to find related tool_result items.
+    Uses ToolResultLink to find related tool_result items.
     """
     try:
         session = Session.objects.get(id=session_id, project_id=project_id)
@@ -345,12 +345,11 @@ def tool_results(request, project_id, session_id, line_num, tool_id, parent_sess
             raise Http404("Session not found")
 
     # Find links for this tool_use
-    links = SessionItemLink.objects.filter(
+    links = ToolResultLink.objects.filter(
         session=session,
-        source_line_num=line_num,
-        link_type='tool_result',
-        reference=tool_id,
-    ).values_list('target_line_num', flat=True)
+        tool_use_line_num=line_num,
+        tool_use_id=tool_id,
+    ).values_list('tool_result_line_num', flat=True)
 
     if not links:
         return JsonResponse({"results": []})
@@ -383,7 +382,7 @@ def tool_agent_id(request, project_id, session_id, line_num, tool_id):
     """GET /api/projects/<id>/sessions/<session_id>/items/<line_num>/tool-agent-id/<tool_id>/
 
     Returns the agent_id for a Task tool_use that spawned a subagent.
-    Uses SessionItemLink to find the agent link.
+    Uses AgentLink to find the agent link.
 
     Only available for regular sessions (not subagents), since subagents cannot spawn subagents.
     """
@@ -396,15 +395,14 @@ def tool_agent_id(request, project_id, session_id, line_num, tool_id):
     if session.parent_session_id is not None:
         raise Http404("Session not found")
 
-    # Find the agent link for this line
-    link = SessionItemLink.objects.filter(
+    # Find the agent link for this tool_use
+    link = AgentLink.objects.filter(
         session=session,
-        source_line_num=line_num,
-        link_type='agent',
+        tool_use_id=tool_id,
     ).first()
 
     if link:
-        return JsonResponse({"agent_id": link.reference})
+        return JsonResponse({"agent_id": link.agent_id})
     else:
         return JsonResponse({"agent_id": None})
 
