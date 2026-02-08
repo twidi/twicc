@@ -66,6 +66,13 @@ const availableRoots = computed(() => {
 const selectedRootKey = ref(null)
 
 /**
+ * Set of root keys whose directories no longer exist on disk.
+ * Populated when fetchTree receives a 404 for a root directory.
+ * Used to disable the corresponding dropdown items.
+ */
+const missingRoots = ref(new Set())
+
+/**
  * The currently active directory path, derived from the selected root.
  */
 const directory = computed(() => {
@@ -88,7 +95,7 @@ watch(availableRoots, (roots) => {
 }, { immediate: true })
 
 function handleRootSelect(key) {
-    if (key !== selectedRootKey.value) {
+    if (key !== selectedRootKey.value && !missingRoots.value.has(key)) {
         selectedRootKey.value = key
     }
 }
@@ -142,6 +149,20 @@ async function fetchTree(projectId, sessionId, dirPath) {
         )
         if (!res.ok) {
             const data = await res.json()
+
+            // If the directory was not found, mark this root as missing
+            // and automatically fall back to the project directory when possible.
+            if (res.status === 404 && selectedRootKey.value === 'git') {
+                missingRoots.value = new Set([...missingRoots.value, 'git'])
+                const projectRoot = availableRoots.value.find(r => r.key === 'project')
+                if (projectRoot) {
+                    selectedRootKey.value = 'project'
+                    // The watcher on `directory` will re-trigger fetchTree
+                    // with the project directory, so we can return here.
+                    return
+                }
+            }
+
             error.value = data.error || `HTTP ${res.status}`
             tree.value = null
             return
@@ -881,9 +902,11 @@ function handleTreeKeydown(event) {
                             type="checkbox"
                             :value="'root:' + root.key"
                             :checked="selectedRootKey === root.key"
+                            :disabled="missingRoots.has(root.key)"
                         >
                             <div>{{ root.label }}</div>
                             <div class="root-path">{{ root.path }}</div>
+                            <div v-if="missingRoots.has(root.key)" class="root-missing">Directory no longer exists</div>
                         </wa-dropdown-item>
                         <wa-divider></wa-divider>
                         <wa-dropdown-item
@@ -1076,6 +1099,11 @@ function handleTreeKeydown(event) {
 .root-path {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
+}
+
+.root-missing {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-danger-fill-loud);
 }
 
 .search-truncated {
