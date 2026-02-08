@@ -7,7 +7,6 @@ import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
 import { useReconciliation } from './useReconciliation'
 import { toast } from './useToast'
-import { router } from '../router'
 import { computeUsageData, logUsageToConsole } from '../utils/usage'
 
 // WebSocket close code sent by backend when authentication fails
@@ -196,6 +195,9 @@ export function useWebSocket() {
         await authStore.checkAuthOnce()
         if (authStore.needsLogin) {
             authStore.handleUnauthorized()
+            // Lazy import to avoid circular dependency
+            // (router imports views → views import components → components import useWebSocket)
+            const { router } = await import('../router')
             const currentPath = router.currentRoute.value.fullPath
             if (router.currentRoute.value.name !== 'login') {
                 router.replace({ name: 'login', query: { redirect: currentPath } })

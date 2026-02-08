@@ -1,7 +1,15 @@
 // frontend/src/utils/api.js
 
 import { useAuthStore } from '../stores/auth'
-import { router } from '../router'
+
+/**
+ * Lazily import the router to avoid circular dependencies.
+ * (router imports views → views import components → components import api.js)
+ */
+async function getRouter() {
+    const { router } = await import('../router')
+    return router
+}
 
 /**
  * Fetch wrapper that handles 401 responses by redirecting to login.
@@ -20,6 +28,7 @@ export async function apiFetch(url, options) {
         const authStore = useAuthStore()
         authStore.handleUnauthorized()
         // Redirect to login with current path as redirect target
+        const router = await getRouter()
         const currentPath = router.currentRoute.value.fullPath
         if (router.currentRoute.value.name !== 'login') {
             router.replace({ name: 'login', query: { redirect: currentPath } })
