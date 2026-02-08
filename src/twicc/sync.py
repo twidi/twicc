@@ -21,6 +21,7 @@ from django.conf import settings
 from twicc.compute import (
     cache_agent_prompt,
     create_agent_link_from_tool_result,
+    create_agent_link_from_tool_use,
     create_agent_link_from_subagent,
     create_tool_result_link_live,
     compute_item_cost_and_usage,
@@ -418,6 +419,12 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                     create_tool_result_link_live(session.id, item, parsed)
                     # Also check for agent links (Task tool_result with agentId)
                     create_agent_link_from_tool_result(session.id, item, parsed)
+
+                # For parent sessions: check if this assistant message contains Task tool_use(s)
+                # and try to link them to existing subagents (handles the race condition where
+                # the subagent was synced before this Task tool_use existed)
+                if session.type == SessionType.SESSION and item.kind == ItemKind.ASSISTANT_MESSAGE:
+                    create_agent_link_from_tool_use(session.id, item, parsed)
 
             # Apply title updates
             for target_session_id, title in session_title_updates.items():

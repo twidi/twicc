@@ -1758,6 +1758,105 @@ def create_agent_link_from_subagent(
     return False
 
 
+def create_agent_link_from_tool_use(
+    session_id: str,
+    item: SessionItem,
+    parsed_json: dict,
+) -> None:
+    """
+    Create SessionItemLink(s) for Task tool_use(s) by matching against existing subagents.
+
+    When a new assistant message containing Task tool_use(s) is synced in the parent session,
+    this function checks if any matching subagents already exist in the database.
+    This handles the race condition where the subagent file is synced before the parent
+    session's Task tool_use item exists: when the parent catches up, we create the link here.
+
+    Args:
+        session_id: The parent session ID
+        item: The SessionItem containing the assistant message with Task tool_use(s)
+        parsed_json: The parsed JSON content of the item
+    """
+    from twicc.core.models import SessionItemLink
+
+    # Extract assistant message content
+    content = get_message_content_list(parsed_json, "assistant")
+    if content is None:
+        return
+
+    # Collect all Task tool_use prompts from this message
+    task_prompts: list[str] = []
+    for content_item in content:
+        if not isinstance(content_item, dict):
+            continue
+        if content_item.get('type') != 'tool_use' or content_item.get('name') != 'Task':
+            continue
+        inputs = content_item.get('input', {})
+        if isinstance(inputs, dict):
+            prompt = inputs.get('prompt')
+            if isinstance(prompt, str):
+                task_prompts.append(prompt.strip())
+
+    if not task_prompts:
+        return
+
+    # Get all subagents for this session that don't have a link yet
+    subagents = Session.objects.filter(
+        parent_session_id=session_id,
+        type=SessionType.SUBAGENT,
+    )
+
+    # For each subagent, check if its prompt matches one of our Task tool_use prompts
+    for subagent in subagents:
+        if is_agent_link_done(session_id, subagent.id):
+            continue
+
+        # Check if link already exists
+        if SessionItemLink.objects.filter(
+            session_id=session_id,
+            link_type='agent',
+            reference=subagent.id,
+        ).exists():
+            mark_agent_link_done(session_id, subagent.id)
+            continue
+
+        # Get the subagent's prompt from cache or DB
+        subagent_prompt = get_cached_agent_prompt(session_id, subagent.id)
+        if not subagent_prompt:
+            # Try to get from the subagent's first user message
+            first_user_message = SessionItem.objects.filter(
+                session_id=subagent.id,
+                kind=ItemKind.USER_MESSAGE,
+            ).first()
+            if first_user_message is None:
+                continue
+            try:
+                first_parsed = orjson.loads(first_user_message.content)
+            except orjson.JSONDecodeError:
+                continue
+            subagent_prompt = extract_text_from_content(get_message_content(first_parsed))
+            if not subagent_prompt:
+                continue
+            subagent_prompt = subagent_prompt.strip()
+            cache_agent_prompt(session_id, subagent.id, subagent_prompt)
+
+        # Check if the subagent's prompt matches any Task tool_use prompt
+        if subagent_prompt in task_prompts:
+            try:
+                _, created = SessionItemLink.objects.get_or_create(
+                    session_id=session_id,
+                    link_type='agent',
+                    source_line_num=item.line_num,
+                    reference=subagent.id,
+                    defaults={
+                        "target_line_num": None,
+                    }
+                )
+                if created:
+                    mark_agent_link_done(session_id, subagent.id)
+            except MultipleObjectsReturned:
+                pass
+
+
 def compute_item_metadata_live(session_id: str, item: SessionItem, content: str) -> set[int]:
     """
     Compute metadata for a single item during live sync.
