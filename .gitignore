@@ -232,3 +232,6 @@ logs/
 
 # Git worktrees
 .worktrees/
+
+# Agent local files
+CLAUDE.local.md
