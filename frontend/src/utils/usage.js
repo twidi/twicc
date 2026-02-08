@@ -106,13 +106,24 @@ function computeLevel(utilization, rate) {
  * @returns {object} Computed quota info
  */
 function computeQuota(utilization, resetsAt, fetchedAt, windowMs) {
-    if (utilization == null || resetsAt == null) {
+    if (utilization == null) {
         return {
             utilization: null,
             resetsAt: null,
             timePct: null,
             burnRate: null,
             level: USAGE_LEVELS.INACTIVE,
+        }
+    }
+
+    // utilization is a number but resetsAt may be null (period not started yet)
+    if (resetsAt == null) {
+        return {
+            utilization,
+            resetsAt: null,
+            timePct: null,
+            burnRate: null,
+            level: computeLevel(utilization, null),
         }
     }
 
@@ -130,6 +141,25 @@ function computeQuota(utilization, resetsAt, fetchedAt, windowMs) {
 }
 
 /**
+ * Compute derived data for a period cost block.
+ *
+ * @param {object|null} raw - Raw period cost data
+ * @returns {object} Period cost info
+ */
+function computePeriodCost(raw) {
+    if (!raw) {
+        return { spent: null, estimatedPeriod: null, estimatedMonthly: null, capped: false, cutoffAt: null }
+    }
+    return {
+        spent: raw.spent ?? null,
+        estimatedPeriod: raw.estimated_period ?? null,
+        estimatedMonthly: raw.estimated_monthly ?? null,
+        capped: raw.capped ?? false,
+        cutoffAt: raw.cutoff_at ?? null,
+    }
+}
+
+/**
  * Compute all derived usage data from a raw usage snapshot.
  *
  * @param {object|null} raw - Raw usage data from WebSocket (serialized UsageSnapshot)
@@ -139,6 +169,7 @@ export function computeUsageData(raw) {
     if (!raw) return null
 
     const fetchedAt = raw.fetched_at
+    const periodCosts = raw.period_costs || {}
 
     return {
         fetchedAt,
@@ -191,58 +222,21 @@ export function computeUsageData(raw) {
             usedCredits: raw.extra_usage_used_credits,
             utilization: raw.extra_usage_utilization,
         },
+
+        // Period cost estimates
+        fiveHourCost: computePeriodCost(periodCosts.five_hour),
+        sevenDayCost: computePeriodCost(periodCosts.seven_day),
     }
 }
 
 /**
- * Format a computed usage object for console display.
+ * Format a dollar amount for display.
  *
- * @param {boolean} hasOauth - Whether OAuth credentials are configured
- * @param {object|null} usage - Computed usage from computeUsageData()
- * @param {boolean} success - Whether the last fetch succeeded
- * @param {string} reason - "sync" (after API fetch) or "connection" (on WS connect)
+ * @param {number|null} value - Dollar amount
+ * @returns {string} Formatted string like "$1.23" or "n/a"
  */
-export function logUsageToConsole(hasOauth, usage, success, reason) {
-    if (!hasOauth) {
-        console.log('[Usage] OAuth not configured — usage quotas unavailable')
-        return
-    }
-
-    if (!usage) {
-        console.log('[Usage] OAuth configured but no data available yet (reason=%s)', reason)
-        return
-    }
-
-    const formatQuota = (label, q) => {
-        if (q.level === USAGE_LEVELS.INACTIVE) {
-            return `  ${label}: inactive`
-        }
-        const burnStr = q.burnRate != null ? q.burnRate.toFixed(2) : 'n/a'
-        const levelIcon = {
-            [USAGE_LEVELS.NORMAL]: '\u2705',
-            [USAGE_LEVELS.WARNING]: '\u26a0\ufe0f',
-            [USAGE_LEVELS.CRITICAL]: '\ud83d\udd34',
-        }[q.level] || ''
-        return `  ${label}: ${levelIcon} ${q.utilization.toFixed(1)}% used, ${q.timePct.toFixed(1)}% time elapsed, burn=${burnStr} [${q.level}]`
-    }
-
-    const reasonLabel = reason === 'connection' ? 'cached' : (success ? 'OK' : 'FAILED')
-    const lines = [
-        `[Usage] Snapshot at ${usage.fetchedAt} (${reasonLabel})`,
-        formatQuota('5-hour', usage.fiveHour),
-        formatQuota('7-day', usage.sevenDay),
-        formatQuota('7-day Opus', usage.sevenDayOpus),
-        formatQuota('7-day Sonnet', usage.sevenDaySonnet),
-        formatQuota('7-day OAuth', usage.sevenDayOauthApps),
-        formatQuota('7-day Cowork', usage.sevenDayCowork),
-    ]
-
-    if (usage.extraUsage.isEnabled) {
-        const eu = usage.extraUsage
-        lines.push(`  Extra usage: enabled, ${eu.usedCredits ?? 0}/${eu.monthlyLimit ?? '?'} credits used`)
-    } else {
-        lines.push('  Extra usage: disabled')
-    }
-
-    console.log(lines.join('\n'))
+export function formatCost(value) {
+    if (value == null) return 'n/a'
+    if (value < 0.01) return '$0.00'
+    return `$${value.toFixed(2)}`
 }

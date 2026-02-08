@@ -28,7 +28,7 @@ from django.conf import settings
 from twicc.compute import load_project_directories
 from twicc.core.models import Project, Session, SessionItem, SessionItemLink
 from twicc.core.pricing import sync_model_prices
-from twicc.core.usage import fetch_and_save_usage, has_oauth_credentials
+from twicc.core.usage import compute_period_costs, fetch_and_save_usage, has_oauth_credentials
 from twicc.core.models import UsageSnapshot
 from twicc.core.serializers import serialize_project, serialize_session, serialize_usage_snapshot
 
@@ -623,14 +623,36 @@ def _build_usage_message(
 
     If has_oauth is False, usage data is omitted even if a snapshot exists
     in the database (the user may have switched from OAuth to API mode).
+
+    Includes period cost data (spent, estimated_period, estimated_monthly)
+    for the 5-hour and 7-day windows when a snapshot is available.
     """
+    if has_oauth and snapshot:
+        period_costs = compute_period_costs(snapshot)
+        usage = serialize_usage_snapshot(snapshot, period_costs=period_costs)
+    else:
+        usage = None
+
     return {
         "type": "usage_updated",
         "success": success,
         "reason": reason,  # "sync" = after API fetch, "connection" = on WS connect
         "has_oauth": has_oauth,
-        "usage": serialize_usage_snapshot(snapshot) if (has_oauth and snapshot) else None,
+        "usage": usage,
     }
+
+
+@sync_to_async
+def _build_usage_message_sync(
+    success: bool, reason: str, has_oauth: bool, snapshot: UsageSnapshot | None
+) -> dict:
+    """
+    sync_to_async wrapper for _build_usage_message.
+
+    Required because compute_period_costs() performs database queries
+    that cannot run in an async context.
+    """
+    return _build_usage_message(success, reason, has_oauth, snapshot)
 
 
 async def broadcast_usage_updated(success: bool) -> None:
@@ -644,7 +666,7 @@ async def broadcast_usage_updated(success: bool) -> None:
     """
     oauth = await asyncio.to_thread(has_oauth_credentials)
     snapshot = await _get_latest_usage_snapshot() if oauth else None
-    data = _build_usage_message(success, reason="sync", has_oauth=oauth, snapshot=snapshot)
+    data = await _build_usage_message_sync(success, reason="sync", has_oauth=oauth, snapshot=snapshot)
     channel_layer = get_channel_layer()
     await channel_layer.group_send(
         "updates",
@@ -664,7 +686,7 @@ async def get_usage_message_for_connection() -> dict:
     """
     oauth = await asyncio.to_thread(has_oauth_credentials)
     snapshot = await _get_latest_usage_snapshot() if oauth else None
-    return _build_usage_message(success=True, reason="connection", has_oauth=oauth, snapshot=snapshot)
+    return await _build_usage_message_sync(success=True, reason="connection", has_oauth=oauth, snapshot=snapshot)
 
 
 async def start_background_compute_task() -> None:

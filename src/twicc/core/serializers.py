@@ -91,17 +91,23 @@ def _serialize_model(model: str | None) -> dict | None:
     }
 
 
-def serialize_usage_snapshot(snapshot):
+def serialize_usage_snapshot(snapshot, period_costs=None):
     """
     Serialize a UsageSnapshot model to a dictionary.
 
     Sends raw stored data — the frontend computes derived values
     (temporal %, burn rate, levels).
+
+    Args:
+        snapshot: UsageSnapshot model instance.
+        period_costs: Optional dict with "five_hour" and "seven_day" cost data
+            from compute_period_costs(). Each contains spent, estimated_period,
+            estimated_monthly.
     """
     def _fmt_dt(dt):
         return dt.isoformat() if dt else None
 
-    return {
+    data = {
         "fetched_at": _fmt_dt(snapshot.fetched_at),
         # Five-hour quota
         "five_hour_utilization": snapshot.five_hour_utilization,
@@ -125,6 +131,12 @@ def serialize_usage_snapshot(snapshot):
         "extra_usage_used_credits": snapshot.extra_usage_used_credits,
         "extra_usage_utilization": snapshot.extra_usage_utilization,
     }
+
+    # Period cost data (spent, estimated_period, estimated_monthly)
+    if period_costs:
+        data["period_costs"] = period_costs
+
+    return data
 
 
 def serialize_session_item(item):
