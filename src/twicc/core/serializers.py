@@ -91,6 +91,42 @@ def _serialize_model(model: str | None) -> dict | None:
     }
 
 
+def serialize_usage_snapshot(snapshot):
+    """
+    Serialize a UsageSnapshot model to a dictionary.
+
+    Sends raw stored data — the frontend computes derived values
+    (temporal %, burn rate, levels).
+    """
+    def _fmt_dt(dt):
+        return dt.isoformat() if dt else None
+
+    return {
+        "fetched_at": _fmt_dt(snapshot.fetched_at),
+        # Five-hour quota
+        "five_hour_utilization": snapshot.five_hour_utilization,
+        "five_hour_resets_at": _fmt_dt(snapshot.five_hour_resets_at),
+        # Seven-day global quota
+        "seven_day_utilization": snapshot.seven_day_utilization,
+        "seven_day_resets_at": _fmt_dt(snapshot.seven_day_resets_at),
+        # Seven-day per-model quotas
+        "seven_day_opus_utilization": snapshot.seven_day_opus_utilization,
+        "seven_day_opus_resets_at": _fmt_dt(snapshot.seven_day_opus_resets_at),
+        "seven_day_sonnet_utilization": snapshot.seven_day_sonnet_utilization,
+        "seven_day_sonnet_resets_at": _fmt_dt(snapshot.seven_day_sonnet_resets_at),
+        # Seven-day other quotas
+        "seven_day_oauth_apps_utilization": snapshot.seven_day_oauth_apps_utilization,
+        "seven_day_oauth_apps_resets_at": _fmt_dt(snapshot.seven_day_oauth_apps_resets_at),
+        "seven_day_cowork_utilization": snapshot.seven_day_cowork_utilization,
+        "seven_day_cowork_resets_at": _fmt_dt(snapshot.seven_day_cowork_resets_at),
+        # Extra usage
+        "extra_usage_is_enabled": snapshot.extra_usage_is_enabled,
+        "extra_usage_monthly_limit": snapshot.extra_usage_monthly_limit,
+        "extra_usage_used_credits": snapshot.extra_usage_used_credits,
+        "extra_usage_utilization": snapshot.extra_usage_utilization,
+    }
+
+
 def serialize_session_item(item):
     """
     Serialize a SessionItem model to a dictionary with full content.

@@ -75,6 +75,10 @@ export const useDataStore = defineStore('data', {
         // { sessionId: { state: 'starting'|'assistant_turn'|'user_turn'|'dead', error?: string } }
         processStates: {},
 
+        // Usage quota data (from periodic usage sync)
+        // { success: bool, raw: serialized snapshot, computed: computeUsageData() result }
+        usage: null,
+
         // Local UI state (separate from server data to avoid being overwritten)
         localState: {
             projectsList: {
@@ -335,6 +339,11 @@ export const useDataStore = defineStore('data', {
     },
 
     actions: {
+        // Usage
+        setUsage(hasOauth, success, reason, rawData, computedData) {
+            this.usage = { hasOauth, success, reason, raw: rawData, computed: computedData }
+        },
+
         // Projects
         addProject(project) {
             this.$patch({ projects: { [project.id]: project } })

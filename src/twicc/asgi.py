@@ -19,6 +19,7 @@ from django.urls import path
 
 from twicc.agent.manager import get_process_manager
 from twicc.agent.states import ProcessInfo, serialize_process_info
+from twicc.background import get_usage_message_for_connection
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,10 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                 "processes": [serialize_process_info(p) for p in processes],
             }
         )
+
+        # Send latest usage snapshot to the connecting client
+        usage_message = await get_usage_message_for_connection()
+        await self.send_json(usage_message)
 
     async def disconnect(self, close_code):
         """Remove from the updates group on disconnect."""

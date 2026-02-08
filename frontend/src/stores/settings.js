@@ -24,6 +24,7 @@ const SETTINGS_SCHEMA = {
     titleGenerationEnabled: true,
     titleSystemPrompt: DEFAULT_TITLE_SYSTEM_PROMPT,
     autoHideHeaderFooter: false,
+    extraUsageOnlyWhenNeeded: true,
     // Not persisted - computed at runtime based on themeMode and system preference
     _effectiveTheme: null,
 }
@@ -43,6 +44,7 @@ const SETTINGS_VALIDATORS = {
     titleGenerationEnabled: (v) => typeof v === 'boolean',
     titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
     autoHideHeaderFooter: (v) => typeof v === 'boolean',
+    extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
 }
 
 /**
@@ -111,6 +113,7 @@ export const useSettingsStore = defineStore('settings', {
         isTitleGenerationEnabled: (state) => state.titleGenerationEnabled,
         getTitleSystemPrompt: (state) => state.titleSystemPrompt,
         isAutoHideHeaderFooterEnabled: (state) => state.autoHideHeaderFooter,
+        isExtraUsageOnlyWhenNeeded: (state) => state.extraUsageOnlyWhenNeeded,
         /**
          * Effective theme: always returns 'light' or 'dark', never 'system'.
          * Takes into account the system preference when themeMode is 'system'.
@@ -218,6 +221,16 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set extra usage "only when needed" mode.
+         * @param {boolean} enabled
+         */
+        setExtraUsageOnlyWhenNeeded(enabled) {
+            if (SETTINGS_VALIDATORS.extraUsageOnlyWhenNeeded(enabled)) {
+                this.extraUsageOnlyWhenNeeded = enabled
+            }
+        },
+
+        /**
          * Update the effective theme based on themeMode and system preference.
          * Called internally when themeMode changes or system preference changes.
          */
@@ -264,6 +277,7 @@ export function initSettings() {
             titleGenerationEnabled: store.titleGenerationEnabled,
             titleSystemPrompt: store.titleSystemPrompt,
             autoHideHeaderFooter: store.autoHideHeaderFooter,
+            extraUsageOnlyWhenNeeded: store.extraUsageOnlyWhenNeeded,
         }),
         (newSettings) => {
             saveSettings(newSettings)

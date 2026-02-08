@@ -36,8 +36,10 @@ from twicc.background import (
     run_initial_price_sync,
     start_background_compute_task,
     start_price_sync_task,
+    start_usage_sync_task,
     stop_background_task,
     stop_price_sync_task,
+    stop_usage_sync_task,
 )
 
 
@@ -59,6 +61,9 @@ async def run_server(port: int):
 
     # Start price sync task (periodic sync every 24h)
     price_sync_task = asyncio.create_task(start_price_sync_task())
+
+    # Start usage sync task (periodic fetch every 5 minutes)
+    usage_sync_task = asyncio.create_task(start_usage_sync_task())
 
     # Configure uvicorn
     config = uvicorn.Config(
@@ -114,6 +119,16 @@ async def run_server(port: int):
         except asyncio.CancelledError:
             pass
         print("  ✓ Price sync task stopped")
+
+        # Clean shutdown of usage sync task
+        print("  Stopping usage sync task...")
+        stop_usage_sync_task()
+        usage_sync_task.cancel()
+        try:
+            await usage_sync_task
+        except asyncio.CancelledError:
+            pass
+        print("  ✓ Usage sync task stopped")
 
         # Clean shutdown of Claude processes (also stops the internal timeout monitor)
         # This gracefully terminates any active Claude SDK processes

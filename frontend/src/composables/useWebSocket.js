@@ -8,6 +8,7 @@ import { useAuthStore } from '../stores/auth'
 import { useReconciliation } from './useReconciliation'
 import { toast } from './useToast'
 import { router } from '../router'
+import { computeUsageData, logUsageToConsole } from '../utils/usage'
 
 // WebSocket close code sent by backend when authentication fails
 const WS_CLOSE_AUTH_FAILURE = 4001
@@ -273,6 +274,13 @@ export function useWebSocket() {
                 // Handle title suggestion response
                 store.handleTitleSuggested(msg)
                 break
+            case 'usage_updated': {
+                // Handle usage quota update
+                const computed = msg.has_oauth ? computeUsageData(msg.usage) : null
+                store.setUsage(msg.has_oauth, msg.success, msg.reason, msg.usage, computed)
+                logUsageToConsole(msg.has_oauth, computed, msg.success, msg.reason)
+                break
+            }
         }
     }
 

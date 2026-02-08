@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch, onMounted, provide } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
@@ -9,6 +9,7 @@ import SettingsPopover from '../components/SettingsPopover.vue'
 import ProjectBadge from '../components/ProjectBadge.vue'
 import ProjectProcessIndicator from '../components/ProjectProcessIndicator.vue'
 import SessionRenameDialog from '../components/SessionRenameDialog.vue'
+import { getUsageRingColor } from '../utils/usage'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,6 +18,100 @@ const settingsStore = useSettingsStore()
 
 // Tooltips setting
 const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Usage quotas
+// ═══════════════════════════════════════════════════════════════════════════
+
+const quotaData = computed(() => store.usage)
+const quotaHasOauth = computed(() => quotaData.value?.hasOauth ?? false)
+const quotaComputed = computed(() => quotaData.value?.computed ?? null)
+
+const quotaFiveHour = computed(() => quotaComputed.value?.fiveHour ?? null)
+const quotaSevenDay = computed(() => quotaComputed.value?.sevenDay ?? null)
+
+const quotaExtraUsage = computed(() => {
+    // "Only when needed" mode: show only if 5h or 7d quota is at 100%
+    if (settingsStore.isExtraUsageOnlyWhenNeeded) {
+        const fh = quotaFiveHour.value
+        const sd = quotaSevenDay.value
+        const needed = (fh && fh.utilization >= 100) || (sd && sd.utilization >= 100)
+        if (!needed) return null
+    }
+    const extra = quotaComputed.value?.extraUsage
+    if (!extra || !extra.isEnabled) return null
+    return extra
+})
+
+const quotaFiveHourRingColor = computed(() => getUsageRingColor(quotaFiveHour.value))
+const quotaSevenDayRingColor = computed(() => getUsageRingColor(quotaSevenDay.value))
+const quotaExtraUsageRingColor = computed(() => {
+    const extra = quotaExtraUsage.value
+    if (!extra || extra.utilization == null) return 'var(--wa-color-neutral)'
+    if (extra.utilization >= 75) return 'var(--wa-color-danger)'
+    if (extra.utilization >= 50) return 'var(--wa-color-warning)'
+    return 'var(--wa-color-success)'
+})
+
+function resetsAtToDate(resetsAt) {
+    if (!resetsAt) return new Date()
+    return new Date(resetsAt)
+}
+
+function extraUsageResetDate() {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth() + 1, 1)
+}
+
+function formatResetTime(resetsAt) {
+    if (!resetsAt) return '?'
+    const reset = resetsAt instanceof Date ? resetsAt : new Date(resetsAt)
+    const now = new Date()
+    const locale = navigator.language
+    const diffMs = reset - now
+    const diffHours = diffMs / (1000 * 60 * 60)
+    // < 24h: time only
+    if (diffHours < 24) {
+        return reset.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+    }
+    // < 7 days: weekday only
+    if (diffHours < 7 * 24) {
+        return reset.toLocaleDateString(locale, { weekday: 'long' })
+    }
+    // >= 7 days: weekday + day/month
+    return reset.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'numeric' })
+}
+
+// Stale data detection: data older than 15 minutes
+const STALE_THRESHOLD_MS = 15 * 60 * 1000
+const STALE_CHECK_INTERVAL_MS = 60 * 1000 // Re-check every minute
+
+// Reactive "now" that ticks every minute to trigger stale re-evaluation
+const now = ref(Date.now())
+const staleCheckInterval = setInterval(() => { now.value = Date.now() }, STALE_CHECK_INTERVAL_MS)
+onUnmounted(() => clearInterval(staleCheckInterval))
+
+const quotaIsStale = computed(() => {
+    const fetchedAt = quotaComputed.value?.fetchedAt
+    if (!fetchedAt) return false
+    const fetchedDate = new Date(fetchedAt)
+    return (now.value - fetchedDate.getTime()) > STALE_THRESHOLD_MS
+})
+
+const quotaLastUpdateFormatted = computed(() => {
+    const fetchedAt = quotaComputed.value?.fetchedAt
+    if (!fetchedAt) return '?'
+    const date = new Date(fetchedAt)
+    const locale = navigator.language
+    return date.toLocaleString(locale, {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    })
+})
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Shared Rename Dialog (single instance for both sidebar and session header)
@@ -605,20 +700,94 @@ function updateSidebarClosedClass(closed) {
             <wa-divider></wa-divider>
 
             <div class="sidebar-footer">
-                <!-- Sidebar Toggle button (label for hidden checkbox, wa-button inside for styling) -->
-                <label for="sidebar-toggle-state" class="sidebar-toggle" id="sidebar-toggle-label">
-                    <span class="sidebar-backdrop"></span>
-                    <wa-button id="sidebar-toggle-button" variant="neutral" appearance="filled-outlined" size="small">
-                        <wa-icon class="icon-collapse" name="angles-left"></wa-icon>
-                        <wa-icon class="icon-expand" name="angles-right"></wa-icon>
-                    </wa-button>
-                </label>
-                <wa-tooltip v-if="tooltipsEnabled" for="sidebar-toggle-label">Toggle sidebar</wa-tooltip>
+                <div v-if="quotaHasOauth && quotaComputed" class="sidebar-footer-usage">
+                    <div id="quota-five-hour" class="usage-quota" v-if="quotaFiveHour">
+                        <wa-progress-ring
+                            class="usage-ring"
+                            :value="Math.min(quotaFiveHour.utilization ?? 0, 100)"
+                            :style="{ '--indicator-color': quotaFiveHourRingColor }"
+                        ><span class="wa-font-weight-bold">{{ Math.round(quotaFiveHour.utilization ?? 0) }}%</span></wa-progress-ring>
+                        <div class="usage-quota-info">
+                            <span class="usage-quota-label">5h quota</span>
+                            <wa-relative-time class="usage-quota-reset" :date.prop="resetsAtToDate(quotaFiveHour.resetsAt)" format="short" numeric="always" sync></wa-relative-time>
+                        </div>
+                    </div>
+                    <wa-tooltip v-if="quotaFiveHour" for="quota-five-hour" hoist>
+                        <div class="quota-tooltip">
+                            <div class="quota-tooltip-row"><span class="quota-tooltip-label">Usage</span><span>{{ quotaFiveHour.utilization.toFixed(1) }}%</span></div>
+                            <div class="quota-tooltip-row" v-if="quotaFiveHour.timePct != null"><span class="quota-tooltip-label">Time elapsed</span><span>{{ quotaFiveHour.timePct.toFixed(1) }}%</span></div>
+                            <div class="quota-tooltip-row" v-if="quotaFiveHour.burnRate != null"><span class="quota-tooltip-label">Burn rate</span><span>{{ (quotaFiveHour.burnRate * 100).toFixed(0) }}%</span></div>
+                            <div class="quota-tooltip-row"><span class="quota-tooltip-label">Reset</span><span>{{ formatResetTime(quotaFiveHour.resetsAt) }}</span></div>
+                            <wa-button size="small" variant="brand" appearance="outlined" href="https://claude.ai/settings/usage" target="_blank" rel="noopener" class="quota-stale-button">View on claude.ai</wa-button>
+                        </div>
+                    </wa-tooltip>
+                    <div id="quota-seven-day" class="usage-quota" v-if="quotaSevenDay">
+                        <wa-progress-ring
+                            class="usage-ring"
+                            :value="Math.min(quotaSevenDay.utilization ?? 0, 100)"
+                            :style="{ '--indicator-color': quotaSevenDayRingColor }"
+                        ><span class="wa-font-weight-bold">{{ Math.round(quotaSevenDay.utilization ?? 0) }}%</span></wa-progress-ring>
+                        <div class="usage-quota-info">
+                            <span class="usage-quota-label">7d quota</span>
+                            <wa-relative-time class="usage-quota-reset" :date.prop="resetsAtToDate(quotaSevenDay.resetsAt)" format="short" numeric="always" sync></wa-relative-time>
+                        </div>
+                    </div>
+                    <wa-tooltip v-if="quotaSevenDay" for="quota-seven-day" hoist>
+                        <div class="quota-tooltip">
+                            <div class="quota-tooltip-row"><span class="quota-tooltip-label">Usage</span><span>{{ quotaSevenDay.utilization.toFixed(1) }}%</span></div>
+                            <div class="quota-tooltip-row" v-if="quotaSevenDay.timePct != null"><span class="quota-tooltip-label">Time elapsed</span><span>{{ quotaSevenDay.timePct.toFixed(1) }}%</span></div>
+                            <div class="quota-tooltip-row" v-if="quotaSevenDay.burnRate != null"><span class="quota-tooltip-label">Burn rate</span><span>{{ (quotaSevenDay.burnRate * 100).toFixed(0) }}%</span></div>
+                            <div class="quota-tooltip-row"><span class="quota-tooltip-label">Reset</span><span>{{ formatResetTime(quotaSevenDay.resetsAt) }}</span></div>
+                            <wa-button size="small" variant="brand" appearance="outlined" href="https://claude.ai/settings/usage" target="_blank" rel="noopener" class="quota-stale-button">View on claude.ai</wa-button>
+                        </div>
+                    </wa-tooltip>
+                    <div id="quota-extra-usage" class="usage-quota" v-if="quotaExtraUsage">
+                        <wa-progress-ring
+                            class="usage-ring"
+                            :value="Math.min(quotaExtraUsage.utilization ?? 0, 100)"
+                            :style="{ '--indicator-color': quotaExtraUsageRingColor }"
+                        ><span class="wa-font-weight-bold">{{ Math.round(quotaExtraUsage.utilization ?? 0) }}%</span></wa-progress-ring>
+                        <div class="usage-quota-info">
+                            <span class="usage-quota-label">Extra usage</span>
+                            <wa-relative-time class="usage-quota-reset" :date.prop="extraUsageResetDate()" format="short" numeric="always" sync></wa-relative-time>
+                        </div>
+                    </div>
+                    <wa-tooltip v-if="quotaExtraUsage" for="quota-extra-usage" hoist>
+                        <div class="quota-tooltip">
+                            <div class="quota-tooltip-row"><span class="quota-tooltip-label">Used</span><span>{{ quotaExtraUsage.usedCredits ?? 0 }} credits</span></div>
+                            <div class="quota-tooltip-row"><span class="quota-tooltip-label">Monthly limit</span><span>{{ quotaExtraUsage.monthlyLimit ?? '?' }} credits</span></div>
+                            <div class="quota-tooltip-row"><span class="quota-tooltip-label">Reset</span><span>{{ formatResetTime(extraUsageResetDate()) }}</span></div>
+                            <wa-button size="small" variant="brand" appearance="outlined" href="https://claude.ai/settings/usage" target="_blank" rel="noopener" class="quota-stale-button">View on claude.ai</wa-button>
+                        </div>
+                    </wa-tooltip>
+                    <wa-icon v-if="quotaIsStale" id="quota-stale-warning" name="triangle-exclamation" class="quota-stale-icon"></wa-icon>
+                    <wa-tooltip v-if="quotaIsStale" for="quota-stale-warning" hoist>
+                        <div class="quota-tooltip">
+                            <div class="quota-stale-header"><wa-icon name="triangle-exclamation" class="quota-stale-header-icon"></wa-icon><span>Data may be outdated</span></div>
+                            <div class="quota-tooltip-row"><span class="quota-tooltip-label">Last update</span><span>{{ quotaLastUpdateFormatted }}</span></div>
+                            <wa-button size="small" variant="brand" appearance="outlined" href="https://claude.ai/settings/usage" target="_blank" rel="noopener" class="quota-stale-button">View usage on claude.ai</wa-button>
+                        </div>
+                    </wa-tooltip>
+                </div>
 
-                <!-- Placeholder to occupy the same space a the sidebar toggle button that is absolute for goot reasons -->
-                <wa-button variant="neutral" appearance="filled-outlined" size="small" style="visibility: hidden; pointer-events: none"><wa-icon name="angles-left"></wa-icon></wa-button>
+                <wa-divider></wa-divider>
 
-                <SettingsPopover />
+                <div class="sidebar-footer-buttons">
+                    <!-- Sidebar Toggle button (label for hidden checkbox, wa-button inside for styling) -->
+                    <label for="sidebar-toggle-state" class="sidebar-toggle" id="sidebar-toggle-label">
+                        <span class="sidebar-backdrop"></span>
+                        <wa-button id="sidebar-toggle-button" variant="neutral" appearance="filled-outlined" size="small">
+                            <wa-icon class="icon-collapse" name="angles-left"></wa-icon>
+                            <wa-icon class="icon-expand" name="angles-right"></wa-icon>
+                        </wa-button>
+                    </label>
+                    <wa-tooltip v-if="tooltipsEnabled" for="sidebar-toggle-label">Toggle sidebar</wa-tooltip>
+
+                    <!-- Placeholder to occupy the same space a the sidebar toggle button that is absolute for goot reasons -->
+                    <wa-button variant="neutral" appearance="filled-outlined" size="small" style="visibility: hidden; pointer-events: none"><wa-icon name="angles-left"></wa-icon></wa-button>
+
+                    <SettingsPopover />
+                </div>
             </div>
 
         </aside>
@@ -904,6 +1073,86 @@ wa-split-panel::part(divider) {
 }
 
 .sidebar-footer {
+    flex-shrink: 0;
+}
+
+.sidebar-footer-usage {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    column-gap: var(--wa-space-l);
+    row-gap: var(--wa-space-xs);
+    padding: var(--wa-space-xs) var(--wa-space-s);
+}
+
+.usage-quota {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+}
+
+.usage-ring {
+    --size: 2rem;
+    --track-width: 3px;
+    font-size: var(--wa-font-size-2xs);
+}
+
+.usage-quota-info {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+}
+
+.usage-quota-label {
+    font-size: var(--wa-font-size-xs);
+    font-weight: var(--wa-font-weight-bold);
+    color: var(--wa-color-neutral-content);
+}
+
+.usage-quota-reset {
+    font-size: var(--wa-font-size-2xs);
+    color: var(--wa-color-neutral-muted);
+}
+
+.quota-tooltip {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-xs);
+}
+
+.quota-tooltip-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--wa-space-l);
+    white-space: nowrap;
+}
+
+.quota-tooltip-label {
+    font-weight: var(--wa-font-weight-bold);
+}
+
+.quota-stale-icon {
+    color: var(--wa-color-warning);
+    font-size: var(--wa-font-size-l);
+}
+
+.quota-stale-header {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    font-weight: var(--wa-font-weight-bold);
+}
+
+.quota-stale-header-icon {
+    color: var(--wa-color-warning);
+}
+
+.quota-stale-button {
+    align-self: stretch;
+}
+
+.sidebar-footer-buttons {
     flex-shrink: 0;
     display: flex;
     gap: var(--wa-space-s);

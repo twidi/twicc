@@ -3,15 +3,20 @@
 import { computed, ref, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
+import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
 import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT } from '../constants'
 
 const router = useRouter()
 const store = useSettingsStore()
+const dataStore = useDataStore()
 const authStore = useAuthStore()
 
 // Show logout button only when password-based auth is active
 const showLogout = computed(() => authStore.passwordRequired && authStore.authenticated)
+
+// Show extra usage setting only when OAuth is configured
+const showExtraUsageSetting = computed(() => dataStore.usage?.hasOauth ?? false)
 
 function handleLogout() {
     router.push({ name: 'logout' })
@@ -38,6 +43,7 @@ const tooltipsSwitch = ref(null)
 const fontSizeSlider = ref(null)
 const themeSelect = ref(null)
 const sessionTimeFormatSelect = ref(null)
+const extraUsageOnlyWhenNeededSwitch = ref(null)
 const titleGenerationSwitch = ref(null)
 const titleSystemPromptTextarea = ref(null)
 
@@ -48,6 +54,7 @@ const fontSize = computed(() => store.getFontSize)
 const themeMode = computed(() => store.getThemeMode)
 const sessionTimeFormat = computed(() => store.getSessionTimeFormat)
 const tooltipsEnabled = computed(() => store.areTooltipsEnabled)
+const extraUsageOnlyWhenNeeded = computed(() => store.isExtraUsageOnlyWhenNeeded)
 const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 
@@ -84,6 +91,9 @@ function syncSwitchState() {
         if (tooltipsSwitch.value && tooltipsSwitch.value.checked !== tooltipsEnabled.value) {
             tooltipsSwitch.value.checked = tooltipsEnabled.value
         }
+        if (extraUsageOnlyWhenNeededSwitch.value && extraUsageOnlyWhenNeededSwitch.value.checked !== extraUsageOnlyWhenNeeded.value) {
+            extraUsageOnlyWhenNeededSwitch.value.checked = extraUsageOnlyWhenNeeded.value
+        }
         if (titleGenerationSwitch.value && titleGenerationSwitch.value.checked !== titleGenerationEnabled.value) {
             titleGenerationSwitch.value.checked = titleGenerationEnabled.value
         }
@@ -94,7 +104,7 @@ function syncSwitchState() {
 }
 
 // Watch for store changes and sync switches
-watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, titleGenerationEnabled, titleSystemPrompt], syncSwitchState, { immediate: true })
+watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, extraUsageOnlyWhenNeeded, titleGenerationEnabled, titleSystemPrompt], syncSwitchState, { immediate: true })
 
 /**
  * Toggle between normal and simplified mode.
@@ -137,6 +147,13 @@ function onSessionTimeFormatChange(event) {
  */
 function onTooltipsChange(event) {
     store.setTooltipsEnabled(event.target.checked)
+}
+
+/**
+ * Toggle extra usage "only when needed" mode.
+ */
+function onExtraUsageOnlyWhenNeededChange(event) {
+    store.setExtraUsageOnlyWhenNeeded(event.target.checked)
 }
 
 /**
@@ -227,6 +244,14 @@ function onPopoverShow() {
                             @change="onTooltipsChange"
                             size="small"
                         >Enabled</wa-switch>
+                    </div>
+                    <div class="setting-group" v-if="showExtraUsageSetting">
+                        <label class="setting-group-label">Extra usage quota</label>
+                        <wa-switch
+                            ref="extraUsageOnlyWhenNeededSwitch"
+                            @change="onExtraUsageOnlyWhenNeededChange"
+                            size="small"
+                        >Only when needed</wa-switch>
                     </div>
                 </section>
 

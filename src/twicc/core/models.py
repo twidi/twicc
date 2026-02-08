@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from django.db import models
@@ -338,3 +338,121 @@ class ModelPrice(models.Model):
 
         # 5. No price found at all
         return None
+
+
+class UsageSnapshot(models.Model):
+    """
+    A point-in-time snapshot of Claude Code usage quotas.
+
+    Fetched from the Anthropic OAuth usage API endpoint.
+    Each row represents one API call, storing both parsed fields
+    and the raw JSON response for investigation purposes.
+    """
+
+    # When the API was called
+    fetched_at = models.DateTimeField()
+
+    # Raw JSON response for future-proofing and investigation
+    raw_response = models.JSONField()
+
+    # Five-hour rolling window quota (null if not yet used in this window)
+    five_hour_utilization = models.FloatField(null=True, blank=True)
+    five_hour_resets_at = models.DateTimeField(null=True, blank=True)
+
+    # Seven-day rolling window quota - global (null if not yet used in this window)
+    seven_day_utilization = models.FloatField(null=True, blank=True)
+    seven_day_resets_at = models.DateTimeField(null=True, blank=True)
+
+    # Seven-day per-model quotas (null means no specific limit for that model)
+    seven_day_opus_utilization = models.FloatField(null=True, blank=True)
+    seven_day_opus_resets_at = models.DateTimeField(null=True, blank=True)
+    seven_day_sonnet_utilization = models.FloatField(null=True, blank=True)
+    seven_day_sonnet_resets_at = models.DateTimeField(null=True, blank=True)
+
+    # Seven-day other quotas (null if not applicable)
+    seven_day_oauth_apps_utilization = models.FloatField(null=True, blank=True)
+    seven_day_oauth_apps_resets_at = models.DateTimeField(null=True, blank=True)
+    seven_day_cowork_utilization = models.FloatField(null=True, blank=True)
+    seven_day_cowork_resets_at = models.DateTimeField(null=True, blank=True)
+
+    # Extra usage (default False if the block is absent)
+    extra_usage_is_enabled = models.BooleanField(default=False)
+    extra_usage_monthly_limit = models.IntegerField(null=True, blank=True)
+    extra_usage_used_credits = models.FloatField(null=True, blank=True)
+    extra_usage_utilization = models.FloatField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-fetched_at"]
+        indexes = [
+            models.Index(fields=["-fetched_at"], name="idx_usage_snapshot_fetched"),
+        ]
+
+    def __str__(self):
+        return f"UsageSnapshot {self.fetched_at.isoformat()}"
+
+    # --- Computed properties ---
+
+    @staticmethod
+    def _temporal_pct(fetched_at: datetime, resets_at: datetime, window: timedelta) -> float:
+        """Calculate how far through a time window we are, as a percentage (0-100)."""
+        window_start = resets_at - window
+        elapsed = (fetched_at - window_start).total_seconds()
+        total = window.total_seconds()
+        if total <= 0:
+            return 0.0
+        return max(0.0, min(100.0, (elapsed / total) * 100.0))
+
+    @property
+    def five_hour_temporal_pct(self) -> float | None:
+        if self.five_hour_resets_at is None:
+            return None
+        return self._temporal_pct(self.fetched_at, self.five_hour_resets_at, timedelta(hours=5))
+
+    @property
+    def seven_day_temporal_pct(self) -> float | None:
+        if self.seven_day_resets_at is None:
+            return None
+        return self._temporal_pct(self.fetched_at, self.seven_day_resets_at, timedelta(days=7))
+
+    @property
+    def seven_day_opus_temporal_pct(self) -> float | None:
+        if self.seven_day_opus_resets_at is None:
+            return None
+        return self._temporal_pct(self.fetched_at, self.seven_day_opus_resets_at, timedelta(days=7))
+
+    @property
+    def seven_day_sonnet_temporal_pct(self) -> float | None:
+        if self.seven_day_sonnet_resets_at is None:
+            return None
+        return self._temporal_pct(self.fetched_at, self.seven_day_sonnet_resets_at, timedelta(days=7))
+
+    @staticmethod
+    def _burn_rate(utilization: float | None, temporal_pct: float | None) -> float | None:
+        """
+        Ratio of utilization to temporal progress.
+
+        > 1.0 means on track to exhaust quota before reset.
+        """
+        if utilization is None or temporal_pct is None or temporal_pct <= 0:
+            return None
+        return utilization / temporal_pct
+
+    @property
+    def five_hour_burn_rate(self) -> float | None:
+        return self._burn_rate(self.five_hour_utilization, self.five_hour_temporal_pct)
+
+    @property
+    def seven_day_burn_rate(self) -> float | None:
+        return self._burn_rate(self.seven_day_utilization, self.seven_day_temporal_pct)
+
+    @property
+    def five_hour_started_at(self) -> datetime | None:
+        if self.five_hour_resets_at is None:
+            return None
+        return self.five_hour_resets_at - timedelta(hours=5)
+
+    @property
+    def seven_day_started_at(self) -> datetime | None:
+        if self.seven_day_resets_at is None:
+            return None
+        return self.seven_day_resets_at - timedelta(days=7)
