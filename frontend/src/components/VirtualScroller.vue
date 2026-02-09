@@ -257,6 +257,7 @@ const {
     invalidateZeroHeights,
     enableStickToBottom: composableEnableStickToBottom,
     disableStickToBottom: composableDisableStickToBottom,
+    suspended: composableSuspended,
     suspend: composableSuspend,
     resume: composableResume,
     getScrollAnchor: composableGetScrollAnchor,
@@ -543,6 +544,7 @@ defineExpose({
     enableStickToBottom,
     disableStickToBottom,
     // KeepAlive support (also called automatically via onActivated/onDeactivated)
+    suspended: composableSuspended,
     suspend,
     resume,
     getScrollAnchor,

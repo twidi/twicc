@@ -107,6 +107,7 @@ export function useVirtualScroll(options) {
      */
     const suspended = ref(false)
     let savedAnchor = null
+    let pendingResume = false
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Computed: Positions
@@ -760,7 +761,17 @@ export function useVirtualScroll(options) {
         // While suspended, ignore all height changes. The browser fires
         // ResizeObserver with 0 when elements are detached, which would
         // corrupt renderRange and spacer calculations.
-        if (suspended.value) return
+        // However, if a resume is pending (container was hidden when resume()
+        // was called), and the container is now visible, perform the deferred resume.
+        if (suspended.value) {
+            if (pendingResume && height > 0) {
+                const container = containerRef.value
+                if (container) {
+                    performResume(container)
+                }
+            }
+            return
+        }
 
         viewportHeight.value = height
     }
@@ -805,16 +816,40 @@ export function useVirtualScroll(options) {
      * item in the (possibly recomputed) positions array and scrolls to
      * anchorTop + offset.
      *
-     * Must be called from onActivated AFTER the DOM is reattached and the
-     * container is visible again.
+     * If the container is not yet visible (e.g., inside a hidden wa-tab-panel),
+     * the resume is deferred: the scroller stays suspended and savedAnchor is
+     * preserved. The actual resume will happen when updateViewportHeight()
+     * receives a positive height (triggered by the ResizeObserver when the
+     * tab panel becomes visible).
      */
     function resume() {
         if (!suspended.value) return
 
-        suspended.value = false
-
         const container = containerRef.value
         if (!container) return
+
+        // If the container is hidden (e.g., inactive wa-tab-panel with display:none),
+        // defer the resume until the container becomes visible. Setting scrollTop
+        // on a hidden container is silently ignored by the browser, so we must wait.
+        if (container.clientHeight === 0) {
+            pendingResume = true
+            return
+        }
+
+        // Container is visible — perform the actual resume
+        performResume(container)
+    }
+
+    /**
+     * Perform the actual resume: unsuspend, update viewport, restore scroll.
+     * Called either directly from resume() when the container is visible,
+     * or deferred from updateViewportHeight() when the container becomes visible.
+     *
+     * @param {HTMLElement} container - The scroller container element
+     */
+    function performResume(container) {
+        pendingResume = false
+        suspended.value = false
 
         // Update viewportHeight from the now-visible container
         viewportHeight.value = container.clientHeight
@@ -965,6 +1000,7 @@ export function useVirtualScroll(options) {
         spacerAfterHeight,
         scrollTop,
         viewportHeight,
+        suspended,
 
         // Height management
         updateItemHeight,

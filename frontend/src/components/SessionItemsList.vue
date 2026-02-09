@@ -234,32 +234,53 @@ onDeactivated(() => {
     savedScrollAnchor = scroller ? scroller.getScrollAnchor() : null
 })
 
-// On reactivation: restore scroll position or auto-scroll to bottom
-onActivated(async () => {
-    // Wait for Vue to render after reactivation
-    await nextTick()
+// On reactivation: handle scroll restoration after KeepAlive reattaches the DOM.
+//
+// The VirtualScroller composable handles anchor-based scroll restoration internally
+// via suspend/resume. If the container is hidden (e.g., inactive wa-tab-panel),
+// resume is deferred until the container becomes visible.
+//
+// SessionItemsList adds one override on top: if items were added while inactive
+// and the user was near bottom, scroll to bottom instead of restoring the anchor.
+// This must also be deferred if the container is not yet visible.
+onActivated(() => {
+    handlePostResume()
+})
 
-    // If items were added while inactive and user was near bottom, scroll to bottom
+// Watch for deferred resume completion: when the scroller's suspended state
+// transitions from true to false, the actual resume just happened (possibly
+// deferred because the container was hidden). Apply any post-resume overrides.
+watch(
+    () => scrollerRef.value?.suspended?.value,
+    (newVal, oldVal) => {
+        if (oldVal === true && newVal === false) {
+            nextTick(() => handlePostResume())
+        }
+    },
+)
+
+/**
+ * Apply post-resume logic: scroll to bottom if items were added while inactive
+ * and the user was near bottom. Only acts if the scroller is not suspended
+ * (i.e., the composable has completed its resume and the container is visible).
+ */
+function handlePostResume() {
+    const scroller = scrollerRef.value
+    if (!scroller || scroller.suspended?.value) return
+
     if (
         itemCountAtDeactivation !== null
         && visualItems.value?.length > itemCountAtDeactivation
         && wasNearBottomAtDeactivation
     ) {
         scrollToBottomUntilStable()
-    } else if (savedScrollAnchor) {
-        // Restore the scroll position from the saved anchor (safety net).
-        // With v-show, the composable's suspend/resume handles this internally,
-        // but this fallback covers edge cases where the composable state is lost.
-        const scroller = scrollerRef.value
-        if (scroller) {
-            scroller.scrollToAnchor(savedScrollAnchor)
-        }
     }
 
+    // Clear saved state now that we've handled reactivation
     itemCountAtDeactivation = null
     wasNearBottomAtDeactivation = false
     savedScrollAnchor = null
-})
+}
 
 // Build base URL for API calls (handles subagent case)
 const apiBaseUrl = computed(() => {
