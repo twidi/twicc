@@ -127,11 +127,11 @@ onMounted(render)
 markdown-body .highlight pre, .markdown-body pre, .markdown-body code, .markdown-body tt {
     font-size: 100%;
 }
-.markdown-body pre.shiki[data-language] {
+.markdown-body pre.shiki[data-language]:not([data-language="text"]) {
     padding-top: 36px;
     position: relative;
 }
-.markdown-body pre.shiki[data-language]::before {
+.markdown-body pre.shiki[data-language]:not([data-language="text"])::before {
     content: attr(data-language);
     position: absolute;
     top: 8px;
