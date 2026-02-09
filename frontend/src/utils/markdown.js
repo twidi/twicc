@@ -10,10 +10,25 @@ import DOMPurify from 'dompurify'
 // Configure markdown-it with all features enabled
 const md = MarkdownItAsync({
     html: false,         // disable raw HTML input (security)
-    linkify: true,       // auto-detect URLs
+    linkify: true,       // auto-detect URLs (only explicit http(s):// thanks to fuzzy* disabled below)
     typographer: true,   // smart quotes, dashes
     breaks: true,        // convert \n to <br> (matches pre-wrap behavior)
 })
+
+// Only auto-link URLs with an explicit protocol (http:// or https://).
+// Without this, linkify-it treats any word followed by a known TLD as a link
+// (e.g. "example.py" or "config.json" would become clickable links).
+md.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false })
+
+// Open all links in a new tab for safety and UX (content stays in place).
+const defaultLinkOpenRender = md.renderer.rules.link_open || function (tokens, idx, options, env, self) {
+    return self.renderToken(tokens, idx, options)
+}
+md.renderer.rules.link_open = function (tokens, idx, options, env, self) {
+    tokens[idx].attrSet('target', '_blank')
+    tokens[idx].attrSet('rel', 'noopener noreferrer')
+    return defaultLinkOpenRender(tokens, idx, options, env, self)
+}
 
 // Wrapper around codeToHtml that falls back to 'text' (plain) for unknown languages.
 // Shiki throws an error when encountering unsupported languages (like 'env', 'dotenv', etc.)
@@ -56,7 +71,8 @@ const DOMPURIFY_CONFIG = {
                'gradientUnits', 'spreadMethod', 'offset', 'stop-color', 'stop-opacity',
                'opacity', 'fill-opacity', 'stroke-opacity', 'stroke-dasharray',
                'stroke-linecap', 'stroke-linejoin', 'preserveAspectRatio',
-               'aria-roledescription', 'role', 'aria-label', 'tabindex'],
+               'aria-roledescription', 'role', 'aria-label', 'tabindex',
+               'target', 'rel'],
     // Allow data: URIs for mermaid inline images
     ALLOW_DATA_ATTR: true,
 }
