@@ -552,7 +552,13 @@ const searchInputRef = ref(null)
  * wa-input is a web component, so we need to call .focus() on it directly.
  */
 function focusSearchInput() {
-    searchInputRef.value?.focus()
+    try {
+        searchInputRef.value?.focus()
+    } catch {
+        // WaInput.focus() can throw if the web component's internal <input>
+        // element isn't ready yet (e.g. shadow DOM not fully initialized).
+        // This is a benign race condition — silently ignore.
+    }
 }
 
 // Auto-focus search input when the panel becomes active
