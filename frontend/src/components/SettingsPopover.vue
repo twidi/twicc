@@ -48,6 +48,7 @@ const maxCachedSessionsSlider = ref(null)
 const autoUnpinOnArchiveSwitch = ref(null)
 const titleGenerationSwitch = ref(null)
 const titleSystemPromptTextarea = ref(null)
+const tmuxSwitch = ref(null)
 
 // Settings from store
 const baseDisplayMode = computed(() => store.getBaseDisplayMode)
@@ -61,6 +62,7 @@ const maxCachedSessions = computed(() => store.getMaxCachedSessions)
 const autoUnpinOnArchive = computed(() => store.isAutoUnpinOnArchive)
 const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
+const terminalUseTmux = computed(() => store.isTerminalUseTmux)
 
 // Check if the current prompt is the default
 const isDefaultPrompt = computed(() => titleSystemPrompt.value === DEFAULT_TITLE_SYSTEM_PROMPT)
@@ -110,11 +112,14 @@ function syncSwitchState() {
         if (titleSystemPromptTextarea.value && titleSystemPromptTextarea.value.value !== titleSystemPrompt.value) {
             titleSystemPromptTextarea.value.value = titleSystemPrompt.value
         }
+        if (tmuxSwitch.value && tmuxSwitch.value.checked !== terminalUseTmux.value) {
+            tmuxSwitch.value.checked = terminalUseTmux.value
+        }
     })
 }
 
 // Watch for store changes and sync switches
-watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, titleGenerationEnabled, titleSystemPrompt], syncSwitchState, { immediate: true })
+watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux], syncSwitchState, { immediate: true })
 
 /**
  * Toggle between normal and simplified mode.
@@ -192,6 +197,13 @@ function onTitleGenerationChange(event) {
  */
 function onTitleSystemPromptChange(event) {
     store.setTitleSystemPrompt(event.target.value)
+}
+
+/**
+ * Toggle terminal tmux persistence.
+ */
+function onTmuxChange(event) {
+    store.setTerminalUseTmux(event.target.checked)
 }
 
 /**
@@ -365,6 +377,19 @@ function onPopoverShow() {
                                 >Reset to default</wa-button>
                             </div>
                         </div>
+                    </div>
+                </section>
+
+                <!-- Terminal Section -->
+                <section class="settings-section">
+                    <h3 class="settings-section-title">Terminal</h3>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Persistent sessions (tmux)</label>
+                        <wa-switch
+                            ref="tmuxSwitch"
+                            @change="onTmuxChange"
+                            size="small"
+                        >Enabled</wa-switch>
                     </div>
                 </section>
             </div>

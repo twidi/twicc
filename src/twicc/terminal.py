@@ -23,9 +23,12 @@ import json
 import logging
 import os
 import pty
+import shutil
 import signal
 import struct
+import subprocess
 import termios
+from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
 from django.conf import settings
@@ -43,12 +46,17 @@ DEFAULT_ROWS = 24
 # small enough to keep latency low)
 READ_BUFFER_SIZE = 20480
 
+# tmux socket name — isolates twicc sessions from user's own tmux
+TMUX_SOCKET_NAME = "twicc"
+
 
 @sync_to_async
-def get_session_directory(session_id: str) -> str:
-    """Resolve the working directory for a terminal session.
+def get_session_info(session_id: str) -> tuple[str, bool]:
+    """Resolve the working directory and archived status for a terminal session.
 
-    Priority order:
+    Returns (cwd, archived).
+
+    Working directory priority order:
     1. Session.git_directory (resolved git root)
     2. Session.cwd (Claude's working directory)
     3. Session.project.directory (project root)
@@ -58,14 +66,45 @@ def get_session_directory(session_id: str) -> str:
 
     try:
         session = Session.objects.select_related("project").get(id=session_id)
-        return (
+        cwd = (
             session.git_directory
             or session.cwd
             or session.project.directory
             or os.path.expanduser("~")
         )
+        return cwd, session.archived
     except Session.DoesNotExist:
-        return os.path.expanduser("~")
+        return os.path.expanduser("~"), False
+
+
+# ── tmux helpers ──────────────────────────────────────────────────────────
+
+_tmux_path: str | None = None
+_tmux_checked = False
+
+
+def get_tmux_path() -> str | None:
+    """Return the path to tmux binary, or None if not installed."""
+    global _tmux_path, _tmux_checked
+    if not _tmux_checked:
+        _tmux_path = shutil.which("tmux")
+        _tmux_checked = True
+    return _tmux_path
+
+
+def wants_tmux(scope: dict) -> bool:
+    """Check if the client requested tmux mode via query parameter."""
+    qs = scope.get("query_string", b"").decode("utf-8", errors="replace")
+    params = parse_qs(qs)
+    return params.get("tmux", ["0"])[0] == "1"
+
+
+def tmux_session_name(session_id: str) -> str:
+    """Deterministic tmux session name from a twicc session ID.
+
+    tmux session names cannot contain dots or colons, so we replace them.
+    """
+    return "twicc-" + session_id.replace(".", "_").replace(":", "_")
 
 
 # ── PTY helpers (pure functions, no class needed) ─────────────────────────
@@ -113,6 +152,51 @@ def spawn_pty(cwd: str) -> tuple[int, int]:
     return child_pid, master_fd
 
 
+def spawn_tmux_pty(cwd: str, session_id: str) -> tuple[int, int]:
+    """Fork a PTY running tmux, attaching to or creating a named session.
+
+    Uses ``tmux -L twicc -f /dev/null new-session -A -s <name>`` which:
+    - ``-L twicc``: use a dedicated socket (isolation from user's tmux)
+    - ``-f /dev/null``: ignore user's tmux.conf
+    - ``new-session -A``: attach if session exists, create if not
+    - ``-s <name>``: deterministic session name
+
+    Returns (child_pid, master_fd) — same interface as spawn_pty.
+    The child_pid is the tmux *client* process, not the server.
+    Killing it just detaches; the tmux session keeps running.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        raise FileNotFoundError("tmux is not installed")
+
+    name = tmux_session_name(session_id)
+    child_pid, master_fd = pty.fork()
+
+    if child_pid == 0:
+        # ── Child process ──
+        os.chdir(cwd)
+        os.environ["TERM"] = "xterm-256color"
+        # Unset TMUX to avoid nesting issues if the server itself runs in tmux
+        os.environ.pop("TMUX", None)
+
+        os.execvp(tmux_path, [
+            "tmux",
+            "-L", TMUX_SOCKET_NAME,
+            "-f", "/dev/null",
+            "new-session", "-A",
+            "-s", name,
+        ])
+        os._exit(1)
+
+    # ── Parent process ──
+    set_winsize(master_fd, DEFAULT_COLS, DEFAULT_ROWS)
+
+    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    return child_pid, master_fd
+
+
 def cleanup_pty(master_fd: int | None, child_pid: int | None) -> None:
     """Release PTY resources: remove reader, close fd, kill child."""
     loop = asyncio.get_event_loop()
@@ -137,6 +221,48 @@ def cleanup_pty(master_fd: int | None, child_pid: int | None) -> None:
             os.waitpid(child_pid, os.WNOHANG)
         except ChildProcessError:
             pass
+
+
+def tmux_session_exists(session_id: str) -> bool:
+    """Check if a tmux session exists for the given twicc session ID."""
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "has-session", "-t", name],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def kill_tmux_session(session_id: str) -> bool:
+    """Kill the tmux session for the given twicc session ID.
+
+    Called when a session is archived to clean up persistent tmux sessions.
+    Returns True if the session was killed, False if it didn't exist or
+    tmux is not installed.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "kill-session", "-t", name],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        logger.warning("Failed to kill tmux session %s", name)
+        return False
 
 
 # ── Raw ASGI WebSocket application ────────────────────────────────────────
@@ -168,17 +294,33 @@ async def terminal_application(scope, receive, send):
             await send({"type": "websocket.close", "code": WS_CLOSE_AUTH_FAILURE})
             return
 
-    # ── Resolve working directory ─────────────────────────────────────
+    # ── Resolve working directory and session state ──────────────────
     session_id = scope["url_route"]["kwargs"]["session_id"]
-    cwd = await get_session_directory(session_id)
+    cwd, archived = await get_session_info(session_id)
 
     # Ensure cwd exists; fall back to home if it doesn't
     if not os.path.isdir(cwd):
         cwd = os.path.expanduser("~")
 
-    # ── Spawn PTY ─────────────────────────────────────────────────────
+    # ── Spawn PTY (tmux or raw shell) ────────────────────────────────
+    use_tmux = wants_tmux(scope)
+    if use_tmux and get_tmux_path() is None:
+        logger.warning(
+            "tmux requested but not installed for session %s, falling back to raw shell",
+            session_id,
+        )
+        use_tmux = False
+
+    # For archived sessions, only use tmux if a session already exists
+    # (don't create new tmux sessions for archived conversations).
+    if use_tmux and archived and not tmux_session_exists(session_id):
+        use_tmux = False
+
     try:
-        child_pid, master_fd = spawn_pty(cwd)
+        if use_tmux:
+            child_pid, master_fd = spawn_tmux_pty(cwd, session_id)
+        else:
+            child_pid, master_fd = spawn_pty(cwd)
     except OSError:
         logger.exception("Failed to spawn PTY for session %s", session_id)
         await send({"type": "websocket.accept"})

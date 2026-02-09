@@ -197,12 +197,15 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
             session.archived = archived
             session.save(update_fields=["archived"])
 
-            # Stop process if archiving
+            # Stop process and clean up tmux session if archiving
             if archived:
                 from asgiref.sync import async_to_sync
                 from twicc.agent.manager import get_process_manager
                 manager = get_process_manager()
                 async_to_sync(manager.kill_process)(session_id, reason="archived")
+
+                from twicc.terminal import kill_tmux_session
+                kill_tmux_session(session_id)
 
         # Handle pinned update
         if "pinned" in data:

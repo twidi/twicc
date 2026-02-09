@@ -4,6 +4,7 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { useSettingsStore } from '../stores/settings'
+import { useDataStore } from '../stores/data'
 import '@xterm/xterm/css/xterm.css'
 
 // ── Terminal themes ──────────────────────────────────────────────────────
@@ -79,6 +80,7 @@ const THEMES = {
  */
 export function useTerminal(sessionId) {
     const settingsStore = useSettingsStore()
+    const dataStore = useDataStore()
     const containerRef = ref(null)
     const isConnected = ref(false)
     const started = ref(false)
@@ -95,11 +97,24 @@ export function useTerminal(sessionId) {
     let intentionalClose = false
 
     /**
+     * Check whether tmux should actually be used for this session.
+     * Tmux is skipped for draft and archived sessions.
+     */
+    function shouldUseTmux() {
+        if (!settingsStore.isTerminalUseTmux) return false
+        const session = dataStore.getSession(sessionId)
+        if (session?.draft || session?.archived) return false
+        return true
+    }
+
+    /**
      * Build the WebSocket URL for the terminal endpoint.
+     * Sends ?tmux=1 only when tmux is applicable for the current session.
      */
     function getWsUrl() {
         const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-        return `${wsProtocol}//${location.host}/ws/terminal/${sessionId}/`
+        const base = `${wsProtocol}//${location.host}/ws/terminal/${sessionId}/`
+        return shouldUseTmux() ? `${base}?tmux=1` : base
     }
 
     /**
@@ -114,7 +129,22 @@ export function useTerminal(sessionId) {
 
         ws.onopen = () => {
             isConnected.value = true
-            terminal?.writeln('\x1b[32mConnected.\x1b[0m \x1b[2m(Ctrl+D or type "exit" to disconnect)\x1b[0m')
+            if (shouldUseTmux()) {
+                terminal?.writeln('\x1b[32mConnected (tmux).\x1b[0m \x1b[2m(Session persists across disconnections)\x1b[0m')
+            } else {
+                terminal?.writeln('\x1b[32mConnected.\x1b[0m \x1b[2m(Ctrl+D or type "exit" to disconnect)\x1b[0m')
+                if (settingsStore.isTerminalUseTmux) {
+                    const session = dataStore.getSession(sessionId)
+                    const reason = session?.draft ? 'draft' : 'archived'
+                    terminal?.writeln(`\x1b[2m(tmux disabled for ${reason} sessions)\x1b[0m`)
+                }
+            }
+            // Send current terminal dimensions so the PTY matches xterm.js size.
+            // The initial fitAddon.fit() runs before the WebSocket is open,
+            // so the backend spawns with default 80x24. This fixes it.
+            if (terminal) {
+                wsSend({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
+            }
         }
 
         ws.onmessage = (event) => {

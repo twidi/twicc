@@ -27,6 +27,7 @@ const SETTINGS_SCHEMA = {
     extraUsageOnlyWhenNeeded: true,
     maxCachedSessions: DEFAULT_MAX_CACHED_SESSIONS,
     autoUnpinOnArchive: true,
+    terminalUseTmux: false,
     // Not persisted - computed at runtime based on themeMode and system preference
     _effectiveTheme: null,
 }
@@ -49,6 +50,7 @@ const SETTINGS_VALIDATORS = {
     extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
     maxCachedSessions: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 50,
     autoUnpinOnArchive: (v) => typeof v === 'boolean',
+    terminalUseTmux: (v) => typeof v === 'boolean',
 }
 
 /**
@@ -120,6 +122,7 @@ export const useSettingsStore = defineStore('settings', {
         isExtraUsageOnlyWhenNeeded: (state) => state.extraUsageOnlyWhenNeeded,
         getMaxCachedSessions: (state) => state.maxCachedSessions,
         isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
+        isTerminalUseTmux: (state) => state.terminalUseTmux,
         /**
          * Effective theme: always returns 'light' or 'dark', never 'system'.
          * Takes into account the system preference when themeMode is 'system'.
@@ -258,6 +261,16 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set terminal tmux persistence enabled/disabled.
+         * @param {boolean} enabled
+         */
+        setTerminalUseTmux(enabled) {
+            if (SETTINGS_VALIDATORS.terminalUseTmux(enabled)) {
+                this.terminalUseTmux = enabled
+            }
+        },
+
+        /**
          * Update the effective theme based on themeMode and system preference.
          * Called internally when themeMode changes or system preference changes.
          */
@@ -307,6 +320,7 @@ export function initSettings() {
             extraUsageOnlyWhenNeeded: store.extraUsageOnlyWhenNeeded,
             maxCachedSessions: store.maxCachedSessions,
             autoUnpinOnArchive: store.autoUnpinOnArchive,
+            terminalUseTmux: store.terminalUseTmux,
         }),
         (newSettings) => {
             saveSettings(newSettings)
