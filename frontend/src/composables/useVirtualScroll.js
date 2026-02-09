@@ -108,6 +108,12 @@ export function useVirtualScroll(options) {
     const suspended = ref(false)
     let savedAnchor = null
     let pendingResume = false
+    // When the container is hidden by a parent (e.g., wa-tab-panel display:none),
+    // the scroller auto-suspends to prevent scrollTop corruption from browser reset.
+    // This flag distinguishes auto-suspension (tab switch) from manual suspension
+    // (KeepAlive deactivation), so we know to auto-resume when the container
+    // becomes visible again.
+    let autoSuspended = false
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Computed: Positions
@@ -572,6 +578,20 @@ export function useVirtualScroll(options) {
             if (suspended.value) return
             const target = event?.target || containerRef.value
             if (target) {
+                // When the container is hidden (e.g., parent wa-tab-panel set to
+                // display:none), the browser resets scrollTop to 0 and fires a
+                // scroll event. Updating scrollTop.value here would corrupt the
+                // saved scroll position. Instead, auto-suspend to freeze state.
+                //
+                // The ResizeObserver on the container does NOT fire when a *parent*
+                // element gets display:none, so updateViewportHeight(0) may never
+                // be called. This check in handleScroll acts as a fallback
+                // detection: if the container has no height, it's hidden.
+                if (target.clientHeight === 0 && viewportHeight.value > 0) {
+                    autoSuspended = true
+                    suspend()
+                    return
+                }
                 scrollTop.value = target.scrollTop
             }
         })
@@ -714,6 +734,9 @@ export function useVirtualScroll(options) {
     function isAtBottom(threshold = 5) {
         const container = containerRef.value
         if (!container) return true
+        // When the container is hidden (display:none), all dimensions are 0.
+        // Return false to avoid false positives that would trigger scroll-to-bottom.
+        if (container.clientHeight === 0) return false
         const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
         return distanceFromBottom <= threshold
     }
@@ -752,24 +775,42 @@ export function useVirtualScroll(options) {
     /**
      * Update the viewport height. Called by the component's ResizeObserver.
      *
-     * While suspended (KeepAlive detached), height changes are ignored to
-     * prevent renderRange/spacer corruption from 0-height resize events.
+     * Handles three scenarios:
+     * 1. Normal resize: update viewportHeight to trigger renderRange recomputation.
+     * 2. Container hidden (height=0): auto-suspend the scroller to preserve scroll
+     *    state before the browser's scroll event corrupts scrollTop.
+     * 3. Container visible again (height>0 while suspended): auto-resume or complete
+     *    a deferred KeepAlive resume.
      *
      * @param {number} height - The new viewport height
      */
     function updateViewportHeight(height) {
-        // While suspended, ignore all height changes. The browser fires
-        // ResizeObserver with 0 when elements are detached, which would
-        // corrupt renderRange and spacer calculations.
-        // However, if a resume is pending (container was hidden when resume()
-        // was called), and the container is now visible, perform the deferred resume.
+        // While suspended, ignore all height changes — UNLESS we need to
+        // complete a deferred resume (container was hidden when resume() was called)
+        // or auto-resume (container was hidden by tab switch and is now visible again).
         if (suspended.value) {
-            if (pendingResume && height > 0) {
+            if (height > 0) {
                 const container = containerRef.value
-                if (container) {
+                if (!container) return
+
+                if (pendingResume || autoSuspended) {
+                    // Container is visible again — perform the deferred/auto resume.
                     performResume(container)
                 }
             }
+            return
+        }
+
+        // Auto-suspend: container just became hidden (e.g., wa-tab-panel display:none).
+        // Save the scroll anchor NOW while scrollTop.value is still valid (the
+        // ResizeObserver fires synchronously on layout change, before the browser's
+        // scroll event resets scrollTop to 0 via handleScroll/RAF).
+        // Only auto-suspend if the container WAS visible (viewportHeight > 0).
+        // This avoids spurious suspend/resume cycles during initial mount of
+        // hidden tab panels (Files, Git, Terminal) that start with height=0.
+        if (height === 0 && viewportHeight.value > 0) {
+            autoSuspended = true
+            suspend()
             return
         }
 
@@ -777,17 +818,28 @@ export function useVirtualScroll(options) {
     }
 
     /**
-     * Suspend the scroller (called before KeepAlive detaches the DOM).
+     * Suspend the scroller: freeze renderRange and save the scroll anchor.
      *
-     * Captures the scroll anchor: the first item visible at the top of the
-     * viewport and the pixel offset into it. This is more robust than saving
-     * raw scrollTop because it survives viewport size changes.
+     * Called in two situations:
+     * 1. KeepAlive deactivation (via onDeactivated) — before the browser detaches
+     *    the DOM and resets scrollTop to 0.
+     * 2. Auto-suspension (via updateViewportHeight) — when the container becomes
+     *    hidden (e.g., wa-tab-panel switching to display:none). The ResizeObserver
+     *    fires synchronously on layout change, BEFORE the browser's scroll event
+     *    resets scrollTop, so we can still capture the correct scroll position.
      *
-     * Must be called from onDeactivated BEFORE the browser detaches the DOM
-     * and resets scrollTop to 0.
+     * If already suspended (e.g., auto-suspended from tab switch), a subsequent
+     * KeepAlive suspend clears the autoSuspended flag so that a manual resume()
+     * is required instead of an automatic resume from updateViewportHeight().
      */
     function suspend() {
-        if (suspended.value) return
+        if (suspended.value) {
+            // Already suspended (e.g., auto-suspended from tab switch).
+            // Clear autoSuspended so that a KeepAlive resume() is required
+            // instead of an automatic resume from updateViewportHeight().
+            autoSuspended = false
+            return
+        }
 
         const posArray = positions.value
         if (posArray.length > 0) {
@@ -849,6 +901,7 @@ export function useVirtualScroll(options) {
      */
     function performResume(container) {
         pendingResume = false
+        autoSuspended = false
         suspended.value = false
 
         // Update viewportHeight from the now-visible container
