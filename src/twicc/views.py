@@ -465,14 +465,48 @@ def file_search(request, project_id, session_id=None):
 
 
 def file_content(request, project_id, session_id=None):
-    """GET file content.
+    """GET/PUT file content.
 
     Works at project level (/api/projects/<id>/file-content/)
     or session level (/api/projects/<id>/sessions/<session_id>/file-content/).
+
+    GET: read file content (existing behavior).
+    PUT: write file content (full replacement).
     """
-    from twicc.file_content import get_file_content
+    from twicc.file_content import get_file_content, write_file_content
     from twicc.file_tree import validate_path
 
+    # PUT: write file content
+    if request.method == "PUT":
+        try:
+            data = orjson.loads(request.body)
+        except orjson.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        content = data.get("content")
+        if content is None:
+            return JsonResponse({"error": "Missing 'content' field"}, status=400)
+
+        file_path = data.get("path")
+        if not file_path:
+            return JsonResponse({"error": "Missing 'path' field"}, status=400)
+
+        # Validate that the file's directory is within allowed project/session paths
+        dir_path = os.path.dirname(os.path.normpath(file_path))
+        session, dir_path, error = validate_path(
+            project_id, dir_path, session_id=session_id
+        )
+        if error:
+            return error
+
+        normalized = os.path.normpath(file_path)
+        result = write_file_content(normalized, content)
+        if result.get("error"):
+            return JsonResponse(result, status=400)
+
+        return JsonResponse(result)
+
+    # GET: read file content (default)
     file_path = request.GET.get("path")
     if not file_path:
         return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)

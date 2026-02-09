@@ -2,7 +2,7 @@
 import { ref, computed, watch, nextTick, shallowRef } from 'vue'
 import { apiFetch } from '../utils/api'
 import FileTree from './FileTree.vue'
-import FileContentViewer from './FileContentViewer.vue'
+import FilePane from './FilePane.vue'
 
 const props = defineProps({
     projectId: {
@@ -997,7 +997,7 @@ function handleTreeKeydown(event) {
 
             <!-- File content (right panel) -->
             <div slot="end" class="files-content-panel">
-                <FileContentViewer
+                <FilePane
                     v-show="selectedFile"
                     :project-id="projectId"
                     :session-id="sessionId"
@@ -1062,6 +1062,7 @@ function handleTreeKeydown(event) {
     overflow: auto;
     display: flex;
     flex-direction: column;
+    position: relative;
 }
 
 /* Placeholder styling (for loading, error, and empty states) */

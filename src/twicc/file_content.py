@@ -1,4 +1,4 @@
-"""File content business logic: read file contents for the code viewer.
+"""File content business logic: read and write file contents for the code viewer/editor.
 
 Extracted following the same pattern as file_tree.py — views stay thin HTTP wrappers.
 """
@@ -45,3 +45,33 @@ def get_file_content(file_path):
         return {"error": "Cannot read file", "size": size, "binary": False}
 
     return {"content": content, "size": size, "binary": False}
+
+
+def write_file_content(file_path, content):
+    """Write content to an existing file.
+
+    Returns:
+        {"ok": True} on success
+        {"error": str} on failure
+
+    Handles:
+    - Content too large (>5MB): returns error
+    - File does not exist: returns error
+    - Permission / OS errors: returns error
+    """
+    if not os.path.isfile(file_path):
+        return {"error": "File not found"}
+
+    content_bytes = content.encode("utf-8")
+    if len(content_bytes) > MAX_FILE_SIZE:
+        return {
+            "error": f"Content too large ({len(content_bytes) / 1024 / 1024:.1f} MB, max {MAX_FILE_SIZE / 1024 / 1024:.0f} MB)"
+        }
+
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except OSError as e:
+        return {"error": f"Cannot write file: {e}"}
+
+    return {"ok": True}
