@@ -1147,6 +1147,7 @@ wa-split-panel::part(divider) {
     display: flex;
     align-items: center;
     gap: var(--wa-space-xs);
+    max-width: 100%;
 }
 
 .usage-ring {
@@ -1159,6 +1160,13 @@ wa-split-panel::part(divider) {
     display: flex;
     flex-direction: column;
     line-height: 1.2;
+}
+
+/* Remove text in narrow sidebar */
+@container sidebar (width <= 15rem) {
+    .usage-quota-info {
+        display: none;
+    }
 }
 
 .usage-quota-label {
