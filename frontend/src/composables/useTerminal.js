@@ -282,6 +282,20 @@ export function useTerminal(sessionId) {
         }
     })
 
+    // Close the terminal WebSocket when the session is archived
+    watch(
+        () => dataStore.getSession(sessionId)?.archived,
+        (archived) => {
+            if (archived && ws) {
+                intentionalClose = true
+                ws.close()
+                ws = null
+                isConnected.value = false
+                terminal?.writeln('\x1b[31mSession archived — terminal disconnected.\x1b[0m')
+            }
+        },
+    )
+
     // Switch theme live when the user toggles dark/light mode
     watch(() => settingsStore.getEffectiveTheme, (newTheme) => {
         if (terminal) {
