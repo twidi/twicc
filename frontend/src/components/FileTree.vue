@@ -84,9 +84,21 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    isDraft: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 const emit = defineEmits(['select', 'focus'])
+
+// API prefix: project-level for drafts, session-level otherwise
+const apiPrefix = computed(() => {
+    if (props.isDraft) {
+        return `/api/projects/${props.projectId}`
+    }
+    return `/api/projects/${props.projectId}/sessions/${props.sessionId}`
+})
 
 /**
  * Compact folders: walk down single-child directory chains.
@@ -162,7 +174,7 @@ async function toggleOpen() {
         isLoading.value = true
         try {
             const res = await apiFetch(
-                `/api/projects/${props.projectId}/sessions/${props.sessionId}/directory-tree/?path=${encodeURIComponent(effectivePath)}${props.extraQuery}`
+                `${apiPrefix.value}/directory-tree/?path=${encodeURIComponent(effectivePath)}${props.extraQuery}`
             )
             if (res.ok) {
                 const data = await res.json()
@@ -272,6 +284,7 @@ const isSelected = computed(() => {
                 :extra-query="extraQuery"
                 :revealed-paths="revealedPaths"
                 :selected-path="selectedPath"
+                :is-draft="isDraft"
                 @select="(path) => emit('select', path)"
                 @focus="(path) => emit('focus', path)"
             />

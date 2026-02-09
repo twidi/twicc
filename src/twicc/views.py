@@ -410,12 +410,16 @@ def tool_agent_id(request, project_id, session_id, line_num, tool_id):
         return JsonResponse({"agent_id": None})
 
 
-def directory_tree(request, project_id, session_id):
-    """GET /api/projects/<id>/sessions/<session_id>/directory-tree/ - Directory tree listing."""
-    from twicc.file_tree import get_directory_tree, validate_session_path
+def directory_tree(request, project_id, session_id=None):
+    """GET directory tree listing.
 
-    session, dir_path, error = validate_session_path(
-        project_id, session_id, request.GET.get("path")
+    Works at project level (/api/projects/<id>/directory-tree/)
+    or session level (/api/projects/<id>/sessions/<session_id>/directory-tree/).
+    """
+    from twicc.file_tree import get_directory_tree, validate_path
+
+    session, dir_path, error = validate_path(
+        project_id, request.GET.get("path"), session_id=session_id
     )
     if error:
         return error
@@ -427,12 +431,16 @@ def directory_tree(request, project_id, session_id):
     return JsonResponse(tree)
 
 
-def file_search(request, project_id, session_id):
-    """GET /api/projects/<id>/sessions/<session_id>/file-search/ - Fuzzy file search."""
-    from twicc.file_tree import search_files, validate_session_path
+def file_search(request, project_id, session_id=None):
+    """GET fuzzy file search.
 
-    session, dir_path, error = validate_session_path(
-        project_id, session_id, request.GET.get("path")
+    Works at project level (/api/projects/<id>/file-search/)
+    or session level (/api/projects/<id>/sessions/<session_id>/file-search/).
+    """
+    from twicc.file_tree import search_files, validate_path
+
+    session, dir_path, error = validate_path(
+        project_id, request.GET.get("path"), session_id=session_id
     )
     if error:
         return error
@@ -456,19 +464,23 @@ def file_search(request, project_id, session_id):
     return JsonResponse(tree)
 
 
-def file_content(request, project_id, session_id):
-    """GET /api/projects/<id>/sessions/<session_id>/file-content/ - Read file content."""
+def file_content(request, project_id, session_id=None):
+    """GET file content.
+
+    Works at project level (/api/projects/<id>/file-content/)
+    or session level (/api/projects/<id>/sessions/<session_id>/file-content/).
+    """
     from twicc.file_content import get_file_content
-    from twicc.file_tree import validate_session_path
+    from twicc.file_tree import validate_path
 
     file_path = request.GET.get("path")
     if not file_path:
         return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
 
-    # Validate that the file's directory is within allowed session paths
+    # Validate that the file's directory is within allowed project/session paths
     dir_path = os.path.dirname(os.path.normpath(file_path))
-    session, dir_path, error = validate_session_path(
-        project_id, session_id, dir_path
+    session, dir_path, error = validate_path(
+        project_id, dir_path, session_id=session_id
     )
     if error:
         return error

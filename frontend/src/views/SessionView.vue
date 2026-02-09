@@ -412,6 +412,7 @@ function handleNeedsTitle() {
                     :git-directory="session?.git_directory"
                     :project-directory="store.getProject(session?.project_id)?.directory"
                     :active="activeTabId === 'files'"
+                    :is-draft="session?.draft === true"
                 />
             </wa-tab-panel>
             <wa-tab-panel name="git">

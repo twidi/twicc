@@ -25,10 +25,22 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    isDraft: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 // KeepAlive active state (provided by SessionView)
 const sessionActive = inject('sessionActive', ref(true))
+
+// API prefix: project-level for drafts, session-level otherwise
+const apiPrefix = computed(() => {
+    if (props.isDraft) {
+        return `/api/projects/${props.projectId}`
+    }
+    return `/api/projects/${props.projectId}/sessions/${props.sessionId}`
+})
 
 // Track whether the fetch watcher was skipped while inactive.
 // On reactivation, if this is true, the watcher's current values are re-fetched.
@@ -134,7 +146,7 @@ const revealedPaths = shallowRef(new Set())
  * Fetch the directory tree from the backend.
  */
 async function fetchTree(projectId, sessionId, dirPath) {
-    if (!projectId || !sessionId || !dirPath) {
+    if (!projectId || !dirPath) {
         tree.value = null
         return
     }
@@ -145,7 +157,7 @@ async function fetchTree(projectId, sessionId, dirPath) {
 
     try {
         const res = await apiFetch(
-            `/api/projects/${projectId}/sessions/${sessionId}/directory-tree/?path=${encodeURIComponent(dirPath)}${optionsQuery()}`
+            `${apiPrefix.value}/directory-tree/?path=${encodeURIComponent(dirPath)}${optionsQuery()}`
         )
         if (!res.ok) {
             const data = await res.json()
@@ -245,12 +257,12 @@ function onSearchInput(event) {
 }
 
 async function doSearch(query) {
-    if (!props.projectId || !props.sessionId || !directory.value) return
+    if (!props.projectId || !directory.value) return
 
     searchLoading.value = true
     try {
         const res = await apiFetch(
-            `/api/projects/${props.projectId}/sessions/${props.sessionId}/file-search/?path=${encodeURIComponent(directory.value)}&q=${encodeURIComponent(query)}${optionsQuery()}`
+            `${apiPrefix.value}/file-search/?path=${encodeURIComponent(directory.value)}&q=${encodeURIComponent(query)}${optionsQuery()}`
         )
         if (res.ok) {
             const data = await res.json()
@@ -394,7 +406,7 @@ async function scrollToPath(absolutePath) {
         if (currentNode.loaded === false) {
             try {
                 const res = await apiFetch(
-                    `/api/projects/${props.projectId}/sessions/${props.sessionId}/directory-tree/?path=${encodeURIComponent(currentAbsPath)}${optionsQuery()}`
+                    `${apiPrefix.value}/directory-tree/?path=${encodeURIComponent(currentAbsPath)}${optionsQuery()}`
                 )
                 if (!res.ok) return false
                 const data = await res.json()
@@ -974,6 +986,7 @@ function handleTreeKeydown(event) {
                             :extra-query="optionsQuery()"
                             :revealed-paths="revealedPaths"
                             :selected-path="selectedAbsPath"
+                            :is-draft="isDraft"
                             @select="onFileSelect"
                             @focus="onNodeFocus"
                         />
@@ -991,6 +1004,7 @@ function handleTreeKeydown(event) {
                     :project-id="projectId"
                     :session-id="sessionId"
                     :file-path="selectedAbsPath"
+                    :is-draft="isDraft"
                 />
                 <div v-show="!selectedFile" class="panel-placeholder">
                     Select a file

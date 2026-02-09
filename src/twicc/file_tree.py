@@ -9,27 +9,38 @@ from collections import deque
 
 from django.http import Http404, JsonResponse
 
-from twicc.core.models import Session
+from twicc.core.models import Project, Session
 
 NODE_THRESHOLD = 200  # Max cumulative nodes before stopping expansion
 
 
-def validate_session_path(project_id, session_id, dir_path):
-    """Validate that a directory path is allowed for a given project/session.
+def validate_path(project_id, dir_path, session_id=None):
+    """Validate that a directory path is allowed for a given project and optional session.
+
+    When session_id is provided, also checks session-specific directories (cwd, git_directory).
+    When session_id is None (project-level / draft sessions), only checks project.directory.
 
     Checks that:
-    1. The project and session exist and are associated.
+    1. The project exists (and the session exists and is associated, if provided).
     2. The requested path is within one of the allowed base directories:
-       - project.directory
-       - session.cwd (if set)
-       - session.git_directory (if set)
+       - project.directory (always)
+       - session.cwd (if session provided and set)
+       - session.git_directory (if session provided and set)
 
     Returns (session, dir_path, error_response) where error_response is None on success.
+    Session is None when no session_id is provided.
     """
     try:
-        session = Session.objects.get(id=session_id, project_id=project_id)
-    except Session.DoesNotExist:
-        raise Http404("Session not found")
+        project = Project.objects.get(id=project_id)
+    except Project.DoesNotExist:
+        raise Http404("Project not found")
+
+    session = None
+    if session_id:
+        try:
+            session = Session.objects.get(id=session_id, project_id=project_id)
+        except Session.DoesNotExist:
+            raise Http404("Session not found")
 
     if not dir_path:
         return session, None, JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
@@ -37,11 +48,12 @@ def validate_session_path(project_id, session_id, dir_path):
     dir_path = os.path.normpath(dir_path)
 
     # Build list of allowed base directories
-    allowed_bases = [os.path.normpath(session.project.directory)]
-    if session.cwd:
-        allowed_bases.append(os.path.normpath(session.cwd))
-    if session.git_directory:
-        allowed_bases.append(os.path.normpath(session.git_directory))
+    allowed_bases = [os.path.normpath(project.directory)]
+    if session:
+        if session.cwd:
+            allowed_bases.append(os.path.normpath(session.cwd))
+        if session.git_directory:
+            allowed_bases.append(os.path.normpath(session.git_directory))
 
     # Check that the requested path is within at least one allowed base
     path_allowed = False

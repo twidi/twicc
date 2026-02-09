@@ -10,6 +10,18 @@ const props = defineProps({
     projectId: String,
     sessionId: String,
     filePath: String,  // absolute path
+    isDraft: {
+        type: Boolean,
+        default: false,
+    },
+})
+
+// API prefix: project-level for drafts, session-level otherwise
+const apiPrefix = computed(() => {
+    if (props.isDraft) {
+        return `/api/projects/${props.projectId}`
+    }
+    return `/api/projects/${props.projectId}/sessions/${props.sessionId}`
 })
 
 const settingsStore = useSettingsStore()
@@ -71,7 +83,7 @@ watch(() => props.filePath, async (newPath) => {
 
     try {
         const res = await apiFetch(
-            `/api/projects/${props.projectId}/sessions/${props.sessionId}/file-content/?path=${encodeURIComponent(newPath)}`
+            `${apiPrefix.value}/file-content/?path=${encodeURIComponent(newPath)}`
         )
         const data = await res.json()
 
