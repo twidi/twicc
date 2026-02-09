@@ -41,9 +41,12 @@ watch(monacoRef, (monaco) => {
     monaco.editor.defineTheme('github-light', githubLight)
 }, { immediate: true })
 
+// --- Monaco editor instance ---
+const editorRef = ref(null)      // Monaco IStandaloneCodeEditor instance
+const savedVersionId = ref(null) // model.getAlternativeVersionId() at last save/fetch
+
 // --- File content state ---
 const currentContent = ref('')   // content currently in the editor
-const savedContent = ref('')     // last fetched content (for instant revert)
 const loading = ref(false)       // true only for the very first load (no file displayed yet)
 const switching = ref(false)     // true during file switch (editor stays visible)
 const error = ref(null)
@@ -60,6 +63,23 @@ const isEditing = ref(false)
 const saving = ref(false)
 const saveError = ref(null)
 const editSwitchRef = ref(null)
+
+// Whether the editor content differs from the last saved/fetched content.
+// Uses Monaco's alternativeVersionId which is undo-aware: if the user types
+// then undoes everything, the file is no longer dirty.
+// Falls back to string comparison when the editor isn't mounted yet.
+const isDirty = computed(() => {
+    if (editorRef.value && savedVersionId.value !== null) {
+        // Accessing currentContent.value to ensure Vue tracks the dependency
+        // (alternativeVersionId is not reactive, but currentContent updates on every change)
+        void currentContent.value
+        const model = editorRef.value.getModel()
+        if (model) {
+            return model.getAlternativeVersionId() !== savedVersionId.value
+        }
+    }
+    return false
+})
 
 const monacoTheme = computed(() =>
     settingsStore.getEffectiveTheme === 'dark' ? 'github-dark' : 'github-light'
@@ -146,7 +166,6 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
         if (!res.ok) {
             error.value = data.error || 'Failed to load file'
             currentContent.value = ''
-            savedContent.value = ''
             return
         }
 
@@ -154,25 +173,23 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
             isBinary.value = true
             fileSize.value = data.size
             currentContent.value = ''
-            savedContent.value = ''
             return
         }
 
         if (data.error) {
             error.value = data.error
             currentContent.value = ''
-            savedContent.value = ''
             return
         }
 
         currentContent.value = data.content
-        savedContent.value = data.content
         fileSize.value = data.size
         hasLoadedOnce.value = true
+        // Snapshot after a tick so Monaco has processed the new content
+        nextTick(() => snapshotVersionId())
     } catch (err) {
         error.value = 'Network error: failed to load file'
         currentContent.value = ''
-        savedContent.value = ''
     } finally {
         loading.value = false
         switching.value = false
@@ -182,7 +199,6 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
 watch(() => props.filePath, async (newPath) => {
     if (!newPath) {
         currentContent.value = ''
-        savedContent.value = ''
         error.value = null
         isBinary.value = false
         // Reset edit mode when file is deselected
@@ -199,6 +215,23 @@ watch(() => props.filePath, async (newPath) => {
     // the editor stays mounted and visible while we fetch.
     await fetchFileContent(newPath, { isSwitch: hasLoadedOnce.value })
 }, { immediate: true })
+
+// --- Monaco editor lifecycle ---
+
+function onEditorMount(editor) {
+    editorRef.value = editor
+    snapshotVersionId()
+}
+
+/** Capture the current model version as the "clean" baseline. */
+function snapshotVersionId() {
+    if (editorRef.value) {
+        const model = editorRef.value.getModel()
+        if (model) {
+            savedVersionId.value = model.getAlternativeVersionId()
+        }
+    }
+}
 
 // --- Edit mode handlers ---
 
@@ -243,8 +276,8 @@ async function save() {
             return
         }
 
-        // Success: update savedContent to reflect the new baseline
-        savedContent.value = currentContent.value
+        // Success: snapshot version as new baseline
+        snapshotVersionId()
     } catch (err) {
         saveError.value = 'Network error: failed to save file'
     } finally {
@@ -271,6 +304,9 @@ function syncEditSwitch() {
     })
 }
 
+// Expose dirty state so parent components can check for unsaved changes
+defineExpose({ isDirty })
+
 function formatSize(bytes) {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -292,7 +328,7 @@ function formatSize(bytes) {
                     <wa-button
                         size="small"
                         variant="brand"
-                        :disabled="saving"
+                        :disabled="saving || !isDirty"
                         @click="save"
                     >
                         <wa-icon v-if="saving" slot="prefix" name="spinner" spin></wa-icon>
@@ -337,6 +373,7 @@ function formatSize(bytes) {
                 :theme="monacoTheme"
                 :options="editorOptions"
                 :save-view-state="true"
+                @mount="onEditorMount"
                 @change="onEditorChange"
             />
 
