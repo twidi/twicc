@@ -817,7 +817,7 @@ function updateSidebarClosedClass(closed) {
         <main slot="end" class="main-content">
             <div v-show="sessionId" class="session-content">
                 <router-view v-slot="{ Component }">
-                    <KeepAlive :max="5">
+                    <KeepAlive :max="settingsStore.getMaxCachedSessions">
                         <component :is="Component" :key="route.params.sessionId" />
                     </KeepAlive>
                 </router-view>

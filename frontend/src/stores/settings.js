@@ -3,7 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
 import { useDataStore } from './data'
 import { setThemeMode } from '../utils/theme'
 
@@ -25,6 +25,7 @@ const SETTINGS_SCHEMA = {
     titleSystemPrompt: DEFAULT_TITLE_SYSTEM_PROMPT,
     autoHideHeaderFooter: false,
     extraUsageOnlyWhenNeeded: true,
+    maxCachedSessions: DEFAULT_MAX_CACHED_SESSIONS,
     // Not persisted - computed at runtime based on themeMode and system preference
     _effectiveTheme: null,
 }
@@ -45,6 +46,7 @@ const SETTINGS_VALIDATORS = {
     titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
     autoHideHeaderFooter: (v) => typeof v === 'boolean',
     extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
+    maxCachedSessions: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 50,
 }
 
 /**
@@ -114,6 +116,7 @@ export const useSettingsStore = defineStore('settings', {
         getTitleSystemPrompt: (state) => state.titleSystemPrompt,
         isAutoHideHeaderFooterEnabled: (state) => state.autoHideHeaderFooter,
         isExtraUsageOnlyWhenNeeded: (state) => state.extraUsageOnlyWhenNeeded,
+        getMaxCachedSessions: (state) => state.maxCachedSessions,
         /**
          * Effective theme: always returns 'light' or 'dark', never 'system'.
          * Takes into account the system preference when themeMode is 'system'.
@@ -231,6 +234,17 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set the maximum number of cached sessions (KeepAlive).
+         * @param {number} count - Number of sessions to keep alive (1-50)
+         */
+        setMaxCachedSessions(count) {
+            const numCount = Number(count)
+            if (SETTINGS_VALIDATORS.maxCachedSessions(numCount)) {
+                this.maxCachedSessions = numCount
+            }
+        },
+
+        /**
          * Update the effective theme based on themeMode and system preference.
          * Called internally when themeMode changes or system preference changes.
          */
@@ -278,6 +292,7 @@ export function initSettings() {
             titleSystemPrompt: store.titleSystemPrompt,
             autoHideHeaderFooter: store.autoHideHeaderFooter,
             extraUsageOnlyWhenNeeded: store.extraUsageOnlyWhenNeeded,
+            maxCachedSessions: store.maxCachedSessions,
         }),
         (newSettings) => {
             saveSettings(newSettings)

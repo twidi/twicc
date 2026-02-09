@@ -65,6 +65,14 @@ User message:
 {text}`
 
 /**
+ * Default maximum number of sessions kept alive in the cache (Vue KeepAlive).
+ * Each cached session preserves its DOM, scroll position, and component state
+ * for instant switching. Cost is ~150-500 KB per session (more with terminal).
+ * Can be adjusted per device in settings.
+ */
+export const DEFAULT_MAX_CACHED_SESSIONS = 20
+
+/**
  * Maximum context tokens for Claude (used for context usage percentage calculation).
  * Value: 200,000 tokens
  */
