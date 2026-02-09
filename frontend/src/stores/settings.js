@@ -26,6 +26,7 @@ const SETTINGS_SCHEMA = {
     autoHideHeaderFooter: false,
     extraUsageOnlyWhenNeeded: true,
     maxCachedSessions: DEFAULT_MAX_CACHED_SESSIONS,
+    autoUnpinOnArchive: true,
     // Not persisted - computed at runtime based on themeMode and system preference
     _effectiveTheme: null,
 }
@@ -47,6 +48,7 @@ const SETTINGS_VALIDATORS = {
     autoHideHeaderFooter: (v) => typeof v === 'boolean',
     extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
     maxCachedSessions: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 50,
+    autoUnpinOnArchive: (v) => typeof v === 'boolean',
 }
 
 /**
@@ -117,6 +119,7 @@ export const useSettingsStore = defineStore('settings', {
         isAutoHideHeaderFooterEnabled: (state) => state.autoHideHeaderFooter,
         isExtraUsageOnlyWhenNeeded: (state) => state.extraUsageOnlyWhenNeeded,
         getMaxCachedSessions: (state) => state.maxCachedSessions,
+        isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
         /**
          * Effective theme: always returns 'light' or 'dark', never 'system'.
          * Takes into account the system preference when themeMode is 'system'.
@@ -245,6 +248,16 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set auto-unpin on archive enabled/disabled.
+         * @param {boolean} enabled
+         */
+        setAutoUnpinOnArchive(enabled) {
+            if (SETTINGS_VALIDATORS.autoUnpinOnArchive(enabled)) {
+                this.autoUnpinOnArchive = enabled
+            }
+        },
+
+        /**
          * Update the effective theme based on themeMode and system preference.
          * Called internally when themeMode changes or system preference changes.
          */
@@ -293,6 +306,7 @@ export function initSettings() {
             autoHideHeaderFooter: store.autoHideHeaderFooter,
             extraUsageOnlyWhenNeeded: store.extraUsageOnlyWhenNeeded,
             maxCachedSessions: store.maxCachedSessions,
+            autoUnpinOnArchive: store.autoUnpinOnArchive,
         }),
         (newSettings) => {
             saveSettings(newSettings)

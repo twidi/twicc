@@ -1286,8 +1286,22 @@ export const useDataStore = defineStore('data', {
             const session = this.sessions[sessionId]
             const oldArchived = session?.archived
 
+            // Auto-unpin on archive: if archiving a pinned session and setting is enabled
+            const settingsStore = useSettingsStore()
+            const shouldUnpin = archived && session?.pinned && settingsStore.isAutoUnpinOnArchive
+            const oldPinned = session?.pinned
+
             if (session) {
                 session.archived = archived
+                if (shouldUnpin) {
+                    session.pinned = false
+                }
+            }
+
+            // Build the PATCH payload
+            const patchData = { archived }
+            if (shouldUnpin) {
+                patchData.pinned = false
             }
 
             try {
@@ -1296,7 +1310,7 @@ export const useDataStore = defineStore('data', {
                     {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ archived })
+                        body: JSON.stringify(patchData)
                     }
                 )
 
@@ -1310,8 +1324,13 @@ export const useDataStore = defineStore('data', {
 
             } catch (error) {
                 // Rollback on error
-                if (session && oldArchived !== undefined) {
-                    session.archived = oldArchived
+                if (session) {
+                    if (oldArchived !== undefined) {
+                        session.archived = oldArchived
+                    }
+                    if (shouldUnpin && oldPinned !== undefined) {
+                        session.pinned = oldPinned
+                    }
                 }
                 throw error
             }

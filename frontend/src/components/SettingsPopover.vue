@@ -45,6 +45,7 @@ const themeSelect = ref(null)
 const sessionTimeFormatSelect = ref(null)
 const extraUsageOnlyWhenNeededSwitch = ref(null)
 const maxCachedSessionsSlider = ref(null)
+const autoUnpinOnArchiveSwitch = ref(null)
 const titleGenerationSwitch = ref(null)
 const titleSystemPromptTextarea = ref(null)
 
@@ -57,6 +58,7 @@ const sessionTimeFormat = computed(() => store.getSessionTimeFormat)
 const tooltipsEnabled = computed(() => store.areTooltipsEnabled)
 const extraUsageOnlyWhenNeeded = computed(() => store.isExtraUsageOnlyWhenNeeded)
 const maxCachedSessions = computed(() => store.getMaxCachedSessions)
+const autoUnpinOnArchive = computed(() => store.isAutoUnpinOnArchive)
 const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 
@@ -99,6 +101,9 @@ function syncSwitchState() {
         if (maxCachedSessionsSlider.value && maxCachedSessionsSlider.value.value !== maxCachedSessions.value) {
             maxCachedSessionsSlider.value.value = maxCachedSessions.value
         }
+        if (autoUnpinOnArchiveSwitch.value && autoUnpinOnArchiveSwitch.value.checked !== autoUnpinOnArchive.value) {
+            autoUnpinOnArchiveSwitch.value.checked = autoUnpinOnArchive.value
+        }
         if (titleGenerationSwitch.value && titleGenerationSwitch.value.checked !== titleGenerationEnabled.value) {
             titleGenerationSwitch.value.checked = titleGenerationEnabled.value
         }
@@ -109,7 +114,7 @@ function syncSwitchState() {
 }
 
 // Watch for store changes and sync switches
-watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, extraUsageOnlyWhenNeeded, maxCachedSessions, titleGenerationEnabled, titleSystemPrompt], syncSwitchState, { immediate: true })
+watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, titleGenerationEnabled, titleSystemPrompt], syncSwitchState, { immediate: true })
 
 /**
  * Toggle between normal and simplified mode.
@@ -166,6 +171,13 @@ function onExtraUsageOnlyWhenNeededChange(event) {
  */
 function onMaxCachedSessionsChange(event) {
     store.setMaxCachedSessions(event.target.value)
+}
+
+/**
+ * Toggle auto-unpin on archive.
+ */
+function onAutoUnpinOnArchiveChange(event) {
+    store.setAutoUnpinOnArchive(event.target.checked)
 }
 
 /**
@@ -257,18 +269,6 @@ function onPopoverShow() {
                             size="small"
                         >Enabled</wa-switch>
                     </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">LRU cached sessions ({{ maxCachedSessions }})</label>
-                        <wa-slider
-                            ref="maxCachedSessionsSlider"
-                            :min.prop="1"
-                            :max.prop="50"
-                            :step.prop="1"
-                            :value.prop="maxCachedSessions"
-                            @input="onMaxCachedSessionsChange"
-                            size="small"
-                        ></wa-slider>
-                    </div>
                     <div class="setting-group" v-if="showExtraUsageSetting">
                         <label class="setting-group-label">Show extra usage quota</label>
                         <wa-switch
@@ -311,6 +311,26 @@ function onPopoverShow() {
                                 :value="option.value"
                             >{{ option.label }}</wa-option>
                         </wa-select>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Auto-unpin on archive</label>
+                        <wa-switch
+                            ref="autoUnpinOnArchiveSwitch"
+                            @change="onAutoUnpinOnArchiveChange"
+                            size="small"
+                        >Enabled</wa-switch>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">LRU cached sessions ({{ maxCachedSessions }})</label>
+                        <wa-slider
+                            ref="maxCachedSessionsSlider"
+                            :min.prop="1"
+                            :max.prop="50"
+                            :step.prop="1"
+                            :value.prop="maxCachedSessions"
+                            @input="onMaxCachedSessionsChange"
+                            size="small"
+                        ></wa-slider>
                     </div>
                 </section>
 
