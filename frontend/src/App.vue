@@ -8,6 +8,7 @@ import { useSettingsStore } from './stores/settings'
 import { useAuthStore } from './stores/auth'
 import { THEME_MODE } from './constants'
 import ConnectionIndicator from './components/ConnectionIndicator.vue'
+import CustomNotification from './components/CustomNotification.vue'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -47,7 +48,11 @@ watch(displayMode, (newMode) => {
 const toastTheme = computed(() => {
     const isDark = settingsStore.getEffectiveTheme === THEME_MODE.DARK
     // Invert: use light toast theme when app is dark, and vice-versa
-    return isDark ? lightTheme : slateTheme
+    return {
+        ...(isDark ? lightTheme : slateTheme),
+        '--nv-width': '100%',
+        '--nv-min-width': '30rem',
+    }
 })
 </script>
 
@@ -67,7 +72,8 @@ const toastTheme = computed(() => {
 
     <!-- Toast notification system (theme inverted for contrast) -->
     <Notivue v-slot="item">
-        <Notification :item="item" :theme="toastTheme" />
+        <CustomNotification v-if="item.props?.custom" :item="item" :theme="toastTheme" />
+        <Notification v-else :item="item" :theme="toastTheme" />
     </Notivue>
 </template>
 

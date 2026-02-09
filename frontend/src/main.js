@@ -62,15 +62,21 @@ const notivue = createNotivue({
     enqueue: true,
     pauseOnHover: true,
     pauseOnTabChange: false,
+    // NOTE: Do NOT set duration in 'global' — Notivue merges configs as
+    // { ...typeConfig, ...globalConfig, ...pushOptions }, so a global duration
+    // would override all type-specific durations.
     notifications: {
-        global: {
-            duration: 3000
-        },
         success: {
-            duration: 3000
+            duration: 5000
+        },
+        info: {
+            duration: 5000
+        },
+        warning: {
+            duration: 15000
         },
         error: {
-            duration: 8000
+            duration: 20000
         },
         promise: {
             duration: Infinity

@@ -115,51 +115,54 @@ export function notifyUserDraftUpdated(sessionId) {
  * Only notifies for specific state transitions (started, stopped).
  */
 function notifyProcessStateChange(store, msg) {
-    const session = store.getSession(msg.session_id)
-    const title = session?.title || 'Unknown'
-    const truncatedTitle = title.length > 50 ? title.slice(0, 50) + '…' : title
-    const sessionLabel = `Session: "${truncatedTitle}"`
+    const sessionId = msg.session_id
 
     // Pending request notification (tool approval or ask user question)
     if (msg.pending_request) {
         const pendingTitle = msg.pending_request.request_type === 'ask_user_question'
             ? '🖐️ Claude has a question for you'
             : '🖐️ Claude needs your approval'
-        toast.warning(sessionLabel, { title: pendingTitle })
+        toast.session(sessionId, { type: 'warning', title: pendingTitle })
     }
 
     if (msg.state === 'starting') {
         // Process started
-        toast.success(sessionLabel, { title: 'Claude Code started' })
+        toast.session(sessionId, { type: 'success', title: 'Claude Code started' })
     } else if (msg.state === 'dead') {
         // Process stopped - check the reason
         if (msg.kill_reason === 'error') {
-            toast.error(`Error: "${msg.error || 'Unknown'}"\n${sessionLabel}`, {
+            toast.session(sessionId, {
+                type: 'error',
                 title: 'Claude Code terminated due to error',
+                errorMessage: msg.error || 'Unknown error',
             })
         } else if (msg.kill_reason === 'timeout_starting') {
             // Starting timeout - something went wrong
-            toast.error(sessionLabel, {
+            toast.session(sessionId, {
+                type: 'error',
                 title: 'Claude Code stopped: failed to start within 1 minute',
             })
         } else if (msg.kill_reason === 'timeout_user_turn') {
             // User turn timeout - normal cleanup, just info
-            toast.info(sessionLabel, {
+            toast.session(sessionId, {
+                type: 'info',
                 title: 'Claude Code stopped: inactive for 15 minutes',
             })
         } else if (msg.kill_reason === 'timeout_assistant_turn') {
             // Assistant turn inactivity timeout - might be stuck
-            toast.warning(sessionLabel, {
+            toast.session(sessionId, {
+                type: 'warning',
                 title: 'Claude Code stopped: no activity for 2 hours',
             })
         } else if (msg.kill_reason === 'timeout_assistant_turn_absolute') {
             // Assistant turn absolute timeout - ran too long
-            toast.warning(sessionLabel, {
+            toast.session(sessionId, {
+                type: 'warning',
                 title: 'Claude Code stopped: running for over 6 hours',
             })
         } else {
             // Manual kill or shutdown
-            toast.info(sessionLabel, { title: 'Claude Code terminated' })
+            toast.session(sessionId, { title: 'Claude Code terminated' })
         }
     }
 }
@@ -294,8 +297,10 @@ export function useWebSocket() {
                 break
             case 'invalid_title':
                 // Show error toast for invalid session title
-                toast.error(`Error: "${msg.error || 'Unknown'}"\nSession: "${msg.title}"`, {
+                toast.session(msg.session_id, {
+                    type: 'error',
                     title: 'Invalid title',
+                    errorMessage: msg.error || 'Unknown error',
                 })
                 break
             case 'title_suggested':
