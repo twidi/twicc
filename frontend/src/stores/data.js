@@ -1176,6 +1176,12 @@ export const useDataStore = defineStore('data', {
                     error: extra.error || null,
                     pending_request: extra.pending_request || null,
                 }
+
+                // Auto-unarchive: running and archived are mutually exclusive
+                const session = this.sessions[sessionId]
+                if (session?.archived && projectId) {
+                    this.setSessionArchived(projectId, sessionId, false)
+                }
             }
         },
 
@@ -1198,6 +1204,12 @@ export const useDataStore = defineStore('data', {
                         memory: p.memory || null,
                         error: p.error || null,
                         pending_request: p.pending_request || null,
+                    }
+
+                    // Auto-unarchive: running and archived are mutually exclusive
+                    const session = this.sessions[p.session_id]
+                    if (session?.archived && p.project_id) {
+                        this.setSessionArchived(p.project_id, p.session_id, false)
                     }
                 }
             }

@@ -270,6 +270,10 @@ function handleMenuSelect(event, session) {
     } else if (action === 'delete-draft') {
         store.deleteDraftSession(session.id)
     } else if (action === 'archive') {
+        // Stop the process if running — archived and running are mutually exclusive
+        if (canStopProcess(session.id)) {
+            killProcess(session.id)
+        }
         store.setSessionArchived(session.project_id, session.id, true)
     } else if (action === 'unarchive') {
         store.setSessionArchived(session.project_id, session.id, false)
@@ -645,12 +649,6 @@ defineExpose({
                         >
                             <wa-icon name="ellipsis" label="Session menu"></wa-icon>
                         </wa-button>
-                        <!-- Quick action: Archive + stop (only when process is running and session is archivable) -->
-                        <wa-dropdown-item v-if="canStopProcess(session.id) && !session.draft && !session.archived" value="archive">
-                            <wa-icon slot="icon" name="box-archive"></wa-icon>
-                            Archive (and stop the Claude Code process)
-                        </wa-dropdown-item>
-                        <wa-divider v-if="canStopProcess(session.id) && !session.draft && !session.archived"></wa-divider>
                         <!-- Standard actions -->
                         <wa-dropdown-item value="rename">
                             <wa-icon slot="icon" name="pencil"></wa-icon>
@@ -664,9 +662,9 @@ defineExpose({
                             <wa-icon slot="icon" name="thumbtack" class="unpinned-menu-icon"></wa-icon>
                             Unpin
                         </wa-dropdown-item>
-                        <wa-dropdown-item v-if="!canStopProcess(session.id) && !session.draft && !session.archived" value="archive">
+                        <wa-dropdown-item v-if="!session.draft && !session.archived" value="archive">
                             <wa-icon slot="icon" name="box-archive"></wa-icon>
-                            Archive
+                            {{ canStopProcess(session.id) ? 'Archive (it will stop the Claude Code process)' : 'Archive' }}
                         </wa-dropdown-item>
                         <wa-dropdown-item v-if="session.archived" value="unarchive">
                             <wa-icon slot="icon" name="box-open"></wa-icon>
@@ -675,7 +673,7 @@ defineExpose({
                         <!-- Danger actions -->
                         <template v-if="canStopProcess(session.id) || session.draft">
                             <wa-divider></wa-divider>
-                            <wa-dropdown-item v-if="canStopProcess(session.id)" value="stop" variant="danger">
+                            <wa-dropdown-item v-if="canStopProcess(session.id)" value="stop">
                                 <wa-icon slot="icon" name="ban"></wa-icon>
                                 Stop the Claude Code process
                             </wa-dropdown-item>

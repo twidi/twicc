@@ -237,9 +237,13 @@ function openRenameDialog({ showHint = false } = {}) {
 
 /**
  * Archive the current session.
+ * Also stops the process if running — archived and running are mutually exclusive.
  */
 function handleArchive() {
     if (session.value && !session.value.archived && !session.value.draft) {
+        if (canStopProcess.value) {
+            killProcess(props.sessionId)
+        }
         store.setSessionArchived(session.value.project_id, props.sessionId, true)
     }
 }
@@ -302,7 +306,7 @@ defineExpose({
             >
                 <wa-icon name="box-archive" label="Archive"></wa-icon>
             </wa-button>
-            <wa-tooltip v-if="tooltipsEnabled && !session.archived && !session.draft" :for="`session-header-${sessionId}-archive-button`">Archive session</wa-tooltip>
+            <wa-tooltip v-if="tooltipsEnabled && !session.archived && !session.draft" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? 'Archive session (it will stop the Claude Code process)' : 'Archive session' }}</wa-tooltip>
 
             <!-- Rename button (only for main session) -->
             <wa-button
