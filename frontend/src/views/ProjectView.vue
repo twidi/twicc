@@ -368,6 +368,32 @@ const initialSidebarChecked = computed(() => {
     return !sidebarState.open
 })
 
+// Track all route changes for MRU (Most Recently Used) navigation.
+// Stores the full path (including sub-routes like /files, /git, /terminal)
+// so we can restore the exact view when navigating back after archiving.
+watch(() => route.fullPath, (newPath) => {
+    store.touchMruPath(newPath, sessionId.value)
+}, { immediate: true })
+
+// Navigate to previous MRU path when the current session gets archived.
+// Uses a computed to reactively track the archived state of the current session,
+// so this works regardless of where the archive action was triggered
+// (session list menu, session header button, etc.).
+const currentSessionArchived = computed(() => {
+    if (!sessionId.value) return false
+    return store.sessions[sessionId.value]?.archived ?? false
+})
+
+watch(currentSessionArchived, (archived) => {
+    if (!archived) return
+    if (showArchivedSessions.value) return  // session stays visible, no need to navigate
+
+    const nextPath = store.getNextMruPath(sessionId.value)
+    if (nextPath) {
+        router.push(nextPath)
+    }
+})
+
 // On mobile, close sidebar when session changes
 watch(sessionId, (newSessionId) => {
     if (!newSessionId) return

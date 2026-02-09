@@ -130,7 +130,14 @@ export const useDataStore = defineStore('data', {
             // Draft attachments - media files pending send per session
             // { sessionId: Map<mediaId, DraftMedia> }
             // Stored separately from draftMessages to avoid rewriting large blobs on each keystroke
-            attachments: {}
+            attachments: {},
+
+            // MRU (Most Recently Used) navigation tracking
+            // Ordered array of { path, sessionId } entries, most recent first
+            // path: the full route path (e.g. /project/abc/session/xyz/files)
+            // sessionId: the session ID from the route, or null if no session selected
+            // Used to navigate back when archiving the current session
+            mruPaths: [],
         }
     }),
 
@@ -406,6 +413,7 @@ export const useDataStore = defineStore('data', {
                 if (!keepInStore) {
                     delete this.sessions[sessionId]
                 }
+                this.removeMruSession(sessionId)
                 // Delete from IndexedDB
                 deleteDraftSessionFromDb(sessionId).catch(err =>
                     console.warn('Failed to delete draft session from IndexedDB:', err)
@@ -1274,6 +1282,65 @@ export const useDataStore = defineStore('data', {
             }
         },
 
+        // --- MRU (Most Recently Used) navigation tracking ---
+
+        /**
+         * Record the current route in the MRU stack.
+         * Replaces the previous entry for the same path, or for the same sessionId
+         * (so each session only has one entry — the latest URL visited within it).
+         * Entries without a sessionId (project pages) are deduplicated by path.
+         * @param {string} path - The full route path (e.g. /project/abc/session/xyz/files)
+         * @param {string|null} sessionId - The session ID from the route, or null
+         */
+        touchMruPath(path, sessionId) {
+            const mru = this.localState.mruPaths
+            // Remove previous entry for the same session (or same path if no session)
+            const index = sessionId
+                ? mru.findIndex(entry => entry.sessionId === sessionId)
+                : mru.findIndex(entry => entry.path === path)
+            if (index > -1) {
+                mru.splice(index, 1)
+            }
+            mru.unshift({ path, sessionId })
+            // Cap length to avoid unbounded growth
+            if (mru.length > 100) {
+                mru.length = 100
+            }
+        },
+
+        /**
+         * Remove all MRU entries for a given session.
+         * Called when a session is archived or a draft is deleted.
+         * @param {string} sessionId - The session ID to remove
+         */
+        removeMruSession(sessionId) {
+            this.localState.mruPaths = this.localState.mruPaths.filter(
+                entry => entry.sessionId !== sessionId
+            )
+        },
+
+        /**
+         * Find the next MRU path to navigate to.
+         * Returns the path of the most recent entry whose session (if any)
+         * is not archived and not a subagent.
+         * @param {string|null} excludeSessionId - Session to exclude (typically the one being archived)
+         * @returns {string|null} The path to navigate to, or null if none found
+         */
+        getNextMruPath(excludeSessionId = null) {
+            for (const entry of this.localState.mruPaths) {
+                if (entry.sessionId === excludeSessionId) continue
+                // Entries without a session (project pages) are always valid
+                if (!entry.sessionId) return entry.path
+                // Entries with a session: check the session is still valid
+                const session = this.sessions[entry.sessionId]
+                if (!session) continue
+                if (session.archived) continue
+                if (session.parent_session_id) continue
+                return entry.path
+            }
+            return null
+        },
+
         /**
          * Set the archived state of a session.
          * @param {string} projectId - The project ID
@@ -1296,6 +1363,11 @@ export const useDataStore = defineStore('data', {
                 if (shouldUnpin) {
                     session.pinned = false
                 }
+            }
+
+            // Remove from MRU when archiving
+            if (archived) {
+                this.removeMruSession(sessionId)
             }
 
             // Build the PATCH payload
