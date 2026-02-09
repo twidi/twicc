@@ -114,7 +114,7 @@ export function useTerminal(sessionId) {
 
         ws.onopen = () => {
             isConnected.value = true
-            terminal?.writeln('\x1b[32mConnected.\x1b[0m')
+            terminal?.writeln('\x1b[32mConnected.\x1b[0m \x1b[2m(Ctrl+D or type "exit" to disconnect)\x1b[0m')
         }
 
         ws.onmessage = (event) => {
