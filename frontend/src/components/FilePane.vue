@@ -42,12 +42,18 @@ watch(monacoRef, (monaco) => {
 }, { immediate: true })
 
 // --- File content state ---
-const originalContent = ref('')  // content as fetched from server
 const currentContent = ref('')   // content currently in the editor
-const loading = ref(false)
+const savedContent = ref('')     // last fetched content (for instant revert)
+const loading = ref(false)       // true only for the very first load (no file displayed yet)
+const switching = ref(false)     // true during file switch (editor stays visible)
 const error = ref(null)
 const isBinary = ref(false)
 const fileSize = ref(0)
+
+// Whether the editor has ever successfully displayed a file.
+// Used to distinguish "initial load" (show spinner, hide editor)
+// from "file switch" (keep editor visible, show subtle indicator).
+const hasLoadedOnce = ref(false)
 
 // --- Edit mode state ---
 const isEditing = ref(false)
@@ -74,6 +80,10 @@ const editorOptions = computed(() => ({
 // Use the absolute path as Monaco model path for auto language detection
 const monacoPath = computed(() => {
     if (!props.filePath) return undefined
+    // When the editor should not be shown (binary / error), return a stable
+    // sentinel path so the library doesn't try to create a model for the real
+    // file path with empty content (which would pollute the model cache).
+    if (isBinary.value || error.value) return undefined
     return props.filePath
 })
 
@@ -84,10 +94,95 @@ const fileName = computed(() => {
     return parts[parts.length - 1]
 })
 
+// Whether the Monaco editor should be visible.
+// Hidden when: no file selected, initial load (never displayed yet), binary, or error.
+const showEditor = computed(() => {
+    if (!props.filePath) return false
+    if (!hasLoadedOnce.value) return false  // initial load — show spinner instead
+    if (isBinary.value) return false
+    if (error.value) return false
+    return true
+})
+
+// Whether the header toolbar should be visible.
+const showHeader = computed(() => {
+    return !!props.filePath && hasLoadedOnce.value
+})
+
+// Whether a full-area placeholder should be shown (loading spinner, error, binary).
+// These overlay on top of the editor area.
+const showOverlay = computed(() => {
+    if (!props.filePath) return false
+    if (loading.value) return true
+    if (error.value) return true
+    if (isBinary.value) return true
+    return false
+})
+
+/**
+ * Fetch file content from the backend.
+ *
+ * @param {string} filePath - absolute path to fetch
+ * @param {Object} [options]
+ * @param {boolean} [options.isSwitch=false] - true when switching between files
+ *   (editor stays visible). false for the very first load.
+ */
+async function fetchFileContent(filePath, { isSwitch = false } = {}) {
+    if (isSwitch) {
+        switching.value = true
+    } else {
+        loading.value = true
+    }
+    error.value = null
+    saveError.value = null
+    isBinary.value = false
+
+    try {
+        const res = await apiFetch(
+            `${apiPrefix.value}/file-content/?path=${encodeURIComponent(filePath)}`
+        )
+        const data = await res.json()
+
+        if (!res.ok) {
+            error.value = data.error || 'Failed to load file'
+            currentContent.value = ''
+            savedContent.value = ''
+            return
+        }
+
+        if (data.binary) {
+            isBinary.value = true
+            fileSize.value = data.size
+            currentContent.value = ''
+            savedContent.value = ''
+            return
+        }
+
+        if (data.error) {
+            error.value = data.error
+            currentContent.value = ''
+            savedContent.value = ''
+            return
+        }
+
+        currentContent.value = data.content
+        savedContent.value = data.content
+        fileSize.value = data.size
+        hasLoadedOnce.value = true
+    } catch (err) {
+        error.value = 'Network error: failed to load file'
+        currentContent.value = ''
+        savedContent.value = ''
+    } finally {
+        loading.value = false
+        switching.value = false
+    }
+}
+
 watch(() => props.filePath, async (newPath) => {
     if (!newPath) {
-        originalContent.value = ''
         currentContent.value = ''
+        savedContent.value = ''
         error.value = null
         isBinary.value = false
         // Reset edit mode when file is deselected
@@ -96,52 +191,13 @@ watch(() => props.filePath, async (newPath) => {
         return
     }
 
-    loading.value = true
-    error.value = null
-    saveError.value = null
-    isBinary.value = false
     // Reset edit mode when switching files
     isEditing.value = false
     syncEditSwitch()
 
-    try {
-        const res = await apiFetch(
-            `${apiPrefix.value}/file-content/?path=${encodeURIComponent(newPath)}`
-        )
-        const data = await res.json()
-
-        if (!res.ok) {
-            error.value = data.error || 'Failed to load file'
-            originalContent.value = ''
-            currentContent.value = ''
-            return
-        }
-
-        if (data.binary) {
-            isBinary.value = true
-            fileSize.value = data.size
-            originalContent.value = ''
-            currentContent.value = ''
-            return
-        }
-
-        if (data.error) {
-            error.value = data.error
-            originalContent.value = ''
-            currentContent.value = ''
-            return
-        }
-
-        originalContent.value = data.content
-        currentContent.value = data.content
-        fileSize.value = data.size
-    } catch (err) {
-        error.value = 'Network error: failed to load file'
-        originalContent.value = ''
-        currentContent.value = ''
-    } finally {
-        loading.value = false
-    }
+    // If we've already displayed a file before, this is a "switch" —
+    // the editor stays mounted and visible while we fetch.
+    await fetchFileContent(newPath, { isSwitch: hasLoadedOnce.value })
 }, { immediate: true })
 
 // --- Edit mode handlers ---
@@ -187,8 +243,8 @@ async function save() {
             return
         }
 
-        // Success: update original content to match saved content
-        originalContent.value = currentContent.value
+        // Success: update savedContent to reflect the new baseline
+        savedContent.value = currentContent.value
     } catch (err) {
         saveError.value = 'Network error: failed to save file'
     } finally {
@@ -196,9 +252,14 @@ async function save() {
     }
 }
 
-function revert() {
-    currentContent.value = originalContent.value
-    saveError.value = null
+/**
+ * Revert editor content by re-fetching the file from the backend.
+ * Always fetches fresh content (the file may have changed on disk).
+ * Uses isSwitch mode so the editor stays mounted — no flash.
+ */
+async function revert() {
+    if (!props.filePath) return
+    await fetchFileContent(props.filePath, { isSwitch: true })
 }
 
 // Sync wa-switch checked state (Web Component doesn't always pick up Vue reactive state)
@@ -219,8 +280,8 @@ function formatSize(bytes) {
 
 <template>
     <div class="file-pane">
-        <!-- Header toolbar (only when a file is loaded) -->
-        <div v-if="filePath && !loading" class="header">
+        <!-- Header toolbar (visible once a file has been loaded) -->
+        <div v-if="showHeader" class="header">
             <div class="header-left">
                 <wa-switch
                     ref="editSwitchRef"
@@ -254,45 +315,47 @@ function formatSize(bytes) {
                 >Spacer</wa-button>
             </div>
             <div class="header-right">
+                <wa-spinner v-if="switching" class="header-spinner"></wa-spinner>
                 <span class="header-filename" :title="filePath">{{ fileName }}</span>
             </div>
         </div>
 
-        <!-- Save error message -->
+        <!-- Save error message (overlays above the editor) -->
         <div v-if="saveError" class="monaco-placeholder">
             <wa-callout variant="danger" size="small">
                 {{ saveError }}
             </wa-callout>
         </div>
 
-        <!-- Loading state -->
-        <div v-if="loading" class="monaco-placeholder">
-            <wa-spinner></wa-spinner>
-        </div>
+        <!-- Content area: editor is always mounted once, overlays sit on top -->
+        <div class="editor-area">
+            <!-- Monaco editor — mounted once, never destroyed on file switch -->
+            <vue-monaco-editor
+                v-show="showEditor"
+                :value="currentContent"
+                :path="monacoPath"
+                :theme="monacoTheme"
+                :options="editorOptions"
+                :save-view-state="true"
+                @change="onEditorChange"
+            />
 
-        <!-- Error state -->
-        <div v-else-if="error" class="monaco-placeholder">
-            <wa-callout variant="danger" size="small">
-                {{ error }}
-            </wa-callout>
+            <!-- Overlay: initial loading (before any file has been displayed) -->
+            <div v-if="showOverlay" class="monaco-placeholder">
+                <template v-if="loading">
+                    <wa-spinner></wa-spinner>
+                </template>
+                <template v-else-if="error">
+                    <wa-callout variant="danger" size="small">
+                        {{ error }}
+                    </wa-callout>
+                </template>
+                <template v-else-if="isBinary">
+                    <wa-icon name="file-zipper" style="font-size: 1.5rem; opacity: 0.5;"></wa-icon>
+                    <span>Binary file ({{ formatSize(fileSize) }}) cannot be displayed</span>
+                </template>
+            </div>
         </div>
-
-        <!-- Binary file -->
-        <div v-else-if="isBinary" class="monaco-placeholder">
-            <wa-icon name="file-zipper" style="font-size: 1.5rem; opacity: 0.5;"></wa-icon>
-            <span>Binary file ({{ formatSize(fileSize) }}) cannot be displayed</span>
-        </div>
-
-        <!-- Monaco editor -->
-        <vue-monaco-editor
-            v-else
-            :value="currentContent"
-            :path="monacoPath"
-            :theme="monacoTheme"
-            :options="editorOptions"
-            :save-view-state="true"
-            @change="onEditorChange"
-        />
     </div>
 </template>
 
@@ -324,6 +387,7 @@ function formatSize(bytes) {
 .header-right {
     display: flex;
     align-items: center;
+    gap: var(--wa-space-xs);
     min-width: 0;
     margin-left: var(--wa-space-s);
 }
@@ -337,9 +401,20 @@ function formatSize(bytes) {
     white-space: nowrap;
 }
 
+.header-spinner {
+    font-size: var(--wa-font-size-s);
+    flex-shrink: 0;
+}
+
 .header-spacer {
     visibility: hidden;
     pointer-events: none;
+}
+
+.editor-area {
+    flex: 1;
+    position: relative;
+    min-height: 0;
 }
 
 .monaco-placeholder {
