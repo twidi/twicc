@@ -322,6 +322,15 @@ defineExpose({
             </wa-button>
             <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-rename-button`">Rename session</wa-tooltip>
 
+            <!-- Pending request indicator (shown when waiting for user response) -->
+            <wa-icon
+                v-if="store.getPendingRequest(sessionId)"
+                :id="`session-header-${sessionId}-pending-request`"
+                name="hand"
+                class="pending-request-indicator"
+            ></wa-icon>
+            <wa-tooltip v-if="tooltipsEnabled && store.getPendingRequest(sessionId)" :for="`session-header-${sessionId}-pending-request`">Waiting for your response</wa-tooltip>
+
             <h2 :id="`session-header-${sessionId}-title`">{{ displayName }}</h2>
             <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-title`">{{ displayName }}</wa-tooltip>
 
@@ -683,6 +692,19 @@ wa-divider {
 .archive-button:hover,
 .rename-button:hover {
     opacity: 1;
+}
+
+.pending-request-indicator {
+    color: var(--wa-color-warning-60);
+    font-size: var(--wa-font-size-s);
+    animation: pending-pulse 1.5s ease-in-out infinite;
+    flex-shrink: 0;
+    align-self: center;
+}
+
+@keyframes pending-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

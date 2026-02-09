@@ -120,6 +120,14 @@ function notifyProcessStateChange(store, msg) {
     const truncatedTitle = title.length > 50 ? title.slice(0, 50) + '…' : title
     const sessionLabel = `Session: "${truncatedTitle}"`
 
+    // Pending request notification (tool approval or ask user question)
+    if (msg.pending_request) {
+        const pendingTitle = msg.pending_request.request_type === 'ask_user_question'
+            ? '🖐️ Claude has a question for you'
+            : '🖐️ Claude needs your approval'
+        toast.warning(sessionLabel, { title: pendingTitle })
+    }
+
     if (msg.state === 'starting') {
         // Process started
         toast.success(sessionLabel, { title: 'Claude Code started' })
