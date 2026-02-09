@@ -100,6 +100,7 @@ const mergedStyle = computed(() => ({
                         v-if="contentComponent"
                         :is="contentComponent"
                         v-bind="contentProps"
+                        :item="item"
                     />
                     <div v-else-if="contentHtml" v-html="contentHtml" />
                     <template v-else>{{ item.message }}</template>
@@ -141,5 +142,6 @@ const mergedStyle = computed(() => ({
 }
 .Notivue__content-message {
     overflow: hidden;
+    white-space: normal;
 }
 </style>
