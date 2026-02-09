@@ -306,9 +306,25 @@ async function handleSend() {
             store.deleteDraftSession(props.sessionId, { keepInStore: true })
         }
 
-        // Clear the textarea on successful send
+        // Clear the textarea on successful send.
+        // We must clear both the Vue ref AND force the Web Component's internal
+        // <textarea> to update. The wa-textarea Lit component uses the `live()`
+        // directive and an early-return in its value setter (`if (_value === val) return`),
+        // which can cause the visual textarea to keep stale text if we only set
+        // the property. Using `nextTick` + `updateComplete` ensures Vue has
+        // propagated the binding before we force-clear the inner textarea.
         messageText.value = ''
         if (textareaRef.value) {
+            await nextTick()
+            if (textareaRef.value.updateComplete) {
+                await textareaRef.value.updateComplete
+            }
+            // Force-clear the internal <textarea> element inside the Web Component
+            const innerTextarea = textareaRef.value.shadowRoot?.querySelector('textarea')
+            if (innerTextarea) {
+                innerTextarea.value = ''
+            }
+            // Also set the component property to ensure consistency
             textareaRef.value.value = ''
         }
     }
@@ -333,10 +349,18 @@ function handleCancel() {
 /**
  * Clear the textarea content for existing sessions.
  */
-function handleClear() {
+async function handleClear() {
     messageText.value = ''
     store.clearDraftMessage(props.sessionId)
     if (textareaRef.value) {
+        await nextTick()
+        if (textareaRef.value.updateComplete) {
+            await textareaRef.value.updateComplete
+        }
+        const innerTextarea = textareaRef.value.shadowRoot?.querySelector('textarea')
+        if (innerTextarea) {
+            innerTextarea.value = ''
+        }
         textareaRef.value.value = ''
     }
 }
