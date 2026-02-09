@@ -390,6 +390,7 @@ function onPopoverShow() {
                             @change="onTmuxChange"
                             size="small"
                         >Enabled</wa-switch>
+                        <span class="setting-group-hint">Tmux sessions are destroyed when Claude sessions are archived.</span>
                     </div>
                 </section>
             </div>
@@ -461,6 +462,12 @@ function onPopoverShow() {
     font-size: var(--wa-font-size-xs);
     font-weight: var(--wa-font-weight-semibold);
     color: var(--wa-color-text-quiet);
+}
+
+.setting-group-hint {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+    font-style: italic;
 }
 
 .title-prompt-section {
