@@ -19,6 +19,7 @@
     "@vueuse/core": "^14.1.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "dayjs": "^1.11.19",
     "diff": "^8.0.3",
     "dompurify": "^3.3.1",
     "fastpriorityqueue": "^0.7.5",

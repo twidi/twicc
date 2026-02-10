@@ -12,11 +12,14 @@
 **Entrée** : `assets/` (icônes SVG), `modules/Tags/utils/formatBranch.ts`
 **Sortie** : `assets/` copiés, `formatBranch.ts` déjà copié en phase 1.4
 
-- Copier les fichiers SVG : `branch.svg`, `git.svg`, `merge.svg`, `tag.svg`, `minus.svg`, `pencil.svg`, `plus.svg`
+- Copier les fichiers SVG manquants : `branch.svg`, `git.svg`, `merge.svg`, `tag.svg` dans `assets/`. Les fichiers `minus.svg`, `pencil.svg`, `plus.svg` sont **déjà en place** (copiés en phase 5.2 pour `IndexStatus`).
 - Vérifier que `formatBranch.ts` est bien en place (phase 1.4) — il est dans `utils/formatBranch.ts` (import direct : `../utils/formatBranch`, pas de barrel `utils/index.ts`)
-- **Note sur l'import SVG** : Dans le code React, les SVG sont importés avec le suffix `?react` de Vite (ex: `import Pencil from 'assets/pencil.svg?react'` dans `IndexStatus.tsx`), ce qui les transforme en composants React. Pour Vue avec Vite, il faudra soit utiliser `vite-svg-loader` (ou un plugin équivalent), soit les convertir manuellement en composants Vue SFC.
+- **Note sur l'import SVG** : Deux approches distinctes selon le SVG (cf [review d'impact phase 5, point #2](./review-impact-phases-5.md#2-svg-importes-comme-urls-avec-img----acceptable-pour-phase-5-incompatible-pour-phase-6)) :
+  - **`branch.svg`, `tag.svg`, `git.svg`** : Ces SVGs utilisent `fill="currentColor"` ou `stroke="currentColor"` et sont colorés dynamiquement dans le code React source (via `fill: textColour` / `stroke: textColour` en inline style). Ils doivent être **inlinés directement dans le `<template>`** de leurs composants Vue respectifs (`BranchIcon.vue`, `TagIcon.vue`, `GitIcon.vue`). Un `<img>` ne permet pas de modifier le `fill`/`stroke` interne d'un SVG. Les fichiers SVG source servent de référence mais le contenu SVG est copié dans le template du composant.
+  - **`pencil.svg`, `plus.svg`, `minus.svg`** : Ont des couleurs hardcodées et ne nécessitent pas de coloration dynamique. Ils restent importés comme URLs et rendus via `<img>` (approche déjà en place depuis la phase 5).
+  - Le nombre d'instances de ces icônes en page est faible (3 à 9 sur 50 commits, uniquement sur les branch tips, tags et index). L'inline SVG ne pose aucun problème de performance.
 
-**Critère de validation** : Les SVG sont importables comme composants Vue. `formatBranch` fonctionne.
+**Critère de validation** : Les SVG à coloration dynamique (`branch.svg`, `tag.svg`, `git.svg`) sont rendus inline dans le template et acceptent une coloration via props/styles. `formatBranch` fonctionne.
 
 #### Phase 6.2 : GitLogTags.vue et sous-composants
 

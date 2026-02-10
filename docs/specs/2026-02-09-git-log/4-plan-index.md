@@ -29,6 +29,15 @@ Le plan est découpé en fichiers séparés par phase pour faciliter le travail 
 
 ---
 
+## A voir plus tard
+
+- **Refactorer `nodeSize`** : Dans le code React source, `nodeSize` est dans le `GitContextBag` (accessible par tous les modules). Lors de la review de la phase 3, il a ete retire a tort du `GitContextBag` et place uniquement dans le `GraphContextBag`. Or `TableRow` en a aussi besoin pour calculer le gradient de background. Actuellement, `TableRow.vue` utilise `DEFAULT_NODE_SIZE` en dur, ce qui cree un desalignement si `nodeSize` est modifie. A corriger : remettre `nodeSize` dans `GitContextBag`, le fournir depuis `GitLog.vue`, et modifier `TableRow.vue` pour le consommer dynamiquement. Cf [review d'impact phase 5, point #1](./review-impact-phases-5.md#1-nodesize-hardcode-au-lieu-de-dynamique----regression-architecturale----correction-a-planifier-non-bloquant-pour-phase-6).
+- **Reevaluer les tooltips WebAwesome** : La phase 7 a ete supprimee car les tooltips CSS internes fonctionnent pour le portage. Une fois le portage complet termine, reevaluer si une migration vers les composants WebAwesome (`wa-tooltip`, `wa-popover`) apporterait des benefices (accessibilite, positionnement intelligent, etc.). Cf [phase 7](./4-plan-phase-7.md).
+- **Retirer les `data-testid`** : Les agents des phases 4 et 5 ont ajoute des attributs `data-testid` sur certains elements DOM par fidelite au code React source. Le projet n'utilise pas de tests automatises et ces attributs n'ont pas lieu d'etre. A retirer de tous les composants (GraphColumn, CommitNode, TableRow, IndexStatus, etc.).
+- **Verifier l'unicite des attributs `id` HTML** : Plusieurs composants utilisent des attributs `id` generes (ex: `vue-git-log-table-row-${index}`). Si plusieurs instances du composant `GitLog` coexistent sur la meme page (chacune avec son propre arbre Git), ces `id` entreront en collision. Verifier tous les attributs `id` et soit les rendre uniques par instance (prefixe unique), soit les remplacer par des `data-*` attributes ou les supprimer s'ils ne sont pas necessaires.
+
+---
+
 ## 15. Structure de fichiers cible
 
 ```

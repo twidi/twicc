@@ -1,0 +1,57 @@
+<script setup lang="ts">
+import { computed, type CSSProperties } from 'vue'
+import dayjs from 'dayjs'
+import utc from 'dayjs/plugin/utc'
+import relativeTime from 'dayjs/plugin/relativeTime'
+import { useTableContext } from '../../composables/useTableContext'
+import styles from './TimestampData.module.scss'
+
+// ---------------------------------------------------------------------------
+// dayjs plugins
+// ---------------------------------------------------------------------------
+
+dayjs.extend(utc)
+dayjs.extend(relativeTime)
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
+const props = defineProps<{
+  index: number
+  timestamp: string
+  isPlaceholder: boolean
+  style?: CSSProperties
+}>()
+
+// ---------------------------------------------------------------------------
+// Context
+// ---------------------------------------------------------------------------
+
+const { timestampFormat } = useTableContext()
+
+// ---------------------------------------------------------------------------
+// Computed
+// ---------------------------------------------------------------------------
+
+const formattedTimestamp = computed(() => {
+  const commitDate = dayjs.utc(props.timestamp)
+
+  if (dayjs.utc().diff(commitDate, 'week') >= 1) {
+    return commitDate.format(timestampFormat.value)
+  }
+
+  return commitDate.fromNow()
+})
+</script>
+
+<template>
+  <div
+    :style="style"
+    :class="styles.timestamp"
+    :id="`vue-git-log-table-data-timestamp-${index}`"
+    :data-testid="`vue-git-log-table-data-timestamp-${index}`"
+  >
+    {{ isPlaceholder ? '-' : formattedTimestamp }}
+  </div>
+</template>
