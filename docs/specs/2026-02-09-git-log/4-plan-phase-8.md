@@ -209,6 +209,28 @@ Toutes les vérifications visuelles ont été effectuées avec succès dans le n
 
 **Problèmes identifiés :** Aucun problème visuel majeur détecté. Le rendu est cohérent et toutes les features fonctionnent correctement.
 
+### nodeSize refactoring
+
+1. **`nodeSize` added to `GitContextBag`**: Added `nodeSize: Readonly<Ref<number>>` to the `GitContextBag` interface in `composables/keys.ts`. This makes `nodeSize` available to all modules (graph, table, tags) via `useGitContext()`, matching the original React source where it was part of the shared context.
+
+2. **`nodeSize` kept in `GraphContextBag`**: The existing `nodeSize` field in `GraphContextBag` is preserved. Graph components continue to consume it via `useGraphContext()`. This avoids breaking any existing graph component code.
+
+3. **`nodeSize` prop on `GitLog.vue`**: Added an optional `nodeSize?: number` prop with default `DEFAULT_NODE_SIZE` (20). The prop value is provided in the `GitContextBag` via `provide()`. The `smallestAvailableGraphWidth` computed also uses `props.nodeSize` instead of the hardcoded constant, ensuring consistency when the consumer changes the node size.
+
+4. **`nodeSize` added to `GitLogCommonProps` in `types.ts`**: This makes the prop part of the public API type, so consumers of the component can see and use it. No conflict with `GraphPropsCommon` which also has its own `nodeSize` -- they are independent prop interfaces for different components (`GitLog` vs `GitLogGraphHTMLGrid`).
+
+5. **`TableRow.vue` fixed**: Replaced the hardcoded `DEFAULT_NODE_SIZE` import with the dynamic `nodeSize` value from `useGitContext()`. The `backgroundStyles` computed now uses `nodeSize.value` instead of the constant, ensuring the table row background gradient stays aligned with the actual node size when it is changed.
+
+6. **`useGitContext.ts` unchanged**: The composable returns the full `GitContextBag` object, so `nodeSize` is automatically available to consumers without any code change.
+
+7. **`index.ts` unchanged**: `GitLogCommonProps` is already exported, so the `nodeSize` property is accessible to external consumers via the existing type export.
+
+8. **`GitLogTestView.vue` updated**: Added a number input control (range 10-40) in the toolbar labeled "Node" to dynamically adjust the node size. The value is passed to `<GitLog :node-size="nodeSize">`, which provides it to all descendants via `GitContextBag`.
+
+9. **Single source of truth via `GitContextBag`**: `GitLog.vue` provides `nodeSize` via `GitContextBag`. `GraphCore.vue` reads it from `useGitContext()` and re-provides it in `GraphContextBag` for graph-specific consumers. The consumer only needs to pass `:node-size` to `<GitLog>`.
+
+10. **`nodeSize` removed from graph component props**: `GraphCore.vue` and `HTMLGridGraph.vue` no longer accept a `nodeSize` prop -- they read it from `GitContextBag` instead. The `nodeSize` field was also removed from `GraphPropsCommon` in `types.ts`. The consumer no longer passes `:node-size` to `<GitLogGraphHTMLGrid>`; the value flows through `GitLog` -> `GitContextBag` -> `GraphCore` -> `GraphContextBag` -> graph descendants.
+
 ---
 
 ## Tasks tracking

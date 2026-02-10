@@ -51,6 +51,7 @@ export interface GitContextBag {
   paging: Readonly<Ref<GraphPaging | undefined>>
   isIndexVisible: Readonly<Ref<boolean>>
   filter: Readonly<Ref<CommitFilter | undefined>>
+  nodeSize: Readonly<Ref<number>>
   graphOrientation: Readonly<Ref<GraphOrientation>>
   setGraphOrientation: (orientation: GraphOrientation) => void
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CSSProperties } from 'vue'
 import { computed } from 'vue'
-import { ROW_HEIGHT, BACKGROUND_HEIGHT_OFFSET, DEFAULT_NODE_SIZE } from '../../constants'
+import { ROW_HEIGHT, BACKGROUND_HEIGHT_OFFSET } from '../../constants'
 import { useGitContext } from '../../composables/useGitContext'
 import { useTheme } from '../../composables/useTheme'
 import { useSelectCommit } from '../../composables/useSelectCommit'
@@ -48,6 +48,7 @@ const {
 const { selectCommitHandler } = useSelectCommit()
 
 const {
+  nodeSize,
   selectedCommit,
   previewedCommit,
   enableSelectedCommitStyling,
@@ -87,7 +88,7 @@ const backgroundColour = computed(() => {
 // ---------------------------------------------------------------------------
 
 const backgroundStyles = computed(() => {
-  const height = DEFAULT_NODE_SIZE + BACKGROUND_HEIGHT_OFFSET
+  const height = nodeSize.value + BACKGROUND_HEIGHT_OFFSET
   const padding = (ROW_HEIGHT - height) / 2
   const end = padding + height
 

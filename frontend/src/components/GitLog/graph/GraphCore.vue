@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, provide, useSlots, watchEffect } from 'vue'
-import { DEFAULT_NODE_SIZE } from '../constants'
 import { useGitContext } from '../composables/useGitContext'
 import { useColumnData } from '../composables/useColumnData'
 import { useResize } from '../composables/useResize'
@@ -22,7 +21,6 @@ import styles from './GraphCore.module.scss'
 // ---------------------------------------------------------------------------
 
 const props = withDefaults(defineProps<{
-  nodeSize?: number
   nodeTheme?: NodeTheme
   breakPointTheme?: BreakPointTheme
   orientation?: GraphOrientation
@@ -31,7 +29,6 @@ const props = withDefaults(defineProps<{
   showCommitNodeTooltips?: boolean
   highlightedBackgroundHeight?: number
 }>(), {
-  nodeSize: DEFAULT_NODE_SIZE,
   nodeTheme: 'default',
   breakPointTheme: 'dot',
   orientation: 'normal',
@@ -69,6 +66,7 @@ const {
   filter,
   headCommit,
   graphData,
+  nodeSize,
   setGraphOrientation,
 } = useGitContext()
 
@@ -127,7 +125,7 @@ const graphContextValue: GraphContextBag = {
   highlightedBackgroundHeight: computed(() => props.highlightedBackgroundHeight),
   nodeTheme: computed(() => props.nodeTheme),
   breakPointTheme: computed(() => props.breakPointTheme),
-  nodeSize: computed(() => props.nodeSize),
+  nodeSize,
   graphWidth: graphWidthWithVirtual,
   orientation: computed(() => props.orientation),
   visibleCommits,

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { DEFAULT_NODE_SIZE } from '../constants'
 import type {
   BreakPointTheme,
   GraphOrientation,
@@ -13,7 +12,6 @@ import HTMLGridContent from './HTMLGridContent.vue'
 // ---------------------------------------------------------------------------
 
 withDefaults(defineProps<{
-  nodeSize?: number
   nodeTheme?: NodeTheme
   breakPointTheme?: BreakPointTheme
   orientation?: GraphOrientation
@@ -22,7 +20,6 @@ withDefaults(defineProps<{
   showCommitNodeTooltips?: boolean
   highlightedBackgroundHeight?: number
 }>(), {
-  nodeSize: DEFAULT_NODE_SIZE,
   nodeTheme: 'default',
   breakPointTheme: 'dot',
   orientation: 'normal',
@@ -34,7 +31,6 @@ withDefaults(defineProps<{
 
 <template>
   <GraphCore
-    :node-size="nodeSize"
     :node-theme="nodeTheme"
     :break-point-theme="breakPointTheme"
     :orientation="orientation"

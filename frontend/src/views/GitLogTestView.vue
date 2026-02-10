@@ -29,6 +29,12 @@ const PALETTE_OPTIONS = [
 const selectedPalette = ref('neon-aurora-dark')
 
 // ---------------------------------------------------------------------------
+// Node size
+// ---------------------------------------------------------------------------
+
+const nodeSize = ref(20)
+
+// ---------------------------------------------------------------------------
 // Orientation
 // ---------------------------------------------------------------------------
 
@@ -120,6 +126,16 @@ const displayedCommitLabel = computed(() => {
                     {{ opt.label }}
                 </option>
             </select>
+            <label class="toggle">
+                <span>Node</span>
+                <input
+                    v-model.number="nodeSize"
+                    type="number"
+                    class="control-input control-input--narrow"
+                    min="10"
+                    max="40"
+                />
+            </label>
             <select v-model.number="pageSize" class="control-select control-select--narrow" @change="currentPage = 0">
                 <option :value="10">10</option>
                 <option :value="20">20</option>
@@ -160,7 +176,8 @@ const displayedCommitLabel = computed(() => {
                 :on-select-commit="handleSelectCommit"
                 :on-preview-commit="handlePreviewCommit"
                 :show-headers="true"
-                :default-graph-width="300"
+                :default-graph-width="100"
+                :node-size="nodeSize"
                 :enable-selected-commit-styling="true"
                 :enable-previewed-commit-styling="true"
             >
@@ -277,6 +294,10 @@ const displayedCommitLabel = computed(() => {
 
 .control-input {
     width: 140px;
+}
+
+.control-input--narrow {
+    width: 50px;
 }
 
 .control-select--palette {

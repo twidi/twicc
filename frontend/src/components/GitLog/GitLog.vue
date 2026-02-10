@@ -53,6 +53,7 @@ const props = withDefaults(defineProps<{
   onPreviewCommit?: (commit?: Commit) => void
   showHeaders?: boolean
   rowSpacing?: number
+  nodeSize?: number
   defaultGraphWidth?: number
   enableSelectedCommitStyling?: boolean
   enablePreviewedCommitStyling?: boolean
@@ -63,6 +64,7 @@ const props = withDefaults(defineProps<{
   showGitIndex: true,
   showHeaders: false,
   rowSpacing: 0,
+  nodeSize: DEFAULT_NODE_SIZE,
   enableSelectedCommitStyling: true,
   enablePreviewedCommitStyling: true,
 })
@@ -189,7 +191,7 @@ const isIndexVisible = computed<boolean>(() => {
 // ---------------------------------------------------------------------------
 
 const smallestAvailableGraphWidth = computed(() => {
-  return graphData.value.graphWidth * (DEFAULT_NODE_SIZE + NODE_BORDER_WIDTH * 2)
+  return graphData.value.graphWidth * (props.nodeSize + NODE_BORDER_WIDTH * 2)
 })
 
 const graphContainerWidth = ref<number | undefined>(undefined)
@@ -313,6 +315,7 @@ const gitContextValue: GitContextBag = {
   paging: computed(() => props.paging ? pageIndices.value : undefined),
   isIndexVisible,
   filter: computed(() => props.filter),
+  nodeSize: computed(() => props.nodeSize),
   graphOrientation: computed(() => graphOrientation.value),
   setGraphOrientation: (orientation: GraphOrientation) => { graphOrientation.value = orientation },
 }

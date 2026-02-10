@@ -313,13 +313,6 @@ export interface GraphPropsCommon {
   enableResize?: boolean
 
   /**
-   * The diameter, in pixels, of the
-   * commit node elements rendered on
-   * the graph.
-   */
-  nodeSize?: number
-
-  /**
    * The orientation of the graph.
    *
    * Normal mode draws the graph from left to right,
@@ -492,6 +485,16 @@ export interface GitLogCommonProps<T = unknown> {
    * the external Git provider.
    */
   urls?: GitLogUrlBuilder<T>
+
+  /**
+   * The diameter, in pixels, of the
+   * commit node elements rendered on
+   * the graph. Also used for the table
+   * row background gradient height.
+   *
+   * @default DEFAULT_NODE_SIZE (20)
+   */
+  nodeSize?: number
 
   /**
    * The default width of the graph in pixels.

@@ -17,6 +17,8 @@
   z-index: 100;
   opacity: 0;
   transition: all ease-in-out 0.2s;
+  border-radius: 0;
+  box-shadow: none;
 
   &:hover {
     opacity: 1;
