@@ -56,25 +56,29 @@ def get_session_info(session_id: str) -> tuple[str, bool]:
 
     Returns (cwd, archived).
 
-    Working directory priority order:
-    1. Session.git_directory (resolved git root)
-    2. Session.cwd (Claude's working directory)
-    3. Session.project.directory (project root)
-    4. ~ (home directory fallback)
+    Working directory priority order (with existence check at each level):
+    1. Session.git_directory (resolved git root) — if it exists on disk
+    2. Session.project.directory (project root) — if it exists on disk
+    3. ~ (home directory fallback)
     """
     from twicc.core.models import Session
 
+    home = os.path.expanduser("~")
+
     try:
         session = Session.objects.select_related("project").get(id=session_id)
-        cwd = (
-            session.git_directory
-            or session.cwd
-            or session.project.directory
-            or os.path.expanduser("~")
-        )
-        return cwd, session.archived
     except Session.DoesNotExist:
-        return os.path.expanduser("~"), False
+        return home, False
+
+    candidates = [
+        session.git_directory,
+        session.project.directory if session.project else None,
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isdir(candidate):
+            return candidate, session.archived
+
+    return home, session.archived
 
 
 # ── tmux helpers ──────────────────────────────────────────────────────────
@@ -297,10 +301,6 @@ async def terminal_application(scope, receive, send):
     # ── Resolve working directory and session state ──────────────────
     session_id = scope["url_route"]["kwargs"]["session_id"]
     cwd, archived = await get_session_info(session_id)
-
-    # Ensure cwd exists; fall back to home if it doesn't
-    if not os.path.isdir(cwd):
-        cwd = os.path.expanduser("~")
 
     # ── Spawn PTY (tmux or raw shell) ────────────────────────────────
     use_tmux = wants_tmux(scope)
