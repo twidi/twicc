@@ -4,6 +4,7 @@ import ProjectView from './views/ProjectView.vue'
 import SessionView from './views/SessionView.vue'
 import LoginView from './views/LoginView.vue'
 import JsonTestView from './views/JsonTestView.vue'
+import GitLogTestView from './views/GitLogTestView.vue'
 import { useAuthStore } from './stores/auth'
 
 const routes = [
@@ -26,6 +27,7 @@ const routes = [
     },
     { path: '/', name: 'home', component: HomeView },
     { path: '/json-test', name: 'json-test', component: JsonTestView, meta: { public: true } },
+    { path: '/git-log-test', name: 'git-log-test', component: GitLogTestView, meta: { public: true } },
     {
         path: '/project/:projectId',
         component: ProjectView,

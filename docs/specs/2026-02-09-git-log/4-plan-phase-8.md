@@ -1,4 +1,4 @@
-# GitLog — Plan de portage — Phase 8
+ C'est quand même super cool ce qu'on peut faire de nos jours. Voici le petit overlay sur mon écran quand j'active le speech to text avec l'outil que j'ai enfin que claude a causé pour moi Coder, pas causer. # GitLog — Plan de portage — Phase 8
 
 > Fait partie de la spécification [GitLog — Port de @tomplum/react-git-log vers Vue 3](./1-contexte.md)
 > Document principal : [Plan de portage — Index](./4-plan-index.md)
@@ -130,10 +130,91 @@ Le développement se fait dans un **worktree Git** séparé du repo principal. L
 
 ---
 
+## Decisions made during implementation
+
+### Phase 8.1
+
+1. **Exported all types from `types.ts` as `export type`**: All public types and interfaces are re-exported using `export type { ... } from './types'` to ensure tree-shaking and clear separation between runtime and type-level exports.
+
+2. **Composables exported: `useGitContext` and `useThemeContext` only**: These two composables are the public API for consumers needing to interact with the GitLog context from outside the component tree (e.g., in custom slot implementations). The other composables (`useGraphContext`, `useTableContext`, `useTheme`, `useColumnData`, `usePlaceholderData`, `useResize`, `useSelectCommit`) are internal implementation details and are not exported from the public API.
+
+3. **Scoped slots documented in `index.ts` comments**: The available scoped slots and their prop types are documented directly in the type exports section comment block, referencing the `CustomTableRowProps` type for the `#row` slot of `GitLogTable`.
+
+4. **`GitLogGraphHTMLGrid` is exported as an alias of `HTMLGridGraph.vue`**: The internal file is named `HTMLGridGraph.vue` but the public API exports it as `GitLogGraphHTMLGrid` to match the naming convention (`GitLog` prefix for all public components).
+
+### Phase 8.2
+
+1. **File location: `__tests__/fakeData.ts`**: Created at `frontend/src/components/GitLog/__tests__/fakeData.ts` as specified in the plan. The `__tests__` directory is new and dedicated to test-related data files.
+
+2. **41 commits total with realistic topology**: The dataset contains 41 commits spanning ~6 weeks (1008 hours), with dates generated from a fixed base date (`2026-01-05T09:00:00Z`) using hour offsets for reproducibility.
+
+3. **Branches**: 4 local branches (`refs/heads/main`, `refs/heads/feature/auth`, `refs/heads/feature/dashboard`, `refs/heads/fix/login-bug`) + 1 remote branch (`refs/remotes/origin/feature/notifications`). The remote branch is unmerged to test concurrent unresolved branches.
+
+4. **3 merge commits with 2 parents each**: `feature/auth` merged into main, `fix/login-bug` merged into main, `feature/dashboard` merged into main. Each merge commit has the main-line parent first and the branch parent second.
+
+5. **3 tags placed on specific commits**: `refs/tags/v1.0.0` on the release commit, `refs/tags/v1.1.0` on the fix/login-bug merge commit, `refs/tags/v2.0.0-beta` on the feature/dashboard merge commit. Tags are assigned via the `branch` field of the commit they tag, following the convention observed in the existing placeholder data (`placeholderData.ts`).
+
+6. **HEAD commit uses `refs/heads/main`**: The HEAD commit (`a1b2c3d`) must have `branch: 'refs/heads/main'` so that `GitLog.vue`'s head detection (`branch.includes(currentBranch)`) works correctly when `currentBranch` is `"main"`. Tags are placed on non-tip commits instead.
+
+7. **3+ concurrent branches**: Around hours 820-960, the branches `refs/heads/main`, `refs/heads/feature/dashboard`, and `refs/remotes/origin/feature/notifications` all coexist, producing at least 3 concurrent columns in the graph.
+
+8. **4 authors with varied distribution**: Alice Martin (project lead, merges and infra), Bob Chen (backend/tooling), Clara Santos (features and UI), David Kim (integrations and notifications).
+
+9. **Strictly descending date order**: All commits are ordered newest-first by `committerDate`, matching `git log` output. This was validated programmatically.
+
+10. **Exported as named constants**: `fakeEntries` (type `GitLogEntry[]`) and `fakeIndexStatus` (type `GitLogIndexStatus` with `{ modified: 3, added: 1, deleted: 0 }`), ready to be consumed by the test view in phase 8.3.
+
+### Phase 8.3
+
+1. **View location: `src/views/GitLogTestView.vue`**: Created as a standalone SFC following the project convention (same directory as `JsonTestView.vue`, `HomeView.vue`, etc.). Uses `<script setup>` with plain JavaScript (no TypeScript), consistent with all other views in the project.
+
+2. **Route: `/git-log-test` with `meta: { public: true }`**: Added to the router following the exact pattern of the existing `/json-test` route. The `public` meta flag bypasses the auth guard so the page is accessible without login, making it usable as a standalone demo.
+
+3. **Refactored `HTMLGridGraph.vue` into wrapper + content pattern**: The original `HTMLGridGraph.vue` directly called `useGraphContext()`, but `GraphContext` is provided by `GraphCore.vue`. When `GitLogGraphHTMLGrid` was used as a standalone slot child of `<GitLog>`, it was not wrapped by `GraphCore`, causing a runtime error. Fix: `HTMLGridGraph.vue` was refactored into a thin wrapper that renders `<GraphCore>` with a new `<HTMLGridContent />` component as its slot child. `HTMLGridContent.vue` contains the original grid rendering logic (SkeletonGraph, IndexPseudoRow, GraphRow) and safely consumes `useGraphContext()` because it is always rendered inside `GraphCore`.
+
+4. **`sass-embedded` added as dev dependency**: The GitLog component uses SCSS Modules (`.module.scss` files) which require a Sass preprocessor. The project did not have one installed. `sass-embedded` was added via `npm install -D sass-embedded` in the frontend directory.
+
+5. **Compact single-line toolbar**: All controls (filter input, palette dropdown, page size dropdown, pagination buttons, dark mode toggle, flipped toggle) are laid out in a single horizontal flexbox row with `gap: 8px`. No labels are used — controls are self-explanatory via placeholders and visual context. This avoids toolbar wrapping on standard screen widths.
+
+6. **Commit detail panel at bottom**: A fixed-height panel (`max-height: 180px`, scrollable) appears at the bottom of the page when a commit is selected or hovered. It shows a badge ("Selected" or "Previewed (hover)"), the commit hash, message, branch, author, date, and parent hashes. The `displayedCommit` computed property prioritizes selection over preview (`selectedCommit ?? previewedCommit`).
+
+7. **All features exercised via props**: The `<GitLog>` component is configured with: `:entries`, `current-branch="main"`, `:theme` (reactive dark/light), `:colours` (reactive palette), `:paging` (reactive page/size), `:filter` (reactive commit message filter), `:show-git-index="true"`, `:index-status`, `:on-select-commit`, `:on-preview-commit`, `:show-headers="true"`, `:default-graph-width="300"`, `:enable-selected-commit-styling="true"`, `:enable-previewed-commit-styling="true"`. The three sub-components are passed via named slots `#tags`, `#graph`, `#table` with their own props (e.g., `:orientation`, `:enable-resize="true"`, `:show-commit-node-tooltips="true"`, `timestamp-format="YYYY-MM-DD HH:mm"`).
+
+8. **Dark mode is CSS-only on the view**: The view toggles a `.dark` class on the root element and uses scoped CSS for the toolbar, detail panel, and background. The GitLog component itself receives the `:theme` prop (`'dark'` or `'light'`) and handles its own theming internally.
+
+### Phase 8.4
+
+**Rapport de validation visuelle (MCP Chrome)**
+
+Toutes les vérifications visuelles ont été effectuées avec succès dans le navigateur via MCP Chrome.
+
+**Rendu du graphe :**
+- ✅ Le graphe est rendu avec des nœuds colorés, des lignes verticales, horizontales et des courbes (merges/branches)
+- ✅ Les branches et tags s'affichent correctement dans la colonne de gauche (index, main, v2.0.0-beta, feature/dashboard, feature/notifications, v1.1.0, v1.0.0)
+- ✅ Le tableau (commit message, auteur, timestamp) s'affiche correctement à droite
+- ✅ Les couleurs sont appliquées correctement (une couleur par colonne/branche)
+- ✅ Le pseudo-commit index apparaît en haut avec une bordure pointillée et la ligne WIP (3 modified, 1 added)
+- ✅ Les merge commits sont rendus avec les courbes de jonction appropriées
+
+**Interactions testées :**
+- ✅ Clic sur un commit → le commit est surligné et ses détails s'affichent dans le panel en bas (hash, message, branche, auteur, date, parents)
+- ✅ Hover sur une ligne → preview visible (surlignage différent de la sélection)
+- ✅ Toggle dark/light mode → les couleurs s'adaptent correctement (fond blanc en light, fond sombre en dark)
+- ✅ Changement de palette → les couleurs du graphe changent (testé Neon Aurora Dark → Rainbow Dark → Neon Aurora Dark)
+- ✅ Filtrage par texte → les commits sont filtrés (testé avec "auth" : seuls les commits auth s'affichent avec breakpoints rouges)
+- ✅ Pagination → navigation entre les pages fonctionnelle (testé page 1/3 → page 2/3)
+- ✅ Toggle Flipped → le composant réagit au changement d'orientation
+
+**Erreurs console :** Aucune erreur console détectée, ni au chargement initial ni après les interactions.
+
+**Problèmes identifiés :** Aucun problème visuel majeur détecté. Le rendu est cohérent et toutes les features fonctionnent correctement.
+
+---
+
 ## Tasks tracking
 
-- [ ] Phase 8.0: Démarrage des serveurs de développement dans le worktree
-- [ ] Phase 8.1: Export public et API du composant
-- [ ] Phase 8.2: Données de test simulées (fake git history)
-- [ ] Phase 8.3: Vue de test indépendante (page dédiée)
-- [ ] Phase 8.4: Validation visuelle dans le navigateur (MCP Chrome)
+- [x] Phase 8.0: Démarrage des serveurs de développement dans le worktree
+- [x] Phase 8.1: Export public et API du composant
+- [x] Phase 8.2: Données de test simulées (fake git history)
+- [x] Phase 8.3: Vue de test indépendante (page dédiée)
+- [x] Phase 8.4: Validation visuelle dans le navigateur (MCP Chrome)
