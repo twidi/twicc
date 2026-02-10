@@ -415,17 +415,19 @@ function handleNeedsTitle() {
                     :session-id="session?.id"
                     :git-directory="session?.git_directory"
                     :project-directory="store.getProject(session?.project_id)?.directory"
-                    :active="activeTabId === 'files'"
+                    :active="isActive && activeTabId === 'files'"
                     :is-draft="session?.draft === true"
                 />
             </wa-tab-panel>
             <wa-tab-panel name="git">
-                <GitPanel />
+                <GitPanel
+                    :active="isActive && activeTabId === 'git'"
+                />
             </wa-tab-panel>
             <wa-tab-panel name="terminal">
                 <TerminalPanel
                     :session-id="session?.id"
-                    :active="activeTabId === 'terminal'"
+                    :active="isActive && activeTabId === 'terminal'"
                 />
             </wa-tab-panel>
         </wa-tab-group>

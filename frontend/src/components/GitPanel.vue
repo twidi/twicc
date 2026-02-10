@@ -1,4 +1,10 @@
 <script setup>
+defineProps({
+    active: {
+        type: Boolean,
+        default: false,
+    },
+})
 </script>
 
 <template>
