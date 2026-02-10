@@ -11,6 +11,7 @@ import type {
   GitLogPaging,
   GitLogStylingProps,
   GitLogUrlBuilder,
+  GraphOrientation,
   ThemeColours,
   ThemeMode,
 } from './types'
@@ -78,6 +79,7 @@ const slots = useSlots()
 
 const selectedCommit = ref<Commit>()
 const previewedCommit = ref<Commit>()
+const graphOrientation = ref<GraphOrientation>('normal')
 
 // ---------------------------------------------------------------------------
 // Data pipeline (computed)
@@ -311,6 +313,8 @@ const gitContextValue: GitContextBag = {
   paging: computed(() => props.paging ? pageIndices.value : undefined),
   isIndexVisible,
   filter: computed(() => props.filter),
+  graphOrientation: computed(() => graphOrientation.value),
+  setGraphOrientation: (orientation: GraphOrientation) => { graphOrientation.value = orientation },
 }
 
 provide(GIT_CONTEXT_KEY, gitContextValue)

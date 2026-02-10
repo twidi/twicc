@@ -1,4 +1,4 @@
-# GitLog — Plan de portage — Phase 6
+# GitLog — Plan de portage — Phase 6 — **COMPLETED**
 
 > Fait partie de la spécification [GitLog — Port de @tomplum/react-git-log vers Vue 3](./1-contexte.md)
 > Document principal : [Plan de portage — Index](./4-plan-index.md)
@@ -41,5 +41,49 @@
 
 ## Tasks tracking
 
-- [ ] Phase 6.1 : Icônes SVG et utilitaires
-- [ ] Phase 6.2 : GitLogTags.vue et sous-composants
+- [x] Phase 6.1 : Icônes SVG et utilitaires
+- [x] Phase 6.2 : GitLogTags.vue et sous-composants
+
+## Decisions made during implementation
+<!-- Free format -->
+
+### Phase 6.1
+
+1. **Icon components use `useTheme()` internally instead of a color prop**: The React source components (`BranchIcon`, `TagIcon`, `GitIcon`) all consume `useTheme()` internally to get `textColour` and `shiftAlphaChannel`. The Vue components follow the same pattern — they do not accept a color prop. The color is determined by the theme context, consistent with the React source behavior.
+
+2. **SVG files copied to `assets/` as reference**: All 4 missing SVGs (`branch.svg`, `tag.svg`, `git.svg`, `merge.svg`) were copied to `assets/`. For `branch.svg`, `tag.svg`, and `git.svg`, the SVG content is inlined in the Vue component templates (as mandated by the review d'impact). The files in `assets/` serve as reference only. `merge.svg` is kept in `assets/` for potential future use.
+
+3. **Vue class fallthrough for parent styling**: The React components accept a `className` prop that gets merged with the component's internal class via `classNames()`. In the Vue components, Vue's automatic attribute fallthrough on the root `<svg>` element handles this — parent components can pass `:class="styles.icon"` and it merges with the component's internal `:class="styles.icon"` automatically. No explicit `class` prop needed.
+
+4. **No `data-testid` attributes**: Per project decision (review d'impact phase 5, point #4), `data-testid` attributes are not added to these components. The `id` attributes are kept (e.g., `id="branch-icon"`) as they were present in the React source.
+
+### Phase 6.2
+
+1. **`graphOrientation` added to `GitContextBag`**: The React source stores `graphOrientation` in `GitContext` (set by `GitLogCore` as state). The Vue port had it only in `GraphContextBag`, but `Tags` is a sibling of `Graph` (not a descendant), so it cannot access `GraphContextBag`. To match the React source pattern, `graphOrientation` and `setGraphOrientation` were added to `GitContextBag`. `GitLog.vue` provides a default of `'normal'`, and `GraphCore.vue` uses `watchEffect` to sync its `orientation` prop to the shared `GitContext`. This is architecturally the same as the `graphWidth`/`setGraphWidth` pattern already in the codebase.
+
+2. **CSS-based tooltip instead of `react-tiny-popover`**: Following the same approach as `CommitNode.vue` (Phase 4.6), the `BranchTag` tooltip uses CSS absolute positioning. The tooltip is positioned to the right of the tag badge (`left: 100%; top: 50%; transform: translateY(-50%)`), matching the React source's `positions='right'` Popover configuration. No arrow/pointer is rendered (the React source's `ArrowContainer` is not reproduced, consistent with the CommitNode tooltip approach).
+
+3. **`Link.vue` uses `linkClass` prop instead of Vue class fallthrough**: The React `Link` component accepts a `className` prop merged via `classNames()`. The Vue `Link.vue` uses a `linkClass` prop instead of relying on Vue's attribute fallthrough, because the `<a>` element already has its own `:class` binding (combining the base `.link` class with the parent-provided class). Using a dedicated prop makes the merge explicit.
+
+4. **No `data-testid` attributes**: Per project decision (review d'impact phase 5, point #4), `data-testid` attributes are not added to any of the Phase 6.2 components.
+
+5. **React SCSS bug in `IndexLabel.module.scss`**: The React source `IndexLabel.tsx` references `styles.indexLabel` but its SCSS file defines `.branchName` instead. This is a bug in the React source. The Vue `IndexLabel.module.scss` uses `.indexLabel` to match the component code reference.
+
+6. **`BranchTag` line positioning uses pixel values**: The React source passes `lineRight` and `lineWidth` as numbers to inline styles. In Vue, CSS `right` and `width` properties require units, so the values are interpolated with `px` suffix (`right: ${lineRight}px`, `width: ${lineWidth}px`).
+
+7. **Tags filtering matches React source**: Like the React `Tags.tsx`, `GitLogTags.vue` applies the `filter` on the paginated commits (after slicing by `paging.startIndex/endIndex`). This is the "triple filtering" behavior documented in the architecture spec (point 3 of the triple filtering).
+
+## Resolved questions and doubts
+<!-- Free format -->
+
+### Phase 6.1
+
+1. **Should icon components accept a color prop or use useTheme() internally?** — Resolved: use `useTheme()` internally, matching the React source. The parent components (`BranchLabel`, `TagLabel`, `IndexLabel`) never pass a color to the icons — the icons determine their own color from the theme context.
+
+### Phase 6.2
+
+1. **How should Tags access `graphOrientation` without being nested inside GraphCore?** — Resolved: added `graphOrientation` and `setGraphOrientation` to `GitContextBag` (the shared context accessible by all modules). `GraphCore.vue` syncs its `orientation` prop to the shared context via `watchEffect`. This matches the React source architecture where `graphOrientation` is part of `GitContext`.
+
+2. **Should the tooltip use the same CSS positioning approach as CommitNode or reproduce the Popover library?** — Resolved: use the same CSS-based approach as `CommitNode.vue`, with positioning adapted to the right side instead of top/bottom. The CSS is simpler and avoids any third-party dependency.
+
+3. **How should `Link.vue` handle the parent-provided class?** — Resolved: use a `linkClass` prop rather than Vue attribute fallthrough. The component already binds its own `.link` class on the root `<a>` element, so a dedicated prop makes the class merge explicit via the array syntax `[styles.link, linkClass]`.

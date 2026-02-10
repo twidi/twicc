@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, useSlots } from 'vue'
+import { computed, provide, useSlots, watchEffect } from 'vue'
 import { DEFAULT_NODE_SIZE } from '../constants'
 import { useGitContext } from '../composables/useGitContext'
 import { useColumnData } from '../composables/useColumnData'
@@ -69,7 +69,14 @@ const {
   filter,
   headCommit,
   graphData,
+  setGraphOrientation,
 } = useGitContext()
+
+// Sync orientation prop to the shared GitContext so sibling components
+// (e.g. Tags) can read it without accessing the GraphContext.
+watchEffect(() => {
+  setGraphOrientation(props.orientation)
+})
 
 // ---------------------------------------------------------------------------
 // Resize
