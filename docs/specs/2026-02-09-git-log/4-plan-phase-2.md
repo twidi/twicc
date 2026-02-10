@@ -19,6 +19,7 @@ Convertir les hooks React en composables Vue (Composition API). Chaque composabl
 - Définir les `InjectionKey<T>` pour chaque contexte : `GIT_CONTEXT_KEY`, `THEME_CONTEXT_KEY`, `GRAPH_CONTEXT_KEY`, `TABLE_CONTEXT_KEY`
 - Définir les interfaces TypeScript correspondantes (`GitContextBag`, `ThemeContextBag`, `GraphContextBag`, `TableContextBag`)
 - Ces types décrivent les valeurs `provide`d — les propriétés réactives (`Ref`, `ComputedRef`, `Readonly`) et les fonctions
+- **Note (implémenté en phase 1)** : Les types `GraphPaging` et `ThemeFunctions` (nécessaires pour `GitContextBag` et `ThemeContextBag`) sont déjà définis et exportés depuis `../types.ts`. Il ne faut pas les redéfinir ici, simplement les importer. De même pour `CommitFilter`, `GitLogStylingProps`, `GitLogPaging`, etc.
 
 **Critère de validation** : `tsc --noEmit` passe. Les types sont cohérents avec les types de la phase 1.
 
@@ -43,6 +44,10 @@ Convertir les hooks React en composables Vue (Composition API). Chaque composabl
   - `getGraphColumnColour(index)` : fonction qui indexe dans la palette avec modulo
   - `generateRainbowGradient` : appel du `createRainbowTheme` copié en phase 1.4
 - Le composable consomme `useThemeContext()` (pour `theme` et `colours`) ET `useGitContext()` (pour `graphData.positions`)
+- **Imports depuis la phase 1** :
+  - Les palettes prédéfinies (`neonAuroraDarkColours`, `neonAuroraLightColours`) s'importent depuis `../utils/colors` (pas depuis `../types` — ce sont des valeurs runtime, pas des types)
+  - La fonction `createRainbowTheme` s'importe depuis `../utils/createRainbowTheme` (pas de barrel `utils/index.ts`, imports directs vers les fichiers individuels)
+  - L'interface `ThemeFunctions` (type de retour du composable) est déjà définie dans `../types.ts`, ainsi que `GetCommitNodeColoursArgs` et `CommitNodeColours`
 - **Note** : `ThemeContextProvider` dans le code source appelle `useTheme()`, ce qui crée une dépendance circulaire à bien comprendre lors de l'implémentation
 - Retourne les **11 valeurs/fonctions** suivantes :
   - `theme` — mode du thème (passthrough)
@@ -84,6 +89,7 @@ Convertir les hooks React en composables Vue (Composition API). Chaque composabl
 - **Note sur le skeleton du graphe** : `HTMLGridGraph.tsx` **n'utilise PAS le hook** `usePlaceholderData()` pour le skeleton — il importe directement les données statiques (`placeholderCommits`) depuis `data.ts` (import direct du fichier, pas du hook). C'est `Table.tsx` qui utilise le hook `usePlaceholderData()` pour ses lignes placeholder.
 - **Important** : Le hook retourne **deux valeurs** : `columnData` (la matrice de colonnes) et `virtualColumns` (nombre de colonnes virtuelles). `virtualColumns` est utilisé dans `GraphCore.tsx` pour ajuster `graphWidth` : `graphWidth + virtualColumns`
 - **Note sur le type de `columnData`** : Le type réel est `RowIndexToColumnStates = Map<number, GraphMatrixColumns>`, où `GraphMatrixColumns` est une **classe** wrapper autour de `GraphColumnState[]` avec des méthodes utilitaires (`update()`, `hasCommitNode()`) et des accesseurs (`columns`, `length`). Cette classe est copiée en phase 1.3 avec le reste du `GraphMatrixBuilder/` et doit être utilisée telle quelle.
+- **Imports depuis la phase 1** : `GraphMatrixBuilder`, `GraphMatrixColumns`, et `GraphColumnState` s'importent tous depuis `../graph/GraphMatrixBuilder` (barrel `index.ts` qui réexporte `types.ts` et `GraphMatrixBuilder.ts`). Note : `GraphColumnState` a été placé dans `graph/GraphMatrixBuilder/types.ts` en phase 1.3 (et non dans un répertoire de composant).
 
 **Critère de validation** : Le composable compile. Le `computed` retourne le bon type (`Map<number, GraphMatrixColumns>`) et `virtualColumns`.
 

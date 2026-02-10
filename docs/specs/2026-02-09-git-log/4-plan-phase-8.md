@@ -53,7 +53,8 @@ Le développement se fait dans un **worktree Git** séparé du repo principal. L
 **Sortie** : `src/components/GitLog/index.ts` finalisé
 
 - Exporter les composants publics : `GitLog`, `GitLogGraphHTMLGrid`, `GitLogTable`, `GitLogTags`
-- Exporter les types publics : `GitLogEntry`, `Commit`, `GitLogProps`, `CommitFilter`, `GitLogPaging`, `GitLogIndexStatus`, etc.
+- Exporter les types publics : `GitLogEntry`, `Commit`, `GitLogProps`, `CommitFilter`, `GitLogPaging`, `GitLogIndexStatus`, etc. — tous sont dans `types.ts`
+- **Note (décisions phase 1.1)** : Les types suivants n'existent **pas** et ne doivent pas être exportés : `Canvas2DGraphProps` (non porté, décision #4), `GitLogPagedProps` (non porté, décision #6), `CustomTooltip`/`CustomCommitNode`/`CustomTableRow` (types function React supprimés, décision #3). Seuls les interfaces `*Props` correspondants existent (`CustomTooltipProps`, `CustomCommitNodeProps`, `CustomTableRowProps`). `CommitFilter<T>` a un default generic `unknown` (décision #10).
 - Exporter les composables publics si pertinent : `useGitContext`, `useThemeContext`
 - Documenter les scoped slots disponibles dans un commentaire ou type
 

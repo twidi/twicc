@@ -16,7 +16,8 @@
   - `provide(TABLE_CONTEXT_KEY, { timestampFormat })` pour le format de date (défaut: `'YYYY-MM-DD HH:mm:ss'`)
   - Conteneur principal qui wrape `TableContainer`
   - Props : `timestampFormat`, `className`, `styles` (objet `GitLogTableStylingProps` avec `table`, `thead`, `tr`, `td` en CSSProperties)
-  - Supporte le scoped slot `#row` pour le custom render de ligne complète
+  - **Imports depuis la phase 1** : `TableProps`, `GitLogTableStylingProps`, `CustomTableRowProps` sont dans `../../types.ts`. Le `CSSProperties` utilisé dans `GitLogTableStylingProps` est celui de Vue (décision phase 1.1 #2), compatible avec `:style="..."`. Le type function `CustomTableRow` (React render prop) n'a **pas** été porté (décision phase 1.1 #3) — seule l'interface `CustomTableRowProps` existe pour typer le scoped slot.
+  - Supporte le scoped slot `#row` pour le custom render de ligne complète (typé avec `CustomTableRowProps`)
   - Applique `TABLE_MARGIN_TOP` (12px) et `HEADER_ROW_HEIGHT` (47px) pour l'alignement avec le graphe
   - **Note importante sur les en-têtes** : Les en-têtes du tableau ("Commit message", "Author", "Timestamp") sont rendus **dans le composant `Table`** lui-même (dans le code source React, `Table.tsx` lignes 50-83), et non dans le `Layout`. C'est différent des en-têtes "Branch / Tag" et "Graph" qui eux sont rendus dans `Layout.tsx`. Le composant `GitLogTable.vue` devra reproduire ce comportement
   - **Note** : `Table.tsx` utilise le hook `usePlaceholderData()` pour afficher des lignes de table placeholder quand il n'y a pas de données. Le graphe (`HTMLGridGraph.tsx`) utilise aussi des données de placeholder, mais via un import direct du fichier `data.ts` (pas via le hook)

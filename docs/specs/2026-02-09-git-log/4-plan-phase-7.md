@@ -20,6 +20,7 @@
   - Adapter les props (position, trigger, contenu) en reproduisant les positionnements distincts : top/bottom pour `CommitNode`, right pour `BranchTag`
   - Reproduire le `z-index: 20` et la flèche du `CommitNode` tooltip
   - S'assurer que le scoped slot `#tooltip` du graphe fonctionne toujours avec le wrapper WebAwesome
+  - **Note (phase 1.1 décision #3)** : Le scoped slot `#tooltip` est typé avec `CustomTooltipProps` (de `types.ts`) qui expose `commit`, `borderColour`, `backgroundColour`. Le type function React `CustomTooltip` n'a pas été porté. De même, le slot `#node` est typé avec `CustomCommitNodeProps` (de `types.ts`).
 
 **Critère de validation** : Les tooltips s'affichent correctement au survol, avec le bon contenu et le bon positionnement.
 

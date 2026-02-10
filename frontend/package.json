@@ -21,6 +21,7 @@
     "@xterm/xterm": "^6.0.0",
     "diff": "^8.0.3",
     "dompurify": "^3.3.1",
+    "fastpriorityqueue": "^0.7.5",
     "github-markdown-css": "^5.8.1",
     "markdown-it": "^14.1.0",
     "markdown-it-async": "^2.2.0",
@@ -33,6 +34,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.3",
+    "typescript": "^5.9.3",
     "vite": "^7.3.1"
   }
 }

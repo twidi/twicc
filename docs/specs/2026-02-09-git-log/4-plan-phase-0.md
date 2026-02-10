@@ -51,4 +51,14 @@ Le projet existant est entièrement en JavaScript (pas de `tsconfig.json`, pas d
 
 ## Tasks tracking
 
-- [ ] Phase 0.1: Setup TypeScript scopé à GitLog
+- [x] Phase 0.1: Setup TypeScript scopé à GitLog
+
+---
+
+## Decisions made during implementation
+
+- **Placeholder `index.ts` instead of empty directory**: `tsc --noEmit` fails with error TS18003 when the `include` globs match zero files. Rather than leaving the directory empty (which would cause `tsc` to fail), a minimal `src/components/GitLog/index.ts` file was created with an empty `export {}`. This serves as both the entry point for the GitLog component (to be populated in subsequent phases) and ensures `tsc --noEmit` passes immediately.
+
+## Resolved questions and doubts
+
+- **Does `tsconfig.json` affect Vite?** Confirmed: no. Vite uses esbuild internally for TypeScript transpilation and does not rely on `tsconfig.json` for builds. `npm run dev` works identically with or without the file.

@@ -17,12 +17,14 @@ Le plus gros morceau, découpé en sous-phases granulaires. Tous les composants 
 - `GraphCore.vue` :
   - **Fusionne les responsabilités** de `GraphHTMLGrid.tsx` (wrapper public) et `GraphCore.tsx` (core) du code source React
   - **Props** (issues de `GraphCoreProps` dans le source) : `nodeSize`, `nodeTheme`, `breakPointTheme`, `orientation`, `enableResize`, `showCommitNodeHashes`, `showCommitNodeTooltips`, `highlightedBackgroundHeight`, slot `#node` (custom commit node), slot `#tooltip` (custom tooltip)
+  - **Note (phase 1.1 décision #5)** : Les props `node` et `tooltip` du React source (qui étaient des render props) ont été supprimées de `HTMLGridGraphProps` en phase 1. En Vue, ce sont des scoped slots typés avec `CustomCommitNodeProps` et `CustomTooltipProps` (définis dans `../../types.ts`), pas des props du composant.
   - `provide(GRAPH_CONTEXT_KEY, { ... })` avec toutes les valeurs du `GraphContextBag` : les props ci-dessus + `graphWidth` (calculé comme `graphData.graphWidth + virtualColumns`), `visibleCommits`, `isHeadCommitVisible`, `columnData`
   - Wrapper qui contient le slot pour le graphe (rendu par `HTMLGridGraph.vue`)
   - Le resize est géré dans `GraphCore` (pas dans `Layout`)
 - `HTMLGridGraph.vue` :
   - Le conteneur CSS Grid principal (`display: grid`, `grid-template-columns`, `grid-template-rows`)
   - Utilise `useColumnData` pour calculer la matrice de colonnes
+  - **Imports depuis la phase 1** : `GraphMatrixColumns` et `GraphColumnState` s'importent depuis `../GraphMatrixBuilder` (barrel `index.ts`). Il n'existe pas de fichier `GraphColumn/types.ts` — le type `GraphColumnState` a été placé dans `GraphMatrixBuilder/types.ts` en phase 1.3.
   - Boucle sur les lignes et colonnes pour rendre les `GraphRow` / `GraphColumn`
   - Applique `marginTop: GRAPH_MARGIN_TOP` (12px) pour l'alignement
   - La hauteur des lignes inclut `rowSpacing` : `${ROW_HEIGHT + rowSpacing}px`
@@ -41,10 +43,10 @@ Le plus gros morceau, découpé en sous-phases granulaires. Tous les composants 
 **Entrée** : Composants React `CommitNode`, `VerticalLine`, `HorizontalLine`, `ColumnBackground` + SCSS modules
 **Sortie** : Composants Vue correspondants
 
-- `CommitNode.vue` : Cercle du nœud de commit. HTML `<div>` avec `border-radius: 50%`. Supporte le merge node (double cercle via `nodeTheme`). Gère le scoped slot `#node` pour le custom render. Affiche le hash à côté du nœud.
+- `CommitNode.vue` : Cercle du nœud de commit. HTML `<div>` avec `border-radius: 50%`. Supporte le merge node (double cercle via `nodeTheme`). Gère le scoped slot `#node` pour le custom render (typé avec `CustomCommitNodeProps` de `../../types.ts`). Affiche le hash à côté du nœud. Utilise `getMergeNodeInnerSize` depuis `../utils/getMergeNodeInnerSize` (placé dans `graph/utils/` en phase 1.4, pas dans `utils/` à la racine du composant).
 - `VerticalLine.vue` : `<div>` avec `border-right` CSS colorée. Reçoit la couleur de colonne en prop.
 - `HorizontalLine.vue` : `<div>` avec `border-bottom` CSS colorée. Pour les merges (lignes horizontales entre colonnes).
-- `ColumnBackground.vue` : `<div>` avec background coloré semi-transparent. Pour la mise en évidence au hover/sélection.
+- `ColumnBackground.vue` : `<div>` avec background coloré semi-transparent. Pour la mise en évidence au hover/sélection. Utilise `getColumnBackgroundSize` depuis `../utils/getColumnBackgroundSize` (placé dans `graph/utils/` en phase 1.4).
 
 **Critère de validation** : Chaque composant compile et rend le bon élément DOM avec le bon style inline.
 
@@ -78,6 +80,8 @@ Le plus gros morceau, découpé en sous-phases granulaires. Tous les composants 
 **Sortie** : `GraphRow.vue`, `GraphColumn.vue`
 
 - `GraphColumn.vue` : C'est le composant clé d'assemblage. Reçoit un `GraphColumnState` et compose les éléments visuels selon les flags booléens (`isNode`, `isVerticalLine`, `isHorizontalLine`, `isLeftDownCurve`, etc.). Gère aussi le fond coloré (`ColumnBackground`) pour sélection/preview. **Important pour l'accessibilité** : dans le code source React, `GraphColumn` est rendu comme un `<button>` avec `tabIndex`, `onClick`, `onBlur`, `onFocus`, `onMouseOut`, `onMouseOver` — ce choix doit être préservé pour la navigation clavier.
+  - **Imports depuis la phase 1** : `GraphColumnState` s'importe depuis `../GraphMatrixBuilder` (barrel) ou `../GraphMatrixBuilder/types`. `GraphColumnProps` n'a **pas** été porté en phase 1 (décision 1.3 #6) — il doit être défini ici via `defineProps` dans le `<script setup>` du composant. Ce type de props dépend de `Commit` (de `../../types`) et `GraphColumnState` (de `../GraphMatrixBuilder/types`).
+  - Les utilitaires `isColumnEmpty` et `getEmptyColumnState` sont dans `../utils/isColumnEmpty` et `../utils/getEmptyColumnState` (placés dans `graph/utils/` en phase 1.3).
 - `GraphRow.vue` : Conteneur d'une ligne de la grille. Itère sur les colonnes et rend un `GraphColumn` pour chacune.
 - Brancher dans `HTMLGridGraph.vue` : remplacer les divs vides de la phase 4.1 par les vrais `GraphRow`
 
@@ -89,7 +93,7 @@ Le plus gros morceau, découpé en sous-phases granulaires. Tous les composants 
 **Sortie** : Mise à jour des composants pour ajouter les interactions
 
 - `CommitNode.vue` : Ajouter les événements `@click` (sélection via `useSelectCommit`) et `@mouseenter`/`@mouseleave` (preview)
-- Tooltip : Intégrer le tooltip au survol du nœud. Utiliser les composants WebAwesome au lieu de `react-tiny-popover`. Supporter le scoped slot `#tooltip` pour le custom render.
+- Tooltip : Intégrer le tooltip au survol du nœud. Utiliser les composants WebAwesome au lieu de `react-tiny-popover`. Supporter le scoped slot `#tooltip` pour le custom render (typé avec `CustomTooltipProps` de `../../types.ts` — les types function React `CustomTooltip` n'ont pas été portés, seule l'interface de props existe).
 - `ColumnBackground.vue` : Réagir à l'état `selectedCommit` et `previewedCommit` du contexte pour colorier le fond.
 - `GraphRow.vue` ou wrapper : Propager les événements hover de la ligne complète pour le preview.
 

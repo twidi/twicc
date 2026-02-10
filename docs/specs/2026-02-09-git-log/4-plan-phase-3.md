@@ -27,8 +27,12 @@
 **Sortie** : `src/components/GitLog/GitLog.vue`
 
 - Props (correspondant à `GitLogCommonProps` + `GitLogProps`) : `entries`, `currentBranch`, `theme`, `colours`, `paging`, `filter`, `showGitIndex`, `indexStatus`, `headCommitHash`, `urls`, `onSelectCommit`, `onPreviewCommit`, `showHeaders`, `rowSpacing`, `defaultGraphWidth`, `enableSelectedCommitStyling`, `enablePreviewedCommitStyling`, `classes` (GitLogStylingProps), et les props de styling
+- **Imports depuis la phase 1** :
+  - Tous les types de props (`GitLogCommonProps`, `GitLogProps`, `GitLogStylingProps`, `CSSProperties` de Vue, `CommitFilter`, `GitLogPaging`, `GitLogIndexStatus`, etc.) sont dans `./types.ts`
+  - Note : `CSSProperties` est importé de `vue` (décision phase 1.1 #2). `GitLogStylingProps.containerStyles` et les types de styling de table utilisent ce type Vue natif.
+  - Les types function React (`CustomTooltip`, `CustomCommitNode`, `CustomTableRow`) n'existent plus — seuls les interfaces `*Props` (`CustomTooltipProps`, `CustomCommitNodeProps`, `CustomTableRowProps`) sont disponibles pour typer les scoped slots
 - Dans le `<script setup>` :
-  1. Appeler le pipeline de données en `computed` : `computeRelationships()` → `temporalTopologicalSort()` → `GraphDataBuilder.build()`
+  1. Appeler le pipeline de données en `computed` : `computeRelationships()` → `temporalTopologicalSort()` → `GraphDataBuilder.build()` — ces fonctions/classes s'importent depuis `./data` (barrel `data/index.ts`)
   2. Gérer le pseudo-commit index (si `showGitIndex` est true)
   3. Gérer la pagination client-side (`paging` prop → `slice()`)
   4. Gérer le filtrage (`filter` prop)
