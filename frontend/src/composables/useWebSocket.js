@@ -125,11 +125,8 @@ function notifyProcessStateChange(store, msg) {
         toast.session(sessionId, { type: 'warning', title: pendingTitle })
     }
 
-    if (msg.state === 'starting') {
-        // Process started
-        toast.session(sessionId, { type: 'success', title: 'Claude Code started' })
-    } else if (msg.state === 'dead') {
-        // Process stopped - check the reason
+    if (msg.state === 'dead') {
+        // Only notify for errors and timeouts, not for normal lifecycle
         if (msg.kill_reason === 'error') {
             toast.session(sessionId, {
                 type: 'error',
@@ -137,32 +134,25 @@ function notifyProcessStateChange(store, msg) {
                 errorMessage: msg.error || 'Unknown error',
             })
         } else if (msg.kill_reason === 'timeout_starting') {
-            // Starting timeout - something went wrong
             toast.session(sessionId, {
                 type: 'error',
                 title: 'Claude Code stopped: failed to start within 1 minute',
             })
         } else if (msg.kill_reason === 'timeout_user_turn') {
-            // User turn timeout - normal cleanup, just info
             toast.session(sessionId, {
                 type: 'info',
                 title: 'Claude Code stopped: inactive for 15 minutes',
             })
         } else if (msg.kill_reason === 'timeout_assistant_turn') {
-            // Assistant turn inactivity timeout - might be stuck
             toast.session(sessionId, {
                 type: 'warning',
                 title: 'Claude Code stopped: no activity for 2 hours',
             })
         } else if (msg.kill_reason === 'timeout_assistant_turn_absolute') {
-            // Assistant turn absolute timeout - ran too long
             toast.session(sessionId, {
                 type: 'warning',
                 title: 'Claude Code stopped: running for over 6 hours',
             })
-        } else {
-            // Manual kill or shutdown
-            toast.session(sessionId, { title: 'Claude Code terminated' })
         }
     }
 }
