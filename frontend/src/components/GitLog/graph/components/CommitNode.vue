@@ -1,0 +1,214 @@
+<script setup lang="ts">
+import { computed, ref, type CSSProperties } from 'vue'
+import { NODE_BORDER_WIDTH } from '../../constants'
+import { useTheme } from '../../composables/useTheme'
+import { useSelectCommit } from '../../composables/useSelectCommit'
+import { useGraphContext } from '../../composables/useGraphContext'
+import { useGitContext } from '../../composables/useGitContext'
+import { getMergeNodeInnerSize } from '../utils/getMergeNodeInnerSize'
+import type { Commit, CustomCommitNodeProps, CustomTooltipProps } from '../../types'
+import CommitNodeTooltip from './CommitNodeTooltip.vue'
+import styles from './CommitNode.module.scss'
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
+const props = defineProps<{
+  commit: Commit
+  colour: string
+  rowIndex: number
+  columnIndex: number
+}>()
+
+// ---------------------------------------------------------------------------
+// Context
+// ---------------------------------------------------------------------------
+
+const { selectCommitHandler } = useSelectCommit()
+const { remoteProviderUrlBuilder } = useGitContext()
+const { textColour, theme, getCommitNodeColours } = useTheme()
+const { showCommitNodeTooltips, showCommitNodeHashes, nodeTheme, nodeSize, node, tooltip } = useGraphContext()
+
+// ---------------------------------------------------------------------------
+// Tooltip visibility
+// ---------------------------------------------------------------------------
+
+const showTooltip = ref(false)
+
+// ---------------------------------------------------------------------------
+// Computed values
+// ---------------------------------------------------------------------------
+
+const commitHashLabelHeight = 20
+
+const isMergeCommit = computed(() =>
+  nodeTheme.value === 'default' && props.commit.parents.length > 1,
+)
+
+const commitUrl = computed(() =>
+  remoteProviderUrlBuilder.value?.({ commit: props.commit })?.commit,
+)
+
+const commitNodeColours = computed(() =>
+  getCommitNodeColours({ columnColour: props.colour }),
+)
+
+const nodeStyles = computed<CSSProperties>(() => ({
+  width: `${nodeSize.value}px`,
+  height: `${nodeSize.value}px`,
+  backgroundColor: commitNodeColours.value.backgroundColour,
+  border: `${NODE_BORDER_WIDTH}px solid ${commitNodeColours.value.borderColour}`,
+}))
+
+const mergeInnerNodeStyles = computed<CSSProperties>(() => {
+  const diameter = getMergeNodeInnerSize({ nodeSize: nodeSize.value })
+  return {
+    background: commitNodeColours.value.borderColour,
+    width: `${diameter}px`,
+    height: `${diameter}px`,
+    top: `calc(50% - ${diameter / 2}px)`,
+    left: `calc(50% - ${diameter / 2}px)`,
+  }
+})
+
+const commitLabelStyles = computed<CSSProperties>(() => ({
+  color: textColour.value,
+  height: `${commitHashLabelHeight}px`,
+  left: `calc(50% + ${nodeSize.value / 2}px + 5px)`,
+  top: `calc(50% - ${commitHashLabelHeight / 2}px)`,
+  background: theme.value === 'dark' ? 'rgb(26,26,26)' : 'white',
+}))
+
+const isTooltipVisible = computed(() =>
+  showCommitNodeTooltips.value && showTooltip.value,
+)
+
+// ---------------------------------------------------------------------------
+// Custom node slot props
+// ---------------------------------------------------------------------------
+
+const customNodeProps = computed<CustomCommitNodeProps>(() => ({
+  commit: props.commit,
+  colour: props.colour,
+  rowIndex: props.rowIndex,
+  columnIndex: props.columnIndex,
+  nodeSize: nodeSize.value,
+  isIndexPseudoNode: false,
+}))
+
+// ---------------------------------------------------------------------------
+// Custom tooltip slot props
+// ---------------------------------------------------------------------------
+
+const customTooltipProps = computed<CustomTooltipProps>(() => ({
+  commit: props.commit,
+  borderColour: commitNodeColours.value.borderColour,
+  backgroundColour: commitNodeColours.value.backgroundColour,
+}))
+
+// ---------------------------------------------------------------------------
+// Event handlers
+// ---------------------------------------------------------------------------
+
+function handleMouseOver(): void {
+  showTooltip.value = true
+  selectCommitHandler.onMouseOver(props.commit)
+}
+
+function handleMouseOut(): void {
+  showTooltip.value = false
+  selectCommitHandler.onMouseOut()
+}
+
+function handleClick(): void {
+  selectCommitHandler.onClick(props.commit)
+
+  if (commitUrl.value) {
+    window.open(commitUrl.value, '_blank')
+  }
+}
+
+function handleKeyDown(event: KeyboardEvent): void {
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    handleClick()
+  }
+}
+</script>
+
+<template>
+  <!-- Custom node wrapped in a transparent interactive container -->
+  <div
+    v-if="node"
+    :class="styles.customNodeWrapper"
+    role="button"
+    :tabindex="0"
+    :title="commitUrl ? 'View Commit' : undefined"
+    @click.stop="handleClick"
+    @mouseover.stop="handleMouseOver"
+    @mouseout.stop="handleMouseOut"
+    @focus.stop="handleMouseOver"
+    @blur.stop="handleMouseOut"
+    @keydown.stop="handleKeyDown"
+  >
+    <component :is="() => node!(customNodeProps)" />
+  </div>
+
+  <!-- Default node rendering -->
+  <div
+    v-else
+    role="button"
+    :tabindex="0"
+    :id="`commit-node-${commit.hash}`"
+    :data-testid="`commit-node-${commit.hash}`"
+    :style="nodeStyles"
+    :class="styles.commitNode"
+    :title="commitUrl ? 'View Commit' : undefined"
+    @click.stop="handleClick"
+    @mouseover.stop="handleMouseOver"
+    @mouseout.stop="handleMouseOut"
+    @focus.stop="handleMouseOver"
+    @blur.stop="handleMouseOut"
+    @keydown.stop="handleKeyDown"
+  >
+    <!-- Merge commit inner circle -->
+    <div
+      v-if="isMergeCommit"
+      :id="`commit-node-merge-circle-${commit.hash}`"
+      :data-testid="`commit-node-merge-circle-${commit.hash}`"
+      :style="mergeInnerNodeStyles"
+      :class="styles.mergeCommitInner"
+    />
+
+    <!-- Commit hash label -->
+    <span
+      v-if="showCommitNodeHashes"
+      :id="`commit-node-hash-${commit.hash}`"
+      :data-testid="`commit-node-hash-${commit.hash}`"
+      :class="styles.commitLabel"
+      :style="commitLabelStyles"
+    >
+      {{ commit.hash }}
+    </span>
+
+    <!-- Tooltip (shown on hover) -->
+    <div
+      v-if="isTooltipVisible"
+      :class="styles.tooltipContainer"
+    >
+      <!-- Custom tooltip via graph context render function -->
+      <component
+        v-if="tooltip"
+        :is="() => tooltip!(customTooltipProps)"
+      />
+
+      <!-- Default tooltip -->
+      <CommitNodeTooltip
+        v-else
+        :commit="commit"
+        :colour="commitNodeColours.borderColour"
+      />
+    </div>
+  </div>
+</template>

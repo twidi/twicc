@@ -24,7 +24,7 @@ Le plan est découpé en fichiers séparés par phase pour faciliter le travail 
 - [Phase 4 : Module Graph (HTML Grid)](./4-plan-phase-4.md)
 - [Phase 5 : Module Table](./4-plan-phase-5.md)
 - [Phase 6 : Module Tags](./4-plan-phase-6.md)
-- [Phase 7 : Intégration tooltips WebAwesome](./4-plan-phase-7.md)
+- [Phase 7 : ~~Intégration tooltips WebAwesome~~ SUPPRIMÉE](./4-plan-phase-7.md)
 - [Phase 8 : Finalisation, vue de test et validation visuelle](./4-plan-phase-8.md)
 
 ---

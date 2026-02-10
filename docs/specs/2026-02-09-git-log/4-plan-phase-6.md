@@ -24,7 +24,7 @@
 **Sortie** : `tags/GitLogTags.vue`, `tags/components/` + SCSS
 
 - `GitLogTags.vue` : Colonne de gauche. Itère sur les commits visibles. Pour chaque commit qui est un branch tip ou a un tag, affiche un `BranchTag`.
-- `BranchTag.vue` : Badge compact avec icône (branche ou tag) + label. Tooltip au hover via composants WebAwesome (au lieu de `react-tiny-popover`).
+- `BranchTag.vue` : Badge compact avec icône (branche ou tag) + label. Tooltip au hover via positionnement CSS (même approche que `CommitNode` en phase 4.6, avec positionnement à droite au lieu de top/bottom).
 - `BranchLabel.vue` : Texte formaté du nom de branche (via `formatBranch`).
 - `TagLabel.vue` : Texte formaté du nom de tag.
 - `BranchIcon.vue`, `TagIcon.vue`, `GitIcon.vue` : Composants d'icônes SVG.
