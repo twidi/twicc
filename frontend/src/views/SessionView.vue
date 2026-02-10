@@ -273,11 +273,15 @@ function getAgentShortId(agentId) {
     return agentId.substring(0, 8)
 }
 
-// Watch subagentId to open tab when navigating to a subagent URL
+// Watch subagentId to open tab when navigating to a subagent URL.
+// Two guards prevent incorrect tab additions with KeepAlive (same logic as activeTabId watcher):
+// 1. isActive: skip when deactivated — don't react to route changes while cached
+// 2. sessionId check: skip when the route belongs to a different session
 watch(subagentId, (newSubagentId) => {
-    if (newSubagentId) {
-        openSubagentTab(newSubagentId)
-    }
+    if (!newSubagentId) return
+    if (!isActive.value) return
+    if (route.params.sessionId !== sessionId.value) return
+    openSubagentTab(newSubagentId)
 }, { immediate: true })
 
 // Sync active tab in store when the route changes for THIS session.
