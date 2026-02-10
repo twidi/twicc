@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import styles from './HeadCommitVerticalLine.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -19,6 +18,18 @@ defineProps<{
       top: '50%',
       borderRight: `2px solid ${columnColour}`,
     }"
-    :class="[styles.line, styles.vertical]"
+    :class="['line', 'vertical']"
   />
 </template>
+
+<style scoped lang="scss">
+.line {
+  position: absolute;
+}
+
+.vertical {
+  left: calc(50% - 3px);
+  width: 2px;
+  z-index: 10;
+}
+</style>

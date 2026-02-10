@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CSSProperties } from 'vue'
 import IndexStatus from './IndexStatus.vue'
-import styles from './CommitMessageData.module.scss'
+
 
 // ---------------------------------------------------------------------------
 // Props
@@ -18,7 +18,7 @@ defineProps<{
 <template>
   <div
     :title="commitMessage"
-    :class="styles.message"
+    class="message"
     :id="`vue-git-log-table-data-commit-message-${index}`"
     :style="{ ...style, display: isIndex ? 'flex' : undefined }"
     :data-testid="`vue-git-log-table-data-commit-message-${index}`"
@@ -28,3 +28,14 @@ defineProps<{
     <IndexStatus v-if="isIndex" />
   </div>
 </template>
+
+<style scoped lang="scss">
+.message {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 30px;
+  padding-left: 20px;
+  font-weight: 400;
+}
+</style>

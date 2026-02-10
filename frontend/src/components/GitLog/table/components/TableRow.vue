@@ -9,7 +9,7 @@ import type { Commit, CustomTableRowProps } from '../../types'
 import CommitMessageData from './CommitMessageData.vue'
 import AuthorData from './AuthorData.vue'
 import TimestampData from './TimestampData.vue'
-import styles from './TableRow.module.scss'
+
 
 // ---------------------------------------------------------------------------
 // Props
@@ -165,7 +165,7 @@ function handleMouseOut() {
     v-else
     :id="`vue-git-log-table-row-${index}`"
     :data-testid="`vue-git-log-table-row-${index}`"
-    :class="styles.row"
+    class="row"
     :style="rowStyleOverrides"
     @click="handleClick"
     @mouseover="handleMouseOver"
@@ -193,3 +193,13 @@ function handleMouseOut() {
     />
   </div>
 </template>
+
+<style scoped lang="scss">
+.row {
+  display: contents;
+
+  &:hover {
+    cursor: pointer;
+  }
+}
+</style>

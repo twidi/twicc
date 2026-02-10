@@ -5,7 +5,6 @@ import { formatBranch } from '../../utils/formatBranch'
 import type { Commit } from '../../types'
 import Link from './Link.vue'
 import BranchIcon from './BranchIcon.vue'
-import styles from './BranchLabel.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -37,15 +36,22 @@ const linkHref = computed(() => {
     <Link
       :href="linkHref"
       :text="displayName"
-      :link-class="styles.branchName"
     />
     <BranchIcon />
   </template>
 
   <template v-else>
-    <span :class="styles.branchName">
+    <span class="branchName">
       {{ displayName }}
     </span>
     <BranchIcon />
   </template>
 </template>
+
+<style scoped lang="scss">
+.branchName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>

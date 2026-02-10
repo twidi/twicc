@@ -8,7 +8,6 @@ import { useGitContext } from '../../composables/useGitContext'
 import { getMergeNodeInnerSize } from '../utils/getMergeNodeInnerSize'
 import type { Commit, CustomCommitNodeProps, CustomTooltipProps } from '../../types'
 import CommitNodeTooltip from './CommitNodeTooltip.vue'
-import styles from './CommitNode.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -141,7 +140,7 @@ function handleKeyDown(event: KeyboardEvent): void {
   <!-- Custom node wrapped in a transparent interactive container -->
   <div
     v-if="node"
-    :class="styles.customNodeWrapper"
+    class="customNodeWrapper"
     role="button"
     :tabindex="0"
     :title="commitUrl ? 'View Commit' : undefined"
@@ -163,7 +162,7 @@ function handleKeyDown(event: KeyboardEvent): void {
     :id="`commit-node-${commit.hash}`"
     :data-testid="`commit-node-${commit.hash}`"
     :style="nodeStyles"
-    :class="styles.commitNode"
+    class="commitNode"
     :title="commitUrl ? 'View Commit' : undefined"
     @click.stop="handleClick"
     @mouseover.stop="handleMouseOver"
@@ -178,7 +177,7 @@ function handleKeyDown(event: KeyboardEvent): void {
       :id="`commit-node-merge-circle-${commit.hash}`"
       :data-testid="`commit-node-merge-circle-${commit.hash}`"
       :style="mergeInnerNodeStyles"
-      :class="styles.mergeCommitInner"
+      class="mergeCommitInner"
     />
 
     <!-- Commit hash label -->
@@ -186,7 +185,7 @@ function handleKeyDown(event: KeyboardEvent): void {
       v-if="showCommitNodeHashes"
       :id="`commit-node-hash-${commit.hash}`"
       :data-testid="`commit-node-hash-${commit.hash}`"
-      :class="styles.commitLabel"
+      class="commitLabel"
       :style="commitLabelStyles"
     >
       {{ commit.hash }}
@@ -195,7 +194,7 @@ function handleKeyDown(event: KeyboardEvent): void {
     <!-- Tooltip (shown on hover) -->
     <div
       v-if="isTooltipVisible"
-      :class="styles.tooltipContainer"
+      class="tooltipContainer"
     >
       <!-- Custom tooltip via graph context render function -->
       <component
@@ -212,3 +211,49 @@ function handleKeyDown(event: KeyboardEvent): void {
     </div>
   </div>
 </template>
+
+<style scoped lang="scss">
+.customNodeWrapper {
+  all: unset;
+  z-index: 20;
+  position: relative;
+
+  &:hover {
+    cursor: pointer;
+  }
+}
+
+.commitNode {
+  all: unset;
+  border-radius: 50%;
+  z-index: 20;
+  position: relative;
+
+  &:hover {
+    cursor: pointer;
+  }
+
+  .commitLabel {
+    position: absolute;
+    padding: 2px 5px 2px 2px;
+    border-radius: 5px;
+    font-size: 0.7rem;
+  }
+}
+
+.mergeCommitInner {
+  border-radius: 50%;
+  position: absolute;
+}
+
+.tooltipContainer {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  pointer-events: none;
+  white-space: nowrap;
+  margin-bottom: 8px;
+}
+</style>

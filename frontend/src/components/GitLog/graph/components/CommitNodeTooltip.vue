@@ -2,7 +2,6 @@
 import { computed, type CSSProperties } from 'vue'
 import { useTheme } from '../../composables/useTheme'
 import type { Commit } from '../../types'
-import styles from './CommitNodeTooltip.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -43,26 +42,44 @@ const childrenText = computed(() =>
     :id="`commit-node-tooltip-${commit.hash}`"
     :data-testid="`commit-node-tooltip-${commit.hash}`"
     :style="tooltipStyle"
-    :class="styles.tooltip"
+    class="tooltip"
   >
     <div>
-      <p :class="styles.label">Hash:</p>
-      <p :class="styles.text">{{ commit.hash }}</p>
+      <p class="label">Hash:</p>
+      <p class="text">{{ commit.hash }}</p>
     </div>
 
     <div>
-      <p :class="styles.label">Parents:</p>
-      <p :class="styles.text">{{ parentsText }}</p>
+      <p class="label">Parents:</p>
+      <p class="text">{{ parentsText }}</p>
     </div>
 
     <div>
-      <p :class="styles.label">Children:</p>
-      <p :class="styles.text">{{ childrenText }}</p>
+      <p class="label">Children:</p>
+      <p class="text">{{ childrenText }}</p>
     </div>
 
     <div>
-      <p :class="styles.label">Branch Tip:</p>
-      <p :class="styles.text">{{ commit.isBranchTip ? 'Yes' : 'No' }}</p>
+      <p class="label">Branch Tip:</p>
+      <p class="text">{{ commit.isBranchTip ? 'Yes' : 'No' }}</p>
     </div>
   </div>
 </template>
+
+<style scoped lang="scss">
+.tooltip {
+  padding: 15px 20px;
+  border-radius: 8px;
+}
+
+.label {
+  font-weight: 600;
+  display: inline-block;
+  margin: 0 5px 5px 0;
+}
+
+.text {
+  display: inline;
+  margin: 0 0 5px 0;
+}
+</style>

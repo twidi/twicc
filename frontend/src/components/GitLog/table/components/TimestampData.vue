@@ -4,7 +4,7 @@ import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import { useTableContext } from '../../composables/useTableContext'
-import styles from './TimestampData.module.scss'
+
 
 // ---------------------------------------------------------------------------
 // dayjs plugins
@@ -48,10 +48,18 @@ const formattedTimestamp = computed(() => {
 <template>
   <div
     :style="style"
-    :class="styles.timestamp"
+    class="timestamp"
     :id="`vue-git-log-table-data-timestamp-${index}`"
     :data-testid="`vue-git-log-table-data-timestamp-${index}`"
   >
     {{ isPlaceholder ? '-' : formattedTimestamp }}
   </div>
 </template>
+
+<style scoped lang="scss">
+.timestamp {
+  font-weight: 400;
+  border-top-right-radius: 10px;
+  border-bottom-right-radius: 10px;
+}
+</style>

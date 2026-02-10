@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import GitIcon from './GitIcon.vue'
-import styles from './IndexLabel.module.scss'
 </script>
 
 <template>
-  <span :class="styles.indexLabel">
+  <span class="indexLabel">
     index
   </span>
   <GitIcon />
 </template>
+
+<style scoped lang="scss">
+.indexLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>

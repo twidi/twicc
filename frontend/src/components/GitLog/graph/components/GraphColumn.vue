@@ -14,7 +14,6 @@ import HorizontalLine from './HorizontalLine.vue'
 import ColumnBackground from './ColumnBackground.vue'
 import LeftDownCurve from './LeftDownCurve.vue'
 import LeftUpCurve from './LeftUpCurve.vue'
-import styles from './GraphColumn.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -181,7 +180,7 @@ function handleMouseOut(): void {
     :data-testid="`graph-column-row-${rowIndex}-col-${index}`"
     :style="columnStyle"
     :tabindex="rowIndex"
-    :class="styles.column"
+    class="column"
     @click="handleClick"
     @mouseover="handleMouseOver"
     @mouseout="handleMouseOut"
@@ -265,3 +264,17 @@ function handleMouseOut(): void {
     />
   </button>
 </template>
+
+<style scoped lang="scss">
+.column {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+
+  &:hover {
+    cursor: pointer;
+  }
+}
+</style>

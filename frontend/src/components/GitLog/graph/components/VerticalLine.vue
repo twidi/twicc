@@ -5,7 +5,6 @@ import { useGitContext } from '../../composables/useGitContext'
 import type { Commit, BreakPointTheme } from '../../types'
 import type { GraphColumnState } from '../GraphMatrixBuilder'
 import BreakPoint from './BreakPoint.vue'
-import styles from './VerticalLine.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -200,7 +199,7 @@ const indexBreakPointStyleOverrides = computed<Partial<Record<BreakPointTheme, C
   <div
     :id="`vertical-line-${lineConfig.variant}`"
     :data-testid="`vertical-line-${lineConfig.variant}`"
-    :class="[styles.line, styles.vertical]"
+    :class="['line', 'vertical']"
     :style="lineConfig.style"
   >
     <!-- Bottom breakpoint for normal commits -->
@@ -226,3 +225,15 @@ const indexBreakPointStyleOverrides = computed<Partial<Record<BreakPointTheme, C
     />
   </div>
 </template>
+
+<style scoped lang="scss">
+.line {
+  position: absolute;
+}
+
+.vertical {
+  left: calc(50% - 3px);
+  width: 2px;
+  z-index: 10;
+}
+</style>

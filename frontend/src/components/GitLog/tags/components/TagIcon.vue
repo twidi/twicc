@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
 import { useTheme } from '../../composables/useTheme'
-import styles from './TagIcon.module.scss'
 
 // ---------------------------------------------------------------------------
 // Context
@@ -21,7 +20,7 @@ const svgStyle = computed<CSSProperties>(() => ({
 <template>
   <svg
     id="tag-icon"
-    :class="styles.icon"
+    class="icon"
     :style="svgStyle"
     viewBox="0 0 24 24"
     xmlns="http://www.w3.org/2000/svg"
@@ -34,3 +33,12 @@ const svgStyle = computed<CSSProperties>(() => ({
     <line x1="7" y1="7" x2="7.01" y2="7" />
   </svg>
 </template>
+
+<style scoped lang="scss">
+.icon {
+  width: 17px;
+  margin-top: 2px;
+  flex: 0 0 auto;
+  margin-left: 6px;
+}
+</style>

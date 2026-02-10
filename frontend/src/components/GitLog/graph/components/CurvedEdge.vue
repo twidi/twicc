@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { CURVE_SIZE } from '../../constants'
-import styles from './CurvedEdge.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -21,7 +20,7 @@ defineProps<{
     :width="CURVE_SIZE"
     :height="CURVE_SIZE"
     viewBox="0 0 100 100"
-    :class="styles.curve"
+    class="curve"
     preserveAspectRatio="none"
   >
     <path
@@ -34,3 +33,9 @@ defineProps<{
     />
   </svg>
 </template>
+
+<style scoped lang="scss">
+.curve {
+  position: absolute;
+}
+</style>

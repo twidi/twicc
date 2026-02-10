@@ -2,7 +2,6 @@
 import { computed, type CSSProperties } from 'vue'
 import { useTheme } from '../../composables/useTheme'
 import { useGraphContext } from '../../composables/useGraphContext'
-import styles from './IndexPseudoCommitNode.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -37,9 +36,29 @@ const nodeStyles = computed<CSSProperties>(() => ({
     id="index-pseudo-commit-node"
     data-testid="index-pseudo-commit-node"
     :class="[
-      styles.indexNode,
-      animate && styles.spin,
+      'indexNode',
+      animate && 'spin',
     ]"
     :style="nodeStyles"
   />
 </template>
+
+<style scoped lang="scss">
+.indexNode {
+  border-radius: 50%;
+  z-index: 20;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 10s linear infinite;
+}
+</style>

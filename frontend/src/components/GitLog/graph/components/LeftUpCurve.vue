@@ -5,7 +5,6 @@ import { useGitContext } from '../../composables/useGitContext'
 import type { BreakPointTheme } from '../../types'
 import CurvedEdge from './CurvedEdge.vue'
 import BreakPoint from './BreakPoint.vue'
-import styles from './LeftUpCurve.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -63,7 +62,7 @@ const breakPointStyleOverrides: Partial<Record<BreakPointTheme, CSSProperties>> 
   <div
     id="left-up-curve"
     data-testid="left-up-curve"
-    :class="styles.container"
+    class="container"
   >
     <BreakPoint
       v-if="showTopBreakPoint"
@@ -75,7 +74,7 @@ const breakPointStyleOverrides: Partial<Record<BreakPointTheme, CSSProperties>> 
     <div
       id="left-up-curve-top-line"
       data-testid="left-up-curve-top-line"
-      :class="styles.line"
+      class="line"
       :style="topLineStyle"
     />
 
@@ -89,8 +88,18 @@ const breakPointStyleOverrides: Partial<Record<BreakPointTheme, CSSProperties>> 
     <div
       id="left-up-curve-left-line"
       data-testid="left-up-curve-left-line"
-      :class="styles.line"
+      class="line"
       :style="leftLineStyle"
     />
   </div>
 </template>
+
+<style scoped lang="scss">
+.container {
+  display: contents;
+}
+
+.curve, .line {
+  position: absolute;
+}
+</style>

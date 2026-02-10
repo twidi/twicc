@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useGitContext } from './composables/useGitContext'
 import { useTheme } from './composables/useTheme'
-import styles from './Layout.module.scss'
 
 const { classes, showHeaders } = useGitContext()
 const { textColour } = useTheme()
@@ -11,13 +10,13 @@ const { textColour } = useTheme()
   <div
     id="vue-git-log"
     :style="classes?.containerStyles"
-    :class="[styles.container, classes?.containerClass]"
+    :class="['container', classes?.containerClass]"
   >
-    <div v-if="$slots.tags" :class="styles.tags">
+    <div v-if="$slots.tags" class="tags">
       <h4
         v-if="showHeaders"
         :style="{ color: textColour, marginLeft: '10px' }"
-        :class="styles.title"
+        class="title"
       >
         Branch / Tag
       </h4>
@@ -25,11 +24,11 @@ const { textColour } = useTheme()
       <slot name="tags" />
     </div>
 
-    <div v-if="$slots.graph" :class="styles.graph">
+    <div v-if="$slots.graph" class="graph">
       <h4
         v-if="showHeaders"
         :style="{ color: textColour }"
-        :class="styles.title"
+        class="title"
       >
         Graph
       </h4>
@@ -37,8 +36,32 @@ const { textColour } = useTheme()
       <slot name="graph" />
     </div>
 
-    <div v-if="$slots.table" :class="styles.table">
+    <div v-if="$slots.table" class="table">
       <slot name="table" />
     </div>
   </div>
 </template>
+
+<style scoped lang="scss">
+.container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+
+  .tags {
+    flex-grow: 1;
+    max-width: 175px;
+  }
+
+  .table {
+    flex-grow: 1;
+  }
+}
+
+.title {
+  margin: 12px 0 25px 0;
+  line-height: 22px;
+  font-weight: 600;
+}
+</style>

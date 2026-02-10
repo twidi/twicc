@@ -2,7 +2,6 @@
 import { computed, type CSSProperties } from 'vue'
 import { useTheme } from '../../composables/useTheme'
 import type { Commit } from '../../types'
-import styles from './BranchTagTooltip.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -33,9 +32,17 @@ const tooltipStyle = computed<CSSProperties>(() => ({
 <template>
   <div
     :id="`tag-${id}-tooltip`"
-    :class="styles.tooltip"
+    class="tooltip"
     :style="tooltipStyle"
   >
     {{ commit.branch }}
   </div>
 </template>
+
+<style scoped lang="scss">
+.tooltip {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+</style>

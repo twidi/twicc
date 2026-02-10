@@ -2,7 +2,6 @@
 import { computed, type CSSProperties } from 'vue'
 import { useGraphContext } from '../../composables/useGraphContext'
 import type { BreakPointTheme } from '../../types'
-import styles from './BreakPoint.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -48,8 +47,8 @@ const themeClass = computed(() => {
 })
 
 const elementClasses = computed(() => [
-  styles[themeClass.value],
-  styles[`${themeClass.value}--${props.position}`],
+  themeClass.value,
+  `${themeClass.value}--${props.position}`,
 ])
 
 const elementStyle = computed<CSSProperties>(() => ({
@@ -69,3 +68,229 @@ const testId = computed(() =>
     :style="elementStyle"
   />
 </template>
+
+<style scoped lang="scss">
+.Slash {
+  position: absolute;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--breakpoint-colour);
+  transform: translate(-50%, -50%) rotate(-45deg);
+  transform-origin: center;
+  left: calc(50% + 2px);
+
+  &--top {
+    top: 0;
+  }
+
+  &--bottom {
+    top: 100%;
+  }
+}
+
+.Dot {
+  position: absolute;
+  $diameter: 8px;
+  width: $diameter;
+  height: $diameter;
+  border-radius: 50%;
+  background: var(--breakpoint-colour);
+  transform: translate(-50%, -50%);
+  left: calc(50% + 2px);
+
+  &--top {
+    top: 0;
+  }
+
+  &--bottom {
+    top: 100%;
+  }
+}
+
+.Ring {
+  position: absolute;
+  $diameter: 6px;
+  width: $diameter;
+  height: $diameter;
+  border-radius: 50%;
+  border: 2px solid var(--breakpoint-colour);
+  transform: translate(-50%, -50%);
+  transform-origin: center;
+  left: calc(50% + 2px);
+
+  &--top {
+    top: -4px;
+  }
+
+  &--bottom {
+    top: calc(100% + 4px);
+  }
+}
+
+.ZigZag {
+  position: absolute;
+
+  &::before {
+    position: absolute;
+    content: '';
+    width: 5px;
+    height: 2px;
+    background: var(--breakpoint-colour);
+    transform: translate(-50%, -50%) rotate(-50deg);
+    transform-origin: center;
+  }
+
+  &::after {
+    position: absolute;
+    content: '';
+    width: 5px;
+    height: 2px;
+    background: var(--breakpoint-colour);
+    transform: translate(-50%, -50%) rotate(50deg);
+    transform-origin: center;
+  }
+
+  &--top {
+    top: 0;
+
+    &::before {
+      top: -1px;
+      left: calc(50% + 4px);
+    }
+
+    &::after {
+      top: -5px;
+      left: calc(50% + 5px);
+    }
+  }
+
+  &--bottom {
+    top: 100%;
+
+    &::before {
+      top: 2px;
+      left: calc(50% + 2px);
+    }
+
+    &::after {
+      top: 6px;
+      left: 50%;
+    }
+  }
+}
+
+.Line {
+  position: absolute;
+  width: 12px;
+  height: 2px;
+  border-radius: 10px;
+  background: var(--breakpoint-colour);
+  left: calc(50% - 4px);
+
+  &--top {
+    top: 0;
+  }
+
+  &--bottom {
+    top: 100%;
+  }
+}
+
+.DoubleLine {
+  position: absolute;
+
+  &::before {
+    position: absolute;
+    content: '';
+    width: 14px;
+    height: 2px;
+    border-radius: 10px;
+    background: var(--breakpoint-colour);
+    left: calc(50% - 4px);
+  }
+
+  &::after {
+    position: absolute;
+    content: '';
+    width: 8px;
+    height: 1px;
+    border-radius: 10px;
+    background: var(--breakpoint-colour);
+    left: calc(50% - 1px);
+  }
+
+  &--top {
+    top: 0;
+
+    &::after {
+      top: -4px;
+    }
+  }
+
+  &--bottom {
+    top: 100%;
+
+    &::after {
+      top: 4px;
+    }
+  }
+}
+
+.Arrow {
+  position: absolute;
+
+  $width: 8px;
+  $height: 3px;
+
+  &::before {
+    position: absolute;
+    content: '';
+    width: $width;
+    height: $height;
+    background: var(--breakpoint-colour);
+    border-radius: $height;
+  }
+
+  &::after {
+    position: absolute;
+    content: '';
+    width: $width;
+    height: $height;
+    background: var(--breakpoint-colour);
+    border-radius: $height;
+  }
+
+  &--top {
+    top: -5px;
+
+    &::before {
+      top: 5px;
+      left: calc(50% - 3px);
+      transform: rotate(-45deg);
+    }
+
+    &::after {
+      top: 5px;
+      left: calc(50% + 1px);
+      transform: rotate(45deg);
+    }
+  }
+
+  &--bottom {
+    top: 90%;
+
+    &::before {
+      top: -3px;
+      left: calc(50% - 3px);
+      transform: rotate(45deg);
+    }
+
+    &::after {
+      top: -3px;
+      left: calc(50% + 1px);
+      transform: rotate(-45deg);
+    }
+  }
+}
+</style>

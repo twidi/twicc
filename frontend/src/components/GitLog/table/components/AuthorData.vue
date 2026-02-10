@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
 import type { CommitAuthor } from '../../types'
-import styles from './AuthorData.module.scss'
+
 
 // ---------------------------------------------------------------------------
 // Props
@@ -49,10 +49,20 @@ const authorName = computed(() => {
   <div
     :style="style"
     :title="authorTitle"
-    :class="styles.author"
+    class="author"
     :id="`vue-git-log-table-data-author-${index}`"
     :data-testid="`vue-git-log-table-data-author-${index}`"
   >
     {{ isPlaceholder ? '-' : authorName }}
   </div>
 </template>
+
+<style scoped lang="scss">
+.author {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 30px;
+  font-weight: 400;
+}
+</style>

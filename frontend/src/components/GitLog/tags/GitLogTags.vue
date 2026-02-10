@@ -4,7 +4,6 @@ import { ROW_HEIGHT } from '../constants'
 import { useGitContext } from '../composables/useGitContext'
 import type { Commit } from '../types'
 import BranchTag from './components/BranchTag.vue'
-import styles from './GitLogTags.module.scss'
 
 // ---------------------------------------------------------------------------
 // Context
@@ -120,7 +119,7 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
 </script>
 
 <template>
-  <div :class="styles.container">
+  <div class="container">
     <template v-for="(commit, i) in preparedCommits" :key="`tag-${commit.hash}`">
       <BranchTag
         v-if="shouldRenderBranchTag(commit)"
@@ -133,9 +132,23 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
       <div
         v-else
         :id="`empty-tag-${commit.hash}`"
-        :class="styles.tag"
+        class="tag"
         :style="{ height: `${rowHeight}px` }"
       />
     </template>
   </div>
 </template>
+
+<style scoped lang="scss">
+.container {
+  position: relative;
+  padding: 0 10px;
+  margin-top: 12px;
+  width: 155px;
+}
+
+.tag {
+  // Empty tag placeholder — takes up the same row height
+  // as a BranchTag so the layout stays aligned with the graph.
+}
+</style>

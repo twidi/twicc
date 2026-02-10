@@ -9,7 +9,6 @@ import { GRAPH_MARGIN_TOP } from './constants'
 import SkeletonGraph from './components/SkeletonGraph.vue'
 import IndexPseudoRow from './components/IndexPseudoRow.vue'
 import GraphRow from './components/GraphRow.vue'
-import styles from './GraphCore.module.scss'
 
 // ---------------------------------------------------------------------------
 // Context
@@ -61,7 +60,7 @@ function getColumnsForCommit(index: number) {
 </script>
 
 <template>
-  <div :class="styles.graph" :style="wrapperStyle">
+  <div class="graph" :style="wrapperStyle">
     <!-- Skeleton placeholder (rendered when no visible commits) -->
     <SkeletonGraph v-if="visibleCommits.length === 0" />
 
@@ -78,3 +77,11 @@ function getColumnsForCommit(index: number) {
     />
   </div>
 </template>
+
+<style scoped lang="scss">
+.graph {
+  height: 100%;
+  display: grid;
+  gap: 0;
+}
+</style>

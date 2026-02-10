@@ -5,7 +5,6 @@ import { formatBranch } from '../../utils/formatBranch'
 import type { Commit } from '../../types'
 import Link from './Link.vue'
 import TagIcon from './TagIcon.vue'
-import styles from './TagLabel.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -40,15 +39,22 @@ const linkHref = computed(() => {
     <Link
       :href="linkHref"
       :text="displayName"
-      :link-class="styles.tagName"
     />
     <TagIcon />
   </template>
 
   <template v-else>
-    <span :class="styles.tagName">
+    <span class="tagName">
       {{ displayName }}
     </span>
     <TagIcon />
   </template>
 </template>
+
+<style scoped lang="scss">
+.tagName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>

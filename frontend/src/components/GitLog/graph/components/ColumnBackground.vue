@@ -4,7 +4,6 @@ import { BACKGROUND_HEIGHT_OFFSET, ROW_HEIGHT } from '../../constants'
 import { useGitContext } from '../../composables/useGitContext'
 import { useGraphContext } from '../../composables/useGraphContext'
 import { getColumnBackgroundSize } from '../utils/getColumnBackgroundSize'
-import styles from './ColumnBackground.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -82,8 +81,19 @@ const shouldShowFullBackground = computed(() =>
     :data-testid="`column-background-${index}-${id}`"
     :style="backgroundStyle"
     :class="[
-      styles.background,
-      shouldShowFullBackground && styles.backgroundSquare,
+      'background',
+      shouldShowFullBackground && 'backgroundSquare',
     ]"
   />
 </template>
+
+<style scoped lang="scss">
+.background {
+  position: absolute;
+}
+
+.backgroundSquare {
+  width: 100%;
+  left: 0;
+}
+</style>

@@ -3,7 +3,6 @@ import { computed, type CSSProperties } from 'vue'
 import { useGraphContext } from '../../composables/useGraphContext'
 import { useTheme } from '../../composables/useTheme'
 import type { GraphColumnState } from '../GraphMatrixBuilder'
-import styles from './HorizontalLine.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -70,7 +69,18 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
   <div
     :id="`horizontal-line-${lineConfig.variant}`"
     :data-testid="`horizontal-line-${lineConfig.variant}`"
-    :class="[styles.line, styles.horizontal]"
+    :class="['line', 'horizontal']"
     :style="lineConfig.style"
   />
 </template>
+
+<style scoped lang="scss">
+.line {
+  position: absolute;
+}
+
+.horizontal {
+  top: 50%;
+  height: 2px;
+}
+</style>

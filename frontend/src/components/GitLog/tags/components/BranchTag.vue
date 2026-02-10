@@ -7,7 +7,6 @@ import BranchLabel from './BranchLabel.vue'
 import TagLabel from './TagLabel.vue'
 import IndexLabel from './IndexLabel.vue'
 import BranchTagTooltip from './BranchTagTooltip.vue'
-import styles from './BranchTag.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -97,7 +96,7 @@ function handleMouseOut(): void {
   <button
     :id="`tag-${id}`"
     :style="{ height: `${height}px` }"
-    :class="styles.tagContainer"
+    class="tagContainer"
     @blur="handleMouseOut"
     @focus="handleMouseOver"
     @mouseout="handleMouseOut"
@@ -105,7 +104,7 @@ function handleMouseOut(): void {
   >
     <span
       :id="`tag-label-${id}`"
-      :class="styles.tag"
+      class="tag"
       :style="tagLabelContainerStyles"
     >
       <IndexLabel v-if="isIndex" />
@@ -115,14 +114,14 @@ function handleMouseOut(): void {
 
     <span
       :id="`tag-line-${id}`"
-      :class="styles.tagLine"
+      class="tagLine"
       :style="tagLineStyles"
     />
 
     <!-- Tooltip (shown on hover), positioned to the right -->
     <div
       v-if="showTooltip"
-      :class="styles.tooltipContainer"
+      class="tooltipContainer"
     >
       <BranchTagTooltip
         :id="id"
@@ -131,3 +130,50 @@ function handleMouseOut(): void {
     </div>
   </button>
 </template>
+
+<style scoped lang="scss">
+.tagContainer {
+  all: unset;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+
+  .tag {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 2px 6px;
+    border-radius: 6px;
+    max-width: 140px;
+    font-size: 0.8rem;
+    height: 22px;
+    opacity: 0.8;
+    transition: all ease-in-out 0.2s;
+
+    &:hover {
+      opacity: 1;
+    }
+  }
+
+  .tagLine {
+    $size: 1px;
+    top: 50%;
+    height: $size;
+    position: absolute;
+    transition: opacity ease-in-out 0.3s;
+  }
+}
+
+.tooltipContainer {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  pointer-events: none;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+</style>

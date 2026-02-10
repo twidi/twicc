@@ -7,7 +7,7 @@ import { usePlaceholderData } from '../composables/usePlaceholderData'
 import type { Commit, CustomTableRowProps, GitLogTableStylingProps } from '../types'
 import TableContainer from './components/TableContainer.vue'
 import TableRow from './components/TableRow.vue'
-import styles from './GitLogTable.module.scss'
+
 
 // ---------------------------------------------------------------------------
 // Props
@@ -75,13 +75,13 @@ const tableData = computed<Commit[]>(() => {
     <!-- Table headers -->
     <div
       v-if="showHeaders"
-      :class="styles.head"
+      class="head"
       id="vue-git-log-table-head"
       data-testid="vue-git-log-table-head"
       :style="props.styles?.thead"
     >
       <div
-        :class="styles.header"
+        class="header"
         :style="{ color: textColour }"
         id="vue-git-log-table-header-commit-message"
         data-testid="vue-git-log-table-header-commit-message"
@@ -90,7 +90,7 @@ const tableData = computed<Commit[]>(() => {
       </div>
 
       <div
-        :class="styles.header"
+        class="header"
         :style="{ color: textColour }"
         id="vue-git-log-table-header-author"
         data-testid="vue-git-log-table-header-author"
@@ -99,7 +99,7 @@ const tableData = computed<Commit[]>(() => {
       </div>
 
       <div
-        :class="styles.header"
+        class="header"
         :style="{ color: textColour }"
         id="vue-git-log-table-header-timestamp"
         data-testid="vue-git-log-table-header-timestamp"
@@ -136,3 +136,17 @@ const tableData = computed<Commit[]>(() => {
     </TableRow>
   </TableContainer>
 </template>
+
+<style scoped lang="scss">
+.head {
+  display: contents;
+}
+
+.header:first-child {
+  padding-left: 20px;
+}
+
+.header {
+  font-weight: 600;
+}
+</style>

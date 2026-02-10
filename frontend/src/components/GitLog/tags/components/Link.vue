@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
 import { useTheme } from '../../composables/useTheme'
-import styles from './Link.module.scss'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -10,7 +9,6 @@ import styles from './Link.module.scss'
 defineProps<{
   href?: string
   text: string
-  linkClass?: string
 }>()
 
 // ---------------------------------------------------------------------------
@@ -34,8 +32,17 @@ const linkStyle = computed<CSSProperties>(() => ({
     target="_blank"
     rel="noopener noreferrer"
     :style="linkStyle"
-    :class="[styles.link, linkClass]"
+    class="link"
   >
     {{ text }}
   </a>
 </template>
+
+<style scoped lang="scss">
+.link {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+</style>

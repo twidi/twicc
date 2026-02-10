@@ -4,7 +4,7 @@ import { ROW_HEIGHT } from '../../constants'
 import { useGitContext } from '../../composables/useGitContext'
 import { placeholderCommits } from '../../graph/placeholderData'
 import { HEADER_ROW_HEIGHT, TABLE_MARGIN_TOP } from '../constants'
-import styles from './TableContainer.module.scss'
+
 
 // ---------------------------------------------------------------------------
 // Props
@@ -101,9 +101,16 @@ const containerStyle = computed<CSSProperties>(() => {
     v-else
     id="vue-git-log-table"
     data-testid="vue-git-log-table"
-    :class="[styles.tableContainer, className]"
+    :class="['tableContainer', className]"
     :style="containerStyle"
   >
     <slot />
   </div>
 </template>
+
+<style scoped lang="scss">
+.tableContainer {
+  display: grid;
+  grid-template-columns: minmax(350px, 4fr) minmax(100px, 1fr) 195px;
+}
+</style>
