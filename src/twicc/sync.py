@@ -422,8 +422,11 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
 
                 # For parent sessions: check if this assistant message contains Task tool_use(s)
                 # and try to link them to existing subagents (handles the race condition where
-                # the subagent was synced before this Task tool_use existed)
-                if session.type == SessionType.SESSION and item.kind == ItemKind.ASSISTANT_MESSAGE:
+                # the subagent was synced before this Task tool_use existed).
+                # Note: Task tool_uses are often in CONTENT_ITEMS lines (streaming splits
+                # the text and tool_use into separate lines, and tool_use-only lines have
+                # no visible content so they're classified as CONTENT_ITEMS, not ASSISTANT_MESSAGE).
+                if session.type == SessionType.SESSION and item.kind in (ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
                     create_agent_link_from_tool_use(session.id, item, parsed)
 
             # Apply title updates
