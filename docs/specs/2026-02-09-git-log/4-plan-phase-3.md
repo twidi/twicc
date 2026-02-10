@@ -37,6 +37,7 @@
   3. Gérer la pagination client-side (`paging` prop → `slice()`)
   4. Gérer le filtrage (`filter` prop)
   5. `provide(GIT_CONTEXT_KEY, { ... })` avec toutes les données calculées
+     - **Note (décision phase 2.1)** : Toutes les propriétés réactives de `GitContextBag` sont typées `Readonly<Ref<T>>`. Les props du composant devront être converties en refs réactives pour satisfaire ce typage (via `toRef(props, 'propName')` ou `computed(() => props.propName)`). Les valeurs d'état interne (`selectedCommit`, `graphWidth`, etc.) sont des `ref()` classiques qui satisfont `Readonly<Ref<T>>` naturellement. Les setters restent des fonctions simples (pas de Ref).
   6. `provide(THEME_CONTEXT_KEY, { ... })` avec le thème (via `useTheme`)
   7. Utiliser `useSelectCommit` pour la logique de sélection
   8. Utiliser `useResize` pour la logique de resize

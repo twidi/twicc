@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'vue'
+import type { ComputedRef, CSSProperties } from 'vue'
 
 // ---------------------------------------------------------------------------
 // GitLogEntry — input data provided by the consumer
@@ -178,20 +178,20 @@ export interface ThemeFunctions {
   /**
    * The current active theme mode.
    */
-  theme: ThemeMode
+  theme: ComputedRef<ThemeMode>
 
   /**
    * An rgb() colour string for
    * text that is being hovered over
    * relative to the currently active theme.
    */
-  hoverColour: string
+  hoverColour: ComputedRef<string>
 
   /**
    * An rgb() colour string for
    * text relative to the currently active theme.
    */
-  textColour: string
+  textColour: ComputedRef<string>
 
   /**
    * An rgb() colour string for the
