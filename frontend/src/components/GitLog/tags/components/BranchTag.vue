@@ -147,7 +147,7 @@ function handleMouseOut(): void {
     justify-content: flex-end;
     padding: 2px 6px;
     border-radius: 6px;
-    max-width: 140px;
+    max-width: 8rem;
     font-size: 0.8rem;
     height: 22px;
     opacity: 0.8;

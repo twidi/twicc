@@ -142,7 +142,7 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
 <style scoped lang="scss">
 .container {
   position: relative;
-  padding: 0 10px;
+  padding: 0 .5rem;
 }
 
 .tag {

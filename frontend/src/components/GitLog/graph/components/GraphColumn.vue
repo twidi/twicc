@@ -13,8 +13,7 @@ import HeadCommitVerticalLine from './HeadCommitVerticalLine.vue'
 import VerticalLine from './VerticalLine.vue'
 import HorizontalLine from './HorizontalLine.vue'
 import ColumnBackground from './ColumnBackground.vue'
-import LeftDownCurve from './LeftDownCurve.vue'
-import LeftUpCurve from './LeftUpCurve.vue'
+import Curve from './Curve.vue'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -249,19 +248,21 @@ function handleMouseOut(): void {
     />
 
     <!-- This column is part of a merge or branching and requires a curve (left edge to bottom edge) -->
-    <LeftDownCurve
+    <Curve
       v-if="state.isLeftDownCurve"
+      direction="down"
       :colour="columnColour"
       :is-placeholder="state.isPlaceholderSkeleton"
-      :show-bottom-break-point="state.isBottomBreakPoint"
+      :show-break-point="state.isBottomBreakPoint"
     />
 
     <!-- This column is part of a merge or branching and requires a curve (left edge to top edge) -->
-    <LeftUpCurve
+    <Curve
       v-if="state.isLeftUpCurve"
+      direction="up"
       :colour="columnColour"
-      :show-top-break-point="state.isTopBreakPoint"
       :is-placeholder="state.isPlaceholderSkeleton"
+      :show-break-point="state.isTopBreakPoint"
     />
   </button>
 </template>

@@ -60,9 +60,9 @@ const titleHeight = computed(() => pxToRem(headerRowHeight.value))
 
   .tags {
     flex-grow: 1;
-    max-width: 11rem;
+    max-width: 10rem;
       .title {
-          margin-left: 10px;
+          margin-left: .5rem;
       }
   }
 

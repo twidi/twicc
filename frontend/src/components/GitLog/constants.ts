@@ -35,6 +35,9 @@ export const DEFAULT_GRAPH_COLUMN_WIDTH = 24
  * The width of the borders on a commit node.
  */
 export const NODE_BORDER_WIDTH = 2
+// TODO: extract a LINE_BORDER_WIDTH constant for graph edges
+// (vertical lines, curves, etc.) — currently hardcoded as 2px
+// in multiple components and style blocks.
 
 /**
  * The number of pixels to offset the background

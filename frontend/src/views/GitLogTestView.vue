@@ -6,6 +6,7 @@ import {
     GitLogTable,
     GitLogTags,
 } from '../components/GitLog'
+import { DEFAULT_NODE_SIZE, DEFAULT_ROW_HEIGHT, NODE_BORDER_WIDTH } from '../components/GitLog/constants'
 import { fakeEntries, fakeIndexStatus } from '../components/GitLog/__tests__/fakeData'
 
 // ---------------------------------------------------------------------------
@@ -29,10 +30,28 @@ const PALETTE_OPTIONS = [
 const selectedPalette = ref('neon-aurora-dark')
 
 // ---------------------------------------------------------------------------
-// Node size
+// Sizing
 // ---------------------------------------------------------------------------
 
-const nodeSize = ref(20)
+const nodeSize = ref(DEFAULT_NODE_SIZE)
+const rowHeight = ref(DEFAULT_ROW_HEIGHT)
+const graphColumnWidth = ref(DEFAULT_NODE_SIZE + NODE_BORDER_WIDTH * 2)
+
+// ---------------------------------------------------------------------------
+// Break point theme
+// ---------------------------------------------------------------------------
+
+const BREAK_POINT_THEME_OPTIONS = [
+    { label: 'Dot', value: 'dot' },
+    { label: 'Slash', value: 'slash' },
+    { label: 'Arrow', value: 'arrow' },
+    { label: 'Ring', value: 'ring' },
+    { label: 'Line', value: 'line' },
+    { label: 'Double line', value: 'double-line' },
+    { label: 'Zig-zag', value: 'zig-zag' },
+]
+
+const selectedBreakPointTheme = ref('dot')
 
 // ---------------------------------------------------------------------------
 // Orientation
@@ -126,16 +145,47 @@ const displayedCommitLabel = computed(() => {
                     {{ opt.label }}
                 </option>
             </select>
-            <label class="toggle">
-                <span>Node</span>
-                <input
-                    v-model.number="nodeSize"
-                    type="number"
-                    class="control-input control-input--narrow"
-                    min="10"
-                    max="40"
-                />
-            </label>
+            <div class="sizing-group">
+                <label class="toggle">
+                    <span>Node</span>
+                    <input
+                        v-model.number="nodeSize"
+                        type="number"
+                        class="control-input control-input--narrow"
+                        min="10"
+                        max="40"
+                    />
+                </label>
+                <label class="toggle">
+                    <span>Row H</span>
+                    <input
+                        v-model.number="rowHeight"
+                        type="number"
+                        class="control-input control-input--narrow"
+                        min="20"
+                        max="80"
+                    />
+                </label>
+                <label class="toggle">
+                    <span>Col W</span>
+                    <input
+                        v-model.number="graphColumnWidth"
+                        type="number"
+                        class="control-input control-input--narrow"
+                        min="16"
+                        max="60"
+                    />
+                </label>
+                <select v-model="selectedBreakPointTheme" class="control-select">
+                    <option
+                        v-for="opt in BREAK_POINT_THEME_OPTIONS"
+                        :key="opt.value"
+                        :value="opt.value"
+                    >
+                        {{ opt.label }}
+                    </option>
+                </select>
+            </div>
             <select v-model.number="pageSize" class="control-select control-select--narrow" @change="currentPage = 0">
                 <option :value="10">10</option>
                 <option :value="20">20</option>
@@ -176,12 +226,11 @@ const displayedCommitLabel = computed(() => {
                 :on-select-commit="handleSelectCommit"
                 :on-preview-commit="handlePreviewCommit"
                 :show-headers="true"
-                :graph-column-width="24"
                 :node-size="nodeSize"
+                :row-height="rowHeight"
+                :graph-column-width="graphColumnWidth"
                 :enable-selected-commit-styling="true"
                 :enable-previewed-commit-styling="true"
-                :row-height="24"
-                :nodeSize="10"
             >
                 <template #tags>
                     <GitLogTags />
@@ -189,7 +238,7 @@ const displayedCommitLabel = computed(() => {
                 <template #graph>
                     <GitLogGraphHTMLGrid
                         :orientation="orientation"
-                        :enable-resize="true"
+                        :break-point-theme="selectedBreakPointTheme"
                         :show-commit-node-tooltips="true"
                     />
                 </template>
@@ -332,6 +381,12 @@ const displayedCommitLabel = computed(() => {
     border-color: #555;
 }
 
+.sizing-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .page-indicator {
     font-size: 0.78rem;
     font-variant-numeric: tabular-nums;
@@ -376,6 +431,7 @@ const displayedCommitLabel = computed(() => {
     background: #f8f8fc;
     max-height: 180px;
     overflow-y: auto;
+    display: none !important;
 }
 
 .commit-detail-panel.dark {
