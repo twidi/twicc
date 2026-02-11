@@ -125,10 +125,14 @@ const graphContextValue: GraphContextBag = {
 }
 
 provide(GRAPH_CONTEXT_KEY, graphContextValue)
+
+const graphCssVars = computed(() => ({
+  '--commit-label-width': props.showCommitNodeHashes ? '2.5rem' : '0rem',
+}))
 </script>
 
 <template>
-  <div class="container">
+  <div class="container" :style="graphCssVars">
     <slot />
   </div>
 </template>

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watchEffect } from 'vue'
 import {
     GitLog,
     GitLogGraphHTMLGrid,
@@ -32,6 +32,12 @@ const selectedPalette = ref('neon-aurora-dark')
 // ---------------------------------------------------------------------------
 // Sizing
 // ---------------------------------------------------------------------------
+
+const fontSize = ref(16)
+
+watchEffect(() => {
+    document.documentElement.style.fontSize = `${fontSize.value}px`
+})
 
 const nodeSize = ref(DEFAULT_NODE_SIZE)
 const rowHeight = ref(DEFAULT_ROW_HEIGHT)
@@ -147,6 +153,15 @@ const displayedCommitLabel = computed(() => {
             </select>
             <div class="sizing-group">
                 <label class="toggle">
+                    <span>Font {{ fontSize }}px</span>
+                    <input
+                        v-model.number="fontSize"
+                        type="range"
+                        min="8"
+                        max="40"
+                    />
+                </label>
+                <label class="toggle">
                     <span>Node</span>
                     <input
                         v-model.number="nodeSize"
@@ -240,6 +255,7 @@ const displayedCommitLabel = computed(() => {
                         :orientation="orientation"
                         :break-point-theme="selectedBreakPointTheme"
                         :show-commit-node-tooltips="true"
+                        :show-commit-node-hashes="false"
                     />
                 </template>
                 <template #table>

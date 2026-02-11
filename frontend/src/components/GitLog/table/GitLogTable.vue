@@ -140,7 +140,7 @@ const tableData = computed<Commit[]>(() => {
 }
 
 .header:first-child {
-  padding-left: 20px;
+  padding-left: 1rem;
 }
 
 .header {

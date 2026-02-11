@@ -11,9 +11,9 @@
 
 <style scoped>
 .icon {
-  width: 18px;
+  width: 1rem;
   flex: 0 0 auto;
-  margin-left: 3px;
+  margin-left: 0.25rem;
   fill: currentColor;
 }
 </style>

@@ -67,21 +67,22 @@ const childrenText = computed(() =>
 
 <style scoped>
 .tooltip {
-  padding: 15px 20px;
+  padding: .5rem;
   border-radius: 8px;
   color: var(--git-text-color);
   border: 2px solid var(--tooltip-border-color);
   background: var(--tooltip-background-color);
+  display: flex;
+  flex-direction: column;
 }
 
 .label {
   font-weight: 600;
   display: inline-block;
-  margin: 0 5px 5px 0;
+  margin: 0 .25rem 0 0;
 }
 
 .text {
   display: inline;
-  margin: 0 0 5px 0;
 }
 </style>

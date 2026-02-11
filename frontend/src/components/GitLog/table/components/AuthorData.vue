@@ -62,7 +62,7 @@ const authorName = computed(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: 30px;
+  padding-right: 1rem;
   font-weight: 400;
 }
 </style>

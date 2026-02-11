@@ -40,7 +40,7 @@ const tooltipVars = computed<CSSProperties>(() => ({
 
 <style scoped>
 .tooltip {
-  padding: 3px 8px;
+  padding: .125rem .5rem;
   border-radius: 4px;
   font-size: 0.8rem;
   color: var(--git-text-color);

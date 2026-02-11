@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, type CSSProperties } from 'vue'
-import { NODE_BORDER_WIDTH } from '../../constants'
 import { pxToRem } from '../../utils/units'
-import { useTheme } from '../../composables/useTheme'
+import { useTheme, shiftAlphaChannel } from '../../composables/useTheme'
 import { useSelectCommit } from '../../composables/useSelectCommit'
 import { useGraphContext } from '../../composables/useGraphContext'
 import { useGitContext } from '../../composables/useGitContext'
@@ -63,6 +62,12 @@ const mergeInnerNodeVars = computed<CSSProperties>(() => {
     '--merge-commit-diameter': diameter,
     '--merge-commit-background-color': commitNodeColours.value.borderColour,
   }
+})
+
+const commitLabelVars = computed<CSSProperties>(() => {
+    return {
+        '--commit-label--background-color': commitNodeColours.value.backgroundColour
+    }
 })
 
 const isTooltipVisible = computed(() =>
@@ -171,6 +176,7 @@ function handleKeyDown(event: KeyboardEvent): void {
       v-if="showCommitNodeHashes"
       :id="`commit-node-hash-${commit.hash}`"
       :data-testid="`commit-node-hash-${commit.hash}`"
+      :style="commitLabelVars"
       class="commitLabel"
     >
       {{ commit.hash }}
@@ -224,15 +230,16 @@ function handleKeyDown(event: KeyboardEvent): void {
 
   .commitLabel {
     position: absolute;
-    padding: 2px 5px 2px 2px;
+    padding: 0.0625rem 0.1875rem;
     border-radius: 5px;
     font-size: 0.7rem;
-     --commit-hash-height: 20px;
     color: var(--git-text-color);
-    left: calc(50% + var(--git-node-size) / 2 + 5);
-    top: calc(50% - var(--commit-hash-height) / 2);
-    height: var(--commit-hash-height);
-
+    left: 50%;
+    top: 50%;
+    translate: -50% -50%;
+    line-height: normal;
+    background: var(--commit-label--background-color);
+    opacity: 0.7;
   }
 }
 
@@ -254,6 +261,6 @@ function handleKeyDown(event: KeyboardEvent): void {
   z-index: 30;
   pointer-events: none;
   white-space: nowrap;
-  margin-bottom: 8px;
+  margin-bottom: .5rem;
 }
 </style>

@@ -12,10 +12,10 @@
 
 <style scoped>
 .icon {
-  width: 17px;
-  margin-top: 2px;
+  width: 1rem;
+  margin-top: 0.125rem;
   flex: 0 0 auto;
-  margin-left: 6px;
+  margin-left: 0.25rem;
   stroke-width: 2px;
   stroke-linecap: round;
   stroke-linejoin: round;

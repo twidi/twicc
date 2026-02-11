@@ -34,8 +34,7 @@ defineProps<{
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: 30px;
-  padding-left: 20px;
+  padding-inline: 1rem;
   font-weight: 400;
   &.isIndex {
     display: flex;

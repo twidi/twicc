@@ -12,11 +12,10 @@
 
 <style scoped>
 .icon {
-  width: 15px;
+  width: 1rem;
   flex: 0 0 auto;
-  margin-left: 5px;
-  margin-top: 2px;
-  margin-right: 2px;
+  margin-left: 0.125rem;
+  margin-right: 0.125rem;
   fill: currentColor;
 }
 </style>

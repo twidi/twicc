@@ -138,11 +138,11 @@ function handleMouseOut(): void {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    padding: 2px 6px;
+    padding: .125rem .375rem;
     border-radius: 6px;
     max-width: 8rem;
     font-size: 0.8rem;
-    height: min(22px, calc(var(--git-row-height) - 8px));
+    height: min(1.25rem, max(.75rem, calc(var(--git-row-height) - .75rem)));
     opacity: 0.8;
     transition: all ease-in-out 0.2s;
     color: var(--tag-label-color);
@@ -187,6 +187,6 @@ function handleMouseOut(): void {
   z-index: 30;
   pointer-events: none;
   white-space: nowrap;
-  margin-left: 8px;
+  margin-left: .5rem;
 }
 </style>

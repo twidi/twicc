@@ -64,15 +64,15 @@ const { indexStatus } = useGitContext()
 
 <style scoped>
 .pencil, .plus, .minus {
-  height: 15px;
-  width: 15px;
-  margin-left: 2px;
+  height: .75rem;
+  width: .75rem;
 }
 
 .indexStatus {
   display: flex;
   align-items: center;
-  margin-left: 5px;
+  margin-left: .75rem;
+  gap: .5rem;
   opacity: 0.8;
   transition: opacity ease-in-out 0.2s;
 
@@ -83,15 +83,8 @@ const { indexStatus } = useGitContext()
   .status {
     display: flex;
     align-items: center;
+      gap: .125rem;
   }
-}
-
-.value {
-  margin-left: 15px;
-}
-
-.iconWrapper {
-  margin-top: 2px;
 }
 
 .modified {
