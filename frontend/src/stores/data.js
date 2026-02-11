@@ -22,7 +22,8 @@ import {
 import { processFile, mediasToSdkFormat } from '../utils/fileUtils'
 import { debounce } from '../utils/debounce'
 import { apiFetch } from '../utils/api'
-import { respondToPendingRequest as sendPendingRequestResponse } from '../composables/useWebSocket'
+// Note: respondToPendingRequest is imported lazily to avoid circular dependency
+// (data.js ↔ useWebSocket.js)
 
 // Map of debounced save functions per session (to avoid mixing debounces)
 const debouncedSaves = new Map()
@@ -1233,8 +1234,10 @@ export const useDataStore = defineStore('data', {
          *   For ask user question: { request_type: 'ask_user_question', answers: { questionText: selectedLabel, ... } }
          * @returns {boolean} True if the message was sent
          */
-        respondToPendingRequest(sessionId, requestId, responseData) {
-            return sendPendingRequestResponse(sessionId, requestId, responseData)
+        async respondToPendingRequest(sessionId, requestId, responseData) {
+            // Lazy import to avoid circular dependency (data.js ↔ useWebSocket.js)
+            const { respondToPendingRequest: sendResponse } = await import('../composables/useWebSocket')
+            return sendResponse(sessionId, requestId, responseData)
         },
 
         // Session rename action

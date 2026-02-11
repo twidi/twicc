@@ -152,6 +152,20 @@ Two tables for append-only JSONL sync:
 - UI state persisted to localStorage via VueUse
 - No authentication layer (current design)
 
+### Avoiding Circular Imports (HMR)
+
+**CRITICAL:** Circular imports between frontend modules cause Vite HMR to fall back to full page reloads instead of hot updates. This has been a recurring issue.
+
+**Rules to follow:**
+- **Never** import `router.js` directly from utility files, composables, or stores. Use lazy `await import('../router')` if router access is needed (e.g., for redirects).
+- **Never** create mutual static imports between stores and composables (e.g., `data.js ↔ useWebSocket.js`). Use lazy `await import()` in the less-frequently-called direction.
+- **Never** import Vue components statically from composables if those components import stores/composables that create a cycle. Use `defineAsyncComponent(() => import(...))` instead.
+- **Common cycle patterns to avoid:**
+  - `main.js → ... → someFile → main.js` (extract shared code to a utility file)
+  - `router.js → views → components → composable/util → router.js` (lazy import router)
+  - `store ↔ composable` (lazy import in one direction)
+  - `composable → component → store → composable` (use defineAsyncComponent)
+
 ## Web Awesome Components
 
 **Version:** Web Awesome 3 (using next, which is > 3). Since version 3, **native** browser events are no longer prefixed with `wa-` (e.g., `@click`, `@focus`, `@input`). However, **custom** Web Awesome events still use the `wa-` prefix (e.g., `@wa-show`, `@wa-hide`, `@wa-after-show`).

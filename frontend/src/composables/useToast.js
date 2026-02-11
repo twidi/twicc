@@ -32,9 +32,12 @@
  *   })
  */
 
-import { markRaw } from 'vue'
+import { markRaw, defineAsyncComponent } from 'vue'
 import { push } from 'notivue'
-import SessionToastContent from '../components/SessionToastContent.vue'
+
+// Lazy import to avoid circular dependency
+// (useToast → SessionToastContent → data.js → useWebSocket → useToast)
+const SessionToastContent = defineAsyncComponent(() => import('../components/SessionToastContent.vue'))
 
 /**
  * Show a success toast
