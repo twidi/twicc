@@ -28,7 +28,6 @@ const { showHeaders } = useGitContext()
   <!-- Custom row mode: plain div (no CSS Grid) -->
   <div
     v-if="hasCustomRow"
-    id="vue-git-log-table"
     class="customTableContainer"
     :style="props.styleOverrides"
   >
@@ -38,7 +37,6 @@ const { showHeaders } = useGitContext()
   <!-- Default mode: CSS Grid layout -->
   <div
     v-else
-    id="vue-git-log-table"
     :class="['tableContainer', className, {hasHeaders: showHeaders}]"
     :style="props.styleOverrides"
   >

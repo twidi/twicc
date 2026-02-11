@@ -39,7 +39,6 @@ const indexColumns = computed<GraphColumnState[]>(() => {
 <template>
   <GraphRow
     v-if="indexCommit"
-    :id="0"
     :commit="indexCommit"
     :columns="indexColumns"
   />

@@ -182,7 +182,6 @@ const indexBreakPointStyleOverrides = computed<Partial<Record<BreakPointTheme, C
 
 <template>
   <div
-    :id="`vertical-line-${lineConfig.variant}`"
     :class="['line', 'vertical']"
     :style="lineConfig.style"
   >

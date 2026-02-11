@@ -29,7 +29,6 @@ const nodeVars = computed<CSSProperties>(() => ({
 
 <template>
   <div
-    id="index-pseudo-commit-node"
     :class="[
       'indexNode',
       animate && 'spin',

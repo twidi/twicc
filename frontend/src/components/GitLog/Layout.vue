@@ -67,7 +67,6 @@ const cssVars = computed(() => ({
 
 <template>
   <div
-    id="vue-git-log"
     :style="[classes?.containerStyles, cssVars]"
     :class="['container', classes?.containerClass]"
   >

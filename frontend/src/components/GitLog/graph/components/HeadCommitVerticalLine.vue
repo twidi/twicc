@@ -11,7 +11,6 @@ defineProps<{
 
 <template>
   <div
-    id="head-commit-vertical-line"
     :style="{'--vertical-line-color': columnColour}"
     :class="['line', 'vertical']"
   />

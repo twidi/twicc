@@ -38,7 +38,6 @@ const childrenText = computed(() =>
 
 <template>
   <div
-    :id="`commit-node-tooltip-${commit.hash}`"
     :style="tooltipVars"
     class="tooltip"
   >

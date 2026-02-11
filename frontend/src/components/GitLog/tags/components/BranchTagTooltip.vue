@@ -8,7 +8,6 @@ import type { Commit } from '../../types'
 // ---------------------------------------------------------------------------
 
 const props = defineProps<{
-  id: string
   commit: Commit
 }>()
 
@@ -30,7 +29,6 @@ const tooltipVars = computed<CSSProperties>(() => ({
 
 <template>
   <div
-    :id="`tag-${id}-tooltip`"
     class="tooltip"
     :style="tooltipVars"
   >

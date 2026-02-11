@@ -116,13 +116,11 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
       <BranchTag
         v-if="shouldRenderBranchTag(commit)"
         :commit="commit"
-        :id="i.toString()"
         :line-width="tagLineWidth(commit)"
         :line-right="-tagLineWidth(commit)"
       />
       <div
         v-else
-        :id="`empty-tag-${commit.hash}`"
         class="tag"
       />
     </template>

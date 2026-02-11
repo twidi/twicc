@@ -49,7 +49,6 @@ const formattedTimestamp = computed(() => {
   <div
     :style="style"
     class="timestamp"
-    :id="`vue-git-log-table-data-timestamp-${index}`"
   >
     {{ isPlaceholder ? '-' : formattedTimestamp }}
   </div>

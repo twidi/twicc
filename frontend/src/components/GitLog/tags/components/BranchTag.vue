@@ -14,7 +14,6 @@ import BranchTagTooltip from './BranchTagTooltip.vue'
 // ---------------------------------------------------------------------------
 
 const props = defineProps<{
-  id: string
   commit: Commit
   lineRight: number
   lineWidth: number
@@ -88,7 +87,6 @@ function handleMouseOut(): void {
 
 <template>
   <button
-    :id="`tag-${id}`"
     class="tagContainer"
     @blur="handleMouseOut"
     @focus="handleMouseOver"
@@ -96,7 +94,6 @@ function handleMouseOut(): void {
     @mouseover="handleMouseOver"
   >
     <span
-      :id="`tag-label-${id}`"
       :class="['tag', { isIndex }]"
       :style="tagLabelVars"
     >
@@ -106,7 +103,6 @@ function handleMouseOut(): void {
     </span>
 
     <span
-      :id="`tag-line-${id}`"
       :class="['tagLine', { isSelected: isSelectedCommit, isPreviewed: isPreviewCommit }]"
       :style="tagLineVars"
     />
@@ -117,7 +113,6 @@ function handleMouseOut(): void {
       class="tooltipContainer"
     >
       <BranchTagTooltip
-        :id="id"
         :commit="commit"
       />
     </div>

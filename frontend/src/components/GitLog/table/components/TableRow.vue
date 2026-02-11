@@ -147,7 +147,6 @@ function handleMouseOut() {
   <!-- Custom row via scoped slot -->
   <div
     v-if="$slots.row"
-    :id="`vue-git-log-table-row-${index}`"
     @click="handleClick"
     @mouseover="handleMouseOver"
     @mouseout="handleMouseOut"
@@ -164,7 +163,6 @@ function handleMouseOut() {
   <!-- Default row layout -->
   <div
     v-else
-    :id="`vue-git-log-table-row-${index}`"
     class="row"
     :style="rowStyleOverrides"
     @click="handleClick"

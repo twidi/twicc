@@ -19,7 +19,6 @@ defineProps<{
   <div
     :title="commitMessage"
     :class="['message', {isIndex}]"
-    :id="`vue-git-log-table-data-commit-message-${index}`"
     :style="style"
   >
     {{ commitMessage }}

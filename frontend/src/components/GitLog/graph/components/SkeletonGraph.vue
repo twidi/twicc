@@ -13,7 +13,6 @@ const { placeholderData } = usePlaceholderData()
   <GraphRow
     v-for="({ commit, columns }, rowIndex) in placeholderData"
     :key="`skeleton-row_${commit.hash}`"
-    :id="rowIndex"
     :commit="commit"
     :columns="columns"
   />

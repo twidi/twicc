@@ -76,26 +76,22 @@ const tableData = computed<Commit[]>(() => {
     <div
       v-if="showHeaders"
       class="head"
-      id="vue-git-log-table-head"
       :style="props.styles?.thead"
     >
       <div
         class="header"
-        id="vue-git-log-table-header-commit-message"
       >
         Commit message
       </div>
 
       <div
         class="header"
-        id="vue-git-log-table-header-author"
       >
         Author
       </div>
 
       <div
         class="header"
-        id="vue-git-log-table-header-timestamp"
       >
         Timestamp
       </div>

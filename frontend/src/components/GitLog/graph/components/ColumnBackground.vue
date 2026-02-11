@@ -10,7 +10,6 @@ import { useGraphContext } from '../../composables/useGraphContext'
 // ---------------------------------------------------------------------------
 
 const props = defineProps<{
-  id: string
   index: number
   colour: string
   commitNodeIndex: number
@@ -55,7 +54,6 @@ const shouldShowFullBackground = computed(() =>
 
 <template>
   <div
-    :id="`column-background-${index}-${id}`"
     :style="backgroundVars"
     :class="['background', {
       backgroundSquare: shouldShowFullBackground,

@@ -156,7 +156,6 @@ function handleMouseOut(): void {
 
 <template>
   <button
-    :id="`graph-column-row-${rowIndex}-col-${index}`"
     :tabindex="rowIndex"
     :class="['column', {isFlippedCurve: orientation === 'flipped' && (props.state.isLeftDownCurve || props.state.isLeftUpCurve)}]"
     @click="handleClick"
@@ -210,7 +209,6 @@ function handleMouseOut(): void {
     <!-- This column is part of a row that has been selected -->
     <ColumnBackground
       v-if="showSelectedBackground"
-      id="selected"
       :index="index"
       :commit-node-index="commitNodeIndex"
       :colour="selectedBackgroundColour"
@@ -219,7 +217,6 @@ function handleMouseOut(): void {
     <!-- This column is part of a row that has been previewed (via hover) -->
     <ColumnBackground
       v-if="showPreviewBackground"
-      id="previewed"
       :index="index"
       :colour="hoverColour"
       :commit-node-index="commitNodeIndex"
