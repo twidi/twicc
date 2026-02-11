@@ -12,17 +12,22 @@ import { computeUsageData } from '../utils/usage'
 // WebSocket close code sent by backend when authentication fails
 const WS_CLOSE_AUTH_FAILURE = 4001
 
+// Module-level state, preserved across HMR reloads via import.meta.hot.
+// Without this, Vite HMR resets these variables to their initial values,
+// causing "WebSocket not initialized" errors even though the connection is alive.
+const __hmrState = import.meta.hot?.data ?? {}
+
 // Module-level reference to the WebSocket send function
 // Allows components to access it without going through the composable
-let wsSendFn = null
+if (!('wsSendFn' in __hmrState)) __hmrState.wsSendFn = null
 
 // Track whether the last close was due to auth failure.
 // When true, auto-reconnect is suppressed until explicitly reset.
-let lastCloseWasAuthFailure = false
+if (!('lastCloseWasAuthFailure' in __hmrState)) __hmrState.lastCloseWasAuthFailure = false
 
 // Debounced function for user draft notifications (10 seconds)
 // This prevents spamming the server while still keeping the process alive
-const debouncedDraftNotifications = new Map() // sessionId -> debouncedFn
+if (!('debouncedDraftNotifications' in __hmrState)) __hmrState.debouncedDraftNotifications = new Map() // sessionId -> debouncedFn
 
 /**
  * Send a JSON message through the WebSocket connection.
@@ -31,11 +36,11 @@ const debouncedDraftNotifications = new Map() // sessionId -> debouncedFn
  * @returns {boolean} - True if message was sent, false if not connected
  */
 export function sendWsMessage(data) {
-    if (!wsSendFn) {
+    if (!__hmrState.wsSendFn) {
         console.warn('WebSocket not initialized, cannot send message')
         return false
     }
-    wsSendFn(JSON.stringify(data))
+    __hmrState.wsSendFn(JSON.stringify(data))
     return true
 }
 
@@ -96,18 +101,18 @@ export function notifyUserDraftUpdated(sessionId) {
     if (!sessionId) return
 
     // Get or create debounced function for this session
-    if (!debouncedDraftNotifications.has(sessionId)) {
+    if (!__hmrState.debouncedDraftNotifications.has(sessionId)) {
         const debouncedFn = useDebounceFn(() => {
             sendWsMessage({
                 type: 'user_draft_updated',
                 session_id: sessionId
             })
         }, 10000) // 10 seconds debounce
-        debouncedDraftNotifications.set(sessionId, debouncedFn)
+        __hmrState.debouncedDraftNotifications.set(sessionId, debouncedFn)
     }
 
     // Call the debounced function
-    debouncedDraftNotifications.get(sessionId)()
+    __hmrState.debouncedDraftNotifications.get(sessionId)()
 }
 
 /**
@@ -175,7 +180,7 @@ export function useWebSocket() {
         autoReconnect: {
             // Don't reconnect if the last close was an auth failure.
             // For all other cases, always retry (equivalent to Infinity).
-            retries: () => !lastCloseWasAuthFailure,
+            retries: () => !__hmrState.lastCloseWasAuthFailure,
             delay: 1000,
         },
         heartbeat: {
@@ -187,7 +192,7 @@ export function useWebSocket() {
         onDisconnected(ws, event) {
             if (event.code === WS_CLOSE_AUTH_FAILURE) {
                 console.warn('WebSocket closed with auth failure code (4001), stopping reconnection')
-                lastCloseWasAuthFailure = true
+                __hmrState.lastCloseWasAuthFailure = true
                 handleWsAuthFailure()
             }
         },
@@ -222,7 +227,7 @@ export function useWebSocket() {
             }
         } else {
             // Auth is actually fine, the WS close was spurious — reconnect
-            lastCloseWasAuthFailure = false
+            __hmrState.lastCloseWasAuthFailure = false
             open()
         }
     }
@@ -235,7 +240,7 @@ export function useWebSocket() {
                 // proxy) strip the close code, so this message ensures we
                 // detect auth failure even when the close code is lost.
                 console.warn('WebSocket received auth_failure message, treating as auth rejection')
-                lastCloseWasAuthFailure = true
+                __hmrState.lastCloseWasAuthFailure = true
                 handleWsAuthFailure()
                 break
             case 'project_added':
@@ -313,7 +318,7 @@ export function useWebSocket() {
     watch(status, (newStatus, oldStatus) => {
         if (newStatus === 'OPEN') {
             // Store send function at module level for global access
-            wsSendFn = send
+            __hmrState.wsSendFn = send
 
             const currentProjectId = route.params.projectId || null
             const currentSessionId = route.params.sessionId || null
@@ -323,7 +328,7 @@ export function useWebSocket() {
             wasConnected = true
         } else if (newStatus === 'CLOSED') {
             // Clear send function when disconnected
-            wsSendFn = null
+            __hmrState.wsSendFn = null
         }
     })
 
@@ -332,7 +337,7 @@ export function useWebSocket() {
      * Called by App.vue when authentication is confirmed.
      */
     function openWs() {
-        lastCloseWasAuthFailure = false
+        __hmrState.lastCloseWasAuthFailure = false
         open()
     }
 
