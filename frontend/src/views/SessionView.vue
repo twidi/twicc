@@ -46,6 +46,8 @@ function restoreActiveTab() {
             params: { ...params, subagentId: agentId }
         })
     } else if (['files', 'git', 'terminal'].includes(savedTab)) {
+        // Don't restore git tab if session has no git repo
+        if (savedTab === 'git' && !hasGitRepo.value) return
         router.replace({
             name: isAllProjectsMode.value ? `projects-session-${savedTab}` : `session-${savedTab}`,
             params
@@ -150,6 +152,9 @@ const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
 // Session data
 const session = computed(() => store.getSession(sessionId.value))
 
+// Whether the session is in a git repository (has both a git directory and a branch defined)
+const hasGitRepo = computed(() => !!session.value?.git_directory && !!session.value?.git_branch)
+
 // Tabs state - computed from store (automatically updates when session changes)
 // Format: [{ id: 'agent-xxx', agentId: 'xxx' }, ...]
 const openSubagentTabs = computed(() => {
@@ -176,6 +181,17 @@ const activeTabId = computed(() => {
     if (name === 'session-terminal' || name === 'projects-session-terminal') return 'terminal'
     return 'main'
 })
+
+// Redirect away from git tab if the session has no git repo
+// (handles direct URL navigation and dynamic changes)
+watch([activeTabId, hasGitRepo], ([tabId, hasGit]) => {
+    if (tabId === 'git' && !hasGit) {
+        router.replace({
+            name: isAllProjectsMode.value ? 'projects-session' : 'session',
+            params: { projectId: projectId.value, sessionId: sessionId.value }
+        })
+    }
+}, { immediate: true })
 
 /**
  * Handle tab change event from wa-tab-group.
@@ -363,7 +379,7 @@ function handleNeedsTitle() {
                     Files
                 </wa-button>
             </wa-tab>
-            <wa-tab slot="nav" panel="git">
+            <wa-tab v-if="hasGitRepo" slot="nav" panel="git">
                 <wa-button
                     :appearance="activeTabId === 'git' ? 'outlined' : 'plain'"
                     :variant="activeTabId === 'git' ? 'brand' : 'neutral'"
@@ -419,7 +435,7 @@ function handleNeedsTitle() {
                     :is-draft="session?.draft === true"
                 />
             </wa-tab-panel>
-            <wa-tab-panel name="git">
+            <wa-tab-panel v-if="hasGitRepo" name="git">
                 <GitPanel
                     :active="isActive && activeTabId === 'git'"
                 />
