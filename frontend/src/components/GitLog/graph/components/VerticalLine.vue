@@ -118,9 +118,10 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
     }
   }
 
+  const hasChildren = props.commit.children.length > 0
   const isBranchTip = isServerSidePaginated.value
     ? props.commit.hash === headCommitHash.value
-    : props.commit.isBranchTip && props.state.isNode
+    : props.commit.isBranchTip && props.state.isNode && !hasChildren
 
   if (isBranchTip || props.state.isColumnAboveEmpty) {
     return {
