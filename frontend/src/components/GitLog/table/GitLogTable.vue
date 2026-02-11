@@ -148,5 +148,7 @@ const tableData = computed<Commit[]>(() => {
 
 .header {
   font-weight: 600;
+    display: flex;
+    align-items: center;
 }
 </style>

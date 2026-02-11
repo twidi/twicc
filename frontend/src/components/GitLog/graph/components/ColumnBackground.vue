@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
-import { BACKGROUND_HEIGHT_OFFSET, ROW_HEIGHT } from '../../constants'
+import { BACKGROUND_HEIGHT_OFFSET } from '../../constants'
+import { pxToRem } from '../../utils/units'
 import { useGitContext } from '../../composables/useGitContext'
 import { useGraphContext } from '../../composables/useGraphContext'
 import { getColumnBackgroundSize } from '../utils/getColumnBackgroundSize'
@@ -20,7 +21,7 @@ const props = defineProps<{
 // Context
 // ---------------------------------------------------------------------------
 
-const { showTable } = useGitContext()
+const { showTable, rowHeight } = useGitContext()
 const { nodeSize, orientation, highlightedBackgroundHeight } = useGraphContext()
 
 // ---------------------------------------------------------------------------
@@ -33,7 +34,7 @@ const height = computed<number>(() => {
   }
 
   const dynamicHeight = nodeSize.value + BACKGROUND_HEIGHT_OFFSET
-  return dynamicHeight > ROW_HEIGHT ? ROW_HEIGHT : dynamicHeight
+  return dynamicHeight > rowHeight.value ? rowHeight.value : dynamicHeight
 })
 
 const backgroundStyle = computed<CSSProperties>(() => {
@@ -44,17 +45,17 @@ const backgroundStyle = computed<CSSProperties>(() => {
 
     return {
       borderRadius: '50%',
-      height: `${backgroundSize}px`,
-      width: `${backgroundSize}px`,
+      height: pxToRem(backgroundSize),
+      width: pxToRem(backgroundSize),
       background: props.colour,
-      left: `calc(50% - ${backgroundSize / 2}px)`,
+      left: `calc(50% - ${pxToRem(backgroundSize / 2)})`,
     }
   }
 
   if (props.index === props.commitNodeIndex) {
     return {
-      width: `calc(50% + ${nodeSize.value / 2}px + ${offset / 2}px)`,
-      height: `${height.value}px`,
+      width: `calc(50% + ${pxToRem(nodeSize.value / 2 + offset / 2)})`,
+      height: pxToRem(height.value),
       background: props.colour,
       right: '0',
       borderTopLeftRadius: '50%',
@@ -63,7 +64,7 @@ const backgroundStyle = computed<CSSProperties>(() => {
   }
 
   return {
-    height: `${height.value}px`,
+    height: pxToRem(height.value),
     background: props.colour,
   }
 })

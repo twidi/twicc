@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ROW_HEIGHT } from '../constants'
+import { pxToRem } from '../utils/units'
 import { useGitContext } from '../composables/useGitContext'
 import type { Commit } from '../types'
 import BranchTag from './components/BranchTag.vue'
@@ -16,9 +16,9 @@ const {
   graphData,
   paging,
   graphWidth,
-  rowSpacing,
   isIndexVisible,
   graphOrientation,
+  rowHeight,
   filter,
 } = useGitContext()
 
@@ -99,7 +99,7 @@ function tagLineWidth(commit: Commit): number {
 // Row height
 // ---------------------------------------------------------------------------
 
-const rowHeight = computed(() => ROW_HEIGHT + rowSpacing.value)
+const totalRowHeight = computed(() => rowHeight.value)
 
 // ---------------------------------------------------------------------------
 // Determine which commits should show a BranchTag
@@ -125,7 +125,7 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
         v-if="shouldRenderBranchTag(commit)"
         :commit="commit"
         :id="i.toString()"
-        :height="rowHeight"
+        :height="totalRowHeight"
         :line-width="tagLineWidth(commit)"
         :line-right="-tagLineWidth(commit)"
       />
@@ -133,7 +133,7 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
         v-else
         :id="`empty-tag-${commit.hash}`"
         class="tag"
-        :style="{ height: `${rowHeight}px` }"
+        :style="{ height: pxToRem(totalRowHeight) }"
       />
     </template>
   </div>
@@ -143,7 +143,6 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
 .container {
   position: relative;
   padding: 0 10px;
-  margin-top: 12px;
   width: 155px;
 }
 

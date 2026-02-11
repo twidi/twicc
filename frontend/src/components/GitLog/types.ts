@@ -471,20 +471,27 @@ export interface GitLogCommonProps<T = unknown> {
   showHeaders?: boolean
 
   /**
-   * The spacing between the rows of the log.
-   * Affects all elements across the branches,
-   * graph, and table.
-   *
-   * @default 0
-   */
-  rowSpacing?: number
-
-  /**
    * A function that returns build URI strings
    * to link out to the remote repository on
    * the external Git provider.
    */
   urls?: GitLogUrlBuilder<T>
+
+  /**
+   * The height of each commit row, in pixels.
+   * Applied across all subcomponents (graph, table, tags).
+   *
+   * @default DEFAULT_ROW_HEIGHT (40)
+   */
+  rowHeight?: number
+
+  /**
+   * The height of the header row, in pixels.
+   * Used when showHeaders is true.
+   *
+   * @default DEFAULT_HEADER_ROW_HEIGHT (30)
+   */
+  headerRowHeight?: number
 
   /**
    * The diameter, in pixels, of the

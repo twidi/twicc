@@ -180,6 +180,8 @@ const displayedCommitLabel = computed(() => {
                 :node-size="nodeSize"
                 :enable-selected-commit-styling="true"
                 :enable-previewed-commit-styling="true"
+                :row-height="24"
+                :nodeSize="10"
             >
                 <template #tags>
                     <GitLogTags />

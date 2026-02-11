@@ -2,6 +2,7 @@
 import { computed, type CSSProperties } from 'vue'
 import { useTheme } from '../../composables/useTheme'
 import { useGraphContext } from '../../composables/useGraphContext'
+import { pxToRem } from '../../utils/units'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -24,8 +25,8 @@ const { shiftAlphaChannel } = useTheme()
 // ---------------------------------------------------------------------------
 
 const nodeStyles = computed<CSSProperties>(() => ({
-  width: `${nodeSize.value}px`,
-  height: `${nodeSize.value}px`,
+  width: pxToRem(nodeSize.value),
+  height: pxToRem(nodeSize.value),
   border: `2px dotted ${shiftAlphaChannel(props.columnColour, 0.5)}`,
   backgroundColor: shiftAlphaChannel(props.columnColour, 0.05),
 }))

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { CSSProperties } from 'vue'
 import { computed } from 'vue'
-import { ROW_HEIGHT, BACKGROUND_HEIGHT_OFFSET } from '../../constants'
+import { BACKGROUND_HEIGHT_OFFSET } from '../../constants'
+import { pxToRem } from '../../utils/units'
 import { useGitContext } from '../../composables/useGitContext'
 import { useTheme } from '../../composables/useTheme'
 import { useSelectCommit } from '../../composables/useSelectCommit'
@@ -49,6 +50,7 @@ const { selectCommitHandler } = useSelectCommit()
 
 const {
   nodeSize,
+  rowHeight,
   selectedCommit,
   previewedCommit,
   enableSelectedCommitStyling,
@@ -83,22 +85,22 @@ const backgroundColour = computed(() => {
   return 'transparent'
 })
 
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------- ------------------
 // Background gradient style
 // ---------------------------------------------------------------------------
 
 const backgroundStyles = computed(() => {
   const height = nodeSize.value + BACKGROUND_HEIGHT_OFFSET
-  const padding = (ROW_HEIGHT - height) / 2
+  const padding = (rowHeight.value - height) / 2
   const end = padding + height
 
   return {
     background: `linear-gradient(
       to bottom,
-      transparent ${padding}px,
-      ${backgroundColour.value} ${padding}px,
-      ${backgroundColour.value} ${end}px,
-      transparent ${end}px
+      transparent ${pxToRem(padding)},
+      ${backgroundColour.value} ${pxToRem(padding)},
+      ${backgroundColour.value} ${pxToRem(end)},
+      transparent ${pxToRem(end)}
     )`,
   }
 })
@@ -118,7 +120,7 @@ const shouldRenderHyphenValue = computed(
 )
 
 const tableDataStyle = computed<CSSProperties>(() => ({
-  lineHeight: `${ROW_HEIGHT}px`,
+  lineHeight: pxToRem(rowHeight.value),
   color: shiftAlphaChannel(textColour.value, shouldReduceOpacity.value ? 0.4 : 1),
   ...backgroundStyles.value,
   ...props.dataStyleOverrides,

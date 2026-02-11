@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
-import { CURVE_SIZE, ROW_HEIGHT } from '../../constants'
+import { CURVE_SIZE } from '../../constants'
+import { pxToRem } from '../../utils/units'
 import { useGitContext } from '../../composables/useGitContext'
 import type { BreakPointTheme } from '../../types'
 import CurvedEdge from './CurvedEdge.vue'
@@ -20,7 +21,7 @@ const props = defineProps<{
 // Context
 // ---------------------------------------------------------------------------
 
-const { rowSpacing } = useGitContext()
+const { rowHeight } = useGitContext()
 
 // ---------------------------------------------------------------------------
 // Computed values
@@ -32,7 +33,7 @@ const bottomLineStyle = computed<CSSProperties>(() => ({
   bottom: '0',
   left: 'calc(50% - 1px)',
   borderRight: `2px ${borderStyle.value} ${props.colour}`,
-  height: `${(ROW_HEIGHT + rowSpacing.value - CURVE_SIZE) / 2}px`,
+  height: pxToRem((rowHeight.value - CURVE_SIZE) / 2),
 }))
 
 const leftLineStyle = computed<CSSProperties>(() => ({
@@ -40,7 +41,7 @@ const leftLineStyle = computed<CSSProperties>(() => ({
   top: '50%',
   height: '0',
   borderBottom: `2px ${borderStyle.value} ${props.colour}`,
-  width: `calc(50% - ${CURVE_SIZE / 2}px)`,
+  width: `calc(50% - ${pxToRem(CURVE_SIZE / 2)})`,
 }))
 
 /**

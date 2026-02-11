@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
 import { useTheme } from '../../composables/useTheme'
+import { pxToRem } from '../../utils/units'
 import { useSelectCommit } from '../../composables/useSelectCommit'
 import { useGraphContext } from '../../composables/useGraphContext'
 import { useGitContext } from '../../composables/useGitContext'
@@ -137,7 +138,7 @@ const columnStyle = computed<CSSProperties>(() => {
 
   if (orientation.value === 'flipped' && isCurve) {
     return {
-      minWidth: `${nodeSize.value}px`,
+      minWidth: pxToRem(nodeSize.value),
       transform: 'scale(-1, 1)',
     }
   }

@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useGitContext } from './composables/useGitContext'
 import { useTheme } from './composables/useTheme'
+import { pxToRem } from './utils/units'
 
-const { classes, showHeaders } = useGitContext()
+const { classes, showHeaders, headerRowHeight } = useGitContext()
 const { textColour } = useTheme()
+
+const titleHeight = computed(() => pxToRem(headerRowHeight.value))
 </script>
 
 <template>
@@ -13,25 +17,25 @@ const { textColour } = useTheme()
     :class="['container', classes?.containerClass]"
   >
     <div v-if="$slots.tags" class="tags">
-      <h4
+      <div
         v-if="showHeaders"
-        :style="{ color: textColour, marginLeft: '10px' }"
+        :style="{ color: textColour, height: titleHeight }"
         class="title"
       >
         Branch / Tag
-      </h4>
+      </div>
 
       <slot name="tags" />
     </div>
 
     <div v-if="$slots.graph" class="graph">
-      <h4
+      <div
         v-if="showHeaders"
-        :style="{ color: textColour }"
+        :style="{ color: textColour, height: titleHeight }"
         class="title"
       >
         Graph
-      </h4>
+      </div>
 
       <slot name="graph" />
     </div>
@@ -49,9 +53,17 @@ const { textColour } = useTheme()
   height: 100%;
   display: flex;
 
+  .tags, .graph {
+      display: flex;
+      flex-direction: column;
+  }
+
   .tags {
     flex-grow: 1;
-    max-width: 175px;
+    max-width: 11rem;
+      .title {
+          margin-left: 10px;
+      }
   }
 
   .table {
@@ -60,8 +72,10 @@ const { textColour } = useTheme()
 }
 
 .title {
-  margin: 12px 0 25px 0;
-  line-height: 22px;
+  margin: 0;
   font-weight: 600;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
 }
 </style>

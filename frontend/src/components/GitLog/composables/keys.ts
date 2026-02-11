@@ -41,7 +41,8 @@ export interface GitContextBag {
   showTable: Readonly<Ref<boolean>>
   showHeaders: Readonly<Ref<boolean>>
   remoteProviderUrlBuilder: Readonly<Ref<GitLogUrlBuilder | undefined>>
-  rowSpacing: Readonly<Ref<number>>
+  rowHeight: Readonly<Ref<number>>
+  headerRowHeight: Readonly<Ref<number>>
   graphWidth: Readonly<Ref<number>>
   setGraphWidth: (width: number) => void
   graphData: Readonly<Ref<GraphData>>

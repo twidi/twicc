@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, type CSSProperties } from 'vue'
 import { NODE_BORDER_WIDTH } from '../../constants'
+import { pxToRem } from '../../utils/units'
 import { useTheme } from '../../composables/useTheme'
 import { useSelectCommit } from '../../composables/useSelectCommit'
 import { useGraphContext } from '../../composables/useGraphContext'
@@ -54,8 +55,8 @@ const commitNodeColours = computed(() =>
 )
 
 const nodeStyles = computed<CSSProperties>(() => ({
-  width: `${nodeSize.value}px`,
-  height: `${nodeSize.value}px`,
+  width: pxToRem(nodeSize.value),
+  height: pxToRem(nodeSize.value),
   backgroundColor: commitNodeColours.value.backgroundColour,
   border: `${NODE_BORDER_WIDTH}px solid ${commitNodeColours.value.borderColour}`,
 }))
@@ -64,18 +65,18 @@ const mergeInnerNodeStyles = computed<CSSProperties>(() => {
   const diameter = getMergeNodeInnerSize({ nodeSize: nodeSize.value })
   return {
     background: commitNodeColours.value.borderColour,
-    width: `${diameter}px`,
-    height: `${diameter}px`,
-    top: `calc(50% - ${diameter / 2}px)`,
-    left: `calc(50% - ${diameter / 2}px)`,
+    width: pxToRem(diameter),
+    height: pxToRem(diameter),
+    top: `calc(50% - ${pxToRem(diameter / 2)})`,
+    left: `calc(50% - ${pxToRem(diameter / 2)})`,
   }
 })
 
 const commitLabelStyles = computed<CSSProperties>(() => ({
   color: textColour.value,
-  height: `${commitHashLabelHeight}px`,
-  left: `calc(50% + ${nodeSize.value / 2}px + 5px)`,
-  top: `calc(50% - ${commitHashLabelHeight / 2}px)`,
+  height: pxToRem(commitHashLabelHeight),
+  left: `calc(50% + ${pxToRem(nodeSize.value / 2 + 5)})`,
+  top: `calc(50% - ${pxToRem(commitHashLabelHeight / 2)})`,
   background: theme.value === 'dark' ? 'rgb(26,26,26)' : 'white',
 }))
 

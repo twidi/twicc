@@ -1,8 +1,22 @@
 /**
+ * All layout constants are expressed as pixel values calibrated for
+ * a root font-size of 16px (1rem = 16px). They are converted to rem
+ * in stylesheets and inline styles so that the entire component scales
+ * proportionally when the root font-size changes.
+ */
+
+
+/**
+ * The default height of each row across
+ * all subcomponents, in pixels.
+ */
+export const DEFAULT_HEADER_ROW_HEIGHT = 30
+
+/**
  * The height of each row across
  * all subcomponents, in pixels.
  */
-export const ROW_HEIGHT = 40
+export const DEFAULT_ROW_HEIGHT = 40
 
 /**
  * The default width and height of

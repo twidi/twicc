@@ -15,7 +15,7 @@ import type {
   ThemeColours,
   ThemeMode,
 } from './types'
-import { DEFAULT_NODE_SIZE, NODE_BORDER_WIDTH } from './constants'
+import { DEFAULT_NODE_SIZE, DEFAULT_HEADER_ROW_HEIGHT, NODE_BORDER_WIDTH, DEFAULT_ROW_HEIGHT } from './constants'
 import {
   computeRelationships,
   GraphDataBuilder,
@@ -52,7 +52,8 @@ const props = withDefaults(defineProps<{
   onSelectCommit?: (commit?: Commit) => void
   onPreviewCommit?: (commit?: Commit) => void
   showHeaders?: boolean
-  rowSpacing?: number
+  rowHeight?: number
+  headerRowHeight?: number
   nodeSize?: number
   defaultGraphWidth?: number
   enableSelectedCommitStyling?: boolean
@@ -63,7 +64,8 @@ const props = withDefaults(defineProps<{
   colours: 'rainbow-light',
   showGitIndex: true,
   showHeaders: false,
-  rowSpacing: 0,
+  rowHeight: DEFAULT_ROW_HEIGHT,
+  headerRowHeight: DEFAULT_HEADER_ROW_HEIGHT,
   nodeSize: DEFAULT_NODE_SIZE,
   enableSelectedCommitStyling: true,
   enablePreviewedCommitStyling: true,
@@ -305,7 +307,8 @@ const gitContextValue: GitContextBag = {
   showTable: computed(() => !!slots.table),
   showHeaders: computed(() => props.showHeaders),
   remoteProviderUrlBuilder: computed(() => props.urls),
-  rowSpacing: computed(() => props.rowSpacing),
+  rowHeight: computed(() => props.rowHeight),
+  headerRowHeight: computed(() => props.headerRowHeight),
   graphWidth: graphWidthValue,
   setGraphWidth: (width: number) => { graphContainerWidth.value = width },
   graphData,

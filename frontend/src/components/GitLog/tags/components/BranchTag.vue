@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, type CSSProperties } from 'vue'
 import { useTheme } from '../../composables/useTheme'
+import { pxToRem } from '../../utils/units'
 import { useGitContext } from '../../composables/useGitContext'
 import type { Commit } from '../../types'
 import BranchLabel from './BranchLabel.vue'
@@ -53,8 +54,8 @@ const tagLineStyles = computed<CSSProperties>(() => {
 
   return {
     opacity,
-    right: `${props.lineRight}px`,
-    width: `${props.lineWidth}px`,
+    right: pxToRem(props.lineRight),
+    width: pxToRem(props.lineWidth),
     borderTop: `2px dotted ${colour.value}`,
     animationDuration: isPreviewCommit ? '0s' : '0.3s',
   }
@@ -95,7 +96,7 @@ function handleMouseOut(): void {
 <template>
   <button
     :id="`tag-${id}`"
-    :style="{ height: `${height}px` }"
+    :style="{ height: pxToRem(height) }"
     class="tagContainer"
     @blur="handleMouseOut"
     @focus="handleMouseOver"

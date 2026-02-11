@@ -7,6 +7,7 @@ import {
   GRAPH_CONTEXT_KEY,
   type GraphContextBag,
 } from '../composables/keys'
+import { pxToRem } from '../utils/units'
 import type {
   BreakPointTheme,
   CustomCommitNodeProps,
@@ -140,7 +141,7 @@ provide(GRAPH_CONTEXT_KEY, graphContextValue)
   <div
     ref="graphContainerRef"
     class="container"
-    :style="{ width: `${width}px` }"
+    :style="{ width: pxToRem(width) }"
   >
     <slot />
 

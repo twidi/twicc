@@ -36,11 +36,12 @@ const totalHeight = positions[positions.length - 1].top + positions[positions.le
 Deux approches principales selon [DEV Community](https://dev.to/georgii/virtual-scrolling-of-content-with-variable-height-with-angular-3a52) :
 
 **A. Estimation basee sur le contenu (recommande)**
+
 ```javascript
 function predictHeight(item) {
-  const baseHeight = 48; // padding, metadata
-  const textRows = Math.ceil(item.content.length / CHARS_PER_ROW);
-  return baseHeight + (textRows * ROW_HEIGHT);
+    const baseHeight = 48; // padding, metadata
+    const textRows = Math.ceil(item.content.length / CHARS_PER_ROW);
+    return baseHeight + (textRows * DEFAULT_ROW_HEIGHT);
 }
 ```
 

@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ROW_HEIGHT } from '../constants'
+import { pxToRem } from '../utils/units'
 import { useGraphContext } from '../composables/useGraphContext'
 import { useGitContext } from '../composables/useGitContext'
 import { getEmptyColumnState } from './utils/getEmptyColumnState'
 import { placeholderCommits } from './placeholderData'
-import { GRAPH_MARGIN_TOP } from './constants'
 import SkeletonGraph from './components/SkeletonGraph.vue'
 import IndexPseudoRow from './components/IndexPseudoRow.vue'
 import GraphRow from './components/GraphRow.vue'
@@ -15,7 +14,7 @@ import GraphRow from './components/GraphRow.vue'
 // ---------------------------------------------------------------------------
 
 const { graphWidth, visibleCommits, columnData } = useGraphContext()
-const { isIndexVisible, rowSpacing, paging } = useGitContext()
+const { isIndexVisible, rowHeight, paging } = useGitContext()
 
 // ---------------------------------------------------------------------------
 // Grid layout computation
@@ -39,8 +38,7 @@ const commitQuantity = computed(() => {
 
 const wrapperStyle = computed(() => ({
   gridTemplateColumns: `repeat(${graphWidth.value}, 1fr)`,
-  gridTemplateRows: `repeat(${commitQuantity.value}, ${ROW_HEIGHT + rowSpacing.value}px)`,
-  marginTop: `${GRAPH_MARGIN_TOP}px`,
+  gridTemplateRows: `repeat(${commitQuantity.value}, ${pxToRem(rowHeight.value)})`,
 }))
 
 // ---------------------------------------------------------------------------
