@@ -9,16 +9,18 @@ import GraphColumn from './GraphColumn.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** The zero-based row id used for tabIndex and indexing. */
-  id: number
+  id?: number
 
   /** The commit represented by this row. */
   commit: Commit
 
   /** The column states for this row. */
   columns: GraphColumnState[]
-}>()
+}>(), {
+  id: 0,
+})
 
 // ---------------------------------------------------------------------------
 // Context
