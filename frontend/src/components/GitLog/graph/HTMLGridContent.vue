@@ -13,7 +13,7 @@ import GraphRow from './components/GraphRow.vue'
 // Context
 // ---------------------------------------------------------------------------
 
-const { graphWidth, visibleCommits, columnData } = useGraphContext()
+const { graphColumns, visibleCommits, columnData } = useGraphContext()
 const { isIndexVisible, rowHeight, paging } = useGitContext()
 
 // ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ const commitQuantity = computed(() => {
 })
 
 const wrapperStyle = computed(() => ({
-  gridTemplateColumns: `repeat(${graphWidth.value}, 1fr)`,
+  gridTemplateColumns: `repeat(${graphColumns.value}, 1fr)`,
   gridTemplateRows: `repeat(${commitQuantity.value}, ${pxToRem(rowHeight.value)})`,
 }))
 
@@ -53,7 +53,7 @@ function getColumnsForCommit(index: number) {
   const pagingValue = paging.value
   const rowIndex = pagingValue ? index + pagingValue.startIndex + 1 : index + 1
   return columnData.value.get(rowIndex)?.columns
-    ?? getEmptyColumnState({ columns: graphWidth.value })
+    ?? getEmptyColumnState({ columns: graphColumns.value })
 }
 </script>
 

@@ -30,6 +30,7 @@ import {
 } from './composables/keys'
 import { generateRainbowGradient } from './utils/createRainbowTheme'
 import { neonAuroraDarkColours, neonAuroraLightColours } from './utils/colors'
+import { pxToRem } from './utils/units'
 import Layout from './Layout.vue'
 
 dayjs.extend(utc)
@@ -112,13 +113,13 @@ const pipelineResult = computed(() => {
     currentBranch: props.currentBranch,
   })
 
-  const { graphWidth, positions, edges } = graphDataBuilder.build()
+  const { graphColumns, positions, edges } = graphDataBuilder.build()
 
   const graphData: GraphData = {
     children,
     parents,
     hashToCommit,
-    graphWidth,
+    graphColumns,
     positions,
     edges,
     commits: filteredCommits,
@@ -194,7 +195,7 @@ const isIndexVisible = computed<boolean>(() => {
 // ---------------------------------------------------------------------------
 
 const graphWidthValue = computed(() => {
-  return graphData.value.graphWidth * props.graphColumnWidth
+  return graphData.value.graphColumns * props.graphColumnWidth
 })
 
 // ---------------------------------------------------------------------------
@@ -240,7 +241,7 @@ function bootstrapShiftAlphaChannel(rgb: string, opacity: number, theme: ThemeMo
 
 const resolvedColours = computed<string[]>(() => {
   const coloursProp = props.colours
-  const width = graphData.value.graphWidth
+  const width = graphData.value.graphColumns
 
   if (typeof coloursProp === 'string') {
     switch (coloursProp) {

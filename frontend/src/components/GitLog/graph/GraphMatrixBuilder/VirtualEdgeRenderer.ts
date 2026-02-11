@@ -8,7 +8,7 @@ export interface VirtualEdgeRendererProps {
   matrix: GraphMatrix
   commits: Commit[]
   visibleCommits: number
-  graphWidth: number
+  graphColumns: number
   headCommitHash: string | undefined
   positions: Map<string, CommitNodeLocation>
 }
@@ -17,14 +17,14 @@ export class VirtualEdgeRenderer {
   private readonly _matrix: GraphMatrix
   private readonly _commits: Commit[]
   private readonly _visibleCommits: number
-  private readonly _graphWidth: number
+  private readonly _graphColumns: number
   private readonly _headCommitHash: string | undefined
   private readonly _positions: Map<string, CommitNodeLocation>
   private readonly _commitsWithUntrackedParents: Commit[]
 
   // If, while server-side paginated, we find commits that need to draw
   // lines to nodes that lie outside of this page of data, and those lines
-  // need to be drawn into columns that are beyond the current graph width,
+  // need to be drawn into columns that are beyond the current graph columns count,
   // then we track the number of new "virtual" columns here that will be injected
   // in the graph.
   private _virtualColumns = 0
@@ -34,7 +34,7 @@ export class VirtualEdgeRenderer {
     this._commits = props.commits
     this._visibleCommits = props.visibleCommits
     this._positions = props.positions
-    this._graphWidth = props.graphWidth
+    this._graphColumns = props.graphColumns
     this._headCommitHash = props.headCommitHash
 
     this._commitsWithUntrackedParents = props.commits.filter(({ parents }) => {
@@ -135,7 +135,7 @@ export class VirtualEdgeRenderer {
 
       // If we've had to draw outside the graph, then add enough virtual
       // columns to support the new horizontal -> curve -> vertical merge lines.
-      const maxColumnIndex = this._graphWidth - 1
+      const maxColumnIndex = this._graphColumns - 1
       if (targetColumnIndex > maxColumnIndex) {
         // Add a virtual column for each horizontal line drawn,
         // plus the column with the curve and vertical lines

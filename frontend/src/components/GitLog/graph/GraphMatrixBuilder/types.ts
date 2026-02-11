@@ -3,7 +3,7 @@ import type { Commit } from '../../types'
 import type { GraphMatrix } from './GraphMatrix'
 
 export interface GraphMatrixBuilderProps {
-  graphWidth: number
+  graphColumns: number
   commits: Commit[]
   positions: Map<string, CommitNodeLocation>
   visibleCommits: number

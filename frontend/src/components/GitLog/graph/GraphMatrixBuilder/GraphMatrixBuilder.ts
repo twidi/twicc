@@ -22,7 +22,7 @@ export class GraphMatrixBuilder {
     this._positions = props.positions
     this._headCommit = props.headCommit
     this._isIndexVisible = props.isIndexVisible
-    this._matrix = new GraphMatrix(props.graphWidth)
+    this._matrix = new GraphMatrix(props.graphColumns)
 
     this.graphEdgeRenderer = new GraphEdgeRenderer(this._matrix)
 
@@ -30,7 +30,7 @@ export class GraphMatrixBuilder {
       headCommitHash: props.headCommitHash,
       matrix: this._matrix,
       commits: props.commits,
-      graphWidth: props.graphWidth,
+      graphColumns: props.graphColumns,
       positions: props.positions,
       visibleCommits: props.visibleCommits
     })

@@ -108,7 +108,7 @@ const { columnData, virtualColumns } = useColumnData(visibleCommitsCount)
 // Graph context — provide to all descendants
 // ---------------------------------------------------------------------------
 
-const graphWidthWithVirtual = computed(() => graphData.value.graphWidth + virtualColumns.value)
+const graphColumnsWithVirtual = computed(() => graphData.value.graphColumns + virtualColumns.value)
 
 const graphContextValue: GraphContextBag = {
   showCommitNodeHashes: computed(() => props.showCommitNodeHashes),
@@ -118,7 +118,7 @@ const graphContextValue: GraphContextBag = {
   nodeTheme: computed(() => props.nodeTheme),
   breakPointTheme: computed(() => props.breakPointTheme),
   nodeSize,
-  graphWidth: graphWidthWithVirtual,
+  graphColumns: graphColumnsWithVirtual,
   orientation: computed(() => props.orientation),
   visibleCommits,
   isHeadCommitVisible,

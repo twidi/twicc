@@ -24,12 +24,12 @@ export interface GraphData<T = unknown> {
   hashToCommit: Map<string, Commit<T>>
 
   /**
-   * The width of the graph. A number
-   * that is the maximum concurrent active
+   * The number of columns in the graph,
+   * i.e. the maximum concurrent active
    * branches at any one time from all
    * git log entries passed the log.
    */
-  graphWidth: number
+  graphColumns: number
 
   /**
    * A map of the SHA1 hash of a commit

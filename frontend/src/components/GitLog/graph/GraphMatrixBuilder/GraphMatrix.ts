@@ -3,10 +3,10 @@ import { GraphMatrixColumns } from './GraphMatrixColumns'
 
 export class GraphMatrix {
   private readonly _matrix = new Map<number, GraphMatrixColumns>
-  private readonly _graphWidth: number
+  private readonly _graphColumns: number
 
-  constructor(graphWidth: number) {
-    this._graphWidth = graphWidth
+  constructor(graphColumns: number) {
+    this._graphColumns = graphColumns
   }
 
   public getColumns(rowIndex: number) {
@@ -50,6 +50,6 @@ export class GraphMatrix {
   }
 
   private emptyColumnState() {
-    return GraphMatrixColumns.empty(this._graphWidth)
+    return GraphMatrixColumns.empty(this._graphColumns)
   }
 }

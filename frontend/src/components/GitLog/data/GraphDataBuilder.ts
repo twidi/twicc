@@ -136,7 +136,7 @@ export class GraphDataBuilder<T> {
 
     return {
       positions: rowMap,
-      graphWidth: this._activeBranches.length,
+      graphColumns: this._activeBranches.length,
       edges
     }
   }

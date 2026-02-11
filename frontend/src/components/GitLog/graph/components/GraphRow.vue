@@ -24,7 +24,7 @@ const props = defineProps<{
 // Context
 // ---------------------------------------------------------------------------
 
-const { graphWidth, orientation } = useGraphContext()
+const { graphColumns, orientation } = useGraphContext()
 
 // ---------------------------------------------------------------------------
 // Computed values
@@ -43,12 +43,12 @@ const emptyColumnState: GraphColumnState = {}
 
 <template>
   <GraphColumn
-    v-for="i in graphWidth"
-    :key="`row_${commit.hash}_column_${orientation === 'normal' ? i - 1 : graphWidth - i}`"
+    v-for="i in graphColumns"
+    :key="`row_${commit.hash}_column_${orientation === 'normal' ? i - 1 : graphColumns - i}`"
     :row-index="id"
     :commit="commit"
-    :index="orientation === 'normal' ? i - 1 : graphWidth - i"
+    :index="orientation === 'normal' ? i - 1 : graphColumns - i"
     :commit-node-index="commitNodeIndex"
-    :state="columns[orientation === 'normal' ? i - 1 : graphWidth - i] ?? emptyColumnState"
+    :state="columns[orientation === 'normal' ? i - 1 : graphColumns - i] ?? emptyColumnState"
   />
 </template>

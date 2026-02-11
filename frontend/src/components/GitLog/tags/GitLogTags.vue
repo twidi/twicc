@@ -73,7 +73,7 @@ const preparedCommits = computed<PreparedCommit[]>(() => {
 
 function tagLineWidth(commit: Commit): number {
   const isNormalOrientation = graphOrientation.value === 'normal'
-  const numberOfColumns = graphData.value.graphWidth
+  const numberOfColumns = graphData.value.graphColumns
   const columnWidth = graphWidth.value / numberOfColumns
 
   if (commit.hash === 'index') {

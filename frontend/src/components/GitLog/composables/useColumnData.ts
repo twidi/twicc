@@ -19,13 +19,13 @@ export function useColumnData(visibleCommits: Readonly<Ref<number>>): ColumnData
   } = useGitContext()
 
   const result = computed(() => {
-    const { graphWidth, positions, edges, commits } = graphData.value
+    const { graphColumns, positions, edges, commits } = graphData.value
 
     const matrixBuilder = new GraphMatrixBuilder({
       commits,
       positions,
       headCommit: headCommit.value,
-      graphWidth,
+      graphColumns,
       visibleCommits: visibleCommits.value,
       headCommitHash: headCommitHash.value,
       isIndexVisible: isIndexVisible.value,

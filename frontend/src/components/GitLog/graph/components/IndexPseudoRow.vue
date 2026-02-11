@@ -10,7 +10,7 @@ import GraphRow from './GraphRow.vue'
 // ---------------------------------------------------------------------------
 
 const { indexCommit } = useGitContext()
-const { graphWidth, isHeadCommitVisible } = useGraphContext()
+const { graphColumns, isHeadCommitVisible } = useGraphContext()
 
 // ---------------------------------------------------------------------------
 // Computed values
@@ -24,7 +24,7 @@ const { graphWidth, isHeadCommitVisible } = useGraphContext()
  * in the current pagination, to indicate a gap.
  */
 const indexColumns = computed<GraphColumnState[]>(() => {
-  const columns = new Array<GraphColumnState>(graphWidth.value).fill({})
+  const columns = new Array<GraphColumnState>(graphColumns.value).fill({})
 
   columns[0] = {
     isNode: true,

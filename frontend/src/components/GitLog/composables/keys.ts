@@ -77,7 +77,7 @@ export interface GraphContextBag {
   nodeTheme: Readonly<Ref<NodeTheme>>
   breakPointTheme: Readonly<Ref<BreakPointTheme>>
   nodeSize: Readonly<Ref<number>>
-  graphWidth: Readonly<Ref<number>>
+  graphColumns: Readonly<Ref<number>>
   orientation: Readonly<Ref<GraphOrientation>>
   visibleCommits: Readonly<Ref<Commit[]>>
   isHeadCommitVisible: Readonly<Ref<boolean>>
