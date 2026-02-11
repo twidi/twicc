@@ -22,7 +22,7 @@ defineProps<{
   />
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .line {
   position: absolute;
 }

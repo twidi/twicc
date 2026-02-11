@@ -51,7 +51,7 @@ const linkHref = computed(() => {
   </template>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .tagName {
   overflow: hidden;
   text-overflow: ellipsis;

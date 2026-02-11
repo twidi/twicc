@@ -56,7 +56,7 @@ const formattedTimestamp = computed(() => {
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .timestamp {
   font-weight: 400;
   border-top-right-radius: 10px;

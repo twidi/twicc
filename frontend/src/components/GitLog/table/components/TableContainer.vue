@@ -92,7 +92,7 @@ const containerStyle = computed<CSSProperties>(() => {
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .tableContainer {
   display: grid;
   grid-template-columns: minmax(350px, 4fr) minmax(100px, 1fr) 195px;

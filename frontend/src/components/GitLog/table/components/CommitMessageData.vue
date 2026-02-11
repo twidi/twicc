@@ -29,7 +29,7 @@ defineProps<{
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .message {
   white-space: nowrap;
   overflow: hidden;

@@ -39,7 +39,7 @@ const tooltipStyle = computed<CSSProperties>(() => ({
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .tooltip {
   padding: 3px 8px;
   border-radius: 4px;

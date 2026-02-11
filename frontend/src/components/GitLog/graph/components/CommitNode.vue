@@ -213,7 +213,7 @@ function handleKeyDown(event: KeyboardEvent): void {
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .customNodeWrapper {
   all: unset;
   z-index: 20;

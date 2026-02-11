@@ -34,7 +34,7 @@ const svgStyle = computed<CSSProperties>(() => ({
   </svg>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .icon {
   width: 17px;
   margin-top: 2px;

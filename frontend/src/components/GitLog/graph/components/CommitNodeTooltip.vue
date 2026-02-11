@@ -66,7 +66,7 @@ const childrenText = computed(() =>
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .tooltip {
   padding: 15px 20px;
   border-radius: 8px;

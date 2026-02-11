@@ -9,7 +9,7 @@ import GitIcon from './GitIcon.vue'
   <GitIcon />
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .indexLabel {
   overflow: hidden;
   text-overflow: ellipsis;

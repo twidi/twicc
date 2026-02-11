@@ -62,7 +62,7 @@ const { indexStatus } = useGitContext()
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .pencil, .plus, .minus {
   height: 15px;
   width: 15px;

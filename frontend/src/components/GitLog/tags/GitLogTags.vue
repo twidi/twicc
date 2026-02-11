@@ -139,14 +139,14 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .container {
   position: relative;
   padding: 0 .5rem;
 }
 
 .tag {
-  // Empty tag placeholder — takes up the same row height
-  // as a BranchTag so the layout stays aligned with the graph.
+  /* Empty tag placeholder — takes up the same row height
+  as a BranchTag so the layout stays aligned with the graph. */
 }
 </style>

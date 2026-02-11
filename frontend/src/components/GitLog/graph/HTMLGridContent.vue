@@ -76,7 +76,7 @@ function getColumnsForCommit(index: number) {
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .graph {
   height: 100%;
   display: grid;

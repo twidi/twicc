@@ -48,7 +48,7 @@ const themeClass = computed(() => {
 
 const elementClasses = computed(() => [
   themeClass.value,
-  `${themeClass.value}--${props.position}`,
+  `breakpoint-${props.position}`,
 ])
 
 const elementStyle = computed<CSSProperties>(() => ({
@@ -69,7 +69,7 @@ const testId = computed(() =>
   />
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .Slash {
   position: absolute;
   width: 14px;
@@ -80,50 +80,50 @@ const testId = computed(() =>
   transform-origin: center;
   left: calc(50% + 2px);
 
-  &--top {
+  &.breakpoint-top {
     top: 0;
   }
 
-  &--bottom {
+  &.breakpoint-bottom {
     top: 100%;
   }
 }
 
 .Dot {
   position: absolute;
-  $diameter: 8px;
-  width: $diameter;
-  height: $diameter;
+  --dot-size: 8px;
+  width: var(--dot-size);
+  height: var(--dot-size);
   border-radius: 50%;
   background: var(--breakpoint-colour);
   transform: translate(-50%, -50%);
   left: calc(50% + 2px);
 
-  &--top {
+  &.breakpoint-top {
     top: 0;
   }
 
-  &--bottom {
+  &.breakpoint-bottom {
     top: 100%;
   }
 }
 
 .Ring {
   position: absolute;
-  $diameter: 6px;
-  width: $diameter;
-  height: $diameter;
+    --ring-size: 6px;
+  width: var(--ring-size);
+  height: var(--ring-size);
   border-radius: 50%;
   border: 2px solid var(--breakpoint-colour);
   transform: translate(-50%, -50%);
   transform-origin: center;
   left: calc(50% + 2px);
 
-  &--top {
+  &.breakpoint-top {
     top: -4px;
   }
 
-  &--bottom {
+  &.breakpoint-bottom {
     top: calc(100% + 4px);
   }
 }
@@ -151,7 +151,7 @@ const testId = computed(() =>
     transform-origin: center;
   }
 
-  &--top {
+  &.breakpoint-top {
     top: 0;
 
     &::before {
@@ -165,7 +165,7 @@ const testId = computed(() =>
     }
   }
 
-  &--bottom {
+  &.breakpoint-bottom {
     top: 100%;
 
     &::before {
@@ -188,11 +188,11 @@ const testId = computed(() =>
   background: var(--breakpoint-colour);
   left: calc(50% - 4px);
 
-  &--top {
+  &.breakpoint-top {
     top: 0;
   }
 
-  &--bottom {
+  &.breakpoint-bottom {
     top: 100%;
   }
 }
@@ -220,7 +220,7 @@ const testId = computed(() =>
     left: calc(50% - 1px);
   }
 
-  &--top {
+  &.breakpoint-top {
     top: 0;
 
     &::after {
@@ -228,7 +228,7 @@ const testId = computed(() =>
     }
   }
 
-  &--bottom {
+  &.breakpoint-bottom {
     top: 100%;
 
     &::after {
@@ -240,28 +240,28 @@ const testId = computed(() =>
 .Arrow {
   position: absolute;
 
-  $width: 8px;
-  $height: 3px;
+  --arrow-width: 8px;
+  --arrow-height: 3px;
 
   &::before {
     position: absolute;
     content: '';
-    width: $width;
-    height: $height;
+    width: var(--arrow-width);
+    height: var(--arrow-height);
     background: var(--breakpoint-colour);
-    border-radius: $height;
+    border-radius: var(--arrow-height);
   }
 
   &::after {
     position: absolute;
     content: '';
-    width: $width;
-    height: $height;
+    width: var(--arrow-width);
+    height: var(--arrow-height);
     background: var(--breakpoint-colour);
-    border-radius: $height;
+    border-radius: var(--arrow-height);
   }
 
-  &--top {
+  &.breakpoint-top {
     top: -5px;
 
     &::before {
@@ -277,7 +277,7 @@ const testId = computed(() =>
     }
   }
 
-  &--bottom {
+  &.breakpoint-bottom {
     top: 90%;
 
     &::before {

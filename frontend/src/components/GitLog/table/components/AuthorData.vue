@@ -57,7 +57,7 @@ const authorName = computed(() => {
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .author {
   white-space: nowrap;
   overflow: hidden;

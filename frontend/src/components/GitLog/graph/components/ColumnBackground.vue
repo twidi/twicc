@@ -88,7 +88,7 @@ const shouldShowFullBackground = computed(() =>
   />
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .background {
   position: absolute;
 }

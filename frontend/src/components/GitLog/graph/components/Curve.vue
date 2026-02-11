@@ -65,7 +65,7 @@ const breakPointStyleOverrides: Partial<Record<BreakPointTheme, CSSProperties>> 
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .container {
   display: contents;
 }

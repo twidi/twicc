@@ -226,7 +226,7 @@ const indexBreakPointStyleOverrides = computed<Partial<Record<BreakPointTheme, C
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .line {
   position: absolute;
 }

@@ -29,7 +29,7 @@ const svgStyle = computed<CSSProperties>(() => ({
   </svg>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .icon {
   width: 18px;
   flex: 0 0 auto;

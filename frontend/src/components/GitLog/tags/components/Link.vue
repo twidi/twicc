@@ -38,7 +38,7 @@ const linkStyle = computed<CSSProperties>(() => ({
   </a>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .link {
   overflow: hidden;
   text-overflow: ellipsis;

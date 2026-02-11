@@ -132,7 +132,7 @@ function handleMouseOut(): void {
   </button>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .tagContainer {
   all: unset;
   position: relative;
@@ -159,9 +159,8 @@ function handleMouseOut(): void {
   }
 
   .tagLine {
-    $size: 1px;
     top: 50%;
-    height: $size;
+    height: 1px;
     position: absolute;
     transition: opacity ease-in-out 0.3s;
   }

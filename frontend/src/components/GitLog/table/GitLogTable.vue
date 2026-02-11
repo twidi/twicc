@@ -137,7 +137,7 @@ const tableData = computed<Commit[]>(() => {
   </TableContainer>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .head {
   display: contents;
 }

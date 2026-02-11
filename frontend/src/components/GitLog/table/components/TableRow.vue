@@ -196,7 +196,7 @@ function handleMouseOut() {
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .row {
   display: contents;
 

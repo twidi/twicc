@@ -44,7 +44,7 @@ const nodeStyles = computed<CSSProperties>(() => ({
   />
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .indexNode {
   border-radius: 50%;
   z-index: 20;

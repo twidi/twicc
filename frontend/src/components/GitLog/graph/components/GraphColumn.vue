@@ -267,7 +267,7 @@ function handleMouseOut(): void {
   </button>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .column {
   all: unset;
   display: flex;

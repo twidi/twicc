@@ -46,7 +46,7 @@ const titleHeight = computed(() => pxToRem(headerRowHeight.value))
   </div>
 </template>
 
-<style scoped lang="scss">
+<style scoped>
 .container {
   position: relative;
   width: 100%;
