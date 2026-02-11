@@ -151,7 +151,6 @@ function handleKeyDown(event: KeyboardEvent): void {
     role="button"
     :tabindex="0"
     :id="`commit-node-${commit.hash}`"
-    :data-testid="`commit-node-${commit.hash}`"
     :style="nodeVars"
     class="commitNode"
     :title="commitUrl ? 'View Commit' : undefined"
@@ -166,7 +165,6 @@ function handleKeyDown(event: KeyboardEvent): void {
     <div
       v-if="isMergeCommit"
       :id="`commit-node-merge-circle-${commit.hash}`"
-      :data-testid="`commit-node-merge-circle-${commit.hash}`"
       :style="mergeInnerNodeVars"
       class="mergeCommitInner"
     />
@@ -175,7 +173,6 @@ function handleKeyDown(event: KeyboardEvent): void {
     <span
       v-if="showCommitNodeHashes"
       :id="`commit-node-hash-${commit.hash}`"
-      :data-testid="`commit-node-hash-${commit.hash}`"
       :style="commitLabelVars"
       class="commitLabel"
     >

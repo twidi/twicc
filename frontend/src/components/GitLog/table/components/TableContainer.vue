@@ -30,7 +30,6 @@ const { showHeaders } = useGitContext()
     v-if="hasCustomRow"
     id="vue-git-log-table"
     class="customTableContainer"
-    data-testid="vue-git-log-table"
     :style="props.styleOverrides"
   >
     <slot />
@@ -40,7 +39,6 @@ const { showHeaders } = useGitContext()
   <div
     v-else
     id="vue-git-log-table"
-    data-testid="vue-git-log-table"
     :class="['tableContainer', className, {hasHeaders: showHeaders}]"
     :style="props.styleOverrides"
   >

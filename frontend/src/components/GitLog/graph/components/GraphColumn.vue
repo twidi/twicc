@@ -157,7 +157,6 @@ function handleMouseOut(): void {
 <template>
   <button
     :id="`graph-column-row-${rowIndex}-col-${index}`"
-    :data-testid="`graph-column-row-${rowIndex}-col-${index}`"
     :tabindex="rowIndex"
     :class="['column', {isFlippedCurve: orientation === 'flipped' && (props.state.isLeftDownCurve || props.state.isLeftUpCurve)}]"
     @click="handleClick"

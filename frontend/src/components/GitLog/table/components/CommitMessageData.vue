@@ -21,7 +21,6 @@ defineProps<{
     :class="['message', {isIndex}]"
     :id="`vue-git-log-table-data-commit-message-${index}`"
     :style="style"
-    :data-testid="`vue-git-log-table-data-commit-message-${index}`"
   >
     {{ commitMessage }}
 

@@ -46,7 +46,6 @@ const breakPointStyleOverrides: Partial<Record<BreakPointTheme, CSSProperties>> 
 
 <template>
   <div
-    :data-testid="`curve-${direction}`"
     class="container"
   >
     <BreakPoint

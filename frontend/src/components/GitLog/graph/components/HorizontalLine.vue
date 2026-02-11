@@ -72,7 +72,6 @@ const lineConfig = computed<{ variant: string; vars: CSSProperties }>(() => {
 <template>
   <div
     :id="`horizontal-line-${lineConfig.variant}`"
-    :data-testid="`horizontal-line-${lineConfig.variant}`"
     :class="['line', 'horizontal']"
     :style="lineConfig.vars"
   />

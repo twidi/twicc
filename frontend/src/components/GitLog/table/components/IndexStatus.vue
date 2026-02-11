@@ -16,12 +16,10 @@ const { indexStatus } = useGitContext()
   <div
     v-if="indexStatus"
     class="indexStatus"
-    data-testid="index-status"
   >
     <div
       v-if="indexStatus.modified > 0"
       class="status"
-      data-testid="index-status-modified"
     >
       <span :class="['value', 'modified']">
         {{ indexStatus.modified }}
@@ -35,7 +33,6 @@ const { indexStatus } = useGitContext()
     <div
       v-if="indexStatus.added > 0"
       class="status"
-      data-testid="index-status-added"
     >
       <span :class="['value', 'added']">
         {{ indexStatus.added }}
@@ -49,7 +46,6 @@ const { indexStatus } = useGitContext()
     <div
       v-if="indexStatus.deleted > 0"
       class="status"
-      data-testid="index-status-deleted"
     >
       <span :class="['value', 'deleted']">
         {{ indexStatus.deleted }}

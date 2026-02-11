@@ -55,15 +55,10 @@ const elementStyle = computed<CSSProperties>(() => ({
   ...commonStyles.value,
   ...(props.styleOverrides?.[breakPointTheme.value] ?? {}),
 }))
-
-const testId = computed(() =>
-  `graph-break-point-${breakPointTheme.value}-${props.position}`,
-)
 </script>
 
 <template>
   <div
-    :data-testid="testId"
     :class="elementClasses"
     :style="elementStyle"
   />

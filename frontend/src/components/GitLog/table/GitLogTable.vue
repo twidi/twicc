@@ -77,13 +77,11 @@ const tableData = computed<Commit[]>(() => {
       v-if="showHeaders"
       class="head"
       id="vue-git-log-table-head"
-      data-testid="vue-git-log-table-head"
       :style="props.styles?.thead"
     >
       <div
         class="header"
         id="vue-git-log-table-header-commit-message"
-        data-testid="vue-git-log-table-header-commit-message"
       >
         Commit message
       </div>
@@ -91,7 +89,6 @@ const tableData = computed<Commit[]>(() => {
       <div
         class="header"
         id="vue-git-log-table-header-author"
-        data-testid="vue-git-log-table-header-author"
       >
         Author
       </div>
@@ -99,7 +96,6 @@ const tableData = computed<Commit[]>(() => {
       <div
         class="header"
         id="vue-git-log-table-header-timestamp"
-        data-testid="vue-git-log-table-header-timestamp"
       >
         Timestamp
       </div>

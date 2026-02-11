@@ -51,7 +51,6 @@ const authorName = computed(() => {
     :title="authorTitle"
     class="author"
     :id="`vue-git-log-table-data-author-${index}`"
-    :data-testid="`vue-git-log-table-data-author-${index}`"
   >
     {{ isPlaceholder ? '-' : authorName }}
   </div>
