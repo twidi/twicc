@@ -18,9 +18,9 @@ defineProps<{
 <template>
   <div
     :title="commitMessage"
-    class="message"
+    :class="['message', {isIndex}]"
     :id="`vue-git-log-table-data-commit-message-${index}`"
-    :style="{ ...style, display: isIndex ? 'flex' : undefined }"
+    :style="style"
     :data-testid="`vue-git-log-table-data-commit-message-${index}`"
   >
     {{ commitMessage }}
@@ -37,5 +37,8 @@ defineProps<{
   padding-right: 30px;
   padding-left: 20px;
   font-weight: 400;
+  &.isIndex {
+    display: flex;
+  }
 }
 </style>

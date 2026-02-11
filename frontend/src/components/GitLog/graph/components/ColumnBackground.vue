@@ -4,7 +4,6 @@ import { BACKGROUND_HEIGHT_OFFSET } from '../../constants'
 import { pxToRem } from '../../utils/units'
 import { useGitContext } from '../../composables/useGitContext'
 import { useGraphContext } from '../../composables/useGraphContext'
-import { getColumnBackgroundSize } from '../utils/getColumnBackgroundSize'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -37,35 +36,13 @@ const height = computed<number>(() => {
   return dynamicHeight > rowHeight.value ? rowHeight.value : dynamicHeight
 })
 
-const backgroundStyle = computed<CSSProperties>(() => {
-  const offset = getColumnBackgroundSize({ nodeSize: nodeSize.value })
-
-  if (!showTable.value) {
-    const backgroundSize = nodeSize.value + offset
-
-    return {
-      borderRadius: '50%',
-      height: pxToRem(backgroundSize),
-      width: pxToRem(backgroundSize),
-      background: props.colour,
-      left: `calc(50% - ${pxToRem(backgroundSize / 2)})`,
-    }
-  }
-
-  if (props.index === props.commitNodeIndex) {
-    return {
-      width: `calc(50% + ${pxToRem(nodeSize.value / 2 + offset / 2)})`,
-      height: pxToRem(height.value),
-      background: props.colour,
-      right: '0',
-      borderTopLeftRadius: '50%',
-      borderBottomLeftRadius: '50%',
-    }
-  }
+const backgroundVars = computed<CSSProperties>(() => {
+  const offset = (nodeSize.value  <= 16 ? 6 : 8) * 2;
 
   return {
-    height: pxToRem(height.value),
-    background: props.colour,
+    '--column-background-offset': pxToRem(offset),
+    '--column-background-color': props.colour,
+    '--column-background-height': pxToRem(height.value),
   }
 })
 
@@ -80,17 +57,37 @@ const shouldShowFullBackground = computed(() =>
   <div
     :id="`column-background-${index}-${id}`"
     :data-testid="`column-background-${index}-${id}`"
-    :style="backgroundStyle"
-    :class="[
-      'background',
-      shouldShowFullBackground && 'backgroundSquare',
-    ]"
+    :style="backgroundVars"
+    :class="['background', {
+      backgroundSquare: shouldShowFullBackground,
+      withTable: showTable,
+      isIndex: props.index === props.commitNodeIndex,
+    }]"
   />
 </template>
 
 <style scoped>
 .background {
   position: absolute;
+  height: var(--column-background-height);
+
+  &.withTable {
+    background: var(--column-background-color);
+    &.isIndex {
+      right: 0;
+      border-top-left-radius: 50%;
+      border-bottom-left-radius: 50%;
+      width: calc(50% + var(--git-node-size) / 2 + var(--column-background-offset) / 2);
+    }
+  }
+
+  &:not(.withTable) {
+    border-radius: 50%;
+    --column-background-size: calc(var(--git-node-size) + var(--column-background-offset));
+    height: var(--column-background-size);
+    width: var(--column-background-size);
+    left: calc(50% - var(--column-background-size) / 2);
+  }
 }
 
 .backgroundSquare {

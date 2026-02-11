@@ -43,7 +43,7 @@ export interface GitContextBag {
   remoteProviderUrlBuilder: Readonly<Ref<GitLogUrlBuilder | undefined>>
   rowHeight: Readonly<Ref<number>>
   headerRowHeight: Readonly<Ref<number>>
-  graphWidth: Readonly<Ref<number>>
+  graphColumnWidth: Readonly<Ref<number>>
   graphData: Readonly<Ref<GraphData>>
   classes: Readonly<Ref<GitLogStylingProps | undefined>>
   indexStatus: Readonly<Ref<GitLogIndexStatus | undefined>>

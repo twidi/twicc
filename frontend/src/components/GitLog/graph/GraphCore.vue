@@ -6,7 +6,6 @@ import {
   GRAPH_CONTEXT_KEY,
   type GraphContextBag,
 } from '../composables/keys'
-import { pxToRem } from '../utils/units'
 import type {
   BreakPointTheme,
   CustomCommitNodeProps,
@@ -63,7 +62,6 @@ const {
   filter,
   headCommit,
   graphData,
-  graphWidth: gitContextGraphWidth,
   nodeSize,
   setGraphOrientation,
 } = useGitContext()
@@ -130,10 +128,7 @@ provide(GRAPH_CONTEXT_KEY, graphContextValue)
 </script>
 
 <template>
-  <div
-    class="container"
-    :style="{ width: pxToRem(gitContextGraphWidth) }"
-  >
+  <div class="container">
     <slot />
   </div>
 </template>
@@ -141,6 +136,7 @@ provide(GRAPH_CONTEXT_KEY, graphContextValue)
 <style scoped>
 .container {
   position: relative;
+  width: var(--git-graph-width);
 }
 
 .graph {

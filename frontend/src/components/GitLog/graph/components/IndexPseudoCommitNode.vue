@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
 import { useTheme } from '../../composables/useTheme'
-import { useGraphContext } from '../../composables/useGraphContext'
-import { pxToRem } from '../../utils/units'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -17,18 +15,15 @@ const props = defineProps<{
 // Context
 // ---------------------------------------------------------------------------
 
-const { nodeSize } = useGraphContext()
 const { shiftAlphaChannel } = useTheme()
 
 // ---------------------------------------------------------------------------
 // Computed values
 // ---------------------------------------------------------------------------
 
-const nodeStyles = computed<CSSProperties>(() => ({
-  width: pxToRem(nodeSize.value),
-  height: pxToRem(nodeSize.value),
-  border: `2px dotted ${shiftAlphaChannel(props.columnColour, 0.5)}`,
-  backgroundColor: shiftAlphaChannel(props.columnColour, 0.05),
+const nodeVars = computed<CSSProperties>(() => ({
+  '--index-border-color': shiftAlphaChannel(props.columnColour, 0.5),
+  '--index-background-color': shiftAlphaChannel(props.columnColour, 0.05),
 }))
 </script>
 
@@ -40,12 +35,17 @@ const nodeStyles = computed<CSSProperties>(() => ({
       'indexNode',
       animate && 'spin',
     ]"
-    :style="nodeStyles"
+    :style="nodeVars"
   />
 </template>
 
 <style scoped>
 .indexNode {
+  width: var(--git-node-size);
+  height: var(--git-node-size);
+  border: 2px dotted var(--index-border-color);
+  background-color: var(--index-background-color);
+
   border-radius: 50%;
   z-index: 20;
 }

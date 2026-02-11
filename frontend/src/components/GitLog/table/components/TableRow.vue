@@ -120,7 +120,7 @@ const shouldRenderHyphenValue = computed(
 )
 
 const tableDataStyle = computed<CSSProperties>(() => ({
-  lineHeight: pxToRem(rowHeight.value),
+  lineHeight: 'var(--git-row-height)',
   color: shiftAlphaChannel(textColour.value, shouldReduceOpacity.value ? 0.4 : 1),
   ...backgroundStyles.value,
   ...props.dataStyleOverrides,

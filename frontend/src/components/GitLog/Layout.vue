@@ -1,25 +1,79 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { CURVE_SIZE, NODE_BORDER_WIDTH } from './constants'
 import { useGitContext } from './composables/useGitContext'
 import { useTheme } from './composables/useTheme'
 import { pxToRem } from './utils/units'
+import { placeholderCommits } from './graph/placeholderData'
 
-const { classes, showHeaders, headerRowHeight } = useGitContext()
-const { textColour } = useTheme()
+// ---------------------------------------------------------------------------
+// Context
+// ---------------------------------------------------------------------------
 
-const titleHeight = computed(() => pxToRem(headerRowHeight.value))
+const {
+  classes,
+  showHeaders,
+  rowHeight,
+  headerRowHeight,
+  nodeSize,
+  graphColumnWidth,
+  graphData,
+  paging,
+  isIndexVisible,
+} = useGitContext()
+
+const { textColour, hoverColour, hoverTransitionDuration } = useTheme()
+
+// ---------------------------------------------------------------------------
+// Visible commit count & total row count
+// ---------------------------------------------------------------------------
+
+const visibleCommitCount = computed(() => {
+  const commits = graphData.value.commits
+  const pagingValue = paging.value
+  if (pagingValue) {
+    return pagingValue.endIndex - pagingValue.startIndex
+  }
+  return commits.length
+})
+
+const commitRowCount = computed(() => {
+  if (visibleCommitCount.value === 0) {
+    return placeholderCommits.length
+  }
+  return visibleCommitCount.value + (isIndexVisible.value ? 1 : 0)
+})
+
+// ---------------------------------------------------------------------------
+// CSS custom properties — cascade sizing values to all descendants
+// ---------------------------------------------------------------------------
+
+const cssVars = computed(() => ({
+  '--git-row-height': pxToRem(rowHeight.value),
+  '--git-header-row-height': pxToRem(headerRowHeight.value),
+  '--git-node-size': pxToRem(nodeSize.value),
+  '--git-graph-columns': graphData.value.graphColumns,
+  '--git-graph-column-width': pxToRem(graphColumnWidth.value),
+  '--git-graph-width': `calc(var(--git-graph-columns) * var(--git-graph-column-width))`,
+  '--git-curve-size': pxToRem(CURVE_SIZE),
+  '--git-node-border-width': pxToRem(NODE_BORDER_WIDTH),
+  '--git-visible-commits': visibleCommitCount.value,
+  '--git-commit-rows': commitRowCount.value,
+  '--git-text-color': textColour.value,
+  '--git-hover-color': hoverColour.value,
+  '--git-hover-transition-duration': `${hoverTransitionDuration}s`,
+}))
 </script>
 
 <template>
   <div
     id="vue-git-log"
-    :style="classes?.containerStyles"
+    :style="[classes?.containerStyles, cssVars]"
     :class="['container', classes?.containerClass]"
   >
     <div v-if="$slots.tags" class="tags">
       <div
         v-if="showHeaders"
-        :style="{ color: textColour, height: titleHeight }"
         class="title"
       >
         Branch / Tag
@@ -31,7 +85,6 @@ const titleHeight = computed(() => pxToRem(headerRowHeight.value))
     <div v-if="$slots.graph" class="graph">
       <div
         v-if="showHeaders"
-        :style="{ color: textColour, height: titleHeight }"
         class="title"
       >
         Graph
@@ -77,5 +130,7 @@ const titleHeight = computed(() => pxToRem(headerRowHeight.value))
   display: flex;
   flex-shrink: 0;
   align-items: center;
+  height: var(--git-header-row-height);
+  color: var(--git-text-color);
 }
 </style>

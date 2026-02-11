@@ -30,7 +30,6 @@ import {
 } from './composables/keys'
 import { generateRainbowGradient } from './utils/createRainbowTheme'
 import { neonAuroraDarkColours, neonAuroraLightColours } from './utils/colors'
-import { pxToRem } from './utils/units'
 import Layout from './Layout.vue'
 
 dayjs.extend(utc)
@@ -194,9 +193,6 @@ const isIndexVisible = computed<boolean>(() => {
 // Graph container width
 // ---------------------------------------------------------------------------
 
-const graphWidthValue = computed(() => {
-  return graphData.value.graphColumns * props.graphColumnWidth
-})
 
 // ---------------------------------------------------------------------------
 // Selection / preview handlers
@@ -297,7 +293,7 @@ const gitContextValue: GitContextBag = {
   remoteProviderUrlBuilder: computed(() => props.urls),
   rowHeight: computed(() => props.rowHeight),
   headerRowHeight: computed(() => props.headerRowHeight),
-  graphWidth: graphWidthValue,
+  graphColumnWidth: computed(() => props.graphColumnWidth),
   graphData,
   classes: computed(() => props.classes),
   indexStatus: computed(() => props.indexStatus),
@@ -311,6 +307,7 @@ const gitContextValue: GitContextBag = {
 }
 
 provide(GIT_CONTEXT_KEY, gitContextValue)
+
 </script>
 
 <template>

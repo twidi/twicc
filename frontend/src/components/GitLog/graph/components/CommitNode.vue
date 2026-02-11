@@ -40,8 +40,6 @@ const showTooltip = ref(false)
 // Computed values
 // ---------------------------------------------------------------------------
 
-const commitHashLabelHeight = 20
-
 const isMergeCommit = computed(() =>
   nodeTheme.value === 'default' && props.commit.parents.length > 1,
 )
@@ -54,31 +52,18 @@ const commitNodeColours = computed(() =>
   getCommitNodeColours({ columnColour: props.colour }),
 )
 
-const nodeStyles = computed<CSSProperties>(() => ({
-  width: pxToRem(nodeSize.value),
-  height: pxToRem(nodeSize.value),
-  backgroundColor: commitNodeColours.value.backgroundColour,
-  border: `${NODE_BORDER_WIDTH}px solid ${commitNodeColours.value.borderColour}`,
+const nodeVars = computed<CSSProperties>(() => ({
+  '--commit-node-background-color':  commitNodeColours.value.backgroundColour,
+  '--commit-node-border-color': commitNodeColours.value.borderColour,
 }))
 
-const mergeInnerNodeStyles = computed<CSSProperties>(() => {
-  const diameter = getMergeNodeInnerSize({ nodeSize: nodeSize.value })
+const mergeInnerNodeVars = computed<CSSProperties>(() => {
+  const diameter = pxToRem(getMergeNodeInnerSize({ nodeSize: nodeSize.value }));
   return {
-    background: commitNodeColours.value.borderColour,
-    width: pxToRem(diameter),
-    height: pxToRem(diameter),
-    top: `calc(50% - ${pxToRem(diameter / 2)})`,
-    left: `calc(50% - ${pxToRem(diameter / 2)})`,
+    '--merge-commit-diameter': diameter,
+    '--merge-commit-background-color': commitNodeColours.value.borderColour,
   }
 })
-
-const commitLabelStyles = computed<CSSProperties>(() => ({
-  color: textColour.value,
-  height: pxToRem(commitHashLabelHeight),
-  left: `calc(50% + ${pxToRem(nodeSize.value / 2 + 5)})`,
-  top: `calc(50% - ${pxToRem(commitHashLabelHeight / 2)})`,
-  background: theme.value === 'dark' ? 'rgb(26,26,26)' : 'white',
-}))
 
 const isTooltipVisible = computed(() =>
   showCommitNodeTooltips.value && showTooltip.value,
@@ -162,7 +147,7 @@ function handleKeyDown(event: KeyboardEvent): void {
     :tabindex="0"
     :id="`commit-node-${commit.hash}`"
     :data-testid="`commit-node-${commit.hash}`"
-    :style="nodeStyles"
+    :style="nodeVars"
     class="commitNode"
     :title="commitUrl ? 'View Commit' : undefined"
     @click.stop="handleClick"
@@ -177,7 +162,7 @@ function handleKeyDown(event: KeyboardEvent): void {
       v-if="isMergeCommit"
       :id="`commit-node-merge-circle-${commit.hash}`"
       :data-testid="`commit-node-merge-circle-${commit.hash}`"
-      :style="mergeInnerNodeStyles"
+      :style="mergeInnerNodeVars"
       class="mergeCommitInner"
     />
 
@@ -187,7 +172,6 @@ function handleKeyDown(event: KeyboardEvent): void {
       :id="`commit-node-hash-${commit.hash}`"
       :data-testid="`commit-node-hash-${commit.hash}`"
       class="commitLabel"
-      :style="commitLabelStyles"
     >
       {{ commit.hash }}
     </span>
@@ -226,9 +210,13 @@ function handleKeyDown(event: KeyboardEvent): void {
 
 .commitNode {
   all: unset;
+  width: var(--git-node-size);
+  height: var(--git-node-size);
   border-radius: 50%;
   z-index: 20;
   position: relative;
+  background-color: var(--commit-node-background-color);
+  border: var(--git-node-border-width) solid var(--commit-node-border-color);
 
   &:hover {
     cursor: pointer;
@@ -239,12 +227,23 @@ function handleKeyDown(event: KeyboardEvent): void {
     padding: 2px 5px 2px 2px;
     border-radius: 5px;
     font-size: 0.7rem;
+     --commit-hash-height: 20px;
+    color: var(--git-text-color);
+    left: calc(50% + var(--git-node-size) / 2 + 5);
+    top: calc(50% - var(--commit-hash-height) / 2);
+    height: var(--commit-hash-height);
+
   }
 }
 
 .mergeCommitInner {
   border-radius: 50%;
   position: absolute;
+  background: var(--merge-commit-background-color);
+  width: var(--merge-commit-diameter);
+  height: var(--merge-commit-diameter);
+  top: calc(50% - var(--merge-commit-diameter) / 2);
+  left: calc(50% - var(--merge-commit-diameter) / 2);
 }
 
 .tooltipContainer {

@@ -16,7 +16,6 @@ import BranchTagTooltip from './BranchTagTooltip.vue'
 const props = defineProps<{
   id: string
   commit: Commit
-  height: number
   lineRight: number
   lineWidth: number
 }>()
@@ -27,7 +26,6 @@ const props = defineProps<{
 
 const { textColour, shiftAlphaChannel, getCommitColour } = useTheme()
 const {
-  rowHeight,
   selectedCommit,
   previewedCommit,
   enablePreviewedCommitStyling,
@@ -46,40 +44,30 @@ const showTooltip = ref(false)
 
 const colour = computed(() => getCommitColour(props.commit))
 
-const tagLineStyles = computed<CSSProperties>(() => {
-  const isPreviewCommit = props.commit.hash === previewedCommit.value?.hash && enablePreviewedCommitStyling.value
-  const isSelectedCommit = props.commit.hash === selectedCommit.value?.hash && enableSelectedCommitStyling.value
+const isPreviewCommit = computed(() =>
+  props.commit.hash === previewedCommit.value?.hash && enablePreviewedCommitStyling.value,
+)
+const isSelectedCommit = computed(() =>
+  props.commit.hash === selectedCommit.value?.hash && enableSelectedCommitStyling.value,
+)
 
-  const previewOrDefaultOpacity = isPreviewCommit ? 0.8 : 0.4
-  const opacity: number = isSelectedCommit ? 1 : previewOrDefaultOpacity
+const tagLineVars = computed<CSSProperties>(() => ({
+  '--tag-line-right': pxToRem(props.lineRight),
+  '--tag-line-width': pxToRem(props.lineWidth),
+  '--tag-line-border-color': colour.value,
+} as CSSProperties))
 
-  return {
-    opacity,
-    right: pxToRem(props.lineRight - 1),
-    width: pxToRem(props.lineWidth),
-    borderTop: `2px dotted ${colour.value}`,
-    animationDuration: isPreviewCommit ? '0s' : '0.3s',
-  }
-})
-
-const tagLabelContainerStyles = computed<CSSProperties>(() => {
-  const rowHeightVar = { '--row-height': pxToRem(rowHeight.value) } as CSSProperties
-
-  if (props.commit.hash === 'index') {
-    return {
-      ...rowHeightVar,
-      color: textColour.value,
-      border: `2px dashed ${shiftAlphaChannel(colour.value, 0.50)}`,
-      background: shiftAlphaChannel(colour.value, 0.05),
-    }
-  }
+const tagLabelVars = computed<CSSProperties>(() => {
+  const borderColor = isIndex.value
+    ? shiftAlphaChannel(colour.value, 0.50)
+    : colour.value
+  const background = shiftAlphaChannel(colour.value, isIndex.value ? 0.05 : 0.30)
 
   return {
-    ...rowHeightVar,
-    color: textColour.value,
-    border: `2px solid ${colour.value}`,
-    background: shiftAlphaChannel(colour.value, 0.30),
-  }
+    '--tag-label-color': textColour.value,
+    '--tag-label-border-color': borderColor,
+    '--tag-label-background': background,
+  } as CSSProperties
 })
 
 const isTag = computed(() => props.commit.branch.includes('tags/'))
@@ -101,7 +89,6 @@ function handleMouseOut(): void {
 <template>
   <button
     :id="`tag-${id}`"
-    :style="{ height: pxToRem(height) }"
     class="tagContainer"
     @blur="handleMouseOut"
     @focus="handleMouseOver"
@@ -110,8 +97,8 @@ function handleMouseOut(): void {
   >
     <span
       :id="`tag-label-${id}`"
-      class="tag"
-      :style="tagLabelContainerStyles"
+      :class="['tag', { isIndex }]"
+      :style="tagLabelVars"
     >
       <IndexLabel v-if="isIndex" />
       <TagLabel v-else-if="isTag" :commit="commit" />
@@ -120,8 +107,8 @@ function handleMouseOut(): void {
 
     <span
       :id="`tag-line-${id}`"
-      class="tagLine"
-      :style="tagLineStyles"
+      :class="['tagLine', { isSelected: isSelectedCommit, isPreviewed: isPreviewCommit }]"
+      :style="tagLineVars"
     />
 
     <!-- Tooltip (shown on hover), positioned to the right -->
@@ -145,6 +132,7 @@ function handleMouseOut(): void {
   align-items: center;
   justify-content: flex-end;
   width: 100%;
+  height: var(--git-row-height);
 
   .tag {
     display: flex;
@@ -154,9 +142,16 @@ function handleMouseOut(): void {
     border-radius: 6px;
     max-width: 8rem;
     font-size: 0.8rem;
-    height: min(22px, calc(var(--row-height) - 8px));
+    height: min(22px, calc(var(--git-row-height) - 8px));
     opacity: 0.8;
     transition: all ease-in-out 0.2s;
+    color: var(--tag-label-color);
+    border: 2px solid var(--tag-label-border-color);
+    background: var(--tag-label-background);
+
+    &.isIndex {
+      border-style: dashed;
+    }
 
     &:hover {
       opacity: 1;
@@ -167,7 +162,20 @@ function handleMouseOut(): void {
     top: 50%;
     height: 1px;
     position: absolute;
+    right: calc(var(--tag-line-right) - 1px);
+    width: var(--tag-line-width);
+    border-top: 2px dotted var(--tag-line-border-color);
+    opacity: 0.4;
     transition: opacity ease-in-out 0.3s;
+
+    &.isPreviewed {
+      opacity: 0.8;
+      transition-duration: 0s;
+    }
+
+    &.isSelected {
+      opacity: 1;
+    }
   }
 }
 

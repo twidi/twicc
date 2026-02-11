@@ -93,11 +93,14 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
     return {
       variant: 'top-half-dotted',
       style: {
-        height: '50%',
-        top: '0',
         borderRight: `2px dotted ${props.indexCommitNodeBorder}`,
       },
     }
+  }
+
+  const vars = {
+      '--line-zIndex': props.columnIndex + 1,
+      ...border.value,
   }
 
   const isFirstCommit = props.state.isNode && props.commit.parents.length === 0
@@ -105,23 +108,13 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
     if (props.state.isTopBreakPoint) {
       return {
         variant: 'top-half-with-break-point',
-        style: {
-          top: '0',
-          height: '50%',
-          zIndex: props.columnIndex + 1,
-          ...border.value,
-        },
+        style: vars,
       }
     }
 
     return {
       variant: 'top-half',
-      style: {
-        top: '0',
-        height: '50%',
-        zIndex: props.columnIndex + 1,
-        ...border.value,
-      },
+      style: vars,
     }
   }
 
@@ -133,10 +126,8 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
     return {
       variant: 'bottom-half',
       style: {
-        top: '50%',
-        height: '50%',
-        zIndex: props.columnIndex + 1,
-        ...border.value,
+          ...vars,
+          '--line-top': '50%',
       },
     }
   }
@@ -145,10 +136,8 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
     return {
       variant: 'bottom-break-point',
       style: {
-        top: '0',
-        height: breakPointTheme.value === 'ring' ? '30%' : '50%',
-        zIndex: props.columnIndex + 1,
-        ...border.value,
+        ...vars,
+        '--line-height': breakPointTheme.value === 'ring' ? '30%' : '50%',
       },
     }
   }
@@ -157,10 +146,8 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
     return {
       variant: 'top-break-point',
       style: {
-        top: '0',
-        height: '100%',
-        zIndex: props.columnIndex + 1,
-        ...border.value,
+          ...vars,
+          '--line-height': '100%',
       },
     }
   }
@@ -168,10 +155,8 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
   return {
     variant: 'full-height',
     style: {
-      top: '0',
-      height: '100%',
-      zIndex: props.columnIndex + 1,
-      ...border.value,
+      ...vars,
+      '--line-height': '100%',
     },
   }
 })
@@ -232,8 +217,10 @@ const indexBreakPointStyleOverrides = computed<Partial<Record<BreakPointTheme, C
 }
 
 .vertical {
+  top: var(--line-top, 0);
+  height: var(--line-height, 50%);
   left: calc(50% - 3px);
   width: 2px;
-  z-index: 10;
+  z-index: var(--line-zIndex, 10);
 }
 </style>

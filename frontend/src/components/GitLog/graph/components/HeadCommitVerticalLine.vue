@@ -13,11 +13,7 @@ defineProps<{
   <div
     id="head-commit-vertical-line"
     data-testid="head-commit-vertical-line"
-    :style="{
-      height: '50%',
-      top: '50%',
-      borderRight: `2px solid ${columnColour}`,
-    }"
+    :style="{'--vertical-line-color': columnColour}"
     :class="['line', 'vertical']"
   />
 </template>
@@ -28,6 +24,9 @@ defineProps<{
 }
 
 .vertical {
+  height: 50%;
+  top: 50%;
+  border-right: 2px solid var(--vertical-line-color);
   left: calc(50% - 3px);
   width: 2px;
   z-index: 10;

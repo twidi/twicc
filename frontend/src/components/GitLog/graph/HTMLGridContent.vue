@@ -1,10 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { pxToRem } from '../utils/units'
 import { useGraphContext } from '../composables/useGraphContext'
 import { useGitContext } from '../composables/useGitContext'
 import { getEmptyColumnState } from './utils/getEmptyColumnState'
-import { placeholderCommits } from './placeholderData'
 import SkeletonGraph from './components/SkeletonGraph.vue'
 import IndexPseudoRow from './components/IndexPseudoRow.vue'
 import GraphRow from './components/GraphRow.vue'
@@ -14,32 +11,7 @@ import GraphRow from './components/GraphRow.vue'
 // ---------------------------------------------------------------------------
 
 const { graphColumns, visibleCommits, columnData } = useGraphContext()
-const { isIndexVisible, rowHeight, paging } = useGitContext()
-
-// ---------------------------------------------------------------------------
-// Grid layout computation
-// ---------------------------------------------------------------------------
-
-const commitQuantity = computed(() => {
-  // When there is no data, render the skeleton graph placeholder
-  // which shows fake commits.
-  if (visibleCommits.value.length === 0) {
-    return placeholderCommits.length
-  }
-
-  // When the index node is visible, show one extra commit
-  // in the form of the index pseudo-node.
-  if (isIndexVisible.value) {
-    return visibleCommits.value.length + 1
-  }
-
-  return visibleCommits.value.length
-})
-
-const wrapperStyle = computed(() => ({
-  gridTemplateColumns: `repeat(${graphColumns.value}, 1fr)`,
-  gridTemplateRows: `repeat(${commitQuantity.value}, ${pxToRem(rowHeight.value)})`,
-}))
+const { isIndexVisible, paging } = useGitContext()
 
 // ---------------------------------------------------------------------------
 // Row data helpers
@@ -58,7 +30,7 @@ function getColumnsForCommit(index: number) {
 </script>
 
 <template>
-  <div class="graph" :style="wrapperStyle">
+  <div class="graph">
     <!-- Skeleton placeholder (rendered when no visible commits) -->
     <SkeletonGraph v-if="visibleCommits.length === 0" />
 
@@ -81,5 +53,7 @@ function getColumnsForCommit(index: number) {
   height: 100%;
   display: grid;
   gap: 0;
+  grid-template-columns: repeat(var(--git-graph-columns), 1fr);
+  grid-template-rows: repeat(var(--git-commit-rows), var(--git-row-height));
 }
 </style>

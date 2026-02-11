@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { pxToRem } from '../utils/units'
 import { useGitContext } from '../composables/useGitContext'
 import type { Commit } from '../types'
 import BranchTag from './components/BranchTag.vue'
@@ -15,10 +14,9 @@ const {
   indexCommit,
   graphData,
   paging,
-  graphWidth,
+  graphColumnWidth,
   isIndexVisible,
   graphOrientation,
-  rowHeight,
   filter,
 } = useGitContext()
 
@@ -74,7 +72,7 @@ const preparedCommits = computed<PreparedCommit[]>(() => {
 function tagLineWidth(commit: Commit): number {
   const isNormalOrientation = graphOrientation.value === 'normal'
   const numberOfColumns = graphData.value.graphColumns
-  const columnWidth = graphWidth.value / numberOfColumns
+  const columnWidth = graphColumnWidth.value
 
   if (commit.hash === 'index') {
     return isNormalOrientation
@@ -94,12 +92,6 @@ function tagLineWidth(commit: Commit): number {
 
   return (columnWidth * normalisedColumnIndex) + (columnWidth / 2)
 }
-
-// ---------------------------------------------------------------------------
-// Row height
-// ---------------------------------------------------------------------------
-
-const totalRowHeight = computed(() => rowHeight.value)
 
 // ---------------------------------------------------------------------------
 // Determine which commits should show a BranchTag
@@ -125,7 +117,6 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
         v-if="shouldRenderBranchTag(commit)"
         :commit="commit"
         :id="i.toString()"
-        :height="totalRowHeight"
         :line-width="tagLineWidth(commit)"
         :line-right="-tagLineWidth(commit)"
       />
@@ -133,7 +124,6 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
         v-else
         :id="`empty-tag-${commit.hash}`"
         class="tag"
-        :style="{ height: pxToRem(totalRowHeight) }"
       />
     </template>
   </div>
@@ -148,5 +138,6 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
 .tag {
   /* Empty tag placeholder — takes up the same row height
   as a BranchTag so the layout stays aligned with the graph. */
+  height: var(--git-row-height);
 }
 </style>

@@ -1,27 +1,7 @@
-<script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
-import { useTheme } from '../../composables/useTheme'
-
-// ---------------------------------------------------------------------------
-// Context
-// ---------------------------------------------------------------------------
-
-const { textColour } = useTheme()
-
-// ---------------------------------------------------------------------------
-// Computed values
-// ---------------------------------------------------------------------------
-
-const svgStyle = computed<CSSProperties>(() => ({
-  fill: textColour.value,
-}))
-</script>
-
 <template>
   <svg
     id="branch-icon"
     class="icon"
-    :style="svgStyle"
     viewBox="0 0 512 512"
     xmlns="http://www.w3.org/2000/svg"
   >
@@ -34,5 +14,6 @@ const svgStyle = computed<CSSProperties>(() => ({
   width: 18px;
   flex: 0 0 auto;
   margin-left: 3px;
+  fill: currentColor;
 }
 </style>

@@ -1,27 +1,7 @@
-<script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
-import { useTheme } from '../../composables/useTheme'
-
-// ---------------------------------------------------------------------------
-// Context
-// ---------------------------------------------------------------------------
-
-const { textColour, shiftAlphaChannel } = useTheme()
-
-// ---------------------------------------------------------------------------
-// Computed values
-// ---------------------------------------------------------------------------
-
-const svgStyle = computed<CSSProperties>(() => ({
-  fill: shiftAlphaChannel(textColour.value, 0.8),
-}))
-</script>
-
 <template>
   <svg
     id="git-icon"
     class="icon"
-    :style="svgStyle"
     viewBox="0 0 256 256"
     xmlns="http://www.w3.org/2000/svg"
     preserveAspectRatio="xMinYMin meet"
@@ -37,5 +17,6 @@ const svgStyle = computed<CSSProperties>(() => ({
   margin-left: 5px;
   margin-top: 2px;
   margin-right: 2px;
+  fill: currentColor;
 }
 </style>

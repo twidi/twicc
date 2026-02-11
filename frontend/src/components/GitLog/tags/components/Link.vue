@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
-import { useTheme } from '../../composables/useTheme'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -11,19 +9,6 @@ defineProps<{
   text: string
 }>()
 
-// ---------------------------------------------------------------------------
-// Context
-// ---------------------------------------------------------------------------
-
-const { textColour } = useTheme()
-
-// ---------------------------------------------------------------------------
-// Computed values
-// ---------------------------------------------------------------------------
-
-const linkStyle = computed<CSSProperties>(() => ({
-  color: textColour.value,
-}))
 </script>
 
 <template>
@@ -31,7 +16,6 @@ const linkStyle = computed<CSSProperties>(() => ({
     :href="href"
     target="_blank"
     rel="noopener noreferrer"
-    :style="linkStyle"
     class="link"
   >
     {{ text }}
@@ -44,5 +28,6 @@ const linkStyle = computed<CSSProperties>(() => ({
   text-overflow: ellipsis;
   white-space: nowrap;
   text-decoration: none;
+  color: var(--git-text-color);
 }
 </style>

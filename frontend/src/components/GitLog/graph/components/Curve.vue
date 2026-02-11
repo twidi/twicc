@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
-import { CURVE_SIZE } from '../../constants'
-import { pxToRem } from '../../utils/units'
 import type { BreakPointTheme } from '../../types'
 import BreakPoint from './BreakPoint.vue'
 
@@ -22,9 +20,9 @@ const props = defineProps<{
 
 const borderStyle = computed(() => (props.isPlaceholder ? 'dotted' : 'solid'))
 
-const curveBorderStyle = computed<CSSProperties>(() => ({
-    border: `2px ${borderStyle.value} ${props.colour}`,
-    borderRadius: pxToRem(CURVE_SIZE),
+const curveBorderVars = computed<CSSProperties>(() => ({
+    '--curve-border-style': borderStyle.value,
+    '--curve-border-color': props.colour,
 }))
 
 const breakPointPosition = computed(() => (props.direction === 'up' ? 'top' : 'bottom'))
@@ -59,7 +57,7 @@ const breakPointStyleOverrides: Partial<Record<BreakPointTheme, CSSProperties>> 
     />
 
     <div :class="['curve', curveClass]"
-      :style="curveBorderStyle"
+      :style="curveBorderVars"
     />
 
   </div>
@@ -73,6 +71,9 @@ const breakPointStyleOverrides: Partial<Record<BreakPointTheme, CSSProperties>> 
 .curve {
     width: 100%;
     height: 100%;
+    border-radius: var(--git-curve-size);
+    border: 2px var(--curve-border-style) var(--curve-border-color);
+
 }
 
 .curve-up {

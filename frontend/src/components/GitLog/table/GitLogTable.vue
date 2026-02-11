@@ -82,7 +82,6 @@ const tableData = computed<Commit[]>(() => {
     >
       <div
         class="header"
-        :style="{ color: textColour }"
         id="vue-git-log-table-header-commit-message"
         data-testid="vue-git-log-table-header-commit-message"
       >
@@ -91,7 +90,6 @@ const tableData = computed<Commit[]>(() => {
 
       <div
         class="header"
-        :style="{ color: textColour }"
         id="vue-git-log-table-header-author"
         data-testid="vue-git-log-table-header-author"
       >
@@ -100,7 +98,6 @@ const tableData = computed<Commit[]>(() => {
 
       <div
         class="header"
-        :style="{ color: textColour }"
         id="vue-git-log-table-header-timestamp"
         data-testid="vue-git-log-table-header-timestamp"
       >
@@ -148,7 +145,8 @@ const tableData = computed<Commit[]>(() => {
 
 .header {
   font-weight: 600;
-    display: flex;
-    align-items: center;
+  color: var(--git-text-color);
+  display: flex;
+  align-items: center;
 }
 </style>

@@ -16,16 +16,15 @@ const props = defineProps<{
 // Context
 // ---------------------------------------------------------------------------
 
-const { textColour, getTooltipBackground } = useTheme()
+const { getTooltipBackground } = useTheme()
 
 // ---------------------------------------------------------------------------
 // Computed values
 // ---------------------------------------------------------------------------
 
-const tooltipStyle = computed<CSSProperties>(() => ({
-  color: textColour.value,
-  border: `2px solid ${props.colour}`,
-  background: getTooltipBackground(props.commit),
+const tooltipVars = computed<CSSProperties>(() => ({
+  '--tooltip-border-color': props.colour,
+  '--tooltip-background-color': getTooltipBackground(props.commit),
 }))
 
 const parentsText = computed(() =>
@@ -41,7 +40,7 @@ const childrenText = computed(() =>
   <div
     :id="`commit-node-tooltip-${commit.hash}`"
     :data-testid="`commit-node-tooltip-${commit.hash}`"
-    :style="tooltipStyle"
+    :style="tooltipVars"
     class="tooltip"
   >
     <div>
@@ -70,6 +69,9 @@ const childrenText = computed(() =>
 .tooltip {
   padding: 15px 20px;
   border-radius: 8px;
+  color: var(--git-text-color);
+  border: 2px solid var(--tooltip-border-color);
+  background: var(--tooltip-background-color);
 }
 
 .label {

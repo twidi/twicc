@@ -22,10 +22,9 @@ const { textColour, getTooltipBackground, getCommitColour } = useTheme()
 // Computed values
 // ---------------------------------------------------------------------------
 
-const tooltipStyle = computed<CSSProperties>(() => ({
-  color: textColour.value,
-  background: getTooltipBackground(props.commit),
-  border: `2px solid ${getCommitColour(props.commit)}`,
+const tooltipVars = computed<CSSProperties>(() => ({
+  '--tooltip--background-color': getTooltipBackground(props.commit),
+  '--tooltip-border-color': getCommitColour(props.commit),
 }))
 </script>
 
@@ -33,7 +32,7 @@ const tooltipStyle = computed<CSSProperties>(() => ({
   <div
     :id="`tag-${id}-tooltip`"
     class="tooltip"
-    :style="tooltipStyle"
+    :style="tooltipVars"
   >
     {{ commit.branch }}
   </div>
@@ -44,5 +43,8 @@ const tooltipStyle = computed<CSSProperties>(() => ({
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 0.8rem;
+  color: var(--git-text-color);
+  background: var(--tooltip--background-color);
+  border: 2px solid var(--tooltip-border-color);
 }
 </style>

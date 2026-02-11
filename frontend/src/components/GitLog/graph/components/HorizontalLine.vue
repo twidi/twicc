@@ -26,7 +26,7 @@ const { getGraphColumnColour } = useTheme()
 // Computed values
 // ---------------------------------------------------------------------------
 
-const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
+const lineConfig = computed<{ variant: string; vars: CSSProperties }>(() => {
   const farthestRightMergeNodeColumnIndex = props.state.mergeSourceColumns
     ? Math.max(...props.state.mergeSourceColumns)
     : undefined
@@ -37,16 +37,21 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
 
   const borderStyle = props.state.isPlaceholderSkeleton ? 'dotted' : 'solid'
 
+  const vars = {
+    '--line-style': borderStyle,
+    '--line-color': borderColour,
+    '--line-zIndex': props.columnIndex + 1,
+  }
+
   if (props.state.isNode && props.state.mergeSourceColumns) {
     const isNormalOrientation = orientation.value === 'normal'
     const variant = isNormalOrientation ? 'right-half' : 'left-half'
     return {
       variant,
-      style: {
-        borderTop: `2px ${borderStyle} ${borderColour}`,
-        width: '50%',
-        right: isNormalOrientation ? '0' : '50%',
-        zIndex: props.columnIndex + 1,
+      vars: {
+        ...vars,
+        '--line-right': isNormalOrientation ? '0' : '50%',
+        '--line-width': '50%',
       },
     }
   }
@@ -55,11 +60,10 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
 
   return {
     variant: isInFirstColumn ? 'right-half' : 'full-width',
-    style: {
-      borderTop: `2px ${borderStyle} ${borderColour}`,
-      width: isInFirstColumn ? '50%' : '100%',
-      zIndex: props.columnIndex + 1,
-      right: '0',
+    vars: {
+        ...vars,
+      '--line-right': 0,
+      '--line-width': isInFirstColumn ? '50%' : '100%',
     },
   }
 })
@@ -70,7 +74,7 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
     :id="`horizontal-line-${lineConfig.variant}`"
     :data-testid="`horizontal-line-${lineConfig.variant}`"
     :class="['line', 'horizontal']"
-    :style="lineConfig.style"
+    :style="lineConfig.vars"
   />
 </template>
 
@@ -82,5 +86,9 @@ const lineConfig = computed<{ variant: string; style: CSSProperties }>(() => {
 .horizontal {
   top: 50%;
   height: 2px;
+  border-top: 2px var(--line-style) var(--line-color);
+  right: var(--line-right);
+  width: var(--line-width);
+  z-index: var(--line-zIndex);
 }
 </style>

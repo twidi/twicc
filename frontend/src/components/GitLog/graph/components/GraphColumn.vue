@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
+import { computed } from 'vue'
 import { useTheme } from '../../composables/useTheme'
-import { pxToRem } from '../../utils/units'
 import { useSelectCommit } from '../../composables/useSelectCommit'
 import { useGraphContext } from '../../composables/useGraphContext'
 import { useGitContext } from '../../composables/useGitContext'
@@ -41,7 +40,7 @@ const props = defineProps<{
 // ---------------------------------------------------------------------------
 
 const { selectCommitHandler } = useSelectCommit()
-const { nodeSize, orientation } = useGraphContext()
+const { orientation } = useGraphContext()
 const {
   getGraphColumnColour,
   shiftAlphaChannel,
@@ -129,25 +128,6 @@ const showSelectedBackground = computed(() => {
 })
 
 // ---------------------------------------------------------------------------
-// Column style
-// ---------------------------------------------------------------------------
-
-const columnStyle = computed<CSSProperties>(() => {
-  const isCurve = props.state.isLeftDownCurve || props.state.isLeftUpCurve
-
-  if (orientation.value === 'flipped' && isCurve) {
-    return {
-      minWidth: pxToRem(nodeSize.value),
-      transform: 'scale(-1, 1)',
-    }
-  }
-
-  return {
-    minWidth: `${nodeSize.value}px`,
-  }
-})
-
-// ---------------------------------------------------------------------------
 // Selected background colour
 // ---------------------------------------------------------------------------
 
@@ -178,9 +158,8 @@ function handleMouseOut(): void {
   <button
     :id="`graph-column-row-${rowIndex}-col-${index}`"
     :data-testid="`graph-column-row-${rowIndex}-col-${index}`"
-    :style="columnStyle"
     :tabindex="rowIndex"
-    class="column"
+    :class="['column', {isFlippedCurve: orientation === 'flipped' && (props.state.isLeftDownCurve || props.state.isLeftUpCurve)}]"
     @click="handleClick"
     @mouseover="handleMouseOver"
     @mouseout="handleMouseOut"
@@ -274,6 +253,10 @@ function handleMouseOut(): void {
   align-items: center;
   justify-content: center;
   position: relative;
+  min-width: var(--git-node-size);
+  &.isFlippedCurve {
+      transform: scale(-1, 1);
+  }
 
   &:hover {
     cursor: pointer;
