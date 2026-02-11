@@ -27,6 +27,7 @@ const props = defineProps<{
 
 const { textColour, shiftAlphaChannel, getCommitColour } = useTheme()
 const {
+  rowHeight,
   selectedCommit,
   previewedCommit,
   enablePreviewedCommitStyling,
@@ -62,8 +63,11 @@ const tagLineStyles = computed<CSSProperties>(() => {
 })
 
 const tagLabelContainerStyles = computed<CSSProperties>(() => {
+  const rowHeightVar = { '--row-height': pxToRem(rowHeight.value) } as CSSProperties
+
   if (props.commit.hash === 'index') {
     return {
+      ...rowHeightVar,
       color: textColour.value,
       border: `2px dashed ${shiftAlphaChannel(colour.value, 0.50)}`,
       background: shiftAlphaChannel(colour.value, 0.05),
@@ -71,6 +75,7 @@ const tagLabelContainerStyles = computed<CSSProperties>(() => {
   }
 
   return {
+    ...rowHeightVar,
     color: textColour.value,
     border: `2px solid ${colour.value}`,
     background: shiftAlphaChannel(colour.value, 0.30),
@@ -149,7 +154,7 @@ function handleMouseOut(): void {
     border-radius: 6px;
     max-width: 8rem;
     font-size: 0.8rem;
-    height: 22px;
+    height: min(22px, calc(var(--row-height) - 8px));
     opacity: 0.8;
     transition: all ease-in-out 0.2s;
 
