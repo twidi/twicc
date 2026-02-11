@@ -17,7 +17,6 @@ const {
   graphColumnWidth,
   isIndexVisible,
   graphOrientation,
-  filter,
 } = useGitContext()
 
 // ---------------------------------------------------------------------------
@@ -48,15 +47,11 @@ function prepareCommits(commits: Commit[]): PreparedCommit[] {
 }
 
 // ---------------------------------------------------------------------------
-// Visible commits (sliced, filtered, with index prepended)
+// Visible commits (sliced, with index prepended)
 // ---------------------------------------------------------------------------
 
 const preparedCommits = computed<PreparedCommit[]>(() => {
-  let data = graphData.value.commits.slice(paging.value?.startIndex, paging.value?.endIndex)
-
-  if (filter.value) {
-    data = filter.value(data)
-  }
+  const data = graphData.value.commits.slice(paging.value?.startIndex, paging.value?.endIndex)
 
   if (isIndexVisible.value && indexCommit.value) {
     data.unshift(indexCommit.value)

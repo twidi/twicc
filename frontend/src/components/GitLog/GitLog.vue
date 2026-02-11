@@ -8,14 +8,14 @@ import type {
   GitLogEntry,
   CommitFilter,
   GitLogIndexStatus,
-  GitLogPaging,
   GitLogStylingProps,
   GitLogUrlBuilder,
   GraphOrientation,
+  GraphPaging,
   ThemeColours,
   ThemeMode,
 } from './types'
-import { DEFAULT_GRAPH_COLUMN_WIDTH, DEFAULT_NODE_SIZE, DEFAULT_HEADER_ROW_HEIGHT, DEFAULT_ROW_HEIGHT } from './constants'
+import { DEFAULT_GRAPH_COLUMN_WIDTH, DEFAULT_NODE_SIZE, DEFAULT_HEADER_ROW_HEIGHT, DEFAULT_ROW_HEIGHT, DEFAULT_SCROLL_BUFFER } from './constants'
 import {
   computeRelationships,
   GraphDataBuilder,
@@ -43,7 +43,6 @@ const props = withDefaults(defineProps<{
   currentBranch: string
   theme?: ThemeMode
   colours?: ThemeColours | string[]
-  paging?: GitLogPaging
   filter?: CommitFilter
   showGitIndex?: boolean
   indexStatus?: GitLogIndexStatus
@@ -56,6 +55,7 @@ const props = withDefaults(defineProps<{
   headerRowHeight?: number
   nodeSize?: number
   graphColumnWidth?: number
+  scrollBuffer?: number
   enableSelectedCommitStyling?: boolean
   enablePreviewedCommitStyling?: boolean
   classes?: GitLogStylingProps
@@ -68,6 +68,7 @@ const props = withDefaults(defineProps<{
   headerRowHeight: DEFAULT_HEADER_ROW_HEIGHT,
   nodeSize: DEFAULT_NODE_SIZE,
   graphColumnWidth: DEFAULT_GRAPH_COLUMN_WIDTH,
+  scrollBuffer: DEFAULT_SCROLL_BUFFER,
   enableSelectedCommitStyling: true,
   enablePreviewedCommitStyling: true,
 })
@@ -160,18 +161,14 @@ const indexCommit = computed<Commit | undefined>(() => {
 })
 
 // ---------------------------------------------------------------------------
-// Pagination (client-side)
+// Scroll-driven paging (set by Layout via setPaging)
 // ---------------------------------------------------------------------------
 
-const pageIndices = computed(() => {
-  const page = props.paging?.page ?? 0
-  const size = props.paging?.size ?? props.entries.length
+const scrollPaging = ref<GraphPaging>()
 
-  const startIndex = Math.max(0, page * size)
-  const endIndex = Math.min(props.entries.length, startIndex + size)
-
-  return { startIndex, endIndex }
-})
+function setPaging(paging: GraphPaging): void {
+  scrollPaging.value = paging
+}
 
 // ---------------------------------------------------------------------------
 // Index visibility
@@ -182,8 +179,9 @@ const isIndexVisible = computed<boolean>(() => {
     return false
   }
 
-  if (props.paging) {
-    return pageIndices.value.startIndex === 0
+  const p = scrollPaging.value
+  if (p) {
+    return p.startIndex === 0
   }
 
   return true
@@ -298,10 +296,11 @@ const gitContextValue: GitContextBag = {
   classes: computed(() => props.classes),
   indexStatus: computed(() => props.indexStatus),
   isServerSidePaginated: computed(() => false),
-  paging: computed(() => props.paging ? pageIndices.value : undefined),
+  paging: computed(() => scrollPaging.value),
+  setPaging,
   isIndexVisible,
-  filter: computed(() => props.filter),
   nodeSize: computed(() => props.nodeSize),
+  scrollBuffer: computed(() => props.scrollBuffer),
   graphOrientation: computed(() => graphOrientation.value),
   setGraphOrientation: (orientation: GraphOrientation) => { graphOrientation.value = orientation },
 }

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watchEffect } from 'vue'
 import { CURVE_SIZE, NODE_BORDER_WIDTH } from './constants'
 import { useGitContext } from './composables/useGitContext'
 import { useTheme } from './composables/useTheme'
+import { useScrollWindow } from './composables/useScrollWindow'
 import { pxToRem } from './utils/units'
 import { placeholderCommits } from './graph/placeholderData'
 
@@ -19,22 +20,67 @@ const {
   graphColumnWidth,
   graphData,
   paging,
+  setPaging,
   isIndexVisible,
+  scrollBuffer,
 } = useGitContext()
 
 const { textColour, hoverColour, hoverTransitionDuration } = useTheme()
 
 // ---------------------------------------------------------------------------
-// Visible commit count & total row count
+// Total commit count (for scroll spacer)
+// ---------------------------------------------------------------------------
+
+const totalCommitCount = computed(() => graphData.value.commits.length)
+
+// ---------------------------------------------------------------------------
+// Scroll window
+// ---------------------------------------------------------------------------
+
+const { startIndex, endIndex, scrollContainerRef } = useScrollWindow(
+  totalCommitCount,
+  rowHeight,
+  scrollBuffer,
+)
+
+// Push scroll-driven paging into GitContext so all descendants can read it
+watchEffect(() => {
+  setPaging({
+    startIndex: startIndex.value,
+    endIndex: endIndex.value,
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Spacer height (creates the scrollbar proportional to total commits)
+// ---------------------------------------------------------------------------
+
+const totalRowCount = computed(() =>
+  totalCommitCount.value + (isIndexVisible.value ? 1 : 0),
+)
+
+const spacerHeight = computed(() =>
+  `${totalRowCount.value * rowHeight.value}px`,
+)
+
+// ---------------------------------------------------------------------------
+// Viewport offset — position the viewport at the correct scroll position
+// ---------------------------------------------------------------------------
+
+const viewportOffset = computed(() =>
+  `${startIndex.value * rowHeight.value}px`,
+)
+
+// ---------------------------------------------------------------------------
+// Visible commit count & rendered row count
 // ---------------------------------------------------------------------------
 
 const visibleCommitCount = computed(() => {
-  const commits = graphData.value.commits
   const pagingValue = paging.value
   if (pagingValue) {
     return pagingValue.endIndex - pagingValue.startIndex
   }
-  return commits.length
+  return graphData.value.commits.length
 })
 
 const commitRowCount = computed(() => {
@@ -70,30 +116,39 @@ const cssVars = computed(() => ({
     :style="[classes?.containerStyles, cssVars]"
     :class="['container', classes?.containerClass]"
   >
-    <div v-if="$slots.tags" class="tags">
+    <!-- Scroll area -->
+    <div ref="scrollContainerRef" class="scroll-area">
       <div
-        v-if="showHeaders"
-        class="title"
+        class="viewport"
+        :style="{ transform: `translateY(${viewportOffset})` }"
       >
-        Branch / Tag
+        <div v-if="$slots.tags" class="tags">
+          <div
+            v-if="showHeaders"
+            class="title"
+          >
+            Branch / Tag
+          </div>
+
+          <slot name="tags" />
+        </div>
+
+        <div v-if="$slots.graph" class="graph">
+          <div
+            v-if="showHeaders"
+            class="title"
+          >
+            Graph
+          </div>
+
+          <slot name="graph" />
+        </div>
+
+        <div v-if="$slots.table" class="table">
+          <slot name="table" />
+        </div>
       </div>
-
-      <slot name="tags" />
-    </div>
-
-    <div v-if="$slots.graph" class="graph">
-      <div
-        v-if="showHeaders"
-        class="title"
-      >
-        Graph
-      </div>
-
-      <slot name="graph" />
-    </div>
-
-    <div v-if="$slots.table" class="table">
-      <slot name="table" />
+      <div class="spacer" :style="{ height: spacerHeight }" />
     </div>
   </div>
 </template>
@@ -104,6 +159,28 @@ const cssVars = computed(() => ({
   width: 100%;
   height: 100%;
   display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  position: relative;
+}
+
+.spacer {
+  pointer-events: none;
+}
+
+.viewport {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  will-change: transform;
 
   .tags, .graph {
       display: flex;

@@ -47,6 +47,12 @@ export const NODE_BORDER_WIDTH = 2
 export const BACKGROUND_HEIGHT_OFFSET = 16
 
 /**
+ * The default number of extra rows rendered
+ * above and below the visible scroll window.
+ */
+export const DEFAULT_SCROLL_BUFFER = 20
+
+/**
  * The size of the SVG curved line and
  * the lengths of the accompanying vertical
  * lines.

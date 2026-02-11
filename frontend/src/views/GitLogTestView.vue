@@ -81,27 +81,6 @@ const commitFilter = computed(() => {
 })
 
 // ---------------------------------------------------------------------------
-// Pagination
-// ---------------------------------------------------------------------------
-
-const pageSize = ref(20)
-const currentPage = ref(0)
-
-const paging = computed(() => ({
-    size: pageSize.value,
-    page: currentPage.value,
-}))
-
-const totalPages = computed(() =>
-    Math.max(1, Math.ceil(fakeEntries.length / pageSize.value))
-)
-
-function goToPage(page) {
-    const clamped = Math.max(0, Math.min(page, totalPages.value - 1))
-    currentPage.value = clamped
-}
-
-// ---------------------------------------------------------------------------
 // Commit selection & preview
 // ---------------------------------------------------------------------------
 
@@ -201,22 +180,6 @@ const displayedCommitLabel = computed(() => {
                     </option>
                 </select>
             </div>
-            <select v-model.number="pageSize" class="control-select control-select--narrow" @change="currentPage = 0">
-                <option :value="10">10</option>
-                <option :value="20">20</option>
-                <option :value="50">50</option>
-            </select>
-            <button
-                class="control-btn"
-                :disabled="currentPage === 0"
-                @click="goToPage(currentPage - 1)"
-            >&laquo;</button>
-            <span class="page-indicator">{{ currentPage + 1 }}/{{ totalPages }}</span>
-            <button
-                class="control-btn"
-                :disabled="currentPage >= totalPages - 1"
-                @click="goToPage(currentPage + 1)"
-            >&raquo;</button>
             <label class="toggle">
                 <input type="checkbox" v-model="isDark" />
                 <span>Dark</span>
@@ -229,12 +192,12 @@ const displayedCommitLabel = computed(() => {
 
         <!-- GitLog component -->
         <div class="gitlog-container">
+          <div class="gitlog-box">
             <GitLog
                 :entries="fakeEntries"
                 current-branch="main"
                 :theme="themeMode"
                 :colours="selectedPalette"
-                :paging="paging"
                 :filter="commitFilter"
                 :show-git-index="true"
                 :index-status="fakeIndexStatus"
@@ -262,6 +225,7 @@ const displayedCommitLabel = computed(() => {
                     <GitLogTable timestamp-format="YYYY-MM-DD HH:mm" />
                 </template>
             </GitLog>
+          </div>
         </div>
 
         <!-- Commit detail panel -->
@@ -371,41 +335,10 @@ const displayedCommitLabel = computed(() => {
     width: 155px;
 }
 
-.control-select--narrow {
-    width: 50px;
-}
-
-.control-btn {
-    padding: 3px 8px;
-    border: 1px solid #bbb;
-    border-radius: 3px;
-    background: inherit;
-    color: inherit;
-    cursor: pointer;
-    font-size: 0.78rem;
-    line-height: 1;
-    height: 26px;
-    box-sizing: border-box;
-}
-
-.control-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
-}
-
-.dark .control-btn {
-    border-color: #555;
-}
-
 .sizing-group {
     display: flex;
     align-items: center;
     gap: 8px;
-}
-
-.page-indicator {
-    font-size: 0.78rem;
-    font-variant-numeric: tabular-nums;
 }
 
 .toggle {
@@ -434,7 +367,17 @@ const displayedCommitLabel = computed(() => {
 .gitlog-container {
     flex: 1;
     min-height: 0;
-    overflow: auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.gitlog-box {
+    width: 90%;
+    height: 50vh;
+    border: 2px solid #888;
+    border-radius: 6px;
+    overflow: hidden;
 }
 
 /* ----- Commit detail panel ----- */

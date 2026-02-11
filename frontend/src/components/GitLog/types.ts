@@ -506,6 +506,15 @@ export interface GitLogCommonProps<T = unknown> {
   graphColumnWidth?: number
 
   /**
+   * Number of extra rows rendered above and below
+   * the visible scroll window. A buffer of 20 means
+   * 20 rows above and 20 rows below the viewport.
+   *
+   * @default DEFAULT_SCROLL_BUFFER (20)
+   */
+  scrollBuffer?: number
+
+  /**
    * The status of changed files in the
    * Git index.
    */
@@ -575,18 +584,6 @@ export interface GitLogProps<T = unknown> extends GitLogCommonProps<T> {
    * currently checked out.
    */
   currentBranch: string
-
-  /**
-   * Optional paging information to show
-   * a window of the given size from the
-   * set of git log entries.
-   *
-   * This property assumes you are using
-   * client-side pagination and that the
-   * given entries include the entire Git log
-   * history for the repository.
-   */
-  paging?: GitLogPaging
 }
 
 // ---------------------------------------------------------------------------
@@ -615,37 +612,23 @@ export interface GitLogStylingProps {
 }
 
 // ---------------------------------------------------------------------------
-// Pagination
+// Scroll window
 // ---------------------------------------------------------------------------
 
-export interface GitLogPaging {
-  /**
-   * The number of rows to show in
-   * each page.
-   */
-  size: number
-
-  /**
-   * The page number to show.
-   * The first page is page 0.
-   */
-  page: number
-}
-
 /**
- * Internal pagination representation using start/end indices.
- * Converted from the public GitLogPaging (page/size) in the root component.
+ * Internal representation of the visible row window.
+ * Driven by the scroll position within Layout.vue.
  */
 export interface GraphPaging {
   /**
-   * The zero-based index of the row
-   * to show from in the log.
+   * The zero-based index of the first
+   * visible row in the log.
    */
   startIndex: number
 
   /**
-   * The zero-based index of the row
-   * to show to in the log.
+   * The zero-based index past the last
+   * visible row in the log (exclusive).
    */
   endIndex: number
 }

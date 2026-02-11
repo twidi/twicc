@@ -1,7 +1,6 @@
 import type { InjectionKey, Ref } from 'vue'
 import type {
   Commit,
-  CommitFilter,
   CustomCommitNodeProps,
   CustomTooltipProps,
   GitLogIndexStatus,
@@ -49,9 +48,10 @@ export interface GitContextBag {
   indexStatus: Readonly<Ref<GitLogIndexStatus | undefined>>
   isServerSidePaginated: Readonly<Ref<boolean>>
   paging: Readonly<Ref<GraphPaging | undefined>>
+  setPaging: (paging: GraphPaging) => void
   isIndexVisible: Readonly<Ref<boolean>>
-  filter: Readonly<Ref<CommitFilter | undefined>>
   nodeSize: Readonly<Ref<number>>
+  scrollBuffer: Readonly<Ref<number>>
   graphOrientation: Readonly<Ref<GraphOrientation>>
   setGraphOrientation: (orientation: GraphOrientation) => void
 }

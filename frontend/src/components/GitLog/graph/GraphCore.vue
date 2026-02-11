@@ -59,7 +59,6 @@ const tooltipSlotFn = computed(() =>
 
 const {
   paging,
-  filter,
   headCommit,
   graphData,
   nodeSize,
@@ -78,14 +77,11 @@ watchEffect(() => {
 
 const visibleCommits = computed(() => {
   const commits = graphData.value.commits
-  const filteredCommits = filter.value?.(commits) ?? commits
-
   const pagingValue = paging.value
   if (pagingValue) {
-    return filteredCommits.slice(pagingValue.startIndex, pagingValue.endIndex)
+    return commits.slice(pagingValue.startIndex, pagingValue.endIndex)
   }
-
-  return filteredCommits
+  return commits
 })
 
 const isHeadCommitVisible = computed<boolean>(() => {

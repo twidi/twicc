@@ -63,8 +63,7 @@ export type {
   // Filtering
   CommitFilter,
 
-  // Pagination
-  GitLogPaging,
+  // Scroll window
   GraphPaging,
 
   // Git index
