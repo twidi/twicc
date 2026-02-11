@@ -48,7 +48,11 @@ def validate_path(project_id, dir_path, session_id=None):
     dir_path = os.path.normpath(dir_path)
 
     # Build list of allowed base directories
-    allowed_bases = [os.path.normpath(project.directory)]
+    allowed_bases = []
+    if project.git_root:
+        allowed_bases.append(os.path.normpath(project.git_root))
+    elif project.directory:
+        allowed_bases.append(os.path.normpath(project.directory))
     if session:
         if session.cwd:
             allowed_bases.append(os.path.normpath(session.cwd))

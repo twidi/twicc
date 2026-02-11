@@ -17,6 +17,10 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    projectGitRoot: {
+        type: String,
+        default: null,
+    },
     projectDirectory: {
         type: String,
         default: null,
@@ -48,12 +52,21 @@ const started = ref(false)
  * Available root directories.
  * Each entry: { key, label, path }
  *
- * If both git root and project directory exist and point to the same path,
- * they are merged into a single entry labelled "Project directory (git root)".
- * Otherwise, git root comes first (default), then project directory.
+ * The effective git root is the session's git_directory (from tool_use analysis)
+ * or, if absent, the project's git_root (from walking up from project directory).
+ *
+ * If git root and project directory are the same path, they are merged into a
+ * single entry labelled "Project directory (git root)".
+ *
+ * When the git root comes from the session (active git context), it is the
+ * default (listed first). When it comes from the project only (the project
+ * happens to be inside a git repo, but the session hasn't touched git), the
+ * project directory is the default and the git root is listed second.
  */
 const availableRoots = computed(() => {
-    const git = props.gitDirectory
+    const sessionGit = props.gitDirectory
+    const projectGitRoot = props.projectGitRoot
+    const git = sessionGit || projectGitRoot
     const project = props.projectDirectory
 
     if (git && project && git === project) {
@@ -62,11 +75,20 @@ const availableRoots = computed(() => {
     }
 
     const roots = []
-    if (git) {
-        roots.push({ key: 'git', label: 'Git root', path: git })
-    }
-    if (project && project !== git) {
-        roots.push({ key: 'project', label: 'Project directory', path: project })
+    if (sessionGit) {
+        // Session has an active git context — git root is the default
+        roots.push({ key: 'git', label: 'Git root', path: sessionGit })
+        if (project && project !== sessionGit) {
+            roots.push({ key: 'project', label: 'Project directory', path: project })
+        }
+    } else {
+        // No session git — project directory is the default
+        if (project) {
+            roots.push({ key: 'project', label: 'Project directory', path: project })
+        }
+        if (projectGitRoot && projectGitRoot !== project) {
+            roots.push({ key: 'git', label: 'Git root', path: projectGitRoot })
+        }
     }
     return roots
 })

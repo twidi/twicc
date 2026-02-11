@@ -13,7 +13,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from watchfiles import Change, awatch
 
-from twicc.compute import load_project_directories, update_project_total_cost
+from twicc.compute import load_project_directories, load_project_git_roots, update_project_total_cost
 from twicc.core.models import Project, Session, SessionItem, SessionType
 from twicc.core.serializers import (
     serialize_project,
@@ -477,8 +477,9 @@ async def start_watcher() -> None:
         logger.warning(f"Projects directory does not exist: {projects_dir}")
         return
 
-    # Load project directories cache at startup
+    # Load project caches at startup
     await sync_to_async(load_project_directories)()
+    await sync_to_async(load_project_git_roots)()
 
     logger.info(f"Starting file watcher on: {projects_dir}")
 

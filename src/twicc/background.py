@@ -25,7 +25,7 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 
-from twicc.compute import load_project_directories
+from twicc.compute import ensure_project_git_root, get_project_git_root, load_project_directories, load_project_git_roots
 from twicc.core.models import AgentLink, Project, Session, SessionItem, ToolResultLink
 from twicc.core.pricing import sync_model_prices
 from twicc.core.usage import compute_period_costs, fetch_and_save_usage, has_oauth_credentials
@@ -439,7 +439,12 @@ def _apply_session_complete(msg: dict) -> None:
     if project_id and project_directory:
         ensure_project_directory(project_id, project_directory)
 
-    # 7. Update project total_cost
+    # 7. Resolve project git_root if session has git info but project doesn't
+    session_git_dir = session_fields.get('git_directory') if session_fields else None
+    if session_git_dir and project_id and get_project_git_root(project_id) is None:
+        ensure_project_git_root(project_id)
+
+    # 8. Update project total_cost
     if project_id:
         update_project_total_cost(project_id)
 
@@ -734,8 +739,9 @@ async def start_background_compute_task() -> None:
         logger.info("Background compute: no sessions to process")
         return
 
-    # Load project directories cache at startup
+    # Load project caches at startup
     await sync_to_async(load_project_directories)()
+    await sync_to_async(load_project_git_roots)()
 
     # Start the worker process
     start_compute_process()

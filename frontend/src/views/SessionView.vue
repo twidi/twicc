@@ -152,8 +152,13 @@ const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
 // Session data
 const session = computed(() => store.getSession(sessionId.value))
 
-// Whether the session is in a git repository (has both a git directory and a branch defined)
-const hasGitRepo = computed(() => !!session.value?.git_directory && !!session.value?.git_branch)
+// Whether the session is in a git repository:
+// - session has resolved git info (git_directory + git_branch from tool_use), OR
+// - the project itself is inside a git repo (git_root resolved from project directory)
+const hasGitRepo = computed(() =>
+    (!!session.value?.git_directory && !!session.value?.git_branch)
+    || !!store.getProject(session.value?.project_id)?.git_root
+)
 
 // Tabs state - computed from store (automatically updates when session changes)
 // Format: [{ id: 'agent-xxx', agentId: 'xxx' }, ...]
@@ -430,6 +435,7 @@ function handleNeedsTitle() {
                     :project-id="session?.project_id"
                     :session-id="session?.id"
                     :git-directory="session?.git_directory"
+                    :project-git-root="store.getProject(session?.project_id)?.git_root"
                     :project-directory="store.getProject(session?.project_id)?.directory"
                     :active="isActive && activeTabId === 'files'"
                     :is-draft="session?.draft === true"

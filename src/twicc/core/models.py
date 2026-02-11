@@ -42,6 +42,7 @@ class Project(models.Model):
 
     id = models.CharField(max_length=255, primary_key=True)
     directory = models.CharField(max_length=500, null=True, blank=True)  # Actual filesystem path (from session cwd)
+    git_root = models.CharField(max_length=500, null=True, blank=True)  # Resolved git root directory (walking up from directory)
     sessions_count = models.PositiveIntegerField(default=0)
     mtime = models.FloatField(default=0)
     stale = models.BooleanField(default=False)  # True if folder/file no longer exists on disk

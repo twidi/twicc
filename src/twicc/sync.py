@@ -28,6 +28,8 @@ from twicc.compute import (
     compute_item_metadata,
     compute_item_metadata_live,
     ensure_project_directory,
+    ensure_project_git_root,
+    get_project_git_root,
     extract_item_timestamp,
     extract_text_from_content,
     extract_title_from_user_message,
@@ -429,6 +431,11 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 if session.type == SessionType.SESSION and item.kind in (ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
                     create_agent_link_from_tool_use(session.id, item, parsed)
 
+            # Check if project needs git_root resolution
+            # (a session item resolved git info but project has no git_root yet)
+            if any(item.git_directory for item, _ in items_to_create) and get_project_git_root(session.project_id) is None:
+                ensure_project_git_root(session.project_id)
+
             # Apply title updates
             for target_session_id, title in session_title_updates.items():
                 Session.objects.filter(id=target_session_id).update(title=title)
@@ -769,6 +776,10 @@ def sync_all(
 
         if on_project_done:
             on_project_done(project_id, project_stats)
+
+    # Resolve git_root for all projects with a directory
+    for project in Project.objects.filter(directory__isnull=False, stale=False):
+        ensure_project_git_root(project.id, project.directory)
 
     elapsed = time.monotonic() - sync_start
     logger.info(

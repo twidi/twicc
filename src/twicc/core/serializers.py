@@ -19,6 +19,7 @@ def serialize_project(project):
     return {
         "id": project.id,
         "directory": project.directory,
+        "git_root": project.git_root,
         "sessions_count": project.sessions_count,
         "mtime": project.mtime,
         "stale": project.stale,

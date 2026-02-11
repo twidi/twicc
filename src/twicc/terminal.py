@@ -57,9 +57,13 @@ def get_session_info(session_id: str) -> tuple[str, bool]:
     Returns (cwd, archived).
 
     Working directory priority order (with existence check at each level):
-    1. Session.git_directory (resolved git root) — if it exists on disk
-    2. Session.project.directory (project root) — if it exists on disk
-    3. ~ (home directory fallback)
+    - If session has a git_directory (active git context from tool_use):
+        1. Session.git_directory
+        2. Project.directory
+    - Otherwise (no session git context):
+        1. Project.directory
+        2. Project.git_root (project happens to be inside a git repo)
+    - Fallback: ~ (home directory)
     """
     from twicc.core.models import Session
 
@@ -70,10 +74,19 @@ def get_session_info(session_id: str) -> tuple[str, bool]:
     except Session.DoesNotExist:
         return home, False
 
-    candidates = [
-        session.git_directory,
-        session.project.directory if session.project else None,
-    ]
+    if session.git_directory:
+        # Session has active git context — git directory is preferred
+        candidates = [
+            session.git_directory,
+            session.project.directory if session.project else None,
+        ]
+    else:
+        # No session git context — project directory is preferred
+        candidates = [
+            session.project.directory if session.project else None,
+            session.project.git_root if session.project else None,
+        ]
+
     for candidate in candidates:
         if candidate and os.path.isdir(candidate):
             return candidate, session.archived

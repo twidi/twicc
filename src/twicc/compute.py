@@ -49,6 +49,8 @@ logger = logging.getLogger(__name__)
 
 # Module-level cache: project_id -> directory (can be None)
 _project_directories: dict[str, str | None] = {}
+# Module-level cache: project_id -> git_root (can be None)
+_project_git_roots: dict[str, str | None] = {}
 
 
 def load_project_directories() -> None:
@@ -61,6 +63,23 @@ def load_project_directories() -> None:
     _project_directories.update(
         Project.objects.values_list('id', 'directory')
     )
+
+
+def load_project_git_roots() -> None:
+    """
+    Load all project git_roots into the cache.
+
+    Should be called once at process startup (watcher or compute background task).
+    """
+    _project_git_roots.clear()
+    _project_git_roots.update(
+        Project.objects.values_list('id', 'git_root')
+    )
+
+
+def get_project_git_root(project_id: str) -> str | None:
+    """Get cached git_root for a project."""
+    return _project_git_roots.get(project_id)
 
 
 def ensure_project_directory(project_id: str, cwd: str) -> None:
@@ -91,6 +110,44 @@ def ensure_project_directory(project_id: str, cwd: str) -> None:
     # Update DB and cache
     Project.objects.filter(id=project_id).update(directory=cwd)
     _project_directories[project_id] = cwd
+
+    # Re-resolve git_root when directory changes
+    ensure_project_git_root(project_id, cwd)
+
+
+def ensure_project_git_root(project_id: str, directory: str | None = None) -> None:
+    """
+    Resolve and store git_root for a project.
+
+    Called:
+    - At sync_all (startup) for all projects with a directory
+    - When project.directory changes (from ensure_project_directory)
+    - When a session gets git info but project.git_root is still None
+
+    Args:
+        project_id: The project ID
+        directory: The project directory to resolve from. If None, uses cached/DB value.
+    """
+    if directory is None:
+        directory = _project_directories.get(project_id)
+        if directory is None:
+            try:
+                directory = Project.objects.values_list('directory', flat=True).get(id=project_id)
+            except Project.DoesNotExist:
+                return
+        if not directory:
+            return
+
+    result = _resolve_git_from_path(directory)
+    git_root = result[0] if result else None
+
+    # Check if update needed
+    if _project_git_roots.get(project_id) == git_root:
+        return
+
+    # Update DB and cache
+    Project.objects.filter(id=project_id).update(git_root=git_root)
+    _project_git_roots[project_id] = git_root
 
 
 def update_project_total_cost(project_id: str) -> None:
