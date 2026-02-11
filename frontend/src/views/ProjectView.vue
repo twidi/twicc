@@ -422,6 +422,7 @@ function resetSidebarToDefault() {
             ignoringReposition = false
         })
         sidebarState.width = DEFAULT_SIDEBAR_WIDTH
+        lastKnownPosition = DEFAULT_SIDEBAR_WIDTH
         saveSidebarState({ open: true, width: DEFAULT_SIDEBAR_WIDTH })
         updateSidebarClosedClass(false)
     }
@@ -453,6 +454,7 @@ onMounted(() => {
         if (sidebarState.width !== DEFAULT_SIDEBAR_WIDTH) {
             splitPanel.positionInPixels = sidebarState.width
         }
+        lastKnownPosition = sidebarState.open ? sidebarState.width : 0
         // Listen for pointerdown on the host element (capture phase) to detect
         // double-clicks on the divider. Native dblclick is blocked by the drag handler.
         splitPanel.addEventListener('pointerdown', handleSplitPanelPointerDown, true)
@@ -467,6 +469,10 @@ onMounted(() => {
 
 // Guard flag to ignore reposition events triggered by width restore after auto-collapse
 let ignoringReposition = false
+// Track the last known position to detect spurious reposition events (e.g. from
+// KeepAlive reactivation or layout recalculations) that jump from a normal width
+// to near-zero in a single step — no human drag can do that.
+let lastKnownPosition = DEFAULT_SIDEBAR_WIDTH
 
 // Handle split panel reposition: auto-collapse when dragged to threshold, and persist width.
 // Ignored on mobile where the split panel is not used (sidebar is an overlay).
@@ -479,8 +485,28 @@ function handleSplitReposition(event) {
 
     const newWidth = event.target.positionInPixels
 
+    // Ignore null/NaN positions emitted during KeepAlive transitions.
+    // wa-split-panel fires wa-reposition with positionInPixels = null when
+    // the component is deactivated/reactivated by KeepAlive.
+    if (newWidth == null || Number.isNaN(newWidth)) return
+
     if (newWidth <= SIDEBAR_COLLAPSE_THRESHOLD) {
+        // Ignore spurious collapse: if the sidebar was at a normal width and jumped
+        // to near-zero in one step, this is a layout recalculation (e.g. KeepAlive
+        // reactivation), not a user drag. Restore the stored width instead.
+        if (lastKnownPosition > SIDEBAR_COLLAPSE_THRESHOLD * 2) {
+            ignoringReposition = true
+            requestAnimationFrame(() => {
+                event.target.positionInPixels = sidebarState.width
+                requestAnimationFrame(() => {
+                    ignoringReposition = false
+                    lastKnownPosition = sidebarState.width
+                })
+            })
+            return
+        }
         // Auto-collapse: mark as closed, reset width to stored value
+        lastKnownPosition = 0
         checkbox.checked = true
         saveSidebarState({ open: false, width: sidebarState.width })
         updateSidebarClosedClass(true)
@@ -494,6 +520,7 @@ function handleSplitReposition(event) {
         })
     } else {
         // Normal resize: update stored width
+        lastKnownPosition = newWidth
         sidebarState.width = newWidth
         saveSidebarState({ open: true, width: newWidth })
         updateSidebarClosedClass(false)
@@ -509,6 +536,7 @@ function handleSidebarToggle(event) {
     } else {
         // Desktop: checked = closed
         const isOpen = !checked
+        lastKnownPosition = isOpen ? sidebarState.width : 0
         saveSidebarState({ open: isOpen, width: sidebarState.width })
         updateSidebarClosedClass(checked)
     }
