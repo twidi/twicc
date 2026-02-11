@@ -143,7 +143,6 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
 .container {
   position: relative;
   padding: 0 10px;
-  width: 155px;
 }
 
 .tag {

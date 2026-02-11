@@ -305,14 +305,6 @@ export interface GraphPropsCommon {
   breakPointTheme?: BreakPointTheme
 
   /**
-   * Enables the graph's horizontal width
-   * to be resized.
-   *
-   * @default false
-   */
-  enableResize?: boolean
-
-  /**
    * The orientation of the graph.
    *
    * Normal mode draws the graph from left to right,
@@ -504,13 +496,14 @@ export interface GitLogCommonProps<T = unknown> {
   nodeSize?: number
 
   /**
-   * The default width of the graph in pixels.
+   * The width of each column in the graph, in pixels.
+   * Each column corresponds to a concurrent branch.
+   * The total graph width is computed as
+   * columnCount * graphColumnWidth.
    *
-   * Can be changed dynamically if enableResize is true.
-   *
-   * @default 300
+   * @default DEFAULT_GRAPH_COLUMN_WIDTH (24)
    */
-  defaultGraphWidth?: number
+  graphColumnWidth?: number
 
   /**
    * The status of changed files in the

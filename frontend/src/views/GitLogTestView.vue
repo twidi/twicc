@@ -176,7 +176,7 @@ const displayedCommitLabel = computed(() => {
                 :on-select-commit="handleSelectCommit"
                 :on-preview-commit="handlePreviewCommit"
                 :show-headers="true"
-                :default-graph-width="100"
+                :graph-column-width="24"
                 :node-size="nodeSize"
                 :enable-selected-commit-styling="true"
                 :enable-previewed-commit-styling="true"

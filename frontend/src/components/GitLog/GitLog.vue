@@ -15,7 +15,7 @@ import type {
   ThemeColours,
   ThemeMode,
 } from './types'
-import { DEFAULT_NODE_SIZE, DEFAULT_HEADER_ROW_HEIGHT, NODE_BORDER_WIDTH, DEFAULT_ROW_HEIGHT } from './constants'
+import { DEFAULT_GRAPH_COLUMN_WIDTH, DEFAULT_NODE_SIZE, DEFAULT_HEADER_ROW_HEIGHT, DEFAULT_ROW_HEIGHT } from './constants'
 import {
   computeRelationships,
   GraphDataBuilder,
@@ -55,7 +55,7 @@ const props = withDefaults(defineProps<{
   rowHeight?: number
   headerRowHeight?: number
   nodeSize?: number
-  defaultGraphWidth?: number
+  graphColumnWidth?: number
   enableSelectedCommitStyling?: boolean
   enablePreviewedCommitStyling?: boolean
   classes?: GitLogStylingProps
@@ -67,6 +67,7 @@ const props = withDefaults(defineProps<{
   rowHeight: DEFAULT_ROW_HEIGHT,
   headerRowHeight: DEFAULT_HEADER_ROW_HEIGHT,
   nodeSize: DEFAULT_NODE_SIZE,
+  graphColumnWidth: DEFAULT_GRAPH_COLUMN_WIDTH,
   enableSelectedCommitStyling: true,
   enablePreviewedCommitStyling: true,
 })
@@ -192,22 +193,8 @@ const isIndexVisible = computed<boolean>(() => {
 // Graph container width
 // ---------------------------------------------------------------------------
 
-const smallestAvailableGraphWidth = computed(() => {
-  return graphData.value.graphWidth * (props.nodeSize + NODE_BORDER_WIDTH * 2)
-})
-
-const graphContainerWidth = ref<number | undefined>(undefined)
-
 const graphWidthValue = computed(() => {
-  if (graphContainerWidth.value !== undefined) {
-    return graphContainerWidth.value
-  }
-
-  if (props.defaultGraphWidth && props.defaultGraphWidth >= smallestAvailableGraphWidth.value) {
-    return props.defaultGraphWidth
-  }
-
-  return smallestAvailableGraphWidth.value
+  return graphData.value.graphWidth * props.graphColumnWidth
 })
 
 // ---------------------------------------------------------------------------
@@ -310,7 +297,6 @@ const gitContextValue: GitContextBag = {
   rowHeight: computed(() => props.rowHeight),
   headerRowHeight: computed(() => props.headerRowHeight),
   graphWidth: graphWidthValue,
-  setGraphWidth: (width: number) => { graphContainerWidth.value = width },
   graphData,
   classes: computed(() => props.classes),
   indexStatus: computed(() => props.indexStatus),

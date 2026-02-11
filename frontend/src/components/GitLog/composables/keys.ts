@@ -44,7 +44,6 @@ export interface GitContextBag {
   rowHeight: Readonly<Ref<number>>
   headerRowHeight: Readonly<Ref<number>>
   graphWidth: Readonly<Ref<number>>
-  setGraphWidth: (width: number) => void
   graphData: Readonly<Ref<GraphData>>
   classes: Readonly<Ref<GitLogStylingProps | undefined>>
   indexStatus: Readonly<Ref<GitLogIndexStatus | undefined>>

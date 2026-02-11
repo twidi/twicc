@@ -54,7 +54,7 @@ const tagLineStyles = computed<CSSProperties>(() => {
 
   return {
     opacity,
-    right: pxToRem(props.lineRight),
+    right: pxToRem(props.lineRight - 1),
     width: pxToRem(props.lineWidth),
     borderTop: `2px dotted ${colour.value}`,
     animationDuration: isPreviewCommit ? '0s' : '0.3s',

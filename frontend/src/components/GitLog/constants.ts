@@ -25,6 +25,13 @@ export const DEFAULT_ROW_HEIGHT = 40
 export const DEFAULT_NODE_SIZE = 20
 
 /**
+ * The default width of each column in the graph,
+ * in pixels. Each column corresponds to a concurrent
+ * branch in the graph.
+ */
+export const DEFAULT_GRAPH_COLUMN_WIDTH = 24
+
+/**
  * The width of the borders on a commit node.
  */
 export const NODE_BORDER_WIDTH = 2

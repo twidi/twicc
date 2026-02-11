@@ -2,7 +2,6 @@
 import { computed, provide, useSlots, watchEffect } from 'vue'
 import { useGitContext } from '../composables/useGitContext'
 import { useColumnData } from '../composables/useColumnData'
-import { useResize } from '../composables/useResize'
 import {
   GRAPH_CONTEXT_KEY,
   type GraphContextBag,
@@ -24,7 +23,6 @@ const props = withDefaults(defineProps<{
   nodeTheme?: NodeTheme
   breakPointTheme?: BreakPointTheme
   orientation?: GraphOrientation
-  enableResize?: boolean
   showCommitNodeHashes?: boolean
   showCommitNodeTooltips?: boolean
   highlightedBackgroundHeight?: number
@@ -32,7 +30,6 @@ const props = withDefaults(defineProps<{
   nodeTheme: 'default',
   breakPointTheme: 'dot',
   orientation: 'normal',
-  enableResize: false,
   showCommitNodeHashes: false,
   showCommitNodeTooltips: false,
 })
@@ -66,6 +63,7 @@ const {
   filter,
   headCommit,
   graphData,
+  graphWidth: gitContextGraphWidth,
   nodeSize,
   setGraphOrientation,
 } = useGitContext()
@@ -75,12 +73,6 @@ const {
 watchEffect(() => {
   setGraphOrientation(props.orientation)
 })
-
-// ---------------------------------------------------------------------------
-// Resize
-// ---------------------------------------------------------------------------
-
-const { width, ref: graphContainerRef, startResizing } = useResize()
 
 // ---------------------------------------------------------------------------
 // Visible commits
@@ -139,17 +131,10 @@ provide(GRAPH_CONTEXT_KEY, graphContextValue)
 
 <template>
   <div
-    ref="graphContainerRef"
     class="container"
-    :style="{ width: pxToRem(width) }"
+    :style="{ width: pxToRem(gitContextGraphWidth) }"
   >
     <slot />
-
-    <button
-      v-if="enableResize"
-      class="dragHandle"
-      @mousedown="startResizing"
-    />
   </div>
 </template>
 
@@ -164,26 +149,4 @@ provide(GRAPH_CONTEXT_KEY, graphContextValue)
   gap: 0;
 }
 
-.dragHandle {
-  position: absolute;
-  right: -5px;
-  top: 10px;
-  width: 10px;
-  height: 100%;
-  z-index: 100;
-  opacity: 0;
-  transition: all ease-in-out 0.2s;
-  border-radius: 0;
-  box-shadow: none;
-
-  &:hover {
-    opacity: 1;
-    cursor: ew-resize;
-    border-left: none;
-    border-right: 1px solid #cccccc;
-    border-bottom: none;
-    border-top: none;
-    background: none;
-  }
-}
 </style>

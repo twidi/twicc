@@ -15,7 +15,6 @@ withDefaults(defineProps<{
   nodeTheme?: NodeTheme
   breakPointTheme?: BreakPointTheme
   orientation?: GraphOrientation
-  enableResize?: boolean
   showCommitNodeHashes?: boolean
   showCommitNodeTooltips?: boolean
   highlightedBackgroundHeight?: number
@@ -23,7 +22,6 @@ withDefaults(defineProps<{
   nodeTheme: 'default',
   breakPointTheme: 'dot',
   orientation: 'normal',
-  enableResize: false,
   showCommitNodeHashes: false,
   showCommitNodeTooltips: false,
 })
@@ -34,7 +32,6 @@ withDefaults(defineProps<{
     :node-theme="nodeTheme"
     :break-point-theme="breakPointTheme"
     :orientation="orientation"
-    :enable-resize="enableResize"
     :show-commit-node-hashes="showCommitNodeHashes"
     :show-commit-node-tooltips="showCommitNodeTooltips"
     :highlighted-background-height="highlightedBackgroundHeight"
