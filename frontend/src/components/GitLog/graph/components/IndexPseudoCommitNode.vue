@@ -39,8 +39,8 @@ const nodeVars = computed<CSSProperties>(() => ({
 
 <style scoped>
 .indexNode {
-  width: var(--git-node-size);
-  height: var(--git-node-size);
+  width: var(--git-log-node-size);
+  height: var(--git-log-node-size);
   border: 2px dotted var(--index-border-color);
   background-color: var(--index-background-color);
 

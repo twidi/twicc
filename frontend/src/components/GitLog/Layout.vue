@@ -95,19 +95,19 @@ const commitRowCount = computed(() => {
 // ---------------------------------------------------------------------------
 
 const cssVars = computed(() => ({
-  '--git-row-height': pxToRem(rowHeight.value),
-  '--git-header-row-height': pxToRem(headerRowHeight.value),
-  '--git-node-size': pxToRem(nodeSize.value),
-  '--git-graph-columns': graphData.value.graphColumns,
-  '--git-graph-column-width': pxToRem(graphColumnWidth.value),
-  '--git-graph-width': `calc(var(--git-graph-columns) * var(--git-graph-column-width))`,
-  '--git-curve-size': pxToRem(CURVE_SIZE),
-  '--git-node-border-width': pxToRem(NODE_BORDER_WIDTH),
-  '--git-visible-commits': visibleCommitCount.value,
-  '--git-commit-rows': commitRowCount.value,
-  '--git-text-color': textColour.value,
-  '--git-hover-color': hoverColour.value,
-  '--git-hover-transition-duration': `${hoverTransitionDuration}s`,
+  '--git-log-row-height': pxToRem(rowHeight.value),
+  '--git-log-header-row-height': pxToRem(headerRowHeight.value),
+  '--git-log-node-size': pxToRem(nodeSize.value),
+  '--git-log-graph-columns': graphData.value.graphColumns,
+  '--git-log-graph-column-width': pxToRem(graphColumnWidth.value),
+  '--git-log-graph-width': `calc(var(--git-log-graph-columns) * var(--git-log-graph-column-width))`,
+  '--git-log-curve-size': pxToRem(CURVE_SIZE),
+  '--git-log-node-border-width': pxToRem(NODE_BORDER_WIDTH),
+  '--git-log-visible-commits': visibleCommitCount.value,
+  '--git-log-commit-rows': commitRowCount.value,
+  '--git-log-text-color': textColour.value,
+  '--git-log-hover-color': hoverColour.value,
+  '--git-log-hover-transition-duration': `${hoverTransitionDuration}s`,
 }))
 </script>
 
@@ -207,7 +207,7 @@ const cssVars = computed(() => ({
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  height: var(--git-header-row-height);
-  color: var(--git-text-color);
+  height: var(--git-log-header-row-height);
+  color: var(--git-log-text-color);
 }
 </style>

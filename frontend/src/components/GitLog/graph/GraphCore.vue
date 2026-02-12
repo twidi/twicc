@@ -136,7 +136,7 @@ const graphCssVars = computed(() => ({
 <style scoped>
 .container {
   position: relative;
-  width: var(--git-graph-width);
+  width: var(--git-log-graph-width);
 }
 
 .graph {

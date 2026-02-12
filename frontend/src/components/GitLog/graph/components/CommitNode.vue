@@ -210,13 +210,13 @@ function handleKeyDown(event: KeyboardEvent): void {
 
 .commitNode {
   all: unset;
-  width: var(--git-node-size);
-  height: var(--git-node-size);
+  width: var(--git-log-node-size);
+  height: var(--git-log-node-size);
   border-radius: 50%;
   z-index: 20;
   position: relative;
   background-color: var(--commit-node-background-color);
-  border: var(--git-node-border-width) solid var(--commit-node-border-color);
+  border: var(--git-log-node-border-width) solid var(--commit-node-border-color);
 
   &:hover {
     cursor: pointer;
@@ -227,7 +227,7 @@ function handleKeyDown(event: KeyboardEvent): void {
     padding: 0.0625rem 0.1875rem;
     border-radius: 5px;
     font-size: 0.7rem;
-    color: var(--git-text-color);
+    color: var(--git-log-text-color);
     left: 50%;
     top: 50%;
     translate: -50% -50%;

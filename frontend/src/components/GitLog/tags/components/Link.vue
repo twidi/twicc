@@ -28,6 +28,6 @@ defineProps<{
   text-overflow: ellipsis;
   white-space: nowrap;
   text-decoration: none;
-  color: var(--git-text-color);
+  color: var(--git-log-text-color);
 }
 </style>

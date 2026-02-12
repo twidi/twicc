@@ -249,7 +249,7 @@ function handleMouseOut(): void {
   align-items: center;
   justify-content: center;
   position: relative;
-  min-width: var(--git-node-size);
+  min-width: var(--git-log-node-size);
   &.isFlippedCurve {
       transform: scale(-1, 1);
   }

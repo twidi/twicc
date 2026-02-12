@@ -131,6 +131,6 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
 .tag {
   /* Empty tag placeholder — takes up the same row height
   as a BranchTag so the layout stays aligned with the graph. */
-  height: var(--git-row-height);
+  height: var(--git-log-row-height);
 }
 </style>

@@ -67,7 +67,7 @@ const childrenText = computed(() =>
 .tooltip {
   padding: .5rem;
   border-radius: 8px;
-  color: var(--git-text-color);
+  color: var(--git-log-text-color);
   border: 2px solid var(--tooltip-border-color);
   background: var(--tooltip-background-color);
   display: flex;

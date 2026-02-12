@@ -127,7 +127,7 @@ function handleMouseOut(): void {
   align-items: center;
   justify-content: flex-end;
   width: 100%;
-  height: var(--git-row-height);
+  height: var(--git-log-row-height);
 
   .tag {
     display: flex;
@@ -137,7 +137,7 @@ function handleMouseOut(): void {
     border-radius: 6px;
     max-width: 8rem;
     font-size: 0.8rem;
-    height: min(1.25rem, max(.75rem, calc(var(--git-row-height) - .75rem)));
+    height: min(1.25rem, max(.75rem, calc(var(--git-log-row-height) - .75rem)));
     opacity: 0.8;
     transition: all ease-in-out 0.2s;
     color: var(--tag-label-color);

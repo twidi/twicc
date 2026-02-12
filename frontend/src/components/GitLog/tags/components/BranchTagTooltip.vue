@@ -41,7 +41,7 @@ const tooltipVars = computed<CSSProperties>(() => ({
   padding: .125rem .5rem;
   border-radius: 4px;
   font-size: 0.8rem;
-  color: var(--git-text-color);
+  color: var(--git-log-text-color);
   background: var(--tooltip--background-color);
   border: 2px solid var(--tooltip-border-color);
 }

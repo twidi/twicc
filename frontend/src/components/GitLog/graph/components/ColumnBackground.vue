@@ -74,13 +74,13 @@ const shouldShowFullBackground = computed(() =>
       right: 0;
       border-top-left-radius: 50%;
       border-bottom-left-radius: 50%;
-      width: calc(50% + var(--git-node-size) / 2 + var(--column-background-offset) / 2);
+      width: calc(50% + var(--git-log-node-size) / 2 + var(--column-background-offset) / 2);
     }
   }
 
   &:not(.withTable) {
     border-radius: 50%;
-    --column-background-size: calc(var(--git-node-size) + var(--column-background-offset));
+    --column-background-size: calc(var(--git-log-node-size) + var(--column-background-offset));
     height: var(--column-background-size);
     width: var(--column-background-size);
     left: calc(50% - var(--column-background-size) / 2);

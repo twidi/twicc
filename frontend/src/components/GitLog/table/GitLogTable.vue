@@ -137,7 +137,7 @@ const tableData = computed<Commit[]>(() => {
 
 .header {
   font-weight: 600;
-  color: var(--git-text-color);
+  color: var(--git-log-text-color);
   display: flex;
   align-items: center;
 }

@@ -70,7 +70,7 @@ const breakPointStyleOverrides: Partial<Record<BreakPointTheme, CSSProperties>> 
 .curve {
     width: 100%;
     height: 100%;
-    border-radius: var(--git-curve-size);
+    border-radius: var(--git-log-curve-size);
     border: 2px var(--curve-border-style) var(--curve-border-color);
 
 }

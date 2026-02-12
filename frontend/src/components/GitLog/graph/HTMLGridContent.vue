@@ -53,7 +53,7 @@ function getColumnsForCommit(index: number) {
   height: 100%;
   display: grid;
   gap: 0;
-  grid-template-columns: repeat(var(--git-graph-columns), 1fr);
-  grid-template-rows: repeat(var(--git-commit-rows), var(--git-row-height));
+  grid-template-columns: repeat(var(--git-log-graph-columns), 1fr);
+  grid-template-rows: repeat(var(--git-log-commit-rows), var(--git-log-row-height));
 }
 </style>
