@@ -192,11 +192,17 @@ const activeTabId = computed(() => {
 
 // Redirect away from git tab if the session has no git repo
 // (handles direct URL navigation and dynamic changes)
-// Guards: skip when deactivated (KeepAlive) or when route belongs to another session.
+// Guards:
+// - skip when deactivated (KeepAlive)
+// - skip when route belongs to another session
+// - skip when project data hasn't loaded yet (avoid premature redirect on
+//   direct URL navigation — hasGitRepo depends on project.git_root which is
+//   only available after loadProjects() completes)
 watch([activeTabId, hasGitRepo], ([tabId, hasGit]) => {
     if (tabId === 'git' && !hasGit) {
         if (!isActive.value) return
         if (route.params.sessionId !== sessionId.value) return
+        if (!store.getProject(session.value?.project_id)) return
         router.replace({
             name: isAllProjectsMode.value ? 'projects-session' : 'session',
             params: { projectId: projectId.value, sessionId: sessionId.value }
