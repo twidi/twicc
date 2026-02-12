@@ -22,6 +22,31 @@ _GIT_LOG_FORMAT = _FIELD_SEP.join(["%h", "%p", "%S", "%s", "%cd", "%ad", "%an", 
 _GIT_TIMEOUT = 10
 
 
+def get_current_branch(git_directory: str) -> str | None:
+    """Return the current branch name or abbreviated HEAD hash.
+
+    Uses ``git rev-parse --abbrev-ref HEAD`` which handles all cases:
+    regular repos, worktrees, and detached HEAD (returns ``HEAD`` in that case,
+    so we fall back to the abbreviated commit hash).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", git_directory, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            if branch and branch != "HEAD":
+                return branch
+            # Detached HEAD — return abbreviated hash
+            return _get_head_hash(git_directory)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
 def _parse_git_log_line(line: str) -> dict | None:
     """Parse a single line of git log output into a GitLogEntry dict.
 

@@ -535,8 +535,15 @@ def git_log(request, project_id, session_id):
     """GET /api/projects/<id>/sessions/<session_id>/git-log/
 
     Returns git commit history for the session's git repository.
-    Requires the session to have both git_directory and git_branch set.
-    Returns 404 if the session has no git repository.
+
+    Git directory resolution order:
+    1. Session git_directory + git_branch (from tool_use analysis)
+    2. Project git_root (resolved from project directory walking up)
+
+    When falling back to project.git_root, the current branch is resolved
+    dynamically from the HEAD file.
+
+    Returns 404 if no git context is available.
 
     Response:
         {
@@ -545,7 +552,7 @@ def git_log(request, project_id, session_id):
             "entries": [{ hash, branch, parents, message, committerDate, ... }]
         }
     """
-    from twicc.git import GitError, get_git_log
+    from twicc.git import GitError, get_current_branch, get_git_log
 
     try:
         session = Session.objects.get(id=session_id, project_id=project_id)
@@ -556,19 +563,39 @@ def git_log(request, project_id, session_id):
     if session.parent_session_id is not None:
         raise Http404("Session not found")
 
-    # Both git_directory and git_branch are required
-    if not session.git_directory or not session.git_branch:
-        return JsonResponse({"error": "Session has no git repository"}, status=404)
+    # Resolve git directory and branch:
+    # 1. Session has explicit git info (from tool_use), if the directory still exists
+    # 2. Fallback to project.git_root (e.g. worktree deleted, branch removed, or
+    #    session hasn't interacted with files yet)
+    git_directory = None
+    current_branch = None
 
-    if not os.path.isdir(session.git_directory):
-        return JsonResponse({"error": "Git directory not found"}, status=404)
+    if session.git_directory and session.git_branch and os.path.isdir(session.git_directory):
+        git_directory = session.git_directory
+        current_branch = session.git_branch
+
+    if not git_directory:
+        # Fallback: use project.git_root
+        try:
+            project = Project.objects.get(id=project_id)
+        except Project.DoesNotExist:
+            raise Http404("Project not found")
+
+        if project.git_root and os.path.isdir(project.git_root):
+            git_directory = project.git_root
+            # Resolve branch dynamically via git command (handles worktrees too)
+            current_branch = get_current_branch(git_directory)
+
+    if not git_directory:
+        return JsonResponse({"error": "No git repository found"}, status=404)
 
     try:
-        result = get_git_log(session.git_directory)
+        result = get_git_log(git_directory)
     except GitError as e:
         return JsonResponse({"error": str(e)}, status=500)
 
-    result["current_branch"] = session.git_branch
+    if current_branch:
+        result["current_branch"] = current_branch
     return JsonResponse(result)
 
 
