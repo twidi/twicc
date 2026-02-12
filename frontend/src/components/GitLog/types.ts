@@ -47,6 +47,19 @@ export interface GitLogEntryBase {
    * This may differ from `committerDate` if the commit was rebased or amended.
    */
   authorDate?: string
+
+  /**
+   * All refs (branches, tags) that point at this commit,
+   * as full canonical ref paths (e.g. "refs/remotes/origin/main").
+   *
+   * This comes from git's `%D` decoration output and is independent
+   * of the `branch` field (which is the source ref used to discover
+   * the commit via `%S`).
+   *
+   * Only present when the commit has decorations other than HEAD
+   * and origin/HEAD.
+   */
+  decorations?: string[]
 }
 
 /**
@@ -119,6 +132,16 @@ export interface CommitBase {
    * tip (the latest commit) of its branch.
    */
   isBranchTip: boolean
+
+  /**
+   * All refs (branches, tags) that point at this commit,
+   * as full canonical ref paths.
+   *
+   * Decorations that differ from the commit's own `branch`
+   * field indicate that other branches/tags also reference
+   * this commit (e.g. a remote tracking branch).
+   */
+  decorations?: string[]
 }
 
 /**

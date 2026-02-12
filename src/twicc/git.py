@@ -19,8 +19,16 @@ _GIT_LOG_FETCH_LIMIT = GIT_LOG_MAX_ENTRIES + 1
 _FIELD_SEP = "\x1f"
 
 # git log --pretty format using unit separator between fields.
-# Fields: hash, parents, branch-ref, subject, committer-date, author-date, author-name, author-email
-_GIT_LOG_FORMAT = _FIELD_SEP.join(["%h", "%p", "%S", "%s", "%cd", "%ad", "%an", "%ae"])
+# Fields: hash, parents, branch-ref, subject, committer-date, author-date,
+#         author-name, author-email, decorations
+_GIT_LOG_FORMAT = _FIELD_SEP.join(
+    ["%h", "%p", "%S", "%s", "%cd", "%ad", "%an", "%ae", "%D"]
+)
+
+# Patterns to exclude from decoration lists.
+# With ``--decorate=full`` the decorations use canonical ref paths.
+_DECORATION_EXCLUDES = frozenset({"refs/stash"})
+_DECORATION_EXCLUDE_SUFFIXES = ("/HEAD",)  # e.g. refs/remotes/origin/HEAD
 
 # Timeout for the git subprocess (seconds).
 _GIT_TIMEOUT = 10
@@ -200,16 +208,61 @@ def get_branches(git_directory: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _parse_decorations(raw: str) -> list[str]:
+    """Parse the ``%D`` decoration string into a filtered list of full ref names.
+
+    With ``--decorate=full`` the output already uses canonical ref paths::
+
+        HEAD -> refs/heads/main, refs/remotes/origin/main, refs/remotes/origin/HEAD
+
+    We drop ``HEAD -> …`` pointers and any ref ending with ``/HEAD`` (symbolic
+    remote HEAD aliases like ``refs/remotes/origin/HEAD``).
+    """
+    if not raw or not raw.strip():
+        return []
+
+    refs: list[str] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+
+        # Skip "HEAD -> refs/heads/…" (the symbolic HEAD pointer)
+        if part.startswith("HEAD -> "):
+            continue
+
+        # Skip exact matches
+        if part in _DECORATION_EXCLUDES:
+            continue
+
+        # Skip refs ending with /HEAD (e.g. refs/remotes/origin/HEAD)
+        if any(part.endswith(suffix) for suffix in _DECORATION_EXCLUDE_SUFFIXES):
+            continue
+
+        refs.append(part)
+    return refs
+
+
 def _parse_git_log_line(line: str) -> dict | None:
     """Parse a single line of git log output into a GitLogEntry dict.
 
     Returns None if the line cannot be parsed (malformed or empty).
     """
     parts = line.split(_FIELD_SEP)
-    if len(parts) != 8:
+    if len(parts) != 9:
         return None
 
-    hash_, parents_str, branch, message, committer_date, author_date, author_name, author_email = parts
+    (
+        hash_,
+        parents_str,
+        branch,
+        message,
+        committer_date,
+        author_date,
+        author_name,
+        author_email,
+        decorations_raw,
+    ) = parts
 
     parents = parents_str.split() if parents_str.strip() else []
 
@@ -220,6 +273,11 @@ def _parse_git_log_line(line: str) -> dict | None:
         "message": message,
         "committerDate": committer_date.strip(),
     }
+
+    # Decorations: all refs pointing at this commit (filtered).
+    decorations = _parse_decorations(decorations_raw)
+    if decorations:
+        entry["decorations"] = decorations
 
     # Optional author date (may differ from committerDate on rebase/amend).
     if author_date.strip():
@@ -499,6 +557,7 @@ def get_git_log(git_directory: str, branch: str | None = None) -> dict:
         f"-{_GIT_LOG_FETCH_LIMIT}",
         f"--pretty=format:{_GIT_LOG_FORMAT}",
         "--date=iso",
+        "--decorate=full",
     ]
 
     try:

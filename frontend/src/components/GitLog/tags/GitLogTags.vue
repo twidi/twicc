@@ -25,6 +25,20 @@ const {
 
 interface PreparedCommit extends Commit {
   isMostRecentTagInstance: boolean
+  /** If set, the tag should display this ref instead of `branch`. */
+  displayRef?: string
+}
+
+/**
+ * Return the first decoration ref that differs from the commit's own
+ * ``branch`` value, or ``undefined`` if there are none.
+ *
+ * This lets us show e.g. ``origin/main`` on a commit whose ``%S`` source
+ * ref is the currently-selected local branch.
+ */
+function extraDecoration(commit: Commit): string | undefined {
+  if (!commit.decorations?.length) return undefined
+  return commit.decorations.find(d => d !== commit.branch)
 }
 
 function prepareCommits(commits: Commit[]): PreparedCommit[] {
@@ -42,6 +56,7 @@ function prepareCommits(commits: Commit[]): PreparedCommit[] {
     return {
       ...commit,
       isMostRecentTagInstance: shouldRenderTag,
+      displayRef: extraDecoration(commit),
     }
   })
 }
@@ -89,6 +104,15 @@ function tagLineWidth(commit: Commit): number {
 }
 
 // ---------------------------------------------------------------------------
+// Build a commit-like object with `branch` overridden for display purposes
+// ---------------------------------------------------------------------------
+
+function commitForDisplay(commit: PreparedCommit): Commit {
+  if (!commit.displayRef) return commit
+  return { ...commit, branch: commit.displayRef }
+}
+
+// ---------------------------------------------------------------------------
 // Determine which commits should show a BranchTag
 // ---------------------------------------------------------------------------
 
@@ -102,6 +126,7 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
     || !!selectedIsNotTip
     || commit.isMostRecentTagInstance
     || !!isIndexCommit
+    || !!commit.displayRef
 }
 </script>
 
@@ -110,7 +135,7 @@ function shouldRenderBranchTag(commit: PreparedCommit): boolean {
     <template v-for="(commit, i) in preparedCommits" :key="`tag-${commit.hash}`">
       <BranchTag
         v-if="shouldRenderBranchTag(commit)"
-        :commit="commit"
+        :commit="commitForDisplay(commit)"
         :line-width="tagLineWidth(commit)"
         :line-right="-tagLineWidth(commit)"
       />

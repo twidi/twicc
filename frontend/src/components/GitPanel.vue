@@ -791,7 +791,7 @@ function handleTreeReposition(event) {
 .gitlog-overlay {
     position: absolute;
     inset: 0;
-    z-index: 1;
+    z-index: 9;
     overflow: hidden;
     background: var(--wa-color-surface-default);
     display: flex;
