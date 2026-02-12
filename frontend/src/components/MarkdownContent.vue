@@ -158,7 +158,8 @@ markdown-body .highlight pre, .markdown-body pre, .markdown-body code, .markdown
 
 /* Dark tweak to handle dark mode https://shiki.style/guide/dual-themes */
 .shiki, .shiki span {
-    background-color: var(--wa-color-surface-default) !important;
+    --shiki-bg-color: var(--wa-color-surface-default);
+    background-color: var(--shiki-bg-color) !important;
 }
 html.wa-dark .shiki,
 html.wa-dark .shiki span {

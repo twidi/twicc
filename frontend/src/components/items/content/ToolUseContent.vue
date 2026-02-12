@@ -3,7 +3,7 @@ import { computed, ref, inject, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../../stores/data'
 import { apiFetch } from '../../../utils/api'
-import JsonViewer from '../../JsonViewer.vue'
+import JsonHumanView from '../../JsonHumanView.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -388,38 +388,13 @@ function navigateToSubagent(agentId) {
     })
 }
 
-// Collapsed paths for JsonNode (input)
-const collapsedPaths = ref(new Set())
-
-// Collapsed paths for result JsonNode
-const resultCollapsedPaths = ref(new Set())
-
-function togglePath(path) {
-    if (collapsedPaths.value.has(path)) {
-        collapsedPaths.value.delete(path)
-    } else {
-        collapsedPaths.value.add(path)
-    }
-    // Trigger reactivity
-    collapsedPaths.value = new Set(collapsedPaths.value)
-}
-
-function toggleResultPath(path) {
-    if (resultCollapsedPaths.value.has(path)) {
-        resultCollapsedPaths.value.delete(path)
-    } else {
-        resultCollapsedPaths.value.add(path)
-    }
-    // Trigger reactivity
-    resultCollapsedPaths.value = new Set(resultCollapsedPaths.value)
-}
 </script>
 
 <template>
     <wa-details class="item-details tool-use" :class="{'with-right-part' : isTask && !parentSessionId}" icon-placement="start" @wa-show="onToolUseOpen" @wa-hide="onToolUseClose">
         <span slot="summary" class="items-details-summary">
             <span class="items-details-summary-left">
-                <strong class="items-details-summary-name">{{ name }}</strong>
+                <strong class="items-details-summary-name">{{ name.replaceAll('__', ' ') }}</strong>
                 <template v-if="description">
                     <span class="items-details-summary-separator"> — </span>
                     <span class="items-details-summary-description">{{ description }}</span>
@@ -440,11 +415,8 @@ function toggleResultPath(path) {
             </template>
         </span>
         <div v-if="displayInput" class="tool-input">
-            <JsonViewer
-                :data="displayInput"
-                path="root"
-                :collapsed-paths="collapsedPaths"
-                @toggle="togglePath"
+            <JsonHumanView
+                :value="displayInput"
             />
         </div>
         <div v-else class="tool-no-input">
@@ -468,11 +440,8 @@ function toggleResultPath(path) {
                     No result available
                 </div>
                 <div v-else-if="resultState === 'loaded' && displayResult" class="tool-result-data">
-                    <JsonViewer
-                        :data="displayResult"
-                        path="result"
-                        :collapsed-paths="resultCollapsedPaths"
-                        @toggle="toggleResultPath"
+                    <JsonHumanView
+                        :value="displayResult"
                     />
                 </div>
             </div>
@@ -528,7 +497,7 @@ wa-details.with-right-part {
 }
 
 .tool-result {
-    margin-top: var(--card-spacing, var(--wa-space-l));
+    margin-top: calc(var(--card-spacing, var(--wa-space-l)) / 2);
 }
 
 .tool-result-content {

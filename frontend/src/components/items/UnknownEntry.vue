@@ -1,6 +1,5 @@
 <script setup>
-import { ref } from 'vue'
-import JsonViewer from '../JsonViewer.vue'
+import JsonHumanView from '../JsonHumanView.vue'
 
 defineProps({
     type: {
@@ -13,18 +12,6 @@ defineProps({
     }
 })
 
-// Collapsed paths for JsonNode
-const collapsedPaths = ref(new Set())
-
-function togglePath(path) {
-    if (collapsedPaths.value.has(path)) {
-        collapsedPaths.value.delete(path)
-    } else {
-        collapsedPaths.value.add(path)
-    }
-    // Trigger reactivity
-    collapsedPaths.value = new Set(collapsedPaths.value)
-}
 </script>
 
 <template>
@@ -35,11 +22,8 @@ function togglePath(path) {
             <span class="items-details-summary-description">{{ type }}</span>
         </span>
         <div v-if="data" class="unknown-data">
-            <JsonViewer
-                :data="data"
-                path="root"
-                :collapsed-paths="collapsedPaths"
-                @toggle="togglePath"
+            <JsonHumanView
+                :value="data"
             />
         </div>
         <div v-else class="unknown-no-data">

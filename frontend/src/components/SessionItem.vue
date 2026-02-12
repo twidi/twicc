@@ -74,7 +74,6 @@ const entryType = computed(() => parsedContent.value?.type || 'unknown')
 // Track collapsed state for JSON view
 const collapsedPaths = ref(new Set())
 
-
 function toggleCollapse(path) {
     if (collapsedPaths.value.has(path)) {
         collapsedPaths.value.delete(path)

@@ -79,7 +79,7 @@ function keyLooksLikeUrl(key) {
  */
 function keyLooksLikeCode(key) {
     if (!key) return false
-    return keyMatches(key.toLowerCase(), ['pattern', 'code', 'glob', 'source'])
+    return keyMatches(key.toLowerCase(), ['pattern', 'code', 'glob', 'source', 'command', 'id', 'type', 'uuid'])
 }
 
 /**
@@ -118,6 +118,17 @@ function valueType(val, key = null) {
 function effectiveType() {
     return props.override?.valueType ?? valueType(props.value, props.name)
 }
+
+/**
+ * Computed content block source info for the current value (only meaningful when value is an object).
+ * Detects source objects with embedded data (image or binary) so the "data" key can be rendered specially.
+ */
+const contentBlockSource = computed(() => {
+    if (typeof props.value === 'object' && props.value !== null && !Array.isArray(props.value)) {
+        return detectContentBlockSource(props.value)
+    }
+    return null
+})
 
 /**
  * Computed diff pairs for the current value (only meaningful when value is an object).
@@ -275,6 +286,24 @@ function findDiffPairs(obj) {
 }
 
 /**
+ * Detect if an object is a content block source with embedded data (image, document, etc.).
+ * Matches the Claude SDK source structure: { type, media_type, data }.
+ * Returns null if not a content block source, or an info object describing how to render the data field.
+ * @param {Object} obj
+ * @returns {{ kind: 'image', mediaType: string, data: string } | { kind: 'binary', mediaType: string } | null}
+ */
+function detectContentBlockSource(obj) {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null
+    if (!obj.media_type || !('data' in obj) || !obj.type) return null
+    if (obj.type === 'text') return null
+    const mediaType = obj.media_type
+    if (typeof mediaType === 'string' && mediaType.startsWith('image/')) {
+        return { kind: 'image', mediaType, data: obj.data }
+    }
+    return { kind: 'binary', mediaType }
+}
+
+/**
  * Generate a unified diff string from two strings, suitable for ```diff rendering.
  * @param {string} oldStr
  * @param {string} newStr
@@ -377,7 +406,7 @@ function generateDiff(oldStr, newStr) {
         <!-- String: multi-line plain text -->
         <template v-else-if="effectiveType() === 'string-multiline'">
             <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
-            <pre class="jhv-pre">{{ value }}</pre>
+            <pre class="jhv-pre">{{ value.trim() }}</pre>
         </template>
 
         <!-- String: single-line -->
@@ -452,7 +481,27 @@ function generateDiff(oldStr, newStr) {
                     <template v-for="key in Object.keys(value)" :key="key">
                         <!-- Skip keys consumed by diff pairs (shown below in diff section) -->
                         <template v-if="!diffPairs.consumed.has(key)">
+                            <!-- Content block source: render "data" as image or binary blob -->
+                            <template v-if="key === 'data' && contentBlockSource">
+                                <!-- Image: show the image inline -->
+                                <template v-if="contentBlockSource.kind === 'image'">
+                                    <div class="jhv-key jhv-block-key">{{ formatLabel('data') }}:</div>
+                                    <div class="jhv-content-block">
+                                        <img :src="'data:' + contentBlockSource.mediaType + ';base64,' + contentBlockSource.data" class="jhv-content-image" loading="lazy" />
+                                    </div>
+                                </template>
+                                <!-- Binary: show placeholder instead of raw data -->
+                                <template v-else>
+                                    <div class="jhv-entry">
+                                        <span class="jhv-key">{{ formatLabel('data') }}</span>
+                                        <span class="jhv-separator">: </span>
+                                        <span class="jhv-null jhv-binary-blob">&lsquo;binary blob&rsquo;</span>
+                                    </div>
+                                </template>
+                            </template>
+                            <!-- Normal key rendering -->
                             <JsonHumanView
+                                v-else
                                 :value="value[key]"
                                 :name="key"
                                 :depth="depth + 1"
@@ -467,19 +516,19 @@ function generateDiff(oldStr, newStr) {
                             <MarkdownContent :source="'```diff\n' + generateDiff(value[pair.oldKey], value[pair.newKey]) + '\n```'" />
                         </div>
                         <details class="jhv-diff-originals">
-                            <summary class="jhv-diff-originals-toggle">show original values</summary>
+                            <summary class="jhv-diff-originals-toggle">Old/new values</summary>
                             <div class="jhv-children">
                                 <JsonHumanView
                                     :value="value[pair.oldKey]"
                                     :name="pair.oldKey"
                                     :depth="depth + 1"
-                                    :override="overrides[pair.oldKey]"
+                                    :override="overrides[pair.oldKey] ?? { valueType: 'string-multiline' }"
                                 />
                                 <JsonHumanView
                                     :value="value[pair.newKey]"
                                     :name="pair.newKey"
                                     :depth="depth + 1"
-                                    :override="overrides[pair.newKey]"
+                                    :override="overrides[pair.newKey] ?? { valueType: 'string-multiline' }"
                                 />
                             </div>
                         </details>
@@ -492,7 +541,7 @@ function generateDiff(oldStr, newStr) {
 
 <style scoped>
 .jhv-node {
-    line-height: 1.5;
+    line-height: 2;
 }
 
 .jhv-nested {
@@ -555,9 +604,30 @@ function generateDiff(oldStr, newStr) {
 }
 
 .jhv-pre {
-    padding: var(--wa-space-xs);
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+.jhv-pre, .jhv-markdown :deep(.markdown-body) {
+    background: var(--wa-color-overlay-inline) !important;
+    border-radius: var(--wa-border-radius-l) !important;
+    max-height: 20rem;
+    overflow: auto;
+    padding: var(--wa-space-m);
+}
+
+.jhv-markdown {
+    & :deep(.markdown-body pre)  {
+        background: transparent !important;
+    }
+    & :deep(.shiki span)  {
+        --shiki-bg-color: transparent;
+    }
+}
+
+.jhv-code {
+    background: var(--wa-color-overlay-inline) !important;
+    padding: var(--wa-space-xs);
 }
 
 .jhv-array-item {
@@ -583,7 +653,23 @@ function generateDiff(oldStr, newStr) {
     margin-top: var(--wa-space-2xs);
 }
 
+.jhv-content-block {
+    margin-left: var(--wa-space-m);
+}
+
+.jhv-content-image {
+    max-width: 100%;
+    max-height: 30rem;
+    border-radius: var(--wa-border-radius-l);
+    object-fit: contain;
+}
+
+.jhv-binary-blob {
+    font-style: italic;
+}
+
 .jhv-diff-originals {
+    margin-top: var(--wa-space-m);
     margin-left: var(--wa-space-m);
 }
 
