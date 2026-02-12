@@ -558,6 +558,9 @@ def git_log(request, project_id, session_id):
     """
     from twicc.git import GitError, get_current_branch, get_git_log
 
+    # Optional branch filter from query string
+    branch_filter = request.GET.get("branch", "")
+
     try:
         session = Session.objects.get(id=session_id, project_id=project_id)
     except Session.DoesNotExist:
@@ -594,7 +597,7 @@ def git_log(request, project_id, session_id):
         return JsonResponse({"error": "No git repository found"}, status=404)
 
     try:
-        result = get_git_log(git_directory)
+        result = get_git_log(git_directory, branch=branch_filter or None)
     except GitError as e:
         return JsonResponse({"error": str(e)}, status=500)
 

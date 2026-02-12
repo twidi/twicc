@@ -167,6 +167,34 @@ def get_current_branch(git_directory: str) -> str | None:
     return None
 
 
+def get_branches(git_directory: str) -> list[str]:
+    """Return the list of local branch names, sorted alphabetically.
+
+    The current branch (if any) is always first in the list.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", git_directory, "branch", "--format=%(refname:short)"],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        if result.returncode != 0:
+            return []
+        branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
+        # Put current branch first
+        current = get_current_branch(git_directory)
+        if current and current in branches:
+            branches.remove(current)
+            branches.sort()
+            branches.insert(0, current)
+        else:
+            branches.sort()
+        return branches
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Git log parsing
 # ---------------------------------------------------------------------------
@@ -436,11 +464,13 @@ def get_commit_files(git_directory: str, commit_hash: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def get_git_log(git_directory: str) -> dict:
+def get_git_log(git_directory: str, branch: str | None = None) -> dict:
     """Run ``git log`` and return parsed entries for the GitLog component.
 
     Args:
         git_directory: Absolute path to the root of the git repository.
+        branch: Optional branch name to filter commits. If None or empty,
+            ``--all`` is used to show commits from all branches.
 
     Returns:
         A dict with keys:
@@ -448,6 +478,7 @@ def get_git_log(git_directory: str) -> dict:
         - ``has_more``: True if there are more commits beyond the limit.
         - ``head_commit_hash``: abbreviated hash of HEAD (or None).
         - ``index_files``: changed files info ``{stats, tree}`` or None.
+        - ``branches``: list of local branch names.
 
     Raises:
         GitError: If the git command fails.
@@ -459,7 +490,12 @@ def get_git_log(git_directory: str) -> dict:
         "log",
         "--exclude=refs/stash",
         "--exclude=refs/remotes/*/HEAD",
-        "--all",
+    ]
+    if branch:
+        cmd.append(branch)
+    else:
+        cmd.append("--all")
+    cmd += [
         f"-{_GIT_LOG_FETCH_LIMIT}",
         f"--pretty=format:{_GIT_LOG_FORMAT}",
         "--date=iso",
@@ -502,6 +538,7 @@ def get_git_log(git_directory: str) -> dict:
         "has_more": has_more,
         "head_commit_hash": _get_head_hash(git_directory),
         "index_files": get_index_files(git_directory),
+        "branches": get_branches(git_directory),
     }
 
 

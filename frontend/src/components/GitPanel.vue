@@ -26,6 +26,10 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    initialBranch: {
+        type: String,
+        default: '',
+    },
     active: {
         type: Boolean,
         default: false,
@@ -46,6 +50,13 @@ const entries = ref([])
 const currentBranch = ref('')
 const headCommitHash = ref('')
 const hasMore = ref(false)
+const branches = ref([])
+const selectedBranch = ref(props.initialBranch)  // '' = all branches
+
+/** Other branches (all except the current/session branch). */
+const otherBranches = computed(() =>
+    branches.value.filter((b) => b !== currentBranch.value)
+)
 
 /**
  * Index changed files data from the git-log response.
@@ -95,6 +106,11 @@ const headerStats = computed(() => {
 
 function toggleGitLog() {
     gitLogOpen.value = !gitLogOpen.value
+}
+
+function onBranchChange(event) {
+    selectedBranch.value = event.target.value
+    refreshGitLog()
 }
 
 function onCommitSelected(commit) {
@@ -335,9 +351,13 @@ const colours = computed(() =>
 // API
 // ---------------------------------------------------------------------------
 
-const apiUrl = computed(() =>
-    `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-log/`
-)
+const apiUrl = computed(() => {
+    const base = `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-log/`
+    if (selectedBranch.value) {
+        return `${base}?branch=${encodeURIComponent(selectedBranch.value)}`
+    }
+    return base
+})
 
 async function fetchGitLog() {
     loading.value = true
@@ -358,6 +378,13 @@ async function fetchGitLog() {
         headCommitHash.value = data.head_commit_hash || ''
         indexFilesData.value = data.index_files || null
         hasMore.value = data.has_more || false
+        branches.value = data.branches || []
+
+        // If selectedBranch wasn't pre-set (no initialBranch prop),
+        // default to the session's current branch.
+        if (!selectedBranch.value && currentBranch.value) {
+            selectedBranch.value = currentBranch.value
+        }
     } catch (e) {
         error.value = 'Failed to load git history'
     } finally {
@@ -387,6 +414,7 @@ async function refreshGitLog() {
         headCommitHash.value = data.head_commit_hash || ''
         indexFilesData.value = data.index_files || null
         hasMore.value = data.has_more || false
+        branches.value = data.branches || []
     } catch {
         // Silently ignore — existing data stays visible
     } finally {
@@ -583,6 +611,29 @@ function handleTreeReposition(event) {
                 <div v-if="gitLogOpen" class="gitlog-overlay">
                     <!-- Overlay header -->
                     <div class="gitlog-overlay-header">
+                        <wa-select
+                            v-if="branches.length"
+                            size="small"
+                            class="branch-select"
+                            :value.prop="selectedBranch"
+                            @change="onBranchChange"
+                        >
+                            <wa-icon slot="prefix" name="code-branch"></wa-icon>
+                            <wa-option value="">All branches</wa-option>
+                            <wa-divider></wa-divider>
+                            <wa-option
+                                v-if="currentBranch"
+                                :value="currentBranch"
+                            >{{ currentBranch }}</wa-option>
+                            <template v-if="otherBranches.length">
+                                <wa-divider></wa-divider>
+                                <wa-option
+                                    v-for="branch in otherBranches"
+                                    :key="branch"
+                                    :value="branch"
+                                >{{ branch }}</wa-option>
+                            </template>
+                        </wa-select>
                         <wa-input
                             v-model="filterText"
                             class="filter-input"
@@ -762,6 +813,14 @@ function handleTreeReposition(event) {
     flex-shrink: 0;
     padding: var(--wa-space-3xs) var(--wa-space-xs);
     border-bottom: 1px solid var(--wa-color-surface-border);
+}
+
+.branch-select {
+    flex-shrink: 0;
+    max-width: 12rem;
+    wa-divider {
+        --spacing: var(--wa-space-2xs);
+    }
 }
 
 .filter-input {

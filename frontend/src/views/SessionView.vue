@@ -466,6 +466,7 @@ function handleNeedsTitle() {
                     :project-id="session?.project_id"
                     :session-id="session?.id"
                     :git-directory="session?.git_directory || store.getProject(session?.project_id)?.git_root"
+                    :initial-branch="session?.git_branch || ''"
                     :active="isActive && activeTabId === 'git'"
                 />
             </wa-tab-panel>
