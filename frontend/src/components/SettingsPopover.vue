@@ -439,7 +439,7 @@ function onPopoverShow() {
 }
 
 .settings-content {
-    max-height: 90vw;
+    max-height: calc(100vh - 8rem);
     overflow-y: auto;
 }
 
