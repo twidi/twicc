@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick, shallowRef } from 'vue'
+import { ref, computed, watch, nextTick, shallowRef, onActivated, onDeactivated } from 'vue'
 import { apiFetch } from '../utils/api'
 import FileTree from './FileTree.vue'
 import FilePane from './FilePane.vue'
@@ -872,16 +872,64 @@ function handleTreeKeydown(event) {
             return  // Don't prevent default for unhandled keys
     }
 }
+
+// ─── Split panel position (KeepAlive-safe) ──────────────────────────────────
+
+const TREE_DEFAULT_WIDTH = 250
+const treePanelWidth = ref(TREE_DEFAULT_WIDTH)
+const splitPanelRef = ref(null)
+
+// Hide the split panel during KeepAlive transitions to prevent the visual
+// glitch where wa-split-panel briefly renders at position 0 before Vue
+// re-applies the correct width binding.
+const keepAliveHidden = ref(false)
+
+onDeactivated(() => {
+    keepAliveHidden.value = true
+})
+
+onActivated(() => {
+    // wa-split-panel's internal state gets desynchronized from the HTML attribute
+    // during KeepAlive transitions. Vue updates the attribute but the web component
+    // doesn't re-read it. Force the JS property directly, then reveal.
+    const panel = splitPanelRef.value
+    const savedWidth = treePanelWidth.value
+    // wa-split-panel re-initializes its internal state (connectedCallback / ResizeObserver)
+    // when KeepAlive re-inserts the DOM, overwriting positionInPixels to NaN.
+    // A double rAF waits for the web component to finish its re-init cycle,
+    // then we force our saved width and reveal.
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            if (panel) {
+                panel.positionInPixels = savedWidth
+            }
+            keepAliveHidden.value = false
+        })
+    })
+})
+
+// Track the last valid position to restore it after KeepAlive reactivation.
+// During transitions, wa-split-panel emits spurious reposition events (null, 0,
+// or clamped to --min). Ignore all repositions while the panel is hidden.
+function handleTreeReposition(event) {
+    if (keepAliveHidden.value) return
+    const newWidth = event.target.positionInPixels
+    if (newWidth == null || Number.isNaN(newWidth) || newWidth <= 0) return
+    treePanelWidth.value = newWidth
+}
 </script>
 
 <template>
     <div class="files-panel">
         <wa-split-panel
+            ref="splitPanelRef"
             class="files-split-panel"
-            :position-in-pixels="250"
+            :class="{ 'keep-alive-hidden': keepAliveHidden }"
+            :position-in-pixels="treePanelWidth"
             primary="start"
             snap="150px 250px 350px"
             snap-threshold="30"
+            @wa-reposition="handleTreeReposition"
         >
             <wa-icon slot="divider" name="grip-lines-vertical" class="divider-handle"></wa-icon>
 
@@ -1048,6 +1096,13 @@ function handleTreeKeydown(event) {
     height: 100%;
     --min: 120px;
     --max: 60%;
+
+    /* Hide during KeepAlive transitions to prevent the visual glitch where
+       wa-split-panel briefly renders at position 0 before Vue re-applies
+       the correct width binding. */
+    &.keep-alive-hidden {
+        visibility: hidden;
+    }
 
     &::part(divider) {
         background-color: var(--wa-color-surface-border);
