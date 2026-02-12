@@ -13,7 +13,7 @@
 .icon {
   width: 1rem;
   flex: 0 0 auto;
-  margin-left: 0.125rem;
+  margin-left: 0.5rem;
   margin-right: 0.125rem;
   fill: currentColor;
 }
