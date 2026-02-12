@@ -28,12 +28,15 @@ const parsed = computed(() => parseBranch(props.commit.branch))
 const isRemote = computed(() => parsed.value.isRemote)
 const remoteName = computed(() => parsed.value.remote)
 
-// For names like "feature/git-graph-visualization", show "…/git-graph-visualization"
+// For prefixed branch names, show only the last segment preceded by "…/",
 // so the meaningful part is visible when truncated by CSS.
+// Examples:
+//   "feature/git-graph-visualization" → "…/git-graph-visualization"
+//   "twidi/feat/git-panel-scroll"     → "…/git-panel-scroll"
 const hasPrefix = computed(() => parsed.value.name.includes('/'))
 const displayName = computed(() => {
   const name = parsed.value.name
-  const idx = name.indexOf('/')
+  const idx = name.lastIndexOf('/')
   return idx >= 0 ? name.slice(idx + 1) : name
 })
 
