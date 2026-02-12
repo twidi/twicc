@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onActivated, onDeactivated } from 'vue'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
 import {
@@ -9,6 +9,8 @@ import {
     GitLogTags,
 } from './GitLog'
 import GitPanelHeader from './GitPanelHeader.vue'
+import FileTreePanel from './FileTreePanel.vue'
+import { searchTreeFiles } from '../utils/treeSearch'
 
 const props = defineProps({
     projectId: {
@@ -83,6 +85,26 @@ function onCommitSelected(commit) {
 }
 
 // ---------------------------------------------------------------------------
+// Current files data (index or commit)
+// ---------------------------------------------------------------------------
+
+/** The current files data: index when viewing uncommitted, commit-specific otherwise. */
+const currentFilesData = computed(() => {
+    if (!selectedCommit.value || selectedCommit.value.hash === 'index') {
+        return indexFilesData.value
+    }
+    return commitFilesData.value
+})
+
+/** The tree to display in the file tree panel. */
+const currentTree = computed(() => currentFilesData.value?.tree ?? null)
+
+/** Whether we are viewing the index (uncommitted changes) vs a specific commit. */
+const isViewingIndex = computed(() => {
+    return !selectedCommit.value || selectedCommit.value.hash === 'index'
+})
+
+// ---------------------------------------------------------------------------
 // Fetch commit files when a commit is selected
 // ---------------------------------------------------------------------------
 
@@ -91,6 +113,8 @@ watch(selectedCommit, async (commit) => {
     commitFilesData.value = null
 
     if (!commit || commit.hash === 'index') {
+        // Re-fetch index files silently (they may have changed)
+        await refreshIndexFiles()
         return
     }
 
@@ -108,6 +132,50 @@ watch(selectedCommit, async (commit) => {
         commitFilesLoading.value = false
     }
 })
+
+// ---------------------------------------------------------------------------
+// File tree panel integration
+// ---------------------------------------------------------------------------
+
+const fileTreePanelRef = ref(null)
+
+/** Selected file relative path from the FileTreePanel. */
+const selectedFile = computed(() => fileTreePanelRef.value?.selectedFile ?? null)
+
+/**
+ * Search callback: filters the current tree client-side.
+ * Uses the same fuzzy/exact search logic as the backend.
+ */
+function doSearch(query) {
+    const tree = currentTree.value
+    if (!tree) return null
+    return searchTreeFiles(tree, query)
+}
+
+// Re-run search when the tree data changes (e.g. switching between index and commit)
+watch(currentTree, () => {
+    fileTreePanelRef.value?.rerunSearch()
+})
+
+/**
+ * Fetch index files from the dedicated endpoint.
+ * Lightweight alternative to re-fetching the entire git log.
+ */
+async function refreshIndexFiles() {
+    commitFilesLoading.value = true
+    try {
+        const url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-index-files/`
+        const res = await apiFetch(url)
+        if (res.ok) {
+            const data = await res.json()
+            indexFilesData.value = data || null
+        }
+    } catch {
+        // Silently ignore — index data just stays stale
+    } finally {
+        commitFilesLoading.value = false
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Theme — follow app-wide effective theme
@@ -168,6 +236,47 @@ watch(
     },
     { immediate: true },
 )
+
+// ---------------------------------------------------------------------------
+// Split panel position (KeepAlive-safe)
+// ---------------------------------------------------------------------------
+
+const TREE_DEFAULT_WIDTH = 250
+const treePanelWidth = ref(TREE_DEFAULT_WIDTH)
+const splitPanelRef = ref(null)
+
+// Hide the split panel during KeepAlive transitions to prevent the visual
+// glitch where wa-split-panel briefly renders at position 0 before Vue
+// re-applies the correct width binding.
+const keepAliveHidden = ref(false)
+
+onDeactivated(() => {
+    keepAliveHidden.value = true
+})
+
+onActivated(() => {
+    const panel = splitPanelRef.value
+    const savedWidth = treePanelWidth.value
+    // wa-split-panel re-initializes its internal state when KeepAlive re-inserts
+    // the DOM. A double rAF waits for the web component to finish its re-init
+    // cycle, then we force our saved width and reveal.
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            if (panel) {
+                panel.positionInPixels = savedWidth
+            }
+            keepAliveHidden.value = false
+        })
+    })
+})
+
+// Track the last valid position to restore it after KeepAlive reactivation.
+function handleTreeReposition(event) {
+    if (keepAliveHidden.value) return
+    const newWidth = event.target.positionInPixels
+    if (newWidth == null || Number.isNaN(newWidth) || newWidth <= 0) return
+    treePanelWidth.value = newWidth
+}
 </script>
 
 <template>
@@ -202,7 +311,7 @@ watch(
             <span class="panel-placeholder">No commits found</span>
         </div>
 
-        <!-- Main content: header + git log overlay -->
+        <!-- Main content: header + split panel + git log overlay -->
         <template v-else-if="entries.length > 0">
             <!-- Header with commit selector -->
             <GitPanelHeader
@@ -216,7 +325,47 @@ watch(
 
             <!-- Content area (position: relative so overlay can cover it) -->
             <div class="git-panel-content">
-                <!-- Future: split panel with file list on right and Monaco editor on left -->
+                <!-- Split panel with file tree + file path display -->
+                <wa-split-panel
+                    ref="splitPanelRef"
+                    class="git-split-panel"
+                    :class="{ 'keep-alive-hidden': keepAliveHidden }"
+                    :position-in-pixels="treePanelWidth"
+                    primary="start"
+                    snap="150px 250px 350px"
+                    snap-threshold="30"
+                    @wa-reposition="handleTreeReposition"
+                >
+                    <wa-icon slot="divider" name="grip-lines-vertical" class="divider-handle"></wa-icon>
+
+                    <!-- File tree (left panel) -->
+                    <div slot="start" class="git-tree-slot">
+                        <FileTreePanel
+                            ref="fileTreePanelRef"
+                            :tree="currentTree"
+                            :loading="commitFilesLoading"
+                            :root-path="currentTree?.name"
+                            :search-fn="doSearch"
+                            :lazy-load-fn="null"
+                            :project-id="projectId"
+                            :session-id="sessionId"
+                            :show-refresh="isViewingIndex"
+                            :active="active"
+                            mode="git"
+                            @refresh="refreshIndexFiles"
+                        />
+                    </div>
+
+                    <!-- File path display (right panel — Monaco editor later) -->
+                    <div slot="end" class="git-content-panel">
+                        <div v-if="selectedFile" class="selected-file-path">
+                            {{ selectedFile }}
+                        </div>
+                        <div v-else class="panel-placeholder">
+                            Select a file
+                        </div>
+                    </div>
+                </wa-split-panel>
 
                 <!-- Git log overlay (absolute, shown when chevron is clicked) -->
                 <div v-if="gitLogOpen" class="gitlog-overlay">
@@ -270,6 +419,10 @@ watch(
 }
 
 .panel-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-s);
 }
@@ -298,6 +451,59 @@ watch(
     min-height: 0;
     position: relative;
     overflow: hidden;
+}
+
+/* ----- Split panel ----- */
+
+.git-split-panel {
+    height: 100%;
+    --min: 120px;
+    --max: 60%;
+
+    &.keep-alive-hidden {
+        visibility: hidden;
+    }
+
+    &::part(divider) {
+        background-color: var(--wa-color-surface-border);
+        width: 4px;
+    }
+}
+
+/* Divider handle (visible on touch devices only) */
+.divider-handle {
+    color: var(--wa-color-surface-border);
+    display: none;
+    scale: 3;
+}
+
+@media (pointer: coarse) {
+    .divider-handle {
+        display: inline;
+    }
+}
+
+/* ----- Panel slots ----- */
+
+.git-tree-slot {
+    height: 100%;
+    overflow: hidden;
+}
+
+.git-content-panel {
+    height: 100%;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+.selected-file-path {
+    padding: var(--wa-space-m);
+    font-family: var(--wa-font-family-code);
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+    word-break: break-all;
 }
 
 /* ----- Git log overlay (absolute over content) ----- */

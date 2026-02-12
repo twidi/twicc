@@ -30,7 +30,14 @@ _GIT_TIMEOUT = 10
 def _build_file_tree(files: list[dict], root_name: str = "") -> dict:
     """Build a file-tree structure from a flat list of file entries.
 
-    Each entry in *files* must have ``{"path": "a/b/c.py", "status": "modified"}``.
+    Each entry in *files* must have at minimum ``{"path": "a/b/c.py"}``.
+
+    **Commit files** carry a ``"status"`` key (a single status string).
+    **Index files** carry ``"staged_status"`` and ``"unstaged_status"`` keys
+    (each is a status string or None).
+
+    All status-related keys present on the entry are preserved on the tree
+    file nodes.
 
     Returns a tree in the same format as the directory-tree API::
 
@@ -44,35 +51,30 @@ def _build_file_tree(files: list[dict], root_name: str = "") -> dict:
                     "type": "directory",
                     "loaded": True,
                     "children": [
-                        {
-                            "name": "b",
-                            "type": "directory",
-                            "loaded": True,
-                            "children": [
-                                {"name": "c.py", "type": "file", "status": "modified"}
-                            ]
-                        }
+                        {"name": "c.py", "type": "file", "status": "modified"}
                     ]
                 }
             ]
         }
 
     Directories are sorted before files, both alphabetically (case-insensitive).
-    File nodes carry an extra ``"status"`` key.
     """
+    _STATUS_KEYS = ("status", "staged_status", "unstaged_status")
+
     # Build a nested dict first, then convert to the tree format.
     tree: dict = {}
 
     for entry in files:
         parts = entry["path"].split("/")
-        status = entry["status"]
+        # Collect whichever status keys are present
+        statuses = {k: entry[k] for k in _STATUS_KEYS if k in entry}
 
         current = tree
         for i, part in enumerate(parts):
             is_last = i == len(parts) - 1
             if is_last:
                 # Leaf file node
-                current.setdefault(part, {"__file__": True, "__status__": status})
+                current.setdefault(part, {"__file__": True, **statuses})
             else:
                 # Intermediate directory node
                 current.setdefault(part, {})
@@ -81,11 +83,11 @@ def _build_file_tree(files: list[dict], root_name: str = "") -> dict:
     def _convert(name: str, node: dict) -> dict:
         """Recursively convert the nested dict into the tree format."""
         if "__file__" in node:
-            return {
-                "name": name,
-                "type": "file",
-                "status": node["__status__"],
-            }
+            result = {"name": name, "type": "file"}
+            for k in _STATUS_KEYS:
+                if k in node:
+                    result[k] = node[k]
+            return result
 
         children = []
         for child_name, child_node in node.items():
@@ -107,18 +109,27 @@ def _build_file_tree(files: list[dict], root_name: str = "") -> dict:
 
 
 def _compute_stats(files: list[dict]) -> dict:
-    """Compute {modified, added, deleted} counts from a flat file list."""
+    """Compute {modified, added, deleted} counts from a flat file list.
+
+    Works with both commit files (``"status"`` key) and index files
+    (``"staged_status"`` / ``"unstaged_status"`` keys).  For index files the
+    stat reflects the *most significant* status of the file (staged wins over
+    unstaged if both are present; among statuses: deleted > modified > added).
+    """
     modified = 0
     added = 0
     deleted = 0
+
     for f in files:
-        status = f["status"]
-        if status == "modified":
+        # Commit files have "status", index files have "staged_status"/"unstaged_status".
+        status = f.get("status") or f.get("staged_status") or f.get("unstaged_status")
+        if status in ("modified", "renamed"):
             modified += 1
         elif status == "added":
             added += 1
         elif status == "deleted":
             deleted += 1
+
     return {"modified": modified, "added": added, "deleted": deleted}
 
 
@@ -217,11 +228,37 @@ def _get_head_hash(git_directory: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _status_letter_to_status(letter: str) -> str | None:
+    """Map a single git status letter to a normalized status string."""
+    return {
+        "M": "modified",
+        "A": "added",
+        "D": "deleted",
+        "R": "renamed",
+        "C": "added",
+        "T": "modified",
+    }.get(letter)
+
+
 def _parse_index_files(git_directory: str) -> list[dict] | None:
     """Parse ``git status --porcelain`` into a flat list of file entries.
 
-    Returns a list of ``{"path": "...", "status": "modified"|"added"|"deleted"}``
-    or None if no changes or on failure.
+    Each entry has::
+
+        {
+            "path": "...",
+            "staged_status": "modified"|"added"|"deleted"|"renamed"|None,
+            "unstaged_status": "modified"|"added"|"deleted"|None,
+        }
+
+    The ``git status --porcelain`` format is ``XY path`` where:
+    - X = index (staged) status
+    - Y = worktree (unstaged) status
+
+    A file can be both staged and unstaged (e.g. partially staged changes).
+    Untracked files (``??``) are reported as unstaged added.
+
+    Returns None if no changes or on failure.
     """
     try:
         result = subprocess.run(
@@ -241,24 +278,32 @@ def _parse_index_files(git_directory: str) -> list[dict] | None:
         if len(line) < 4:
             continue
         # git status --porcelain: XY filename
-        # X = index status, Y = worktree status
-        xy = line[:2]
+        x = line[0]  # index (staged) status
+        y = line[1]  # worktree (unstaged) status
         path = line[3:]
 
         # Handle renames: "R  old -> new"
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
 
-        if "M" in xy:
-            files.append({"path": path, "status": "modified"})
-        elif "D" in xy:
-            files.append({"path": path, "status": "deleted"})
-        elif "?" in xy:
-            files.append({"path": path, "status": "added"})
-        elif "A" in xy:
-            files.append({"path": path, "status": "added"})
-        elif "R" in xy:
-            files.append({"path": path, "status": "modified"})
+        # Untracked files: both X and Y are '?'
+        if x == "?" and y == "?":
+            files.append({
+                "path": path,
+                "staged_status": None,
+                "unstaged_status": "added",
+            })
+            continue
+
+        staged = _status_letter_to_status(x)
+        unstaged = _status_letter_to_status(y)
+
+        if staged or unstaged:
+            files.append({
+                "path": path,
+                "staged_status": staged,
+                "unstaged_status": unstaged,
+            })
 
     return files if files else None
 
@@ -378,7 +423,7 @@ def get_commit_files(git_directory: str, commit_hash: str) -> dict:
 
     return {
         "stats": _compute_stats(files),
-        "tree": _build_file_tree(files, root_name=f"commit {short_hash}"),
+        "tree": _build_file_tree(files, root_name=f"Commit {short_hash}"),
     }
 
 

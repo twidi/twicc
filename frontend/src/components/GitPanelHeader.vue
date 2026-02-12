@@ -142,6 +142,8 @@ function toggleGitLog() {
     transition: background-color 0.15s ease;
     box-shadow: none;
     margin: 0;
+    translate: none !important;
+    transform: none !important;
 }
 
 .commit-selector:hover {
@@ -164,7 +166,7 @@ function toggleGitLog() {
 
 .commit-hash {
     flex-shrink: 0;
-    font-family: var(--wa-font-family-mono, monospace);
+    font-family: var(--wa-font-family-code);
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
     background: var(--wa-color-surface-alt);

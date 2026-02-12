@@ -31,6 +31,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/<str:parent_session_id>/subagent/<str:session_id>/items/<int:line_num>/tool-results/<str:tool_id>/", views.tool_results),
     # Git endpoints (session-level only, no subagent support)
     path("api/projects/<str:project_id>/sessions/<str:session_id>/git-log/", views.git_log),
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/git-index-files/", views.git_index_files),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/git-commit-files/<str:commit_hash>/", views.git_commit_files),
     # File system endpoints (scoped to project + session for security)
     path("api/projects/<str:project_id>/sessions/<str:session_id>/directory-tree/", views.directory_tree),

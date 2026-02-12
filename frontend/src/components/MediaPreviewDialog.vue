@@ -264,7 +264,7 @@ defineExpose({ open, close })
 .preview-text {
     margin: 0;
     padding: var(--wa-space-m);
-    font-family: var(--wa-font-family-mono);
+    font-family: var(--wa-font-family-code);
     font-size: var(--wa-font-size-s);
     white-space: pre-wrap;
     word-wrap: break-word;

@@ -88,6 +88,10 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    mode: {
+        type: String,
+        default: 'files',  // 'files' | 'git'
+    },
 })
 
 const emit = defineEmits(['select', 'focus'])
@@ -139,9 +143,10 @@ const compact = computed(() => {
 })
 
 // Directories: root and allOpen start open, others start closed.
+// In git mode, all directories start open (the tree is fully loaded and small).
 // Also open if this node's effective path is in the revealedPaths set (for reveal-in-tree).
 const isOpen = ref(
-    props.isRoot || props.allOpen || (props.node.type === 'directory' && props.revealedPaths.has(compact.value.effectivePath))
+    props.isRoot || props.allOpen || props.mode === 'git' || (props.node.type === 'directory' && props.revealedPaths.has(compact.value.effectivePath))
 )
 const isLoading = ref(false)
 
@@ -169,8 +174,9 @@ async function toggleOpen() {
 
     const { effectiveNode, effectivePath } = compact.value
 
-    // If opening a not-yet-loaded directory, fetch its children first
-    if (!isOpen.value && effectiveNode.loaded === false) {
+    // If opening a not-yet-loaded directory, fetch its children first.
+    // In git mode all data is already loaded, so skip the API call.
+    if (!isOpen.value && effectiveNode.loaded === false && props.mode !== 'git') {
         isLoading.value = true
         try {
             const res = await apiFetch(
@@ -229,6 +235,54 @@ const isSelected = computed(() => {
     const ep = nodePath.value
     return props.selectedPath === ep || props.selectedPath.startsWith(ep + '/')
 })
+
+/**
+ * Map a git status string to its badge letter and CSS class.
+ */
+const STATUS_MAP = {
+    modified: { letter: 'M', cls: 'git-badge-modified' },
+    added:    { letter: 'A', cls: 'git-badge-added' },
+    deleted:  { letter: 'D', cls: 'git-badge-deleted' },
+    renamed:  { letter: 'R', cls: 'git-badge-renamed' },
+    copied:   { letter: 'C', cls: 'git-badge-added' },
+}
+
+/**
+ * Git status badge for files in git mode.
+ *
+ * Supports two data formats:
+ * - **Commit files**: node has `status` → single badge letter (e.g. "M")
+ * - **Index files**: node has `staged_status` / `unstaged_status` →
+ *   badge letter from the primary status + "u" suffix if unstaged.
+ *
+ * Returns null for directories or files without any status.
+ */
+const gitBadge = computed(() => {
+    if (props.mode !== 'git' || props.node.type !== 'file') return null
+
+    const node = props.node
+
+    // Commit files: simple single status
+    if (node.status) {
+        const entry = STATUS_MAP[node.status]
+        return entry || { letter: node.status[0].toUpperCase(), cls: 'git-badge-modified' }
+    }
+
+    // Index files: staged_status / unstaged_status
+    const staged = node.staged_status
+    const unstaged = node.unstaged_status
+    if (!staged && !unstaged) return null
+
+    // Primary status determines the letter and color (staged wins if present)
+    const primary = staged || unstaged
+    const entry = STATUS_MAP[primary] || { letter: primary[0].toUpperCase(), cls: 'git-badge-modified' }
+
+    // Add unstaged class if the file has unstaged changes
+    if (unstaged) {
+        return { letter: entry.letter, cls: entry.cls + ' git-badge-unstaged' }
+    }
+    return entry
+})
 </script>
 
 <template>
@@ -241,7 +295,8 @@ const isSelected = computed(() => {
                 { 'is-toggle': node.type === 'directory' },
                 { 'is-clickable': node.type === 'file' },
                 { 'is-focused': isFocused },
-                { 'is-selected': isSelected }
+                { 'is-selected': isSelected },
+                { 'has-git-badge': gitBadge },
             ]"
             :style="{ '--level': depth }"
             :data-path="nodePath"
@@ -263,6 +318,7 @@ const isSelected = computed(() => {
                 height="16"
             />
             <span class="node-name">{{ compact.displayName }}</span>
+            <span v-if="gitBadge" class="git-badge" :class="gitBadge.cls">{{ gitBadge.letter }}</span>
         </div>
 
         <!-- Children (only rendered when directory is open) -->
@@ -285,6 +341,7 @@ const isSelected = computed(() => {
                 :revealed-paths="revealedPaths"
                 :selected-path="selectedPath"
                 :is-draft="isDraft"
+                :mode="mode"
                 @select="(path) => emit('select', path)"
                 @focus="(path) => emit('focus', path)"
             />
@@ -296,6 +353,17 @@ const isSelected = computed(() => {
 .file-tree-node {
     user-select: none;
     font-size: var(--wa-font-size-m);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    /* Only way I found to have the git badges stick on the right regardless of the width of the node content */
+    width: 1000%;
+}
+
+.node-children {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
 }
 
 .node-label {
@@ -309,23 +377,25 @@ const isSelected = computed(() => {
     width: fit-content;
     min-width: 100%;
     outline: none;
+    position: relative;
+    --node-bg-color: var(--wa-color-surface-default);
+    background-color: var(--node-bg-color);
 }
 
 .node-label:hover {
-    background-color: var(--wa-color-surface-raised);
+    --node-bg-color: var(--wa-color-surface-raised);
 }
 
-.node-label.is-selected {
-    background-color: var(--wa-color-neutral-fill-quiet);
+.node-label.is-selected .node-name {
+    text-decoration: underline;
 }
 
 .node-label.is-selected:hover {
-    background-color: var(--wa-color-neutral-fill-quiet);
+    --node-bg-color: var(--wa-color-surface-lowered);
 }
 
 .node-label.is-focused {
-    outline: var(--wa-focus-ring);
-    outline-offset: var(--wa-focus-ring-offset);
+    --node-bg-color: var(--wa-color-surface-lowered);
 }
 
 .node-label.is-toggle,
@@ -356,6 +426,43 @@ const isSelected = computed(() => {
 }
 
 .node-name {
+}
+
+/* ----- Git status badge (git mode only) ----- */
+
+.git-badge {
+    position: sticky;
+    right: 0;
+    flex-shrink: 0;
+    margin-left: auto;
+    font-size: var(--wa-font-size-xs);
+    font-weight: 600;
+    font-family: var(--wa-font-family-code);
+    line-height: 1.6;
+    background-color: var(--node-bg-color);
+    padding-block: .15rem;
+    padding-inline: .5rem .25rem;
+    &.git-badge-unstaged::before {
+        content: 'u';
+        margin-inline-end: .2rem;
+        font-weight: normal;
+    }
+}
+
+.git-badge-modified {
+    color: #c4841d;
+}
+
+.git-badge-added {
+    color: #3a9a28;
+}
+
+.git-badge-deleted {
+    color: #e5484d;
+}
+
+.git-badge-renamed {
+    color: #6e56cf;
 }
 
 </style>

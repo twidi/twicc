@@ -478,7 +478,7 @@ function onPopoverShow() {
 }
 
 .title-prompt-textarea {
-    font-family: var(--wa-font-family-mono);
+    font-family: var(--wa-font-family-code);
     font-size: var(--wa-font-size-xs);
 }
 

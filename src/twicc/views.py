@@ -636,6 +636,27 @@ def _resolve_session_git_directory(project_id, session_id):
     raise Http404("No git repository found")
 
 
+def git_index_files(request, project_id, session_id):
+    """GET /api/projects/<id>/sessions/<session_id>/git-index-files/
+
+    Returns stats and a file tree for uncommitted (index) changes.
+
+    Response:
+        {
+            "stats": { "modified": 3, "added": 1, "deleted": 0 },
+            "tree": { ... }
+        }
+
+    Returns ``null`` if there are no uncommitted changes.
+    """
+    from twicc.git import get_index_files
+
+    git_directory = _resolve_session_git_directory(project_id, session_id)
+    result = get_index_files(git_directory)
+
+    return JsonResponse(result, safe=False)
+
+
 def git_commit_files(request, project_id, session_id, commit_hash):
     """GET /api/projects/<id>/sessions/<session_id>/git-commit-files/<commit_hash>/
 
