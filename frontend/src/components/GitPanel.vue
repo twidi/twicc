@@ -146,9 +146,9 @@ watch(
                     :index-status="indexStatus"
                     :theme="themeMode"
                     :colours="colours"
-                    :show-headers="true"
-                    :node-size=12
-                    :row-height=32
+                    :show-headers="false"
+                    :node-size=10
+                    :row-height=28
                 >
                     <template #tags>
                         <GitLogTags />
