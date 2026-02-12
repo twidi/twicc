@@ -81,6 +81,9 @@ provide('sessionActive', readonly(isActive))
 // Auto-hide header/footer on small viewports (behind feature flag)
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Whether tooltips are enabled (from settings)
+const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
+
 // Whether auto-hide is enabled (from settings)
 const autoHideEnabled = computed(() => settingsStore.isAutoHideHeaderFooterEnabled)
 
@@ -353,7 +356,15 @@ function handleNeedsTitle() {
                     size="small"
                 >
                     Chat
+                    <wa-icon
+                        v-if="store.getPendingRequest(sessionId)"
+                        slot="end"
+                        :id="`session-tab-chat-${sessionId}-pending-request`"
+                        name="hand"
+                        class="pending-request-indicator"
+                    ></wa-icon>
                 </wa-button>
+                <wa-tooltip v-if="tooltipsEnabled && store.getPendingRequest(sessionId)" :for="`session-tab-chat-${sessionId}-pending-request`">Waiting for your response</wa-tooltip>
             </wa-tab>
 
             <!-- Subagent tabs with close button -->
@@ -546,6 +557,19 @@ wa-tab::part(base) {
 
 .tab-close-icon:hover {
     opacity: 1;
+}
+
+.pending-request-indicator {
+    color: var(--wa-color-warning-60);
+    font-size: var(--wa-font-size-s);
+    animation: pending-pulse 1.5s ease-in-out infinite;
+    flex-shrink: 0;
+    align-self: center;
+}
+
+@keyframes pending-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
