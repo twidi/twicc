@@ -192,8 +192,11 @@ const activeTabId = computed(() => {
 
 // Redirect away from git tab if the session has no git repo
 // (handles direct URL navigation and dynamic changes)
+// Guards: skip when deactivated (KeepAlive) or when route belongs to another session.
 watch([activeTabId, hasGitRepo], ([tabId, hasGit]) => {
     if (tabId === 'git' && !hasGit) {
+        if (!isActive.value) return
+        if (route.params.sessionId !== sessionId.value) return
         router.replace({
             name: isAllProjectsMode.value ? 'projects-session' : 'session',
             params: { projectId: projectId.value, sessionId: sessionId.value }
@@ -454,6 +457,8 @@ function handleNeedsTitle() {
             </wa-tab-panel>
             <wa-tab-panel v-if="hasGitRepo" name="git">
                 <GitPanel
+                    :project-id="session?.project_id"
+                    :session-id="session?.id"
                     :active="isActive && activeTabId === 'git'"
                 />
             </wa-tab-panel>

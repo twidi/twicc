@@ -477,6 +477,10 @@ let lastKnownPosition = DEFAULT_SIDEBAR_WIDTH
 // Handle split panel reposition: auto-collapse when dragged to threshold, and persist width.
 // Ignored on mobile where the split panel is not used (sidebar is an overlay).
 function handleSplitReposition(event) {
+    // Ignore events bubbling from nested wa-split-panels (e.g. FilesPanel's tree/content splitter).
+    // Only handle events from our own split panel.
+    if (event.target !== event.currentTarget) return
+
     if (isMobile()) return
     if (ignoringReposition) return
 

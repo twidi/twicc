@@ -531,6 +531,47 @@ def file_content(request, project_id, session_id=None):
     return JsonResponse(result)
 
 
+def git_log(request, project_id, session_id):
+    """GET /api/projects/<id>/sessions/<session_id>/git-log/
+
+    Returns git commit history for the session's git repository.
+    Requires the session to have both git_directory and git_branch set.
+    Returns 404 if the session has no git repository.
+
+    Response:
+        {
+            "current_branch": "main",
+            "has_more": true/false,
+            "entries": [{ hash, branch, parents, message, committerDate, ... }]
+        }
+    """
+    from twicc.git import GitError, get_git_log
+
+    try:
+        session = Session.objects.get(id=session_id, project_id=project_id)
+    except Session.DoesNotExist:
+        raise Http404("Session not found")
+
+    # Only regular sessions (not subagents)
+    if session.parent_session_id is not None:
+        raise Http404("Session not found")
+
+    # Both git_directory and git_branch are required
+    if not session.git_directory or not session.git_branch:
+        return JsonResponse({"error": "Session has no git repository"}, status=404)
+
+    if not os.path.isdir(session.git_directory):
+        return JsonResponse({"error": "Git directory not found"}, status=404)
+
+    try:
+        result = get_git_log(session.git_directory)
+    except GitError as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+    result["current_branch"] = session.git_branch
+    return JsonResponse(result)
+
+
 def spa_index(request):
     """Catch-all for Vue Router - serves index.html."""
     index_path = settings.BASE_DIR / "frontend" / "dist" / "index.html"
