@@ -549,7 +549,11 @@ def git_log(request, project_id, session_id):
         {
             "current_branch": "main",
             "has_more": true/false,
-            "entries": [{ hash, branch, parents, message, committerDate, ... }]
+            "entries": [{ hash, branch, parents, message, committerDate, ... }],
+            "index_files": {
+                "stats": { "modified": 3, "added": 1, "deleted": 0 },
+                "tree": { "name": "", "type": "directory", "loaded": true, "children": [...] }
+            }
         }
     """
     from twicc.git import GitError, get_current_branch, get_git_log
@@ -596,6 +600,67 @@ def git_log(request, project_id, session_id):
 
     if current_branch:
         result["current_branch"] = current_branch
+    return JsonResponse(result)
+
+
+def _resolve_session_git_directory(project_id, session_id):
+    """Resolve the git directory for a session.
+
+    Resolution order:
+    1. Session git_directory (from tool_use analysis), if directory still exists
+    2. Project git_root (resolved from project directory walking up)
+
+    Returns the git_directory path or raises Http404.
+    """
+    try:
+        session = Session.objects.get(id=session_id, project_id=project_id)
+    except Session.DoesNotExist:
+        raise Http404("Session not found")
+
+    # Only regular sessions (not subagents)
+    if session.parent_session_id is not None:
+        raise Http404("Session not found")
+
+    if session.git_directory and os.path.isdir(session.git_directory):
+        return session.git_directory
+
+    # Fallback: use project.git_root
+    try:
+        project = Project.objects.get(id=project_id)
+    except Project.DoesNotExist:
+        raise Http404("Project not found")
+
+    if project.git_root and os.path.isdir(project.git_root):
+        return project.git_root
+
+    raise Http404("No git repository found")
+
+
+def git_commit_files(request, project_id, session_id, commit_hash):
+    """GET /api/projects/<id>/sessions/<session_id>/git-commit-files/<commit_hash>/
+
+    Returns stats and a file tree for the files changed by a single commit.
+
+    Response:
+        {
+            "stats": { "modified": 3, "added": 1, "deleted": 0 },
+            "tree": {
+                "name": "",
+                "type": "directory",
+                "loaded": true,
+                "children": [...]
+            }
+        }
+    """
+    from twicc.git import GitError, get_commit_files
+
+    git_directory = _resolve_session_git_directory(project_id, session_id)
+
+    try:
+        result = get_commit_files(git_directory, commit_hash)
+    except GitError as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
     return JsonResponse(result)
 
 

@@ -8,6 +8,7 @@ import {
     GitLogTable,
     GitLogTags,
 } from './GitLog'
+import GitPanelHeader from './GitPanelHeader.vue'
 
 const props = defineProps({
     projectId: {
@@ -36,8 +37,77 @@ const error = ref(null)
 const entries = ref([])
 const currentBranch = ref('')
 const headCommitHash = ref('')
-const indexStatus = ref(null)
 const hasMore = ref(false)
+
+/**
+ * Index changed files data from the git-log response.
+ * Shape: { stats: { modified, added, deleted }, tree: { name, type, loaded, children } }
+ * or null if no changes.
+ */
+const indexFilesData = ref(null)
+
+/** Counts from index — passed to GitLog's indexStatus prop. */
+const indexStatus = computed(() => indexFilesData.value?.stats ?? null)
+
+// ---------------------------------------------------------------------------
+// Git log overlay toggle & commit selection
+// ---------------------------------------------------------------------------
+
+const gitLogOpen = ref(false)
+const selectedCommit = ref(null)
+
+/**
+ * Commit changed files data fetched from git-commit-files endpoint.
+ * Shape: { stats: { modified, added, deleted }, tree: { name, type, loaded, children } }
+ */
+const commitFilesData = ref(null)
+const commitFilesLoading = ref(false)
+
+/** Stats for the header: commit-specific when a commit is selected, index otherwise. */
+const headerStats = computed(() => {
+    if (!selectedCommit.value || selectedCommit.value.hash === 'index') {
+        return indexFilesData.value?.stats ?? null
+    }
+    return commitFilesData.value?.stats ?? null
+})
+
+function toggleGitLog() {
+    gitLogOpen.value = !gitLogOpen.value
+}
+
+function onCommitSelected(commit) {
+    selectedCommit.value = commit || null
+    if (commit) {
+        gitLogOpen.value = false
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fetch commit files when a commit is selected
+// ---------------------------------------------------------------------------
+
+watch(selectedCommit, async (commit) => {
+    // Reset data
+    commitFilesData.value = null
+
+    if (!commit || commit.hash === 'index') {
+        return
+    }
+
+    commitFilesLoading.value = true
+    try {
+        const url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-commit-files/${commit.hash}/`
+        const res = await apiFetch(url)
+
+        if (res.ok) {
+            commitFilesData.value = await res.json()
+        }
+    } catch {
+        // Silently ignore — header will just not show stats
+    } finally {
+        commitFilesLoading.value = false
+    }
+})
 
 // ---------------------------------------------------------------------------
 // Theme — follow app-wide effective theme
@@ -75,7 +145,7 @@ async function fetchGitLog() {
         entries.value = data.entries || []
         currentBranch.value = data.current_branch || ''
         headCommitHash.value = data.head_commit_hash || ''
-        indexStatus.value = data.index_status || null
+        indexFilesData.value = data.index_files || null
         hasMore.value = data.has_more || false
     } catch (e) {
         error.value = 'Failed to load git history'
@@ -132,37 +202,50 @@ watch(
             <span class="panel-placeholder">No commits found</span>
         </div>
 
-        <!-- GitLog visualization -->
+        <!-- Main content: header + git log overlay -->
         <template v-else-if="entries.length > 0">
-            <div v-if="hasMore" class="has-more-banner">
-                <wa-icon name="circle-info"></wa-icon>
-                Only the last 200 commits are shown.
-            </div>
-            <div class="gitlog-container">
-                <GitLog
-                    :entries="entries"
-                    :current-branch="currentBranch"
-                    :head-commit-hash="headCommitHash"
-                    :index-status="indexStatus"
-                    :theme="themeMode"
-                    :colours="colours"
-                    :show-headers="false"
-                    :node-size=10
-                    :row-height=28
-                >
-                    <template #tags>
-                        <GitLogTags />
-                    </template>
-                    <template #graph>
-                        <GitLogGraphHTMLGrid
-                            :show-commit-node-tooltips="true"
-                            :show-commit-node-hashes="false"
-                        />
-                    </template>
-                    <template #table>
-                        <GitLogTable timestamp-format="YYYY-MM-DD HH:mm" />
-                    </template>
-                </GitLog>
+            <!-- Header with commit selector -->
+            <GitPanelHeader
+                :selected-commit="selectedCommit"
+                :stats="headerStats"
+                :stats-loading="commitFilesLoading"
+                :git-log-open="gitLogOpen"
+                @toggle-git-log="toggleGitLog"
+            />
+            <wa-divider></wa-divider>
+
+            <!-- Content area (position: relative so overlay can cover it) -->
+            <div class="git-panel-content">
+                <!-- Future: split panel with file list on right and Monaco editor on left -->
+
+                <!-- Git log overlay (absolute, shown when chevron is clicked) -->
+                <div v-if="gitLogOpen" class="gitlog-overlay">
+                    <GitLog
+                        :entries="entries"
+                        :current-branch="currentBranch"
+                        :head-commit-hash="headCommitHash"
+                        :index-status="indexStatus"
+                        :theme="themeMode"
+                        :colours="colours"
+                        :show-headers="false"
+                        :node-size=10
+                        :row-height=28
+                        :on-select-commit="onCommitSelected"
+                    >
+                        <template #tags>
+                            <GitLogTags />
+                        </template>
+                        <template #graph>
+                            <GitLogGraphHTMLGrid
+                                :show-commit-node-tooltips="true"
+                                :show-commit-node-hashes="false"
+                            />
+                        </template>
+                        <template #table>
+                            <GitLogTable timestamp-format="YYYY-MM-DD HH:mm" />
+                        </template>
+                    </GitLog>
+                </div>
             </div>
         </template>
     </div>
@@ -173,6 +256,7 @@ watch(
     height: 100%;
     display: flex;
     flex-direction: column;
+    position: relative;
 }
 
 .panel-state {
@@ -198,20 +282,31 @@ watch(
     text-align: center;
 }
 
-.has-more-banner {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-2xs);
-    padding: var(--wa-space-2xs) var(--wa-space-s);
-    font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-quiet);
-    border-bottom: 1px solid var(--wa-color-surface-border);
+
+.git-panel-header {
+    & + wa-divider {
+        flex-shrink: 0;
+        --width: 4px;
+        --spacing: 0;
+    }
 }
 
-.gitlog-container {
+/* ----- Content area ----- */
+
+.git-panel-content {
     flex: 1;
     min-height: 0;
+    position: relative;
     overflow: hidden;
+}
+
+/* ----- Git log overlay (absolute over content) ----- */
+
+.gitlog-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    overflow: hidden;
+    background: var(--wa-color-surface-default);
 }
 </style>
