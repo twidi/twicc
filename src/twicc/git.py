@@ -1,9 +1,13 @@
 """Git operations for the API.
 
-Provides git log parsing for the GitLog visualization component.
+Provides git log parsing for the GitLog visualization component,
+and file diff retrieval for the Monaco diff editor.
 """
 
+import os
 import subprocess
+
+from twicc.file_content import MAX_FILE_SIZE
 
 # Maximum number of entries returned to the frontend.
 GIT_LOG_MAX_ENTRIES = 200
@@ -125,7 +129,7 @@ def _compute_stats(files: list[dict]) -> dict:
         status = f.get("status") or f.get("staged_status") or f.get("unstaged_status")
         if status in ("modified", "renamed"):
             modified += 1
-        elif status == "added":
+        elif status in ("added", "untracked"):
             added += 1
         elif status == "deleted":
             deleted += 1
@@ -262,7 +266,7 @@ def _parse_index_files(git_directory: str) -> list[dict] | None:
     """
     try:
         result = subprocess.run(
-            ["git", "-C", git_directory, "status", "--porcelain"],
+            ["git", "-C", git_directory, "status", "--porcelain", "-uall"],
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT,
@@ -291,7 +295,7 @@ def _parse_index_files(git_directory: str) -> list[dict] | None:
             files.append({
                 "path": path,
                 "staged_status": None,
-                "unstaged_status": "added",
+                "unstaged_status": "untracked",
             })
             continue
 
@@ -499,6 +503,133 @@ def get_git_log(git_directory: str) -> dict:
         "head_commit_hash": _get_head_hash(git_directory),
         "index_files": get_index_files(git_directory),
     }
+
+
+# ---------------------------------------------------------------------------
+# File diff retrieval
+# ---------------------------------------------------------------------------
+
+
+def _git_show(git_directory: str, ref_and_path: str) -> tuple[str | None, bool]:
+    """Run ``git show <ref>:<path>`` and return the file content.
+
+    Args:
+        git_directory: Absolute path to the git repository root.
+        ref_and_path: A git ref + path expression, e.g. ``"HEAD:src/main.py"``
+            or ``"abc1234^:src/main.py"``.
+
+    Returns:
+        A tuple ``(content, is_binary)``:
+        - ``(content_str, False)`` for a normal text file.
+        - ``(None, True)`` if the file is binary.
+        - ``(None, False)`` if the file does not exist at the given ref
+          or the git command fails for another reason.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", git_directory, "show", ref_and_path],
+            capture_output=True,
+            timeout=_GIT_TIMEOUT,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None, False
+
+    if result.returncode != 0:
+        return None, False
+
+    # Check size limit
+    if len(result.stdout) > MAX_FILE_SIZE:
+        return None, False
+
+    # Try UTF-8 decode; binary files will fail
+    try:
+        content = result.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, True
+
+    return content, False
+
+
+def get_index_file_diff(git_directory: str, file_path: str) -> dict:
+    """Return the original (HEAD) and modified (working tree) content of a file.
+
+    Used to display a diff of uncommitted changes in the Monaco diff editor.
+
+    Args:
+        git_directory: Absolute path to the git repository root.
+        file_path: File path relative to the git root.
+
+    Returns:
+        A dict with keys:
+        - ``original``: file content at HEAD, or None if the file is new.
+        - ``modified``: file content on disk, or None if the file was deleted.
+        - ``binary``: True if either version is binary.
+        - ``error``: error message string, or None.
+    """
+    # Original: content at HEAD
+    original, original_binary = _git_show(git_directory, f"HEAD:{file_path}")
+
+    if original_binary:
+        return {"original": None, "modified": None, "binary": True, "error": None}
+
+    # Modified: current content on disk
+    abs_path = os.path.join(git_directory, file_path)
+
+    if not os.path.isfile(abs_path):
+        # File was deleted from disk (but existed in HEAD)
+        return {"original": original, "modified": None, "binary": False, "error": None}
+
+    try:
+        size = os.path.getsize(abs_path)
+    except OSError:
+        return {"original": None, "modified": None, "binary": False, "error": "Cannot read file"}
+
+    if size > MAX_FILE_SIZE:
+        return {"original": None, "modified": None, "binary": False, "error": "File too large"}
+
+    try:
+        with open(abs_path, "r", encoding="utf-8") as f:
+            modified = f.read()
+    except UnicodeDecodeError:
+        return {"original": None, "modified": None, "binary": True, "error": None}
+    except OSError:
+        return {"original": None, "modified": None, "binary": False, "error": "Cannot read file"}
+
+    return {"original": original, "modified": modified, "binary": False, "error": None}
+
+
+def get_commit_file_diff(git_directory: str, commit_hash: str, file_path: str) -> dict:
+    """Return the original (parent) and modified (commit) content of a file.
+
+    Used to display a diff of a specific commit in the Monaco diff editor.
+
+    Args:
+        git_directory: Absolute path to the git repository root.
+        commit_hash: The commit hash to diff.
+        file_path: File path relative to the git root.
+
+    Returns:
+        A dict with keys:
+        - ``original``: file content at the parent commit, or None if the file
+          was added in this commit (or it's a root commit).
+        - ``modified``: file content at this commit, or None if the file was
+          deleted in this commit.
+        - ``binary``: True if either version is binary.
+        - ``error``: error message string, or None.
+    """
+    # Original: content at parent commit
+    original, original_binary = _git_show(git_directory, f"{commit_hash}^:{file_path}")
+
+    if original_binary:
+        return {"original": None, "modified": None, "binary": True, "error": None}
+
+    # Modified: content at this commit
+    modified, modified_binary = _git_show(git_directory, f"{commit_hash}:{file_path}")
+
+    if modified_binary:
+        return {"original": None, "modified": None, "binary": True, "error": None}
+
+    return {"original": original, "modified": modified, "binary": False, "error": None}
 
 
 class GitError(Exception):

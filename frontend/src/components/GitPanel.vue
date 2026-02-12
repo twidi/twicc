@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onActivated, onDeactivated } from 'vue'
+import { ref, computed, watch, nextTick, onActivated, onDeactivated } from 'vue'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
 import {
@@ -10,6 +10,7 @@ import {
 } from './GitLog'
 import GitPanelHeader from './GitPanelHeader.vue'
 import FileTreePanel from './FileTreePanel.vue'
+import FilePane from './FilePane.vue'
 import { searchTreeFiles } from '../utils/treeSearch'
 
 const props = defineProps({
@@ -20,6 +21,10 @@ const props = defineProps({
     sessionId: {
         type: String,
         required: true,
+    },
+    gitDirectory: {
+        type: String,
+        default: null,
     },
     active: {
         type: Boolean,
@@ -111,8 +116,35 @@ const currentFilesData = computed(() => {
     return commitFilesData.value
 })
 
-/** The tree to display in the file tree panel. */
+/** The raw tree from the API (before filtering). */
 const currentTree = computed(() => currentFilesData.value?.tree ?? null)
+
+// --- Display options ---
+const showUntracked = ref(true)
+
+/**
+ * Recursively filter out untracked files from a tree.
+ * Returns a new tree without untracked files, or null if the tree is empty after filtering.
+ */
+function filterUntracked(node) {
+    if (!node) return null
+    if (node.type === 'file') {
+        return node.unstaged_status === 'untracked' ? null : node
+    }
+    if (!node.children) return node
+    const children = node.children
+        .map(filterUntracked)
+        .filter(Boolean)
+    if (children.length === 0) return null
+    return { ...node, children }
+}
+
+/** The tree to display in the file tree panel (with optional untracked filtering). */
+const displayTree = computed(() => {
+    const tree = currentTree.value
+    if (!tree || showUntracked.value) return tree
+    return filterUntracked(tree)
+})
 
 /** Whether we are viewing the index (uncommitted changes) vs a specific commit. */
 const isViewingIndex = computed(() => {
@@ -161,15 +193,50 @@ const selectedFile = computed(() => fileTreePanelRef.value?.selectedFile ?? null
  * Search callback: filters the current tree client-side.
  * Uses the same fuzzy/exact search logic as the backend.
  */
+function handleOptionsSelect(value) {
+    if (value === 'show-untracked') {
+        showUntracked.value = !showUntracked.value
+    }
+}
+
 function doSearch(query) {
-    const tree = currentTree.value
+    const tree = displayTree.value
     if (!tree) return null
     return searchTreeFiles(tree, query)
 }
 
-// Re-run search when the tree data changes (e.g. switching between index and commit)
-watch(currentTree, () => {
-    fileTreePanelRef.value?.rerunSearch()
+/**
+ * Find the first file node in a tree (depth-first).
+ * Returns the full path built by joining ancestor names, matching
+ * the path format used by FileTree (rootPath/dir/dir/file).
+ */
+function findFirstFile(node, parentPath = '') {
+    if (!node) return null
+    const currentPath = parentPath ? `${parentPath}/${node.name}` : node.name
+    if (node.type === 'file') return currentPath
+    if (node.children) {
+        for (const child of node.children) {
+            const found = findFirstFile(child, currentPath)
+            if (found) return found
+        }
+    }
+    return null
+}
+
+// Re-run search and auto-select first file when the tree data changes
+// (e.g. switching between index and commit)
+watch(displayTree, (tree) => {
+    fileTreePanelRef.value?.clearSearch()
+
+    // Auto-select first file in the new tree
+    if (tree) {
+        const firstFilePath = findFirstFile(tree)
+        if (firstFilePath) {
+            nextTick(() => {
+                fileTreePanelRef.value?.onFileSelect(firstFilePath)
+            })
+        }
+    }
 })
 
 /**
@@ -190,7 +257,68 @@ async function refreshIndexFiles() {
     } finally {
         commitFilesLoading.value = false
     }
+
+    // Re-fetch the diff for the currently selected file (if any)
+    if (selectedFile.value) {
+        fetchDiff(selectedFile.value)
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Diff data (fetched when a file is selected)
+// ---------------------------------------------------------------------------
+
+const diffData = ref(null)        // { original, modified, binary, error }
+const diffLoading = ref(false)
+const diffError = ref(null)
+
+/** Absolute file path for the selected file (needed by FilePane for language detection and save). */
+const selectedFilePath = computed(() => {
+    if (!selectedFile.value) return null
+    if (props.gitDirectory) {
+        return `${props.gitDirectory}/${selectedFile.value}`
+    }
+    return selectedFile.value
+})
+
+/** Fetch diff data for a file. */
+async function fetchDiff(file) {
+    if (!file) {
+        diffData.value = null
+        return
+    }
+
+    diffLoading.value = true
+    diffError.value = null
+
+    try {
+        let url
+        if (isViewingIndex.value) {
+            url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-index-file-diff/?path=${encodeURIComponent(file)}`
+        } else {
+            url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-commit-file-diff/${selectedCommit.value.hash}/?path=${encodeURIComponent(file)}`
+        }
+
+        const res = await apiFetch(url)
+        const data = await res.json()
+
+        if (!res.ok || data.error) {
+            diffError.value = data.error || 'Failed to load diff'
+            return
+        }
+
+        diffData.value = data
+    } catch {
+        diffError.value = 'Network error'
+    } finally {
+        diffLoading.value = false
+    }
+}
+
+// Fetch diff when a file is selected
+watch(selectedFile, (file) => {
+    fetchDiff(file)
+})
 
 // ---------------------------------------------------------------------------
 // Theme — follow app-wide effective theme
@@ -386,9 +514,9 @@ function handleTreeReposition(event) {
                     <div slot="start" class="git-tree-slot">
                         <FileTreePanel
                             ref="fileTreePanelRef"
-                            :tree="currentTree"
+                            :tree="displayTree"
                             :loading="commitFilesLoading"
-                            :root-path="currentTree?.name"
+                            :root-path="displayTree?.name"
                             :search-fn="doSearch"
                             :lazy-load-fn="null"
                             :project-id="projectId"
@@ -397,15 +525,55 @@ function handleTreeReposition(event) {
                             :active="active"
                             mode="git"
                             @refresh="refreshIndexFiles"
-                        />
+                            @option-select="handleOptionsSelect"
+                        >
+                            <template #options-before>
+                                <wa-dropdown-item
+                                    v-if="isViewingIndex"
+                                    type="checkbox"
+                                    value="show-untracked"
+                                    :checked="showUntracked"
+                                >
+                                    Show untracked files
+                                </wa-dropdown-item>
+                            </template>
+                        </FileTreePanel>
                     </div>
 
-                    <!-- File path display (right panel — Monaco editor later) -->
+                    <!-- Diff viewer (right panel) -->
                     <div slot="end" class="git-content-panel">
-                        <div v-if="selectedFile" class="selected-file-path">
-                            {{ selectedFile }}
+                        <!-- Loading diff -->
+                        <div v-if="diffLoading" class="panel-placeholder">
+                            <wa-spinner></wa-spinner>
                         </div>
-                        <div v-else class="panel-placeholder">
+
+                        <!-- Diff error -->
+                        <div v-else-if="diffError" class="panel-placeholder">
+                            <wa-callout variant="danger" size="small">
+                                {{ diffError }}
+                            </wa-callout>
+                        </div>
+
+                        <!-- Binary file -->
+                        <div v-else-if="diffData?.binary" class="panel-placeholder">
+                            Binary file cannot be diffed
+                        </div>
+
+                        <!-- Diff viewer (Monaco diff editor via FilePane) -->
+                        <FilePane
+                            v-else-if="selectedFile && diffData"
+                            :project-id="projectId"
+                            :session-id="sessionId"
+                            :file-path="selectedFilePath"
+                            diff-mode
+                            :original-content="diffData.original"
+                            :modified-content="diffData.modified"
+                            :diff-read-only="!isViewingIndex"
+                            @revert="fetchDiff(selectedFile)"
+                        />
+
+                        <!-- No file selected -->
+                        <div v-else-if="!selectedFile" class="panel-placeholder">
                             Select a file
                         </div>
                     </div>
@@ -565,14 +733,6 @@ function handleTreeReposition(event) {
     display: flex;
     flex-direction: column;
     position: relative;
-}
-
-.selected-file-path {
-    padding: var(--wa-space-m);
-    font-family: var(--wa-font-family-code);
-    font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-quiet);
-    word-break: break-all;
 }
 
 /* ----- Git log overlay (absolute over content) ----- */

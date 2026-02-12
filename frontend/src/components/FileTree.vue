@@ -240,11 +240,12 @@ const isSelected = computed(() => {
  * Map a git status string to its badge letter and CSS class.
  */
 const STATUS_MAP = {
-    modified: { letter: 'M', cls: 'git-badge-modified' },
-    added:    { letter: 'A', cls: 'git-badge-added' },
-    deleted:  { letter: 'D', cls: 'git-badge-deleted' },
-    renamed:  { letter: 'R', cls: 'git-badge-renamed' },
-    copied:   { letter: 'C', cls: 'git-badge-added' },
+    modified:  { letter: 'M', cls: 'git-badge-modified' },
+    added:     { letter: 'A', cls: 'git-badge-added' },
+    deleted:   { letter: 'D', cls: 'git-badge-deleted' },
+    renamed:   { letter: 'R', cls: 'git-badge-renamed' },
+    copied:    { letter: 'C', cls: 'git-badge-added' },
+    untracked: { letter: 'U', cls: 'git-badge-untracked' },
 }
 
 /**
@@ -442,10 +443,8 @@ const gitBadge = computed(() => {
     background-color: var(--node-bg-color);
     padding-block: .15rem;
     padding-inline: .5rem .25rem;
-    &.git-badge-unstaged::before {
-        content: 'u';
-        margin-inline-end: .2rem;
-        font-weight: normal;
+    &.git-badge-unstaged {
+        font-style: italic;
     }
 }
 
@@ -463,6 +462,10 @@ const gitBadge = computed(() => {
 
 .git-badge-renamed {
     color: #6e56cf;
+}
+
+.git-badge-untracked {
+    color: #7c8594;
 }
 
 </style>

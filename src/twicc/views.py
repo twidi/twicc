@@ -685,6 +685,70 @@ def git_commit_files(request, project_id, session_id, commit_hash):
     return JsonResponse(result)
 
 
+def git_index_file_diff(request, project_id, session_id):
+    """GET /api/projects/<id>/sessions/<session_id>/git-index-file-diff/
+
+    Returns the original (HEAD) and modified (working tree) content of a file
+    for display in the Monaco diff editor.
+
+    Query params:
+        path: File path relative to the git root.
+
+    Response:
+        {
+            "original": "...",   # content at HEAD (null if new file)
+            "modified": "...",   # content on disk (null if deleted)
+            "binary": false,
+            "error": null
+        }
+    """
+    from twicc.git import get_index_file_diff
+
+    file_path = request.GET.get("path")
+    if not file_path:
+        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+
+    git_directory = _resolve_session_git_directory(project_id, session_id)
+    result = get_index_file_diff(git_directory, file_path)
+
+    if result.get("error"):
+        return JsonResponse(result, status=500)
+
+    return JsonResponse(result)
+
+
+def git_commit_file_diff(request, project_id, session_id, commit_hash):
+    """GET /api/projects/<id>/sessions/<session_id>/git-commit-file-diff/<commit_hash>/
+
+    Returns the original (parent commit) and modified (commit) content of a file
+    for display in the Monaco diff editor.
+
+    Query params:
+        path: File path relative to the git root.
+
+    Response:
+        {
+            "original": "...",   # content at parent commit (null if added)
+            "modified": "...",   # content at this commit (null if deleted)
+            "binary": false,
+            "error": null
+        }
+    """
+    from twicc.git import get_commit_file_diff
+
+    file_path = request.GET.get("path")
+    if not file_path:
+        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+
+    git_directory = _resolve_session_git_directory(project_id, session_id)
+    result = get_commit_file_diff(git_directory, commit_hash, file_path)
+
+    if result.get("error"):
+        return JsonResponse(result, status=500)
+
+    return JsonResponse(result)
+
+
 def spa_index(request):
     """Catch-all for Vue Router - serves index.html."""
     index_path = settings.BASE_DIR / "frontend" / "dist" / "index.html"

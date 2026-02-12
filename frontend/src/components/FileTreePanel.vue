@@ -716,6 +716,7 @@ defineExpose({
     clearSearch,
     focusSearchInput,
     rerunSearch,
+    onFileSelect,
     selectedAbsPath,
     selectedFile,
     autoOpen,
