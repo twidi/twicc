@@ -600,9 +600,9 @@ function handleTreeReposition(event) {
                             @revert="fetchDiff(selectedFile)"
                         />
 
-                        <!-- No file selected -->
+                        <!-- No file selected / no changes -->
                         <div v-else-if="!selectedFile" class="panel-placeholder">
-                            Select a file
+                            {{ !displayTree ? 'No changes' : 'Select a file' }}
                         </div>
                     </div>
                 </wa-split-panel>

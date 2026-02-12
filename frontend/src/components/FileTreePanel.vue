@@ -800,7 +800,7 @@ defineExpose({
             {{ error }}
         </div>
         <div v-else-if="!isSearching && !rootPath" class="panel-placeholder">
-            No directory
+            {{ mode === 'git' ? 'No changes' : 'No directory' }}
         </div>
 
         <!-- Tree (same structure for both browse and search) -->
