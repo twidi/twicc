@@ -49,6 +49,7 @@ const autoUnpinOnArchiveSwitch = ref(null)
 const titleGenerationSwitch = ref(null)
 const titleSystemPromptTextarea = ref(null)
 const tmuxSwitch = ref(null)
+const diffSideBySideSwitch = ref(null)
 
 // Settings from store
 const baseDisplayMode = computed(() => store.getBaseDisplayMode)
@@ -63,6 +64,7 @@ const autoUnpinOnArchive = computed(() => store.isAutoUnpinOnArchive)
 const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 const terminalUseTmux = computed(() => store.isTerminalUseTmux)
+const diffSideBySide = computed(() => store.isDiffSideBySide)
 
 // Check if the current prompt is the default
 const isDefaultPrompt = computed(() => titleSystemPrompt.value === DEFAULT_TITLE_SYSTEM_PROMPT)
@@ -115,11 +117,14 @@ function syncSwitchState() {
         if (tmuxSwitch.value && tmuxSwitch.value.checked !== terminalUseTmux.value) {
             tmuxSwitch.value.checked = terminalUseTmux.value
         }
+        if (diffSideBySideSwitch.value && diffSideBySideSwitch.value.checked !== diffSideBySide.value) {
+            diffSideBySideSwitch.value.checked = diffSideBySide.value
+        }
     })
 }
 
 // Watch for store changes and sync switches
-watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux], syncSwitchState, { immediate: true })
+watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide], syncSwitchState, { immediate: true })
 
 /**
  * Toggle between normal and simplified mode.
@@ -204,6 +209,13 @@ function onTitleSystemPromptChange(event) {
  */
 function onTmuxChange(event) {
     store.setTerminalUseTmux(event.target.checked)
+}
+
+/**
+ * Toggle diff side-by-side default.
+ */
+function onDiffSideBySideChange(event) {
+    store.setDiffSideBySide(event.target.checked)
 }
 
 /**
@@ -377,6 +389,20 @@ function onPopoverShow() {
                                 >Reset to default</wa-button>
                             </div>
                         </div>
+                    </div>
+                </section>
+
+                <!-- Editor Section -->
+                <section class="settings-section">
+                    <h3 class="settings-section-title">Editor</h3>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Default diff layout</label>
+                        <wa-switch
+                            ref="diffSideBySideSwitch"
+                            @change="onDiffSideBySideChange"
+                            size="small"
+                        >Side by side</wa-switch>
+                        <span class="setting-group-hint">Inactive if the screen is too narrow.</span>
                     </div>
                 </section>
 

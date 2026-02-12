@@ -28,6 +28,7 @@ const SETTINGS_SCHEMA = {
     maxCachedSessions: DEFAULT_MAX_CACHED_SESSIONS,
     autoUnpinOnArchive: true,
     terminalUseTmux: false,
+    diffSideBySide: true,
     // Not persisted - computed at runtime based on themeMode and system preference
     _effectiveTheme: null,
 }
@@ -51,6 +52,7 @@ const SETTINGS_VALIDATORS = {
     maxCachedSessions: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 50,
     autoUnpinOnArchive: (v) => typeof v === 'boolean',
     terminalUseTmux: (v) => typeof v === 'boolean',
+    diffSideBySide: (v) => typeof v === 'boolean',
 }
 
 /**
@@ -123,6 +125,7 @@ export const useSettingsStore = defineStore('settings', {
         getMaxCachedSessions: (state) => state.maxCachedSessions,
         isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
         isTerminalUseTmux: (state) => state.terminalUseTmux,
+        isDiffSideBySide: (state) => state.diffSideBySide,
         /**
          * Effective theme: always returns 'light' or 'dark', never 'system'.
          * Takes into account the system preference when themeMode is 'system'.
@@ -271,6 +274,16 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set diff side-by-side default mode.
+         * @param {boolean} enabled
+         */
+        setDiffSideBySide(enabled) {
+            if (SETTINGS_VALIDATORS.diffSideBySide(enabled)) {
+                this.diffSideBySide = enabled
+            }
+        },
+
+        /**
          * Update the effective theme based on themeMode and system preference.
          * Called internally when themeMode changes or system preference changes.
          */
@@ -321,6 +334,7 @@ export function initSettings() {
             maxCachedSessions: store.maxCachedSessions,
             autoUnpinOnArchive: store.autoUnpinOnArchive,
             terminalUseTmux: store.terminalUseTmux,
+            diffSideBySide: store.diffSideBySide,
         }),
         (newSettings) => {
             saveSettings(newSettings)

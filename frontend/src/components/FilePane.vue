@@ -129,7 +129,8 @@ function goToNextDiff() {
 }
 
 // --- Diff layout state ---
-const sideBySide = ref(true)  // true = side-by-side, false = inline
+// Initialize from settings store; local ref allows per-session override via the toggle.
+const sideBySide = ref(settingsStore.isDiffSideBySide)
 
 // Monaco switches to inline when the diff editor width <= 900px
 // (renderSideBySideInlineBreakpoint default). We track the editor area width
@@ -577,7 +578,7 @@ function formatSize(bytes) {
                     v-show="canSideBySide"
                     size="small"
                     class="diff-layout-toggle"
-                    @change="sideBySide = $event.target.checked"
+                    @change="sideBySide = $event.target.checked; settingsStore.setDiffSideBySide($event.target.checked)"
                 >Side by side</wa-switch>
             </div>
             <div class="header-right">
