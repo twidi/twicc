@@ -188,8 +188,9 @@ const cssVars = computed(() => ({
   }
 
   .tags {
-    flex-grow: 1;
-    max-width: 10rem;
+    flex-grow: 0;
+    flex-shrink: 0;
+    width: 10rem;
       .title {
           margin-left: .5rem;
       }
