@@ -35,6 +35,7 @@ const settingsStore = useSettingsStore()
 
 const started = ref(false)
 const loading = ref(false)
+const refreshing = ref(false)
 const error = ref(null)
 const entries = ref([])
 const currentBranch = ref('')
@@ -50,6 +51,20 @@ const indexFilesData = ref(null)
 
 /** Counts from index — passed to GitLog's indexStatus prop. */
 const indexStatus = computed(() => indexFilesData.value?.stats ?? null)
+
+// ---------------------------------------------------------------------------
+// Git log filter
+// ---------------------------------------------------------------------------
+
+const filterText = ref('')
+
+const commitFilter = computed(() => {
+    const text = filterText.value.trim().toLowerCase()
+    if (!text) return undefined
+    return (commits) => commits.filter((c) =>
+        c.message.toLowerCase().includes(text)
+    )
+})
 
 // ---------------------------------------------------------------------------
 // Git log overlay toggle & commit selection
@@ -222,6 +237,35 @@ async function fetchGitLog() {
     }
 }
 
+/**
+ * Refresh the git log (called from the overlay header button).
+ * Unlike the initial fetchGitLog, this sets `refreshing` instead of `loading`
+ * so the overlay stays visible with its current content while refreshing.
+ */
+async function refreshGitLog() {
+    if (refreshing.value) return
+    refreshing.value = true
+
+    try {
+        const res = await apiFetch(apiUrl.value)
+
+        if (!res.ok) {
+            return
+        }
+
+        const data = await res.json()
+        entries.value = data.entries || []
+        currentBranch.value = data.current_branch || ''
+        headCommitHash.value = data.head_commit_hash || ''
+        indexFilesData.value = data.index_files || null
+        hasMore.value = data.has_more || false
+    } catch {
+        // Silently ignore — existing data stays visible
+    } finally {
+        refreshing.value = false
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Lazy init: fetch only when the tab becomes active for the first time
 // ---------------------------------------------------------------------------
@@ -369,6 +413,30 @@ function handleTreeReposition(event) {
 
                 <!-- Git log overlay (absolute, shown when chevron is clicked) -->
                 <div v-if="gitLogOpen" class="gitlog-overlay">
+                    <!-- Overlay header -->
+                    <div class="gitlog-overlay-header">
+                        <wa-input
+                            v-model="filterText"
+                            class="filter-input"
+                            size="small"
+                            placeholder="Filter commits..."
+                            clearable
+                        >
+                            <wa-icon slot="prefix" name="magnifying-glass"></wa-icon>
+                        </wa-input>
+
+                        <wa-button
+                            class="refresh-button"
+                            variant="neutral"
+                            appearance="filled-outlined"
+                            size="small"
+                            :loading="refreshing"
+                            @click="refreshGitLog"
+                        >
+                            <wa-icon name="arrow-rotate-right"></wa-icon>
+                        </wa-button>
+                    </div>
+
                     <GitLog
                         :entries="entries"
                         :current-branch="currentBranch"
@@ -376,6 +444,7 @@ function handleTreeReposition(event) {
                         :index-status="indexStatus"
                         :theme="themeMode"
                         :colours="colours"
+                        :filter="commitFilter"
                         :show-headers="false"
                         :node-size=10
                         :row-height=28
@@ -514,5 +583,37 @@ function handleTreeReposition(event) {
     z-index: 1;
     overflow: hidden;
     background: var(--wa-color-surface-default);
+    display: flex;
+    flex-direction: column;
+
+    /* Let the GitLog component fill the remaining space below the header */
+    :deep(> .container) {
+        flex: 1;
+        min-height: 0;
+    }
+}
+
+/* Overlay header */
+
+.gitlog-overlay-header {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    flex-shrink: 0;
+    padding: var(--wa-space-3xs) var(--wa-space-xs);
+    border-bottom: 1px solid var(--wa-color-surface-border);
+}
+
+.filter-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.refresh-button {
+    flex-shrink: 0;
+
+    &::part(base) {
+        padding: var(--wa-space-3xs) var(--wa-space-2xs);
+    }
 }
 </style>
