@@ -88,7 +88,7 @@ const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 const autoHideEnabled = computed(() => settingsStore.isAutoHideHeaderFooterEnabled)
 
 // Threshold for small viewport detection (in pixels)
-const SMALL_VIEWPORT_HEIGHT = 800
+const SMALL_VIEWPORT_HEIGHT = 900
 
 // Track if we're on a small viewport
 const isSmallViewport = ref(false)
@@ -190,6 +190,19 @@ const activeTabId = computed(() => {
     return 'main'
 })
 
+// Human-readable label for the active tab (used in compact header)
+const activeTabLabel = computed(() => {
+    const tabId = activeTabId.value
+    if (tabId === 'main') return 'Chat'
+    if (tabId === 'files') return 'Files'
+    if (tabId === 'git') return 'Git'
+    if (tabId === 'terminal') return 'Terminal'
+    if (tabId.startsWith('agent-')) {
+        return 'Agent';
+    }
+    return null
+})
+
 // Redirect away from git tab if the session has no git repo
 // (handles direct URL navigation and dynamic changes)
 // Guards:
@@ -211,13 +224,11 @@ watch([activeTabId, hasGitRepo], ([tabId, hasGit]) => {
 }, { immediate: true })
 
 /**
- * Handle tab change event from wa-tab-group.
- * Updates the URL to reflect the new active tab.
+ * Navigate to a specific tab by panel name.
+ * Used both by the wa-tab-group event handler and compact-mode tab buttons.
+ * @param {string} panel - The panel name (e.g., 'main', 'agent-xxx', 'files', 'git', 'terminal')
  */
-function onTabShow(event) {
-    const panel = event.detail?.name
-    if (!panel) return
-
+function switchToTab(panel) {
     // Ignore if already on this tab (avoid infinite loop)
     if (panel === activeTabId.value) return
 
@@ -251,6 +262,28 @@ function onTabShow(event) {
             }
         })
     }
+}
+
+/**
+ * Navigate to a tab and collapse the compact header overlay.
+ * Used by the compact-mode tab buttons inside the header slot.
+ * @param {string} panel
+ */
+function switchToTabAndCollapse(panel) {
+    switchToTab(panel)
+    if (sessionHeaderRef.value?.isCompactExpanded) {
+        sessionHeaderRef.value.isCompactExpanded = false
+    }
+}
+
+/**
+ * Handle tab change event from wa-tab-group.
+ * Updates the URL to reflect the new active tab.
+ */
+function onTabShow(event) {
+    const panel = event.detail?.name
+    if (!panel) return
+    switchToTab(panel)
 }
 
 /**
@@ -349,7 +382,51 @@ function handleNeedsTitle() {
             :session-id="sessionId"
             mode="session"
             :hidden="effectiveHeaderHidden"
-        />
+            :active-tab-label="activeTabLabel"
+        >
+            <!-- Compact mode: tab navigation inside the header overlay -->
+            <template #compact-extra>
+                <div class="compact-tab-nav">
+                    <wa-button
+                        :appearance="activeTabId === 'main' ? 'outlined' : 'plain'"
+                        :variant="activeTabId === 'main' ? 'brand' : 'neutral'"
+                        size="small"
+                        @click="switchToTabAndCollapse('main')"
+                    >Chat</wa-button>
+
+                    <wa-button
+                        v-for="tab in openSubagentTabs"
+                        :key="tab.id"
+                        :appearance="activeTabId === tab.id ? 'outlined' : 'plain'"
+                        :variant="activeTabId === tab.id ? 'brand' : 'neutral'"
+                        size="small"
+                        @click="switchToTabAndCollapse(tab.id)"
+                    >Agent "{{ getAgentShortId(tab.agentId) }}"</wa-button>
+
+                    <wa-button
+                        :appearance="activeTabId === 'files' ? 'outlined' : 'plain'"
+                        :variant="activeTabId === 'files' ? 'brand' : 'neutral'"
+                        size="small"
+                        @click="switchToTabAndCollapse('files')"
+                    >Files</wa-button>
+
+                    <wa-button
+                        v-if="hasGitRepo"
+                        :appearance="activeTabId === 'git' ? 'outlined' : 'plain'"
+                        :variant="activeTabId === 'git' ? 'brand' : 'neutral'"
+                        size="small"
+                        @click="switchToTabAndCollapse('git')"
+                    >Git</wa-button>
+
+                    <wa-button
+                        :appearance="activeTabId === 'terminal' ? 'outlined' : 'plain'"
+                        :variant="activeTabId === 'terminal' ? 'brand' : 'neutral'"
+                        size="small"
+                        @click="switchToTabAndCollapse('terminal')"
+                    >Terminal</wa-button>
+                </div>
+            </template>
+        </SessionHeader>
 
         <wa-tab-group
             v-if="session"
@@ -598,5 +675,30 @@ wa-tab::part(base) {
     height: 200px;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-l);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Compact mode: tab nav inside header overlay
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Hidden by default on large viewports */
+.compact-tab-nav {
+    display: none;
+}
+
+@media (max-height: 900px) {
+    /* Hide the real tab-group nav in compact mode */
+    .session-tabs::part(nav) {
+        display: none;
+    }
+
+    /* Show the compact tab nav inside the header overlay */
+    .compact-tab-nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--wa-space-2xs);
+        padding-inline: var(--wa-space-m);
+        padding-bottom: var(--wa-space-xs);
+    }
 }
 </style>

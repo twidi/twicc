@@ -25,6 +25,14 @@ const props = defineProps({
     hidden: {
         type: Boolean,
         default: false
+    },
+    /**
+     * Label of the currently active tab (e.g., "Chat", "Files").
+     * Shown in the compact header when collapsed, replacing the action buttons.
+     */
+    activeTabLabel: {
+        type: String,
+        default: null
     }
 })
 
@@ -270,94 +278,100 @@ function handleTogglePin() {
 defineExpose({
     openRenameDialog,
     headerRef,
+    isCompactExpanded,
 })
 </script>
 
 <template>
-    <header ref="headerRef" class="session-header" :class="{ 'auto-hide-hidden': hidden, 'compact-expanded': isCompactExpanded }" :data-session-type="mode" v-if="session">
+    <header ref="headerRef" class="session-header" :class="{ 'auto-hide-hidden': hidden, 'compact-expanded': isCompactExpanded, 'compact-collapsed': !isCompactExpanded }" :data-session-type="mode" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
-            <wa-tag v-if="session.archived" :id="`session-header-${sessionId}-archived-tag`" size="small" variant="neutral" class="archived-tag" @click="handleUnarchive">Archived</wa-tag>
-            <wa-tooltip v-if="tooltipsEnabled && session.archived" :for="`session-header-${sessionId}-archived-tag`">Click to unarchive</wa-tooltip>
-            <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+            <!-- Action buttons group: hidden in compact collapsed mode, replaced by active tab label -->
+            <div class="session-title-actions">
+                <wa-tag v-if="session.archived" :id="`session-header-${sessionId}-archived-tag`" size="small" variant="neutral" class="archived-tag" @click="handleUnarchive">Archived</wa-tag>
+                <wa-tooltip v-if="tooltipsEnabled && session.archived" :for="`session-header-${sessionId}-archived-tag`">Click to unarchive</wa-tooltip>
+                <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
 
-            <!-- Pin/Unpin button (not for drafts) -->
-            <wa-button
-                v-if="!session.draft"
-                :id="`session-header-${sessionId}-pin-button`"
-                :variant="session.pinned ? 'brand' : 'neutral'"
-                appearance="plain"
-                size="small"
-                :class="['pin-button', { 'pin-button--active': session.pinned }]"
-                @click="handleTogglePin"
-            >
-                <wa-icon name="thumbtack" :label="session.pinned ? 'Unpin' : 'Pin'"></wa-icon>
-            </wa-button>
-            <wa-tooltip v-if="tooltipsEnabled && !session.draft" :for="`session-header-${sessionId}-pin-button`">{{ session.pinned ? 'Unpin session' : 'Pin session' }}</wa-tooltip>
+                <!-- Pin/Unpin button (not for drafts) -->
+                <wa-button
+                    v-if="!session.draft"
+                    :id="`session-header-${sessionId}-pin-button`"
+                    :variant="session.pinned ? 'brand' : 'neutral'"
+                    appearance="plain"
+                    size="small"
+                    :class="['pin-button', { 'pin-button--active': session.pinned }]"
+                    @click="handleTogglePin"
+                >
+                    <wa-icon name="thumbtack" :label="session.pinned ? 'Unpin' : 'Pin'"></wa-icon>
+                </wa-button>
+                <wa-tooltip v-if="tooltipsEnabled && !session.draft" :for="`session-header-${sessionId}-pin-button`">{{ session.pinned ? 'Unpin session' : 'Pin session' }}</wa-tooltip>
 
-            <!-- Archive button (not for drafts or already archived) -->
-            <wa-button
-                v-if="!session.archived && !session.draft"
-                :id="`session-header-${sessionId}-archive-button`"
-                variant="neutral"
-                appearance="plain"
-                size="small"
-                class="archive-button"
-                @click="handleArchive"
-            >
-                <wa-icon name="box-archive" label="Archive"></wa-icon>
-            </wa-button>
-            <wa-tooltip v-if="tooltipsEnabled && !session.archived && !session.draft" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? 'Archive session (it will stop the Claude Code process)' : 'Archive session' }}</wa-tooltip>
+                <!-- Archive button (not for drafts or already archived) -->
+                <wa-button
+                    v-if="!session.archived && !session.draft"
+                    :id="`session-header-${sessionId}-archive-button`"
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="archive-button"
+                    @click="handleArchive"
+                >
+                    <wa-icon name="box-archive" label="Archive"></wa-icon>
+                </wa-button>
+                <wa-tooltip v-if="tooltipsEnabled && !session.archived && !session.draft" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? 'Archive session (it will stop the Claude Code process)' : 'Archive session' }}</wa-tooltip>
 
-            <!-- Rename button (only for main session) -->
-            <wa-button
-                v-if="mode === 'session'"
-                :id="`session-header-${sessionId}-rename-button`"
-                variant="neutral"
-                appearance="plain"
-                size="small"
-                class="rename-button"
-                @click="openRenameDialog"
-            >
-                <wa-icon name="pencil" label="Rename"></wa-icon>
-            </wa-button>
-            <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-rename-button`">Rename session</wa-tooltip>
+                <!-- Rename button (only for main session) -->
+                <wa-button
+                    v-if="mode === 'session'"
+                    :id="`session-header-${sessionId}-rename-button`"
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="rename-button"
+                    @click="openRenameDialog"
+                >
+                    <wa-icon name="pencil" label="Rename"></wa-icon>
+                </wa-button>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-rename-button`">Rename session</wa-tooltip>
 
-            <!-- Pending request indicator (shown when waiting for user response) -->
-            <wa-icon
-                v-if="store.getPendingRequest(sessionId)"
-                :id="`session-header-${sessionId}-pending-request`"
-                name="hand"
-                class="pending-request-indicator"
-            ></wa-icon>
-            <wa-tooltip v-if="tooltipsEnabled && store.getPendingRequest(sessionId)" :for="`session-header-${sessionId}-pending-request`">Waiting for your response</wa-tooltip>
+                <!-- Pending request indicator (shown when waiting for user response) -->
+                <wa-icon
+                    v-if="store.getPendingRequest(sessionId)"
+                    :id="`session-header-${sessionId}-pending-request`"
+                    name="hand"
+                    class="pending-request-indicator"
+                ></wa-icon>
+                <wa-tooltip v-if="tooltipsEnabled && store.getPendingRequest(sessionId)" :for="`session-header-${sessionId}-pending-request`">Waiting for your response</wa-tooltip>
+            </div>
 
-            <h2 :id="`session-header-${sessionId}-title`">{{ displayName }}</h2>
-            <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-title`">{{ displayName }}</wa-tooltip>
+            <!-- Clickable zone: title + project + context ring + chevron toggle compact mode -->
+            <div class="compact-toggle-zone" @click="isCompactExpanded = !isCompactExpanded">
+                <!-- Active tab label: shown only in compact collapsed mode, replacing action buttons -->
+                <span v-if="activeTabLabel" class="compact-active-tab-label">{{ activeTabLabel }}</span>
 
-            <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
+                <h2 :id="`session-header-${sessionId}-title`">{{ displayName }}</h2>
+                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-title`">{{ displayName }}</wa-tooltip>
 
-            <!-- Context usage ring duplicate for compact mode (visible only on small viewports when not expanded) -->
-            <wa-progress-ring
-                v-if="contextUsagePercentage != null"
-                class="context-usage-ring compact-context-ring"
-                :value="Math.min(contextUsagePercentage, 100)"
-                :style="{
-                    '--indicator-color': contextUsageColor,
-                    '--indicator-width': contextUsageIndicatorWidth
-                }"
-            ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
+                <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
 
-            <!-- Compact mode: expand/collapse toggle (only visible on small viewports via CSS) -->
-            <wa-button
-                v-if="!session.draft"
-                class="compact-toggle-button"
-                variant="neutral"
-                appearance="plain"
-                size="small"
-                @click="isCompactExpanded = !isCompactExpanded"
-            >
-                <wa-icon :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'" label="Toggle details"></wa-icon>
-            </wa-button>
+                <!-- Context usage ring duplicate for compact mode (visible only on small viewports when not expanded) -->
+                <wa-progress-ring
+                    v-if="contextUsagePercentage != null"
+                    class="context-usage-ring compact-context-ring"
+                    :value="Math.min(contextUsagePercentage, 100)"
+                    :style="{
+                        '--indicator-color': contextUsageColor,
+                        '--indicator-width': contextUsageIndicatorWidth
+                    }"
+                ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
+
+                <!-- Compact mode: expand/collapse chevron (only visible on small viewports via CSS) -->
+                <wa-icon
+                    v-if="!session.draft"
+                    class="compact-toggle-chevron"
+                    :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'"
+                    label="Toggle details"
+                ></wa-icon>
+            </div>
         </div>
 
         <!-- Collapsible rows: git info + meta (overlay on small viewports) -->
@@ -487,6 +501,9 @@ defineExpose({
                 </template>
             </div>
 
+            <!-- Slot for extra compact-mode content (e.g. tab nav from SessionView) -->
+            <slot name="compact-extra"></slot>
+
         </div><!-- /.session-collapsible-rows -->
 
         <wa-divider></wa-divider>
@@ -526,12 +543,31 @@ defineExpose({
     padding-top: var(--wa-space-xs);
 }
 
+/* Action buttons wrapper: transparent by default, hidden in compact collapsed mode */
+.session-title-actions {
+    display: contents;
+}
+
+/* Active tab label: hidden by default, shown in compact collapsed mode */
+.compact-active-tab-label {
+    display: none;
+    font-size: var(--wa-font-size-s);
+    font-weight: 700;
+    color: var(--wa-color-brand-on-quiet);
+    flex-shrink: 0;
+    border-color: var(--wa-color-brand-border-loud);
+    border-radius: var(--wa-form-control-border-radius);
+    border-style: var(--wa-border-style);
+    border-width: var(--wa-border-width-s);
+    padding: var(--wa-space-2xs) var(--wa-space-xs);
+    box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) 0 0 var(--wa-color-brand-border-loud);
+}
+
 .draft-tag, .archived-tag {
     flex-shrink: 0;
     line-height: unset;
     height: unset;
     align-self: stretch;
-    margin-bottom: -2px;
 }
 
 .archived-tag {
@@ -560,6 +596,21 @@ defineExpose({
     width: 25%;
     min-width: 3rem;
     max-width: max-content;
+}
+
+/* Clickable zone for compact toggle: wraps title, project badge, context ring, and chevron */
+.compact-toggle-zone {
+    display: contents;
+}
+
+/* Compact chevron icon: hidden by default, shown only on small viewports */
+.compact-toggle-chevron {
+    display: none;
+    flex-shrink: 0;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+    font-size: var(--wa-font-size-xs);
+    align-self: center;
 }
 
 .session-git-info {
@@ -746,10 +797,50 @@ wa-divider {
     display: contents;
 }
 
-@media (max-height: 800px) {
-    /* Show the compact toggle button */
+@media (max-height: 900px) {
+    /* Show the compact toggle chevron */
+    .compact-toggle-chevron {
+        display: inline-flex;
+    }
+
+    /* Show the compact toggle button for non-main sessions */
     .compact-toggle-button {
         display: inline-flex;
+    }
+
+    /* Make the toggle zone a clickable flex row */
+    .compact-toggle-zone {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-s);
+        min-width: 0;
+        cursor: pointer;
+        flex: 1;
+    }
+
+    .compact-toggle-zone:hover .compact-toggle-chevron {
+        opacity: 1;
+    }
+
+    .draft-tag {
+        margin-bottom: var(--wa-space-xs);
+    }
+
+    .session-header.compact-collapsed {
+        border-bottom: solid var(--wa-color-surface-border) 4px;
+    }
+
+    /* In compact collapsed mode: hide action buttons, show active tab label */
+    .session-header.compact-collapsed .session-title-actions {
+        display: none;
+    }
+    .session-header.compact-collapsed .compact-active-tab-label {
+        display: inline;
+    }
+
+    /* In compact expanded mode: show action buttons, hide active tab label */
+    .session-header.compact-expanded .compact-active-tab-label {
+        display: none;
     }
 
     /* Dont show divider when compact mode is active */
@@ -758,13 +849,13 @@ wa-divider {
     }
 
     /* Add some padding on the bottom of the first line */
-    .session-header:not(.compact-expanded) .session-title wa-progress-ring {
-        position: relative;
-        top: calc(-1 * var(--wa-space-2xs));
+    .session-header.compact-collapsed .session-title {
+        padding-bottom: var(--wa-space-xs);
+        align-items: center;
     }
 
     /* Show the compact context ring when not expanded */
-    .session-header:not(.compact-expanded) .compact-context-ring {
+    .session-header.compact-collapsed .compact-context-ring {
         display: inline-flex;
     }
 
@@ -780,7 +871,7 @@ wa-divider {
         z-index: 20;
         background: var(--wa-color-surface-default);
         box-shadow: var(--wa-shadow-s);
-        padding-bottom: var(--wa-space-xs);
+        border-bottom: solid var(--wa-color-surface-border) 4px;
 
         /* Hidden by default */
         opacity: 0;
@@ -807,7 +898,7 @@ wa-divider {
 }
 
 /* Auto-hide header on small viewport heights */
-@media (max-height: 800px) {
+@media (max-height: 900px) {
     .session-header {
         transition: transform 0.3s ease, opacity 0.3s ease;
     }
