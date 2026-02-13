@@ -5,7 +5,7 @@ import { defineStore } from 'pinia'
 import { watch } from 'vue'
 import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
-import { useDataStore } from './data'
+// Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
 import { setThemeMode } from '../utils/theme'
 
 const STORAGE_KEY = 'twicc-settings'
@@ -414,7 +414,9 @@ export function initSettings() {
     // Recompute all visual items when display mode changes
     watch(
         () => store.getDisplayMode,
-        () => {
+        async () => {
+            // Lazy import to avoid circular dependency (settings.js ↔ data.js)
+            const { useDataStore } = await import('./data')
             const dataStore = useDataStore()
             dataStore.recomputeAllVisualItems()
         }
