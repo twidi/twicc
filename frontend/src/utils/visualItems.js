@@ -16,7 +16,8 @@ import { DISPLAY_LEVEL, DISPLAY_MODE } from '../constants'
  * @param {Array} items - Array of session items with metadata
  * @param {string} mode - Display mode: 'conversation' | 'simplified' | 'normal' | 'debug'
  * @param {Array} expandedGroups - Array of expanded group_head line numbers
- * @param {boolean} [isAssistantTurn=false] - Whether we're currently in an assistant turn (conversation mode only)
+ * @param {boolean} [isAssistantTurn=false] - Whether we're currently in an assistant turn.
+ *   In conversation mode, this hides the trailing assistant_message (incomplete/in-progress).
  * @returns {Array} Array of visual items with properties:
  *   - lineNum: the item's line number
  *   - content: the item's raw content (for reactivity in virtual scroller)
@@ -75,7 +76,9 @@ export function computeVisualItems(items, mode, expandedGroups = [], isAssistant
         }
 
         for (const item of items) {
-            if (item.kind === 'user_message' ||
+            // Synthetic items (line_num < 0) always pass through regardless of filtering rules
+            if (item.line_num < 0 ||
+                item.kind === 'user_message' ||
                 (item.kind === 'assistant_message' && keptAssistantLineNums.has(item.line_num))) {
                 result.push({
                     lineNum: item.line_num,

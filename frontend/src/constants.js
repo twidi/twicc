@@ -93,6 +93,17 @@ export const DISPLAY_LEVEL = {
 }
 
 /**
+ * Synthetic items injected client-side (not from backend).
+ * Each entry has:
+ * - lineNum: negative to avoid collision with real backend line numbers (1-based)
+ * - kind: string identifier used as syntheticKind and data-synthetic-kind attribute
+ */
+export const SYNTHETIC_ITEM = {
+    OPTIMISTIC_USER_MESSAGE: { lineNum: -2000, kind: 'optimistic-user-message' },
+    WORKING_ASSISTANT_MESSAGE: { lineNum: -1000, kind: 'working-assistant-message' },
+}
+
+/**
  * Process state values (matches backend ProcessState enum).
  */
 export const PROCESS_STATE = {

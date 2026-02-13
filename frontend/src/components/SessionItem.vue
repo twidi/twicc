@@ -18,7 +18,7 @@ const props = defineProps({
         type: String,
         default: null
     },
-    specialKind: {
+    syntheticKind: {
         type: String,
         default: null
     },
@@ -92,7 +92,7 @@ function toggleJsonView() {
 </script>
 
 <template>
-    <div class="session-item" :data-kind="kind" :data-special-kind="specialKind">
+    <div class="session-item" :data-kind="kind" :data-synthetic-kind="syntheticKind">
         <!-- JSON toggle button (visible on hover) -->
         <div class="json-toggle-container">
             <wa-button

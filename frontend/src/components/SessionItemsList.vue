@@ -979,7 +979,7 @@ defineExpose({
                         v-if="item.isExpanded"
                         :content="item.content"
                         :kind="item.kind"
-                        :special-kind="item.specialKind || null"
+                        :synthetic-kind="item.syntheticKind || null"
                         :project-id="projectId"
                         :session-id="sessionId"
                         :parent-session-id="parentSessionId"
@@ -992,7 +992,7 @@ defineExpose({
                     v-else
                     :content="item.content"
                     :kind="item.kind"
-                    :special-kind="item.specialKind || null"
+                    :synthetic-kind="item.syntheticKind || null"
                     :project-id="projectId"
                     :session-id="sessionId"
                     :parent-session-id="parentSessionId"

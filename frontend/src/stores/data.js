@@ -3,7 +3,7 @@
 import { defineStore } from 'pinia'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
-import { DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE } from '../constants'
+import { DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
 import { useSettingsStore } from './settings'
 import {
     saveDraftMessage,
@@ -143,7 +143,7 @@ export const useDataStore = defineStore('data', {
 
             // Optimistic messages - user messages displayed immediately after send,
             // before the backend confirms with a real user_message item.
-            // { sessionId: { specialKind, content, kind } }
+            // { sessionId: { syntheticKind, content, kind } }
             // Cleared when the real user_message arrives in addSessionItems.
             optimisticMessages: {},
         }
@@ -909,10 +909,10 @@ export const useDataStore = defineStore('data', {
             const mode = settingsStore.getDisplayMode
             const expandedGroups = this.localState.sessionExpandedGroups[sessionId] || []
 
-            // Conversation mode: hide trailing assistant messages during assistant_turn
+            // Detect assistant_turn (used by computeVisualItems for conversation mode
+            // filtering, and for the synthetic working assistant message)
             const processState = this.processStates[sessionId]
-            const isAssistantTurn = mode === DISPLAY_MODE.CONVERSATION &&
-                processState?.state === PROCESS_STATE.ASSISTANT_TURN
+            const isAssistantTurn = processState?.state === PROCESS_STATE.ASSISTANT_TURN
 
             let allItems = items
             // Append optimistic message if one exists for this session
@@ -921,15 +921,65 @@ export const useDataStore = defineStore('data', {
                 allItems = [...allItems, optimistic]
             }
 
+            // Append a synthetic "working" assistant message when in assistant_turn.
+            // Injected into allItems so computeVisualItems handles it like any other item.
+            // computeVisualItems knows to always let synthetic items (line_num < 0) through,
+            // even in conversation mode which normally filters assistant messages.
+            let workingMessage = null
+            if (isAssistantTurn) {
+                const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE
+
+                // Check if the last item is an assistant_message or content_items whose
+                // last content entry is a tool_use — if so, capture the whole tool_use object
+                // to allow the UI to adapt based on tool type.
+                let toolUse = null
+                const lastItem = items.length > 0 ? items[items.length - 1] : null
+                if (lastItem?.kind === 'assistant_message' || lastItem?.kind === 'content_items') {
+                    try {
+                        const parsed = JSON.parse(lastItem.content)
+                        const contentArray = parsed?.message?.content
+                        if (Array.isArray(contentArray) && contentArray.length > 0) {
+                            const lastContent = contentArray[contentArray.length - 1]
+                            if (lastContent.type === 'tool_use') {
+                                toolUse = lastContent
+                            }
+                        }
+                    } catch { /* ignore parse errors */ }
+                }
+
+                workingMessage = {
+                    line_num: lineNum,
+                    content: JSON.stringify({
+                        type: 'assistant',
+                        syntheticKind,
+                        toolUse,
+                        message: {
+                            role: 'assistant',
+                            content: []
+                        }
+                    }),
+                    kind: 'assistant_message',
+                    syntheticKind,
+                    display_level: DISPLAY_LEVEL.ALWAYS,
+                    group_head: null,
+                    group_tail: null,
+                }
+                allItems = allItems === items ? [...items, workingMessage] : [...allItems, workingMessage]
+            }
+
             const visualItems = computeVisualItems(allItems, mode, expandedGroups, isAssistantTurn)
 
-            // Propagate specialKind to the last visual item if it came from the optimistic message.
-            // computeVisualItems doesn't know about specialKind, so we add it here.
-            if (optimistic && visualItems.length > 0) {
-                const lastItem = visualItems[visualItems.length - 1]
-                if (lastItem.lineNum === -1) {
-                    lastItem.specialKind = optimistic.specialKind
+            // Propagate syntheticKind to visual items for synthetic messages.
+            // computeVisualItems doesn't know about syntheticKind, so we add it here.
+            for (let i = visualItems.length - 1; i >= 0; i--) {
+                const vi = visualItems[i]
+                if (vi.lineNum === SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE.lineNum && optimistic) {
+                    vi.syntheticKind = optimistic.syntheticKind
+                } else if (vi.lineNum === SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE.lineNum && workingMessage) {
+                    vi.syntheticKind = workingMessage.syntheticKind
                 }
+                // Synthetic items are always at the end, stop as soon as we hit a real item
+                if (vi.lineNum >= 0) break
             }
 
             this.localState.sessionVisualItems[sessionId] = visualItems
@@ -955,21 +1005,21 @@ export const useDataStore = defineStore('data', {
          * @param {string} text - The message text
          */
         setOptimisticMessage(sessionId, text) {
-            const specialKind = 'optimistic-user-message'
+            const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE
             // Store as sessionItem format (snake_case) since it's injected into
             // the items array before computeVisualItems processes it.
             this.localState.optimisticMessages[sessionId] = {
-                line_num: -1,
+                line_num: lineNum,
                 content: JSON.stringify({
                     type: 'user',
-                    specialKind,
+                    syntheticKind,
                     message: {
                         role: 'user',
                         content: [{ type: 'text', text }]
                     }
                 }),
                 kind: 'user_message',
-                specialKind,
+                syntheticKind,
                 display_level: DISPLAY_LEVEL.ALWAYS,
                 group_head: null,
                 group_tail: null

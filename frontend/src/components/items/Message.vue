@@ -1,6 +1,8 @@
 <script setup>
 import { computed } from 'vue'
+import { SYNTHETIC_ITEM } from '../../constants'
 import ContentList from './content/ContentList.vue'
+import WorkingAssistantMessage from './WorkingAssistantMessage.vue'
 
 const props = defineProps({
     data: {
@@ -50,6 +52,10 @@ const props = defineProps({
 
 const emit = defineEmits(['toggle-suffix'])
 
+const isWorkingAssistantMessage = computed(() =>
+    props.data?.syntheticKind === SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE.kind
+)
+
 const contentItems = computed(() => {
     const content = props.data?.message?.content
 
@@ -68,7 +74,9 @@ const contentItems = computed(() => {
 </script>
 
 <template>
+    <WorkingAssistantMessage v-if="isWorkingAssistantMessage" :tool-use="data.toolUse || null" />
     <ContentList
+        v-else
         :items="contentItems"
         :role="role"
         :project-id="projectId"
