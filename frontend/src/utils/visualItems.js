@@ -14,8 +14,9 @@ import { DISPLAY_LEVEL, DISPLAY_MODE } from '../constants'
  * - group_head pointing to an ALWAYS: this item is part of a group started by an ALWAYS suffix
  *
  * @param {Array} items - Array of session items with metadata
- * @param {string} mode - Display mode: 'debug' | 'normal' | 'simplified'
+ * @param {string} mode - Display mode: 'conversation' | 'simplified' | 'normal' | 'debug'
  * @param {Array} expandedGroups - Array of expanded group_head line numbers
+ * @param {number|null} [assistantTurnStartedAt=null] - Unix timestamp (seconds) of when assistant_turn started, or null if not in assistant_turn
  * @returns {Array} Array of visual items with properties:
  *   - lineNum: the item's line number
  *   - content: the item's raw content (for reactivity in virtual scroller)
@@ -29,7 +30,7 @@ import { DISPLAY_LEVEL, DISPLAY_MODE } from '../constants'
  *   - suffixGroupHead?: this item's line_num when it starts a group via suffix (ALWAYS items)
  *   - suffixExpanded?: true if suffix group is expanded (ALWAYS items)
  */
-export function computeVisualItems(items, mode, expandedGroups = []) {
+export function computeVisualItems(items, mode, expandedGroups = [], assistantTurnStartedAt = null) {
     if (!items || items.length === 0) return []
 
     const result = []
@@ -48,6 +49,66 @@ export function computeVisualItems(items, mode, expandedGroups = []) {
         if (item.group_head != null && item.display_level === DISPLAY_LEVEL.COLLAPSIBLE) {
             groupSizes.set(item.group_head, (groupSizes.get(item.group_head) || 0) + 1)
         }
+    }
+
+    // Conversation mode: show only user_messages + last assistant_message before each user_message
+    // + trailing assistant_message at end of session
+    if (mode === DISPLAY_MODE.CONVERSATION) {
+        const isAssistantTurn = assistantTurnStartedAt !== null
+        // Convert assistantTurnStartedAt (unix seconds) to ms for comparison with ISO timestamps
+        const turnStartMs = isAssistantTurn ? assistantTurnStartedAt * 1000 : null
+
+        const keptAssistantLineNums = new Set()
+        let lastAssistantLineNum = null
+
+        for (const item of items) {
+            if (item.kind === 'assistant_message') {
+                lastAssistantLineNum = item.line_num
+            } else if (item.kind === 'user_message') {
+                if (lastAssistantLineNum !== null) {
+                    keptAssistantLineNums.add(lastAssistantLineNum)
+                    lastAssistantLineNum = null
+                }
+            }
+        }
+
+        // Trailing assistant_message (last with no user_message after it):
+        if (lastAssistantLineNum !== null) {
+            if (isAssistantTurn) {
+                // During assistant_turn: find the last assistant_message from BEFORE the turn started
+                // (items created during this turn are intermediate and not final yet)
+                let lastPreTurnAssistantLineNum = null
+                for (const item of items) {
+                    if (item.kind === 'assistant_message') {
+                        const itemTimeMs = item.timestamp ? new Date(item.timestamp).getTime() : null
+                        if (itemTimeMs !== null && itemTimeMs < turnStartMs) {
+                            lastPreTurnAssistantLineNum = item.line_num
+                        }
+                    } else if (item.kind === 'user_message') {
+                        lastPreTurnAssistantLineNum = null
+                    }
+                }
+                if (lastPreTurnAssistantLineNum !== null) {
+                    keptAssistantLineNums.add(lastPreTurnAssistantLineNum)
+                }
+            } else {
+                keptAssistantLineNums.add(lastAssistantLineNum)
+            }
+        }
+
+        for (const item of items) {
+            if (item.kind === 'user_message' ||
+                (item.kind === 'assistant_message' && keptAssistantLineNums.has(item.line_num))) {
+                result.push({
+                    lineNum: item.line_num,
+                    content: item.content,
+                    kind: item.kind,
+                    groupHead: null,
+                    groupTail: null
+                })
+            }
+        }
+        return result
     }
 
     for (const item of items) {

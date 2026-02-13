@@ -3,6 +3,7 @@
 import { defineStore } from 'pinia'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
+import { DISPLAY_MODE, PROCESS_STATE } from '../constants'
 import { useSettingsStore } from './settings'
 import {
     saveDraftMessage,
@@ -895,7 +896,14 @@ export const useDataStore = defineStore('data', {
             const mode = settingsStore.getDisplayMode
             const expandedGroups = this.localState.sessionExpandedGroups[sessionId] || []
 
-            this.localState.sessionVisualItems[sessionId] = computeVisualItems(items, mode, expandedGroups)
+            // Conversation mode: pass assistant_turn start time to hide intermediate messages
+            const processState = this.processStates[sessionId]
+            const assistantTurnStartedAt = mode === DISPLAY_MODE.CONVERSATION &&
+                processState?.state === PROCESS_STATE.ASSISTANT_TURN
+                ? processState.state_changed_at
+                : null
+
+            this.localState.sessionVisualItems[sessionId] = computeVisualItems(items, mode, expandedGroups, assistantTurnStartedAt)
         },
 
         /**
@@ -1192,6 +1200,9 @@ export const useDataStore = defineStore('data', {
                     this.setSessionArchived(projectId, sessionId, false)
                 }
             }
+
+            // Recompute visual items (conversation mode depends on process state)
+            this.recomputeVisualItems(sessionId)
         },
 
         /**

@@ -12,14 +12,16 @@ export const INITIAL_ITEMS_COUNT = 100
 
 /**
  * Display mode values for session items.
- * - debug: Show all items (levels 1, 2, 3)
- * - normal: Show levels 1 and 2, hide level 3
+ * - conversation: Show only user messages + last assistant message before each user message
  * - simplified: Show level 1, collapse level 2 groups, hide level 3
+ * - normal: Show levels 1 and 2, hide level 3
+ * - debug: Show all items (levels 1, 2, 3)
  */
 export const DISPLAY_MODE = {
     DEBUG: 'debug',
     NORMAL: 'normal',
     SIMPLIFIED: 'simplified',
+    CONVERSATION: 'conversation',
 }
 
 export const DEFAULT_DISPLAY_MODE = DISPLAY_MODE.SIMPLIFIED

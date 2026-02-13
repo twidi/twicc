@@ -38,7 +38,7 @@ const SETTINGS_SCHEMA = {
  * Invalid values will be replaced with defaults.
  */
 const SETTINGS_VALIDATORS = {
-    displayMode: (v) => [DISPLAY_MODE.NORMAL, DISPLAY_MODE.SIMPLIFIED, DISPLAY_MODE.DEBUG].includes(v),
+    displayMode: (v) => [DISPLAY_MODE.CONVERSATION, DISPLAY_MODE.SIMPLIFIED, DISPLAY_MODE.NORMAL, DISPLAY_MODE.DEBUG].includes(v),
     fontSize: (v) => typeof v === 'number' && v >= 12 && v <= 32,
     themeMode: (v) => [THEME_MODE.SYSTEM, THEME_MODE.LIGHT, THEME_MODE.DARK].includes(v),
     sessionTimeFormat: (v) => [SESSION_TIME_FORMAT.TIME, SESSION_TIME_FORMAT.RELATIVE_SHORT, SESSION_TIME_FORMAT.RELATIVE_NARROW].includes(v),
