@@ -468,6 +468,7 @@ function handleNeedsTitle() {
                     :git-directory="session?.git_directory || store.getProject(session?.project_id)?.git_root"
                     :initial-branch="session?.git_branch || ''"
                     :active="isActive && activeTabId === 'git'"
+                    :is-draft="session?.draft === true"
                 />
             </wa-tab-panel>
             <wa-tab-panel name="terminal">

@@ -531,17 +531,20 @@ def file_content(request, project_id, session_id=None):
     return JsonResponse(result)
 
 
-def git_log(request, project_id, session_id):
-    """GET /api/projects/<id>/sessions/<session_id>/git-log/
+def git_log(request, project_id, session_id=None):
+    """GET /api/projects/<id>/[sessions/<session_id>/]git-log/
 
     Returns git commit history for the session's git repository.
 
     Git directory resolution order:
-    1. Session git_directory + git_branch (from tool_use analysis)
+    1. Session git_directory (from tool_use analysis)
     2. Project git_root (resolved from project directory walking up)
 
-    When falling back to project.git_root, the current branch is resolved
-    dynamically from the HEAD file.
+    When session_id is None (project-level, e.g. draft sessions), only the
+    project git_root is used.
+
+    The current branch is always resolved dynamically from the git directory
+    at request time, ensuring it reflects the actual state.
 
     Returns 404 if no git context is available.
 
@@ -561,25 +564,24 @@ def git_log(request, project_id, session_id):
     # Optional branch filter from query string
     branch_filter = request.GET.get("branch", "")
 
-    try:
-        session = Session.objects.get(id=session_id, project_id=project_id)
-    except Session.DoesNotExist:
-        raise Http404("Session not found")
-
-    # Only regular sessions (not subagents)
-    if session.parent_session_id is not None:
-        raise Http404("Session not found")
-
-    # Resolve git directory and branch:
+    # Resolve git directory:
     # 1. Session has explicit git info (from tool_use), if the directory still exists
     # 2. Fallback to project.git_root (e.g. worktree deleted, branch removed, or
-    #    session hasn't interacted with files yet)
+    #    session hasn't interacted with files yet, or draft session)
     git_directory = None
-    current_branch = None
 
-    if session.git_directory and session.git_branch and os.path.isdir(session.git_directory):
-        git_directory = session.git_directory
-        current_branch = session.git_branch
+    if session_id:
+        try:
+            session = Session.objects.get(id=session_id, project_id=project_id)
+        except Session.DoesNotExist:
+            raise Http404("Session not found")
+
+        # Only regular sessions (not subagents)
+        if session.parent_session_id is not None:
+            raise Http404("Session not found")
+
+        if session.git_directory and os.path.isdir(session.git_directory):
+            git_directory = session.git_directory
 
     if not git_directory:
         # Fallback: use project.git_root
@@ -590,11 +592,13 @@ def git_log(request, project_id, session_id):
 
         if project.git_root and os.path.isdir(project.git_root):
             git_directory = project.git_root
-            # Resolve branch dynamically via git command (handles worktrees too)
-            current_branch = get_current_branch(git_directory)
 
     if not git_directory:
         return JsonResponse({"error": "No git repository found"}, status=404)
+
+    # Always resolve branch dynamically from the git directory at request time,
+    # so the branch selector reflects the actual state (handles worktrees too).
+    current_branch = get_current_branch(git_directory)
 
     try:
         result = get_git_log(git_directory, branch=branch_filter or None)
@@ -606,26 +610,30 @@ def git_log(request, project_id, session_id):
     return JsonResponse(result)
 
 
-def _resolve_session_git_directory(project_id, session_id):
-    """Resolve the git directory for a session.
+def _resolve_session_git_directory(project_id, session_id=None):
+    """Resolve the git directory for a session or project.
 
     Resolution order:
     1. Session git_directory (from tool_use analysis), if directory still exists
     2. Project git_root (resolved from project directory walking up)
 
+    When session_id is None (project-level, e.g. draft sessions), only the
+    project git_root is used.
+
     Returns the git_directory path or raises Http404.
     """
-    try:
-        session = Session.objects.get(id=session_id, project_id=project_id)
-    except Session.DoesNotExist:
-        raise Http404("Session not found")
+    if session_id:
+        try:
+            session = Session.objects.get(id=session_id, project_id=project_id)
+        except Session.DoesNotExist:
+            raise Http404("Session not found")
 
-    # Only regular sessions (not subagents)
-    if session.parent_session_id is not None:
-        raise Http404("Session not found")
+        # Only regular sessions (not subagents)
+        if session.parent_session_id is not None:
+            raise Http404("Session not found")
 
-    if session.git_directory and os.path.isdir(session.git_directory):
-        return session.git_directory
+        if session.git_directory and os.path.isdir(session.git_directory):
+            return session.git_directory
 
     # Fallback: use project.git_root
     try:
@@ -639,8 +647,8 @@ def _resolve_session_git_directory(project_id, session_id):
     raise Http404("No git repository found")
 
 
-def git_index_files(request, project_id, session_id):
-    """GET /api/projects/<id>/sessions/<session_id>/git-index-files/
+def git_index_files(request, project_id, session_id=None):
+    """GET /api/projects/<id>/[sessions/<session_id>/]git-index-files/
 
     Returns stats and a file tree for uncommitted (index) changes.
 
@@ -660,8 +668,8 @@ def git_index_files(request, project_id, session_id):
     return JsonResponse(result, safe=False)
 
 
-def git_commit_files(request, project_id, session_id, commit_hash):
-    """GET /api/projects/<id>/sessions/<session_id>/git-commit-files/<commit_hash>/
+def git_commit_files(request, project_id, commit_hash, session_id=None):
+    """GET /api/projects/<id>/[sessions/<session_id>/]git-commit-files/<commit_hash>/
 
     Returns stats and a file tree for the files changed by a single commit.
 
@@ -688,8 +696,8 @@ def git_commit_files(request, project_id, session_id, commit_hash):
     return JsonResponse(result)
 
 
-def git_index_file_diff(request, project_id, session_id):
-    """GET /api/projects/<id>/sessions/<session_id>/git-index-file-diff/
+def git_index_file_diff(request, project_id, session_id=None):
+    """GET /api/projects/<id>/[sessions/<session_id>/]git-index-file-diff/
 
     Returns the original (HEAD) and modified (working tree) content of a file
     for display in the Monaco diff editor.
@@ -720,8 +728,8 @@ def git_index_file_diff(request, project_id, session_id):
     return JsonResponse(result)
 
 
-def git_commit_file_diff(request, project_id, session_id, commit_hash):
-    """GET /api/projects/<id>/sessions/<session_id>/git-commit-file-diff/<commit_hash>/
+def git_commit_file_diff(request, project_id, commit_hash, session_id=None):
+    """GET /api/projects/<id>/[sessions/<session_id>/]git-commit-file-diff/<commit_hash>/
 
     Returns the original (parent commit) and modified (commit) content of a file
     for display in the Monaco diff editor.

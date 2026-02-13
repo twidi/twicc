@@ -25,6 +25,11 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    /** Currently selected branch name (shown as a tag). */
+    selectedBranch: {
+        type: String,
+        default: '',
+    },
 })
 
 const emit = defineEmits(['toggle-git-log'])
@@ -75,10 +80,7 @@ function toggleGitLog() {
             :class="{ open: gitLogOpen }"
             @click="toggleGitLog"
         >
-            <div class="commit-info">
-                <span v-if="commitShortHash" class="commit-hash">{{ commitShortHash }}</span>
-                <span class="commit-message" :title="commitLabel">{{ commitLabel }}</span>
-            </div>
+            <span class="commit-message" :title="commitLabel">{{ commitLabel }}</span>
 
             <div v-if="statsLoading" class="status-badges">
                 <wa-spinner style="--spinner-size: 0.75rem;"></wa-spinner>
@@ -109,6 +111,14 @@ function toggleGitLog() {
                     <img :src="minusIcon" class="status-icon" alt="deleted">
                 </span>
             </div>
+
+            <wa-tag v-if="selectedBranch" variant="neutral" class="branch-tag">
+                {{ selectedBranch }}
+            </wa-tag>
+
+            <wa-tag v-if="commitShortHash" variant="neutral" class="commit-hash">
+                {{ commitShortHash }}
+            </wa-tag>
 
             <wa-icon
                 class="chevron"
@@ -144,6 +154,9 @@ function toggleGitLog() {
     margin: 0;
     translate: none !important;
     transform: none !important;
+    justify-content: start;
+    flex-wrap: wrap;
+    height: auto;
 }
 
 .commit-selector:hover {
@@ -154,24 +167,22 @@ function toggleGitLog() {
     background-color: var(--wa-color-surface-alt);
 }
 
-/* ----- Commit info (hash + message) ----- */
+/* ----- Branch tag ----- */
 
-.commit-info {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-2xs);
-    min-width: 0;
-    flex: 1;
+.branch-tag {
+    font-weight: 600;
+    line-height: 1;
+    height: auto;
+    padding: var(--wa-space-2xs) var(--wa-space-xs);
+    margin-left: auto;
 }
 
 .commit-hash {
     flex-shrink: 0;
-    font-family: var(--wa-font-family-code);
-    font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-quiet);
-    background: var(--wa-color-surface-alt);
-    padding: 0.05em 0.4em;
-    border-radius: var(--wa-border-radius-s);
+    font-weight: 600;
+    line-height: 1;
+    height: auto;
+    padding: var(--wa-space-2xs) var(--wa-space-xs);
 }
 
 .commit-message {

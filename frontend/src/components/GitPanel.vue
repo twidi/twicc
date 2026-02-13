@@ -34,9 +34,24 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    isDraft: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 const settingsStore = useSettingsStore()
+
+// ---------------------------------------------------------------------------
+// API prefix (project-level for drafts, session-level otherwise)
+// ---------------------------------------------------------------------------
+
+const apiPrefix = computed(() => {
+    if (props.isDraft) {
+        return `/api/projects/${props.projectId}`
+    }
+    return `/api/projects/${props.projectId}/sessions/${props.sessionId}`
+})
 
 // ---------------------------------------------------------------------------
 // State
@@ -183,7 +198,7 @@ watch(selectedCommit, async (commit) => {
 
     commitFilesLoading.value = true
     try {
-        const url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-commit-files/${commit.hash}/`
+        const url = `${apiPrefix.value}/git-commit-files/${commit.hash}/`
         const res = await apiFetch(url)
 
         if (res.ok) {
@@ -262,7 +277,7 @@ watch(displayTree, (tree) => {
 async function refreshIndexFiles() {
     commitFilesLoading.value = true
     try {
-        const url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-index-files/`
+        const url = `${apiPrefix.value}/git-index-files/`
         const res = await apiFetch(url)
         if (res.ok) {
             const data = await res.json()
@@ -310,9 +325,9 @@ async function fetchDiff(file) {
     try {
         let url
         if (isViewingIndex.value) {
-            url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-index-file-diff/?path=${encodeURIComponent(file)}`
+            url = `${apiPrefix.value}/git-index-file-diff/?path=${encodeURIComponent(file)}`
         } else {
-            url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-commit-file-diff/${selectedCommit.value.hash}/?path=${encodeURIComponent(file)}`
+            url = `${apiPrefix.value}/git-commit-file-diff/${selectedCommit.value.hash}/?path=${encodeURIComponent(file)}`
         }
 
         const res = await apiFetch(url)
@@ -352,7 +367,7 @@ const colours = computed(() =>
 // ---------------------------------------------------------------------------
 
 const apiUrl = computed(() => {
-    const base = `/api/projects/${props.projectId}/sessions/${props.sessionId}/git-log/`
+    const base = `${apiPrefix.value}/git-log/`
     if (selectedBranch.value) {
         return `${base}?branch=${encodeURIComponent(selectedBranch.value)}`
     }
@@ -363,8 +378,12 @@ async function fetchGitLog() {
     loading.value = true
     error.value = null
 
+    // First fetch is always unfiltered (--all) so we get the full branch list
+    // and current branch. We'll select the right branch and re-fetch if needed.
+    const base = `${apiPrefix.value}/git-log/`
+
     try {
-        const res = await apiFetch(apiUrl.value)
+        const res = await apiFetch(base)
 
         if (!res.ok) {
             const data = await res.json().catch(() => ({}))
@@ -380,15 +399,27 @@ async function fetchGitLog() {
         hasMore.value = data.has_more || false
         branches.value = data.branches || []
 
-        // If selectedBranch wasn't pre-set (no initialBranch prop),
-        // default to the session's current branch.
-        if (!selectedBranch.value && currentBranch.value) {
-            selectedBranch.value = currentBranch.value
+        // Determine which branch to select:
+        // - If initialBranch exists in the branch list, use it
+        // - Otherwise, fall back to the actual current branch of the git directory
+        const branchList = data.branches || []
+        let targetBranch = currentBranch.value
+        if (props.initialBranch && branchList.includes(props.initialBranch)) {
+            targetBranch = props.initialBranch
+        }
+
+        if (targetBranch) {
+            selectedBranch.value = targetBranch
         }
     } catch (e) {
         error.value = 'Failed to load git history'
     } finally {
         loading.value = false
+    }
+
+    // If a specific branch was selected, re-fetch filtered by that branch
+    if (selectedBranch.value) {
+        refreshGitLog()
     }
 }
 
@@ -516,6 +547,7 @@ function handleTreeReposition(event) {
             <!-- Header with commit selector -->
             <GitPanelHeader
                 :selected-commit="selectedCommit"
+                :selected-branch="selectedBranch"
                 :stats="headerStats"
                 :stats-loading="commitFilesLoading"
                 :git-log-open="gitLogOpen"
@@ -704,6 +736,10 @@ function handleTreeReposition(event) {
     gap: var(--wa-space-s);
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-s);
+}
+
+wa-callout {
+    max-width: min(40rem, 90vh);
 }
 
 .panel-placeholder {
