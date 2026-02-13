@@ -4,6 +4,7 @@
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
 import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
+import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 import { useDataStore } from './data'
 import { setThemeMode } from '../utils/theme'
 
@@ -28,6 +29,11 @@ const SETTINGS_SCHEMA = {
     autoUnpinOnArchive: true,
     terminalUseTmux: false,
     diffSideBySide: true,
+    // Notification settings: sound + browser notification for each event type
+    notifUserTurnSound: NOTIFICATION_SOUNDS.NONE,
+    notifUserTurnBrowser: false,
+    notifPendingRequestSound: NOTIFICATION_SOUNDS.NONE,
+    notifPendingRequestBrowser: false,
     // Not persisted - computed at runtime based on themeMode and system preference
     _effectiveTheme: null,
 }
@@ -51,6 +57,10 @@ const SETTINGS_VALIDATORS = {
     autoUnpinOnArchive: (v) => typeof v === 'boolean',
     terminalUseTmux: (v) => typeof v === 'boolean',
     diffSideBySide: (v) => typeof v === 'boolean',
+    notifUserTurnSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
+    notifUserTurnBrowser: (v) => typeof v === 'boolean',
+    notifPendingRequestSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
+    notifPendingRequestBrowser: (v) => typeof v === 'boolean',
 }
 
 /**
@@ -130,6 +140,10 @@ export const useSettingsStore = defineStore('settings', {
         isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
         isTerminalUseTmux: (state) => state.terminalUseTmux,
         isDiffSideBySide: (state) => state.diffSideBySide,
+        getNotifUserTurnSound: (state) => state.notifUserTurnSound,
+        isNotifUserTurnBrowser: (state) => state.notifUserTurnBrowser,
+        getNotifPendingRequestSound: (state) => state.notifPendingRequestSound,
+        isNotifPendingRequestBrowser: (state) => state.notifPendingRequestBrowser,
         /**
          * Effective theme: always returns 'light' or 'dark', never 'system'.
          * Takes into account the system preference when themeMode is 'system'.
@@ -278,6 +292,46 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set notification sound for user turn events.
+         * @param {string} sound - One of NOTIFICATION_SOUNDS values
+         */
+        setNotifUserTurnSound(sound) {
+            if (SETTINGS_VALIDATORS.notifUserTurnSound(sound)) {
+                this.notifUserTurnSound = sound
+            }
+        },
+
+        /**
+         * Set browser notification for user turn events.
+         * @param {boolean} enabled
+         */
+        setNotifUserTurnBrowser(enabled) {
+            if (SETTINGS_VALIDATORS.notifUserTurnBrowser(enabled)) {
+                this.notifUserTurnBrowser = enabled
+            }
+        },
+
+        /**
+         * Set notification sound for pending request events.
+         * @param {string} sound - One of NOTIFICATION_SOUNDS values
+         */
+        setNotifPendingRequestSound(sound) {
+            if (SETTINGS_VALIDATORS.notifPendingRequestSound(sound)) {
+                this.notifPendingRequestSound = sound
+            }
+        },
+
+        /**
+         * Set browser notification for pending request events.
+         * @param {boolean} enabled
+         */
+        setNotifPendingRequestBrowser(enabled) {
+            if (SETTINGS_VALIDATORS.notifPendingRequestBrowser(enabled)) {
+                this.notifPendingRequestBrowser = enabled
+            }
+        },
+
+        /**
          * Update the effective theme based on themeMode and system preference.
          * Called internally when themeMode changes or system preference changes.
          */
@@ -328,6 +382,10 @@ export function initSettings() {
             autoUnpinOnArchive: store.autoUnpinOnArchive,
             terminalUseTmux: store.terminalUseTmux,
             diffSideBySide: store.diffSideBySide,
+            notifUserTurnSound: store.notifUserTurnSound,
+            notifUserTurnBrowser: store.notifUserTurnBrowser,
+            notifPendingRequestSound: store.notifPendingRequestSound,
+            notifPendingRequestBrowser: store.notifPendingRequestBrowser,
         }),
         (newSettings) => {
             saveSettings(newSettings)

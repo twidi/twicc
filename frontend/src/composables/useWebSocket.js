@@ -8,6 +8,9 @@ import { useAuthStore } from '../stores/auth'
 import { useReconciliation } from './useReconciliation'
 import { toast } from './useToast'
 import { computeUsageData } from '../utils/usage'
+import { useSettingsStore } from '../stores/settings'
+import { playNotificationSound, sendBrowserNotification, BROWSER_NOTIFICATION_TAGS } from '../utils/notificationSounds'
+import { truncateTitle } from '../utils/truncate'
 
 // WebSocket close code sent by backend when authentication fails
 const WS_CLOSE_AUTH_FAILURE = 4001
@@ -116,20 +119,65 @@ export function notifyUserDraftUpdated(sessionId) {
 }
 
 /**
- * Show toast notification for process state changes.
- * Only notifies for specific state transitions (started, stopped).
+ * Build a notification body string from session/project info.
+ * Format: "Project: <name> — Session: <title>" (both truncated).
+ * @param {Object} store - The data store
+ * @param {string} sessionId - The session ID
+ * @returns {string}
  */
-function notifyProcessStateChange(store, msg) {
-    const sessionId = msg.session_id
+function buildNotificationBody(store, sessionId) {
+    const session = store.getSession(sessionId)
+    const projectId = session?.project_id
+    const projectName = projectId ? truncateTitle(store.getProjectDisplayName(projectId), 50) : 'Unknown'
+    const sessionTitle = truncateTitle(session?.title, 50)
+    return `Project: ${projectName}\nSession: ${sessionTitle}`
+}
 
-    // Pending request notification (tool approval or ask user question)
-    if (msg.pending_request) {
+/**
+ * Show toast notification and trigger external notifications (sound + browser)
+ * for process state changes.
+ * @param {Object} store - The data store
+ * @param {Object} msg - The WebSocket process_state message
+ * @param {Object|null} previousState - The previous process state (before update), null if new process
+ */
+function notifyProcessStateChange(store, msg, previousState) {
+    const sessionId = msg.session_id
+    const settings = useSettingsStore()
+
+    // --- Transition to user_turn: "Claude finished working" ---
+    if (msg.state === 'user_turn' && previousState?.state !== 'user_turn') {
+        // Sound notification
+        playNotificationSound(settings.notifUserTurnSound)
+        // Browser notification
+        if (settings.notifUserTurnBrowser) {
+            sendBrowserNotification(
+                'Claude finished working',
+                buildNotificationBody(store, sessionId),
+                { tag: BROWSER_NOTIFICATION_TAGS.USER_TURN },
+            )
+        }
+    }
+
+    // --- Pending request: "Claude needs your attention" ---
+    if (msg.pending_request && !previousState?.pending_request) {
         const pendingTitle = msg.pending_request.request_type === 'ask_user_question'
             ? '🖐️ Claude has a question for you'
             : '🖐️ Claude needs your approval'
         toast.session(sessionId, { type: 'warning', title: pendingTitle })
+
+        // Sound notification
+        playNotificationSound(settings.notifPendingRequestSound)
+        // Browser notification
+        if (settings.notifPendingRequestBrowser) {
+            sendBrowserNotification(
+                'Claude needs your attention',
+                buildNotificationBody(store, sessionId),
+                { tag: BROWSER_NOTIFICATION_TAGS.PENDING_REQUEST },
+            )
+        }
     }
 
+    // --- Process death notifications (toast only, unchanged) ---
     if (msg.state === 'dead') {
         // Only notify for errors and timeouts, not for normal lifecycle
         if (msg.kill_reason === 'error') {
@@ -274,7 +322,9 @@ export function useWebSocket() {
                     store.addSessionItems(msg.session_id, msg.items, msg.updated_metadata)
                 }
                 break
-            case 'process_state':
+            case 'process_state': {
+                // Capture previous state before updating (needed for transition detection)
+                const previousProcessState = store.processStates[msg.session_id] || null
                 // Update process state for a session
                 store.setProcessState(msg.session_id, msg.project_id, msg.state, {
                     started_at: msg.started_at,
@@ -283,9 +333,10 @@ export function useWebSocket() {
                     error: msg.error,
                     pending_request: msg.pending_request,
                 })
-                // Show toast notifications for process state changes
-                notifyProcessStateChange(store, msg)
+                // Show toast + sound + browser notifications for process state changes
+                notifyProcessStateChange(store, msg, previousProcessState)
                 break
+            }
             case 'active_processes':
                 // Initialize process states from server on connection
                 store.setActiveProcesses(msg.processes)

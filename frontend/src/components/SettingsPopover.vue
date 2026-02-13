@@ -6,6 +6,7 @@ import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
 import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS } from '../constants'
+import NotificationSettings from './NotificationSettings.vue'
 
 const router = useRouter()
 const store = useSettingsStore()
@@ -49,6 +50,7 @@ const titleGenerationSwitch = ref(null)
 const titleSystemPromptTextarea = ref(null)
 const tmuxSwitch = ref(null)
 const diffSideBySideSwitch = ref(null)
+const notificationSettingsRef = ref(null)
 
 // Settings from store
 const displayMode = computed(() => store.getDisplayMode)
@@ -221,6 +223,7 @@ function resetTitleSystemPrompt() {
  */
 function onPopoverShow() {
     syncSwitchState()
+    notificationSettingsRef.value?.sync()
 }
 </script>
 
@@ -379,6 +382,9 @@ function onPopoverShow() {
                         </div>
                     </div>
                 </section>
+
+                <!-- Notifications Section -->
+                <NotificationSettings ref="notificationSettingsRef" />
 
                 <!-- Editor Section -->
                 <section class="settings-section">

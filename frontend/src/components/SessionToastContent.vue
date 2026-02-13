@@ -36,11 +36,7 @@ const store = useDataStore()
 const session = computed(() => store.getSession(props.sessionId))
 const projectId = computed(() => session.value?.project_id)
 
-const sessionTitle = computed(() => {
-    const title = session.value?.title
-    if (!title) return 'Unknown'
-    return title.length > 50 ? title.slice(0, 50) + '…' : title
-})
+const sessionTitle = computed(() => session.value?.title || 'Unknown')
 
 /** Whether we're already viewing this session. */
 const isCurrentSession = computed(() => route.params.sessionId === props.sessionId)
