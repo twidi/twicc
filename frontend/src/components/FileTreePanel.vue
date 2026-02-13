@@ -87,9 +87,40 @@ const props = defineProps({
         type: String,
         default: 'files',  // 'files' | 'git'
     },
+    /**
+     * Whether the panel is in mobile layout mode.
+     * When true, the file tree is hidden behind a header that shows the
+     * selected file path. Clicking the header opens the tree as an overlay.
+     */
+    isMobile: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 const emit = defineEmits(['file-select', 'refresh', 'option-select'])
+
+// ─── Mobile overlay state ────────────────────────────────────────────────────
+
+const fileTreeOpen = ref(false)
+
+function toggleFileTree() {
+    fileTreeOpen.value = !fileTreeOpen.value
+}
+
+/**
+ * Placeholder text for the mobile header when no file is selected.
+ * Mirrors the placeholder states from the template.
+ */
+const headerPlaceholder = computed(() => {
+    if (isSearching.value && !searchTree.value?.children?.length && searchResponded.value) {
+        return 'No matches'
+    }
+    if (!props.rootPath) {
+        return props.mode === 'git' ? 'No changes' : 'No directory'
+    }
+    return 'Select a file'
+})
 
 // ─── Search state ────────────────────────────────────────────────────────────
 
@@ -194,6 +225,11 @@ function onFileSelect(path) {
         ? path.slice(prefix.length)
         : path
     emit('file-select', selectedFile.value)
+
+    // In mobile mode, close the overlay after selecting a file
+    if (props.isMobile) {
+        fileTreeOpen.value = false
+    }
 }
 
 /**
@@ -722,117 +758,143 @@ defineExpose({
     autoOpen,
     isSearching,
     searchQuery,
+    fileTreeOpen,
+    toggleFileTree,
 })
 </script>
 
 <template>
-    <div class="file-tree-panel">
-        <!-- Search input + options (only shown when tree is loaded) -->
-        <div v-if="tree" class="files-search">
-            <wa-dropdown
-                placement="bottom-start"
-                class="files-options-dropdown"
-                @wa-select="handleOptionsSelect"
-            >
-                <wa-button
-                    slot="trigger"
-                    variant="neutral"
-                    appearance="filled-outlined"
+    <div class="file-tree-panel" :class="{ 'file-tree-panel--mobile': isMobile }">
+        <!-- Mobile header: shows selected file path, click to open overlay -->
+        <button
+            v-if="isMobile"
+            class="files-panel-header"
+            :class="{ open: fileTreeOpen }"
+            @click="toggleFileTree"
+        >
+            <span class="files-panel-header-label" :title="selectedFile || undefined">
+                {{ selectedFile || headerPlaceholder }}
+            </span>
+            <wa-icon
+                class="chevron"
+                :name="fileTreeOpen ? 'chevron-up' : 'chevron-down'"
+            ></wa-icon>
+        </button>
+
+        <!-- File tree content: inline on desktop, overlay on mobile.
+             Use v-show (not v-if) so the tree DOM, search state, scroll
+             position and focus are preserved when the overlay is closed. -->
+        <div
+            v-show="!isMobile || fileTreeOpen"
+            class="file-tree-panel-content"
+        >
+            <!-- Search input + options (only shown when tree is loaded) -->
+            <div v-if="tree" class="files-search">
+                <wa-dropdown
+                    placement="bottom-start"
+                    class="files-options-dropdown"
+                    @wa-select="handleOptionsSelect"
+                >
+                    <wa-button
+                        slot="trigger"
+                        variant="neutral"
+                        appearance="filled-outlined"
+                        size="small"
+                    >
+                        <wa-icon name="sliders"></wa-icon>
+                    </wa-button>
+
+                    <!-- Parent-specific options (injected via slot) -->
+                    <slot name="options-before" />
+
+                    <!-- Shared options -->
+                    <wa-dropdown-item
+                        type="checkbox"
+                        value="auto-open"
+                        :checked="autoOpen"
+                    >
+                        Auto-open
+                    </wa-dropdown-item>
+                    <wa-divider></wa-divider>
+                    <wa-dropdown-item
+                        v-if="selectedFile"
+                        value="reveal-in-tree"
+                    >
+                        <wa-icon slot="icon" name="crosshairs"></wa-icon>
+                        <div>Scroll to selected file</div>
+                        <div class="reveal-path">{{ selectedFile }}</div>
+                    </wa-dropdown-item>
+                    <wa-dropdown-item
+                        v-if="showRefresh"
+                        value="refresh"
+                    >
+                        <wa-icon slot="icon" name="arrows-rotate"></wa-icon>
+                        Refresh
+                    </wa-dropdown-item>
+                </wa-dropdown>
+                <wa-input
+                    ref="searchInputRef"
+                    :value="searchQuery"
+                    placeholder="Filter files..."
                     size="small"
+                    with-clear
+                    class="files-search-input"
+                    @input="onSearchInput"
+                    @keydown="handleSearchKeydown"
+                    @wa-clear="clearSearch"
                 >
-                    <wa-icon name="sliders"></wa-icon>
-                </wa-button>
-
-                <!-- Parent-specific options (injected via slot) -->
-                <slot name="options-before" />
-
-                <!-- Shared options -->
-                <wa-dropdown-item
-                    type="checkbox"
-                    value="auto-open"
-                    :checked="autoOpen"
-                >
-                    Auto-open
-                </wa-dropdown-item>
-                <wa-divider></wa-divider>
-                <wa-dropdown-item
-                    v-if="selectedFile"
-                    value="reveal-in-tree"
-                >
-                    <wa-icon slot="icon" name="crosshairs"></wa-icon>
-                    <div>Scroll to selected file</div>
-                    <div class="reveal-path">{{ selectedFile }}</div>
-                </wa-dropdown-item>
-                <wa-dropdown-item
-                    v-if="showRefresh"
-                    value="refresh"
-                >
-                    <wa-icon slot="icon" name="arrows-rotate"></wa-icon>
-                    Refresh
-                </wa-dropdown-item>
-            </wa-dropdown>
-            <wa-input
-                ref="searchInputRef"
-                :value="searchQuery"
-                placeholder="Filter files..."
-                size="small"
-                with-clear
-                class="files-search-input"
-                @input="onSearchInput"
-                @keydown="handleSearchKeydown"
-                @wa-clear="clearSearch"
-            >
-                <wa-icon slot="start" name="magnifying-glass"></wa-icon>
-            </wa-input>
-        </div>
-
-        <!-- Placeholder states -->
-        <div v-if="isSearching && !searchTree?.children?.length && !searchResponded" class="panel-placeholder">
-            <wa-spinner></wa-spinner>
-        </div>
-        <div v-else-if="isSearching && !searchTree?.children?.length && searchResponded" class="panel-placeholder">
-            No matches
-        </div>
-        <div v-else-if="!isSearching && loading" class="panel-placeholder">
-            <wa-spinner></wa-spinner>
-        </div>
-        <div v-else-if="!isSearching && error" class="panel-placeholder panel-error">
-            {{ error }}
-        </div>
-        <div v-else-if="!isSearching && !rootPath" class="panel-placeholder">
-            {{ mode === 'git' ? 'No changes' : 'No directory' }}
-        </div>
-
-        <!-- Tree (same structure for both browse and search) -->
-        <template v-else-if="displayTree">
-            <div
-                ref="treeContainerRef"
-                class="tree-container"
-                role="tree"
-                tabindex="0"
-                @keydown="handleTreeKeydown"
-            >
-                <FileTree
-                    :node="displayTree"
-                    :path="rootPath"
-                    :project-id="projectId"
-                    :session-id="sessionId"
-                    :is-root="true"
-                    :all-open="isSearching"
-                    :focused-path="focusedPath"
-                    :extra-query="extraQuery"
-                    :revealed-paths="revealedPaths"
-                    :selected-path="selectedAbsPath"
-                    :is-draft="isDraft"
-                    :mode="mode"
-                    @select="onFileSelect"
-                    @focus="onNodeFocus"
-                />
+                    <wa-icon slot="start" name="magnifying-glass"></wa-icon>
+                </wa-input>
             </div>
-            <div v-if="isSearching && searchTruncated" class="search-truncated">
-                {{ searchTotal }} matches — showing first {{ searchTree.children.length }}
+
+            <!-- Placeholder states -->
+            <div v-if="isSearching && !searchTree?.children?.length && !searchResponded" class="panel-placeholder">
+                <wa-spinner></wa-spinner>
             </div>
-        </template>
+            <div v-else-if="isSearching && !searchTree?.children?.length && searchResponded" class="panel-placeholder">
+                No matches
+            </div>
+            <div v-else-if="!isSearching && loading" class="panel-placeholder">
+                <wa-spinner></wa-spinner>
+            </div>
+            <div v-else-if="!isSearching && error" class="panel-placeholder panel-error">
+                {{ error }}
+            </div>
+            <div v-else-if="!isSearching && !rootPath" class="panel-placeholder">
+                {{ mode === 'git' ? 'No changes' : 'No directory' }}
+            </div>
+
+            <!-- Tree (same structure for both browse and search) -->
+            <template v-else-if="displayTree">
+                <div
+                    ref="treeContainerRef"
+                    class="tree-container"
+                    role="tree"
+                    tabindex="0"
+                    @keydown="handleTreeKeydown"
+                >
+                    <FileTree
+                        :node="displayTree"
+                        :path="rootPath"
+                        :project-id="projectId"
+                        :session-id="sessionId"
+                        :is-root="true"
+                        :all-open="isSearching"
+                        :focused-path="focusedPath"
+                        :extra-query="extraQuery"
+                        :revealed-paths="revealedPaths"
+                        :selected-path="selectedAbsPath"
+                        :is-draft="isDraft"
+                        :mode="mode"
+                        @select="onFileSelect"
+                        @focus="onNodeFocus"
+                    />
+                </div>
+                <div v-if="isSearching && searchTruncated" class="search-truncated">
+                    {{ searchTotal }} matches — showing first {{ searchTree.children.length }}
+                </div>
+            </template>
+        </div>
     </div>
 </template>
 
@@ -909,5 +971,87 @@ defineExpose({
     color: var(--wa-color-text-quiet);
     text-align: center;
     border-top: 1px solid var(--wa-color-surface-border);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mobile layout: header + overlay
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.file-tree-panel--mobile {
+    /* In mobile mode, the panel is no longer a flex column filling the
+       split-panel slot. It must be position: relative so the overlay
+       can use position: absolute with inset: 0. But since the panel
+       itself is inside an absolute/flex container from the parent,
+       we keep height: 100% and let the overlay cover the parent's
+       content area via the parent's positioning context. */
+    height: auto;
+    overflow: visible;
+}
+
+/* ----- Mobile header (click to open file tree overlay) ----- */
+
+.files-panel-header {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    width: 100%;
+    padding: var(--wa-space-xs) var(--wa-space-s);
+    background: var(--wa-color-surface-default);
+    border: none;
+    border-bottom: 1px solid var(--wa-color-surface-border);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--wa-font-size-s);
+    font-weight: normal;
+    color: inherit;
+    text-align: left;
+    transition: background-color 0.15s ease;
+    box-shadow: none;
+    margin: 0;
+    translate: none !important;
+    transform: none !important;
+    justify-content: start;
+    flex-wrap: wrap;
+    height: auto;
+    flex-shrink: 0;
+    /* Stay above the overlay (z-index: 10) */
+    position: relative;
+    z-index: 11;
+}
+
+.files-panel-header:hover {
+    background-color: var(--wa-color-surface-alt);
+}
+
+.files-panel-header.open {
+    background-color: var(--wa-color-surface-alt);
+}
+
+.files-panel-header-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+}
+
+.files-panel-header .chevron {
+    flex-shrink: 0;
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+    transition: transform 0.2s ease;
+}
+
+/* ----- Mobile overlay (same pattern as .gitlog-overlay in GitPanel) ----- */
+
+.file-tree-panel--mobile > .file-tree-panel-content {
+    position: absolute;
+    inset: 0;
+    top: 3rem;
+    z-index: 10;
+    overflow: hidden;
+    background: var(--wa-color-surface-default);
+    display: flex;
+    flex-direction: column;
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick, onActivated, onDeactivated } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
 import {
@@ -41,6 +41,26 @@ const props = defineProps({
 })
 
 const settingsStore = useSettingsStore()
+
+// ─── Mobile breakpoint detection ─────────────────────────────────────────────
+
+const MOBILE_BREAKPOINT = 640
+const isMobile = ref(false)
+let mobileMediaQuery = null
+
+function updateMobileState(event) {
+    isMobile.value = event.matches
+}
+
+onMounted(() => {
+    mobileMediaQuery = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
+    isMobile.value = mobileMediaQuery.matches
+    mobileMediaQuery.addEventListener('change', updateMobileState)
+})
+
+onBeforeUnmount(() => {
+    mobileMediaQuery?.removeEventListener('change', updateMobileState)
+})
 
 // ---------------------------------------------------------------------------
 // API prefix (project-level for drafts, session-level otherwise)
@@ -557,8 +577,9 @@ function handleTreeReposition(event) {
 
             <!-- Content area (position: relative so overlay can cover it) -->
             <div class="git-panel-content">
-                <!-- Split panel with file tree + file path display -->
+                <!-- ═══ Desktop layout: split panel ═══ -->
                 <wa-split-panel
+                    v-if="!isMobile"
                     ref="splitPanelRef"
                     class="git-split-panel"
                     :class="{ 'keep-alive-hidden': keepAliveHidden }"
@@ -638,6 +659,76 @@ function handleTreeReposition(event) {
                         </div>
                     </div>
                 </wa-split-panel>
+
+                <!-- ═══ Mobile layout: header + full-width content ═══ -->
+                <template v-if="isMobile">
+                    <!-- FileTreePanel renders its own header + overlay in mobile mode -->
+                    <FileTreePanel
+                        ref="fileTreePanelRef"
+                        :tree="displayTree"
+                        :loading="commitFilesLoading"
+                        :root-path="displayTree?.name"
+                        :search-fn="doSearch"
+                        :lazy-load-fn="null"
+                        :project-id="projectId"
+                        :session-id="sessionId"
+                        :show-refresh="isViewingIndex"
+                        :active="active"
+                        :is-mobile="true"
+                        mode="git"
+                        @refresh="refreshIndexFiles"
+                        @option-select="handleOptionsSelect"
+                    >
+                        <template #options-before>
+                            <wa-dropdown-item
+                                v-if="isViewingIndex"
+                                type="checkbox"
+                                value="show-untracked"
+                                :checked="showUntracked"
+                            >
+                                Show untracked files
+                            </wa-dropdown-item>
+                        </template>
+                    </FileTreePanel>
+
+                    <!-- Diff viewer (full width) -->
+                    <div class="git-content-panel">
+                        <!-- Loading diff -->
+                        <div v-if="diffLoading" class="panel-placeholder">
+                            <wa-spinner></wa-spinner>
+                        </div>
+
+                        <!-- Diff error -->
+                        <div v-else-if="diffError" class="panel-placeholder">
+                            <wa-callout variant="danger" size="small">
+                                {{ diffError }}
+                            </wa-callout>
+                        </div>
+
+                        <!-- Binary file -->
+                        <div v-else-if="diffData?.binary" class="panel-placeholder">
+                            Binary file cannot be diffed
+                        </div>
+
+                        <!-- Diff viewer (Monaco diff editor via FilePane) -->
+                        <FilePane
+                            v-else-if="selectedFile && diffData"
+                            :project-id="projectId"
+                            :session-id="sessionId"
+                            :file-path="selectedFilePath"
+                            diff-mode
+                            :original-content="diffData.original"
+                            :modified-content="diffData.modified"
+                            :diff-read-only="!isViewingIndex"
+                            @revert="fetchDiff(selectedFile)"
+                        />
+
+                        <!-- No file selected / no changes -->
+                        <div v-else-if="!selectedFile" class="panel-placeholder">
+                            {{ !displayTree ? 'No changes' : 'Select a file' }}
+                        </div>
+                    </div>
+                </template>
 
                 <!-- Git log overlay (absolute, shown when chevron is clicked) -->
                 <div v-if="gitLogOpen" class="gitlog-overlay">
@@ -777,6 +868,19 @@ wa-callout {
     overflow: hidden;
 }
 
+/* Mobile: stack header + content vertically */
+@media (width < 640px) {
+    .git-panel-content {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .git-content-panel {
+        flex: 1;
+        min-height: 0;
+    }
+}
+
 /* ----- Split panel ----- */
 
 .git-split-panel {
@@ -827,7 +931,7 @@ wa-callout {
 .gitlog-overlay {
     position: absolute;
     inset: 0;
-    z-index: 9;
+    z-index: 11;
     overflow: hidden;
     background: var(--wa-color-surface-default);
     display: flex;

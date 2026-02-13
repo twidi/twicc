@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onActivated, onDeactivated } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { apiFetch } from '../utils/api'
 import FileTreePanel from './FileTreePanel.vue'
 import FilePane from './FilePane.vue'
@@ -33,6 +33,26 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+})
+
+// ─── Mobile breakpoint detection ─────────────────────────────────────────────
+
+const MOBILE_BREAKPOINT = 640
+const isMobile = ref(false)
+let mobileMediaQuery = null
+
+function updateMobileState(event) {
+    isMobile.value = event.matches
+}
+
+onMounted(() => {
+    mobileMediaQuery = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
+    isMobile.value = mobileMediaQuery.matches
+    mobileMediaQuery.addEventListener('change', updateMobileState)
+})
+
+onBeforeUnmount(() => {
+    mobileMediaQuery?.removeEventListener('change', updateMobileState)
 })
 
 // API prefix: project-level for drafts, session-level otherwise
@@ -362,7 +382,9 @@ function handleTreeReposition(event) {
 
 <template>
     <div class="files-panel">
+        <!-- ═══ Desktop layout: split panel ═══ -->
         <wa-split-panel
+            v-if="!isMobile"
             ref="splitPanelRef"
             class="files-split-panel"
             :class="{ 'keep-alive-hidden': keepAliveHidden }"
@@ -445,6 +467,79 @@ function handleTreeReposition(event) {
                 </div>
             </div>
         </wa-split-panel>
+
+        <!-- ═══ Mobile layout: header + full-width content ═══ -->
+        <template v-else>
+            <!-- FileTreePanel renders its own header + overlay in mobile mode -->
+            <FileTreePanel
+                ref="fileTreePanelRef"
+                :tree="tree"
+                :loading="loading"
+                :error="error"
+                :root-path="directory"
+                :search-fn="doSearch"
+                :lazy-load-fn="lazyLoadDir"
+                :project-id="projectId"
+                :session-id="sessionId"
+                :is-draft="isDraft"
+                :extra-query="optionsQuery()"
+                :show-refresh="true"
+                :active="active"
+                :is-mobile="true"
+                mode="files"
+                @refresh="refresh"
+                @option-select="handleOptionsSelect"
+            >
+                <template #options-before>
+                    <wa-dropdown-item
+                        type="checkbox"
+                        value="show-hidden"
+                        :checked="showHidden"
+                    >
+                        Show hidden files
+                    </wa-dropdown-item>
+                    <wa-dropdown-item
+                        v-if="isGit"
+                        type="checkbox"
+                        value="show-ignored"
+                        :checked="showIgnored"
+                    >
+                        Show git ignored files
+                    </wa-dropdown-item>
+                    <wa-divider></wa-divider>
+                    <wa-dropdown-item disabled class="dropdown-header">
+                        Root:
+                    </wa-dropdown-item>
+                    <wa-dropdown-item
+                        v-for="root in availableRoots"
+                        :key="root.key"
+                        type="checkbox"
+                        :value="'root:' + root.key"
+                        :checked="selectedRootKey === root.key"
+                        :disabled="missingRoots.has(root.key)"
+                    >
+                        <div>{{ root.label }}</div>
+                        <div class="root-path">{{ root.path }}</div>
+                        <div v-if="missingRoots.has(root.key)" class="root-missing">Directory no longer exists</div>
+                    </wa-dropdown-item>
+                    <wa-divider></wa-divider>
+                </template>
+            </FileTreePanel>
+
+            <!-- File content (full width) -->
+            <div class="files-content-panel">
+                <FilePane
+                    v-show="selectedFile"
+                    :project-id="projectId"
+                    :session-id="sessionId"
+                    :file-path="selectedAbsPath"
+                    :is-draft="isDraft"
+                />
+                <div v-show="!selectedFile" class="panel-placeholder">
+                    Select a file
+                </div>
+            </div>
+        </template>
     </div>
 </template>
 
@@ -452,6 +547,15 @@ function handleTreeReposition(event) {
 .files-panel {
     height: 100%;
     overflow: hidden;
+    position: relative;
+}
+
+/* Mobile: stack header + content vertically */
+@media (width < 640px) {
+    .files-panel {
+        display: flex;
+        flex-direction: column;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -504,6 +608,13 @@ function handleTreeReposition(event) {
     display: flex;
     flex-direction: column;
     position: relative;
+}
+
+@media (width < 640px) {
+    .files-content-panel {
+        flex: 1;
+        min-height: 0;
+    }
 }
 
 /* Placeholder styling */
