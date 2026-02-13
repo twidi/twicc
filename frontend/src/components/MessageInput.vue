@@ -380,7 +380,7 @@ async function handleClear() {
             ref="textareaRef"
             :value.prop="messageText"
             :placeholder="placeholderText"
-            rows="3"
+            rows="1"
             resize="auto"
             @input="onInput"
             @keydown="onKeydown"
@@ -499,23 +499,34 @@ async function handleClear() {
     max-height: calc(var(--visual-viewport-height, 100dvh) * 0.4);
     /* Override resize="auto" which sets overflow-y: hidden - we need scrolling when max-height is reached */
     overflow-y: auto;
+    padding-bottom: 3.5rem;
 }
 
 .message-input-toolbar {
     display: flex;
-    align-items: center;
+    align-items: end;
     justify-content: space-between;
     gap: var(--wa-space-s);
     @media (width < 640px) {
-        padding-left: calc(2.75rem + var(--wa-space-s) + 2.75rem + var(--wa-space-s));
+        padding-left: 3rem;
     }
+    position: absolute;
+    bottom: var(--wa-space-xs);
+    left: var(--wa-space-l);
+    right: var(--wa-space-l);
 }
 
 /* When sidebar is closed, the sidebar toggle button overlaps
-   the attach button area. Add left padding to make room. */
-body.sidebar-closed .message-input-toolbar {
-    @media (width >= 640px) {
-        padding-left: 3.5rem;
+   the attach button area. Add left padding to make room.
+   (Also take into account that the space for the split divider, 4px, is still "here" */
+@media (width >= 640px) {
+    body.sidebar-closed  {
+        .message-input-toolbar {
+            padding-left: 3rem;
+        }
+        .message-input {
+            padding-left: calc(var(--wa-space-s) - 4px);
+        }
     }
 }
 
@@ -527,12 +538,14 @@ body.sidebar-closed .message-input-toolbar {
     @media (width < 640px) {
         gap: var(--wa-space-xs);
     }
+    margin-bottom: var(--wa-space-2xs);
 }
 
 .message-input-actions {
     display: flex;
     gap: var(--wa-space-s);
     flex-shrink: 0;
+    margin-bottom: var(--wa-space-m);
 
     .cancel-button, .clear-button, .send-button {
         wa-icon {
