@@ -292,6 +292,14 @@ async function handleSend() {
     const success = sendWsMessage(payload)
 
     if (success) {
+        // Show optimistic user message immediately (only when not in assistant_turn,
+        // because during assistant_turn the message is queued and the user_message
+        // won't arrive until later)
+        const state = processState.value?.state
+        if (state !== 'assistant_turn') {
+            store.setOptimisticMessage(props.sessionId, text)
+        }
+
         // Clear draft message from store (and IndexedDB)
         store.clearDraftMessage(props.sessionId)
 

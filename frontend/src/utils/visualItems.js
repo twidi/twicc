@@ -16,7 +16,7 @@ import { DISPLAY_LEVEL, DISPLAY_MODE } from '../constants'
  * @param {Array} items - Array of session items with metadata
  * @param {string} mode - Display mode: 'conversation' | 'simplified' | 'normal' | 'debug'
  * @param {Array} expandedGroups - Array of expanded group_head line numbers
- * @param {number|null} [assistantTurnStartedAt=null] - Unix timestamp (seconds) of when assistant_turn started, or null if not in assistant_turn
+ * @param {boolean} [isAssistantTurn=false] - Whether we're currently in an assistant turn (conversation mode only)
  * @returns {Array} Array of visual items with properties:
  *   - lineNum: the item's line number
  *   - content: the item's raw content (for reactivity in virtual scroller)
@@ -30,7 +30,7 @@ import { DISPLAY_LEVEL, DISPLAY_MODE } from '../constants'
  *   - suffixGroupHead?: this item's line_num when it starts a group via suffix (ALWAYS items)
  *   - suffixExpanded?: true if suffix group is expanded (ALWAYS items)
  */
-export function computeVisualItems(items, mode, expandedGroups = [], assistantTurnStartedAt = null) {
+export function computeVisualItems(items, mode, expandedGroups = [], isAssistantTurn = false) {
     if (!items || items.length === 0) return []
 
     const result = []
@@ -52,12 +52,9 @@ export function computeVisualItems(items, mode, expandedGroups = [], assistantTu
     }
 
     // Conversation mode: show only user_messages + last assistant_message before each user_message
-    // + trailing assistant_message at end of session
+    // + trailing assistant_message (unless we're in assistant_turn, since the optimistic
+    // user_message already captures the last pre-turn assistant_message naturally)
     if (mode === DISPLAY_MODE.CONVERSATION) {
-        const isAssistantTurn = assistantTurnStartedAt !== null
-        // Convert assistantTurnStartedAt (unix seconds) to ms for comparison with ISO timestamps
-        const turnStartMs = isAssistantTurn ? assistantTurnStartedAt * 1000 : null
-
         const keptAssistantLineNums = new Set()
         let lastAssistantLineNum = null
 
@@ -72,28 +69,9 @@ export function computeVisualItems(items, mode, expandedGroups = [], assistantTu
             }
         }
 
-        // Trailing assistant_message (last with no user_message after it):
-        if (lastAssistantLineNum !== null) {
-            if (isAssistantTurn) {
-                // During assistant_turn: find the last assistant_message from BEFORE the turn started
-                // (items created during this turn are intermediate and not final yet)
-                let lastPreTurnAssistantLineNum = null
-                for (const item of items) {
-                    if (item.kind === 'assistant_message') {
-                        const itemTimeMs = item.timestamp ? new Date(item.timestamp).getTime() : null
-                        if (itemTimeMs !== null && itemTimeMs < turnStartMs) {
-                            lastPreTurnAssistantLineNum = item.line_num
-                        }
-                    } else if (item.kind === 'user_message') {
-                        lastPreTurnAssistantLineNum = null
-                    }
-                }
-                if (lastPreTurnAssistantLineNum !== null) {
-                    keptAssistantLineNums.add(lastPreTurnAssistantLineNum)
-                }
-            } else {
-                keptAssistantLineNums.add(lastAssistantLineNum)
-            }
+        // Trailing assistant_message: show last one only if not in assistant_turn
+        if (lastAssistantLineNum !== null && !isAssistantTurn) {
+            keptAssistantLineNums.add(lastAssistantLineNum)
         }
 
         for (const item of items) {

@@ -3,7 +3,7 @@
 import { defineStore } from 'pinia'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
-import { DISPLAY_MODE, PROCESS_STATE } from '../constants'
+import { DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE } from '../constants'
 import { useSettingsStore } from './settings'
 import {
     saveDraftMessage,
@@ -140,6 +140,12 @@ export const useDataStore = defineStore('data', {
             // sessionId: the session ID from the route, or null if no session selected
             // Used to navigate back when archiving the current session
             mruPaths: [],
+
+            // Optimistic messages - user messages displayed immediately after send,
+            // before the backend confirms with a real user_message item.
+            // { sessionId: { specialKind, content, kind } }
+            // Cleared when the real user_message arrives in addSessionItems.
+            optimisticMessages: {},
         }
     }),
 
@@ -505,6 +511,12 @@ export const useDataStore = defineStore('data', {
                 targetArray[index] = item
             }
 
+            // Clear optimistic message when a real user_message arrives from the backend
+            if (this.localState.optimisticMessages[sessionId] &&
+                newItems.some(item => item.kind === 'user_message')) {
+                delete this.localState.optimisticMessages[sessionId]
+            }
+
             this.recomputeVisualItems(sessionId)
         },
 
@@ -846,6 +858,7 @@ export const useDataStore = defineStore('data', {
             delete this.localState.sessionExpandedGroups[sessionId]
             delete this.localState.sessionInternalExpandedGroups[sessionId]
             delete this.localState.sessionVisualItems[sessionId]
+            delete this.localState.optimisticMessages[sessionId]
             delete this.localState.agentLinks[sessionId]
         },
 
@@ -896,14 +909,30 @@ export const useDataStore = defineStore('data', {
             const mode = settingsStore.getDisplayMode
             const expandedGroups = this.localState.sessionExpandedGroups[sessionId] || []
 
-            // Conversation mode: pass assistant_turn start time to hide intermediate messages
+            // Conversation mode: hide trailing assistant messages during assistant_turn
             const processState = this.processStates[sessionId]
-            const assistantTurnStartedAt = mode === DISPLAY_MODE.CONVERSATION &&
+            const isAssistantTurn = mode === DISPLAY_MODE.CONVERSATION &&
                 processState?.state === PROCESS_STATE.ASSISTANT_TURN
-                ? processState.state_changed_at
-                : null
 
-            this.localState.sessionVisualItems[sessionId] = computeVisualItems(items, mode, expandedGroups, assistantTurnStartedAt)
+            let allItems = items
+            // Append optimistic message if one exists for this session
+            const optimistic = this.localState.optimisticMessages[sessionId]
+            if (optimistic) {
+                allItems = [...allItems, optimistic]
+            }
+
+            const visualItems = computeVisualItems(allItems, mode, expandedGroups, isAssistantTurn)
+
+            // Propagate specialKind to the last visual item if it came from the optimistic message.
+            // computeVisualItems doesn't know about specialKind, so we add it here.
+            if (optimistic && visualItems.length > 0) {
+                const lastItem = visualItems[visualItems.length - 1]
+                if (lastItem.lineNum === -1) {
+                    lastItem.specialKind = optimistic.specialKind
+                }
+            }
+
+            this.localState.sessionVisualItems[sessionId] = visualItems
         },
 
         /**
@@ -912,6 +941,50 @@ export const useDataStore = defineStore('data', {
          */
         recomputeAllVisualItems() {
             for (const sessionId of Object.keys(this.sessionItems)) {
+                this.recomputeVisualItems(sessionId)
+            }
+        },
+
+        // Optimistic message actions
+
+        /**
+         * Set an optimistic user message for a session.
+         * Displayed immediately in the conversation while waiting for the backend
+         * to confirm with a real user_message item.
+         * @param {string} sessionId
+         * @param {string} text - The message text
+         */
+        setOptimisticMessage(sessionId, text) {
+            const specialKind = 'optimistic-user-message'
+            // Store as sessionItem format (snake_case) since it's injected into
+            // the items array before computeVisualItems processes it.
+            this.localState.optimisticMessages[sessionId] = {
+                line_num: -1,
+                content: JSON.stringify({
+                    type: 'user',
+                    specialKind,
+                    message: {
+                        role: 'user',
+                        content: [{ type: 'text', text }]
+                    }
+                }),
+                kind: 'user_message',
+                specialKind,
+                display_level: DISPLAY_LEVEL.ALWAYS,
+                group_head: null,
+                group_tail: null
+            }
+            this.recomputeVisualItems(sessionId)
+        },
+
+        /**
+         * Clear the optimistic message for a session.
+         * Called when the real user_message arrives from the backend.
+         * @param {string} sessionId
+         */
+        clearOptimisticMessage(sessionId) {
+            if (this.localState.optimisticMessages[sessionId]) {
+                delete this.localState.optimisticMessages[sessionId]
                 this.recomputeVisualItems(sessionId)
             }
         },

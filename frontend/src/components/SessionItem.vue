@@ -18,6 +18,10 @@ const props = defineProps({
         type: String,
         default: null
     },
+    specialKind: {
+        type: String,
+        default: null
+    },
     // Context for store lookups (propagated to Message/ContentList)
     projectId: {
         type: String,
@@ -88,7 +92,7 @@ function toggleJsonView() {
 </script>
 
 <template>
-    <div class="session-item" :data-kind="kind">
+    <div class="session-item" :data-kind="kind" :data-special-kind="specialKind">
         <!-- JSON toggle button (visible on hover) -->
         <div class="json-toggle-container">
             <wa-button

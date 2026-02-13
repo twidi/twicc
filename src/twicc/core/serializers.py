@@ -156,7 +156,6 @@ def serialize_session_item(item):
         "group_head": item.group_head,
         "group_tail": item.group_tail,
         "kind": item.kind,
-        "timestamp": item.timestamp.isoformat() if item.timestamp else None,
     }
 
 
@@ -176,7 +175,6 @@ def serialize_session_item_metadata(item):
         "group_head": item.group_head,
         "group_tail": item.group_tail,
         "kind": item.kind,
-        "timestamp": item.timestamp.isoformat() if item.timestamp else None,
         "git_directory": item.git_directory,
         "git_branch": item.git_branch,
         # NO content field - that's the whole point
