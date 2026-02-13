@@ -12,6 +12,8 @@ const settingsStore = useSettingsStore()
 
 // Tooltips setting
 const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
+// Costs setting
+const showCosts = computed(() => settingsStore.areCostsShown)
 
 // Format cost as USD string (e.g., "$0.42")
 function formatCost(cost) {
@@ -71,8 +73,10 @@ function handleEditClick(event, project) {
                     <wa-tooltip v-if="tooltipsEnabled" :for="`sessions-count-${project.id}`">Number of sessions</wa-tooltip>
                     <span :id="`project-mtime-${project.id}`" class="project-mtime">{{ formatDate(project.mtime) }}</span>
                     <wa-tooltip v-if="tooltipsEnabled" :for="`project-mtime-${project.id}`">Last activity</wa-tooltip>
-                    <span :id="`project-cost-${project.id}`" class="project-cost">{{ project.total_cost != null ? formatCost(project.total_cost) : '-' }}</span>
-                    <wa-tooltip v-if="tooltipsEnabled" :for="`project-cost-${project.id}`">Total project cost</wa-tooltip>
+                    <template v-if="showCosts">
+                        <span :id="`project-cost-${project.id}`" class="project-cost">{{ project.total_cost != null ? formatCost(project.total_cost) : '-' }}</span>
+                        <wa-tooltip v-if="tooltipsEnabled" :for="`project-cost-${project.id}`">Total project cost</wa-tooltip>
+                    </template>
                 </div>
             </div>
         </wa-card>

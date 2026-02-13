@@ -24,6 +24,7 @@ const SETTINGS_SCHEMA = {
     titleGenerationEnabled: true,
     titleSystemPrompt: DEFAULT_TITLE_SYSTEM_PROMPT,
     autoHideHeaderFooter: false,
+    showCosts: true,
     extraUsageOnlyWhenNeeded: true,
     maxCachedSessions: DEFAULT_MAX_CACHED_SESSIONS,
     autoUnpinOnArchive: true,
@@ -52,6 +53,7 @@ const SETTINGS_VALIDATORS = {
     titleGenerationEnabled: (v) => typeof v === 'boolean',
     titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
     autoHideHeaderFooter: (v) => typeof v === 'boolean',
+    showCosts: (v) => typeof v === 'boolean',
     extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
     maxCachedSessions: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 50,
     autoUnpinOnArchive: (v) => typeof v === 'boolean',
@@ -135,6 +137,7 @@ export const useSettingsStore = defineStore('settings', {
         isTitleGenerationEnabled: (state) => state.titleGenerationEnabled,
         getTitleSystemPrompt: (state) => state.titleSystemPrompt,
         isAutoHideHeaderFooterEnabled: (state) => state.autoHideHeaderFooter,
+        areCostsShown: (state) => state.showCosts,
         isExtraUsageOnlyWhenNeeded: (state) => state.extraUsageOnlyWhenNeeded,
         getMaxCachedSessions: (state) => state.maxCachedSessions,
         isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
@@ -237,6 +240,16 @@ export const useSettingsStore = defineStore('settings', {
         setAutoHideHeaderFooter(enabled) {
             if (SETTINGS_VALIDATORS.autoHideHeaderFooter(enabled)) {
                 this.autoHideHeaderFooter = enabled
+            }
+        },
+
+        /**
+         * Set costs display enabled/disabled.
+         * @param {boolean} enabled
+         */
+        setShowCosts(enabled) {
+            if (SETTINGS_VALIDATORS.showCosts(enabled)) {
+                this.showCosts = enabled
             }
         },
 
@@ -377,6 +390,7 @@ export function initSettings() {
             titleGenerationEnabled: store.titleGenerationEnabled,
             titleSystemPrompt: store.titleSystemPrompt,
             autoHideHeaderFooter: store.autoHideHeaderFooter,
+            showCosts: store.showCosts,
             extraUsageOnlyWhenNeeded: store.extraUsageOnlyWhenNeeded,
             maxCachedSessions: store.maxCachedSessions,
             autoUnpinOnArchive: store.autoUnpinOnArchive,

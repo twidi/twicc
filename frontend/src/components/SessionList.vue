@@ -39,6 +39,8 @@ const settingsStore = useSettingsStore()
 const sessionTimeFormat = computed(() => settingsStore.getSessionTimeFormat)
 // Tooltips setting
 const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
+// Costs setting
+const showCosts = computed(() => settingsStore.areCostsShown)
 const useRelativeTime = computed(() =>
     sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_SHORT ||
     sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_NARROW
@@ -619,12 +621,14 @@ defineExpose({
                         </span>
                     </div>
                     <!-- Meta row (not shown for draft sessions) -->
-                    <div v-if="!session.draft" class="session-meta">
+                    <div v-if="!session.draft" class="session-meta" :class="{ 'session-meta--no-cost': !showCosts }">
                         <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.message_count ?? '??' }}</span>
                         <wa-tooltip v-if="tooltipsEnabled" :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
 
-                        <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon>{{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
-                        <wa-tooltip v-if="tooltipsEnabled" :for="`session-cost-${session.id}`">Total session cost</wa-tooltip>
+                        <template v-if="showCosts">
+                            <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon>{{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
+                            <wa-tooltip v-if="tooltipsEnabled" :for="`session-cost-${session.id}`">Total session cost</wa-tooltip>
+                        </template>
 
                         <span :id="`session-mtime-${session.id}`" class="session-mtime">
                             <wa-icon auto-width name="clock" variant="regular"></wa-icon>
@@ -897,6 +901,10 @@ defineExpose({
 }
 .session-cost {
     justify-self: center;
+}
+
+.session-meta--no-cost {
+    grid-template-columns: 1fr 1fr;
 }
 
 @container session-list (width <= 12rem) {

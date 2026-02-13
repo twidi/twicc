@@ -41,6 +41,8 @@ const settingsStore = useSettingsStore()
 
 // Tooltips setting
 const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
+// Costs setting
+const showCosts = computed(() => settingsStore.areCostsShown)
 
 // Session data from store
 const session = computed(() => store.getSession(props.sessionId))
@@ -413,7 +415,7 @@ defineExpose({
                 </span>
                 <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-mtime`">Last activity</wa-tooltip>
 
-                <template v-if="formattedTotalCost">
+                <template v-if="showCosts && formattedTotalCost">
                     <span :id="`session-header-${sessionId}-cost`" class="meta-item">
                         <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
                         {{ formattedTotalCost }}
@@ -421,7 +423,7 @@ defineExpose({
                     <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-cost`">Total session cost</wa-tooltip>
                 </template>
 
-                <template v-if="formattedCostBreakdown">
+                <template v-if="showCosts && formattedCostBreakdown">
                     <span :id="`session-header-${sessionId}-cost-breakdown`" class="meta-item cost-breakdown-item">
                         <span>(
                         <span>

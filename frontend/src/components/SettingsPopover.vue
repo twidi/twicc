@@ -40,6 +40,7 @@ const sessionTimeFormatOptions = [
 // Refs for wa-switch elements (needed to sync checked property with Web Components)
 const displayModeSelect = ref(null)
 const tooltipsSwitch = ref(null)
+const showCostsSwitch = ref(null)
 const fontSizeSlider = ref(null)
 const themeSelect = ref(null)
 const sessionTimeFormatSelect = ref(null)
@@ -58,6 +59,7 @@ const fontSize = computed(() => store.getFontSize)
 const themeMode = computed(() => store.getThemeMode)
 const sessionTimeFormat = computed(() => store.getSessionTimeFormat)
 const tooltipsEnabled = computed(() => store.areTooltipsEnabled)
+const showCosts = computed(() => store.areCostsShown)
 const extraUsageOnlyWhenNeeded = computed(() => store.isExtraUsageOnlyWhenNeeded)
 const maxCachedSessions = computed(() => store.getMaxCachedSessions)
 const autoUnpinOnArchive = computed(() => store.isAutoUnpinOnArchive)
@@ -96,6 +98,9 @@ function syncSwitchState() {
         if (tooltipsSwitch.value && tooltipsSwitch.value.checked !== tooltipsEnabled.value) {
             tooltipsSwitch.value.checked = tooltipsEnabled.value
         }
+        if (showCostsSwitch.value && showCostsSwitch.value.checked !== showCosts.value) {
+            showCostsSwitch.value.checked = showCosts.value
+        }
         if (extraUsageOnlyWhenNeededSwitch.value && extraUsageOnlyWhenNeededSwitch.value.checked !== extraUsageOnlyWhenNeeded.value) {
             extraUsageOnlyWhenNeededSwitch.value.checked = extraUsageOnlyWhenNeeded.value
         }
@@ -121,7 +126,7 @@ function syncSwitchState() {
 }
 
 // Watch for store changes and sync switches
-watch([displayMode, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide], syncSwitchState, { immediate: true })
+watch([displayMode, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide], syncSwitchState, { immediate: true })
 
 /**
  * Handle display mode change.
@@ -156,6 +161,13 @@ function onSessionTimeFormatChange(event) {
  */
 function onTooltipsChange(event) {
     store.setTooltipsEnabled(event.target.checked)
+}
+
+/**
+ * Toggle costs display.
+ */
+function onShowCostsChange(event) {
+    store.setShowCosts(event.target.checked)
 }
 
 /**
@@ -280,6 +292,14 @@ function onPopoverShow() {
                         <wa-switch
                             ref="tooltipsSwitch"
                             @change="onTooltipsChange"
+                            size="small"
+                        >Enabled</wa-switch>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Show costs</label>
+                        <wa-switch
+                            ref="showCostsSwitch"
+                            @change="onShowCostsChange"
                             size="small"
                         >Enabled</wa-switch>
                     </div>
@@ -433,7 +453,7 @@ function onPopoverShow() {
 }
 
 .settings-content {
-    max-height: calc(100vh - 8rem);
+    max-height: calc(90vh - 8rem);
     overflow-y: auto;
 }
 
