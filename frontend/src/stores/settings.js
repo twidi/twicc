@@ -15,8 +15,7 @@ const STORAGE_KEY = 'twicc-settings'
  * When removing settings: just remove them from here (they'll be cleaned from localStorage).
  */
 const SETTINGS_SCHEMA = {
-    baseDisplayMode: DEFAULT_DISPLAY_MODE,
-    debugEnabled: false,
+    displayMode: DEFAULT_DISPLAY_MODE,
     fontSize: 16,
     themeMode: DEFAULT_THEME_MODE,
     sessionTimeFormat: DEFAULT_SESSION_TIME_FORMAT,
@@ -39,8 +38,7 @@ const SETTINGS_SCHEMA = {
  * Invalid values will be replaced with defaults.
  */
 const SETTINGS_VALIDATORS = {
-    baseDisplayMode: (v) => [DISPLAY_MODE.NORMAL, DISPLAY_MODE.SIMPLIFIED].includes(v),
-    debugEnabled: (v) => typeof v === 'boolean',
+    displayMode: (v) => [DISPLAY_MODE.NORMAL, DISPLAY_MODE.SIMPLIFIED, DISPLAY_MODE.DEBUG].includes(v),
     fontSize: (v) => typeof v === 'number' && v >= 12 && v <= 32,
     themeMode: (v) => [THEME_MODE.SYSTEM, THEME_MODE.LIGHT, THEME_MODE.DARK].includes(v),
     sessionTimeFormat: (v) => [SESSION_TIME_FORMAT.TIME, SESSION_TIME_FORMAT.RELATIVE_SHORT, SESSION_TIME_FORMAT.RELATIVE_NARROW].includes(v),
@@ -69,6 +67,16 @@ function loadSettings() {
         const stored = localStorage.getItem(STORAGE_KEY)
         if (stored) {
             const parsed = JSON.parse(stored)
+
+            // Migrate legacy baseDisplayMode + debugEnabled → displayMode
+            if ('baseDisplayMode' in parsed || 'debugEnabled' in parsed) {
+                const debugEnabled = parsed.debugEnabled === true
+                const baseMode = parsed.baseDisplayMode || DEFAULT_DISPLAY_MODE
+                parsed.displayMode = debugEnabled ? DISPLAY_MODE.DEBUG : baseMode
+                delete parsed.baseDisplayMode
+                delete parsed.debugEnabled
+            }
+
             // Only keep keys that exist in schema and have valid values
             for (const key of Object.keys(SETTINGS_SCHEMA)) {
                 if (key in parsed) {
@@ -107,13 +115,9 @@ export const useSettingsStore = defineStore('settings', {
 
     getters: {
         /**
-         * Effective display mode: 'debug' if debugEnabled, otherwise baseDisplayMode.
+         * Current display mode: 'simplified', 'normal', or 'debug'.
          */
-        getDisplayMode: (state) =>
-            state.debugEnabled ? DISPLAY_MODE.DEBUG : state.baseDisplayMode,
-
-        getBaseDisplayMode: (state) => state.baseDisplayMode,
-        isDebugEnabled: (state) => state.debugEnabled,
+        getDisplayMode: (state) => state.displayMode,
         getFontSize: (state) => state.fontSize,
         getThemeMode: (state) => state.themeMode,
         getSessionTimeFormat: (state) => state.sessionTimeFormat,
@@ -135,22 +139,12 @@ export const useSettingsStore = defineStore('settings', {
 
     actions: {
         /**
-         * Set base display mode (normal or simplified).
-         * @param {string} mode - 'normal' | 'simplified'
+         * Set display mode.
+         * @param {string} mode - 'simplified' | 'normal' | 'debug'
          */
-        setBaseDisplayMode(mode) {
-            if (SETTINGS_VALIDATORS.baseDisplayMode(mode)) {
-                this.baseDisplayMode = mode
-            }
-        },
-
-        /**
-         * Set debug mode enabled/disabled.
-         * @param {boolean} enabled
-         */
-        setDebugEnabled(enabled) {
-            if (SETTINGS_VALIDATORS.debugEnabled(enabled)) {
-                this.debugEnabled = enabled
+        setDisplayMode(mode) {
+            if (SETTINGS_VALIDATORS.displayMode(mode)) {
+                this.displayMode = mode
             }
         },
 
@@ -321,8 +315,7 @@ export function initSettings() {
     // Note: _effectiveTheme is excluded as it's computed at runtime
     watch(
         () => ({
-            baseDisplayMode: store.baseDisplayMode,
-            debugEnabled: store.debugEnabled,
+            displayMode: store.displayMode,
             fontSize: store.fontSize,
             themeMode: store.themeMode,
             sessionTimeFormat: store.sessionTimeFormat,
@@ -359,7 +352,7 @@ export function initSettings() {
         document.documentElement.style.fontSize = `${size}px`
     })
 
-    // Watch for display mode changes (baseDisplayMode or debugEnabled)
+    // Watch for display mode changes
     // Recompute all visual items when display mode changes
     watch(
         () => store.getDisplayMode,

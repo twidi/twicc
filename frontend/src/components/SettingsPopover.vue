@@ -37,8 +37,7 @@ const sessionTimeFormatOptions = [
 ]
 
 // Refs for wa-switch elements (needed to sync checked property with Web Components)
-const baseModeSwitch = ref(null)
-const debugSwitch = ref(null)
+const displayModeSelect = ref(null)
 const tooltipsSwitch = ref(null)
 const fontSizeSlider = ref(null)
 const themeSelect = ref(null)
@@ -52,8 +51,7 @@ const tmuxSwitch = ref(null)
 const diffSideBySideSwitch = ref(null)
 
 // Settings from store
-const baseDisplayMode = computed(() => store.getBaseDisplayMode)
-const debugEnabled = computed(() => store.isDebugEnabled)
+const displayMode = computed(() => store.getDisplayMode)
 const fontSize = computed(() => store.getFontSize)
 const themeMode = computed(() => store.getThemeMode)
 const sessionTimeFormat = computed(() => store.getSessionTimeFormat)
@@ -69,23 +67,19 @@ const diffSideBySide = computed(() => store.isDiffSideBySide)
 // Check if the current prompt is the default
 const isDefaultPrompt = computed(() => titleSystemPrompt.value === DEFAULT_TITLE_SYSTEM_PROMPT)
 
-// Computed label for the base mode switch
-const baseModeLabel = computed(() =>
-    baseDisplayMode.value === DISPLAY_MODE.SIMPLIFIED ? 'Simplified' : 'Detailed'
-)
-
-// Is simplified mode active?
-const isSimplified = computed(() => baseDisplayMode.value === DISPLAY_MODE.SIMPLIFIED)
+// Display mode options for the select
+const displayModeOptions = [
+    { value: DISPLAY_MODE.SIMPLIFIED, label: 'Simplified' },
+    { value: DISPLAY_MODE.NORMAL, label: 'Detailed' },
+    { value: DISPLAY_MODE.DEBUG, label: 'Debug' },
+]
 
 // Sync switch checked state with store values
 // Web Components don't always pick up initial prop values from Vue bindings
 function syncSwitchState() {
     nextTick(() => {
-        if (baseModeSwitch.value && baseModeSwitch.value.checked !== isSimplified.value) {
-            baseModeSwitch.value.checked = isSimplified.value
-        }
-        if (debugSwitch.value && debugSwitch.value.checked !== debugEnabled.value) {
-            debugSwitch.value.checked = debugEnabled.value
+        if (displayModeSelect.value && displayModeSelect.value.value !== displayMode.value) {
+            displayModeSelect.value.value = displayMode.value
         }
         if (fontSizeSlider.value && fontSizeSlider.value.value !== fontSize.value) {
             fontSizeSlider.value.value = fontSize.value
@@ -124,21 +118,13 @@ function syncSwitchState() {
 }
 
 // Watch for store changes and sync switches
-watch([isSimplified, debugEnabled, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide], syncSwitchState, { immediate: true })
+watch([displayMode, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide], syncSwitchState, { immediate: true })
 
 /**
- * Toggle between normal and simplified mode.
+ * Handle display mode change.
  */
-function onBaseModeChange(event) {
-    const newMode = event.target.checked ? DISPLAY_MODE.SIMPLIFIED : DISPLAY_MODE.NORMAL
-    store.setBaseDisplayMode(newMode)
-}
-
-/**
- * Toggle debug mode.
- */
-function onDebugChange(event) {
-    store.setDebugEnabled(event.target.checked)
+function onDisplayModeChange(event) {
+    store.setDisplayMode(event.target.value)
 }
 
 /**
@@ -308,17 +294,18 @@ function onPopoverShow() {
                     <h3 class="settings-section-title">Sessions</h3>
                     <div class="setting-group">
                         <label class="setting-group-label">Display mode</label>
-                        <wa-switch
-                            ref="baseModeSwitch"
-                            :disabled.prop="debugEnabled"
-                            @change="onBaseModeChange"
+                        <wa-select
+                            ref="displayModeSelect"
+                            :value.prop="displayMode"
+                            @change="onDisplayModeChange"
                             size="small"
-                        >{{ baseModeLabel }}</wa-switch>
-                        <wa-switch
-                            ref="debugSwitch"
-                            @change="onDebugChange"
-                            size="small"
-                        >Debug</wa-switch>
+                        >
+                            <wa-option
+                                v-for="option in displayModeOptions"
+                                :key="option.value"
+                                :value="option.value"
+                            >{{ option.label }}</wa-option>
+                        </wa-select>
                     </div>
                     <div class="setting-group">
                         <label class="setting-group-label">Time display</label>
