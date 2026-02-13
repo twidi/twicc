@@ -6,6 +6,7 @@ handling real-time updates on the /ws/ endpoint. Also handles agent-related
 messages for sending messages to Claude sessions.
 """
 
+import asyncio
 import logging
 
 from asgiref.sync import sync_to_async
@@ -20,7 +21,7 @@ from django.urls import path
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
 from twicc.agent.manager import get_process_manager
-from twicc.agent.states import ProcessInfo, serialize_process_info
+from twicc.agent.states import ProcessInfo, ProcessState, serialize_process_info
 from twicc.background import get_usage_message_for_connection
 from twicc.terminal import terminal_application
 
@@ -62,7 +63,16 @@ async def broadcast_process_state(info: ProcessInfo) -> None:
 
     This is the callback registered with ProcessManager to handle
     state change notifications.
+
+    When transitioning out of assistant_turn (e.g. to user_turn or dead),
+    we delay the broadcast by 1 second to allow the file watcher to sync
+    the final assistant message to the database and broadcast it via WebSocket
+    before the frontend learns that the turn ended. This prevents a brief flash
+    of an intermediate assistant message in conversation display mode.
     """
+    if info.state != ProcessState.ASSISTANT_TURN:
+        await asyncio.sleep(1)
+
     channel_layer = get_channel_layer()
     message = serialize_process_info(info)
     message["type"] = "process_state"
