@@ -115,48 +115,80 @@ export function getAvailableSoundOptions() {
     }))
 }
 
+// --- Browser notification management ---
+
+/** Single tag so only one notification is visible at a time (the latest replaces the previous). */
+const BROWSER_NOTIFICATION_TAG = 'twicc'
+
+/** Reference to the last browser notification, so we can close it on return. */
+let activeNotification = null
+
 /**
- * Tags for browser notifications.
- * Using tags means a new notification of the same type replaces the previous one
- * instead of stacking. Combined with renotify: true, the replacement still
- * triggers the system sound/vibration so the user notices.
+ * Whether the user is actively looking at the app.
+ * True when the tab is in the foreground AND the browser window has OS-level focus.
  */
-export const BROWSER_NOTIFICATION_TAGS = {
-    USER_TURN: 'twicc-user-turn',
-    PENDING_REQUEST: 'twicc-pending-request',
+export function isPageActive() {
+    return document.visibilityState === 'visible' && document.hasFocus()
 }
 
 /**
+ * Close the active browser notification (if any).
+ * Called when the user returns to the app.
+ */
+export function closeBrowserNotification() {
+    if (activeNotification) {
+        activeNotification.close()
+        activeNotification = null
+    }
+}
+
+// Auto-close browser notification when the user returns to the app.
+// Both events are needed: visibilitychange catches tab switches,
+// focus catches alt-tab back to the browser window.
+document.addEventListener('visibilitychange', () => {
+    if (isPageActive()) closeBrowserNotification()
+})
+window.addEventListener('focus', () => {
+    if (isPageActive()) closeBrowserNotification()
+})
+
+/**
  * Send a browser (desktop) notification.
- * Only sends if the Notification API is available and permission is granted.
+ * Only sends if the Notification API is available, permission is granted,
+ * and the page is NOT currently active (user is away).
+ * Uses a single tag ('twicc') so the latest notification always replaces the previous one,
+ * with renotify: true so the system sound/vibration re-triggers.
  * @param {string} title - Notification title
  * @param {string} body - Notification body text
- * @param {Object} [options] - Additional options
- * @param {string} [options.tag] - Tag to group/replace notifications of the same type
- * @param {Function} [options.onClick] - Callback when notification is clicked
+ * @param {Function} [onClick] - Optional callback when notification is clicked
  * @returns {Notification|null}
  */
-export function sendBrowserNotification(title, body, options = {}) {
+export function sendBrowserNotification(title, body, onClick) {
     if (!('Notification' in window) || Notification.permission !== 'granted') {
         return null
     }
 
+    // Don't send if the user is already looking at the app
+    if (isPageActive()) {
+        return null
+    }
+
     try {
-        const notifOptions = { body }
-        if (options.tag) {
-            notifOptions.tag = options.tag
-            notifOptions.renotify = true
+        const notification = new Notification(title, {
+            body,
+            tag: BROWSER_NOTIFICATION_TAG,
+            renotify: true,
+        })
+
+        notification.onclick = () => {
+            window.focus()
+            onClick?.()
+            notification.close()
+            activeNotification = null
         }
 
-        const notification = new Notification(title, notifOptions)
-
-        if (options.onClick) {
-            notification.onclick = () => {
-                window.focus()
-                options.onClick()
-                notification.close()
-            }
-        }
+        // Keep reference for auto-close on return
+        activeNotification = notification
 
         return notification
     } catch (error) {

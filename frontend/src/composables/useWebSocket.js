@@ -9,7 +9,7 @@ import { useReconciliation } from './useReconciliation'
 import { toast } from './useToast'
 import { computeUsageData } from '../utils/usage'
 import { useSettingsStore } from '../stores/settings'
-import { playNotificationSound, sendBrowserNotification, BROWSER_NOTIFICATION_TAGS } from '../utils/notificationSounds'
+import { playNotificationSound, sendBrowserNotification } from '../utils/notificationSounds'
 import { truncateTitle } from '../utils/truncate'
 
 // WebSocket close code sent by backend when authentication fails
@@ -153,7 +153,6 @@ function notifyProcessStateChange(store, msg, previousState) {
             sendBrowserNotification(
                 'Claude finished working',
                 buildNotificationBody(store, sessionId),
-                { tag: BROWSER_NOTIFICATION_TAGS.USER_TURN },
             )
         }
     }
@@ -172,7 +171,6 @@ function notifyProcessStateChange(store, msg, previousState) {
             sendBrowserNotification(
                 'Claude needs your attention',
                 buildNotificationBody(store, sessionId),
-                { tag: BROWSER_NOTIFICATION_TAGS.PENDING_REQUEST },
             )
         }
     }
