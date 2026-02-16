@@ -5,6 +5,7 @@ import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
 import githubDark from '../assets/monaco-themes/github-dark.json'
 import githubLight from '../assets/monaco-themes/github-light.json'
+import MarkdownContent from './MarkdownContent.vue'
 
 const props = defineProps({
     projectId: String,
@@ -77,6 +78,13 @@ const fileSize = ref(0)
 // Used to distinguish "initial load" (show spinner, hide editor)
 // from "file switch" (keep editor visible, show subtle indicator).
 const hasLoadedOnce = ref(false)
+
+// --- Markdown preview state ---
+const isMarkdownFile = computed(() => {
+    if (!props.filePath) return false
+    return /\.(?:md|markdown|mdown|mkd|mkdn)$/i.test(props.filePath)
+})
+const showMarkdownPreview = ref(false)
 
 // --- Edit mode state ---
 const isEditing = ref(false)
@@ -352,8 +360,9 @@ watch(() => props.filePath, async (newPath) => {
         return
     }
 
-    // Reset edit mode and diff navigation index when switching files
+    // Reset edit mode, markdown preview and diff navigation index when switching files
     isEditing.value = false
+    showMarkdownPreview.value = false
     syncEditSwitch()
     currentDiffIndex.value = 0
 
@@ -423,12 +432,17 @@ function onEditToggle(event) {
     const checked = event.target.checked
     if (checked) {
         isEditing.value = true
+        showMarkdownPreview.value = false  // exit preview when entering edit mode
         saveError.value = null
     } else {
         // Revert silently when leaving edit mode
         revert()
         isEditing.value = false
     }
+}
+
+function toggleMarkdownPreview() {
+    showMarkdownPreview.value = !showMarkdownPreview.value
 }
 
 async function save() {
@@ -550,7 +564,7 @@ function formatSize(bytes) {
                     >Spacer</wa-button>
                 </template>
             </div>
-            <div v-if="diffMode" class="header-center">
+            <div v-if="diffMode && !showMarkdownPreview" class="header-center">
                 <div class="diff-nav-buttons">
                     <wa-button
                         size="small"
@@ -573,17 +587,27 @@ function formatSize(bytes) {
                         <wa-icon name="arrow-down"></wa-icon>
                     </wa-button>
                 </div>
+            </div>
+            <div class="header-right">
+                <wa-spinner v-if="switching" class="header-spinner"></wa-spinner>
                 <wa-switch
                     ref="sideBySideSwitchRef"
-                    v-show="canSideBySide"
+                    v-if="diffMode && !showMarkdownPreview && canSideBySide"
                     size="small"
                     class="diff-layout-toggle"
                     @change="sideBySide = $event.target.checked; settingsStore.setDiffSideBySide($event.target.checked)"
                 >Side by side</wa-switch>
-            </div>
-            <div class="header-right">
-                <wa-spinner v-if="switching" class="header-spinner"></wa-spinner>
-                <span class="header-filename" :title="filePath">{{ fileName }}</span>
+                <!-- Markdown preview toggle: shown for .md files when not editing -->
+                <wa-button
+                    v-if="isMarkdownFile && !isEditing"
+                    size="small"
+                    variant="neutral"
+                    :appearance="showMarkdownPreview ? 'filled' : 'outlined'"
+                    title="Toggle markdown preview"
+                    @click="toggleMarkdownPreview"
+                >
+                    <wa-icon name="eye"></wa-icon>
+                </wa-button>
             </div>
         </div>
 
@@ -596,9 +620,16 @@ function formatSize(bytes) {
 
         <!-- Content area: editor is always mounted once, overlays sit on top -->
         <div ref="editorAreaRef" class="editor-area">
+            <!-- Markdown preview (when toggled on for .md files) -->
+            <div v-if="showMarkdownPreview && isMarkdownFile" class="markdown-preview-container">
+                <MarkdownContent
+                    :source="diffMode ? (modifiedContent ?? '') : currentContent"
+                />
+            </div>
+
             <!-- Monaco diff editor (diff mode) -->
             <vue-monaco-diff-editor
-                v-if="diffMode && showEditor"
+                v-if="diffMode && showEditor && !showMarkdownPreview"
                 :original="originalContent ?? ''"
                 :modified="modifiedContent ?? ''"
                 :language="diffLanguage"
@@ -612,7 +643,7 @@ function formatSize(bytes) {
             <!-- Monaco editor — mounted once, never destroyed on file switch (normal mode) -->
             <vue-monaco-editor
                 v-if="!diffMode"
-                v-show="showEditor"
+                v-show="showEditor && !showMarkdownPreview"
                 :value="currentContent"
                 :path="monacoPath"
                 :theme="monacoTheme"
@@ -680,15 +711,6 @@ function formatSize(bytes) {
     min-width: 0;
 }
 
-.header-filename {
-    font-size: var(--wa-font-size-s);
-    font-weight: 500;
-    color: var(--wa-color-neutral-700);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 .diff-nav-buttons {
     display: flex;
     gap: var(--wa-space-3xs);
@@ -717,6 +739,13 @@ function formatSize(bytes) {
     flex: 1;
     position: relative;
     min-height: 0;
+}
+
+.markdown-preview-container {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    padding: var(--wa-space-m) var(--wa-space-l);
 }
 
 .monaco-placeholder {
