@@ -498,7 +498,7 @@ function handleSubmitQuestions() {
     gap: var(--wa-space-s);
     padding: var(--wa-space-s);
     background: var(--main-header-footer-bg-color);
-    max-height: 40vh;
+    max-height: 50vh;
 }
 
 .pending-request-header {

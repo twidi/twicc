@@ -611,7 +611,6 @@ function generateDiff(oldStr, newStr) {
 .jhv-pre, .jhv-markdown :deep(.markdown-body) {
     background: var(--wa-color-overlay-inline) !important;
     border-radius: var(--wa-border-radius-l) !important;
-    max-height: 20rem;
     overflow: auto;
     padding: var(--wa-space-m);
 }

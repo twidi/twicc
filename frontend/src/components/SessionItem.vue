@@ -568,4 +568,11 @@ wa-details.item-details {
         }
     }
 }
+
+.session-item {
+    .jhv-pre, .jhv-markdown .markdown-body {
+        max-height: 20rem;
+    }
+}
+
 </style>
