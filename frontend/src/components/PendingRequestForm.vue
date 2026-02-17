@@ -43,6 +43,16 @@ const store = useDataStore()
 // Whether a response has been sent and we're waiting for the store to clear the pending request
 const isResponding = ref(false)
 
+// Whether the form is expanded (shows full content) or collapsed (compact view)
+const isExpanded = ref(false)
+
+/**
+ * Toggle the expanded/collapsed state of the form.
+ */
+function toggleExpanded() {
+    isExpanded.value = !isExpanded.value
+}
+
 // ============================================================================
 // Tool approval state
 // ============================================================================
@@ -332,7 +342,8 @@ function handleSubmitQuestions() {
 </script>
 
 <template>
-    <div class="pending-request-form">
+    <wa-divider></wa-divider>
+    <div class="pending-request-form" :class="{ expanded: isExpanded }">
         <!-- ================================================================ -->
         <!-- Tool Approval Variant -->
         <!-- ================================================================ -->
@@ -341,6 +352,16 @@ function handleSubmitQuestions() {
             <div class="pending-request-header">
                 <wa-icon name="shield-halved" class="pending-request-icon"></wa-icon>
                 <span class="pending-request-title">Tool approval requested</span>
+                <wa-button
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="expand-toggle-btn"
+                    :title="isExpanded ? 'Collapse' : 'Expand'"
+                    @click="toggleExpanded"
+                >
+                    <wa-icon :name="isExpanded ? 'compress' : 'expand'" variant="classic"></wa-icon>
+                </wa-button>
             </div>
 
             <!-- Tool details -->
@@ -421,6 +442,16 @@ function handleSubmitQuestions() {
             <div class="pending-request-header">
                 <wa-icon name="circle-question" class="pending-request-icon question-icon"></wa-icon>
                 <span class="pending-request-title">Claude needs your input</span>
+                <wa-button
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="expand-toggle-btn"
+                    :title="isExpanded ? 'Collapse' : 'Expand'"
+                    @click="toggleExpanded"
+                >
+                    <wa-icon :name="isExpanded ? 'compress' : 'expand'" variant="classic"></wa-icon>
+                </wa-button>
             </div>
 
             <!-- Questions -->
@@ -492,6 +523,12 @@ function handleSubmitQuestions() {
 </template>
 
 <style scoped>
+
+wa-divider {
+    --width: 4px;
+    --spacing: 0;
+}
+
 .pending-request-form {
     display: flex;
     flex-direction: column;
@@ -499,6 +536,9 @@ function handleSubmitQuestions() {
     padding: var(--wa-space-s);
     background: var(--main-header-footer-bg-color);
     max-height: 50vh;
+    &.expanded {
+        max-height: 80vh;
+    }
 }
 
 .pending-request-header {
@@ -507,6 +547,15 @@ function handleSubmitQuestions() {
     gap: var(--wa-space-xs);
     color: var(--wa-color-warning-60);
     font-weight: 600;
+}
+
+.pending-request-title {
+    flex: 1;
+}
+
+.expand-toggle-btn {
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-s);
 }
 
 .question-icon {
