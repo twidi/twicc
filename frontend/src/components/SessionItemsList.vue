@@ -919,7 +919,6 @@ defineExpose({
 
         <div class="session-footer">
             <!-- Pending request form (replaces MessageInput when Claude requests approval or asks a question) -->
-            <wa-divider></wa-divider>
             <PendingRequestForm
                 v-if="hasPendingRequest"
                 :session-id="sessionId"
