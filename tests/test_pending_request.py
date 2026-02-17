@@ -23,6 +23,7 @@ def _make_process_info(**kwargs) -> ProcessInfo:
         "session_id": "test-session",
         "project_id": "test-project",
         "state": ProcessState.ASSISTANT_TURN,
+        "previous_state": None,
         "started_at": 1000000.0,
         "state_changed_at": 1000001.0,
         "last_activity": 1000002.0,

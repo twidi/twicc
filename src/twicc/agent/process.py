@@ -67,6 +67,7 @@ class ClaudeProcess:
         self.project_id = project_id
         self.cwd = cwd
         self.state = ProcessState.STARTING
+        self.previous_state: ProcessState | None = None
         self.started_at = time.time()
         self.state_changed_at = self.started_at
         self.last_activity = self.started_at
@@ -100,6 +101,7 @@ class ClaudeProcess:
     def _set_state(self, new_state: ProcessState) -> None:
         """Update state with DEBUG logging."""
         old_state = self.state
+        self.previous_state = old_state
         self.state = new_state
         self.state_changed_at = time.time()
         logger.debug(
@@ -159,6 +161,7 @@ class ClaudeProcess:
             session_id=self.session_id,
             project_id=self.project_id,
             state=self.state,
+            previous_state=self.previous_state,
             started_at=self.started_at,
             state_changed_at=self.state_changed_at,
             last_activity=self.last_activity,

@@ -89,6 +89,7 @@ class ProcessInfo(NamedTuple):
         session_id: Claude's session identifier
         project_id: TwiCC project this session belongs to
         state: Current process state
+        previous_state: State before the last transition, None for initial state
         started_at: Unix timestamp when the process was started
         state_changed_at: Unix timestamp when the state last changed
         last_activity: Unix timestamp of last activity
@@ -101,6 +102,7 @@ class ProcessInfo(NamedTuple):
     session_id: str
     project_id: str
     state: ProcessState
+    previous_state: ProcessState | None
     started_at: float
     state_changed_at: float
     last_activity: float
