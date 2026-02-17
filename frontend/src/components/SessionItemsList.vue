@@ -33,28 +33,11 @@ const props = defineProps({
         type: String,
         required: true
     },
-    /**
-     * Whether to track scroll direction for auto-hide header feature.
-     * When false, scroll direction detection is skipped for performance.
-     */
-    trackScrollDirection: {
-        type: Boolean,
-        default: false
-    },
-    /**
-     * Whether the footer (message input) is hidden (for auto-hide on small viewports).
-     * When true, the footer slides down and out of view.
-     * The ProcessIndicator remains visible as it's positioned above the footer.
-     */
-    footerHidden: {
-        type: Boolean,
-        default: false
-    }
 })
 
 const store = useDataStore()
 
-const emit = defineEmits(['needs-title', 'scroll-direction'])
+const emit = defineEmits(['needs-title'])
 
 // KeepAlive active state (provided by SessionView)
 const sessionActive = inject('sessionActive', ref(true))
@@ -107,9 +90,6 @@ const LOAD_DEBOUNCE_MS = 150
 
 // Minimum item size for the virtual scroller (in pixels)
 const MIN_ITEM_SIZE = 50
-
-// Track last emitted direction to avoid duplicate emissions
-let lastEmittedDirection = null
 
 // Track pending range to load (accumulated during debounce)
 const pendingLoadRange = ref(null)
@@ -735,73 +715,6 @@ function toggleGroup(groupHeadLineNum) {
 }
 
 /**
- * Handle physical scroll input (wheel or touch).
- * Only reacts to user-initiated scrolls, not programmatic scrolls.
- * Emits 'scroll-direction' event with 'up' or 'down' when direction changes.
- * @param {'up' | 'down'} direction - The scroll direction
- */
-function onPhysicalScroll(direction) {
-    // Skip direction detection if not needed (performance optimization)
-    if (!props.trackScrollDirection) return
-
-    // Only emit if direction actually changed
-    if (direction !== lastEmittedDirection) {
-        lastEmittedDirection = direction
-        emit('scroll-direction', direction)
-    }
-}
-
-/**
- * Handle wheel events for scroll direction detection.
- * @param {WheelEvent} event
- */
-function onWheel(event) {
-    if (!props.trackScrollDirection) return
-    // deltaY > 0 means scrolling down, < 0 means scrolling up
-    if (Math.abs(event.deltaY) > 0) {
-        onPhysicalScroll(event.deltaY > 0 ? 'down' : 'up')
-    }
-}
-
-// Track touch position for direction detection
-let lastTouchY = 0
-
-/**
- * Handle touch start for scroll direction detection.
- * @param {TouchEvent} event
- */
-function onTouchStart(event) {
-    if (!props.trackScrollDirection) return
-    if (event.touches.length > 0) {
-        lastTouchY = event.touches[0].clientY
-    }
-}
-
-// Minimum touch movement threshold to detect direction (in pixels)
-const TOUCH_DIRECTION_THRESHOLD = 10
-
-/**
- * Handle touch move for scroll direction detection.
- * Compares current position to previous position to detect direction.
- * @param {TouchEvent} event
- */
-function onTouchMove(event) {
-    if (!props.trackScrollDirection) return
-    if (event.touches.length > 0) {
-        const touchY = event.touches[0].clientY
-        const delta = lastTouchY - touchY
-        // Only trigger if movement exceeds threshold
-        if (Math.abs(delta) >= TOUCH_DIRECTION_THRESHOLD) {
-            // Update lastTouchY for next comparison
-            lastTouchY = touchY
-            // delta > 0 means finger moved up = scrolling down
-            // delta < 0 means finger moved down = scrolling up
-            onPhysicalScroll(delta > 0 ? 'down' : 'up')
-        }
-    }
-}
-
-/**
  * Get the scroller element for scroll compensation.
  * @returns {HTMLElement|null}
  */
@@ -960,9 +873,6 @@ defineExpose({
             :class="{ 'initial-scrolling': isInitialScrolling }"
             @update="onScrollerUpdate"
             @item-resized="onItemResized"
-            @wheel="onWheel"
-            @touchstart="onTouchStart"
-            @touchmove="onTouchMove"
         >
             <template #default="{ item, index }">
                 <!-- Placeholder (no content loaded yet) -->
@@ -1007,7 +917,7 @@ defineExpose({
             </template>
         </VirtualScroller>
 
-        <div class="session-footer" :class="{ 'auto-hide-hidden': footerHidden }">
+        <div class="session-footer">
             <!-- Pending request form (replaces MessageInput when Claude requests approval or asks a question) -->
             <wa-divider></wa-divider>
             <PendingRequestForm
@@ -1112,31 +1022,6 @@ defineExpose({
     > wa-divider {
         --width: 4px;
         --spacing: 0;
-    }
-}
-
-/* Auto-hide footer on small viewport heights */
-@media (max-height: 800px) {
-    .session-footer {
-        transition: transform 0.3s ease;
-    }
-
-    .session-footer > * {
-        transition: opacity 0.3s ease;
-    }
-
-    .session-footer.auto-hide-hidden {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        z-index: 10;
-        transform: translateY(100%);
-        pointer-events: none;
-    }
-
-    .session-footer.auto-hide-hidden > * {
-        opacity: 0;
     }
 }
 

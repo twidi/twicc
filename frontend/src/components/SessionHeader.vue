@@ -19,14 +19,6 @@ const props = defineProps({
         validator: (value) => ['session', 'subagent'].includes(value)
     },
     /**
-     * Whether the header is hidden (for auto-hide on small viewports).
-     * When true, the header slides up and out of view.
-     */
-    hidden: {
-        type: Boolean,
-        default: false
-    },
-    /**
      * Label of the currently active tab (e.g., "Chat", "Files").
      * Shown in the compact header when collapsed, replacing the action buttons.
      */
@@ -221,17 +213,10 @@ function getStateDuration(procState) {
 // Track expanded state of the compact header overlay
 const isCompactExpanded = ref(false)
 
-// Auto-collapse when the header is hidden by auto-hide (scroll-based)
-watch(() => props.hidden, (newHidden) => {
-    if (newHidden) {
-        isCompactExpanded.value = false
-    }
-})
-
 // Rename dialog (provided by ProjectView)
 const injectedOpenRenameDialog = inject('openRenameDialog')
 
-// Reference to the header element (for auto-hide height calculation)
+// Reference to the header element
 const headerRef = ref(null)
 
 /**
@@ -285,7 +270,7 @@ defineExpose({
 </script>
 
 <template>
-    <header ref="headerRef" class="session-header" :class="{ 'auto-hide-hidden': hidden, 'compact-expanded': isCompactExpanded, 'compact-collapsed': !isCompactExpanded }" :data-session-type="mode" v-if="session">
+    <header ref="headerRef" class="session-header" :class="{ 'compact-expanded': isCompactExpanded, 'compact-collapsed': !isCompactExpanded }" :data-session-type="mode" v-if="session">
         <div v-if="mode === 'session'" class="session-title">
             <!-- Action buttons group: hidden in compact collapsed mode, replaced by active tab label -->
             <div class="session-title-actions">
@@ -897,24 +882,6 @@ wa-divider {
         bottom: -100%;
     }
 
-}
-
-/* Auto-hide header on small viewport heights */
-@media (max-height: 900px) {
-    .session-header {
-        transition: transform 0.3s ease, opacity 0.3s ease;
-    }
-
-    .session-header.auto-hide-hidden {
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        z-index: 10;
-        transform: translateY(-100%);
-        opacity: 0;
-        pointer-events: none;
-    }
 }
 
 </style>

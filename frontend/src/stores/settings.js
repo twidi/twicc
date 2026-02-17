@@ -23,7 +23,6 @@ const SETTINGS_SCHEMA = {
     tooltipsEnabled: true,
     titleGenerationEnabled: true,
     titleSystemPrompt: DEFAULT_TITLE_SYSTEM_PROMPT,
-    autoHideHeaderFooter: false,
     showCosts: true,
     extraUsageOnlyWhenNeeded: true,
     maxCachedSessions: DEFAULT_MAX_CACHED_SESSIONS,
@@ -52,7 +51,6 @@ const SETTINGS_VALIDATORS = {
     tooltipsEnabled: (v) => typeof v === 'boolean',
     titleGenerationEnabled: (v) => typeof v === 'boolean',
     titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
-    autoHideHeaderFooter: (v) => typeof v === 'boolean',
     showCosts: (v) => typeof v === 'boolean',
     extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
     maxCachedSessions: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 50,
@@ -136,7 +134,6 @@ export const useSettingsStore = defineStore('settings', {
         areTooltipsEnabled: (state) => state.tooltipsEnabled,
         isTitleGenerationEnabled: (state) => state.titleGenerationEnabled,
         getTitleSystemPrompt: (state) => state.titleSystemPrompt,
-        isAutoHideHeaderFooterEnabled: (state) => state.autoHideHeaderFooter,
         areCostsShown: (state) => state.showCosts,
         isExtraUsageOnlyWhenNeeded: (state) => state.extraUsageOnlyWhenNeeded,
         getMaxCachedSessions: (state) => state.maxCachedSessions,
@@ -231,16 +228,6 @@ export const useSettingsStore = defineStore('settings', {
          */
         resetTitleSystemPrompt() {
             this.titleSystemPrompt = DEFAULT_TITLE_SYSTEM_PROMPT
-        },
-
-        /**
-         * Set auto-hide header/footer on scroll enabled/disabled.
-         * @param {boolean} enabled
-         */
-        setAutoHideHeaderFooter(enabled) {
-            if (SETTINGS_VALIDATORS.autoHideHeaderFooter(enabled)) {
-                this.autoHideHeaderFooter = enabled
-            }
         },
 
         /**
@@ -389,7 +376,6 @@ export function initSettings() {
             tooltipsEnabled: store.tooltipsEnabled,
             titleGenerationEnabled: store.titleGenerationEnabled,
             titleSystemPrompt: store.titleSystemPrompt,
-            autoHideHeaderFooter: store.autoHideHeaderFooter,
             showCosts: store.showCosts,
             extraUsageOnlyWhenNeeded: store.extraUsageOnlyWhenNeeded,
             maxCachedSessions: store.maxCachedSessions,

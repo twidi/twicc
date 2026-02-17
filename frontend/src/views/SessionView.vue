@@ -58,10 +58,6 @@ function restoreActiveTab() {
 onActivated(() => {
     isActive.value = true
 
-    // Check viewport height and start listening for resize events
-    checkViewportHeight()
-    window.addEventListener('resize', checkViewportHeight)
-
     // Start observing compact tab overflow
     startCompactTabsObserver()
 
@@ -74,75 +70,14 @@ onActivated(() => {
 onDeactivated(() => {
     isActive.value = false
 
-    // Stop listening for resize events while deactivated
-    window.removeEventListener('resize', checkViewportHeight)
-
     // Stop observing compact tab overflow
     stopCompactTabsObserver()
 })
 
 provide('sessionActive', readonly(isActive))
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Auto-hide header/footer on small viewports (behind feature flag)
-// ═══════════════════════════════════════════════════════════════════════════
-
 // Whether tooltips are enabled (from settings)
 const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
-
-// Whether auto-hide is enabled (from settings)
-const autoHideEnabled = computed(() => settingsStore.isAutoHideHeaderFooterEnabled)
-
-// Threshold for small viewport detection (in pixels)
-const SMALL_VIEWPORT_HEIGHT = 900
-
-// Track if we're on a small viewport
-const isSmallViewport = ref(false)
-
-// Track header hidden state
-const isHeaderHidden = ref(false)
-
-// Track footer hidden state (inverted behavior: hidden when scrolling UP)
-const isFooterHidden = ref(false)
-
-// Effective values: only apply when feature flag is enabled
-const effectiveHeaderHidden = computed(() => autoHideEnabled.value && isHeaderHidden.value)
-const effectiveFooterHidden = computed(() => autoHideEnabled.value && isFooterHidden.value)
-const effectiveTrackScrollDirection = computed(() => autoHideEnabled.value && isSmallViewport.value)
-
-/**
- * Check viewport height and update isSmallViewport.
- */
-function checkViewportHeight() {
-    isSmallViewport.value = window.innerHeight < SMALL_VIEWPORT_HEIGHT
-    // Reset header and footer visibility when viewport becomes large again
-    if (!isSmallViewport.value) {
-        if (isHeaderHidden.value) {
-            isHeaderHidden.value = false
-        }
-        if (isFooterHidden.value) {
-            isFooterHidden.value = false
-        }
-    }
-}
-
-/**
- * Handle scroll direction changes from SessionItemsList.
- * @param {'up' | 'down'} direction
- */
-function onScrollDirection(direction) {
-    if (!autoHideEnabled.value || !isSmallViewport.value) return
-
-    if (direction === 'down') {
-        // Scroll down: hide header, show footer
-        isHeaderHidden.value = true
-        isFooterHidden.value = false
-    } else if (direction === 'up') {
-        // Scroll up: show header, hide footer
-        isHeaderHidden.value = false
-        isFooterHidden.value = true
-    }
-}
 
 // Current session from route params
 // IMPORTANT: projectId and sessionId are captured at creation time (not reactive
@@ -461,7 +396,6 @@ function handleNeedsTitle() {
             ref="sessionHeaderRef"
             :session-id="sessionId"
             mode="session"
-            :hidden="effectiveHeaderHidden"
             :active-tab-label="activeTabLabel"
         >
             <!-- Compact mode: tab navigation inside the header overlay -->
@@ -630,10 +564,7 @@ function handleNeedsTitle() {
                     ref="sessionItemsListRef"
                     :session-id="sessionId"
                     :project-id="projectId"
-                    :track-scroll-direction="effectiveTrackScrollDirection"
-                    :footer-hidden="effectiveFooterHidden"
                     @needs-title="handleNeedsTitle"
-                    @scroll-direction="onScrollDirection"
                 />
             </wa-tab-panel>
 
