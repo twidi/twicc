@@ -1008,15 +1008,6 @@ defineExpose({
         </VirtualScroller>
 
         <div class="session-footer" :class="{ 'auto-hide-hidden': footerHidden }">
-            <!-- Process indicator (fixed at bottom of list, visible while scrolling) -->
-            <ProcessIndicator
-                v-if="shouldShowProcessIndicator"
-                :state="processState.state"
-                size="large"
-                :animate-states="BOTTOM_INDICATOR_ANIMATE_STATES"
-                class="bottom-process-indicator"
-            />
-
             <!-- Pending request form (replaces MessageInput when Claude requests approval or asks a question) -->
             <wa-divider></wa-divider>
             <PendingRequestForm
@@ -1123,12 +1114,6 @@ defineExpose({
         --spacing: 0;
     }
 }
-.bottom-process-indicator {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%) translateY(calc(-100% - var(--wa-space-2xs)));
-}
 
 /* Auto-hide footer on small viewport heights */
 @media (max-height: 800px) {
@@ -1136,10 +1121,7 @@ defineExpose({
         transition: transform 0.3s ease;
     }
 
-    /* Apply opacity transition only to divider and input area, not ProcessIndicator */
-    .session-footer > wa-divider,
-    .session-footer > :deep(.message-input),
-    .session-footer > :deep(.pending-request-form) {
+    .session-footer > * {
         transition: opacity 0.3s ease;
     }
 
@@ -1153,16 +1135,8 @@ defineExpose({
         pointer-events: none;
     }
 
-    .session-footer.auto-hide-hidden > wa-divider,
-    .session-footer.auto-hide-hidden > :deep(.message-input),
-    .session-footer.auto-hide-hidden > :deep(.pending-request-form) {
+    .session-footer.auto-hide-hidden > * {
         opacity: 0;
-    }
-
-    /* Keep the process indicator visible when footer is hidden */
-    .session-footer.auto-hide-hidden .bottom-process-indicator {
-        transform: translateX(-50%) translateY(calc(-100% - var(--wa-space-2xs) - 100%));
-        pointer-events: auto;
     }
 }
 

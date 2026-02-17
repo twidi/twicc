@@ -525,6 +525,14 @@ wa-details.item-details {
     z-index: 1;
 }
 
+/* Two successive "markdown" blocks should have a space between them to improve readability */
+.session-items {
+    .virtual-scroller-item:has( > .session-item[data-kind="assistant_message"] > .text-content:last-child)
+    + .virtual-scroller-item > .session-item[data-kind="assistant_message"] > .text-content:nth-child(2) {
+        padding-top: var(--wa-space-xl);
+    }
+}
+
 /* Responsive styles for narrow containers */
 @container session-items-list (width <= 50rem) {
     .session-items {

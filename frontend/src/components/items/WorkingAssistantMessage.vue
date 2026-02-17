@@ -35,7 +35,7 @@ const toolAction = computed(() => {
 </script>
 
 <template>
-    <div class="working-assistant-message">
+    <div class="working-assistant-message text-content">
         <wa-spinner></wa-spinner>
         <span>Claude is {{ toolAction || 'working' }}...</span>
     </div>
@@ -47,5 +47,6 @@ const toolAction = computed(() => {
     align-items: center;
     gap: var(--wa-space-s);
     font-style: italic;
+    font-size: var(--wa-font-size-m);
 }
 </style>
