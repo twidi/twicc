@@ -115,35 +115,37 @@ function toggleJsonView() {
 
 <template>
     <div class="session-item" :data-kind="kind" :data-synthetic-kind="syntheticKind">
-        <!-- Detail toggle button for conversation mode (on assistant_message when collapsed,
-             or on first visible item of block when detailed) -->
-        <wa-button
-            v-if="showDetailToggle"
-            :id="`detail-toggle-${sessionId}-${detailToggleFor}`"
-            class="detail-toggle"
-            :variant="isBlockDetailed ? 'brand' : 'neutral'"
-            size="small"
-            @click="toggleBlockDetailed"
-        >
-            <wa-icon :name="isBlockDetailed ? 'compress' : 'expand'"></wa-icon>
-        </wa-button>
-        <wa-tooltip v-if="showDetailToggle && tooltipsEnabled" :for="`detail-toggle-${sessionId}-${detailToggleFor}`">
-            {{ isBlockDetailed ? 'Show conversation' : 'Show details' }}
-        </wa-tooltip>
-
-        <!-- JSON toggle button (visible on hover) -->
-        <div class="json-toggle-container">
+        <div><!-- all non-content stuff must be in this div for complex css rules of content stuff assuming they always start at 2nd place-->
+            <!-- Detail toggle button for conversation mode (on assistant_message when collapsed,
+                 or on first visible item of block when detailed) -->
             <wa-button
-                v-if="!showJson"
-                :id="`json-toggle-${sessionId}-${lineNum}`"
-                class="json-toggle"
-                :variant="showJson ? 'warning' : 'neutral'"
+                v-if="showDetailToggle"
+                :id="`detail-toggle-${sessionId}-${detailToggleFor}`"
+                class="detail-toggle"
+                :variant="isBlockDetailed ? 'brand' : 'neutral'"
                 size="small"
-                @click="toggleJsonView"
+                @click="toggleBlockDetailed"
             >
-                <wa-icon name="code"></wa-icon>
+                <wa-icon :name="isBlockDetailed ? 'compress' : 'expand'"></wa-icon>
             </wa-button>
-            <wa-tooltip v-if="!showJson && tooltipsEnabled" :for="`json-toggle-${sessionId}-${lineNum}`">Show JSON</wa-tooltip>
+            <wa-tooltip v-if="showDetailToggle && tooltipsEnabled" :for="`detail-toggle-${sessionId}-${detailToggleFor}`">
+                {{ isBlockDetailed ? 'Show conversation' : 'Show details' }}
+            </wa-tooltip>
+
+            <!-- JSON toggle button (visible on hover) -->
+            <div class="json-toggle-container">
+                <wa-button
+                    v-if="!showJson"
+                    :id="`json-toggle-${sessionId}-${lineNum}`"
+                    class="json-toggle"
+                    :variant="showJson ? 'warning' : 'neutral'"
+                    size="small"
+                    @click="toggleJsonView"
+                >
+                    <wa-icon name="code"></wa-icon>
+                </wa-button>
+                <wa-tooltip v-if="!showJson && tooltipsEnabled" :for="`json-toggle-${sessionId}-${lineNum}`">Show JSON</wa-tooltip>
+            </div>
         </div>
 
         <!-- JSON view -->
