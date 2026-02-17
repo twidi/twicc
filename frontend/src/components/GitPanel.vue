@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
+import { ref, computed, watch, nextTick, onActivated, onDeactivated } from 'vue'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
+import { useContainerBreakpoint } from '../composables/useContainerBreakpoint'
 import {
     GitLog,
     GitLogGraphHTMLGrid,
@@ -43,23 +44,12 @@ const props = defineProps({
 const settingsStore = useSettingsStore()
 
 // ─── Mobile breakpoint detection ─────────────────────────────────────────────
+// Uses a ResizeObserver on .main-content instead of a viewport media query,
+// so the panel reacts to the actual available width (e.g. sidebar open/close).
 
-const MOBILE_BREAKPOINT = 640
-const isMobile = ref(false)
-let mobileMediaQuery = null
-
-function updateMobileState(event) {
-    isMobile.value = event.matches
-}
-
-onMounted(() => {
-    mobileMediaQuery = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
-    isMobile.value = mobileMediaQuery.matches
-    mobileMediaQuery.addEventListener('change', updateMobileState)
-})
-
-onBeforeUnmount(() => {
-    mobileMediaQuery?.removeEventListener('change', updateMobileState)
+const { isBelowBreakpoint: isMobile } = useContainerBreakpoint({
+    containerSelector: '.main-content',
+    breakpoint: 640,
 })
 
 // ---------------------------------------------------------------------------
@@ -869,7 +859,7 @@ wa-callout {
 }
 
 /* Mobile: stack header + content vertically */
-@media (width < 640px) {
+@container main-content (width < 640px) {
     .git-panel-content {
         display: flex;
         flex-direction: column;

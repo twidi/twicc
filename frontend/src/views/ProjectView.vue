@@ -1059,6 +1059,8 @@ wa-split-panel::part(divider) {
     overflow: hidden;
     background: var(--wa-color-surface-default);
     z-index: 1;
+    container-type: inline-size;
+    container-name: main-content;
 }
 
 .session-content {

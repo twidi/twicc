@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
+import { ref, computed, watch, onActivated, onDeactivated } from 'vue'
 import { apiFetch } from '../utils/api'
+import { useContainerBreakpoint } from '../composables/useContainerBreakpoint'
 import FileTreePanel from './FileTreePanel.vue'
 import FilePane from './FilePane.vue'
 
@@ -36,23 +37,12 @@ const props = defineProps({
 })
 
 // ─── Mobile breakpoint detection ─────────────────────────────────────────────
+// Uses a ResizeObserver on .main-content instead of a viewport media query,
+// so the panel reacts to the actual available width (e.g. sidebar open/close).
 
-const MOBILE_BREAKPOINT = 640
-const isMobile = ref(false)
-let mobileMediaQuery = null
-
-function updateMobileState(event) {
-    isMobile.value = event.matches
-}
-
-onMounted(() => {
-    mobileMediaQuery = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
-    isMobile.value = mobileMediaQuery.matches
-    mobileMediaQuery.addEventListener('change', updateMobileState)
-})
-
-onBeforeUnmount(() => {
-    mobileMediaQuery?.removeEventListener('change', updateMobileState)
+const { isBelowBreakpoint: isMobile } = useContainerBreakpoint({
+    containerSelector: '.main-content',
+    breakpoint: 640,
 })
 
 // API prefix: project-level for drafts, session-level otherwise
@@ -551,7 +541,7 @@ function handleTreeReposition(event) {
 }
 
 /* Mobile: stack header + content vertically */
-@media (width < 640px) {
+@container main-content (width < 640px) {
     .files-panel {
         display: flex;
         flex-direction: column;
@@ -610,7 +600,7 @@ function handleTreeReposition(event) {
     position: relative;
 }
 
-@media (width < 640px) {
+@container main-content (width < 640px) {
     .files-content-panel {
         flex: 1;
         min-height: 0;
