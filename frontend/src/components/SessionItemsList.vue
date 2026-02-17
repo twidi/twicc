@@ -1001,6 +1001,7 @@ defineExpose({
                     :group-tail="item.groupTail"
                     :prefix-expanded="item.prefixExpanded || false"
                     :suffix-expanded="item.suffixExpanded || false"
+                    :detail-toggle-for="item.detailToggleFor ?? null"
                     @toggle-suffix="toggleGroup(item.suffixGroupHead)"
                 />
             </template>

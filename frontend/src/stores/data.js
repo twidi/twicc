@@ -101,6 +101,15 @@ export const useDataStore = defineStore('data', {
             // Two-level structure allows easy invalidation of entire session
             sessionInternalExpandedGroups: {},
 
+            // Blocks expanded to detailed mode in conversation view.
+            // { sessionId: [userMessageLineNum, ...] }
+            // Each entry is the line_num of the last user_message before a non-user block.
+            // When present, all non-user items following that user_message (up to the next
+            // user_message) are rendered in detailed/normal mode instead of conversation mode.
+            // Using array instead of Set for Vue reactivity (same pattern as sessionExpandedGroups).
+            // Ephemeral: not persisted, lost on page refresh.
+            sessionDetailedBlocks: {},
+
             // Visual items - computed from sessionItems, display mode, and expanded groups
             // { sessionId: [{ lineNum, isGroupHead?, isExpanded? }, ...] }
             sessionVisualItems: {},
@@ -289,6 +298,12 @@ export const useDataStore = defineStore('data', {
         // Get visual items for a session
         getSessionVisualItems: (state) => (sessionId) =>
             state.localState.sessionVisualItems[sessionId] || [],
+
+        // Check if a conversation block is in detailed mode
+        isBlockDetailed: (state) => (sessionId, userMessageLineNum) => {
+            const blocks = state.localState.sessionDetailedBlocks[sessionId]
+            return blocks ? blocks.includes(userMessageLineNum) : false
+        },
 
         // Get open tabs for a session
         getSessionOpenTabs: (state) => (sessionId) =>
@@ -967,7 +982,11 @@ export const useDataStore = defineStore('data', {
                 allItems = allItems === items ? [...items, workingMessage] : [...allItems, workingMessage]
             }
 
-            const visualItems = computeVisualItems(allItems, mode, expandedGroups, isAssistantTurn)
+            // Get detailed blocks for conversation mode (per-block detail toggle)
+            const detailedBlocksArray = this.localState.sessionDetailedBlocks[sessionId] || []
+            const detailedBlocks = new Set(detailedBlocksArray)
+
+            const visualItems = computeVisualItems(allItems, mode, expandedGroups, isAssistantTurn, detailedBlocks)
 
             // Propagate syntheticKind to visual items for synthetic messages.
             // computeVisualItems doesn't know about syntheticKind, so we add it here.
@@ -1102,6 +1121,32 @@ export const useDataStore = defineStore('data', {
          */
         collapseAllGroups(sessionId) {
             this.localState.sessionExpandedGroups[sessionId] = []
+        },
+
+        // Detailed blocks actions (conversation mode per-block detail toggle)
+
+        /**
+         * Toggle a conversation block between conversation and detailed display mode.
+         * @param {string} sessionId
+         * @param {number} userMessageLineNum - line_num of the last user_message before the block
+         */
+        toggleBlockDetailedMode(sessionId, userMessageLineNum) {
+            if (!this.localState.sessionDetailedBlocks[sessionId]) {
+                this.localState.sessionDetailedBlocks[sessionId] = []
+            }
+
+            const blocks = this.localState.sessionDetailedBlocks[sessionId]
+            const index = blocks.indexOf(userMessageLineNum)
+
+            if (index >= 0) {
+                // Collapse back to conversation mode: remove from array
+                blocks.splice(index, 1)
+            } else {
+                // Expand to detailed mode: add to array
+                blocks.push(userMessageLineNum)
+            }
+
+            this.recomputeVisualItems(sessionId)
         },
 
         /**

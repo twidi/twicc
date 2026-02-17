@@ -1,12 +1,14 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
+import { useDataStore } from '../stores/data'
 import JsonViewer from './JsonViewer.vue'
 import Message from './items/Message.vue'
 import ApiError from './items/ApiError.vue'
 import UnknownEntry from './items/UnknownEntry.vue'
 
 const settingsStore = useSettingsStore()
+const dataStore = useDataStore()
 const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 
 const props = defineProps({
@@ -55,10 +57,30 @@ const props = defineProps({
     suffixExpanded: {
         type: Boolean,
         default: false
+    },
+    // In conversation mode, the user_message line_num identifying the block this item's
+    // detail toggle controls. Always set on the first non-user visual item after the last
+    // user_message of a user block. null means no toggle on this item.
+    detailToggleFor: {
+        type: Number,
+        default: null
     }
 })
 
 const emit = defineEmits(['toggle-suffix'])
+
+// Conversation mode per-block detail toggle.
+// detailToggleFor is set by computeVisualItems to indicate this item should show the toggle.
+const showDetailToggle = computed(() => props.detailToggleFor != null)
+
+const isBlockDetailed = computed(() => {
+    if (!showDetailToggle.value) return false
+    return dataStore.isBlockDetailed(props.sessionId, props.detailToggleFor)
+})
+
+function toggleBlockDetailed() {
+    dataStore.toggleBlockDetailedMode(props.sessionId, props.detailToggleFor)
+}
 
 // Toggle for showing raw JSON
 const showJson = ref(false)
@@ -93,6 +115,22 @@ function toggleJsonView() {
 
 <template>
     <div class="session-item" :data-kind="kind" :data-synthetic-kind="syntheticKind">
+        <!-- Detail toggle button for conversation mode (on assistant_message when collapsed,
+             or on first visible item of block when detailed) -->
+        <wa-button
+            v-if="showDetailToggle"
+            :id="`detail-toggle-${sessionId}-${detailToggleFor}`"
+            class="detail-toggle"
+            :variant="isBlockDetailed ? 'brand' : 'neutral'"
+            size="small"
+            @click="toggleBlockDetailed"
+        >
+            <wa-icon :name="isBlockDetailed ? 'compress' : 'expand'"></wa-icon>
+        </wa-button>
+        <wa-tooltip v-if="showDetailToggle && tooltipsEnabled" :for="`detail-toggle-${sessionId}-${detailToggleFor}`">
+            {{ isBlockDetailed ? 'Show conversation' : 'Show details' }}
+        </wa-tooltip>
+
         <!-- JSON toggle button (visible on hover) -->
         <div class="json-toggle-container">
             <wa-button
@@ -175,6 +213,26 @@ function toggleJsonView() {
     position: relative;
     font-size: var(--wa-font-size-s);
     line-height: 1.5;
+}
+
+.detail-toggle {
+    position: absolute;
+    top: var(--wa-space-xs);
+    right: 0;
+    opacity: 0.25;
+    transition: opacity 0.2s;
+    z-index: 2;
+    transform-origin: top center;
+    scale: 0.6;
+    &::part(label) {
+        scale: 1.3;
+    }
+    &[variant="brand"] {
+        opacity: 0.7;
+    }
+    &:hover {
+        opacity: 1;
+    }
 }
 
 .json-toggle {
