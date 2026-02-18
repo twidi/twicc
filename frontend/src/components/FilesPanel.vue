@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onActivated, onDeactivated } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onActivated, onDeactivated } from 'vue'
 import { apiFetch } from '../utils/api'
 import { useContainerBreakpoint } from '../composables/useContainerBreakpoint'
 import FileTreePanel from './FileTreePanel.vue'
@@ -340,6 +340,9 @@ onDeactivated(() => {
 })
 
 onActivated(() => {
+    // Ensure reparented nodes are in the right container after KeepAlive reactivation
+    nextTick(() => reparentNodes(isMobile.value))
+
     // wa-split-panel's internal state gets desynchronized from the HTML attribute
     // during KeepAlive transitions. Vue updates the attribute but the web component
     // doesn't re-read it. Force the JS property directly, then reveal.
@@ -368,99 +371,60 @@ function handleTreeReposition(event) {
     if (newWidth == null || Number.isNaN(newWidth) || newWidth <= 0) return
     treePanelWidth.value = newWidth
 }
+
+// ─── DOM reparenting on layout switch ────────────────────────────────────────
+// A single FileTreePanel and FilePane instance are always rendered inside
+// hidden "owner" divs. When the layout switches between desktop (split panel)
+// and mobile (stacked), we move the actual DOM nodes into the appropriate
+// container so the component state (tree expansion, Monaco editor, unsaved
+// changes…) is fully preserved.
+
+const treeOwnerRef = ref(null)        // hidden div that owns the FileTreePanel instance
+const contentOwnerRef = ref(null)     // hidden div that owns the FilePane instance
+const desktopTreeSlotRef = ref(null)  // slot="start" container inside wa-split-panel
+const desktopContentSlotRef = ref(null) // slot="end" container inside wa-split-panel
+const mobileTreeSlotRef = ref(null)   // mobile container for the tree
+const mobileContentSlotRef = ref(null) // mobile container for the content
+
+// Persistent references to the actual DOM nodes being reparented.
+// Set once on mount, then reused across all reparenting operations.
+let treeNode = null
+let contentNode = null
+
+function reparentNodes(mobile) {
+    const treeTarget = mobile ? mobileTreeSlotRef.value : desktopTreeSlotRef.value
+    const contentTarget = mobile ? mobileContentSlotRef.value : desktopContentSlotRef.value
+
+    if (!treeTarget || !contentTarget) return
+
+    // Lazily grab the nodes on first call
+    if (!treeNode) treeNode = treeOwnerRef.value?.firstElementChild
+    if (!contentNode) contentNode = contentOwnerRef.value?.firstElementChild
+    if (!treeNode || !contentNode) return
+
+    // Move nodes only if they aren't already in the right container
+    if (treeNode.parentElement !== treeTarget) {
+        treeTarget.appendChild(treeNode)
+    }
+    if (contentNode.parentElement !== contentTarget) {
+        contentTarget.appendChild(contentNode)
+    }
+}
+
+watch(isMobile, (mobile) => {
+    nextTick(() => reparentNodes(mobile))
+})
+
+// Initial placement once the DOM is ready
+onMounted(() => {
+    nextTick(() => reparentNodes(isMobile.value))
+})
 </script>
 
 <template>
     <div class="files-panel">
-        <!-- ═══ Desktop layout: split panel ═══ -->
-        <wa-split-panel
-            v-if="!isMobile"
-            ref="splitPanelRef"
-            class="files-split-panel"
-            :class="{ 'keep-alive-hidden': keepAliveHidden }"
-            :position-in-pixels="treePanelWidth"
-            primary="start"
-            snap="150px 250px 350px"
-            snap-threshold="30"
-            @wa-reposition="handleTreeReposition"
-        >
-            <wa-icon slot="divider" name="grip-lines-vertical" class="divider-handle"></wa-icon>
-
-            <!-- File tree (left panel) -->
-            <div slot="start" class="files-tree-slot">
-                <FileTreePanel
-                    ref="fileTreePanelRef"
-                    :tree="tree"
-                    :loading="loading"
-                    :error="error"
-                    :root-path="directory"
-                    :search-fn="doSearch"
-                    :lazy-load-fn="lazyLoadDir"
-                    :project-id="projectId"
-                    :session-id="sessionId"
-                    :is-draft="isDraft"
-                    :extra-query="optionsQuery()"
-                    :show-refresh="true"
-                    :active="active"
-                    mode="files"
-                    @refresh="refresh"
-                    @option-select="handleOptionsSelect"
-                >
-                    <template #options-before>
-                        <wa-dropdown-item
-                            type="checkbox"
-                            value="show-hidden"
-                            :checked="showHidden"
-                        >
-                            Show hidden files
-                        </wa-dropdown-item>
-                        <wa-dropdown-item
-                            v-if="isGit"
-                            type="checkbox"
-                            value="show-ignored"
-                            :checked="showIgnored"
-                        >
-                            Show git ignored files
-                        </wa-dropdown-item>
-                        <wa-divider></wa-divider>
-                        <wa-dropdown-item disabled class="dropdown-header">
-                            Root:
-                        </wa-dropdown-item>
-                        <wa-dropdown-item
-                            v-for="root in availableRoots"
-                            :key="root.key"
-                            type="checkbox"
-                            :value="'root:' + root.key"
-                            :checked="selectedRootKey === root.key"
-                            :disabled="missingRoots.has(root.key)"
-                        >
-                            <div>{{ root.label }}</div>
-                            <div class="root-path">{{ root.path }}</div>
-                            <div v-if="missingRoots.has(root.key)" class="root-missing">Directory no longer exists</div>
-                        </wa-dropdown-item>
-                        <wa-divider></wa-divider>
-                    </template>
-                </FileTreePanel>
-            </div>
-
-            <!-- File content (right panel) -->
-            <div slot="end" class="files-content-panel">
-                <FilePane
-                    v-show="selectedFile"
-                    :project-id="projectId"
-                    :session-id="sessionId"
-                    :file-path="selectedAbsPath"
-                    :is-draft="isDraft"
-                />
-                <div v-show="!selectedFile" class="panel-placeholder">
-                    Select a file
-                </div>
-            </div>
-        </wa-split-panel>
-
-        <!-- ═══ Mobile layout: header + full-width content ═══ -->
-        <template v-else>
-            <!-- FileTreePanel renders its own header + overlay in mobile mode -->
+        <!-- ═══ Hidden owners: single instances that get reparented ═══ -->
+        <div ref="treeOwnerRef" class="reparent-owner">
             <FileTreePanel
                 ref="fileTreePanelRef"
                 :tree="tree"
@@ -475,7 +439,7 @@ function handleTreeReposition(event) {
                 :extra-query="optionsQuery()"
                 :show-refresh="true"
                 :active="active"
-                :is-mobile="true"
+                :is-mobile="isMobile"
                 mode="files"
                 @refresh="refresh"
                 @option-select="handleOptionsSelect"
@@ -515,9 +479,10 @@ function handleTreeReposition(event) {
                     <wa-divider></wa-divider>
                 </template>
             </FileTreePanel>
+        </div>
 
-            <!-- File content (full width) -->
-            <div class="files-content-panel">
+        <div ref="contentOwnerRef" class="reparent-owner">
+            <div class="files-content-inner">
                 <FilePane
                     v-show="selectedFile"
                     :project-id="projectId"
@@ -529,23 +494,58 @@ function handleTreeReposition(event) {
                     Select a file
                 </div>
             </div>
-        </template>
+        </div>
+
+        <!-- ═══ Desktop layout: split panel ═══ -->
+        <wa-split-panel
+            v-show="!isMobile"
+            ref="splitPanelRef"
+            class="files-split-panel"
+            :class="{ 'keep-alive-hidden': keepAliveHidden }"
+            :position-in-pixels="treePanelWidth"
+            primary="start"
+            snap="150px 250px 350px"
+            snap-threshold="30"
+            @wa-reposition="handleTreeReposition"
+        >
+            <wa-icon slot="divider" name="grip-lines-vertical" class="divider-handle"></wa-icon>
+
+            <!-- Empty slots — filled by reparenting -->
+            <div ref="desktopTreeSlotRef" slot="start" class="files-tree-slot"></div>
+            <div ref="desktopContentSlotRef" slot="end" class="files-content-panel"></div>
+        </wa-split-panel>
+
+        <!-- ═══ Mobile layout: stacked ═══
+             Always in the DOM (v-show) so reparenting can move nodes
+             back to desktop slots before the mobile container disappears. -->
+        <div v-show="isMobile" class="mobile-layout">
+            <div ref="mobileTreeSlotRef" class="mobile-tree-slot"></div>
+            <div ref="mobileContentSlotRef" class="files-content-panel"></div>
+        </div>
     </div>
 </template>
 
 <style scoped>
+/* Hidden owner divs: components are rendered here then reparented into
+   the appropriate layout container (desktop split-panel or mobile stack). */
+.reparent-owner {
+    display: none;
+}
+
 .files-panel {
     height: 100%;
     overflow: hidden;
     position: relative;
 }
 
-/* Mobile: stack header + content vertically */
-@container main-content (width < 640px) {
-    .files-panel {
-        display: flex;
-        flex-direction: column;
-    }
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mobile layout
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mobile-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -600,11 +600,15 @@ function handleTreeReposition(event) {
     position: relative;
 }
 
-@container main-content (width < 640px) {
-    .files-content-panel {
-        flex: 1;
-        min-height: 0;
-    }
+.files-content-inner {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.mobile-layout > .files-content-panel {
+    flex: 1;
+    min-height: 0;
 }
 
 /* Placeholder styling */
