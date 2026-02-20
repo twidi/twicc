@@ -82,19 +82,31 @@ const placeholderText = computed(() => {
 })
 
 // Restore draft message when session changes
-watch(() => props.sessionId, (newId) => {
+watch(() => props.sessionId, async (newId) => {
     const draft = store.getDraftMessage(newId)
     messageText.value = draft?.message || ''
+    // Adjust textarea height after the DOM updates with restored content
+    await nextTick()
+    if (textareaRef.value?.updateComplete) {
+        await textareaRef.value.updateComplete
+    }
+    adjustTextareaHeight()
 }, { immediate: true })
 
 // Also restore draft when it arrives after hydration (initial page load)
 // This handles the race condition where the component mounts before IndexedDB is loaded
 watch(
     () => store.getDraftMessage(props.sessionId),
-    (draft) => {
+    async (draft) => {
         // Only restore if textarea is still empty (don't overwrite user typing)
         if (!messageText.value && draft?.message) {
             messageText.value = draft.message
+            // Adjust textarea height after the DOM updates with restored content
+            await nextTick()
+            if (textareaRef.value?.updateComplete) {
+                await textareaRef.value.updateComplete
+            }
+            adjustTextareaHeight()
         }
     }
 )
@@ -129,9 +141,30 @@ watch([isDraft, textareaRef], async ([isDraftSession, textarea]) => {
             }
             await new Promise(resolve => requestAnimationFrame(resolve))
         }
+        adjustTextareaHeight()
         textarea.focus()
     }
 }, { immediate: true })
+
+/**
+ * Adjust the textarea height to fit its content.
+ * Accesses the internal <textarea> inside the wa-textarea shadow DOM
+ * to perform a single synchronous height reset + scrollHeight read.
+ * Unlike wa-textarea's built-in resize="auto", this avoids the
+ * ResizeObserver feedback loop that causes 1px jitter.
+ */
+function adjustTextareaHeight() {
+    const textarea = textareaRef.value?.shadowRoot?.querySelector('textarea')
+    if (!textarea) return
+    // Reset to auto to measure natural scrollHeight
+    textarea.style.height = 'auto'
+    // Only set an explicit height if content exceeds the natural rows height.
+    // When scrollHeight <= the natural height (determined by the rows="3" attribute),
+    // leaving height as "auto" lets the browser use the rows attribute as the floor.
+    if (textarea.scrollHeight > textarea.clientHeight) {
+        textarea.style.height = `${textarea.scrollHeight}px`
+    }
+}
 
 /**
  * Handle textarea input event.
@@ -139,6 +172,7 @@ watch([isDraft, textareaRef], async ([isDraftSession, textarea]) => {
  */
 function onInput(event) {
     messageText.value = event.target.value
+    adjustTextareaHeight()
     // Notify server that user is actively preparing a message (debounced)
     // This prevents auto-stop of the process due to inactivity timeout
     notifyUserDraftUpdated(props.sessionId)
@@ -334,6 +368,7 @@ async function handleSend() {
             }
             // Also set the component property to ensure consistency
             textareaRef.value.value = ''
+            adjustTextareaHeight()
         }
     }
 }
@@ -370,6 +405,7 @@ async function handleClear() {
             innerTextarea.value = ''
         }
         textareaRef.value.value = ''
+        adjustTextareaHeight()
     }
 }
 </script>
@@ -381,7 +417,7 @@ async function handleClear() {
             :value.prop="messageText"
             :placeholder="placeholderText"
             rows="3"
-            resize="auto"
+            resize="none"
             @input="onInput"
             @keydown="onKeydown"
             @paste="onPaste"
@@ -497,7 +533,7 @@ async function handleClear() {
 .message-input wa-textarea::part(textarea) {
     /* Limit height to 40% of visual viewport (accounts for mobile keyboard) */
     max-height: calc(var(--visual-viewport-height, 100dvh) * 0.4);
-    /* Override resize="auto" which sets overflow-y: hidden - we need scrolling when max-height is reached */
+    /* Allow scrolling when content exceeds max-height */
     overflow-y: auto;
 }
 
