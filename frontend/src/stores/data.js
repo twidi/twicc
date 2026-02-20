@@ -944,22 +944,34 @@ export const useDataStore = defineStore('data', {
             if (isAssistantTurn) {
                 const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE
 
-                // Check if the last item is an assistant_message or content_items whose
-                // last content entry is a tool_use — if so, capture the whole tool_use object
-                // to allow the UI to adapt based on tool type.
+                // Walk backwards through items to find the most recent tool_use.
+                // Skip over tool_result items (content_items whose content is all
+                // tool_result entries) so that the status line keeps showing the
+                // current tool name even after its result has arrived.
+                // Also track whether we skipped any tool_result items: if so, the
+                // tool_use has completed; otherwise it is still in progress.
                 let toolUse = null
-                const lastItem = items.length > 0 ? items[items.length - 1] : null
-                if (lastItem?.kind === 'assistant_message' || lastItem?.kind === 'content_items') {
+                let toolUseCompleted = false
+                for (let i = items.length - 1; i >= 0; i--) {
+                    const item = items[i]
+                    if (item.kind !== 'assistant_message' && item.kind !== 'content_items') break
                     try {
-                        const parsed = JSON.parse(lastItem.content)
+                        const parsed = JSON.parse(item.content)
                         const contentArray = parsed?.message?.content
-                        if (Array.isArray(contentArray) && contentArray.length > 0) {
-                            const lastContent = contentArray[contentArray.length - 1]
-                            if (lastContent.type === 'tool_use') {
-                                toolUse = lastContent
-                            }
+                        if (!Array.isArray(contentArray) || contentArray.length === 0) break
+                        const lastContent = contentArray[contentArray.length - 1]
+                        if (lastContent.type === 'tool_use') {
+                            toolUse = lastContent
+                            break
                         }
-                    } catch { /* ignore parse errors */ }
+                        // If every entry is a tool_result, skip this item and keep looking
+                        if (contentArray.every(c => c.type === 'tool_result')) {
+                            toolUseCompleted = true
+                            continue
+                        }
+                        // Otherwise (text, image, etc.) stop searching
+                        break
+                    } catch { break }
                 }
 
                 workingMessage = {
@@ -968,6 +980,7 @@ export const useDataStore = defineStore('data', {
                         type: 'assistant',
                         syntheticKind,
                         toolUse,
+                        toolUseCompleted,
                         message: {
                             role: 'assistant',
                             content: []
