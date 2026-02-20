@@ -559,6 +559,13 @@ watch(isMobile, (mobile) => {
     nextTick(() => reparentNodes(mobile))
 })
 
+// The owners and layout containers live inside a v-else-if that is only
+// rendered once git data has loaded. Watch the owner ref so reparenting
+// runs as soon as the conditional block appears in the DOM.
+watch(treeOwnerRef, (el) => {
+    if (el) nextTick(() => reparentNodes(isMobile.value))
+})
+
 onMounted(() => {
     nextTick(() => reparentNodes(isMobile.value))
 })
