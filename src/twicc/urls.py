@@ -15,6 +15,7 @@ urlpatterns = [
     path("api/projects/", views.project_list),
     path("api/projects/<str:project_id>/", views.project_detail),
     path("api/projects/<str:project_id>/sessions/", views.project_sessions),
+    path("api/projects/<str:project_id>/weekly-activity/", views.project_weekly_activity),
     # Project-level file system endpoints (for draft sessions and project-level browsing)
     path("api/projects/<str:project_id>/directory-tree/", views.directory_tree),
     path("api/projects/<str:project_id>/file-search/", views.file_search),

@@ -7,6 +7,7 @@ import { SESSION_TIME_FORMAT } from '../constants'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
+import ProjectSparkline from './ProjectSparkline.vue'
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
@@ -86,20 +87,25 @@ function handleEditClick(event, project) {
                 </wa-button>
                 <wa-tooltip v-if="tooltipsEnabled" :for="`edit-button-${project.id}`">Edit project (name and color)</wa-tooltip>
                 <div v-if="project.directory" class="project-directory">{{ project.directory }}</div>
-                <div class="project-meta">
-                    <span :id="`sessions-count-${project.id}`" class="sessions-count">
-                        {{ project.sessions_count }} session{{ project.sessions_count !== 1 ? 's' : '' }}
-                    </span>
-                    <wa-tooltip v-if="tooltipsEnabled" :for="`sessions-count-${project.id}`">Number of sessions</wa-tooltip>
-                    <template v-if="showCosts">
-                        <span :id="`project-cost-${project.id}`" class="project-cost">{{ project.total_cost != null ? formatCost(project.total_cost) : '-' }}</span>
-                        <wa-tooltip v-if="tooltipsEnabled" :for="`project-cost-${project.id}`">Total project cost</wa-tooltip>
-                    </template>
-                    <span :id="`project-mtime-${project.id}`" class="project-mtime">
-                        <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(project.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
-                        <template v-else>{{ formatDate(project.mtime) }}</template>
-                    </span>
-                    <wa-tooltip v-if="tooltipsEnabled" :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</wa-tooltip>
+                <div class="project-meta-wrapper">
+                    <div class="project-meta">
+                        <span :id="`sessions-count-${project.id}`" class="sessions-count">
+                            {{ project.sessions_count }} session{{ project.sessions_count !== 1 ? 's' : '' }}
+                        </span>
+                        <wa-tooltip v-if="tooltipsEnabled" :for="`sessions-count-${project.id}`">Number of sessions</wa-tooltip>
+                        <template v-if="showCosts">
+                            <span :id="`project-cost-${project.id}`" class="project-cost">{{ project.total_cost != null ? formatCost(project.total_cost) : '-' }}</span>
+                            <wa-tooltip v-if="tooltipsEnabled" :for="`project-cost-${project.id}`">Total project cost</wa-tooltip>
+                        </template>
+                        <span :id="`project-mtime-${project.id}`" class="project-mtime">
+                            <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(project.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
+                            <template v-else>{{ formatDate(project.mtime) }}</template>
+                        </span>
+                        <wa-tooltip v-if="tooltipsEnabled" :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</wa-tooltip>
+                    </div>
+                    <div class="project-graph">
+                        <ProjectSparkline :project-id="project.id" />
+                    </div>
                 </div>
             </div>
         </wa-card>
@@ -162,6 +168,12 @@ function handleEditClick(event, project) {
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
     word-break: break-all;
+}
+
+.project-meta-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .project-meta {

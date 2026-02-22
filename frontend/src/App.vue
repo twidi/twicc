@@ -124,6 +124,12 @@ body {
     /* --main-header-footer-bg-color: var(--wa-color-surface-raised); */
     --main-header-footer-bg-color: transparent;
 
+    /* Sparkline graph colors (light mode) */
+    --sparkline-project-gradient-color-1: #aceebb;
+    --sparkline-project-gradient-color-2: #4ac26b;
+    --sparkline-project-gradient-color-3: #2da44e;
+    --sparkline-project-gradient-color-4: #116329;
+    --sparkline-project-stroke-color: #8cc665;
 }
 
 .wa-dark {
@@ -136,6 +142,13 @@ body {
 
     --user-card-base-color: #323b45;
     --assistant-card-base-color: #252e38;
+
+    /* Sparkline graph colors (dark mode) */
+    --sparkline-project-gradient-color-1: #033a16;
+    --sparkline-project-gradient-color-2: #196c2e;
+    --sparkline-project-gradient-color-3: #2ea043;
+    --sparkline-project-gradient-color-4: #56d364;
+    --sparkline-project-stroke-color: #8cc665;
 }
 
 /* Reset Web Awesome button styles inside Notivue notifications */

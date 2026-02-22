@@ -1,9 +1,11 @@
 """API views and SPA catch-all for serving the frontend."""
 
 import os
+from datetime import timedelta
 
 from django.conf import settings
 from django.http import FileResponse, Http404, JsonResponse
+from django.utils import timezone
 
 import orjson
 
@@ -758,6 +760,89 @@ def git_commit_file_diff(request, project_id, commit_hash, session_id=None):
         return JsonResponse(result, status=500)
 
     return JsonResponse(result)
+
+
+def project_weekly_activity(request, project_id):
+    """GET /api/projects/<id>/weekly-activity/ - Weekly user message counts.
+
+    Returns weekly activity for the project. Leading weeks with zero activity
+    are trimmed, so the first entry always has count > 0. Intermediate and
+    trailing weeks with no activity are kept with count 0.
+
+    Query params (optional):
+        max-weeks: Maximum number of weeks to look back (1-104, default: 52).
+
+    Response:
+        [
+            {"week": "2025-08-11", "count": 3},
+            {"week": "2025-08-18", "count": 0},
+            {"week": "2025-08-25", "count": 7},
+            ...
+        ]
+    """
+    from django.db.models import Count
+    from django.db.models.functions import TruncWeek
+
+    try:
+        Project.objects.get(id=project_id)
+    except Project.DoesNotExist:
+        raise Http404("Project not found")
+
+    try:
+        max_weeks = int(request.GET.get("max-weeks", 52))
+        max_weeks = max(1, min(max_weeks, 104))
+    except (ValueError, TypeError):
+        max_weeks = 52
+    today = timezone.now().date()
+    current_monday = today - timedelta(days=today.weekday())
+    start_monday = current_monday - timedelta(weeks=max_weeks - 1)
+
+    # Query only weeks that have data
+    qs = (
+        SessionItem.objects.filter(
+            session__project_id=project_id,
+            kind="user_message",
+            timestamp__isnull=False,
+            timestamp__date__gte=start_monday,
+        )
+        .values(week=TruncWeek("timestamp"))
+        .annotate(count=Count("id"))
+    )
+
+    # Index by monday date
+    data_by_week = {row["week"].date(): row["count"] for row in qs}
+
+    # Find the first week with data to skip leading zeros
+    first_active_monday = None
+    for i in range(max_weeks):
+        monday = start_monday + timedelta(weeks=i)
+        if data_by_week.get(monday, 0) > 0:
+            first_active_monday = monday
+            break
+
+    # No activity at all: return empty list
+    if first_active_monday is None:
+        return JsonResponse([], safe=False)
+
+    # Build result from first active week to current week
+    result = []
+    monday = first_active_monday
+    while monday <= current_monday:
+        result.append({
+            "week": monday.isoformat(),
+            "count": data_by_week.get(monday, 0),
+        })
+        monday += timedelta(weeks=1)
+
+    # Pad with leading zero-count weeks (up to 3) to approach max_weeks
+    padding = min(max_weeks - len(result), 3)
+    for i in range(padding, 0, -1):
+        result.insert(0, {
+            "week": (first_active_monday - timedelta(weeks=i)).isoformat(),
+            "count": 0,
+        })
+
+    return JsonResponse(result, safe=False)
 
 
 def spa_index(request):
