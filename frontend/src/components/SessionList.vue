@@ -8,6 +8,7 @@ import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 import VirtualScroller from './VirtualScroller.vue'
+import CostDisplay from './CostDisplay.vue'
 
 const props = defineProps({
     projectId: {
@@ -184,11 +185,6 @@ function getSessionDisplayName(session) {
     return session.title || session.id
 }
 
-// Format cost as USD string (e.g., "$0.42")
-function formatCost(cost) {
-    if (cost == null) return null
-    return `${cost.toFixed(2)}`
-}
 
 const emit = defineEmits(['select', 'focus-search'])
 
@@ -627,7 +623,7 @@ defineExpose({
                         <wa-tooltip v-if="tooltipsEnabled" :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
 
                         <template v-if="showCosts">
-                            <span :id="`session-cost-${session.id}`" class="session-cost"><wa-icon auto-width name="dollar-sign" variant="classic"></wa-icon>{{ session.total_cost != null ? formatCost(session.total_cost) : '-' }}</span>
+                            <CostDisplay :id="`session-cost-${session.id}`" :cost="session.total_cost" class="session-cost" />
                             <wa-tooltip v-if="tooltipsEnabled" :for="`session-cost-${session.id}`">Total session cost</wa-tooltip>
                         </template>
 

@@ -7,6 +7,7 @@ import { MAX_CONTEXT_TOKENS, PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_
 import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
+import CostDisplay from './CostDisplay.vue'
 
 const props = defineProps({
     sessionId: {
@@ -53,30 +54,25 @@ const displayName = computed(() => {
     return session.value?.title || props.sessionId
 })
 
-// Format cost as USD string (e.g., "$0.42")
-function formatCost(cost) {
-    if (cost == null) return null
-    return `${cost.toFixed(2)}`
-}
-
-// Format cost display for header
-const formattedTotalCost = computed(() => {
+// Cost values for header display
+const totalCost = computed(() => {
     const sess = session.value
-    if (!sess || sess.total_cost == null) return null
-    return formatCost(sess.total_cost)
+    if (!sess) return null
+    return sess.total_cost ?? null
 })
 
 // Cost breakdown (self + subagents) - only shown if subagents have cost
-const formattedCostBreakdown = computed(() => {
+const costBreakdown = computed(() => {
     const sess = session.value
     if (!sess) return null
 
     const subagentsCost = sess.subagents_cost
     if (subagentsCost == null || subagentsCost <= 0) return null
 
-    const self = formatCost(sess.self_cost)
-    const subagents = formatCost(subagentsCost)
-    return `${self} + ${subagents}`
+    return {
+        self: sess.self_cost ?? null,
+        subagents: subagentsCost,
+    }
 })
 
 // Calculate context usage percentage
@@ -402,20 +398,18 @@ defineExpose({
                 </span>
                 <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-mtime`">Last activity</wa-tooltip>
 
-                <template v-if="showCosts && formattedTotalCost">
-                    <span :id="`session-header-${sessionId}-cost`" class="meta-item">
-                        <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
-                        {{ formattedTotalCost }}
-                    </span>
+                <template v-if="showCosts && totalCost != null">
+                    <CostDisplay :id="`session-header-${sessionId}-cost`" :cost="totalCost" class="meta-item" />
                     <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-cost`">Total session cost</wa-tooltip>
                 </template>
 
-                <template v-if="showCosts && formattedCostBreakdown">
+                <template v-if="showCosts && costBreakdown">
                     <span :id="`session-header-${sessionId}-cost-breakdown`" class="meta-item cost-breakdown-item">
                         <span>(
                         <span>
-                            <wa-icon auto-width name="dollar-sign" variant="solid"></wa-icon>
-                            <span class="cost-breakdown">{{ formattedCostBreakdown }}</span>
+                            <CostDisplay :cost="costBreakdown.self" />
+                            <span class="cost-breakdown-separator">+</span>
+                            <CostDisplay :cost="costBreakdown.subagents" />
                         </span>
                         )</span>
                     </span>

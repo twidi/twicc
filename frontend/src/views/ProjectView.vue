@@ -8,8 +8,10 @@ import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
 import ProjectBadge from '../components/ProjectBadge.vue'
 import ProjectProcessIndicator from '../components/ProjectProcessIndicator.vue'
+import ProjectDetailPanel from '../components/ProjectDetailPanel.vue'
 import SessionRenameDialog from '../components/SessionRenameDialog.vue'
-import { getUsageRingColor, formatCost } from '../utils/usage'
+import { getUsageRingColor } from '../utils/usage'
+import CostDisplay from '../components/CostDisplay.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -782,10 +784,10 @@ function updateSidebarClosedClass(closed) {
                             <div class="quota-tooltip-row" v-if="quotaFiveHour.resetsAt"><span class="quota-tooltip-label">Reset</span><span>{{ formatResetTime(quotaFiveHour.resetsAt) }}</span></div>
                             <template v-if="showCosts && quotaFiveHourCost && quotaFiveHourCost.spent != null">
                                 <wa-divider class="quota-tooltip-divider"></wa-divider>
-                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">Spent</span><span>{{ formatCost(quotaFiveHourCost.spent) }}</span></div>
-                                <div class="quota-tooltip-row" v-if="quotaFiveHourCost.estimatedPeriod != null"><span class="quota-tooltip-label">Est. 5h</span><span>{{ formatCost(quotaFiveHourCost.estimatedPeriod) }}</span></div>
+                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">Spent</span><CostDisplay :cost="quotaFiveHourCost.spent" /></div>
+                                <div class="quota-tooltip-row" v-if="quotaFiveHourCost.estimatedPeriod != null"><span class="quota-tooltip-label">Est. 5h</span><CostDisplay :cost="quotaFiveHourCost.estimatedPeriod" /></div>
                                 <div class="quota-tooltip-note quota-tooltip-row-danger" v-if="quotaFiveHourCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Capped — burn rate exceeds 100%</div>
-                                <div class="quota-tooltip-row" v-if="quotaFiveHourCost.estimatedMonthly != null"><span class="quota-tooltip-label">Est. 30 days</span><span>{{ formatCost(quotaFiveHourCost.estimatedMonthly) }}</span></div>
+                                <div class="quota-tooltip-row" v-if="quotaFiveHourCost.estimatedMonthly != null"><span class="quota-tooltip-label">Est. 30 days</span><CostDisplay :cost="quotaFiveHourCost.estimatedMonthly" /></div>
                                 <div class="quota-tooltip-note quota-tooltip-row-danger" v-if="quotaFiveHourCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Based on capped 5h estimate</div>
                             </template>
                             <wa-button size="small" variant="brand" appearance="outlined" href="https://claude.ai/settings/usage" target="_blank" rel="noopener" class="quota-stale-button">View on claude.ai</wa-button>
@@ -813,10 +815,10 @@ function updateSidebarClosedClass(closed) {
                             <div class="quota-tooltip-row" v-if="quotaSevenDay.resetsAt"><span class="quota-tooltip-label">Reset</span><span>{{ formatResetTime(quotaSevenDay.resetsAt) }}</span></div>
                             <template v-if="showCosts && quotaSevenDayCost && quotaSevenDayCost.spent != null">
                                 <wa-divider class="quota-tooltip-divider"></wa-divider>
-                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">Spent</span><span>{{ formatCost(quotaSevenDayCost.spent) }}</span></div>
-                                <div class="quota-tooltip-row" v-if="quotaSevenDayCost.estimatedPeriod != null"><span class="quota-tooltip-label">Est. 7d</span><span>{{ formatCost(quotaSevenDayCost.estimatedPeriod) }}</span></div>
+                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">Spent</span><CostDisplay :cost="quotaSevenDayCost.spent" /></div>
+                                <div class="quota-tooltip-row" v-if="quotaSevenDayCost.estimatedPeriod != null"><span class="quota-tooltip-label">Est. 7d</span><CostDisplay :cost="quotaSevenDayCost.estimatedPeriod" /></div>
                                 <div class="quota-tooltip-note quota-tooltip-row-danger" v-if="quotaSevenDayCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Capped — burn rate exceeds 100%</div>
-                                <div class="quota-tooltip-row" v-if="quotaSevenDayCost.estimatedMonthly != null"><span class="quota-tooltip-label">Est. 30 days</span><span>{{ formatCost(quotaSevenDayCost.estimatedMonthly) }}</span></div>
+                                <div class="quota-tooltip-row" v-if="quotaSevenDayCost.estimatedMonthly != null"><span class="quota-tooltip-label">Est. 30 days</span><CostDisplay :cost="quotaSevenDayCost.estimatedMonthly" /></div>
                                 <div class="quota-tooltip-note quota-tooltip-row-danger" v-if="quotaSevenDayCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Based on capped 7d estimate</div>
                             </template>
                             <wa-button size="small" variant="brand" appearance="outlined" href="https://claude.ai/settings/usage" target="_blank" rel="noopener" class="quota-stale-button">View on claude.ai</wa-button>
@@ -882,9 +884,7 @@ function updateSidebarClosedClass(closed) {
                     </KeepAlive>
                 </router-view>
             </div>
-            <div v-if="!sessionId" class="empty-state">
-                <p>Select a session from the list</p>
-            </div>
+            <ProjectDetailPanel v-if="!sessionId" :project-id="effectiveProjectId" />
         </main>
     </wa-split-panel>
 
@@ -1065,15 +1065,6 @@ wa-split-panel::part(divider) {
 
 .session-content {
     height: 100%;
-}
-
-.empty-state {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-l);
 }
 
 .sessions-loading {

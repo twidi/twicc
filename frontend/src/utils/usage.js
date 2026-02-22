@@ -228,15 +228,3 @@ export function computeUsageData(raw) {
         sevenDayCost: computePeriodCost(periodCosts.seven_day),
     }
 }
-
-/**
- * Format a dollar amount for display.
- *
- * @param {number|null} value - Dollar amount
- * @returns {string} Formatted string like "$1.23" or "n/a"
- */
-export function formatCost(value) {
-    if (value == null) return 'n/a'
-    if (value < 0.01) return '$0.00'
-    return `$${value.toFixed(2)}`
-}
