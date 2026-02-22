@@ -192,12 +192,14 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
                 write_custom_title_to_jsonl(session_id, title)
 
         # Handle archived update
+        needs_broadcast = False
         if "archived" in data:
             archived = data["archived"]
             if not isinstance(archived, bool):
                 return JsonResponse({"error": "archived must be a boolean"}, status=400)
             session.archived = archived
             session.save(update_fields=["archived"])
+            needs_broadcast = True
 
             # Stop process and clean up tmux session if archiving
             if archived:
@@ -216,6 +218,25 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
                 return JsonResponse({"error": "pinned must be a boolean"}, status=400)
             session.pinned = pinned
             session.save(update_fields=["pinned"])
+            needs_broadcast = True
+
+        # Broadcast session_updated for archived/pinned changes.
+        # Title changes don't need this: writing to JSONL triggers the
+        # file watcher which broadcasts session_updated automatically.
+        if needs_broadcast:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                "updates",
+                {
+                    "type": "broadcast",
+                    "data": {
+                        "type": "session_updated",
+                        "session": serialize_session(session),
+                    },
+                },
+            )
 
     return JsonResponse(serialize_session(session))
 
