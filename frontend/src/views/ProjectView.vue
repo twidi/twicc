@@ -277,9 +277,16 @@ function handleProjectChange(event) {
     }
 }
 
-// Handle session selection
+// Handle session selection (toggle: clicking already-selected session deselects it)
 function handleSessionSelect(session) {
-    if (isAllProjectsMode.value) {
+    if (session.id === sessionId.value) {
+        // Deselect: navigate back to project root
+        if (isAllProjectsMode.value) {
+            router.push({ name: 'projects-all' })
+        } else {
+            router.push({ name: 'project', params: { projectId: projectId.value } })
+        }
+    } else if (isAllProjectsMode.value) {
         router.push({
             name: 'projects-session',
             params: { projectId: session.project_id, sessionId: session.id }
