@@ -12,7 +12,7 @@ import os
 import orjson
 import logging
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -1257,6 +1257,11 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     user_message_count = 0
     last_relevant_kind: ItemKind | None = None
 
+    # Track activity counts for real sessions (not subagents)
+    is_real_session = session.type == SessionType.SESSION
+    weekly_counts: Counter = Counter()  # week_monday (date) -> count
+    daily_counts: Counter = Counter()  # date -> count
+
     # Track cost and context usage (deduplication by message_id)
     seen_message_ids: set[str] = set()
     last_context_usage: int | None = None
@@ -1334,6 +1339,12 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         if item.kind == ItemKind.USER_MESSAGE:
             user_message_count += 1
             last_relevant_kind = ItemKind.USER_MESSAGE
+            # Track activity counts (for real sessions only)
+            if is_real_session and item.timestamp:
+                ts_date = item.timestamp.date() if hasattr(item.timestamp, 'date') else item.timestamp
+                daily_counts[ts_date.isoformat()] += 1
+                monday = ts_date - timedelta(days=ts_date.weekday())
+                weekly_counts[monday.isoformat()] += 1
         elif item.kind == ItemKind.ASSISTANT_MESSAGE:
             last_relevant_kind = ItemKind.ASSISTANT_MESSAGE
 
@@ -1468,6 +1479,8 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         },
         'titles': session_titles,
         'project_directory': project_directory,
+        'activity_weekly': dict(weekly_counts) if weekly_counts else None,
+        'activity_daily': dict(daily_counts) if daily_counts else None,
     }))
 
     connection.close()
@@ -1550,7 +1563,14 @@ def apply_compute_results(result_queue) -> None:
             if project_id and project_directory:
                 ensure_project_directory(project_id, project_directory)
 
-            # 7. Update project total_cost
+            # 7. Update activity counters (only present for real sessions)
+            activity_weekly = msg.get('activity_weekly')
+            activity_daily = msg.get('activity_daily')
+            if project_id and (activity_weekly or activity_daily):
+                from twicc.sync import apply_activity_counts
+                apply_activity_counts(project_id, activity_weekly, activity_daily)
+
+            # 8. Update project total_cost
             if project_id:
                 update_project_total_cost(project_id)
 

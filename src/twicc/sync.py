@@ -166,6 +166,67 @@ def _increment_daily_activity(
             )
 
 
+def apply_activity_counts(
+    project_id: str,
+    weekly: dict[str, int] | None,
+    daily: dict[str, int] | None,
+) -> None:
+    """Apply pre-computed activity counts to the database.
+
+    Used by the background compute path, which passes activity counts
+    as {iso_date_string: count} dicts in the session_complete message.
+
+    Uses the same UPDATE-or-CREATE pattern as the live sync increment
+    functions. Counts are added to existing rows since multiple sessions
+    contribute to the same project/week or project/date counters.
+    """
+    from datetime import date as date_cls
+
+    from django.db.models import F
+
+    from twicc.core.models import DailyActivity, WeeklyActivity
+
+    if weekly:
+        for week_str, count in weekly.items():
+            week_date = date_cls.fromisoformat(week_str)
+            # Per-project counter
+            updated = WeeklyActivity.objects.filter(
+                project_id=project_id, week=week_date
+            ).update(count=F("count") + count)
+            if not updated:
+                WeeklyActivity.objects.create(
+                    project_id=project_id, week=week_date, count=count
+                )
+            # Global counter (project=NULL)
+            updated = WeeklyActivity.objects.filter(
+                project__isnull=True, week=week_date
+            ).update(count=F("count") + count)
+            if not updated:
+                WeeklyActivity.objects.create(
+                    project=None, week=week_date, count=count
+                )
+
+    if daily:
+        for day_str, count in daily.items():
+            day_date = date_cls.fromisoformat(day_str)
+            # Per-project counter
+            updated = DailyActivity.objects.filter(
+                project_id=project_id, date=day_date
+            ).update(count=F("count") + count)
+            if not updated:
+                DailyActivity.objects.create(
+                    project_id=project_id, date=day_date, count=count
+                )
+            # Global counter (project=NULL)
+            updated = DailyActivity.objects.filter(
+                project__isnull=True, date=day_date
+            ).update(count=F("count") + count)
+            if not updated:
+                DailyActivity.objects.create(
+                    project=None, date=day_date, count=count
+                )
+
+
 def is_session_file(path: Path) -> bool:
     """Check if a path is a valid session file (*.jsonl but not agent-*.jsonl)."""
     return path.suffix == ".jsonl" and not path.name.startswith("agent-")
@@ -588,9 +649,10 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             if last_model and last_model != session.model:
                 session.model = last_model
 
-            # Update activity counters for new user messages
-            _increment_weekly_activity(session.project_id, items_to_create)
-            _increment_daily_activity(session.project_id, items_to_create)
+            # Update activity counters for new user messages (only for real sessions, not subagents)
+            if session.type == SessionType.SESSION:
+                _increment_weekly_activity(session.project_id, items_to_create)
+                _increment_daily_activity(session.project_id, items_to_create)
 
         # Update offset to end of file
         session.last_offset = f.tell()
