@@ -389,15 +389,38 @@ watch(() => props.modifiedContent, (newContent) => {
 
 // --- Monaco editor lifecycle ---
 
+/**
+ * Register Ctrl+S as a save action on a Monaco editor instance.
+ * The action is always registered but only triggers save() when in edit mode and dirty.
+ */
+function registerSaveAction(editor) {
+    editor.addAction({
+        id: 'file-pane-save',
+        label: 'Save File',
+        keybindings: [
+            // Monaco keybinding: CtrlCmd + S (Ctrl on Windows/Linux, Cmd on Mac)
+            monacoRef.value.KeyMod.CtrlCmd | monacoRef.value.KeyCode.KeyS,
+        ],
+        run() {
+            if (isEditing.value && isDirty.value && !saving.value) {
+                save()
+            }
+        },
+    })
+}
+
 function onEditorMount(editor) {
     editorRef.value = editor
     snapshotVersionId()
+    registerSaveAction(editor)
 }
 
 let _contentChangeGuard = false
 function onDiffEditorMount(editor) {
     diffEditorRef.value = editor
     snapshotVersionId()
+    // Register Ctrl+S on the modified side of the diff editor
+    registerSaveAction(editor.getModifiedEditor())
     // Listen for changes on the modified side for reactivity (dirty detection)
     const modifiedEditor = editor.getModifiedEditor()
     modifiedEditor.onDidChangeModelContent(() => {
