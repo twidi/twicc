@@ -244,6 +244,8 @@ function handleSessionOptionsSelect(event) {
     const item = event.detail.item
     if (item.value === 'show-archived') {
         showArchivedSessions.value = item.checked
+    } else if (item.value === 'compact-view') {
+        settingsStore.setCompactSessionList(item.checked)
     }
 }
 
@@ -642,6 +644,13 @@ function updateSidebarClosedClass(closed) {
                             :checked="showArchivedSessions"
                         >
                             Show archived sessions
+                        </wa-dropdown-item>
+                        <wa-dropdown-item
+                            type="checkbox"
+                            value="compact-view"
+                            :checked="settingsStore.isCompactSessionList"
+                        >
+                            Compact view
                         </wa-dropdown-item>
                     </wa-dropdown>
                     <wa-tooltip v-if="tooltipsEnabled" for="session-options-button">Session list options</wa-tooltip>

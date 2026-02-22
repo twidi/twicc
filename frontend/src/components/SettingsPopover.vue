@@ -50,6 +50,7 @@ const autoUnpinOnArchiveSwitch = ref(null)
 const titleGenerationSwitch = ref(null)
 const titleSystemPromptTextarea = ref(null)
 const tmuxSwitch = ref(null)
+const compactSessionListSwitch = ref(null)
 const diffSideBySideSwitch = ref(null)
 const notificationSettingsRef = ref(null)
 
@@ -66,6 +67,7 @@ const autoUnpinOnArchive = computed(() => store.isAutoUnpinOnArchive)
 const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 const terminalUseTmux = computed(() => store.isTerminalUseTmux)
+const compactSessionList = computed(() => store.isCompactSessionList)
 const diffSideBySide = computed(() => store.isDiffSideBySide)
 
 // Check if the current prompt is the default
@@ -119,6 +121,9 @@ function syncSwitchState() {
         if (tmuxSwitch.value && tmuxSwitch.value.checked !== terminalUseTmux.value) {
             tmuxSwitch.value.checked = terminalUseTmux.value
         }
+        if (compactSessionListSwitch.value && compactSessionListSwitch.value.checked !== compactSessionList.value) {
+            compactSessionListSwitch.value.checked = compactSessionList.value
+        }
         if (diffSideBySideSwitch.value && diffSideBySideSwitch.value.checked !== diffSideBySide.value) {
             diffSideBySideSwitch.value.checked = diffSideBySide.value
         }
@@ -126,7 +131,7 @@ function syncSwitchState() {
 }
 
 // Watch for store changes and sync switches
-watch([displayMode, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide], syncSwitchState, { immediate: true })
+watch([displayMode, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide], syncSwitchState, { immediate: true })
 
 /**
  * Handle display mode change.
@@ -210,6 +215,13 @@ function onTitleSystemPromptChange(event) {
  */
 function onTmuxChange(event) {
     store.setTerminalUseTmux(event.target.checked)
+}
+
+/**
+ * Toggle compact session list.
+ */
+function onCompactSessionListChange(event) {
+    store.setCompactSessionList(event.target.checked)
 }
 
 /**
@@ -352,6 +364,14 @@ function onPopoverShow() {
                         <wa-switch
                             ref="autoUnpinOnArchiveSwitch"
                             @change="onAutoUnpinOnArchiveChange"
+                            size="small"
+                        >Enabled</wa-switch>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Compact session list</label>
+                        <wa-switch
+                            ref="compactSessionListSwitch"
+                            @change="onCompactSessionListChange"
                             size="small"
                         >Enabled</wa-switch>
                     </div>

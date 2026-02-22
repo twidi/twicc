@@ -29,6 +29,7 @@ const SETTINGS_SCHEMA = {
     autoUnpinOnArchive: true,
     terminalUseTmux: false,
     diffSideBySide: true,
+    compactSessionList: false,
     // Notification settings: sound + browser notification for each event type
     notifUserTurnSound: NOTIFICATION_SOUNDS.NONE,
     notifUserTurnBrowser: false,
@@ -57,6 +58,7 @@ const SETTINGS_VALIDATORS = {
     autoUnpinOnArchive: (v) => typeof v === 'boolean',
     terminalUseTmux: (v) => typeof v === 'boolean',
     diffSideBySide: (v) => typeof v === 'boolean',
+    compactSessionList: (v) => typeof v === 'boolean',
     notifUserTurnSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
     notifUserTurnBrowser: (v) => typeof v === 'boolean',
     notifPendingRequestSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
@@ -140,6 +142,7 @@ export const useSettingsStore = defineStore('settings', {
         isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
         isTerminalUseTmux: (state) => state.terminalUseTmux,
         isDiffSideBySide: (state) => state.diffSideBySide,
+        isCompactSessionList: (state) => state.compactSessionList,
         getNotifUserTurnSound: (state) => state.notifUserTurnSound,
         isNotifUserTurnBrowser: (state) => state.notifUserTurnBrowser,
         getNotifPendingRequestSound: (state) => state.notifPendingRequestSound,
@@ -292,6 +295,16 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set compact session list mode.
+         * @param {boolean} enabled
+         */
+        setCompactSessionList(enabled) {
+            if (SETTINGS_VALIDATORS.compactSessionList(enabled)) {
+                this.compactSessionList = enabled
+            }
+        },
+
+        /**
          * Set notification sound for user turn events.
          * @param {string} sound - One of NOTIFICATION_SOUNDS values
          */
@@ -382,6 +395,7 @@ export function initSettings() {
             autoUnpinOnArchive: store.autoUnpinOnArchive,
             terminalUseTmux: store.terminalUseTmux,
             diffSideBySide: store.diffSideBySide,
+            compactSessionList: store.compactSessionList,
             notifUserTurnSound: store.notifUserTurnSound,
             notifUserTurnBrowser: store.notifUserTurnBrowser,
             notifPendingRequestSound: store.notifPendingRequestSound,

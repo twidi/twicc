@@ -42,6 +42,8 @@ const sessionTimeFormat = computed(() => settingsStore.getSessionTimeFormat)
 const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 // Costs setting
 const showCosts = computed(() => settingsStore.areCostsShown)
+// Compact view setting
+const compactView = computed(() => settingsStore.isCompactSessionList)
 const useRelativeTime = computed(() =>
     sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_SHORT ||
     sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_NARROW
@@ -111,8 +113,8 @@ const isLoading = computed(() => store.areSessionsLoading(props.projectId))
 const loadMoreError = ref(false)
 
 // Virtual scroller configuration
-// Session items have relatively uniform height (~80-100px)
-const MIN_SESSION_HEIGHT = 70
+// Session items have relatively uniform height (~80-100px normal, ~35-40px compact)
+const minSessionHeight = computed(() => compactView.value ? 35 : 70)
 const SCROLLER_BUFFER = 300
 
 // Reference to the VirtualScroller component
@@ -527,7 +529,7 @@ defineExpose({
 </script>
 
 <template>
-    <div class="session-list-container">
+    <div class="session-list-container" :class="{ 'session-list-container--compact': compactView }">
         <!-- Empty state: no sessions at all -->
         <div v-if="allSessions.length === 0 && !isLoading" class="empty-state">
             No sessions
@@ -545,7 +547,7 @@ defineExpose({
             :key="projectId"
             :items="sessions"
             :item-key="session => session.id"
-            :min-item-height="MIN_SESSION_HEIGHT"
+            :min-item-height="minSessionHeight"
             :buffer="SCROLLER_BUFFER"
             :unload-buffer="SCROLLER_BUFFER * 1.5"
             class="session-list"
@@ -572,17 +574,36 @@ defineExpose({
                         @click="handleSelect(session)"
                     >
                         <div class="session-name-row">
+                            <!-- Compact mode: inline project color dot (instead of full ProjectBadge line) -->
+                            <span
+                                v-if="compactView && showProjectName"
+                                :id="`compact-project-dot-${session.id}`"
+                                class="compact-project-dot"
+                                :style="store.getProject(session.project_id)?.color ? { '--dot-color': store.getProject(session.project_id).color } : null"
+                            ></span>
+                            <wa-tooltip v-if="compactView && showProjectName && tooltipsEnabled" :for="`compact-project-dot-${session.id}`">{{ store.getProjectDisplayName(session.project_id) }}</wa-tooltip>
                             <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
                             <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
                             <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                             <wa-tag v-if="session.stale" size="small" variant="warning" class="stale-tag">Stale</wa-tag>
                             <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
                             <wa-tooltip v-if="tooltipsEnabled" :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
+                            <!-- Compact mode: inline process indicator -->
+                            <ProcessIndicator
+                                v-if="compactView && !session.draft && getProcessState(session.id)"
+                                :id="`compact-process-indicator-${session.id}`"
+                                :state="getProcessState(session.id).state"
+                                size="small"
+                                :animate-states="animateStates"
+                                class="compact-process-indicator"
+                            />
+                            <wa-tooltip v-if="compactView && tooltipsEnabled && !session.draft && getProcessState(session.id)" :for="`compact-process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
                         </div>
-                        <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
-                    <!-- Process info row (only shown when process is active and not draft) -->
+                        <!-- Project badge line (hidden in compact mode, dot is shown inline instead) -->
+                        <ProjectBadge v-if="!compactView && showProjectName" :project-id="session.project_id" class="session-project" />
+                    <!-- Process info row (only shown when process is active and not draft, hidden in compact mode) -->
                     <div
-                        v-if="!session.draft && getProcessState(session.id)"
+                        v-if="!compactView && !session.draft && getProcessState(session.id)"
                         class="process-info"
                         :style="{ color: getProcessColor(getProcessState(session.id).state) }"
                     >
@@ -617,8 +638,8 @@ defineExpose({
                             <wa-tooltip v-if="tooltipsEnabled" :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</wa-tooltip>
                         </span>
                     </div>
-                    <!-- Meta row (not shown for draft sessions) -->
-                    <div v-if="!session.draft" class="session-meta" :class="{ 'session-meta--no-cost': !showCosts }">
+                    <!-- Meta row (not shown for draft sessions, hidden in compact mode) -->
+                    <div v-if="!compactView && !session.draft" class="session-meta" :class="{ 'session-meta--no-cost': !showCosts }">
                         <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.message_count ?? '??' }}</span>
                         <wa-tooltip v-if="tooltipsEnabled" :for="`session-messages-${session.id}`">Number of user and assistant messages</wa-tooltip>
 
@@ -739,6 +760,9 @@ defineExpose({
 .session-item-wrapper {
     position: relative;
     width: 100%;
+}
+
+.session-list-container:not(.session-list-container--compact) .session-item-wrapper {
     /* Small gap between items */
     margin-block: var(--wa-space-3xs);
 }
@@ -751,6 +775,10 @@ defineExpose({
     padding: var(--wa-space-xs);
     height: auto;
     margin-bottom: var(--wa-shadow-offset-y-s);  /* default if border, enforce for non active items to avoid movement */
+}
+
+.session-list-container.session-list-container--compact .session-item::part(base) {
+    padding-block: var(--wa-space-2xs);
 }
 
 /* Keyboard navigation highlight */
@@ -800,6 +828,26 @@ defineExpose({
     white-space: nowrap;
     /* Visual space for dropdown button */
     margin-right: 1.5rem;
+}
+
+/* Compact mode: inline project color dot */
+.compact-project-dot {
+    width: var(--wa-space-s);
+    height: var(--wa-space-s);
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1px solid;
+    box-sizing: border-box;
+    background-color: var(--dot-color, transparent);
+    border-color: var(--dot-color, var(--wa-color-border-quiet));
+}
+
+/* Compact mode: inline process indicator pushed to the right */
+.compact-process-indicator {
+    margin-left: auto;
+    flex-shrink: 0;
+    position: relative;
+    left: -1.5rem;
 }
 
 /* Session dropdown menu */
