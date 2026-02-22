@@ -31,7 +31,8 @@
     "pinia": "^3.0.4",
     "shiki": "^3.21.0",
     "vue": "^3.5.27",
-    "vue-router": "^4.6.4"
+    "vue-router": "^4.6.4",
+    "vue3-calendar-heatmap": "^2.0.5"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.3",

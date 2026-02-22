@@ -10,7 +10,7 @@ from django.utils import timezone
 import orjson
 
 from twicc.compute import get_message_content_list
-from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType, ToolResultLink, WeeklyActivity
+from twicc.core.models import AgentLink, DailyActivity, Project, Session, SessionItem, SessionType, ToolResultLink, WeeklyActivity
 from twicc.core.serializers import (
     serialize_project,
     serialize_session,
@@ -854,6 +854,45 @@ def home_data(request):
     return JsonResponse({
         "projects": data,
         "global_weekly_activity": global_activity,
+    })
+
+
+_DAILY_ACTIVITY_MAX_DAYS = 365
+
+
+def daily_activity(request, project_id=None):
+    """GET /api/daily-activity/ or /api/projects/<id>/daily-activity/
+
+    Returns daily activity data for the contribution graph.
+    Only days with count > 0 are returned (sparse format).
+    The frontend heatmap component handles missing days as empty cells.
+
+    If project_id is provided, returns per-project data.
+    If project_id is omitted, returns global data (all projects).
+
+    Returns:
+        { "daily_activity": [ { "date": "YYYY-MM-DD", "count": N }, ... ] }
+    """
+    today = timezone.now().date()
+    cutoff = today - timedelta(days=_DAILY_ACTIVITY_MAX_DAYS - 1)
+
+    filters = {"date__gte": cutoff}
+    if project_id:
+        filters["project_id"] = project_id
+    else:
+        filters["project__isnull"] = True
+
+    rows = (
+        DailyActivity.objects.filter(**filters)
+        .order_by("date")
+        .values("date", "count")
+    )
+
+    return JsonResponse({
+        "daily_activity": [
+            {"date": row["date"].isoformat(), "count": row["count"]}
+            for row in rows
+        ],
     })
 
 

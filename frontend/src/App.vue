@@ -124,7 +124,8 @@ body {
     /* --main-header-footer-bg-color: var(--wa-color-surface-raised); */
     --main-header-footer-bg-color: transparent;
 
-    /* Sparkline graph colors (light mode) */
+    /* Sparkline / heatmap graph colors (light mode) */
+    --sparkline-project-gradient-color-0: #ebedf0;
     --sparkline-project-gradient-color-1: #aceebb;
     --sparkline-project-gradient-color-2: #4ac26b;
     --sparkline-project-gradient-color-3: #2da44e;
@@ -143,7 +144,8 @@ body {
     --user-card-base-color: #323b45;
     --assistant-card-base-color: #252e38;
 
-    /* Sparkline graph colors (dark mode) */
+    /* Sparkline / heatmap graph colors (dark mode) */
+    --sparkline-project-gradient-color-0: #151b23;
     --sparkline-project-gradient-color-1: #033a16;
     --sparkline-project-gradient-color-2: #196c2e;
     --sparkline-project-gradient-color-3: #2ea043;

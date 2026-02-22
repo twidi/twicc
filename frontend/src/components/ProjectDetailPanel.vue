@@ -14,6 +14,7 @@ import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import ActivitySparkline from './ActivitySparkline.vue'
 import CostDisplay from './CostDisplay.vue'
+import ContributionGraph from './ContributionGraph.vue'
 
 const props = defineProps({
     /** Project ID or ALL_PROJECTS_ID for aggregate view */
@@ -175,6 +176,9 @@ function handleEditClick() {
                 </div>
                 <wa-tooltip v-if="mtime && tooltipsEnabled" for="detail-mtime">{{ useRelativeTime ? `Last activity: ${formatDate(mtime)}` : 'Last activity' }}</wa-tooltip>
             </div>
+
+            <!-- Contribution graph (daily activity heatmap) -->
+            <ContributionGraph :project-id="projectId" />
 
         </div>
 

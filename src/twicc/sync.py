@@ -122,6 +122,50 @@ def _increment_weekly_activity(
             )
 
 
+def _increment_daily_activity(
+    project_id: str,
+    items_to_create: list[tuple],
+) -> None:
+    """Increment DailyActivity counters for new user_message items.
+
+    Counts user messages by date, then updates both per-project
+    and global (project=NULL) counters. Uses UPDATE first (common case),
+    falls back to CREATE only when the day row doesn't exist yet.
+    """
+    from django.db.models import F
+
+    from twicc.core.enums import ItemKind
+    from twicc.core.models import DailyActivity
+
+    # Count user messages by date
+    day_counts: Counter = Counter()
+    for item, _parsed in items_to_create:
+        if item.kind == ItemKind.USER_MESSAGE and item.timestamp:
+            day_counts[item.timestamp.date()] += 1
+
+    if not day_counts:
+        return
+
+    for day, count in day_counts.items():
+        # Per-project counter
+        updated = DailyActivity.objects.filter(
+            project_id=project_id, date=day
+        ).update(count=F("count") + count)
+        if not updated:
+            DailyActivity.objects.create(
+                project_id=project_id, date=day, count=count
+            )
+
+        # Global counter (project=NULL)
+        updated = DailyActivity.objects.filter(
+            project__isnull=True, date=day
+        ).update(count=F("count") + count)
+        if not updated:
+            DailyActivity.objects.create(
+                project=None, date=day, count=count
+            )
+
+
 def is_session_file(path: Path) -> bool:
     """Check if a path is a valid session file (*.jsonl but not agent-*.jsonl)."""
     return path.suffix == ".jsonl" and not path.name.startswith("agent-")
@@ -544,8 +588,9 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             if last_model and last_model != session.model:
                 session.model = last_model
 
-            # Update weekly activity counters for new user messages
+            # Update activity counters for new user messages
             _increment_weekly_activity(session.project_id, items_to_create)
+            _increment_daily_activity(session.project_id, items_to_create)
 
         # Update offset to end of file
         session.last_offset = f.tell()
