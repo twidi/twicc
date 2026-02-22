@@ -113,7 +113,7 @@ def update_project_metadata(project: Project) -> None:
     """Update project sessions_count, mtime, and total_cost from its sessions."""
     # Only count sessions (not subagents) with at least 1 line (non-empty)
     sessions = Session.objects.filter(
-        project=project, stale=False, last_line__gt=0, type=SessionType.SESSION
+        project=project, last_line__gt=0, type=SessionType.SESSION
     )
     project.sessions_count = sessions.count()
     max_mtime = sessions.order_by("-mtime").values_list("mtime", flat=True).first()

@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { formatDate } from '../utils/date'
+import { SESSION_TIME_FORMAT } from '../constants'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
@@ -14,6 +15,25 @@ const settingsStore = useSettingsStore()
 const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 // Costs setting
 const showCosts = computed(() => settingsStore.areCostsShown)
+
+// Session time format setting
+const sessionTimeFormat = computed(() => settingsStore.getSessionTimeFormat)
+const useRelativeTime = computed(() =>
+    sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_SHORT ||
+    sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_NARROW
+)
+const relativeTimeFormat = computed(() =>
+    sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_SHORT ? 'short' : 'narrow'
+)
+
+/**
+ * Convert Unix timestamp (seconds) to Date object for wa-relative-time.
+ * @param {number} timestamp - Unix timestamp in seconds
+ * @returns {Date}
+ */
+function timestampToDate(timestamp) {
+    return new Date(timestamp * 1000)
+}
 
 // Format cost as USD string (e.g., "$0.42")
 function formatCost(cost) {
@@ -71,12 +91,15 @@ function handleEditClick(event, project) {
                         {{ project.sessions_count }} session{{ project.sessions_count !== 1 ? 's' : '' }}
                     </span>
                     <wa-tooltip v-if="tooltipsEnabled" :for="`sessions-count-${project.id}`">Number of sessions</wa-tooltip>
-                    <span :id="`project-mtime-${project.id}`" class="project-mtime">{{ formatDate(project.mtime) }}</span>
-                    <wa-tooltip v-if="tooltipsEnabled" :for="`project-mtime-${project.id}`">Last activity</wa-tooltip>
                     <template v-if="showCosts">
                         <span :id="`project-cost-${project.id}`" class="project-cost">{{ project.total_cost != null ? formatCost(project.total_cost) : '-' }}</span>
                         <wa-tooltip v-if="tooltipsEnabled" :for="`project-cost-${project.id}`">Total project cost</wa-tooltip>
                     </template>
+                    <span :id="`project-mtime-${project.id}`" class="project-mtime">
+                        <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(project.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
+                        <template v-else>{{ formatDate(project.mtime) }}</template>
+                    </span>
+                    <wa-tooltip v-if="tooltipsEnabled" :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</wa-tooltip>
                 </div>
             </div>
         </wa-card>
@@ -143,7 +166,8 @@ function handleEditClick(event, project) {
 
 .project-meta {
     display: flex;
-    justify-content: space-between;
+    justify-content: start;
+    gap: var(--wa-space-m);
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
 }

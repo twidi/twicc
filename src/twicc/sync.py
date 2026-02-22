@@ -691,8 +691,16 @@ def sync_project(
         )
         stats["sessions_stale"] += len(stale_session_ids)
 
-    # Update project metadata (only count non-empty sessions)
-    project.sessions_count = len(non_empty_session_ids)
+    # Update project metadata (count non-empty sessions, including stale ones)
+    stale_non_empty_count = (
+        Session.objects.filter(
+            project=project,
+            stale=True,
+            last_line__gt=0,
+            type=SessionType.SESSION,
+        ).count()
+    )
+    project.sessions_count = len(non_empty_session_ids) + stale_non_empty_count
     project.mtime = max_mtime
     if project.stale:
         project.stale = False
