@@ -1,34 +1,34 @@
 <script setup>
 // ActivitySparkline.vue - GitHub-style sparkline graph showing weekly activity
-import { ref, computed, onMounted } from 'vue'
-import { apiFetch } from '../utils/api'
+import { computed } from 'vue'
 
 const props = defineProps({
-    projectId: {
+    /** Unique suffix for SVG IDs (prevents collisions when multiple sparklines on page) */
+    idSuffix: {
         type: String,
-        default: null,
+        default: 'global',
+    },
+    /** Array of { week, count } objects to render */
+    data: {
+        type: Array,
+        default: () => [],
     },
 })
-
-const weeklyData = ref([])
-const loaded = ref(false)
 
 const SVG_HEIGHT = 30
 const GRAPH_HEIGHT = 28
 const MIN_Y = 1.0
 
 // SVG width adapts to number of weeks: n * 3 - 1 (e.g. 52 weeks = 155px)
-const svgWidth = computed(() => weeklyData.value.length * 3 - 1)
+const svgWidth = computed(() => props.data.length * 3 - 1)
 
-// Unique IDs: scope to project when given, otherwise use "global"
-const idSuffix = computed(() => props.projectId ?? 'global')
-const gradientId = computed(() => `sparkline-${idSuffix.value}-gradient`)
-const maskId = computed(() => `sparkline-${idSuffix.value}-graph`)
+const gradientId = computed(() => `sparkline-${props.idSuffix}-gradient`)
+const maskId = computed(() => `sparkline-${props.idSuffix}-graph`)
 
 const polylinePoints = computed(() => {
-    if (!weeklyData.value.length) return ''
+    if (!props.data.length) return ''
 
-    const counts = weeklyData.value.map((w) => w.count)
+    const counts = props.data.map((w) => w.count)
     const maxCount = Math.max(...counts)
 
     const xStep = svgWidth.value / (counts.length - 1)
@@ -42,24 +42,10 @@ const polylinePoints = computed(() => {
         })
         .join(' ')
 })
-
-onMounted(async () => {
-    try {
-        const url = props.projectId
-            ? `/api/projects/${props.projectId}/weekly-activity/?max-weeks=52`
-            : '/api/weekly-activity/?max-weeks=52'
-        const res = await apiFetch(url)
-        if (res.ok) {
-            weeklyData.value = await res.json()
-        }
-    } finally {
-        loaded.value = true
-    }
-})
 </script>
 
 <template>
-    <svg v-if="loaded && weeklyData.length" :width="svgWidth" aria-hidden="true" :height="SVG_HEIGHT" class="activity-sparkline">
+    <svg v-if="data.length" :width="svgWidth" aria-hidden="true" :height="SVG_HEIGHT" class="activity-sparkline">
         <defs>
             <linearGradient :id="gradientId" x1="0" x2="0" y1="1" y2="0">
                 <stop offset="0%" stop-color="var(--sparkline-project-gradient-color-1)"></stop>

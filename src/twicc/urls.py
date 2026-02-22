@@ -11,12 +11,11 @@ urlpatterns = [
     path("api/auth/login/", auth_views.login),
     path("api/auth/logout/", auth_views.logout),
     # API endpoints
+    path("api/home/", views.home_data),
     path("api/sessions/", views.all_sessions),
-    path("api/weekly-activity/", views.weekly_activity),
     path("api/projects/", views.project_list),
     path("api/projects/<str:project_id>/", views.project_detail),
     path("api/projects/<str:project_id>/sessions/", views.project_sessions),
-    path("api/projects/<str:project_id>/weekly-activity/", views.project_weekly_activity),
     # Project-level file system endpoints (for draft sessions and project-level browsing)
     path("api/projects/<str:project_id>/directory-tree/", views.directory_tree),
     path("api/projects/<str:project_id>/file-search/", views.file_search),

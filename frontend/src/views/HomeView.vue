@@ -23,8 +23,11 @@ function handleProjectSelect(project) {
     router.push({ name: 'project', params: { projectId: project.id } })
 }
 
+// Global weekly activity from the store
+const globalWeeklyActivity = computed(() => store.weeklyActivity._global || [])
+
 async function handleRetry() {
-    await store.loadProjects({ isInitialLoading: true })
+    await store.loadHomeData()
 }
 </script>
 
@@ -32,7 +35,7 @@ async function handleRetry() {
     <div class="home-view">
         <header class="home-header">
             <h1>Claude Code Projects</h1>
-            <ActivitySparkline class="global-sparkline" />
+            <ActivitySparkline :data="globalWeeklyActivity" class="global-sparkline" />
             <router-link :to="{ name: 'projects-all' }" class="view-all-link">
                 View all sessions ({{ totalSessionsCount }})
             </router-link>

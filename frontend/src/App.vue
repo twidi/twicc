@@ -27,7 +27,7 @@ const dataStore = useDataStore()
 // React to authentication state changes (initial check + after login)
 watch(isAuthenticated, async (authenticated) => {
     if (authenticated) {
-        await dataStore.loadProjects({ isInitialLoading: true })
+        await dataStore.loadHomeData()
         openWs()
     } else {
         closeWs()

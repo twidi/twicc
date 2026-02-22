@@ -78,6 +78,10 @@ export const useDataStore = defineStore('data', {
         // { sessionId: { state: 'starting'|'assistant_turn'|'user_turn'|'dead', error?: string } }
         processStates: {},
 
+        // Weekly activity data (from /api/home/ endpoint)
+        // { _global: [...], projectId: [...] } — each value is Array of { week, count }
+        weeklyActivity: {},
+
         // Usage quota data (from periodic usage sync)
         // { success: bool, raw: serialized snapshot, computed: computeUsageData() result }
         usage: null,
@@ -630,6 +634,41 @@ export const useDataStore = defineStore('data', {
                     this.localState.projectsList.loadingError = true
                 }
                 throw error  // Re-throw for reconciliation retry logic
+            } finally {
+                this.localState.projectsList.loading = false
+            }
+        },
+        /**
+         * Load home page data: projects with weekly activity.
+         * Calls /api/home/ which returns projects and weekly activity in one request.
+         * Weekly activity is stored separately in weeklyActivity (not on project objects).
+         */
+        async loadHomeData() {
+            this.localState.projectsList.loading = true
+            try {
+                const res = await apiFetch('/api/home/')
+                if (!res.ok) {
+                    console.error('Failed to load home data:', res.status, res.statusText)
+                    this.localState.projectsList.loadingError = true
+                    return
+                }
+                const data = await res.json()
+
+                // Update projects (strip weekly_activity from project objects)
+                for (const fresh of data.projects) {
+                    const { weekly_activity, ...projectData } = fresh
+                    this.projects[projectData.id] = projectData
+                    // Store per-project weekly activity separately
+                    this.weeklyActivity[projectData.id] = weekly_activity || []
+                }
+
+                // Store global weekly activity
+                this.weeklyActivity._global = data.global_weekly_activity || []
+
+                this.localState.projectsList.loadingError = false
+            } catch (error) {
+                console.error('Failed to load home data:', error)
+                this.localState.projectsList.loadingError = true
             } finally {
                 this.localState.projectsList.loading = false
             }

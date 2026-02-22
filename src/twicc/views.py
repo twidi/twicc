@@ -10,7 +10,7 @@ from django.utils import timezone
 import orjson
 
 from twicc.compute import get_message_content_list
-from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType, ToolResultLink
+from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType, ToolResultLink, WeeklyActivity
 from twicc.core.serializers import (
     serialize_project,
     serialize_session,
@@ -762,47 +762,32 @@ def git_commit_file_diff(request, project_id, commit_hash, session_id=None):
     return JsonResponse(result)
 
 
-def _get_weekly_activity(project_id, max_weeks):
-    """Compute weekly user message counts, optionally scoped to a project.
+_WEEKLY_ACTIVITY_MAX_WEEKS = 52
+
+
+def _format_weekly_activity(rows, current_monday):
+    """Format sparse WeeklyActivity rows into a dense list with zero-filling.
 
     Args:
-        project_id: Project ID to filter by, or None for all projects.
-        max_weeks: Maximum number of weeks to look back.
+        rows: Iterable of dicts with "week" (date) and "count" keys.
+        current_monday: The Monday of the current week.
 
     Returns:
-        List of dicts with "week" (ISO date string) and "count" keys.
-        Leading zero-count weeks are trimmed (up to 3 padding weeks added).
+        List of dicts with "week" (ISO string) and "count" keys.
+        Leading zero-count weeks are trimmed, with up to 3 padding weeks.
     """
-    from django.db.models import Count
-    from django.db.models.functions import TruncWeek
+    data_by_week = {row["week"]: row["count"] for row in rows}
 
-    today = timezone.now().date()
-    current_monday = today - timedelta(days=today.weekday())
-    start_monday = current_monday - timedelta(weeks=max_weeks - 1)
-
-    # Query only weeks that have data
-    qs = SessionItem.objects.filter(
-        kind="user_message",
-        timestamp__isnull=False,
-        timestamp__date__gte=start_monday,
-    )
-    if project_id is not None:
-        qs = qs.filter(session__project_id=project_id)
-
-    qs = qs.values(week=TruncWeek("timestamp")).annotate(count=Count("id"))
-
-    # Index by monday date
-    data_by_week = {row["week"].date(): row["count"] for row in qs}
+    start_monday = current_monday - timedelta(weeks=_WEEKLY_ACTIVITY_MAX_WEEKS - 1)
 
     # Find the first week with data to skip leading zeros
     first_active_monday = None
-    for i in range(max_weeks):
+    for i in range(_WEEKLY_ACTIVITY_MAX_WEEKS):
         monday = start_monday + timedelta(weeks=i)
         if data_by_week.get(monday, 0) > 0:
             first_active_monday = monday
             break
 
-    # No activity at all: return empty list
     if first_active_monday is None:
         return []
 
@@ -816,8 +801,8 @@ def _get_weekly_activity(project_id, max_weeks):
         })
         monday += timedelta(weeks=1)
 
-    # Pad with leading zero-count weeks (up to 3) to approach max_weeks
-    padding = min(max_weeks - len(result), 3)
+    # Pad with leading zero-count weeks (up to 3) to approach max weeks
+    padding = min(_WEEKLY_ACTIVITY_MAX_WEEKS - len(result), 3)
     for i in range(padding, 0, -1):
         result.insert(0, {
             "week": (first_active_monday - timedelta(weeks=i)).isoformat(),
@@ -827,38 +812,49 @@ def _get_weekly_activity(project_id, max_weeks):
     return result
 
 
-def _parse_max_weeks(request):
-    """Parse and clamp the max-weeks query parameter."""
-    try:
-        max_weeks = int(request.GET.get("max-weeks", 52))
-        return max(1, min(max_weeks, 104))
-    except (ValueError, TypeError):
-        return 52
+def home_data(request):
+    """GET /api/home/ - Home page data: projects with weekly activity.
 
-
-def weekly_activity(request):
-    """GET /api/weekly-activity/ - Weekly user message counts across all projects.
-
-    Query params (optional):
-        max-weeks: Maximum number of weeks to look back (1-104, default: 52).
+    Returns:
+        {
+            "projects": [ { ...project..., "weekly_activity": [...] }, ... ],
+            "global_weekly_activity": [ { "week": "...", "count": N }, ... ]
+        }
     """
-    max_weeks = _parse_max_weeks(request)
-    return JsonResponse(_get_weekly_activity(None, max_weeks), safe=False)
+    today = timezone.now().date()
+    current_monday = today - timedelta(days=today.weekday())
+    cutoff = current_monday - timedelta(weeks=_WEEKLY_ACTIVITY_MAX_WEEKS - 1)
 
+    projects = Project.objects.all()
 
-def project_weekly_activity(request, project_id):
-    """GET /api/projects/<id>/weekly-activity/ - Weekly user message counts for a project.
+    # Load all weekly activities in a single query (within the 52-week window)
+    all_activities = WeeklyActivity.objects.filter(
+        week__gte=cutoff,
+    ).values("project_id", "week", "count")
 
-    Query params (optional):
-        max-weeks: Maximum number of weeks to look back (1-104, default: 52).
-    """
-    try:
-        Project.objects.get(id=project_id)
-    except Project.DoesNotExist:
-        raise Http404("Project not found")
+    # Group by project_id (None = global)
+    from collections import defaultdict
 
-    max_weeks = _parse_max_weeks(request)
-    return JsonResponse(_get_weekly_activity(project_id, max_weeks), safe=False)
+    activities_by_project = defaultdict(list)
+    for a in all_activities:
+        activities_by_project[a["project_id"]].append(a)
+
+    data = []
+    for p in projects:
+        d = serialize_project(p)
+        d["weekly_activity"] = _format_weekly_activity(
+            activities_by_project.get(p.id, []), current_monday
+        )
+        data.append(d)
+
+    global_activity = _format_weekly_activity(
+        activities_by_project.get(None, []), current_monday
+    )
+
+    return JsonResponse({
+        "projects": data,
+        "global_weekly_activity": global_activity,
+    })
 
 
 def spa_index(request):

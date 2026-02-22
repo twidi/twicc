@@ -57,6 +57,37 @@ class Project(models.Model):
         return self.id
 
 
+class WeeklyActivity(models.Model):
+    """Pre-computed weekly user message count, per project and global.
+
+    Each row stores the count of user_message items for a given week (Monday).
+    project=NULL means global (all projects combined).
+    Incremented live by sync.py when new user messages are detected.
+    """
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="weekly_activities",
+        null=True,
+        blank=True,  # NULL = global (all projects)
+    )
+    week = models.DateField()  # Monday of the ISO week
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "week"],
+                name="unique_project_week",
+            ),
+        ]
+
+    def __str__(self):
+        label = self.project_id or "global"
+        return f"{label} / {self.week} = {self.count}"
+
+
 class Session(models.Model):
     """A session corresponds to a *.jsonl file, or a subagent file in {session_id}/subagents/"""
 

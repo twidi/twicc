@@ -104,7 +104,7 @@ function handleEditClick(event, project) {
                         <wa-tooltip v-if="tooltipsEnabled" :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</wa-tooltip>
                     </div>
                     <div class="project-graph">
-                        <ActivitySparkline :project-id="project.id" />
+                        <ActivitySparkline :id-suffix="project.id" :data="store.weeklyActivity[project.id] || []" />
                     </div>
                 </div>
             </div>

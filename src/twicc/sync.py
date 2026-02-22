@@ -12,6 +12,8 @@ import logging
 import orjson
 import sys
 import time
+from collections import Counter
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -73,6 +75,51 @@ def _update_parent_session_costs(parent_session_id: str) -> None:
         subagents_cost=subagents_cost,
         total_cost=Coalesce(F('self_cost'), Value(Decimal(0))) + subagents_cost,
     )
+
+
+def _increment_weekly_activity(
+    project_id: str,
+    items_to_create: list[tuple],
+) -> None:
+    """Increment WeeklyActivity counters for new user_message items.
+
+    Counts user messages by week (Monday), then updates both per-project
+    and global (project=NULL) counters. Uses UPDATE first (common case),
+    falls back to CREATE only when the week row doesn't exist yet.
+    """
+    from django.db.models import F
+
+    from twicc.core.enums import ItemKind
+    from twicc.core.models import WeeklyActivity
+
+    # Count user messages by week monday
+    week_counts: Counter = Counter()
+    for item, _parsed in items_to_create:
+        if item.kind == ItemKind.USER_MESSAGE and item.timestamp:
+            monday = item.timestamp.date() - timedelta(days=item.timestamp.weekday())
+            week_counts[monday] += 1
+
+    if not week_counts:
+        return
+
+    for week_monday, count in week_counts.items():
+        # Per-project counter
+        updated = WeeklyActivity.objects.filter(
+            project_id=project_id, week=week_monday
+        ).update(count=F("count") + count)
+        if not updated:
+            WeeklyActivity.objects.create(
+                project_id=project_id, week=week_monday, count=count
+            )
+
+        # Global counter (project=NULL)
+        updated = WeeklyActivity.objects.filter(
+            project__isnull=True, week=week_monday
+        ).update(count=F("count") + count)
+        if not updated:
+            WeeklyActivity.objects.create(
+                project=None, week=week_monday, count=count
+            )
 
 
 def is_session_file(path: Path) -> bool:
@@ -496,6 +543,9 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 session.cwd_git_branch = last_cwd_git_branch
             if last_model and last_model != session.model:
                 session.model = last_model
+
+            # Update weekly activity counters for new user messages
+            _increment_weekly_activity(session.project_id, items_to_create)
 
         # Update offset to end of file
         session.last_offset = f.tell()
