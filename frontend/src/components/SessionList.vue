@@ -579,6 +579,7 @@ defineExpose({
                             <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
                             <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
                             <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+                            <wa-tag v-if="session.stale" size="small" variant="warning" class="stale-tag">Stale</wa-tag>
                             <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
                             <wa-tooltip v-if="tooltipsEnabled" :for="`session-name-${session.id}`">{{ session.title || session.id }}</wa-tooltip>
                         </div>
@@ -786,7 +787,8 @@ defineExpose({
 }
 
 .draft-tag,
-.archived-tag {
+.archived-tag,
+.stale-tag {
     flex-shrink: 0;
     line-height: unset;
     height: unset;

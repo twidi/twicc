@@ -277,6 +277,8 @@ defineExpose({
                 <wa-tag v-if="session.archived" :id="`session-header-${sessionId}-archived-tag`" size="small" variant="neutral" class="archived-tag" @click="handleUnarchive">Archived</wa-tag>
                 <wa-tooltip v-if="tooltipsEnabled && session.archived" :for="`session-header-${sessionId}-archived-tag`">Click to unarchive</wa-tooltip>
                 <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+                <wa-tag v-if="session.stale" :id="`session-header-${sessionId}-stale-tag`" size="small" variant="warning" class="stale-tag">Stale</wa-tag>
+                <wa-tooltip v-if="tooltipsEnabled && session.stale" :for="`session-header-${sessionId}-stale-tag`">Session files were deleted from disk</wa-tooltip>
 
                 <!-- Pin/Unpin button (not for drafts) -->
                 <wa-button
@@ -550,7 +552,7 @@ defineExpose({
     box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) 0 0 var(--wa-color-brand-border-loud);
 }
 
-.draft-tag, .archived-tag {
+.draft-tag, .archived-tag, .stale-tag {
     flex-shrink: 0;
     line-height: unset;
     height: unset;

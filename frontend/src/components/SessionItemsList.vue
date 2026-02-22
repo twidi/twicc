@@ -101,6 +101,9 @@ let dragCounter = 0  // Track enter/leave events for nested elements
 // Session data
 const session = computed(() => store.getSession(props.sessionId))
 
+// Whether the session is stale (JSONL files deleted, history preserved as read-only)
+const isStale = computed(() => session.value?.stale === true)
+
 // Session items (raw, with metadata + content)
 const items = computed(() => store.getSessionItems(props.sessionId))
 
@@ -918,9 +921,19 @@ defineExpose({
         </VirtualScroller>
 
         <div class="session-footer">
+            <!-- Stale session banner (replaces message input for stale main sessions) -->
+            <div v-if="isStale && !parentSessionId" class="stale-banner">
+                <wa-callout variant="warning" appearance="outlined">
+                    <wa-icon slot="icon" name="clock-rotate-left"></wa-icon>
+                    <div class="stale-banner-content">
+                        <strong>Read-only session</strong>
+                        <span>The session files were cleaned up by Claude Code. The conversation history has been preserved for reference.</span>
+                    </div>
+                </wa-callout>
+            </div>
             <!-- Pending request form (replaces MessageInput when Claude requests approval or asks a question) -->
             <PendingRequestForm
-                v-if="hasPendingRequest"
+                v-else-if="hasPendingRequest"
                 :session-id="sessionId"
                 :pending-request="pendingRequest"
             />
@@ -1022,6 +1035,16 @@ defineExpose({
         --width: 4px;
         --spacing: 0;
     }
+}
+
+.stale-banner {
+    padding: var(--wa-space-s);
+}
+
+.stale-banner-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-2xs);
 }
 
 </style>
