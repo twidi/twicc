@@ -1,28 +1,29 @@
 <script setup>
-// ProjectSparkline.vue - GitHub-style sparkline graph showing weekly activity
+// ActivitySparkline.vue - GitHub-style sparkline graph showing weekly activity
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '../utils/api'
 
 const props = defineProps({
     projectId: {
         type: String,
-        required: true,
+        default: null,
     },
 })
 
 const weeklyData = ref([])
 const loaded = ref(false)
 
-const SVG_HEIGHT = 50
+const SVG_HEIGHT = 30
 const GRAPH_HEIGHT = 28
 const MIN_Y = 1.0
 
 // SVG width adapts to number of weeks: n * 3 - 1 (e.g. 52 weeks = 155px)
 const svgWidth = computed(() => weeklyData.value.length * 3 - 1)
 
-// Unique IDs scoped to this project
-const gradientId = computed(() => `sparkline-project-${props.projectId}-gradient`)
-const maskId = computed(() => `sparkline-project-${props.projectId}-graph`)
+// Unique IDs: scope to project when given, otherwise use "global"
+const idSuffix = computed(() => props.projectId ?? 'global')
+const gradientId = computed(() => `sparkline-${idSuffix.value}-gradient`)
+const maskId = computed(() => `sparkline-${idSuffix.value}-graph`)
 
 const polylinePoints = computed(() => {
     if (!weeklyData.value.length) return ''
@@ -44,7 +45,10 @@ const polylinePoints = computed(() => {
 
 onMounted(async () => {
     try {
-        const res = await apiFetch(`/api/projects/${props.projectId}/weekly-activity/?max-weeks=52`)
+        const url = props.projectId
+            ? `/api/projects/${props.projectId}/weekly-activity/?max-weeks=52`
+            : '/api/weekly-activity/?max-weeks=52'
+        const res = await apiFetch(url)
         if (res.ok) {
             weeklyData.value = await res.json()
         }
@@ -55,7 +59,7 @@ onMounted(async () => {
 </script>
 
 <template>
-    <svg v-if="loaded && weeklyData.length" :width="svgWidth" aria-hidden="true" :height="SVG_HEIGHT" class="project-sparkline">
+    <svg v-if="loaded && weeklyData.length" :width="svgWidth" aria-hidden="true" :height="SVG_HEIGHT" class="activity-sparkline">
         <defs>
             <linearGradient :id="gradientId" x1="0" x2="0" y1="1" y2="0">
                 <stop offset="0%" stop-color="var(--sparkline-project-gradient-color-1)"></stop>
@@ -87,7 +91,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.project-sparkline {
+.activity-sparkline {
     display: block;
 }
 </style>

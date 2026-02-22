@@ -12,6 +12,7 @@ urlpatterns = [
     path("api/auth/logout/", auth_views.logout),
     # API endpoints
     path("api/sessions/", views.all_sessions),
+    path("api/weekly-activity/", views.weekly_activity),
     path("api/projects/", views.project_list),
     path("api/projects/<str:project_id>/", views.project_detail),
     path("api/projects/<str:project_id>/sessions/", views.project_sessions),

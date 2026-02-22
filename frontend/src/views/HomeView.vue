@@ -5,6 +5,7 @@ import { useDataStore } from '../stores/data'
 import ProjectList from '../components/ProjectList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
+import ActivitySparkline from '../components/ActivitySparkline.vue'
 
 const router = useRouter()
 const store = useDataStore()
@@ -31,6 +32,7 @@ async function handleRetry() {
     <div class="home-view">
         <header class="home-header">
             <h1>Claude Code Projects</h1>
+            <ActivitySparkline class="global-sparkline" />
             <router-link :to="{ name: 'projects-all' }" class="view-all-link">
                 View all sessions ({{ totalSessionsCount }})
             </router-link>
@@ -76,7 +78,7 @@ async function handleRetry() {
 
 .home-header {
     display: flex;
-    justify-content: space-between;
+    justify-content: start;
     align-items: baseline;
     flex-wrap: wrap;
     gap: var(--wa-space-s);
@@ -95,11 +97,16 @@ async function handleRetry() {
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
     text-decoration: none;
+    margin-left: auto;
 }
 
 .view-all-link:hover {
     color: var(--wa-color-text-normal);
     text-decoration: underline;
+}
+
+.global-sparkline {
+    flex-shrink: 0;
 }
 
 .home-content {

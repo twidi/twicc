@@ -762,52 +762,34 @@ def git_commit_file_diff(request, project_id, commit_hash, session_id=None):
     return JsonResponse(result)
 
 
-def project_weekly_activity(request, project_id):
-    """GET /api/projects/<id>/weekly-activity/ - Weekly user message counts.
+def _get_weekly_activity(project_id, max_weeks):
+    """Compute weekly user message counts, optionally scoped to a project.
 
-    Returns weekly activity for the project. Leading weeks with zero activity
-    are trimmed, so the first entry always has count > 0. Intermediate and
-    trailing weeks with no activity are kept with count 0.
+    Args:
+        project_id: Project ID to filter by, or None for all projects.
+        max_weeks: Maximum number of weeks to look back.
 
-    Query params (optional):
-        max-weeks: Maximum number of weeks to look back (1-104, default: 52).
-
-    Response:
-        [
-            {"week": "2025-08-11", "count": 3},
-            {"week": "2025-08-18", "count": 0},
-            {"week": "2025-08-25", "count": 7},
-            ...
-        ]
+    Returns:
+        List of dicts with "week" (ISO date string) and "count" keys.
+        Leading zero-count weeks are trimmed (up to 3 padding weeks added).
     """
     from django.db.models import Count
     from django.db.models.functions import TruncWeek
 
-    try:
-        Project.objects.get(id=project_id)
-    except Project.DoesNotExist:
-        raise Http404("Project not found")
-
-    try:
-        max_weeks = int(request.GET.get("max-weeks", 52))
-        max_weeks = max(1, min(max_weeks, 104))
-    except (ValueError, TypeError):
-        max_weeks = 52
     today = timezone.now().date()
     current_monday = today - timedelta(days=today.weekday())
     start_monday = current_monday - timedelta(weeks=max_weeks - 1)
 
     # Query only weeks that have data
-    qs = (
-        SessionItem.objects.filter(
-            session__project_id=project_id,
-            kind="user_message",
-            timestamp__isnull=False,
-            timestamp__date__gte=start_monday,
-        )
-        .values(week=TruncWeek("timestamp"))
-        .annotate(count=Count("id"))
+    qs = SessionItem.objects.filter(
+        kind="user_message",
+        timestamp__isnull=False,
+        timestamp__date__gte=start_monday,
     )
+    if project_id is not None:
+        qs = qs.filter(session__project_id=project_id)
+
+    qs = qs.values(week=TruncWeek("timestamp")).annotate(count=Count("id"))
 
     # Index by monday date
     data_by_week = {row["week"].date(): row["count"] for row in qs}
@@ -822,7 +804,7 @@ def project_weekly_activity(request, project_id):
 
     # No activity at all: return empty list
     if first_active_monday is None:
-        return JsonResponse([], safe=False)
+        return []
 
     # Build result from first active week to current week
     result = []
@@ -842,7 +824,41 @@ def project_weekly_activity(request, project_id):
             "count": 0,
         })
 
-    return JsonResponse(result, safe=False)
+    return result
+
+
+def _parse_max_weeks(request):
+    """Parse and clamp the max-weeks query parameter."""
+    try:
+        max_weeks = int(request.GET.get("max-weeks", 52))
+        return max(1, min(max_weeks, 104))
+    except (ValueError, TypeError):
+        return 52
+
+
+def weekly_activity(request):
+    """GET /api/weekly-activity/ - Weekly user message counts across all projects.
+
+    Query params (optional):
+        max-weeks: Maximum number of weeks to look back (1-104, default: 52).
+    """
+    max_weeks = _parse_max_weeks(request)
+    return JsonResponse(_get_weekly_activity(None, max_weeks), safe=False)
+
+
+def project_weekly_activity(request, project_id):
+    """GET /api/projects/<id>/weekly-activity/ - Weekly user message counts for a project.
+
+    Query params (optional):
+        max-weeks: Maximum number of weeks to look back (1-104, default: 52).
+    """
+    try:
+        Project.objects.get(id=project_id)
+    except Project.DoesNotExist:
+        raise Http404("Project not found")
+
+    max_weeks = _parse_max_weeks(request)
+    return JsonResponse(_get_weekly_activity(project_id, max_weeks), safe=False)
 
 
 def spa_index(request):

@@ -7,7 +7,7 @@ import { SESSION_TIME_FORMAT } from '../constants'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
-import ProjectSparkline from './ProjectSparkline.vue'
+import ActivitySparkline from './ActivitySparkline.vue'
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
@@ -104,7 +104,7 @@ function handleEditClick(event, project) {
                         <wa-tooltip v-if="tooltipsEnabled" :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</wa-tooltip>
                     </div>
                     <div class="project-graph">
-                        <ProjectSparkline :project-id="project.id" />
+                        <ActivitySparkline :project-id="project.id" />
                     </div>
                 </div>
             </div>
