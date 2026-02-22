@@ -58,6 +58,96 @@ def session_exists(session_id: str) -> bool:
     return Session.objects.filter(id=session_id).exists()
 
 
+def _get_project_display_name(project) -> str:
+    """Compute a human-readable display name for a project.
+
+    Mirrors the frontend logic in getProjectDisplayName (stores/data.js):
+    1. User-defined name (project.name) takes priority
+    2. Last component of the directory path
+    3. Last component of the project ID (after dashes)
+    """
+    if project.name:
+        return project.name
+    if project.directory:
+        parts = project.directory.rstrip("/").split("/")
+        return parts[-1] if parts[-1] else project.directory
+    parts = project.id.split("-")
+    return parts[-1] if parts[-1] else project.id
+
+
+@sync_to_async
+def get_session_and_project_display(session_id: str, project_id: str) -> tuple[str | None, str | None]:
+    """Get session title and project display name from the database.
+
+    Uses select_related to fetch session + project in a single query.
+    Falls back to a separate Project query if the session doesn't exist.
+
+    Returns:
+        (session_title, project_display_name) — either may be None if not found.
+    """
+    from twicc.core.models import Project, Session
+
+    session_title = None
+    project_name = None
+
+    try:
+        session = Session.objects.select_related("project").get(id=session_id)
+        session_title = session.title
+        project_name = _get_project_display_name(session.project)
+    except Session.DoesNotExist:
+        # Session not in DB yet (e.g. just created) — try project alone
+        try:
+            project = Project.objects.get(id=project_id)
+            project_name = _get_project_display_name(project)
+        except Project.DoesNotExist:
+            pass
+
+    return session_title, project_name
+
+
+@sync_to_async
+def get_bulk_session_and_project_display(
+    process_infos: list[dict],
+) -> dict[str, tuple[str | None, str | None]]:
+    """Batch-fetch session titles and project display names for multiple processes.
+
+    Args:
+        process_infos: List of serialized process info dicts (with session_id and project_id).
+
+    Returns:
+        Dict mapping session_id → (session_title, project_display_name).
+    """
+    from twicc.core.models import Project, Session
+
+    session_ids = [p["session_id"] for p in process_infos]
+    project_ids = list({p["project_id"] for p in process_infos})
+
+    # Batch fetch sessions with their projects
+    sessions_by_id = {
+        s.id: s
+        for s in Session.objects.select_related("project").filter(id__in=session_ids)
+    }
+
+    # Batch fetch projects (for sessions not yet in DB)
+    projects_by_id = {
+        p.id: p
+        for p in Project.objects.filter(id__in=project_ids)
+    }
+
+    result = {}
+    for p in process_infos:
+        sid = p["session_id"]
+        pid = p["project_id"]
+        session = sessions_by_id.get(sid)
+        if session:
+            result[sid] = (session.title, _get_project_display_name(session.project))
+        else:
+            project = projects_by_id.get(pid)
+            result[sid] = (None, _get_project_display_name(project) if project else None)
+
+    return result
+
+
 async def broadcast_process_state(info: ProcessInfo) -> None:
     """Broadcast a process state change to all connected clients.
 
@@ -76,6 +166,17 @@ async def broadcast_process_state(info: ProcessInfo) -> None:
     channel_layer = get_channel_layer()
     message = serialize_process_info(info)
     message["type"] = "process_state"
+
+    # Enrich with human-readable session title and project name
+    # so the frontend can display notifications without needing
+    # session data in its local store.
+    session_title, project_name = await get_session_and_project_display(
+        info.session_id, info.project_id
+    )
+    if session_title is not None:
+        message["session_title"] = session_title
+    if project_name is not None:
+        message["project_name"] = project_name
 
     await channel_layer.group_send(
         "updates",
@@ -132,12 +233,22 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         manager = get_process_manager()
         manager.set_broadcast_callback(broadcast_process_state)
 
-        # Send current active processes to the connecting client
+        # Send current active processes to the connecting client,
+        # enriched with session titles and project names for notification display.
         processes = manager.get_active_processes()
+        serialized = [serialize_process_info(p) for p in processes]
+        if serialized:
+            display_info = await get_bulk_session_and_project_display(serialized)
+            for proc in serialized:
+                session_title, project_name = display_info.get(proc["session_id"], (None, None))
+                if session_title is not None:
+                    proc["session_title"] = session_title
+                if project_name is not None:
+                    proc["project_name"] = project_name
         await self.send_json(
             {
                 "type": "active_processes",
-                "processes": [serialize_process_info(p) for p in processes],
+                "processes": serialized,
             }
         )
 

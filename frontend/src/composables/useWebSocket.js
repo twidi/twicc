@@ -119,28 +119,29 @@ export function notifyUserDraftUpdated(sessionId) {
 }
 
 /**
- * Build a notification body string from session/project info.
- * Format: "Project: <name> — Session: <title>" (both truncated).
- * @param {Object} store - The data store
- * @param {string} sessionId - The session ID
+ * Build a notification body string from the enriched WebSocket message.
+ * Format: "Project: <name>\nSession: <title>" (both truncated).
+ *
+ * Uses session_title / project_name injected by the backend so that
+ * notifications display correctly even when session data isn't loaded
+ * in the frontend store (e.g. on the projects list page).
+ *
+ * @param {Object} msg - The WebSocket process_state message (with session_title / project_name)
  * @returns {string}
  */
-function buildNotificationBody(store, sessionId) {
-    const session = store.getSession(sessionId)
-    const projectId = session?.project_id
-    const projectName = projectId ? truncateTitle(store.getProjectDisplayName(projectId), 50) : 'Unknown'
-    const sessionTitle = truncateTitle(session?.title, 50)
+function buildNotificationBody(msg) {
+    const projectName = truncateTitle(msg.project_name, 50)
+    const sessionTitle = truncateTitle(msg.session_title, 50)
     return `Project: ${projectName}\nSession: ${sessionTitle}`
 }
 
 /**
  * Show toast notification and trigger external notifications (sound + browser)
  * for process state changes.
- * @param {Object} store - The data store
- * @param {Object} msg - The WebSocket process_state message
+ * @param {Object} msg - The WebSocket process_state message (enriched with session_title / project_name)
  * @param {Object|null} previousState - The previous process state (before update), null if new process
  */
-function notifyProcessStateChange(store, msg, previousState) {
+function notifyProcessStateChange(msg, previousState) {
     const sessionId = msg.session_id
     const settings = useSettingsStore()
 
@@ -152,7 +153,7 @@ function notifyProcessStateChange(store, msg, previousState) {
         if (settings.notifUserTurnBrowser) {
             sendBrowserNotification(
                 'Claude finished working',
-                buildNotificationBody(store, sessionId),
+                buildNotificationBody(msg),
             )
         }
     }
@@ -170,7 +171,7 @@ function notifyProcessStateChange(store, msg, previousState) {
         if (settings.notifPendingRequestBrowser) {
             sendBrowserNotification(
                 'Claude needs your attention',
-                buildNotificationBody(store, sessionId),
+                buildNotificationBody(msg),
             )
         }
     }
@@ -330,9 +331,11 @@ export function useWebSocket() {
                     memory: msg.memory,
                     error: msg.error,
                     pending_request: msg.pending_request,
+                    session_title: msg.session_title,
+                    project_name: msg.project_name,
                 })
                 // Show toast + sound + browser notifications for process state changes
-                notifyProcessStateChange(store, msg, previousProcessState)
+                notifyProcessStateChange(msg, previousProcessState)
                 break
             }
             case 'active_processes':

@@ -34,16 +34,19 @@ const router = useRouter()
 const store = useDataStore()
 
 const session = computed(() => store.getSession(props.sessionId))
-const projectId = computed(() => session.value?.project_id)
+const processState = computed(() => store.processStates[props.sessionId])
 
-const sessionTitle = computed(() => session.value?.title || 'Unknown')
+// Use session data when available, fall back to processState (enriched by backend)
+const projectId = computed(() => session.value?.project_id || processState.value?.project_id)
+
+const sessionTitle = computed(() => session.value?.title || processState.value?.session_title || 'Unknown')
 
 /** Whether we're already viewing this session. */
 const isCurrentSession = computed(() => route.params.sessionId === props.sessionId)
 
 /** Navigate to the session, switching project if needed, then dismiss the toast. */
 function goToSession() {
-    if (!session.value || !projectId.value) return
+    if (!projectId.value) return
 
     const isAllProjectsMode = route.name?.startsWith('projects-')
 

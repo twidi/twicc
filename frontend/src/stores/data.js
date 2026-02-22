@@ -1358,7 +1358,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          * @param {string} projectId - The project ID this session belongs to
          * @param {string} state - 'starting' | 'assistant_turn' | 'user_turn' | 'dead'
-         * @param {object} extra - Additional fields: started_at, state_changed_at, memory, error, pending_request
+         * @param {object} extra - Additional fields: started_at, state_changed_at, memory, error, pending_request, session_title, project_name
          */
         setProcessState(sessionId, projectId, state, extra = {}) {
             if (state === 'dead') {
@@ -1373,6 +1373,8 @@ export const useDataStore = defineStore('data', {
                     memory: extra.memory || null,
                     error: extra.error || null,
                     pending_request: extra.pending_request || null,
+                    session_title: extra.session_title || null,
+                    project_name: extra.project_name || null,
                 }
 
                 // Auto-unarchive: running and archived are mutually exclusive
@@ -1389,7 +1391,7 @@ export const useDataStore = defineStore('data', {
         /**
          * Initialize process states from WebSocket active_processes message.
          * Called on connection to sync with backend.
-         * @param {Array<{session_id: string, project_id: string, state: string, started_at?: number, state_changed_at?: number, memory?: number}>} processes
+         * @param {Array<{session_id: string, project_id: string, state: string, started_at?: number, state_changed_at?: number, memory?: number, session_title?: string, project_name?: string}>} processes
          */
         setActiveProcesses(processes) {
             // Clear existing states and rebuild from server data
@@ -1405,6 +1407,8 @@ export const useDataStore = defineStore('data', {
                         memory: p.memory || null,
                         error: p.error || null,
                         pending_request: p.pending_request || null,
+                        session_title: p.session_title || null,
+                        project_name: p.project_name || null,
                     }
 
                     // Auto-unarchive: running and archived are mutually exclusive
