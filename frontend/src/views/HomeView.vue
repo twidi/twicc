@@ -66,9 +66,12 @@ async function handleRetry() {
     padding: var(--wa-space-l);
     max-width: 900px;
     margin: 0 auto;
-    min-height: 100vh;
     display: flex;
     flex-direction: column;
+    /* The root has overflow:hidden for ProjectView/SessionView which manage their
+       own internal scroll. HomeView needs its own scrollable container. */
+    height: 100vh;
+    overflow-y: auto;
 }
 
 .home-header {
