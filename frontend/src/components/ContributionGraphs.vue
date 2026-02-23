@@ -5,6 +5,7 @@
 import { ref, watch, onMounted } from 'vue'
 import { apiFetch } from '../utils/api'
 import { ALL_PROJECTS_ID } from '../stores/data'
+import ActivityDashboard from './ActivityDashboard.vue'
 import ContributionGraph from './ContributionGraph.vue'
 
 const props = defineProps({
@@ -38,6 +39,7 @@ watch(() => props.projectId, fetchDailyActivity)
 </script>
 
 <template>
+    <ActivityDashboard :daily-activity="dailyActivity" />
     <ContributionGraph :daily-activity="dailyActivity" mode="messages" />
     <ContributionGraph :daily-activity="dailyActivity" mode="cost" />
 </template>
