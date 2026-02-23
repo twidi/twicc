@@ -41,7 +41,6 @@ const sessionTimeFormatOptions = [
 
 // Refs for wa-switch elements (needed to sync checked property with Web Components)
 const displayModeSelect = ref(null)
-const tooltipsSwitch = ref(null)
 const showCostsSwitch = ref(null)
 const fontSizeSlider = ref(null)
 const themeSelect = ref(null)
@@ -61,7 +60,6 @@ const displayMode = computed(() => store.getDisplayMode)
 const fontSize = computed(() => store.getFontSize)
 const themeMode = computed(() => store.getThemeMode)
 const sessionTimeFormat = computed(() => store.getSessionTimeFormat)
-const tooltipsEnabled = computed(() => store.areTooltipsEnabled)
 const showCosts = computed(() => store.areCostsShown)
 const extraUsageOnlyWhenNeeded = computed(() => store.isExtraUsageOnlyWhenNeeded)
 const maxCachedSessions = computed(() => store.getMaxCachedSessions)
@@ -99,9 +97,6 @@ function syncSwitchState() {
         if (sessionTimeFormatSelect.value && sessionTimeFormatSelect.value.value !== sessionTimeFormat.value) {
             sessionTimeFormatSelect.value.value = sessionTimeFormat.value
         }
-        if (tooltipsSwitch.value && tooltipsSwitch.value.checked !== tooltipsEnabled.value) {
-            tooltipsSwitch.value.checked = tooltipsEnabled.value
-        }
         if (showCostsSwitch.value && showCostsSwitch.value.checked !== showCosts.value) {
             showCostsSwitch.value.checked = showCosts.value
         }
@@ -133,7 +128,7 @@ function syncSwitchState() {
 }
 
 // Watch for store changes and sync switches
-watch([displayMode, fontSize, themeMode, sessionTimeFormat, tooltipsEnabled, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide], syncSwitchState, { immediate: true })
+watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide], syncSwitchState, { immediate: true })
 
 /**
  * Handle display mode change.
@@ -161,13 +156,6 @@ function onThemeModeChange(event) {
  */
 function onSessionTimeFormatChange(event) {
     store.setSessionTimeFormat(event.target.value)
-}
-
-/**
- * Toggle tooltips.
- */
-function onTooltipsChange(event) {
-    store.setTooltipsEnabled(event.target.checked)
 }
 
 /**
@@ -302,14 +290,6 @@ function onPopoverShow() {
                             @input="onFontSizeChange"
                             size="small"
                         ></wa-slider>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Tooltips</label>
-                        <wa-switch
-                            ref="tooltipsSwitch"
-                            @change="onTooltipsChange"
-                            size="small"
-                        >Enabled</wa-switch>
                     </div>
                     <div class="setting-group">
                         <label class="setting-group-label">Show costs</label>

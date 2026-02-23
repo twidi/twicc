@@ -2,17 +2,16 @@
 /**
  * AppTooltip - Unified tooltip wrapper around wa-tooltip.
  *
- * Encapsulates the tooltipsEnabled setting check so that consumers
- * don't need to import the settings store, create a computed property,
- * or add v-if="tooltipsEnabled" at every call site.
+ * Automatically hides tooltips on touch devices (where hover is not available).
+ * On non-touch devices, tooltips are always shown.
  *
  * Usage:
  *   <AppTooltip :for="elementId">Tooltip text</AppTooltip>
  *
  * Props:
- *   - force: When true, the tooltip is always shown regardless of the
- *     tooltipsEnabled setting. Use for critical UI elements like quota
- *     indicators where the tooltip provides essential information.
+ *   - force: When true, the tooltip is always shown even on touch devices.
+ *     Use for critical UI elements like quota indicators where the tooltip
+ *     provides essential information.
  *
  * All extra attributes are forwarded to the underlying <wa-tooltip>.
  */
@@ -27,7 +26,7 @@ const props = defineProps({
 })
 
 const settingsStore = useSettingsStore()
-const shouldShow = computed(() => props.force || settingsStore.areTooltipsEnabled)
+const shouldShow = computed(() => props.force || !settingsStore.isTouchDevice)
 </script>
 
 <template>

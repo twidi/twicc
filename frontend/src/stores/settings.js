@@ -20,7 +20,6 @@ const SETTINGS_SCHEMA = {
     fontSize: 16,
     themeMode: DEFAULT_THEME_MODE,
     sessionTimeFormat: DEFAULT_SESSION_TIME_FORMAT,
-    tooltipsEnabled: true,
     titleGenerationEnabled: true,
     titleSystemPrompt: DEFAULT_TITLE_SYSTEM_PROMPT,
     showCosts: true,
@@ -37,6 +36,8 @@ const SETTINGS_SCHEMA = {
     notifPendingRequestBrowser: false,
     // Not persisted - computed at runtime based on themeMode and system preference
     _effectiveTheme: null,
+    // Not persisted - detected once at startup, true when primary input is touch
+    _isTouchDevice: false,
 }
 
 /**
@@ -49,7 +50,6 @@ const SETTINGS_VALIDATORS = {
     fontSize: (v) => typeof v === 'number' && v >= 12 && v <= 32,
     themeMode: (v) => [THEME_MODE.SYSTEM, THEME_MODE.LIGHT, THEME_MODE.DARK].includes(v),
     sessionTimeFormat: (v) => [SESSION_TIME_FORMAT.TIME, SESSION_TIME_FORMAT.RELATIVE_SHORT, SESSION_TIME_FORMAT.RELATIVE_NARROW].includes(v),
-    tooltipsEnabled: (v) => typeof v === 'boolean',
     titleGenerationEnabled: (v) => typeof v === 'boolean',
     titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
     showCosts: (v) => typeof v === 'boolean',
@@ -133,7 +133,6 @@ export const useSettingsStore = defineStore('settings', {
         getFontSize: (state) => state.fontSize,
         getThemeMode: (state) => state.themeMode,
         getSessionTimeFormat: (state) => state.sessionTimeFormat,
-        areTooltipsEnabled: (state) => state.tooltipsEnabled,
         isTitleGenerationEnabled: (state) => state.titleGenerationEnabled,
         getTitleSystemPrompt: (state) => state.titleSystemPrompt,
         areCostsShown: (state) => state.showCosts,
@@ -152,6 +151,11 @@ export const useSettingsStore = defineStore('settings', {
          * Takes into account the system preference when themeMode is 'system'.
          */
         getEffectiveTheme: (state) => state._effectiveTheme,
+        /**
+         * Whether the primary input device is touch (no hover support).
+         * Detected once at startup. Used to disable tooltips on touch devices.
+         */
+        isTouchDevice: (state) => state._isTouchDevice,
     },
 
     actions: {
@@ -193,16 +197,6 @@ export const useSettingsStore = defineStore('settings', {
         setSessionTimeFormat(format) {
             if (SETTINGS_VALIDATORS.sessionTimeFormat(format)) {
                 this.sessionTimeFormat = format
-            }
-        },
-
-        /**
-         * Set tooltips enabled/disabled.
-         * @param {boolean} enabled
-         */
-        setTooltipsEnabled(enabled) {
-            if (SETTINGS_VALIDATORS.tooltipsEnabled(enabled)) {
-                this.tooltipsEnabled = enabled
             }
         },
 
@@ -386,7 +380,6 @@ export function initSettings() {
             fontSize: store.fontSize,
             themeMode: store.themeMode,
             sessionTimeFormat: store.sessionTimeFormat,
-            tooltipsEnabled: store.tooltipsEnabled,
             titleGenerationEnabled: store.titleGenerationEnabled,
             titleSystemPrompt: store.titleSystemPrompt,
             showCosts: store.showCosts,
@@ -412,6 +405,9 @@ export function initSettings() {
         setThemeMode(mode)
         store._updateEffectiveTheme()
     })
+
+    // Detect touch device once at startup (primary input has no hover support)
+    store._isTouchDevice = window.matchMedia('(hover: none)').matches
 
     // Initialize effective theme and listen for system preference changes
     store._updateEffectiveTheme()
