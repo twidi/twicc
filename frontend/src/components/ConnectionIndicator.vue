@@ -1,9 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { useSettingsStore } from '../stores/settings'
-
-const settingsStore = useSettingsStore()
-const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
+import AppTooltip from './AppTooltip.vue'
 
 const props = defineProps({
     status: {
@@ -27,7 +24,7 @@ const config = computed(() => statusConfig[props.status] || statusConfig.CLOSED)
     <div id="connection-indicator" class="connection-indicator">
         <span class="indicator-dot" :style="{ backgroundColor: config.color }"></span>
     </div>
-    <wa-tooltip v-if="tooltipsEnabled" for="connection-indicator">WebSocket: {{ config.label }}</wa-tooltip>
+    <AppTooltip for="connection-indicator">WebSocket: {{ config.label }}</AppTooltip>
 </template>
 
 <style scoped>

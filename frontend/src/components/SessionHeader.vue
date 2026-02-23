@@ -8,6 +8,7 @@ import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 import CostDisplay from './CostDisplay.vue'
+import AppTooltip from './AppTooltip.vue'
 
 const props = defineProps({
     sessionId: {
@@ -32,8 +33,6 @@ const props = defineProps({
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 
-// Tooltips setting
-const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 // Costs setting
 const showCosts = computed(() => settingsStore.areCostsShown)
 
@@ -271,10 +270,10 @@ defineExpose({
             <!-- Action buttons group: hidden in compact collapsed mode, replaced by active tab label -->
             <div class="session-title-actions">
                 <wa-tag v-if="session.archived" :id="`session-header-${sessionId}-archived-tag`" size="small" variant="neutral" class="archived-tag" @click="handleUnarchive">Archived</wa-tag>
-                <wa-tooltip v-if="tooltipsEnabled && session.archived" :for="`session-header-${sessionId}-archived-tag`">Click to unarchive</wa-tooltip>
+                <AppTooltip v-if="session.archived" :for="`session-header-${sessionId}-archived-tag`">Click to unarchive</AppTooltip>
                 <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                 <wa-tag v-if="session.stale" :id="`session-header-${sessionId}-stale-tag`" size="small" variant="warning" class="stale-tag">Stale</wa-tag>
-                <wa-tooltip v-if="tooltipsEnabled && session.stale" :for="`session-header-${sessionId}-stale-tag`">Session files were deleted from disk</wa-tooltip>
+                <AppTooltip v-if="session.stale" :for="`session-header-${sessionId}-stale-tag`">Session files were deleted from disk</AppTooltip>
 
                 <!-- Pin/Unpin button (not for drafts) -->
                 <wa-button
@@ -288,7 +287,7 @@ defineExpose({
                 >
                     <wa-icon name="thumbtack" :label="session.pinned ? 'Unpin' : 'Pin'"></wa-icon>
                 </wa-button>
-                <wa-tooltip v-if="tooltipsEnabled && !session.draft" :for="`session-header-${sessionId}-pin-button`">{{ session.pinned ? 'Unpin session' : 'Pin session' }}</wa-tooltip>
+                <AppTooltip v-if="!session.draft" :for="`session-header-${sessionId}-pin-button`">{{ session.pinned ? 'Unpin session' : 'Pin session' }}</AppTooltip>
 
                 <!-- Archive button (not for drafts or already archived) -->
                 <wa-button
@@ -302,7 +301,7 @@ defineExpose({
                 >
                     <wa-icon name="box-archive" label="Archive"></wa-icon>
                 </wa-button>
-                <wa-tooltip v-if="tooltipsEnabled && !session.archived && !session.draft" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? 'Archive session (it will stop the Claude Code process)' : 'Archive session' }}</wa-tooltip>
+                <AppTooltip v-if="!session.archived && !session.draft" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? 'Archive session (it will stop the Claude Code process)' : 'Archive session' }}</AppTooltip>
 
                 <!-- Rename button (only for main session) -->
                 <wa-button
@@ -316,7 +315,7 @@ defineExpose({
                 >
                     <wa-icon name="pencil" label="Rename"></wa-icon>
                 </wa-button>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-rename-button`">Rename session</wa-tooltip>
+                <AppTooltip :for="`session-header-${sessionId}-rename-button`">Rename session</AppTooltip>
 
                 <!-- Pending request indicator (shown when waiting for user response) -->
                 <wa-icon
@@ -325,7 +324,7 @@ defineExpose({
                     name="hand"
                     class="pending-request-indicator"
                 ></wa-icon>
-                <wa-tooltip v-if="tooltipsEnabled && store.getPendingRequest(sessionId)" :for="`session-header-${sessionId}-pending-request`">Waiting for your response</wa-tooltip>
+                <AppTooltip v-if="store.getPendingRequest(sessionId)" :for="`session-header-${sessionId}-pending-request`">Waiting for your response</AppTooltip>
             </div>
 
             <!-- Clickable zone: title + project + context ring + chevron toggle compact mode -->
@@ -334,7 +333,7 @@ defineExpose({
                 <span v-if="activeTabLabel" class="compact-active-tab-label">{{ activeTabLabel }}</span>
 
                 <h2 :id="`session-header-${sessionId}-title`">{{ displayName }}</h2>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-title`">{{ displayName }}</wa-tooltip>
+                <AppTooltip :for="`session-header-${sessionId}-title`">{{ displayName }}</AppTooltip>
 
                 <ProjectBadge v-if="session.project_id" :project-id="session.project_id" class="session-project" />
 
@@ -368,13 +367,13 @@ defineExpose({
                     <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
                     <span>{{ displayDirectory }}</span>
                 </span>
-                <wa-tooltip v-if="tooltipsEnabled && displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }}</wa-tooltip>
+                <AppTooltip v-if="displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }}</AppTooltip>
 
                 <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item">
                     <wa-icon auto-width name="code-branch"></wa-icon>
                     <span>{{ session.git_branch }}</span>
                 </span>
-                <wa-tooltip v-if="tooltipsEnabled && session.git_branch" :for="`session-header-${sessionId}-git-branch`">Git branch</wa-tooltip>
+                <AppTooltip v-if="session.git_branch" :for="`session-header-${sessionId}-git-branch`">Git branch</AppTooltip>
             </div>
 
             <!-- Meta row (not shown for draft sessions) -->
@@ -384,23 +383,23 @@ defineExpose({
                     <wa-icon auto-width name="comment" variant="regular"></wa-icon>
                     <span>{{ session.message_count ?? '??' }}</span>
                 </span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-messages`">Number of user and assistant messages</wa-tooltip>
+                <AppTooltip :for="`session-header-${sessionId}-messages`">Number of user and assistant messages</AppTooltip>
 
                 <span :id="`session-header-${sessionId}-lines`" class="meta-item nb_lines">
                     <wa-icon auto-width name="bars"></wa-icon>
                     <span>{{ session.last_line }}</span>
                 </span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-lines`">Lines in the JSONL file</wa-tooltip>
+                <AppTooltip :for="`session-header-${sessionId}-lines`">Lines in the JSONL file</AppTooltip>
 
                 <span :id="`session-header-${sessionId}-mtime`" class="meta-item">
                     <wa-icon auto-width name="clock" variant="regular"></wa-icon>
                     <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
                 </span>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-mtime`">Last activity</wa-tooltip>
+                <AppTooltip :for="`session-header-${sessionId}-mtime`">Last activity</AppTooltip>
 
                 <template v-if="showCosts && totalCost != null">
                     <CostDisplay :id="`session-header-${sessionId}-cost`" :cost="totalCost" class="meta-item" />
-                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-cost`">Total session cost</wa-tooltip>
+                    <AppTooltip :for="`session-header-${sessionId}-cost`">Total session cost</AppTooltip>
                 </template>
 
                 <template v-if="showCosts && costBreakdown">
@@ -413,7 +412,7 @@ defineExpose({
                         </span>
                         )</span>
                     </span>
-                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-cost-breakdown`">Main agent cost + sub-agents cost</wa-tooltip>
+                    <AppTooltip :for="`session-header-${sessionId}-cost-breakdown`">Main agent cost + sub-agents cost</AppTooltip>
                 </template>
 
                 <template v-if="formattedModel">
@@ -421,7 +420,7 @@ defineExpose({
                         <wa-icon auto-width name="robot" variant="classic"></wa-icon>
                         <span>{{ formattedModel }}</span>
                     </span>
-                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-model`">Last used model</wa-tooltip>
+                    <AppTooltip :for="`session-header-${sessionId}-model`">Last used model</AppTooltip>
                 </template>
 
                 <template v-if="contextUsagePercentage != null">
@@ -434,7 +433,7 @@ defineExpose({
                             '--indicator-width': contextUsageIndicatorWidth
                         }"
                     ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
-                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-context`">Context window usage</wa-tooltip>
+                    <AppTooltip :for="`session-header-${sessionId}-context`">Context window usage</AppTooltip>
                 </template>
 
                 <template
@@ -449,7 +448,7 @@ defineExpose({
                     >
                         {{ formatDuration(getStateDuration(processState)) }}
                     </span>
-                    <wa-tooltip v-if="tooltipsEnabled && processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">Assistant turn duration</wa-tooltip>
+                    <AppTooltip v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">Assistant turn duration</AppTooltip>
 
                     <span
                         v-if="processState.memory"
@@ -459,7 +458,7 @@ defineExpose({
                     >
                         {{ formatMemory(processState.memory) }}
                     </span>
-                    <wa-tooltip v-if="tooltipsEnabled && processState.memory" :for="`session-header-${sessionId}-process-memory`">Claude Code memory usage</wa-tooltip>
+                    <AppTooltip v-if="processState.memory" :for="`session-header-${sessionId}-process-memory`">Claude Code memory usage</AppTooltip>
 
                     <ProcessIndicator
                         :id="`session-header-${sessionId}-process-indicator`"
@@ -467,7 +466,7 @@ defineExpose({
                         size="small"
                         :animate-states="animateStates"
                     />
-                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-process-indicator`">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}</wa-tooltip>
+                    <AppTooltip :for="`session-header-${sessionId}-process-indicator`">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}</AppTooltip>
 
                     <wa-button
                         v-if="canStopProcess"
@@ -480,7 +479,7 @@ defineExpose({
                     >
                         <wa-icon name="ban" label="Stop"></wa-icon>
                     </wa-button>
-                    <wa-tooltip v-if="tooltipsEnabled" :for="`session-header-${sessionId}-stop-button`">Stop the Claude Code process</wa-tooltip>
+                    <AppTooltip :for="`session-header-${sessionId}-stop-button`">Stop the Claude Code process</AppTooltip>
                 </template>
             </div>
 

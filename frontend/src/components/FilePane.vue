@@ -1,11 +1,12 @@
 <script setup>
-import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount, useId } from 'vue'
 import { useMonaco } from '@guolao/vue-monaco-editor'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
 import githubDark from '../assets/monaco-themes/github-dark.json'
 import githubLight from '../assets/monaco-themes/github-light.json'
 import MarkdownContent from './MarkdownContent.vue'
+import AppTooltip from './AppTooltip.vue'
 
 const props = defineProps({
     projectId: String,
@@ -35,6 +36,10 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['revert'])
+
+const prevChangeButtonId = useId()
+const nextChangeButtonId = useId()
+const markdownPreviewButtonId = useId()
 
 // API prefix: project-level for drafts, session-level otherwise
 const apiPrefix = computed(() => {
@@ -594,21 +599,23 @@ function formatSize(bytes) {
                         variant="neutral"
                         appearance="outlined"
                         class="diff-nav-button"
-                        title="Previous change"
+                        :id="prevChangeButtonId"
                         @click="goToPreviousDiff"
                     >
                         <wa-icon name="arrow-up"></wa-icon>
                     </wa-button>
+                    <AppTooltip :for="prevChangeButtonId">Previous change</AppTooltip>
                     <wa-button
                         size="small"
                         variant="neutral"
                         appearance="outlined"
                         class="diff-nav-button"
-                        title="Next change"
+                        :id="nextChangeButtonId"
                         @click="goToNextDiff"
                     >
                         <wa-icon name="arrow-down"></wa-icon>
                     </wa-button>
+                    <AppTooltip :for="nextChangeButtonId">Next change</AppTooltip>
                 </div>
             </div>
             <div class="header-right">
@@ -626,11 +633,12 @@ function formatSize(bytes) {
                     size="small"
                     variant="neutral"
                     :appearance="showMarkdownPreview ? 'filled' : 'outlined'"
-                    title="Toggle markdown preview"
+                    :id="markdownPreviewButtonId"
                     @click="toggleMarkdownPreview"
                 >
                     <wa-icon name="eye"></wa-icon>
                 </wa-button>
+                <AppTooltip :for="markdownPreviewButtonId">Toggle markdown preview</AppTooltip>
             </div>
         </div>
 

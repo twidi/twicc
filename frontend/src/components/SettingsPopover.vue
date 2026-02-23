@@ -1,12 +1,13 @@
 <script setup>
 // SettingsPopover.vue - Settings button with popover panel
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick, useId } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
 import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS } from '../constants'
 import NotificationSettings from './NotificationSettings.vue'
+import AppTooltip from './AppTooltip.vue'
 
 const router = useRouter()
 const store = useSettingsStore()
@@ -15,6 +16,7 @@ const authStore = useAuthStore()
 
 // Show logout button only when password-based auth is active
 const showLogout = computed(() => authStore.passwordRequired && authStore.authenticated)
+const logoutButtonId = useId()
 
 // Show extra usage setting only when OAuth is configured
 const showExtraUsageSetting = computed(() => dataStore.usage?.hasOauth ?? false)
@@ -255,11 +257,12 @@ function onPopoverShow() {
     <wa-button id="settings-trigger" variant="neutral" appearance="filled-outlined" size="small">
         <wa-icon name="gear"></wa-icon><span>Settings</span>
     </wa-button>
-    <wa-tooltip v-if="tooltipsEnabled" for="settings-trigger">Toggle settings</wa-tooltip>
+    <AppTooltip for="settings-trigger">Toggle settings</AppTooltip>
     <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
         <div class="settings-content">
             <wa-button
                 v-if="showLogout"
+                :id="logoutButtonId"
                 class="logout-button"
                 variant="danger"
                 appearance="plain"
@@ -268,6 +271,7 @@ function onPopoverShow() {
             >
                 <wa-icon name="right-from-bracket"></wa-icon>
             </wa-button>
+            <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
             <div class="settings-sections">
                 <!-- Global Section -->
                 <section class="settings-section">

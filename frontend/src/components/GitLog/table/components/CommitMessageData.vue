@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import type { CSSProperties } from 'vue'
+import { useId, type CSSProperties } from 'vue'
 import IndexStatus from './IndexStatus.vue'
+import AppTooltip from '../../../AppTooltip.vue'
 
 
 // ---------------------------------------------------------------------------
@@ -13,11 +14,13 @@ defineProps<{
   commitMessage: string
   style?: CSSProperties
 }>()
+
+const messageId = useId()
 </script>
 
 <template>
   <div
-    :title="commitMessage"
+    :id="messageId"
     :class="['message', {isIndex}]"
     :style="style"
   >
@@ -25,6 +28,7 @@ defineProps<{
 
     <IndexStatus v-if="isIndex" />
   </div>
+  <AppTooltip :for="messageId">{{ commitMessage }}</AppTooltip>
 </template>
 
 <style scoped>

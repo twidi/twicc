@@ -1,15 +1,13 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import JsonViewer from './JsonViewer.vue'
 import Message from './items/Message.vue'
 import ApiError from './items/ApiError.vue'
 import UnknownEntry from './items/UnknownEntry.vue'
+import AppTooltip from './AppTooltip.vue'
 
-const settingsStore = useSettingsStore()
 const dataStore = useDataStore()
-const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 
 const props = defineProps({
     content: {
@@ -128,9 +126,9 @@ function toggleJsonView() {
             >
                 <wa-icon :name="isBlockDetailed ? 'compress' : 'expand'"></wa-icon>
             </wa-button>
-            <wa-tooltip v-if="showDetailToggle && tooltipsEnabled" :for="`detail-toggle-${sessionId}-${detailToggleFor}`">
+            <AppTooltip v-if="showDetailToggle" :for="`detail-toggle-${sessionId}-${detailToggleFor}`">
                 {{ isBlockDetailed ? 'Show conversation' : 'Show details' }}
-            </wa-tooltip>
+            </AppTooltip>
 
             <!-- JSON toggle button (visible on hover) -->
             <div class="json-toggle-container">
@@ -144,7 +142,7 @@ function toggleJsonView() {
                 >
                     <wa-icon name="code"></wa-icon>
                 </wa-button>
-                <wa-tooltip v-if="!showJson && tooltipsEnabled" :for="`json-toggle-${sessionId}-${lineNum}`">Show JSON</wa-tooltip>
+                <AppTooltip v-if="!showJson" :for="`json-toggle-${sessionId}-${lineNum}`">Show JSON</AppTooltip>
             </div>
         </div>
 
@@ -159,9 +157,9 @@ function toggleJsonView() {
             >
                 <wa-icon name="code"></wa-icon>
             </wa-button>
-            <wa-tooltip v-if="tooltipsEnabled" :for="`json-toggle-hide-${sessionId}-${lineNum}`">Hide JSON</wa-tooltip>
+            <AppTooltip :for="`json-toggle-hide-${sessionId}-${lineNum}`">Hide JSON</AppTooltip>
             <wa-tag :id="`line-number-${sessionId}-${lineNum}`" size="small"  appearance="filled-outlined" variant="brand" class="line-number">{{ lineNum }}</wa-tag>
-            <wa-tooltip v-if="tooltipsEnabled" :for="`line-number-${sessionId}-${lineNum}`">Line number</wa-tooltip>
+            <AppTooltip :for="`line-number-${sessionId}-${lineNum}`">Line number</AppTooltip>
             <div class="json-tree">
                 <JsonViewer
                     :data="parsedContent"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
+import { computed, useId, type CSSProperties } from 'vue'
 import type { CommitAuthor } from '../../types'
+import AppTooltip from '../../../AppTooltip.vue'
 
 
 // ---------------------------------------------------------------------------
@@ -36,6 +37,8 @@ const authorTitle = computed(() => {
   return undefined
 })
 
+const authorId = useId()
+
 const authorName = computed(() => {
   if (props.author?.name) {
     return props.author.name
@@ -48,11 +51,12 @@ const authorName = computed(() => {
 <template>
   <div
     :style="style"
-    :title="authorTitle"
+    :id="authorId"
     class="author"
   >
     {{ isPlaceholder ? '-' : authorName }}
   </div>
+  <AppTooltip v-if="authorTitle" :for="authorId">{{ authorTitle }}</AppTooltip>
 </template>
 
 <style scoped>

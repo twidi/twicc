@@ -4,6 +4,7 @@
 // Accepts normalized MediaItem[] format.
 import { ref, computed } from 'vue'
 import MediaPreviewDialog from './MediaPreviewDialog.vue'
+import AppTooltip from './AppTooltip.vue'
 
 const props = defineProps({
     items: {
@@ -87,9 +88,9 @@ function getIconName(item) {
         <div
             v-for="(item, index) in items"
             :key="index"
+            :id="`media-thumb-${index}`"
             class="media-thumbnail"
             :class="{ 'can-preview': canPreview(item) }"
-            :title="item.name || ''"
             @click="openPreview(index)"
         >
             <!-- Image thumbnail -->
@@ -108,17 +109,20 @@ function getIconName(item) {
             <!-- Remove button (only when removable) -->
             <button
                 v-if="removable"
+                :id="`media-thumb-remove-${index}`"
                 class="thumbnail-remove"
                 @click="(e) => handleRemove(e, index)"
-                title="Remove"
             >
                 <wa-icon name="xmark"></wa-icon>
             </button>
+            <AppTooltip :for="`media-thumb-remove-${index}`">Remove</AppTooltip>
 
             <!-- File name tooltip on hover (for non-images) -->
             <span v-if="item.type !== 'image' && item.name" class="thumbnail-name">
                 {{ item.name }}
             </span>
+
+            <AppTooltip v-if="item.name" :for="`media-thumb-${index}`">{{ item.name }}</AppTooltip>
         </div>
     </div>
 

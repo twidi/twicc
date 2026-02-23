@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onActivated, onDeactivated } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onActivated, onDeactivated, useId } from 'vue'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
 import { useContainerBreakpoint } from '../composables/useContainerBreakpoint'
@@ -10,6 +10,7 @@ import {
     GitLogTags,
 } from './GitLog'
 import GitPanelHeader from './GitPanelHeader.vue'
+import AppTooltip from './AppTooltip.vue'
 import FileTreePanel from './FileTreePanel.vue'
 import FilePane from './FilePane.vue'
 import { searchTreeFiles } from '../utils/treeSearch'
@@ -42,6 +43,7 @@ const props = defineProps({
 })
 
 const settingsStore = useSettingsStore()
+const refreshButtonId = useId()
 
 // ─── Mobile breakpoint detection ─────────────────────────────────────────────
 // Uses a ResizeObserver on .main-content instead of a viewport media query,
@@ -751,6 +753,7 @@ onMounted(() => {
                         </wa-input>
 
                         <wa-button
+                            :id="refreshButtonId"
                             class="refresh-button"
                             variant="neutral"
                             appearance="filled-outlined"
@@ -760,6 +763,7 @@ onMounted(() => {
                         >
                             <wa-icon name="arrow-rotate-right"></wa-icon>
                         </wa-button>
+                        <AppTooltip :for="refreshButtonId">Refresh git log</AppTooltip>
                     </div>
 
                     <GitLog

@@ -5,9 +5,10 @@
 // - tool_approval: Shows tool name, formatted parameters, and Approve/Deny buttons
 // - ask_user_question: Shows questions with selectable options and an "Other" free-text input
 
-import { ref, computed, reactive, watch, nextTick } from 'vue'
+import { ref, computed, reactive, watch, nextTick, useId } from 'vue'
 import { useDataStore } from '../stores/data'
 import JsonHumanView from './JsonHumanView.vue'
+import AppTooltip from './AppTooltip.vue'
 
 // Per-tool overrides for JsonHumanView display types.
 // Only keys that need an override (not auto-detected) are listed.
@@ -45,6 +46,10 @@ const isResponding = ref(false)
 
 // Whether the form is expanded (shows full content) or collapsed (compact view)
 const isExpanded = ref(false)
+
+// Unique IDs for tooltip anchoring
+const toolExpandToggleId = useId()
+const questionExpandToggleId = useId()
 
 /**
  * Toggle the expanded/collapsed state of the form.
@@ -357,11 +362,12 @@ function handleSubmitQuestions() {
                     appearance="plain"
                     size="small"
                     class="expand-toggle-btn"
-                    :title="isExpanded ? 'Collapse' : 'Expand'"
+                    :id="toolExpandToggleId"
                     @click="toggleExpanded"
                 >
                     <wa-icon :name="isExpanded ? 'compress' : 'expand'" variant="classic"></wa-icon>
                 </wa-button>
+                <AppTooltip :for="toolExpandToggleId">{{ isExpanded ? 'Collapse' : 'Expand' }}</AppTooltip>
             </div>
 
             <!-- Tool details -->
@@ -447,11 +453,12 @@ function handleSubmitQuestions() {
                     appearance="plain"
                     size="small"
                     class="expand-toggle-btn"
-                    :title="isExpanded ? 'Collapse' : 'Expand'"
+                    :id="questionExpandToggleId"
                     @click="toggleExpanded"
                 >
                     <wa-icon :name="isExpanded ? 'compress' : 'expand'" variant="classic"></wa-icon>
                 </wa-button>
+                <AppTooltip :for="questionExpandToggleId">{{ isExpanded ? 'Collapse' : 'Expand' }}</AppTooltip>
             </div>
 
             <!-- Questions -->

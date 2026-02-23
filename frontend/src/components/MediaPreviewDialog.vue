@@ -2,7 +2,8 @@
 // MediaPreviewDialog.vue - Full-size preview dialog for media items (images, text, PDF).
 // Supports prev/next navigation via arrow keys and buttons.
 // Accepts a normalized MediaItem[] format shared by both draft attachments and conversation messages.
-import { ref, computed, onBeforeUnmount } from 'vue'
+import { ref, computed, onBeforeUnmount, useId } from 'vue'
+import AppTooltip from './AppTooltip.vue'
 
 const props = defineProps({
     items: {
@@ -19,6 +20,8 @@ const emit = defineEmits(['remove'])
 
 const dialogRef = ref(null)
 const currentIndex = ref(0)
+const prevButtonId = useId()
+const nextButtonId = useId()
 
 // Current item based on index
 const currentItem = computed(() => {
@@ -158,14 +161,15 @@ defineExpose({ open, close })
             <!-- Previous button -->
             <button
                 v-if="hasNavigation"
+                :id="prevButtonId"
                 class="nav-button nav-prev"
                 :class="{ 'nav-disabled': !hasPrev }"
                 :disabled="!hasPrev"
                 @click="prev"
-                title="Previous (Left arrow)"
             >
                 <wa-icon name="chevron-left"></wa-icon>
             </button>
+            <AppTooltip :for="prevButtonId">Previous (Left arrow)</AppTooltip>
 
             <!-- Image preview -->
             <img
@@ -193,14 +197,15 @@ defineExpose({ open, close })
             <!-- Next button -->
             <button
                 v-if="hasNavigation"
+                :id="nextButtonId"
                 class="nav-button nav-next"
                 :class="{ 'nav-disabled': !hasNext }"
                 :disabled="!hasNext"
                 @click="next"
-                title="Next (Right arrow)"
             >
                 <wa-icon name="chevron-right"></wa-icon>
             </button>
+            <AppTooltip :for="nextButtonId">Next (Right arrow)</AppTooltip>
         </div>
 
         <!-- Remove button in footer -->

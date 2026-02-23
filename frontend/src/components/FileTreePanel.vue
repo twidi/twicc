@@ -31,8 +31,9 @@
  *   options-before: injected before the shared options in the dropdown
  */
 
-import { ref, computed, watch, nextTick, shallowRef } from 'vue'
+import { ref, computed, watch, nextTick, shallowRef, useId } from 'vue'
 import FileTree from './FileTree.vue'
+import AppTooltip from './AppTooltip.vue'
 
 const props = defineProps({
     tree: {
@@ -214,6 +215,8 @@ function clearSearch(reveal = true) {
 // ─── File selection ──────────────────────────────────────────────────────────
 
 const selectedFile = ref(null)
+const selectedFileId = useId()
+const fileOptionsButtonId = useId()
 
 /**
  * Handle file selection from either the main tree or search results.
@@ -772,9 +775,10 @@ defineExpose({
             :class="{ open: fileTreeOpen }"
             @click="toggleFileTree"
         >
-            <span class="files-panel-header-label" :title="selectedFile || undefined">
+            <span class="files-panel-header-label" :id="selectedFileId">
                 {{ selectedFile || headerPlaceholder }}
             </span>
+            <AppTooltip v-if="selectedFile" :for="selectedFileId">{{ selectedFile }}</AppTooltip>
             <wa-icon
                 class="chevron"
                 :name="fileTreeOpen ? 'chevron-up' : 'chevron-down'"
@@ -796,6 +800,7 @@ defineExpose({
                     @wa-select="handleOptionsSelect"
                 >
                     <wa-button
+                        :id="fileOptionsButtonId"
                         slot="trigger"
                         variant="neutral"
                         appearance="filled-outlined"
@@ -803,6 +808,7 @@ defineExpose({
                     >
                         <wa-icon name="sliders"></wa-icon>
                     </wa-button>
+                    <AppTooltip :for="fileOptionsButtonId">File options</AppTooltip>
 
                     <!-- Parent-specific options (injected via slot) -->
                     <slot name="options-before" />

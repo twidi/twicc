@@ -12,14 +12,13 @@ import ProjectDetailPanel from '../components/ProjectDetailPanel.vue'
 import SessionRenameDialog from '../components/SessionRenameDialog.vue'
 import { getUsageRingColor } from '../utils/usage'
 import CostDisplay from '../components/CostDisplay.vue'
+import AppTooltip from '../components/AppTooltip.vue'
 
 const route = useRoute()
 const router = useRouter()
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 
-// Tooltips setting
-const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 // Costs setting
 const showCosts = computed(() => settingsStore.areCostsShown)
 
@@ -590,7 +589,7 @@ function updateSidebarClosedClass(closed) {
                     <wa-button id="back-button" class="back-button" variant="brand" appearance="outlined" size="small" @click="handleBackHome">
                         <wa-icon name="arrow-left"></wa-icon>
                     </wa-button>
-                    <wa-tooltip v-if="tooltipsEnabled" for="back-button">Back to projects list</wa-tooltip>
+                    <AppTooltip for="back-button">Back to projects list</AppTooltip>
                     <wa-select
                         id="project-selector"
                         :value.attr="isAllProjectsMode ? ALL_PROJECTS_ID : projectId"
@@ -653,7 +652,7 @@ function updateSidebarClosedClass(closed) {
                             Compact view
                         </wa-dropdown-item>
                     </wa-dropdown>
-                    <wa-tooltip v-if="tooltipsEnabled" for="session-options-button">Session list options</wa-tooltip>
+                    <AppTooltip for="session-options-button">Session list options</AppTooltip>
 
                     <!-- Search/filter input -->
                     <wa-input
@@ -743,8 +742,8 @@ function updateSidebarClosedClass(closed) {
                         </wa-dropdown-item>
                     </wa-dropdown>
                 </wa-button-group>
-                <wa-tooltip v-if="tooltipsEnabled" for="new-session-button">Create a new session in this project</wa-tooltip>
-                <wa-tooltip v-if="tooltipsEnabled" for="new-session-project-picker">Choose a different project</wa-tooltip>
+                <AppTooltip for="new-session-button">Create a new session in this project</AppTooltip>
+                <AppTooltip for="new-session-project-picker">Choose a different project</AppTooltip>
 
                 <!-- In all projects mode: dropdown to choose project -->
                 <wa-dropdown
@@ -789,7 +788,7 @@ function updateSidebarClosedClass(closed) {
                             <wa-relative-time v-if="quotaFiveHour.resetsAt" class="usage-quota-reset" :date.prop="resetsAtToDate(quotaFiveHour.resetsAt)" format="short" numeric="always" sync></wa-relative-time>
                         </div>
                     </div>
-                    <wa-tooltip v-if="quotaFiveHour" for="quota-five-hour" hoist>
+                    <AppTooltip v-if="quotaFiveHour" for="quota-five-hour" hoist>
                         <div class="quota-tooltip">
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Usage</span><span>{{ (quotaFiveHour.utilization ?? 0).toFixed(1) }}%</span></div>
                             <div class="quota-tooltip-note" v-if="!quotaFiveHour.resetsAt"><wa-icon name="info-circle"></wa-icon> Period not started yet</div>
@@ -808,7 +807,7 @@ function updateSidebarClosedClass(closed) {
                             </template>
                             <wa-button size="small" variant="brand" appearance="outlined" href="https://claude.ai/settings/usage" target="_blank" rel="noopener" class="quota-stale-button">View on claude.ai</wa-button>
                         </div>
-                    </wa-tooltip>
+                    </AppTooltip>
                     <div id="quota-seven-day" class="usage-quota" v-if="quotaSevenDay">
                         <wa-progress-ring
                             class="usage-ring"
@@ -820,7 +819,7 @@ function updateSidebarClosedClass(closed) {
                             <wa-relative-time v-if="quotaSevenDay.resetsAt" class="usage-quota-reset" :date.prop="resetsAtToDate(quotaSevenDay.resetsAt)" format="short" numeric="always" sync></wa-relative-time>
                         </div>
                     </div>
-                    <wa-tooltip v-if="quotaSevenDay" for="quota-seven-day" hoist>
+                    <AppTooltip v-if="quotaSevenDay" for="quota-seven-day" hoist>
                         <div class="quota-tooltip">
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Usage</span><span>{{ (quotaSevenDay.utilization ?? 0).toFixed(1) }}%</span></div>
                             <div class="quota-tooltip-note" v-if="!quotaSevenDay.resetsAt"><wa-icon name="info-circle"></wa-icon> Period not started yet</div>
@@ -839,7 +838,7 @@ function updateSidebarClosedClass(closed) {
                             </template>
                             <wa-button size="small" variant="brand" appearance="outlined" href="https://claude.ai/settings/usage" target="_blank" rel="noopener" class="quota-stale-button">View on claude.ai</wa-button>
                         </div>
-                    </wa-tooltip>
+                    </AppTooltip>
                     <div id="quota-extra-usage" class="usage-quota" v-if="quotaExtraUsage">
                         <wa-progress-ring
                             class="usage-ring"
@@ -851,22 +850,22 @@ function updateSidebarClosedClass(closed) {
                             <wa-relative-time class="usage-quota-reset" :date.prop="extraUsageResetDate()" format="short" numeric="always" sync></wa-relative-time>
                         </div>
                     </div>
-                    <wa-tooltip v-if="quotaExtraUsage" for="quota-extra-usage" hoist>
+                    <AppTooltip v-if="quotaExtraUsage" for="quota-extra-usage" hoist>
                         <div class="quota-tooltip">
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Used</span><span>{{ quotaExtraUsage.usedCredits ?? 0 }} credits</span></div>
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Monthly limit</span><span>{{ quotaExtraUsage.monthlyLimit ?? '?' }} credits</span></div>
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Reset</span><span>{{ formatResetTime(extraUsageResetDate()) }}</span></div>
                             <wa-button size="small" variant="brand" appearance="outlined" href="https://claude.ai/settings/usage" target="_blank" rel="noopener" class="quota-stale-button">View on claude.ai</wa-button>
                         </div>
-                    </wa-tooltip>
+                    </AppTooltip>
                     <wa-icon v-if="quotaIsStale" id="quota-stale-warning" name="triangle-exclamation" class="quota-stale-icon"></wa-icon>
-                    <wa-tooltip v-if="quotaIsStale" for="quota-stale-warning" hoist>
+                    <AppTooltip v-if="quotaIsStale" for="quota-stale-warning" hoist>
                         <div class="quota-tooltip">
                             <div class="quota-stale-header"><wa-icon name="triangle-exclamation" class="quota-stale-header-icon"></wa-icon><span>Data may be outdated</span></div>
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Last update</span><span>{{ quotaLastUpdateFormatted }}</span></div>
                             <wa-button size="small" variant="brand" appearance="outlined" href="https://claude.ai/settings/usage" target="_blank" rel="noopener" class="quota-stale-button">View usage on claude.ai</wa-button>
                         </div>
-                    </wa-tooltip>
+                    </AppTooltip>
                 </div>
 
                 <wa-divider></wa-divider>
@@ -880,7 +879,7 @@ function updateSidebarClosedClass(closed) {
                             <wa-icon class="icon-expand" name="angles-right"></wa-icon>
                         </wa-button>
                     </label>
-                    <wa-tooltip v-if="tooltipsEnabled" for="sidebar-toggle-label">Toggle sidebar</wa-tooltip>
+                    <AppTooltip for="sidebar-toggle-label">Toggle sidebar</AppTooltip>
 
                     <!-- Placeholder to occupy the same space a the sidebar toggle button that is absolute for goot reasons -->
                     <wa-button variant="neutral" appearance="filled-outlined" size="small" style="visibility: hidden; pointer-events: none"><wa-icon name="angles-left"></wa-icon></wa-button>

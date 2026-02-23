@@ -15,6 +15,7 @@ import ProjectEditDialog from './ProjectEditDialog.vue'
 import ActivitySparkline from './ActivitySparkline.vue'
 import CostDisplay from './CostDisplay.vue'
 import ContributionGraph from './ContributionGraph.vue'
+import AppTooltip from './AppTooltip.vue'
 
 const props = defineProps({
     /** Project ID or ALL_PROJECTS_ID for aggregate view */
@@ -27,8 +28,6 @@ const props = defineProps({
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 
-// Tooltips setting
-const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 // Costs setting
 const showCosts = computed(() => settingsStore.areCostsShown)
 
@@ -145,7 +144,7 @@ function handleEditClick() {
                 >
                     <wa-icon name="pencil"></wa-icon>
                 </wa-button>
-                <wa-tooltip v-if="!isAllProjectsMode && tooltipsEnabled" for="detail-edit-button">Edit project (name and color)</wa-tooltip>
+                <AppTooltip v-if="!isAllProjectsMode" for="detail-edit-button">Edit project (name and color)</AppTooltip>
             </div>
 
             <!-- Directory (single project only) -->
@@ -160,11 +159,11 @@ function handleEditClick() {
                     <wa-icon name="folder-open" class="detail-icon" variant="regular"></wa-icon>
                     <span>{{ sessionsCount }} session{{ sessionsCount !== 1 ? 's' : '' }}</span>
                 </div>
-                <wa-tooltip v-if="tooltipsEnabled" for="detail-sessions-count">Number of sessions</wa-tooltip>
+                <AppTooltip for="detail-sessions-count">Number of sessions</AppTooltip>
 
                 <template v-if="showCosts">
                     <CostDisplay id="detail-cost" :cost="totalCost" class="detail-meta-item" />
-                    <wa-tooltip v-if="tooltipsEnabled" for="detail-cost">Total cost</wa-tooltip>
+                    <AppTooltip for="detail-cost">Total cost</AppTooltip>
                 </template>
 
                 <div v-if="mtime" id="detail-mtime" class="detail-meta-item">
@@ -174,7 +173,7 @@ function handleEditClick() {
                         <template v-else>{{ formatDate(mtime) }}</template>
                     </span>
                 </div>
-                <wa-tooltip v-if="mtime && tooltipsEnabled" for="detail-mtime">{{ useRelativeTime ? `Last activity: ${formatDate(mtime)}` : 'Last activity' }}</wa-tooltip>
+                <AppTooltip v-if="mtime" for="detail-mtime">{{ useRelativeTime ? `Last activity: ${formatDate(mtime)}` : 'Last activity' }}</AppTooltip>
             </div>
 
             <!-- Contribution graph (daily activity heatmap) -->

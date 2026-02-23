@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
+import AppTooltip from './AppTooltip.vue'
 import pencilIcon from './GitLog/assets/pencil.svg'
 import plusIcon from './GitLog/assets/plus.svg'
 import minusIcon from './GitLog/assets/minus.svg'
@@ -68,6 +69,8 @@ const hasStats = computed(() => {
 // Handlers
 // ---------------------------------------------------------------------------
 
+const commitLabelId = useId()
+
 function toggleGitLog() {
     emit('toggle-git-log')
 }
@@ -80,7 +83,8 @@ function toggleGitLog() {
             :class="{ open: gitLogOpen }"
             @click="toggleGitLog"
         >
-            <span class="commit-message" :title="commitLabel">{{ commitLabel }}</span>
+            <span class="commit-message" :id="commitLabelId">{{ commitLabel }}</span>
+            <AppTooltip :for="commitLabelId">{{ commitLabel }}</AppTooltip>
 
             <div v-if="statsLoading" class="status-badges">
                 <wa-spinner style="--spinner-size: 0.75rem;"></wa-spinner>

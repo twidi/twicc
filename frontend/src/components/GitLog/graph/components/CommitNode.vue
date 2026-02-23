@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, type CSSProperties } from 'vue'
+import { computed, ref, useId, type CSSProperties } from 'vue'
 import { pxToRem } from '../../utils/units'
 import { useTheme, shiftAlphaChannel } from '../../composables/useTheme'
 import { useSelectCommit } from '../../composables/useSelectCommit'
@@ -8,6 +8,7 @@ import { useGitContext } from '../../composables/useGitContext'
 import { getMergeNodeInnerSize } from '../utils/getMergeNodeInnerSize'
 import type { Commit, CustomCommitNodeProps, CustomTooltipProps } from '../../types'
 import CommitNodeTooltip from './CommitNodeTooltip.vue'
+import AppTooltip from '../../../AppTooltip.vue'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -34,6 +35,8 @@ const { showCommitNodeTooltips, showCommitNodeHashes, nodeTheme, nodeSize, node,
 // ---------------------------------------------------------------------------
 
 const showTooltip = ref(false)
+const customNodeId = useId()
+const defaultNodeId = useId()
 
 // ---------------------------------------------------------------------------
 // Computed values
@@ -131,10 +134,10 @@ function handleKeyDown(event: KeyboardEvent): void {
   <!-- Custom node wrapped in a transparent interactive container -->
   <div
     v-if="node"
+    :id="customNodeId"
     class="customNodeWrapper"
     role="button"
     :tabindex="0"
-    :title="commitUrl ? 'View Commit' : undefined"
     @click.stop="handleClick"
     @mouseover.stop="handleMouseOver"
     @mouseout.stop="handleMouseOut"
@@ -144,15 +147,16 @@ function handleKeyDown(event: KeyboardEvent): void {
   >
     <component :is="() => node!(customNodeProps)" />
   </div>
+  <AppTooltip v-if="commitUrl" :for="customNodeId">View Commit</AppTooltip>
 
   <!-- Default node rendering -->
   <div
     v-else
+    :id="defaultNodeId"
     role="button"
     :tabindex="0"
     :style="nodeVars"
     class="commitNode"
-    :title="commitUrl ? 'View Commit' : undefined"
     @click.stop="handleClick"
     @mouseover.stop="handleMouseOver"
     @mouseout.stop="handleMouseOut"
@@ -195,6 +199,7 @@ function handleKeyDown(event: KeyboardEvent): void {
       />
     </div>
   </div>
+  <AppTooltip v-if="commitUrl" :for="defaultNodeId">View Commit</AppTooltip>
 </template>
 
 <style scoped>

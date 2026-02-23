@@ -1,6 +1,6 @@
 <script setup>
 // MessageInput.vue - Text input for sending messages to Claude
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, useId } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSocket'
@@ -8,6 +8,7 @@ import { useVisualViewport } from '../composables/useVisualViewport'
 import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
 import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
+import AppTooltip from './AppTooltip.vue'
 
 // Track visual viewport height for mobile keyboard handling
 useVisualViewport()
@@ -40,6 +41,7 @@ const isDraft = computed(() => session.value?.draft === true)
 const messageText = ref('')
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
+const attachButtonId = useId()
 
 // Attachments for this session
 const attachments = computed(() => store.getAttachments(props.sessionId))
@@ -442,20 +444,21 @@ async function handleClear() {
                     appearance="plain"
                     size="small"
                     @click="openFilePicker"
-                    title="Attach files (images, PDF, text)"
+                    :id="attachButtonId"
                 >
                     <wa-icon name="paperclip"></wa-icon>
                 </wa-button>
+                <AppTooltip :for="attachButtonId">Attach files (images, PDF, text)</AppTooltip>
 
                 <!-- Attachment badge + popover -->
                 <template v-if="attachmentCount > 0">
                     <button
                         :id="`attachments-popover-trigger-${sessionId}`"
                         class="attachments-badge-trigger"
-                        :title="`${attachmentCount} file${attachmentCount > 1 ? 's' : ''} attached`"
                     >
                         <wa-badge variant="primary" pill>{{ attachmentCount }}</wa-badge>
                     </button>
+                    <AppTooltip :for="`attachments-popover-trigger-${sessionId}`">{{ attachmentCount }} file{{ attachmentCount > 1 ? 's' : '' }} attached</AppTooltip>
                     <wa-popover
                         :for="`attachments-popover-trigger-${sessionId}`"
                         placement="top"

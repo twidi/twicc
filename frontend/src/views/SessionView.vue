@@ -2,18 +2,17 @@
 import { computed, watch, ref, readonly, provide, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
-import { useSettingsStore } from '../stores/settings'
 import SessionHeader from '../components/SessionHeader.vue'
 import SessionItemsList from '../components/SessionItemsList.vue'
 import SessionContent from '../components/SessionContent.vue'
 import FilesPanel from '../components/FilesPanel.vue'
 import GitPanel from '../components/GitPanel.vue'
 import TerminalPanel from '../components/TerminalPanel.vue'
+import AppTooltip from '../components/AppTooltip.vue'
 
 const route = useRoute()
 const router = useRouter()
 const store = useDataStore()
-const settingsStore = useSettingsStore()
 
 // Reference to session header for opening rename dialog
 const sessionHeaderRef = ref(null)
@@ -75,9 +74,6 @@ onDeactivated(() => {
 })
 
 provide('sessionActive', readonly(isActive))
-
-// Whether tooltips are enabled (from settings)
-const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 
 // Current session from route params
 // IMPORTANT: projectId and sessionId are captured at creation time (not reactive
@@ -508,7 +504,7 @@ function handleNeedsTitle() {
                         class="pending-request-indicator"
                     ></wa-icon>
                 </wa-button>
-                <wa-tooltip v-if="tooltipsEnabled && store.getPendingRequest(sessionId)" :for="`session-tab-chat-${sessionId}-pending-request`">Waiting for your response</wa-tooltip>
+                <AppTooltip v-if="store.getPendingRequest(sessionId)" :for="`session-tab-chat-${sessionId}-pending-request`">Waiting for your response</AppTooltip>
             </wa-tab>
 
             <!-- Subagent tabs with close button -->

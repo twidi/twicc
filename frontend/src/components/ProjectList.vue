@@ -9,12 +9,11 @@ import ProjectBadge from './ProjectBadge.vue'
 import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
 import ActivitySparkline from './ActivitySparkline.vue'
 import CostDisplay from './CostDisplay.vue'
+import AppTooltip from './AppTooltip.vue'
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 
-// Tooltips setting
-const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
 // Costs setting
 const showCosts = computed(() => settingsStore.areCostsShown)
 
@@ -81,7 +80,7 @@ function handleEditClick(event, project) {
                 >
                     <wa-icon name="pencil"></wa-icon>
                 </wa-button>
-                <wa-tooltip v-if="tooltipsEnabled" :for="`edit-button-${project.id}`">Edit project (name and color)</wa-tooltip>
+                <AppTooltip :for="`edit-button-${project.id}`">Edit project (name and color)</AppTooltip>
                 <div v-if="project.directory" class="project-directory">{{ project.directory }}</div>
                 <div class="project-meta-wrapper">
                     <div class="project-meta">
@@ -89,17 +88,17 @@ function handleEditClick(event, project) {
                             <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
                             <span>{{ project.sessions_count }} session{{ project.sessions_count !== 1 ? 's' : '' }}</span>
                         </span>
-                        <wa-tooltip v-if="tooltipsEnabled" :for="`sessions-count-${project.id}`">Number of sessions</wa-tooltip>
+                        <AppTooltip :for="`sessions-count-${project.id}`">Number of sessions</AppTooltip>
                         <template v-if="showCosts">
                             <CostDisplay :id="`project-cost-${project.id}`" :cost="project.total_cost" class="project-cost" />
-                            <wa-tooltip v-if="tooltipsEnabled" :for="`project-cost-${project.id}`">Total project cost</wa-tooltip>
+                            <AppTooltip :for="`project-cost-${project.id}`">Total project cost</AppTooltip>
                         </template>
                         <span :id="`project-mtime-${project.id}`" class="project-mtime">
                             <wa-icon auto-width name="clock" variant="regular"></wa-icon>
                             <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(project.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
                             <span v-else>{{ formatDate(project.mtime) }}</span>
                         </span>
-                        <wa-tooltip v-if="tooltipsEnabled" :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</wa-tooltip>
+                        <AppTooltip :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</AppTooltip>
                     </div>
                     <div class="project-graph">
                         <ActivitySparkline :id-suffix="project.id" :data="store.weeklyActivity[project.id] || []" />
