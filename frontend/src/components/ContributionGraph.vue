@@ -1,34 +1,37 @@
 <script setup>
-// ContributionGraph.vue - GitHub-style contribution heatmap showing daily activity
-// Uses vue3-calendar-heatmap to render an SVG heatmap calendar.
-// Fetches daily activity data from the API for a specific project or globally.
+// ContributionGraph.vue - Pure presentation component for a GitHub-style contribution heatmap.
+// Receives pre-fetched daily activity data via props.
+// Supports two modes: 'messages' (user message count) and 'cost' (USD cost).
 // Colors come from CSS custom properties (--sparkline-project-gradient-color-0..4),
 // read reactively when the effective theme changes via settingsStore.
 
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useElementSize } from '@vueuse/core'
 import { CalendarHeatmap } from 'vue3-calendar-heatmap'
 import 'vue3-calendar-heatmap/dist/style.css'
-import { apiFetch } from '../utils/api'
-import { ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 
 const props = defineProps({
-    /** Project ID or ALL_PROJECTS_ID for global view */
-    projectId: {
-        type: String,
+    /** Daily activity data: array of { date, count, cost } */
+    dailyActivity: {
+        type: Array,
         required: true,
     },
+    /** Display mode: 'messages' for user message count, 'cost' for USD cost */
+    mode: {
+        type: String,
+        default: 'messages',
+        validator: v => ['messages', 'cost'].includes(v),
+    },
 })
+
+const isCostMode = computed(() => props.mode === 'cost')
 
 const settingsStore = useSettingsStore()
 
 const graphContainer = ref(null)
 const { width: containerWidth } = useElementSize(graphContainer)
 const isVertical = computed(() => containerWidth.value > 0 && containerWidth.value < 600)
-
-const dailyActivity = ref([])
-const loading = ref(false)
 
 const isDark = computed(() => settingsStore.getEffectiveTheme === 'dark')
 
@@ -65,14 +68,17 @@ const rangeColor = computed(() => {
 const endDate = computed(() => new Date())
 
 const heatmapValues = computed(() => {
-    return dailyActivity.value.map(d => ({
+    return props.dailyActivity.map(d => ({
         date: d.date,
-        count: d.count,
+        // CalendarHeatmap uses 'count' internally; in cost mode, map cost to count
+        count: isCostMode.value ? parseFloat(d.cost) || 0 : d.count,
     }))
 })
 
 /**
- * Custom tooltip formatter: "N messages on Jan 1, 2026"
+ * Custom tooltip formatter.
+ * Messages mode: "N messages on Jan 1, 2026"
+ * Cost mode: "$1.23 on Jan 1, 2026"
  */
 function tooltipFormatter(item, unit) {
     const date = item.date
@@ -82,53 +88,36 @@ function tooltipFormatter(item, unit) {
         year: 'numeric',
     })
     const count = item.count || 0
+    if (isCostMode.value) {
+        if (count === 0) {
+            return `No cost on ${dateStr}`
+        }
+        return `$${count.toFixed(2)} on ${dateStr}`
+    }
     if (count === 0) {
         return `No ${unit} on ${dateStr}`
     }
     return `${count} ${count === 1 ? unit.replace(/s$/, '') : unit} on ${dateStr}`
 }
-
-async function fetchDailyActivity() {
-    loading.value = true
-    try {
-        const url = props.projectId === ALL_PROJECTS_ID
-            ? '/api/daily-activity/'
-            : `/api/projects/${encodeURIComponent(props.projectId)}/daily-activity/`
-
-        const res = await apiFetch(url)
-        if (res.ok) {
-            const data = await res.json()
-            dailyActivity.value = data.daily_activity || []
-        }
-    } catch (error) {
-        console.error('Failed to load daily activity:', error)
-    } finally {
-        loading.value = false
-    }
-}
-
-// Fetch on mount and when projectId changes
-onMounted(fetchDailyActivity)
-watch(() => props.projectId, fetchDailyActivity)
 </script>
 
 <template>
-    <h3 class="contribution-graph-title">User messages graph</h3>
     <div ref="graphContainer" class="contribution-graph" :class="{ vertical: isVertical }">
+        <h3 class="contribution-graph-title">{{ isCostMode ? 'Cost graph' : 'User messages graph' }}</h3>
         <CalendarHeatmap
             v-if="heatmapValues.length > 0 && rangeColor.length === 6"
-            :key="`${rangeColor.join(',')}-${isVertical}`"
+            :key="`${rangeColor.join(',')}-${isVertical}-${mode}`"
             :values="heatmapValues"
             :end-date="endDate"
             :range-color="rangeColor"
             :round="2"
             :tooltip="true"
-            tooltip-unit="user messages"
+            :tooltip-unit="isCostMode ? 'cost' : 'user messages'"
             :tooltip-formatter="tooltipFormatter"
             :dark-mode="isDark"
             :vertical="isVertical"
         />
-        <div v-else-if="!loading" class="no-data">
+        <div v-else-if="dailyActivity.length === 0" class="no-data">
             No activity data
         </div>
     </div>
@@ -137,9 +126,10 @@ watch(() => props.projectId, fetchDailyActivity)
 <style scoped>
 .contribution-graph {
     margin-top: var(--wa-space-l);
-    width: 100%;
     display: flex;
+    flex-direction: column;
     justify-content: center;
+    align-items: center;
     padding-inline: var(--wa-space-m);
 }
 
@@ -149,6 +139,9 @@ watch(() => props.projectId, fetchDailyActivity)
 }
 .contribution-graph.vertical :deep(.vch__container) {
     max-width: 20rem;
+    svg {
+        translate: 1rem 0; /* compensate for hidden less-more legent */
+    }
 }
 
 /* Override vue3-calendar-heatmap styles for theme integration */
@@ -165,39 +158,12 @@ watch(() => props.projectId, fetchDailyActivity)
     fill: var(--wa-color-text-quiet);
 }
 
-/* The legend SVG has a height attr but no width; Firefox collapses it in flex layouts.
-   Setting overflow:visible + min-width ensures the rects are shown cross-browser. */
-.contribution-graph :deep(svg.vch__external-legend-wrapper) {
-    overflow: visible;
-    min-width: 5rem;
-}
-
-/* Hide the first color as we use the same one for "no data" and "0 entries" */
-.contribution-graph :deep(.vch__legend__wrapper) rect:first-of-type {
+.contribution-graph :deep(.vch__legend__wrapper), .contribution-graph :deep(.vch__legend) {
     display: none;
-}
-.contribution-graph :deep(.vch__legend__wrapper) {
-    translate: 0 -1rem;
-}
-.contribution-graph :deep(.vch__legend-right .vch__legend__wrapper) {
-    translate: 0 0;
-}
-
-.contribution-graph :deep(.vch__legend__wrapper text:first-child) {
-    translate: 0 .5rem;
-}
-.contribution-graph :deep(.vch__legend-right > div > div:first-child) {
-    position: relative;
-    left: 1rem;
-}
-.contribution-graph :deep(.vch__legend-right > div > div) {
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-2xs);
 }
 
 .contribution-graph-title {
-    margin: 0;
-    margin-top: var(--wa-space-l);
+    margin-block: var(--wa-space-l);
     padding-inline: var(--wa-space-m);
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-l);

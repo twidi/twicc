@@ -14,7 +14,7 @@ import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import ActivitySparkline from './ActivitySparkline.vue'
 import CostDisplay from './CostDisplay.vue'
-import ContributionGraph from './ContributionGraph.vue'
+import ContributionGraphs from './ContributionGraphs.vue'
 import AppTooltip from './AppTooltip.vue'
 
 const props = defineProps({
@@ -180,8 +180,8 @@ function handleEditClick() {
                 <AppTooltip v-if="mtime" for="detail-mtime">{{ useRelativeTime ? `Last activity: ${formatDate(mtime)}` : 'Last activity' }}</AppTooltip>
             </div>
 
-            <!-- Contribution graph (daily activity heatmap) -->
-            <ContributionGraph :project-id="projectId" />
+            <!-- Contribution graphs (daily activity heatmaps) -->
+            <ContributionGraphs :project-id="projectId" />
 
         </div>
 
