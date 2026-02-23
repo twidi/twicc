@@ -13,6 +13,7 @@ import orjson
 import sys
 import time
 from collections import Counter
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -122,38 +123,44 @@ def _increment_activity(
 
 def apply_activity_counts(
     project_id: str,
-    weekly: dict[str, int] | None,
-    daily: dict[str, int] | None,
+    weekly_user_message_counts: dict[str, int] | None,
+    daily_user_message_counts: dict[str, int] | None,
     weekly_costs: dict[str, str] | None = None,
     daily_costs: dict[str, str] | None = None,
+    weekly_session_counts: dict[str, int] | None = None,
+    daily_session_counts: dict[str, int] | None = None,
 ) -> None:
-    """Apply pre-computed activity user message counts and costs to the database.
+    """Apply pre-computed activity metrics to the database.
 
-    Used by the background compute path, which passes activity user message counts
-    as {iso_date_string: user_message_count} dicts and costs as {iso_date_string: cost_str}
-    dicts in the session_complete message.
+    Used by the background compute path, which passes:
+    - user message counts as {iso_date_string: count} dicts
+    - costs as {iso_date_string: cost_str} dicts
+    - session counts as {iso_date_string: count} dicts
+    in the session_complete message.
 
     Uses PeriodicActivity.increment_or_create for atomic updates.
-    Counts and costs are added to existing rows since multiple
-    sessions contribute to the same project/week or project/date counters.
+    Values are added to existing rows since multiple sessions
+    contribute to the same project/week or project/date counters.
     """
     from datetime import date as date_cls
 
     from twicc.core.models import DailyActivity, WeeklyActivity
 
-    for model, user_message_counts, costs in [
-        (WeeklyActivity, weekly, weekly_costs),
-        (DailyActivity, daily, daily_costs),
+    for model, user_message_counts, costs, session_counts in [
+        (WeeklyActivity, weekly_user_message_counts, weekly_costs, weekly_session_counts),
+        (DailyActivity, daily_user_message_counts, daily_costs, daily_session_counts),
     ]:
         user_message_counts = user_message_counts or {}
         costs = costs or {}
-        all_date_strs = set(user_message_counts.keys()) | set(costs.keys())
+        session_counts = session_counts or {}
+        all_date_strs = set(user_message_counts.keys()) | set(costs.keys()) | set(session_counts.keys())
         for date_str in all_date_strs:
             activity_date = date_cls.fromisoformat(date_str)
             user_message_count = user_message_counts.get(date_str, 0)
+            session_count = session_counts.get(date_str, 0)
             cost = Decimal(costs[date_str]) if date_str in costs else Decimal(0)
-            model.increment_or_create(project_id, activity_date, user_message_count, cost)
-            model.increment_or_create(None, activity_date, user_message_count, cost)
+            model.increment_or_create(project_id, activity_date, user_message_count, session_count, cost)
+            model.increment_or_create(None, activity_date, user_message_count, session_count, cost)
 
 
 def is_session_file(path: Path) -> bool:
@@ -582,7 +589,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 session.cwd_git_branch = last_cwd_git_branch
             if last_model and last_model != session.model:
                 session.model = last_model
-            if session.created_at is None and first_timestamp is not None:
+            is_new_session = session.created_at is None and first_timestamp is not None
+            if is_new_session:
                 session.created_at = first_timestamp
 
             # Update activity counters:
@@ -592,6 +600,15 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             from twicc.core.models import DailyActivity, WeeklyActivity
             _increment_activity(WeeklyActivity, session.project_id, items_to_create, date_index=1, include_user_message_counts=include_user_message_counts)
             _increment_activity(DailyActivity, session.project_id, items_to_create, date_index=0, include_user_message_counts=include_user_message_counts)
+
+            # Increment session_count when a real session is first created
+            if is_new_session and session.type == SessionType.SESSION:
+                created_date = first_timestamp.date()
+                created_monday = created_date - timedelta(days=created_date.weekday())
+                DailyActivity.increment_or_create(session.project_id, created_date, session_count=1)
+                DailyActivity.increment_or_create(None, created_date, session_count=1)
+                WeeklyActivity.increment_or_create(session.project_id, created_monday, session_count=1)
+                WeeklyActivity.increment_or_create(None, created_monday, session_count=1)
 
         # Update offset to end of file
         session.last_offset = f.tell()

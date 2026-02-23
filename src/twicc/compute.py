@@ -1257,12 +1257,15 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     user_message_count = 0
     last_relevant_kind: ItemKind | None = None
 
-    # Track activity counts and costs for real sessions (not subagents)
+    # Track activity counts, session counts, and costs for real sessions (not subagents)
     is_real_session = session.type == SessionType.SESSION
-    weekly_counts: Counter = Counter()  # week_monday (date) -> count
-    daily_counts: Counter = Counter()  # date -> count
+    weekly_user_message_counts: Counter = Counter()  # week_monday (date) -> count
+    daily_user_message_counts: Counter = Counter()  # date -> count
     weekly_costs: dict = {}  # week_monday (date iso str) -> Decimal cost
     daily_costs_map: dict = {}  # date iso str -> Decimal cost
+    # Session counts: {iso_date_string: 1} — at most one entry per session
+    weekly_session_counts: dict[str, int] = {}
+    daily_session_counts: dict[str, int] = {}
 
     # Track cost and context usage (deduplication by message_id)
     seen_message_ids: set[str] = set()
@@ -1297,6 +1300,12 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         item.timestamp = extract_item_timestamp(parsed)
         if first_timestamp is None and item.timestamp is not None:
             first_timestamp = item.timestamp
+            # Track session creation in activity counts (real sessions only)
+            if is_real_session:
+                created_date = first_timestamp.date()
+                created_monday = created_date - timedelta(days=created_date.weekday())
+                daily_session_counts[created_date.isoformat()] = 1
+                weekly_session_counts[created_monday.isoformat()] = 1
 
         # Compute cost and context usage
         compute_item_cost_and_usage(item, parsed, seen_message_ids)
@@ -1349,8 +1358,8 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             # Track activity counts (for real sessions only)
             if is_real_session and item.timestamp:
                 day_key, week_key = (d.isoformat() for d in item.activity_keys())
-                daily_counts[day_key] += 1
-                weekly_counts[week_key] += 1
+                daily_user_message_counts[day_key] += 1
+                weekly_user_message_counts[week_key] += 1
         elif item.kind == ItemKind.ASSISTANT_MESSAGE:
             last_relevant_kind = ItemKind.ASSISTANT_MESSAGE
 
@@ -1492,10 +1501,12 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         },
         'titles': session_titles,
         'project_directory': project_directory,
-        'activity_weekly': dict(weekly_counts) if weekly_counts else None,
-        'activity_daily': dict(daily_counts) if daily_counts else None,
+        'activity_weekly_user_message_counts': dict(weekly_user_message_counts) if weekly_user_message_counts else None,
+        'activity_daily_user_message_counts': dict(daily_user_message_counts) if daily_user_message_counts else None,
         'activity_weekly_costs': {k: str(v) for k, v in weekly_costs.items()} if weekly_costs else None,
         'activity_daily_costs': {k: str(v) for k, v in daily_costs_map.items()} if daily_costs_map else None,
+        'activity_weekly_session_counts': weekly_session_counts if weekly_session_counts else None,
+        'activity_daily_session_counts': daily_session_counts if daily_session_counts else None,
     }))
 
     connection.close()
@@ -1579,13 +1590,15 @@ def apply_compute_results(result_queue) -> None:
                 ensure_project_directory(project_id, project_directory)
 
             # 7. Update activity counters (only present for real sessions)
-            activity_weekly = msg.get('activity_weekly')
-            activity_daily = msg.get('activity_daily')
+            activity_weekly_user_message_counts = msg.get('activity_weekly_user_message_counts')
+            activity_daily_user_message_counts = msg.get('activity_daily_user_message_counts')
             activity_weekly_costs = msg.get('activity_weekly_costs')
             activity_daily_costs = msg.get('activity_daily_costs')
-            if project_id and (activity_weekly or activity_daily or activity_weekly_costs or activity_daily_costs):
+            activity_weekly_session_counts = msg.get('activity_weekly_session_counts')
+            activity_daily_session_counts = msg.get('activity_daily_session_counts')
+            if project_id and (activity_weekly_user_message_counts or activity_daily_user_message_counts or activity_weekly_costs or activity_daily_costs or activity_weekly_session_counts or activity_daily_session_counts):
                 from twicc.sync import apply_activity_counts
-                apply_activity_counts(project_id, activity_weekly, activity_daily, activity_weekly_costs, activity_daily_costs)
+                apply_activity_counts(project_id, activity_weekly_user_message_counts, activity_daily_user_message_counts, activity_weekly_costs, activity_daily_costs, activity_weekly_session_counts, activity_daily_session_counts)
 
             # 8. Update project total_cost
             if project_id:

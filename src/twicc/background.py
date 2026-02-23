@@ -449,13 +449,15 @@ def _apply_session_complete(msg: dict) -> None:
         ensure_project_git_root(project_id)
 
     # 8. Update activity counters (only present for real sessions, not subagents)
-    activity_weekly = msg.get('activity_weekly')
-    activity_daily = msg.get('activity_daily')
+    activity_weekly_user_message_counts = msg.get('activity_weekly_user_message_counts')
+    activity_daily_user_message_counts = msg.get('activity_daily_user_message_counts')
     activity_weekly_costs = msg.get('activity_weekly_costs')
     activity_daily_costs = msg.get('activity_daily_costs')
-    if project_id and (activity_weekly or activity_daily or activity_weekly_costs or activity_daily_costs):
+    activity_weekly_session_counts = msg.get('activity_weekly_session_counts')
+    activity_daily_session_counts = msg.get('activity_daily_session_counts')
+    if project_id and (activity_weekly_user_message_counts or activity_daily_user_message_counts or activity_weekly_costs or activity_daily_costs or activity_weekly_session_counts or activity_daily_session_counts):
         from twicc.sync import apply_activity_counts
-        apply_activity_counts(project_id, activity_weekly, activity_daily, activity_weekly_costs, activity_daily_costs)
+        apply_activity_counts(project_id, activity_weekly_user_message_counts, activity_daily_user_message_counts, activity_weekly_costs, activity_daily_costs, activity_weekly_session_counts, activity_daily_session_counts)
 
     # 9. Update project total_cost
     if project_id:

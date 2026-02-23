@@ -58,7 +58,7 @@ class Project(models.Model):
 
 
 class PeriodicActivity(models.Model):
-    """Pre-computed periodic user message count and costs, per project and global.
+    """Pre-computed periodic activity metrics, per project and global.
 
     Each row stores the data for a given date (Monday for week, for example)
     `project=NULL` means global (all projects combined).
@@ -73,6 +73,7 @@ class PeriodicActivity(models.Model):
     )
     date = models.DateField()
     user_message_count = models.PositiveIntegerField(default=0)
+    session_count = models.PositiveIntegerField(default=0)
     cost = models.DecimalField(max_digits=12, decimal_places=6, default=0)
 
     class Meta:
@@ -85,8 +86,11 @@ class PeriodicActivity(models.Model):
         ]
 
     @classmethod
-    def increment_or_create(cls, project_id: str | None, activity_date: date, user_message_count: int = 0, cost: Decimal = Decimal(0)) -> None:
-        """Atomically increment user_message_count/cost for a project+date, creating the row if needed.
+    def increment_or_create(
+        cls, project_id: str | None, activity_date: date,
+        user_message_count: int = 0, session_count: int = 0, cost: Decimal = Decimal(0),
+    ) -> None:
+        """Atomically increment counters for a project+date, creating the row if needed.
 
         Uses UPDATE first (common case), falls back to CREATE when the row doesn't exist.
         """
@@ -95,6 +99,8 @@ class PeriodicActivity(models.Model):
         update_kwargs = {}
         if user_message_count:
             update_kwargs["user_message_count"] = F("user_message_count") + user_message_count
+        if session_count:
+            update_kwargs["session_count"] = F("session_count") + session_count
         if cost:
             update_kwargs["cost"] = F("cost") + cost
         if not update_kwargs:
@@ -109,7 +115,8 @@ class PeriodicActivity(models.Model):
         updated = cls.objects.filter(**filters).update(**update_kwargs)
         if not updated:
             cls.objects.create(
-                project_id=project_id, date=activity_date, user_message_count=user_message_count, cost=cost,
+                project_id=project_id, date=activity_date,
+                user_message_count=user_message_count, session_count=session_count, cost=cost,
             )
 
     def __str__(self):
@@ -118,11 +125,11 @@ class PeriodicActivity(models.Model):
 
 
 class WeeklyActivity(PeriodicActivity):
-    """Pre-computed weekly user message count and costs, per project and global."""
+    """Pre-computed weekly activity metrics (messages, sessions, costs), per project and global."""
 
 
 class DailyActivity(PeriodicActivity):
-    """Pre-computed daily user message count and costs, per project and global."""
+    """Pre-computed daily activity metrics (messages, sessions, costs), per project and global."""
 
 
 class Session(models.Model):

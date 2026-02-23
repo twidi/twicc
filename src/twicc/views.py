@@ -790,14 +790,19 @@ def _format_weekly_activity(rows, current_monday):
     """Format sparse WeeklyActivity rows into a dense list with zero-filling.
 
     Args:
-        rows: Iterable of dicts with "date" (date object), "user_message_count" and "cost" keys.
+        rows: Iterable of dicts with "date" (date object), "user_message_count",
+            "session_count" and "cost" keys.
         current_monday: The Monday of the current week.
 
     Returns:
-        List of dicts with "date" (ISO date string), "user_message_count" and "cost" keys.
-        Leading zero-count weeks are trimmed, with up to 3 padding weeks.
+        List of dicts with "date" (ISO date string), "user_message_count",
+        "session_count" and "cost" keys.
+        Leading zero-activity weeks are trimmed, with up to 3 padding weeks.
     """
-    data_by_week = {row["date"]: (row["user_message_count"], row.get("cost", 0)) for row in rows}
+    data_by_week = {
+        row["date"]: (row["user_message_count"], row.get("session_count", 0), row.get("cost", 0))
+        for row in rows
+    }
 
     start_monday = current_monday - timedelta(weeks=_WEEKLY_ACTIVITY_MAX_WEEKS - 1)
 
@@ -805,8 +810,8 @@ def _format_weekly_activity(rows, current_monday):
     first_active_monday = None
     for i in range(_WEEKLY_ACTIVITY_MAX_WEEKS):
         monday = start_monday + timedelta(weeks=i)
-        user_message_count, cost = data_by_week.get(monday, (0, 0))
-        if user_message_count > 0 or cost:
+        user_message_count, session_count, cost = data_by_week.get(monday, (0, 0, 0))
+        if user_message_count > 0 or session_count > 0 or cost:
             first_active_monday = monday
             break
 
@@ -817,20 +822,22 @@ def _format_weekly_activity(rows, current_monday):
     result = []
     monday = first_active_monday
     while monday <= current_monday:
-        user_message_count, cost = data_by_week.get(monday, (0, 0))
+        user_message_count, session_count, cost = data_by_week.get(monday, (0, 0, 0))
         result.append({
             "date": monday.isoformat(),
             "user_message_count": user_message_count,
+            "session_count": session_count,
             "cost": str(cost) if cost else "0",
         })
         monday += timedelta(weeks=1)
 
-    # Pad with leading zero-count weeks (up to 3) to approach max weeks
+    # Pad with leading zero-activity weeks (up to 3) to approach max weeks
     padding = min(_WEEKLY_ACTIVITY_MAX_WEEKS - len(result), 3)
     for i in range(padding, 0, -1):
         result.insert(0, {
             "date": (first_active_monday - timedelta(weeks=i)).isoformat(),
             "user_message_count": 0,
+            "session_count": 0,
             "cost": "0",
         })
 
@@ -843,7 +850,7 @@ def home_data(request):
     Returns:
         {
             "projects": [ { ...project..., "weekly_activity": [...] }, ... ],
-            "global_weekly_activity": [ { "date": "...", "user_message_count": N }, ... ]
+            "global_weekly_activity": [ { "date": "...", "user_message_count": N, "session_count": N }, ... ]
         }
     """
     today = timezone.now().date()
@@ -855,7 +862,7 @@ def home_data(request):
     # Load all weekly activities in a single query (within the 52-week window)
     all_activities = WeeklyActivity.objects.filter(
         date__gte=cutoff,
-    ).values("project_id", "date", "user_message_count", "cost")
+    ).values("project_id", "date", "user_message_count", "session_count", "cost")
 
     # Group by project_id (None = global)
     from collections import defaultdict
@@ -889,14 +896,14 @@ def daily_activity(request, project_id=None):
     """GET /api/daily-activity/ or /api/projects/<id>/daily-activity/
 
     Returns daily activity data for the contribution graph.
-    Only days with user_message_count > 0 are returned (sparse format).
+    Sparse format: only days with activity are returned.
     The frontend heatmap component handles missing days as empty cells.
 
     If project_id is provided, returns per-project data.
     If project_id is omitted, returns global data (all projects).
 
     Returns:
-        { "daily_activity": [ { "date": "YYYY-MM-DD", "user_message_count": N }, ... ] }
+        { "daily_activity": [ { "date": "YYYY-MM-DD", "user_message_count": N, "session_count": N, "cost": "X.XX" }, ... ] }
     """
     today = timezone.now().date()
     cutoff = today - timedelta(days=_DAILY_ACTIVITY_MAX_DAYS - 1)
@@ -910,12 +917,17 @@ def daily_activity(request, project_id=None):
     rows = (
         DailyActivity.objects.filter(**filters)
         .order_by("date")
-        .values("date", "user_message_count", "cost")
+        .values("date", "user_message_count", "session_count", "cost")
     )
 
     return JsonResponse({
         "daily_activity": [
-            {"date": row["date"].isoformat(), "user_message_count": row["user_message_count"], "cost": str(row["cost"]) if row["cost"] else "0"}
+            {
+                "date": row["date"].isoformat(),
+                "user_message_count": row["user_message_count"],
+                "session_count": row["session_count"],
+                "cost": str(row["cost"]) if row["cost"] else "0",
+            }
             for row in rows
         ],
     })
