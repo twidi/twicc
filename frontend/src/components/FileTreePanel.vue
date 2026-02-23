@@ -808,7 +808,6 @@ defineExpose({
                     >
                         <wa-icon name="sliders"></wa-icon>
                     </wa-button>
-                    <AppTooltip :for="fileOptionsButtonId">File options</AppTooltip>
 
                     <!-- Parent-specific options (injected via slot) -->
                     <slot name="options-before" />
@@ -838,6 +837,7 @@ defineExpose({
                         Refresh
                     </wa-dropdown-item>
                 </wa-dropdown>
+                <AppTooltip :for="fileOptionsButtonId">Files options</AppTooltip>
                 <wa-input
                     ref="searchInputRef"
                     :value="searchQuery"

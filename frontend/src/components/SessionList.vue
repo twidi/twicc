@@ -563,6 +563,7 @@ defineExpose({
                     }"
                 >
                     <wa-button
+                        :id="`session-button-${session.id}`"
                         :appearance="session.id === sessionId ? 'outlined' : 'plain'"
                         :variant="session.id === sessionId ? 'brand' : 'neutral'"
                         class="session-item"
@@ -584,8 +585,7 @@ defineExpose({
                             <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
                             <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
                             <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
-                            <span :id="`session-name-${session.id}`" class="session-name">{{ getSessionDisplayName(session) }}</span>
-                            <AppTooltip :for="`session-name-${session.id}`">{{ session.title || session.id }}</AppTooltip>
+                            <span class="session-name">{{ getSessionDisplayName(session) }}</span>
                             <!-- Compact mode: inline process indicator -->
                             <ProcessIndicator
                                 v-if="compactView && !session.draft && getProcessState(session.id)"
@@ -654,6 +654,7 @@ defineExpose({
                         <AppTooltip :for="`session-mtime-${session.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(session.mtime, { smart: true })}` : 'Last activity' }}</AppTooltip>
                         </div>
                     </wa-button>
+                    <AppTooltip :for="`session-button-${session.id}`" placement="right">{{ session.title || session.id }}</AppTooltip>
                     <!-- Session dropdown menu (outside button to avoid nesting issues) -->
                     <wa-dropdown
                         class="session-menu"
@@ -670,7 +671,6 @@ defineExpose({
                         >
                             <wa-icon name="ellipsis" label="Session menu"></wa-icon>
                         </wa-button>
-                        <AppTooltip :for="`session-menu-trigger-${session.id}`">Session actions</AppTooltip>
                         <!-- Standard actions -->
                         <wa-dropdown-item value="rename">
                             <wa-icon slot="icon" name="pencil"></wa-icon>
@@ -705,6 +705,7 @@ defineExpose({
                             </wa-dropdown-item>
                         </template>
                     </wa-dropdown>
+                    <AppTooltip :for="`session-menu-trigger-${session.id}`">Session actions</AppTooltip>
                 </div>
             </template>
         </VirtualScroller>

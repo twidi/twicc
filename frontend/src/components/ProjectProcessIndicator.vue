@@ -14,7 +14,7 @@
  * Used in project list (home page) and project selector to quickly identify
  * which projects require attention.
  */
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import { useDataStore } from '../stores/data'
 import AppTooltip from './AppTooltip.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
@@ -50,6 +50,9 @@ const tooltipText = computed(() => {
     return `${count} active Claude Code session${count !== 1 ? 's' : ''}`
 })
 
+// Unique ID for this instance (avoids collisions when multiple instances exist for the same project)
+const indicatorId = useId()
+
 // Only assistant_turn should animate in this context
 const animateStates = ['assistant_turn']
 </script>
@@ -58,11 +61,11 @@ const animateStates = ['assistant_turn']
     <!-- Only render if there's an active process state for this project -->
     <template v-if="projectState">
         <ProcessIndicator
-            :id="`project-process-${projectId}`"
+            :id="indicatorId"
             :state="projectState"
             :size="size"
             :animate-states="animateStates"
         />
-        <AppTooltip :for="`project-process-${projectId}`">{{ tooltipText }}</AppTooltip>
+        <AppTooltip :for="indicatorId">{{ tooltipText }}</AppTooltip>
     </template>
 </template>

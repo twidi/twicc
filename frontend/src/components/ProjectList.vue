@@ -100,9 +100,10 @@ function handleEditClick(event, project) {
                         </span>
                         <AppTooltip :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</AppTooltip>
                     </div>
-                    <div class="project-graph">
+                    <div :id="`project-sparkline-${project.id}`" class="project-graph">
                         <ActivitySparkline :id-suffix="project.id" :data="store.weeklyActivity[project.id] || []" />
                     </div>
+                    <AppTooltip :for="`project-sparkline-${project.id}`">Project activity</AppTooltip>
                 </div>
             </div>
         </wa-card>

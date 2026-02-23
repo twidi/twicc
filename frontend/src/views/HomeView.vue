@@ -6,6 +6,7 @@ import ProjectList from '../components/ProjectList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
 import ActivitySparkline from '../components/ActivitySparkline.vue'
+import AppTooltip from '../components/AppTooltip.vue'
 
 const router = useRouter()
 const store = useDataStore()
@@ -35,7 +36,10 @@ async function handleRetry() {
     <div class="home-view">
         <header class="home-header">
             <h1>Claude Code Projects</h1>
-            <ActivitySparkline :data="globalWeeklyActivity" class="global-sparkline" />
+            <span id="home-global-sparkline" class="global-sparkline">
+                <ActivitySparkline :data="globalWeeklyActivity" />
+            </span>
+            <AppTooltip for="home-global-sparkline">Overall activity</AppTooltip>
             <router-link :to="{ name: 'projects-all' }" class="view-all-link">
                 View all sessions ({{ totalSessionsCount }})
             </router-link>

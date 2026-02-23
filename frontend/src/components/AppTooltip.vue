@@ -9,15 +9,27 @@
  * Usage:
  *   <AppTooltip :for="elementId">Tooltip text</AppTooltip>
  *
+ * Props:
+ *   - force: When true, the tooltip is always shown regardless of the
+ *     tooltipsEnabled setting. Use for critical UI elements like quota
+ *     indicators where the tooltip provides essential information.
+ *
  * All extra attributes are forwarded to the underlying <wa-tooltip>.
  */
 import { computed } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 
+const props = defineProps({
+    force: {
+        type: Boolean,
+        default: false,
+    },
+})
+
 const settingsStore = useSettingsStore()
-const tooltipsEnabled = computed(() => settingsStore.areTooltipsEnabled)
+const shouldShow = computed(() => props.force || settingsStore.areTooltipsEnabled)
 </script>
 
 <template>
-    <wa-tooltip v-if="tooltipsEnabled" v-bind="$attrs"><slot /></wa-tooltip>
+    <wa-tooltip v-if="shouldShow" v-bind="$attrs"><slot /></wa-tooltip>
 </template>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
+import { computed, useId, type CSSProperties } from 'vue'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import { useTableContext } from '../../composables/useTableContext'
+import AppTooltip from '../../../AppTooltip.vue'
 
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,8 @@ const { timestampFormat } = useTableContext()
 // Computed
 // ---------------------------------------------------------------------------
 
+const timestampId = useId()
+
 const formattedTimestamp = computed(() => {
   const commitDate = dayjs.utc(props.timestamp)
 
@@ -43,15 +46,22 @@ const formattedTimestamp = computed(() => {
 
   return commitDate.fromNow()
 })
+
+const fullTimestamp = computed(() => {
+  if (props.isPlaceholder) return undefined
+  return dayjs.utc(props.timestamp).format('YYYY-MM-DD HH:mm:ss')
+})
 </script>
 
 <template>
   <div
+    :id="timestampId"
     :style="style"
     class="timestamp"
   >
     {{ isPlaceholder ? '-' : formattedTimestamp }}
   </div>
+  <AppTooltip v-if="fullTimestamp" :for="timestampId">{{ fullTimestamp }}</AppTooltip>
 </template>
 
 <style scoped>

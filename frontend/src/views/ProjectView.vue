@@ -741,9 +741,9 @@ function updateSidebarClosedClass(closed) {
                             <ProjectBadge :project-id="p.id" />
                         </wa-dropdown-item>
                     </wa-dropdown>
+                    <AppTooltip for="new-session-button">Create a new session in this project</AppTooltip>
+                    <AppTooltip for="new-session-project-picker">Choose a different project</AppTooltip>
                 </wa-button-group>
-                <AppTooltip for="new-session-button">Create a new session in this project</AppTooltip>
-                <AppTooltip for="new-session-project-picker">Choose a different project</AppTooltip>
 
                 <!-- In all projects mode: dropdown to choose project -->
                 <wa-dropdown
@@ -754,6 +754,7 @@ function updateSidebarClosedClass(closed) {
                     @wa-select="(e) => handleNewSession(e.detail.item.value)"
                 >
                     <wa-button
+                        id="new-session-all-projects-button"
                         slot="trigger"
                         variant="brand"
                         appearance="accent"
@@ -771,6 +772,7 @@ function updateSidebarClosedClass(closed) {
                         <ProjectBadge :project-id="p.id" />
                     </wa-dropdown-item>
                 </wa-dropdown>
+                <AppTooltip v-if="isAllProjectsMode" for="new-session-all-projects-button">Create a new session</AppTooltip>
             </div>
 
             <wa-divider></wa-divider>
@@ -788,7 +790,7 @@ function updateSidebarClosedClass(closed) {
                             <wa-relative-time v-if="quotaFiveHour.resetsAt" class="usage-quota-reset" :date.prop="resetsAtToDate(quotaFiveHour.resetsAt)" format="short" numeric="always" sync></wa-relative-time>
                         </div>
                     </div>
-                    <AppTooltip v-if="quotaFiveHour" for="quota-five-hour" hoist>
+                    <AppTooltip v-if="quotaFiveHour" for="quota-five-hour" hoist force>
                         <div class="quota-tooltip">
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Usage</span><span>{{ (quotaFiveHour.utilization ?? 0).toFixed(1) }}%</span></div>
                             <div class="quota-tooltip-note" v-if="!quotaFiveHour.resetsAt"><wa-icon name="info-circle"></wa-icon> Period not started yet</div>
@@ -819,7 +821,7 @@ function updateSidebarClosedClass(closed) {
                             <wa-relative-time v-if="quotaSevenDay.resetsAt" class="usage-quota-reset" :date.prop="resetsAtToDate(quotaSevenDay.resetsAt)" format="short" numeric="always" sync></wa-relative-time>
                         </div>
                     </div>
-                    <AppTooltip v-if="quotaSevenDay" for="quota-seven-day" hoist>
+                    <AppTooltip v-if="quotaSevenDay" for="quota-seven-day" hoist force>
                         <div class="quota-tooltip">
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Usage</span><span>{{ (quotaSevenDay.utilization ?? 0).toFixed(1) }}%</span></div>
                             <div class="quota-tooltip-note" v-if="!quotaSevenDay.resetsAt"><wa-icon name="info-circle"></wa-icon> Period not started yet</div>
@@ -850,7 +852,7 @@ function updateSidebarClosedClass(closed) {
                             <wa-relative-time class="usage-quota-reset" :date.prop="extraUsageResetDate()" format="short" numeric="always" sync></wa-relative-time>
                         </div>
                     </div>
-                    <AppTooltip v-if="quotaExtraUsage" for="quota-extra-usage" hoist>
+                    <AppTooltip v-if="quotaExtraUsage" for="quota-extra-usage" hoist force>
                         <div class="quota-tooltip">
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Used</span><span>{{ quotaExtraUsage.usedCredits ?? 0 }} credits</span></div>
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Monthly limit</span><span>{{ quotaExtraUsage.monthlyLimit ?? '?' }} credits</span></div>
@@ -859,7 +861,7 @@ function updateSidebarClosedClass(closed) {
                         </div>
                     </AppTooltip>
                     <wa-icon v-if="quotaIsStale" id="quota-stale-warning" name="triangle-exclamation" class="quota-stale-icon"></wa-icon>
-                    <AppTooltip v-if="quotaIsStale" for="quota-stale-warning" hoist>
+                    <AppTooltip v-if="quotaIsStale" for="quota-stale-warning" hoist force>
                         <div class="quota-tooltip">
                             <div class="quota-stale-header"><wa-icon name="triangle-exclamation" class="quota-stale-header-icon"></wa-icon><span>Data may be outdated</span></div>
                             <div class="quota-tooltip-row"><span class="quota-tooltip-label">Last update</span><span>{{ quotaLastUpdateFormatted }}</span></div>

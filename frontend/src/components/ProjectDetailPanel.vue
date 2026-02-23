@@ -117,20 +117,24 @@ function handleEditClick() {
                 <div class="detail-title-row">
                     <template v-if="!isAllProjectsMode">
                         <ProjectBadge :project-id="projectId" class="detail-title" />
-                        <ActivitySparkline
-                            :id-suffix="`${projectId}-detail`"
-                            :data="weeklyActivity"
-                            class="detail-sparkline"
-                        />
+                        <span :id="`detail-sparkline-${projectId}`" class="detail-sparkline">
+                            <ActivitySparkline
+                                :id-suffix="`${projectId}-detail`"
+                                :data="weeklyActivity"
+                            />
+                        </span>
+                        <AppTooltip :for="`detail-sparkline-${projectId}`">Project activity</AppTooltip>
                         <ProjectProcessIndicator :project-id="projectId" size="small" />
                     </template>
                     <template v-else>
                         <h2 class="detail-title all-projects-title">{{ displayName }}</h2>
-                        <ActivitySparkline
-                            id-suffix="all-projects-detail"
-                            :data="weeklyActivity"
-                            class="detail-sparkline"
-                        />
+                        <span id="detail-sparkline-all-projects" class="detail-sparkline">
+                            <ActivitySparkline
+                                id-suffix="all-projects-detail"
+                                :data="weeklyActivity"
+                            />
+                        </span>
+                        <AppTooltip for="detail-sparkline-all-projects">Overall activity</AppTooltip>
                     </template>
                 </div>
                 <wa-button
