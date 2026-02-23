@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount, useId } from 'vue'
+import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount, useId, onActivated } from 'vue'
 import { useMonaco } from '@guolao/vue-monaco-editor'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
@@ -32,6 +32,10 @@ const props = defineProps({
     diffReadOnly: {
         type: Boolean,
         default: true,  // true for commit diffs, false for index (editable)
+    },
+    active: {
+        type: Boolean,
+        default: true,
     },
 })
 
@@ -96,6 +100,7 @@ const isEditing = ref(false)
 const saving = ref(false)
 const saveError = ref(null)
 const editSwitchRef = ref(null)
+const wordWrapSwitchRef = ref(null)
 const sideBySideSwitchRef = ref(null)
 
 // --- Diff navigation ---
@@ -141,6 +146,10 @@ function goToNextDiff() {
     navigateDiff('next')
 }
 
+// --- Word wrap state ---
+// Initialize from settings store; local ref allows per-session override via the toggle.
+const wordWrap = ref(settingsStore.isEditorWordWrap)
+
 // --- Diff layout state ---
 // Initialize from settings store; local ref allows per-session override via the toggle.
 const sideBySide = ref(settingsStore.isDiffSideBySide)
@@ -157,7 +166,14 @@ onMounted(() => {
     if (editorAreaRef.value) {
         resizeObserver = new ResizeObserver((entries) => {
             for (const entry of entries) {
-                editorAreaWidth.value = entry.contentRect.width
+                // Ignore zero-width reports from hidden panels (wa-tab-panel
+                // sets display:none, collapsing dimensions to 0). Without this
+                // guard, canSideBySide would flip to false, destroying the
+                // side-by-side switch via v-if, and the new switch created when
+                // the panel becomes visible again would lose its checked state.
+                if (entry.contentRect.width > 0) {
+                    editorAreaWidth.value = entry.contentRect.width
+                }
             }
         })
         resizeObserver.observe(editorAreaRef.value)
@@ -209,7 +225,7 @@ const editorOptions = computed(() => ({
     fontSize: settingsStore.getFontSize,
     lineNumbers: 'on',
     folding: true,
-    wordWrap: 'on',
+    wordWrap: wordWrap.value ? 'on' : 'off',
 }))
 
 const diffEditorOptions = computed(() => ({
@@ -223,7 +239,7 @@ const diffEditorOptions = computed(() => ({
     minimap: { enabled: editorAreaWidth.value > MINIMAP_EDITOR_MIN_WIDTH },
     scrollBeyondLastLine: false,
     fontSize: settingsStore.getFontSize,
-    wordWrap: 'on',
+    wordWrap: wordWrap.value ? 'on' : 'off',
     hideUnchangedRegions: {
         enabled: true,
     },
@@ -354,6 +370,48 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
     }
 }
 
+// Sync all wa-switch checked states whenever the header first appears in the DOM.
+watch(showHeader, (visible) => {
+    if (visible) {
+        syncEditSwitch()
+        syncWordWrapSwitch()
+        syncSideBySideSwitch()
+    }
+}, { immediate: true })
+
+// Markdown preview toggle: Wrap and Side-by-side switches use v-if="!showMarkdownPreview"
+// so they are destroyed when the preview is activated and recreated when it's deactivated.
+// The newly created wa-switch elements need their checked state synced.
+watch(showMarkdownPreview, (previewing) => {
+    if (!previewing) {
+        syncWordWrapSwitch()
+        syncSideBySideSwitch()
+    }
+})
+
+// KeepAlive reactivation: wa-switch web components lose their visual checked
+// state when hidden by wa-tab-panel. Re-sync when the component becomes active again.
+onActivated(() => {
+    syncEditSwitch()
+    syncWordWrapSwitch()
+    syncSideBySideSwitch()
+})
+
+// Tab switch within the same session: wa-tab-panel hides/shows panels via
+// display:none which can desync wa-switch visual state. The `active` prop
+// is set by the parent (FilesPanel/GitPanel) and reflects the tab visibility.
+// We use requestAnimationFrame to ensure the wa-tab-panel has finished its
+// display transition before re-syncing the switches.
+watch(() => props.active, (isActive) => {
+    if (isActive) {
+        requestAnimationFrame(() => {
+            syncEditSwitch()
+            syncWordWrapSwitch()
+            syncSideBySideSwitch()
+        })
+    }
+})
+
 watch(() => props.filePath, async (newPath) => {
     if (!newPath) {
         currentContent.value = ''
@@ -374,7 +432,6 @@ watch(() => props.filePath, async (newPath) => {
     // In diff mode, content is passed via props — don't fetch.
     if (props.diffMode) {
         currentContent.value = props.modifiedContent ?? ''
-        syncSideBySideSwitch()
         return
     }
 
@@ -526,22 +583,23 @@ async function revert() {
     await fetchFileContent(props.filePath, { isSwitch: true })
 }
 
-// Sync wa-switch checked state (Web Component doesn't always pick up Vue reactive state)
-function syncEditSwitch() {
-    nextTick(() => {
-        if (editSwitchRef.value && editSwitchRef.value.checked !== isEditing.value) {
-            editSwitchRef.value.checked = isEditing.value
-        }
-    })
+// Sync wa-switch checked state.
+// Web Components (Lit-based) need `updateComplete` before setting `.checked`
+// has a visual effect — a simple nextTick only updates the Vue DOM, but the
+// custom element may not have finished its first render yet.
+async function syncSwitch(switchRef, value) {
+    await nextTick()
+    const el = switchRef.value
+    if (!el) return
+    if (el.updateComplete) await el.updateComplete
+    if (el.checked !== value) {
+        el.checked = value
+    }
 }
 
-function syncSideBySideSwitch() {
-    nextTick(() => {
-        if (sideBySideSwitchRef.value && sideBySideSwitchRef.value.checked !== sideBySide.value) {
-            sideBySideSwitchRef.value.checked = sideBySide.value
-        }
-    })
-}
+function syncEditSwitch() { syncSwitch(editSwitchRef, isEditing.value) }
+function syncSideBySideSwitch() { syncSwitch(sideBySideSwitchRef, sideBySide.value) }
+function syncWordWrapSwitch() { syncSwitch(wordWrapSwitchRef, wordWrap.value) }
 
 // Expose dirty state so parent components can check for unsaved changes
 defineExpose({ isDirty })
@@ -621,11 +679,17 @@ function formatSize(bytes) {
             <div class="header-right">
                 <wa-spinner v-if="switching" class="header-spinner"></wa-spinner>
                 <wa-switch
+                    ref="wordWrapSwitchRef"
+                    v-if="!showMarkdownPreview"
+                    size="small"
+                    @change="wordWrap = $event.target.checked"
+                >Wrap</wa-switch>
+                <wa-switch
                     ref="sideBySideSwitchRef"
                     v-if="diffMode && !showMarkdownPreview && canSideBySide"
                     size="small"
                     class="diff-layout-toggle"
-                    @change="sideBySide = $event.target.checked; settingsStore.setDiffSideBySide($event.target.checked)"
+                    @change="sideBySide = $event.target.checked"
                 >Side by side</wa-switch>
                 <!-- Markdown preview toggle: shown for .md files when not editing -->
                 <wa-button

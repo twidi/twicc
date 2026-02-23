@@ -676,6 +676,7 @@ onMounted(() => {
                             :project-id="projectId"
                             :session-id="sessionId"
                             :file-path="selectedFilePath"
+                            :active="active"
                             diff-mode
                             :original-content="diffData.original"
                             :modified-content="diffData.modified"

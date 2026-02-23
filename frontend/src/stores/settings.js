@@ -28,6 +28,7 @@ const SETTINGS_SCHEMA = {
     autoUnpinOnArchive: true,
     terminalUseTmux: false,
     diffSideBySide: true,
+    editorWordWrap: true,
     compactSessionList: false,
     // Notification settings: sound + browser notification for each event type
     notifUserTurnSound: NOTIFICATION_SOUNDS.NONE,
@@ -58,6 +59,7 @@ const SETTINGS_VALIDATORS = {
     autoUnpinOnArchive: (v) => typeof v === 'boolean',
     terminalUseTmux: (v) => typeof v === 'boolean',
     diffSideBySide: (v) => typeof v === 'boolean',
+    editorWordWrap: (v) => typeof v === 'boolean',
     compactSessionList: (v) => typeof v === 'boolean',
     notifUserTurnSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
     notifUserTurnBrowser: (v) => typeof v === 'boolean',
@@ -141,6 +143,7 @@ export const useSettingsStore = defineStore('settings', {
         isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
         isTerminalUseTmux: (state) => state.terminalUseTmux,
         isDiffSideBySide: (state) => state.diffSideBySide,
+        isEditorWordWrap: (state) => state.editorWordWrap,
         isCompactSessionList: (state) => state.compactSessionList,
         getNotifUserTurnSound: (state) => state.notifUserTurnSound,
         isNotifUserTurnBrowser: (state) => state.notifUserTurnBrowser,
@@ -289,6 +292,16 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set editor word wrap mode.
+         * @param {boolean} enabled
+         */
+        setEditorWordWrap(enabled) {
+            if (SETTINGS_VALIDATORS.editorWordWrap(enabled)) {
+                this.editorWordWrap = enabled
+            }
+        },
+
+        /**
          * Set compact session list mode.
          * @param {boolean} enabled
          */
@@ -388,6 +401,7 @@ export function initSettings() {
             autoUnpinOnArchive: store.autoUnpinOnArchive,
             terminalUseTmux: store.terminalUseTmux,
             diffSideBySide: store.diffSideBySide,
+            editorWordWrap: store.editorWordWrap,
             compactSessionList: store.compactSessionList,
             notifUserTurnSound: store.notifUserTurnSound,
             notifUserTurnBrowser: store.notifUserTurnBrowser,

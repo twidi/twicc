@@ -56,6 +56,10 @@ const apiPrefix = computed(() => {
 // Lazy init: defer all loading until the tab becomes active for the first time
 const started = ref(false)
 
+// Template ref for the FileTreePanel child component — declared early because
+// immediate watchers below may reference it before the "File selection" section.
+const fileTreePanelRef = ref(null)
+
 // ─── Root directory selection ────────────────────────────────────────────────
 
 /**
@@ -309,8 +313,6 @@ async function refresh() {
 
 // ─── File selection ──────────────────────────────────────────────────────────
 
-const fileTreePanelRef = ref(null)
-
 /**
  * Selected file relative path — proxied from the FileTreePanel ref.
  */
@@ -488,6 +490,7 @@ onMounted(() => {
                     :project-id="projectId"
                     :session-id="sessionId"
                     :file-path="selectedAbsPath"
+                    :active="active"
                     :is-draft="isDraft"
                 />
                 <div v-show="!selectedFile" class="panel-placeholder">

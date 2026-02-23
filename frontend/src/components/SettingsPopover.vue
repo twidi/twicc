@@ -53,6 +53,7 @@ const titleSystemPromptTextarea = ref(null)
 const tmuxSwitch = ref(null)
 const compactSessionListSwitch = ref(null)
 const diffSideBySideSwitch = ref(null)
+const editorWordWrapSwitch = ref(null)
 const notificationSettingsRef = ref(null)
 
 // Settings from store
@@ -69,6 +70,7 @@ const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 const terminalUseTmux = computed(() => store.isTerminalUseTmux)
 const compactSessionList = computed(() => store.isCompactSessionList)
 const diffSideBySide = computed(() => store.isDiffSideBySide)
+const editorWordWrap = computed(() => store.isEditorWordWrap)
 
 // Check if the current prompt is the default
 const isDefaultPrompt = computed(() => titleSystemPrompt.value === DEFAULT_TITLE_SYSTEM_PROMPT)
@@ -124,11 +126,14 @@ function syncSwitchState() {
         if (diffSideBySideSwitch.value && diffSideBySideSwitch.value.checked !== diffSideBySide.value) {
             diffSideBySideSwitch.value.checked = diffSideBySide.value
         }
+        if (editorWordWrapSwitch.value && editorWordWrapSwitch.value.checked !== editorWordWrap.value) {
+            editorWordWrapSwitch.value.checked = editorWordWrap.value
+        }
     })
 }
 
 // Watch for store changes and sync switches
-watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide], syncSwitchState, { immediate: true })
+watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide, editorWordWrap], syncSwitchState, { immediate: true })
 
 /**
  * Handle display mode change.
@@ -219,6 +224,13 @@ function onCompactSessionListChange(event) {
  */
 function onDiffSideBySideChange(event) {
     store.setDiffSideBySide(event.target.checked)
+}
+
+/**
+ * Toggle editor word wrap default.
+ */
+function onEditorWordWrapChange(event) {
+    store.setEditorWordWrap(event.target.checked)
 }
 
 /**
@@ -413,6 +425,15 @@ function onPopoverShow() {
                 <!-- Editor Section -->
                 <section class="settings-section">
                     <h3 class="settings-section-title">Editor</h3>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Word wrap</label>
+                        <wa-switch
+                            ref="editorWordWrapSwitch"
+                            @change="onEditorWordWrapChange"
+                            size="small"
+                        >Enabled</wa-switch>
+                        <span class="setting-group-hint">Wrap long lines in the editor.</span>
+                    </div>
                     <div class="setting-group">
                         <label class="setting-group-label">Default diff layout</label>
                         <wa-switch
