@@ -154,7 +154,7 @@ const indexCommit = computed<Commit | undefined>(() => {
     parents: [headCommit.value.hash],
     children: [],
     authorDate: today,
-    message: '// WIP',
+    message: 'Uncommitted changes',
     committerDate: today,
     isBranchTip: false,
   } as Commit

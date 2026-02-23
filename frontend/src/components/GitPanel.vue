@@ -266,10 +266,53 @@ function findFirstFile(node, parentPath = '') {
     return null
 }
 
+/**
+ * Check whether a relative file path exists in a tree.
+ * The targetPath should NOT include the root node name (matches the format
+ * of selectedFile which has the rootPath stripped by FileTreePanel).
+ */
+function fileExistsInTree(node, targetPath) {
+    if (!node) return false
+    // Start searching from the root's children, skipping the root name itself
+    function search(n, parentPath) {
+        const currentPath = parentPath ? `${parentPath}/${n.name}` : n.name
+        if (n.type === 'file' && currentPath === targetPath) return true
+        if (n.children) {
+            for (const child of n.children) {
+                if (search(child, currentPath)) return true
+            }
+        }
+        return false
+    }
+    // Search children of the root node (root name = rootPath, stripped from selectedFile)
+    if (node.children) {
+        for (const child of node.children) {
+            if (search(child, '')) return true
+        }
+    }
+    return false
+}
+
+// When set, the displayTree watcher will try to keep the current file
+// selection instead of auto-selecting the first file.
+let _preserveFileSelection = false
+
 // Re-run search and auto-select first file when the tree data changes
 // (e.g. switching between index and commit)
 watch(displayTree, (tree) => {
     fileTreePanelRef.value?.clearSearch()
+
+    if (tree && _preserveFileSelection) {
+        _preserveFileSelection = false
+        // Keep the current file if it still exists in the new tree.
+        // Don't fetch diff here — the caller (refreshIndexFiles or the
+        // active watcher) handles diff refresh separately.
+        const current = selectedFile.value
+        if (current && fileExistsInTree(tree, current)) {
+            return
+        }
+    }
+    _preserveFileSelection = false
 
     // Auto-select first file in the new tree
     if (tree) {
@@ -466,15 +509,70 @@ async function refreshGitLog() {
 }
 
 // ---------------------------------------------------------------------------
-// Lazy init: fetch only when the tab becomes active for the first time
+// Lazy init + auto-refresh when the tab becomes active
 // ---------------------------------------------------------------------------
+
+// Snapshot of the selected file when the tab is deactivated, so we can
+// restore it after a refresh.  We cannot rely on the computed selectedFile
+// at reactivation time because intermediate reactive updates (displayTree
+// watcher, etc.) may have already reset it to the first file.
+let _savedFileBeforeDeactivation = null
 
 watch(
     () => props.active,
-    (active) => {
-        if (active && !started.value) {
+    async (active) => {
+        if (!active) {
+            // Save current file selection before leaving the tab
+            _savedFileBeforeDeactivation = selectedFile.value
+            return
+        }
+
+        if (!started.value) {
+            // First activation: full initial fetch
             started.value = true
             fetchGitLog()
+            return
+        }
+
+        // Subsequent activations: refresh keeping current state
+        const previousFile = _savedFileBeforeDeactivation
+        const isViewingIndexBefore =
+            !selectedCommit.value || selectedCommit.value.hash === 'index'
+
+        _preserveFileSelection = true
+        await refreshGitLog()
+
+        // If a commit was selected, check it still exists in the new data
+        if (selectedCommit.value && selectedCommit.value.hash !== 'index') {
+            const stillExists = entries.value.some(
+                (e) => e.hash === selectedCommit.value.hash,
+            )
+            if (!stillExists) {
+                selectedCommit.value = null
+            }
+        }
+
+        // If viewing uncommitted changes, refresh the file tree & diff
+        if (isViewingIndexBefore) {
+            _preserveFileSelection = true
+            await refreshIndexFiles()
+        }
+
+        // Restore file selection & diff.  The displayTree watcher may have
+        // already re-selected the file via the _preserveFileSelection flag,
+        // but we do an authoritative fetchDiff at the end to be sure.
+        const tree = displayTree.value
+        if (previousFile && tree && fileExistsInTree(tree, previousFile)) {
+            // Re-select the file in the tree panel (builds the full path)
+            const rootPath = tree.name
+            const fullPath = rootPath ? `${rootPath}/${previousFile}` : previousFile
+            nextTick(() => {
+                fileTreePanelRef.value?.onFileSelect(fullPath)
+            })
+        } else if (!tree || !findFirstFile(tree)) {
+            // Tree is empty or null (e.g. no uncommitted changes left):
+            // clear stale diff data so Monaco doesn't show old content.
+            diffData.value = null
         }
     },
     { immediate: true },
