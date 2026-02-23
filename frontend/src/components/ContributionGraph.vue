@@ -1,7 +1,7 @@
 <script setup>
 // ContributionGraph.vue - Pure presentation component for a GitHub-style contribution heatmap.
 // Receives pre-fetched daily activity data via props.
-// Supports two modes: 'messages' (user message count) and 'cost' (USD cost).
+// Supports three modes: 'messages' (user message count), 'sessions' (session count), and 'cost' (USD cost).
 // Colors come from CSS custom properties (--sparkline-project-gradient-color-0..4),
 // read reactively when the effective theme changes via settingsStore.
 
@@ -12,20 +12,21 @@ import 'vue3-calendar-heatmap/dist/style.css'
 import { useSettingsStore } from '../stores/settings'
 
 const props = defineProps({
-    /** Daily activity data: array of { date, user_message_count, cost } */
+    /** Daily activity data: array of { date, user_message_count, session_count, cost } */
     dailyActivity: {
         type: Array,
         required: true,
     },
-    /** Display mode: 'messages' for user message count, 'cost' for USD cost */
+    /** Display mode: 'messages' for user message count, 'sessions' for session count, 'cost' for USD cost */
     mode: {
         type: String,
         default: 'messages',
-        validator: v => ['messages', 'cost'].includes(v),
+        validator: v => ['messages', 'sessions', 'cost'].includes(v),
     },
 })
 
 const isCostMode = computed(() => props.mode === 'cost')
+const isSessionsMode = computed(() => props.mode === 'sessions')
 
 const settingsStore = useSettingsStore()
 
@@ -68,16 +69,23 @@ const rangeColor = computed(() => {
 const endDate = computed(() => new Date())
 
 const heatmapValues = computed(() => {
-    return props.dailyActivity.map(d => ({
-        date: d.date,
-        // CalendarHeatmap uses 'count' internally; in cost mode, map cost to count
-        count: isCostMode.value ? parseFloat(d.cost) || 0 : d.user_message_count,
-    }))
+    return props.dailyActivity.map(d => {
+        let count
+        if (isCostMode.value) {
+            count = parseFloat(d.cost) || 0
+        } else if (isSessionsMode.value) {
+            count = d.session_count
+        } else {
+            count = d.user_message_count
+        }
+        return { date: d.date, count }
+    })
 })
 
 /**
  * Custom tooltip formatter.
  * Messages mode: "N messages on Jan 1, 2026"
+ * Sessions mode: "N sessions on Jan 1, 2026"
  * Cost mode: "$1.23 on Jan 1, 2026"
  */
 function tooltipFormatter(item, unit) {
@@ -103,7 +111,7 @@ function tooltipFormatter(item, unit) {
 
 <template>
     <div ref="graphContainer" class="contribution-graph" :class="{ vertical: isVertical }">
-        <h3 class="contribution-graph-title">{{ isCostMode ? 'Cost graph' : 'User messages graph' }}</h3>
+        <h3 class="contribution-graph-title">{{ isCostMode ? 'Cost per day' : isSessionsMode ? 'Sessions created per day' : 'User messages sent per day' }}</h3>
         <CalendarHeatmap
             v-if="heatmapValues.length > 0 && rangeColor.length === 6"
             :key="`${rangeColor.join(',')}-${isVertical}-${mode}`"
@@ -112,7 +120,7 @@ function tooltipFormatter(item, unit) {
             :range-color="rangeColor"
             :round="2"
             :tooltip="true"
-            :tooltip-unit="isCostMode ? 'cost' : 'user messages'"
+            :tooltip-unit="isCostMode ? 'cost' : isSessionsMode ? 'sessions created' : 'user messages sent'"
             :tooltip-formatter="tooltipFormatter"
             :dark-mode="isDark"
             :vertical="isVertical"

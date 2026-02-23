@@ -117,8 +117,8 @@ def _increment_activity(
     for activity_date in set(user_message_counts.keys()) | set(costs.keys()):
         user_message_count = user_message_counts.get(activity_date, 0)
         cost = costs.get(activity_date, Decimal(0))
-        model.increment_or_create(project_id, activity_date, user_message_count, cost)
-        model.increment_or_create(None, activity_date, user_message_count, cost)
+        model.increment_or_create(project_id, activity_date, user_message_count, cost=cost)
+        model.increment_or_create(None, activity_date, user_message_count, cost=cost)
 
 
 def apply_activity_counts(

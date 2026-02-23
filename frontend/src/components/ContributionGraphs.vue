@@ -1,6 +1,6 @@
 <script setup>
 // ContributionGraphs.vue - Fetches daily activity data once and renders
-// both the user messages and cost contribution graphs.
+// the user messages, sessions, and cost contribution graphs.
 
 import { ref, watch, onMounted } from 'vue'
 import { apiFetch } from '../utils/api'
@@ -39,7 +39,9 @@ watch(() => props.projectId, fetchDailyActivity)
 </script>
 
 <template>
-    <ActivityDashboard :daily-activity="dailyActivity" />
+    <ActivityDashboard :daily-activity="dailyActivity" mode="sessions" />
+    <ActivityDashboard :daily-activity="dailyActivity" mode="messages" />
+    <ContributionGraph :daily-activity="dailyActivity" mode="sessions" />
     <ContributionGraph :daily-activity="dailyActivity" mode="messages" />
     <ContributionGraph :daily-activity="dailyActivity" mode="cost" />
 </template>

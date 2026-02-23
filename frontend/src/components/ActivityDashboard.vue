@@ -1,6 +1,9 @@
 <script setup>
-// ActivityDashboard.vue - KPI cards showing messages, cost and cost-per-message
-// for daily/weekly/monthly periods, with trend badges comparing to the previous period.
+// ActivityDashboard.vue - KPI cards for daily/weekly/monthly periods,
+// with trend badges comparing to the previous period.
+// Supports two modes:
+//   - 'messages': main metric = user message count, sub-metrics = total cost + cost per message
+//   - 'sessions': main metric = session count, sub-metrics = avg messages/session + avg cost/session
 // Pure presentation component: receives pre-fetched daily activity data via props.
 
 import { computed } from 'vue'
@@ -8,27 +11,37 @@ import AppTooltip from './AppTooltip.vue'
 import CostDisplay from './CostDisplay.vue'
 
 const props = defineProps({
-    /** Daily activity data: array of { date: "YYYY-MM-DD", user_message_count: N, cost: "X.XX" } */
+    /** Daily activity data: array of { date: "YYYY-MM-DD", user_message_count: N, session_count: N, cost: "X.XX" } */
     dailyActivity: {
         type: Array,
         required: true,
     },
+    /** Display mode: 'messages' or 'sessions' */
+    mode: {
+        type: String,
+        default: 'messages',
+        validator: v => ['messages', 'sessions'].includes(v),
+    },
 })
+
+const isSessionsMode = computed(() => props.mode === 'sessions')
 
 /**
  * Aggregate daily activity data for a date range [startDate, endDate).
- * Returns { userMessageCount, cost } totals.
+ * Returns { userMessageCount, sessionCount, cost } totals.
  */
 function aggregatePeriod(data, startDate, endDate) {
     let userMessageCount = 0
+    let sessionCount = 0
     let cost = 0
     for (const d of data) {
         if (d.date >= startDate && d.date < endDate) {
             userMessageCount += d.user_message_count || 0
+            sessionCount += d.session_count || 0
             cost += parseFloat(d.cost) || 0
         }
     }
-    return { userMessageCount, cost }
+    return { userMessageCount, sessionCount, cost }
 }
 
 /**
@@ -69,6 +82,48 @@ function computeTrend(cur, prev, upIsGood) {
     }
 }
 
+/**
+ * Format a decimal number for display (e.g. 12.3, 0.5).
+ * Shows one decimal place, or integer if whole number.
+ */
+function formatAvg(value) {
+    if (value === null) return '-'
+    const rounded = Math.round(value * 10) / 10
+    return rounded % 1 === 0 ? rounded.toString() : rounded.toFixed(1)
+}
+
+const periodDefs = [
+    {
+        key: 'daily',
+        label: 'Daily',
+        icon: 'calendar-day',
+        previousLabel: 'yesterday',
+        offsetCurrent: 0,
+        offsetPrevious: -1,
+        days: 1,
+    },
+    {
+        key: 'weekly',
+        label: 'Weekly',
+        sublabel: 'rolling 7 days',
+        icon: 'calendar-week',
+        previousLabel: 'the previous 7 days period',
+        offsetCurrent: -6,
+        offsetPrevious: -13,
+        days: 7,
+    },
+    {
+        key: 'monthly',
+        label: 'Monthly',
+        sublabel: 'rolling 30 days',
+        icon: 'calendar',
+        previousLabel: 'the previous 30 days period',
+        offsetCurrent: -29,
+        offsetPrevious: -59,
+        days: 30,
+    },
+]
+
 const periods = computed(() => {
     const data = props.dailyActivity
     if (!data.length) return []
@@ -77,57 +132,51 @@ const periods = computed(() => {
     today.setHours(0, 0, 0, 0)
     const tomorrow = addDays(today, 1)
 
-    const defs = [
-        {
-            key: 'daily',
-            label: 'Daily',
-            icon: 'calendar-day',
-            previousLabel: 'yesterday',
-            current: [today, tomorrow],
-            previous: [addDays(today, -1), today],
-        },
-        {
-            key: 'weekly',
-            label: 'Weekly',
-            sublabel: 'rolling 7 days',
-            icon: 'calendar-week',
-            previousLabel: 'the previous 7 days period',
-            current: [addDays(today, -6), tomorrow],
-            previous: [addDays(today, -13), addDays(today, -6)],
-        },
-        {
-            key: 'monthly',
-            label: 'Monthly',
-            sublabel: 'rolling 30 days',
-            icon: 'calendar',
-            previousLabel: 'the previous 30 days period',
-            current: [addDays(today, -29), tomorrow],
-            previous: [addDays(today, -59), addDays(today, -29)],
-        },
-    ]
+    return periodDefs.map(({ key, label, sublabel, icon, previousLabel, offsetCurrent, offsetPrevious, days }) => {
+        const currentStart = addDays(today, offsetCurrent)
+        const previousStart = addDays(today, offsetPrevious)
+        const previousEnd = addDays(previousStart, days)
 
-    return defs.map(({ key, label, sublabel, icon, previousLabel, current, previous }) => {
-        const cur = aggregatePeriod(data, toDateStr(current[0]), toDateStr(current[1]))
-        const prev = aggregatePeriod(data, toDateStr(previous[0]), toDateStr(previous[1]))
+        const cur = aggregatePeriod(data, toDateStr(currentStart), toDateStr(tomorrow))
+        const prev = aggregatePeriod(data, toDateStr(previousStart), toDateStr(previousEnd))
 
-        const curCpm = cur.userMessageCount > 0 ? cur.cost / cur.userMessageCount : null
-        const prevCpm = prev.userMessageCount > 0 ? prev.cost / prev.userMessageCount : null
+        // Main metric
+        const mainValue = isSessionsMode.value ? cur.sessionCount : cur.userMessageCount
+        const prevMainValue = isSessionsMode.value ? prev.sessionCount : prev.userMessageCount
+        const mainTrend = computeTrend(mainValue, prevMainValue, true)
+
+        // Sub metric 1
+        let sub1Value, prevSub1Value, sub1Trend
+        if (isSessionsMode.value) {
+            // avg messages per session
+            sub1Value = cur.sessionCount > 0 ? cur.userMessageCount / cur.sessionCount : null
+            prevSub1Value = prev.sessionCount > 0 ? prev.userMessageCount / prev.sessionCount : null
+            sub1Trend = computeTrend(sub1Value, prevSub1Value, true)
+        } else {
+            // total cost
+            sub1Value = cur.cost
+            prevSub1Value = prev.cost
+            sub1Trend = computeTrend(sub1Value, prevSub1Value, false)
+        }
+
+        // Sub metric 2
+        let sub2Value, prevSub2Value, sub2Trend
+        if (isSessionsMode.value) {
+            // avg cost per session
+            sub2Value = cur.sessionCount > 0 ? cur.cost / cur.sessionCount : null
+            prevSub2Value = prev.sessionCount > 0 ? prev.cost / prev.sessionCount : null
+        } else {
+            // cost per message
+            sub2Value = cur.userMessageCount > 0 ? cur.cost / cur.userMessageCount : null
+            prevSub2Value = prev.userMessageCount > 0 ? prev.cost / prev.userMessageCount : null
+        }
+        sub2Trend = computeTrend(sub2Value, prevSub2Value, false)
 
         return {
-            key,
-            label,
-            sublabel,
-            icon,
-            previousLabel,
-            messages: cur.userMessageCount,
-            prevMessages: prev.userMessageCount,
-            messagesTrend: computeTrend(cur.userMessageCount, prev.userMessageCount, true),
-            cost: cur.cost,
-            prevCost: prev.cost,
-            costTrend: computeTrend(cur.cost, prev.cost, false),
-            cpm: curCpm,
-            prevCpm,
-            cpmTrend: computeTrend(curCpm, prevCpm, false),
+            key, label, sublabel, icon, previousLabel,
+            mainValue, prevMainValue, mainTrend,
+            sub1Value, prevSub1Value, sub1Trend,
+            sub2Value, prevSub2Value, sub2Trend,
         }
     })
 })
@@ -135,7 +184,7 @@ const periods = computed(() => {
 
 <template>
     <div v-if="periods.length > 0" class="activity-dashboard">
-        <h3 class="dashboard-title">Activity overview</h3>
+        <h3 class="dashboard-title">{{ isSessionsMode ? 'Sessions overview' : 'Messages overview' }}</h3>
         <div class="wa-grid dashboard-grid">
             <wa-card v-for="period in periods" :key="period.label">
                 <div class="wa-flank wa-align-items-start">
@@ -145,75 +194,83 @@ const periods = computed(() => {
                     <div class="wa-stack wa-gap-m">
                         <h3 class="wa-caption-m">{{ period.label }} <span v-if="period.sublabel" class="wa-caption-2xs period-sublabel">({{ period.sublabel }})</span></h3>
 
-                        <!-- Main metric: message count -->
+                        <!-- Main metric -->
                         <div class="wa-stack wa-gap-2xs">
                             <div class="wa-cluster wa-gap-xs">
-                                <span v-if="period.messagesTrend" class="wa-caption-2xs prev-value">{{ period.prevMessages }} →</span>
-                                <span class="wa-heading-xl">{{ period.messages }}</span>
+                                <span v-if="period.mainTrend" class="wa-caption-2xs prev-value">{{ period.prevMainValue }} →</span>
+                                <span class="wa-heading-xl">{{ period.mainValue }}</span>
                                 <wa-tag
-                                    v-if="period.messagesTrend"
-                                    :variant="period.messagesTrend.variant"
+                                    v-if="period.mainTrend"
+                                    :variant="period.mainTrend.variant"
                                     appearance="outlined"
                                 >
                                     <wa-icon
-                                        :name="period.messagesTrend.direction === 'up' ? 'arrow-up' : 'arrow-down'"
-                                        :label="period.messagesTrend.direction === 'up' ? 'Up' : 'Down'"
+                                        :name="period.mainTrend.direction === 'up' ? 'arrow-up' : 'arrow-down'"
+                                        :label="period.mainTrend.direction === 'up' ? 'Up' : 'Down'"
                                     ></wa-icon>
-                                    {{ period.messagesTrend.value }}%
+                                    {{ period.mainTrend.value }}%
                                 </wa-tag>
-                                <wa-tag v-else :id="`na-messages-${period.key}`" variant="neutral" appearance="outlined">N/A</wa-tag>
-                                <AppTooltip v-if="!period.messagesTrend" :for="`na-messages-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                <wa-tag v-else :id="`na-main-${mode}-${period.key}`" variant="neutral" appearance="outlined">N/A</wa-tag>
+                                <AppTooltip v-if="!period.mainTrend" :for="`na-main-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
                             </div>
-                            <span class="wa-caption-s kpi-label">user messages</span>
+                            <span class="wa-caption-s kpi-label">{{ isSessionsMode ? 'sessions created' : 'user messages sent' }}</span>
                         </div>
 
                         <wa-divider></wa-divider>
 
-                        <!-- Sub metrics: cost + cost per user message -->
+                        <!-- Sub metric 1 -->
                         <div class="wa-stack wa-gap-2xs">
                             <div class="wa-cluster wa-gap-xs sub-metric">
-                                <CostDisplay v-if="period.costTrend" :cost="period.prevCost" class="wa-caption-2xs prev-value" />
-                                <span v-if="period.costTrend" class="wa-caption-2xs prev-value">→</span>
-                                <CostDisplay :cost="period.cost" class="wa-heading-s" />
+                                <!-- Cost display for messages mode, plain number for sessions mode -->
+                                <template v-if="isSessionsMode">
+                                    <span v-if="period.sub1Trend" class="wa-caption-2xs prev-value">{{ formatAvg(period.prevSub1Value) }} →</span>
+                                    <span class="wa-heading-s">{{ formatAvg(period.sub1Value) }}</span>
+                                </template>
+                                <template v-else>
+                                    <CostDisplay v-if="period.sub1Trend" :cost="period.prevSub1Value" class="wa-caption-2xs prev-value" />
+                                    <span v-if="period.sub1Trend" class="wa-caption-2xs prev-value">→</span>
+                                    <CostDisplay :cost="period.sub1Value" class="wa-heading-s" />
+                                </template>
                                 <wa-tag
-                                    v-if="period.costTrend"
-                                    :variant="period.costTrend.variant"
+                                    v-if="period.sub1Trend"
+                                    :variant="period.sub1Trend.variant"
                                     appearance="outlined"
                                     size="small"
                                 >
                                     <wa-icon
-                                        :name="period.costTrend.direction === 'up' ? 'arrow-up' : 'arrow-down'"
-                                        :label="period.costTrend.direction === 'up' ? 'Up' : 'Down'"
+                                        :name="period.sub1Trend.direction === 'up' ? 'arrow-up' : 'arrow-down'"
+                                        :label="period.sub1Trend.direction === 'up' ? 'Up' : 'Down'"
                                     ></wa-icon>
-                                    {{ period.costTrend.value }}%
+                                    {{ period.sub1Trend.value }}%
                                 </wa-tag>
-                                <wa-tag v-else :id="`na-cost-${period.key}`" variant="neutral" appearance="outlined" size="small">N/A</wa-tag>
-                                <AppTooltip v-if="!period.costTrend" :for="`na-cost-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                <wa-tag v-else :id="`na-sub1-${mode}-${period.key}`" variant="neutral" appearance="outlined" size="small">N/A</wa-tag>
+                                <AppTooltip v-if="!period.sub1Trend" :for="`na-sub1-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
                             </div>
-                            <span class="wa-caption-xs kpi-label">total cost</span>
+                            <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? 'avg. user messages sent per session' : 'total cost' }}</span>
                         </div>
 
+                        <!-- Sub metric 2 -->
                         <div class="wa-stack wa-gap-2xs">
                             <div class="wa-cluster wa-gap-xs sub-metric">
-                                <CostDisplay v-if="period.cpmTrend" :cost="period.prevCpm" class="wa-caption-2xs prev-value" />
-                                <span v-if="period.cpmTrend" class="wa-caption-2xs prev-value">→</span>
-                                <CostDisplay :cost="period.cpm" class="wa-heading-s" />
+                                <CostDisplay v-if="period.sub2Trend" :cost="period.prevSub2Value" class="wa-caption-2xs prev-value" />
+                                <span v-if="period.sub2Trend" class="wa-caption-2xs prev-value">→</span>
+                                <CostDisplay :cost="period.sub2Value" class="wa-heading-s" />
                                 <wa-tag
-                                    v-if="period.cpmTrend"
-                                    :variant="period.cpmTrend.variant"
+                                    v-if="period.sub2Trend"
+                                    :variant="period.sub2Trend.variant"
                                     appearance="outlined"
                                     size="small"
                                 >
                                     <wa-icon
-                                        :name="period.cpmTrend.direction === 'up' ? 'arrow-up' : 'arrow-down'"
-                                        :label="period.cpmTrend.direction === 'up' ? 'Up' : 'Down'"
+                                        :name="period.sub2Trend.direction === 'up' ? 'arrow-up' : 'arrow-down'"
+                                        :label="period.sub2Trend.direction === 'up' ? 'Up' : 'Down'"
                                     ></wa-icon>
-                                    {{ period.cpmTrend.value }}%
+                                    {{ period.sub2Trend.value }}%
                                 </wa-tag>
-                                <wa-tag v-else :id="`na-cpm-${period.key}`" variant="neutral" appearance="outlined" size="small">N/A</wa-tag>
-                                <AppTooltip v-if="!period.cpmTrend" :for="`na-cpm-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                <wa-tag v-else :id="`na-sub2-${mode}-${period.key}`" variant="neutral" appearance="outlined" size="small">N/A</wa-tag>
+                                <AppTooltip v-if="!period.sub2Trend" :for="`na-sub2-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
                             </div>
-                            <span class="wa-caption-xs kpi-label">cost per user message</span>
+                            <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? 'avg. cost per session' : 'avg. cost per user message' }}</span>
                         </div>
                     </div>
                 </div>
