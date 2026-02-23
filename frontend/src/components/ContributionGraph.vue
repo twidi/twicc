@@ -12,7 +12,7 @@ import 'vue3-calendar-heatmap/dist/style.css'
 import { useSettingsStore } from '../stores/settings'
 
 const props = defineProps({
-    /** Daily activity data: array of { date, count, cost } */
+    /** Daily activity data: array of { date, user_message_count, cost } */
     dailyActivity: {
         type: Array,
         required: true,
@@ -71,7 +71,7 @@ const heatmapValues = computed(() => {
     return props.dailyActivity.map(d => ({
         date: d.date,
         // CalendarHeatmap uses 'count' internally; in cost mode, map cost to count
-        count: isCostMode.value ? parseFloat(d.cost) || 0 : d.count,
+        count: isCostMode.value ? parseFloat(d.cost) || 0 : d.user_message_count,
     }))
 })
 

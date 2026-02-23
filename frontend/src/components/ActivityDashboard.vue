@@ -8,7 +8,7 @@ import AppTooltip from './AppTooltip.vue'
 import CostDisplay from './CostDisplay.vue'
 
 const props = defineProps({
-    /** Daily activity data: array of { date: "YYYY-MM-DD", count: N, cost: "X.XX" } */
+    /** Daily activity data: array of { date: "YYYY-MM-DD", user_message_count: N, cost: "X.XX" } */
     dailyActivity: {
         type: Array,
         required: true,
@@ -17,18 +17,18 @@ const props = defineProps({
 
 /**
  * Aggregate daily activity data for a date range [startDate, endDate).
- * Returns { count, cost } totals.
+ * Returns { userMessageCount, cost } totals.
  */
 function aggregatePeriod(data, startDate, endDate) {
-    let count = 0
+    let userMessageCount = 0
     let cost = 0
     for (const d of data) {
         if (d.date >= startDate && d.date < endDate) {
-            count += d.count || 0
+            userMessageCount += d.user_message_count || 0
             cost += parseFloat(d.cost) || 0
         }
     }
-    return { count, cost }
+    return { userMessageCount, cost }
 }
 
 /**
@@ -110,8 +110,8 @@ const periods = computed(() => {
         const cur = aggregatePeriod(data, toDateStr(current[0]), toDateStr(current[1]))
         const prev = aggregatePeriod(data, toDateStr(previous[0]), toDateStr(previous[1]))
 
-        const curCpm = cur.count > 0 ? cur.cost / cur.count : null
-        const prevCpm = prev.count > 0 ? prev.cost / prev.count : null
+        const curCpm = cur.userMessageCount > 0 ? cur.cost / cur.userMessageCount : null
+        const prevCpm = prev.userMessageCount > 0 ? prev.cost / prev.userMessageCount : null
 
         return {
             key,
@@ -119,9 +119,9 @@ const periods = computed(() => {
             sublabel,
             icon,
             previousLabel,
-            messages: cur.count,
-            prevMessages: prev.count,
-            messagesTrend: computeTrend(cur.count, prev.count, true),
+            messages: cur.userMessageCount,
+            prevMessages: prev.userMessageCount,
+            messagesTrend: computeTrend(cur.userMessageCount, prev.userMessageCount, true),
             cost: cur.cost,
             prevCost: prev.cost,
             costTrend: computeTrend(cur.cost, prev.cost, false),

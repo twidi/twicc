@@ -8,7 +8,7 @@ const props = defineProps({
         type: String,
         default: 'global',
     },
-    /** Array of { week, count } objects to render */
+    /** Array of { date, user_message_count } objects to render */
     data: {
         type: Array,
         default: () => [],
@@ -28,7 +28,7 @@ const maskId = computed(() => `sparkline-${props.idSuffix}-graph`)
 const polylinePoints = computed(() => {
     if (!props.data.length) return ''
 
-    const counts = props.data.map((w) => w.count)
+    const counts = props.data.map((w) => w.user_message_count)
     const maxCount = Math.max(...counts)
 
     const xStep = svgWidth.value / (counts.length - 1)

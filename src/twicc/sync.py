@@ -81,11 +81,11 @@ def _increment_activity(
     project_id: str,
     items_to_create: list[tuple],
     date_index: int,
-    include_counts: bool = True,
+    include_user_message_counts: bool = True,
 ) -> None:
     """Increment activity counters for new items.
 
-    Counts user messages when include_counts is True,
+    Counts user messages when include_user_message_counts is True,
     and always sums costs from all items with a cost.
     Updates both per-project and global (project=NULL) counters
     via PeriodicActivity.increment_or_create.
@@ -95,29 +95,29 @@ def _increment_activity(
         project_id: The project ID.
         items_to_create: List of (item, parsed) tuples.
         date_index: Index into activity_keys() tuple (0=day, 1=week_monday).
-        include_counts: If True, count user_message items. Set to False
+        include_user_message_counts: If True, count user_message items. Set to False
             for subagent sessions (only costs should be tracked).
     """
     from twicc.core.enums import ItemKind
 
-    counts: Counter = Counter()
+    user_message_counts: Counter = Counter()
     costs: dict = {}
     for item, _parsed in items_to_create:
         if item.timestamp:
             activity_date = item.activity_keys()[date_index]
-            if include_counts and item.kind == ItemKind.USER_MESSAGE:
-                counts[activity_date] += 1
+            if include_user_message_counts and item.kind == ItemKind.USER_MESSAGE:
+                user_message_counts[activity_date] += 1
             if item.cost:
                 costs[activity_date] = costs.get(activity_date, Decimal(0)) + item.cost
 
-    if not counts and not costs:
+    if not user_message_counts and not costs:
         return
 
-    for activity_date in set(counts.keys()) | set(costs.keys()):
-        count = counts.get(activity_date, 0)
+    for activity_date in set(user_message_counts.keys()) | set(costs.keys()):
+        user_message_count = user_message_counts.get(activity_date, 0)
         cost = costs.get(activity_date, Decimal(0))
-        model.increment_or_create(project_id, activity_date, count, cost)
-        model.increment_or_create(None, activity_date, count, cost)
+        model.increment_or_create(project_id, activity_date, user_message_count, cost)
+        model.increment_or_create(None, activity_date, user_message_count, cost)
 
 
 def apply_activity_counts(
@@ -127,10 +127,10 @@ def apply_activity_counts(
     weekly_costs: dict[str, str] | None = None,
     daily_costs: dict[str, str] | None = None,
 ) -> None:
-    """Apply pre-computed activity counts and costs to the database.
+    """Apply pre-computed activity user message counts and costs to the database.
 
-    Used by the background compute path, which passes activity counts
-    as {iso_date_string: count} dicts and costs as {iso_date_string: cost_str}
+    Used by the background compute path, which passes activity user message counts
+    as {iso_date_string: user_message_count} dicts and costs as {iso_date_string: cost_str}
     dicts in the session_complete message.
 
     Uses PeriodicActivity.increment_or_create for atomic updates.
@@ -141,19 +141,19 @@ def apply_activity_counts(
 
     from twicc.core.models import DailyActivity, WeeklyActivity
 
-    for model, counts, costs in [
+    for model, user_message_counts, costs in [
         (WeeklyActivity, weekly, weekly_costs),
         (DailyActivity, daily, daily_costs),
     ]:
-        counts = counts or {}
+        user_message_counts = user_message_counts or {}
         costs = costs or {}
-        all_date_strs = set(counts.keys()) | set(costs.keys())
+        all_date_strs = set(user_message_counts.keys()) | set(costs.keys())
         for date_str in all_date_strs:
             activity_date = date_cls.fromisoformat(date_str)
-            count = counts.get(date_str, 0)
+            user_message_count = user_message_counts.get(date_str, 0)
             cost = Decimal(costs[date_str]) if date_str in costs else Decimal(0)
-            model.increment_or_create(project_id, activity_date, count, cost)
-            model.increment_or_create(None, activity_date, count, cost)
+            model.increment_or_create(project_id, activity_date, user_message_count, cost)
+            model.increment_or_create(None, activity_date, user_message_count, cost)
 
 
 def is_session_file(path: Path) -> bool:
@@ -579,12 +579,12 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 session.model = last_model
 
             # Update activity counters:
-            # - counts: only for real sessions (not subagents)
+            # - user message counts: only for real sessions (not subagents)
             # - costs: for all sessions (sessions and subagents)
-            include_counts = session.type == SessionType.SESSION
+            include_user_message_counts = session.type == SessionType.SESSION
             from twicc.core.models import DailyActivity, WeeklyActivity
-            _increment_activity(WeeklyActivity, session.project_id, items_to_create, date_index=1, include_counts=include_counts)
-            _increment_activity(DailyActivity, session.project_id, items_to_create, date_index=0, include_counts=include_counts)
+            _increment_activity(WeeklyActivity, session.project_id, items_to_create, date_index=1, include_user_message_counts=include_user_message_counts)
+            _increment_activity(DailyActivity, session.project_id, items_to_create, date_index=0, include_user_message_counts=include_user_message_counts)
 
         # Update offset to end of file
         session.last_offset = f.tell()

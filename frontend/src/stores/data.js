@@ -79,7 +79,7 @@ export const useDataStore = defineStore('data', {
         processStates: {},
 
         // Weekly activity data (from /api/home/ endpoint)
-        // { _global: [...], projectId: [...] } — each value is Array of { week, count }
+        // { _global: [...], projectId: [...] } — each value is Array of { date, user_message_count }
         weeklyActivity: {},
 
         // Usage quota data (from periodic usage sync)

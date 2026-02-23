@@ -72,7 +72,7 @@ class PeriodicActivity(models.Model):
         blank=True,  # NULL = global (all projects)
     )
     date = models.DateField()
-    count = models.PositiveIntegerField(default=0)
+    user_message_count = models.PositiveIntegerField(default=0)
     cost = models.DecimalField(max_digits=12, decimal_places=6, default=0)
 
     class Meta:
@@ -85,16 +85,16 @@ class PeriodicActivity(models.Model):
         ]
 
     @classmethod
-    def increment_or_create(cls, project_id: str | None, activity_date: date, count: int = 0, cost: Decimal = Decimal(0)) -> None:
-        """Atomically increment count/cost for a project+date, creating the row if needed.
+    def increment_or_create(cls, project_id: str | None, activity_date: date, user_message_count: int = 0, cost: Decimal = Decimal(0)) -> None:
+        """Atomically increment user_message_count/cost for a project+date, creating the row if needed.
 
         Uses UPDATE first (common case), falls back to CREATE when the row doesn't exist.
         """
         from django.db.models import F
 
         update_kwargs = {}
-        if count:
-            update_kwargs["count"] = F("count") + count
+        if user_message_count:
+            update_kwargs["user_message_count"] = F("user_message_count") + user_message_count
         if cost:
             update_kwargs["cost"] = F("cost") + cost
         if not update_kwargs:
@@ -109,12 +109,12 @@ class PeriodicActivity(models.Model):
         updated = cls.objects.filter(**filters).update(**update_kwargs)
         if not updated:
             cls.objects.create(
-                project_id=project_id, date=activity_date, count=count, cost=cost,
+                project_id=project_id, date=activity_date, user_message_count=user_message_count, cost=cost,
             )
 
     def __str__(self):
         label = self.project_id or "global"
-        return f"{label} / {self.date} = {self.count}"
+        return f"{label} / {self.date} = {self.user_message_count}"
 
 
 class WeeklyActivity(PeriodicActivity):
