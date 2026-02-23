@@ -152,24 +152,17 @@ def ensure_project_git_root(project_id: str, directory: str | None = None) -> No
 
 def update_project_total_cost(project_id: str) -> None:
     """
-    Update a project's total_cost by summing all its sessions' total_costs.
+    Recalculate and save a project's total_cost.
 
-    Only sums costs from non-stale regular sessions (not subagents).
-    Subagent costs are already included in their parent session's total_cost.
+    Uses Project.recalculate_total_cost() which sums total_cost from
+    non-stale SESSION-type sessions.
     """
-    from decimal import Decimal
-    from django.db.models import Sum
-
-    total_cost = Session.objects.filter(
-        project_id=project_id,
-        stale=False,
-        type=SessionType.SESSION,
-        total_cost__isnull=False,
-    ).aggregate(total=Sum('total_cost'))['total'] or Decimal(0)
-
-    Project.objects.filter(id=project_id).update(
-        total_cost=total_cost if total_cost > 0 else None
-    )
+    try:
+        project = Project.objects.get(id=project_id)
+    except Project.DoesNotExist:
+        return
+    project.recalculate_total_cost()
+    project.save(update_fields=["total_cost"])
 
 
 # =============================================================================
@@ -1257,15 +1250,8 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     user_message_count = 0
     last_relevant_kind: ItemKind | None = None
 
-    # Track activity counts, session counts, and costs for real sessions (not subagents)
-    is_real_session = session.type == SessionType.SESSION
-    weekly_user_message_counts: Counter = Counter()  # week_monday (date) -> count
-    daily_user_message_counts: Counter = Counter()  # date -> count
-    weekly_costs: dict = {}  # week_monday (date iso str) -> Decimal cost
-    daily_costs_map: dict = {}  # date iso str -> Decimal cost
-    # Session counts: {iso_date_string: 1} — at most one entry per session
-    weekly_session_counts: dict[str, int] = {}
-    daily_session_counts: dict[str, int] = {}
+    # Track affected days for activity recalculation
+    affected_days: set[str] = set()  # ISO date strings
 
     # Track cost and context usage (deduplication by message_id)
     seen_message_ids: set[str] = set()
@@ -1300,12 +1286,8 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         item.timestamp = extract_item_timestamp(parsed)
         if first_timestamp is None and item.timestamp is not None:
             first_timestamp = item.timestamp
-            # Track session creation in activity counts (real sessions only)
-            if is_real_session:
-                created_date = first_timestamp.date()
-                created_monday = created_date - timedelta(days=created_date.weekday())
-                daily_session_counts[created_date.isoformat()] = 1
-                weekly_session_counts[created_monday.isoformat()] = 1
+            # Track session creation day for activity recalculation
+            affected_days.add(first_timestamp.date().isoformat())
 
         # Compute cost and context usage
         compute_item_cost_and_usage(item, parsed, seen_message_ids)
@@ -1355,19 +1337,12 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         if item.kind == ItemKind.USER_MESSAGE:
             user_message_count += 1
             last_relevant_kind = ItemKind.USER_MESSAGE
-            # Track activity counts (for real sessions only)
-            if is_real_session and item.timestamp:
-                day_key, week_key = (d.isoformat() for d in item.activity_keys())
-                daily_user_message_counts[day_key] += 1
-                weekly_user_message_counts[week_key] += 1
         elif item.kind == ItemKind.ASSISTANT_MESSAGE:
             last_relevant_kind = ItemKind.ASSISTANT_MESSAGE
 
-        # Track activity costs for all items with cost (sessions and subagents)
-        if item.cost and item.timestamp:
-            day_key, week_key = (d.isoformat() for d in item.activity_keys())
-            daily_costs_map[day_key] = daily_costs_map.get(day_key, Decimal(0)) + item.cost
-            weekly_costs[week_key] = weekly_costs.get(week_key, Decimal(0)) + item.cost
+        # Track affected days for activity recalculation (only for items that contribute)
+        if item.timestamp and (item.kind == ItemKind.USER_MESSAGE or item.cost):
+            affected_days.add(item.timestamp.date().isoformat())
 
         # Track tool_use IDs from assistant/content_items messages
         tool_use_ids = get_tool_use_ids(parsed)
@@ -1459,24 +1434,13 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     else:
         message_count = user_message_count * 2
 
-    # Sum all item costs for self_cost
-    self_cost = SessionItem.objects.filter(
-        session=session,
-        cost__isnull=False
-    ).aggregate(total=Sum('cost'))['total']
-
-    # Sum all subagent total_costs for subagents_cost
-    subagents_cost = Session.objects.filter(
-        parent_session=session,
-        total_cost__isnull=False
-    ).aggregate(total=Sum('total_cost'))['total'] or Decimal(0)
-
-    total_cost = (self_cost or Decimal(0)) + subagents_cost
-
     # Determine project directory update (for real sessions only)
     project_directory = first_cwd if first_cwd and session.type == SessionType.SESSION else None
 
     # Send ALL results as a single message (serialized with orjson for speed)
+    # Note: costs (self_cost, subagents_cost, total_cost) are NOT included here.
+    # They are recalculated from SessionItem data in the main process after items are written,
+    # using Session.recalculate_costs(). This avoids order-of-processing issues with subagents.
     result_queue.put(orjson.dumps({
         'type': 'session_complete',
         'session_id': session_id,
@@ -1489,9 +1453,6 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             'compute_version': settings.CURRENT_COMPUTE_VERSION,
             'message_count': message_count,
             'context_usage': last_context_usage,
-            'self_cost': str(self_cost) if self_cost else None,
-            'subagents_cost': str(subagents_cost) if subagents_cost else None,
-            'total_cost': str(total_cost) if total_cost else None,
             'cwd': last_cwd,
             'cwd_git_branch': last_cwd_git_branch,
             'git_directory': last_resolved_git_directory,
@@ -1501,12 +1462,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         },
         'titles': session_titles,
         'project_directory': project_directory,
-        'activity_weekly_user_message_counts': dict(weekly_user_message_counts) if weekly_user_message_counts else None,
-        'activity_daily_user_message_counts': dict(daily_user_message_counts) if daily_user_message_counts else None,
-        'activity_weekly_costs': {k: str(v) for k, v in weekly_costs.items()} if weekly_costs else None,
-        'activity_daily_costs': {k: str(v) for k, v in daily_costs_map.items()} if daily_costs_map else None,
-        'activity_weekly_session_counts': weekly_session_counts if weekly_session_counts else None,
-        'activity_daily_session_counts': daily_session_counts if daily_session_counts else None,
+        'affected_days': sorted(affected_days) if affected_days else None,
     }))
 
     connection.close()
@@ -1518,13 +1474,15 @@ def apply_compute_results(result_queue) -> None:
 
     Consumes all messages from the queue and applies corresponding DB operations.
     Used by tests to apply results after calling compute_session_metadata().
+    Delegates to apply_session_complete() for the actual DB writes, so tests
+    exercise the same code path as the background process.
 
     Args:
         result_queue: Queue containing compute result messages
     """
     import queue as queue_module
-    from decimal import Decimal
-    from twicc.core.models import AgentLink, Session, SessionItem, ToolResultLink
+
+    from twicc.background import apply_session_complete
 
     while True:
         try:
@@ -1532,77 +1490,21 @@ def apply_compute_results(result_queue) -> None:
         except queue_module.Empty:
             break
 
-        # Deserialize from orjson bytes
         msg = orjson.loads(raw_msg)
         msg_type = msg.get('type')
 
         if msg_type == 'session_complete':
-            # New unified message type - all data in one message
-            session_id = msg['session_id']
+            apply_session_complete(msg)
 
-            # 1. Delete existing links
-            ToolResultLink.objects.filter(session_id=session_id).delete()
-            AgentLink.objects.filter(session_id=session_id).delete()
-
-            # 2. Apply item updates
-            item_updates = msg.get('item_updates', [])
-            item_fields = msg.get('item_fields', [])
-            if item_updates and item_fields:
-                items = []
-                for upd in item_updates:
-                    item = SessionItem(id=upd['id'])
-                    for field in item_fields:
-                        value = upd.get(field)
-                        if field == 'cost' and value is not None:
-                            value = Decimal(value)
-                        setattr(item, field, value)
-                    items.append(item)
-                if items:
-                    SessionItem.objects.bulk_update(items, item_fields)
-
-            # 3. Create links
-            tool_result_links_data = msg.get('tool_result_links', [])
-            if tool_result_links_data:
-                links = [ToolResultLink(**d) for d in tool_result_links_data]
-                ToolResultLink.objects.bulk_create(links, ignore_conflicts=True)
-
-            agent_links_data = msg.get('agent_links', [])
-            if agent_links_data:
-                links = [AgentLink(**d) for d in agent_links_data]
-                AgentLink.objects.bulk_create(links, ignore_conflicts=True)
-
-            # 4. Update session fields
-            session_fields = msg.get('session_fields', {})
-            if session_fields:
-                for decimal_field in ('self_cost', 'subagents_cost', 'total_cost'):
-                    if decimal_field in session_fields and session_fields[decimal_field] is not None:
-                        session_fields[decimal_field] = Decimal(session_fields[decimal_field])
-                Session.objects.filter(id=session_id).update(**session_fields)
-
-            # 5. Update titles
-            for target_id, title in msg.get('titles', {}).items():
-                Session.objects.filter(id=target_id).update(title=title)
-
-            # 6. Update project directory
+            # Recalculate activity counters for affected days
+            # (in the background process this is batched, but for tests we do it immediately)
+            affected_days = msg.get('affected_days')
             project_id = msg.get('project_id')
-            project_directory = msg.get('project_directory')
-            if project_id and project_directory:
-                ensure_project_directory(project_id, project_directory)
-
-            # 7. Update activity counters (only present for real sessions)
-            activity_weekly_user_message_counts = msg.get('activity_weekly_user_message_counts')
-            activity_daily_user_message_counts = msg.get('activity_daily_user_message_counts')
-            activity_weekly_costs = msg.get('activity_weekly_costs')
-            activity_daily_costs = msg.get('activity_daily_costs')
-            activity_weekly_session_counts = msg.get('activity_weekly_session_counts')
-            activity_daily_session_counts = msg.get('activity_daily_session_counts')
-            if project_id and (activity_weekly_user_message_counts or activity_daily_user_message_counts or activity_weekly_costs or activity_daily_costs or activity_weekly_session_counts or activity_daily_session_counts):
-                from twicc.sync import apply_activity_counts
-                apply_activity_counts(project_id, activity_weekly_user_message_counts, activity_daily_user_message_counts, activity_weekly_costs, activity_daily_costs, activity_weekly_session_counts, activity_daily_session_counts)
-
-            # 8. Update project total_cost
-            if project_id:
-                update_project_total_cost(project_id)
+            if project_id and affected_days:
+                from datetime import date as date_cls
+                from twicc.core.models import PeriodicActivity
+                days = {date_cls.fromisoformat(d) for d in affected_days}
+                PeriodicActivity.recalculate_for_days(project_id, days)
 
         elif msg_type == 'error':
             logger.error(f"Compute error for {msg['session_id']}: {msg['error']}")

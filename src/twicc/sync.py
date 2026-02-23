@@ -12,9 +12,7 @@ import logging
 import orjson
 import sys
 import time
-from collections import Counter
 from datetime import timedelta
-from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -52,115 +50,18 @@ if TYPE_CHECKING:
 
 def _update_parent_session_costs(parent_session_id: str) -> None:
     """
-    Update the parent session's subagents_cost and total_cost.
+    Recalculate the parent session's costs from SessionItem data.
 
-    Called when a subagent's cost changes. Recalculates the parent's
-    subagents_cost by summing all subagent total_costs, then updates
-    total_cost = self_cost + subagents_cost.
-
-    Uses F() expressions to avoid race conditions when multiple subagents
-    update simultaneously or when the parent session is being synced.
+    Called when a subagent's cost changes. Uses recalculate_costs()
+    which sums SessionItem.cost for both the session and its subagents.
     """
-    from django.db.models import F, Sum, Value
-    from django.db.models.functions import Coalesce
-
-    # Sum all subagent total_costs
-    subagents_cost = Session.objects.filter(
-        parent_session_id=parent_session_id,
-        total_cost__isnull=False
-    ).aggregate(total=Sum('total_cost'))['total'] or Decimal(0)
-
-    # Update parent using F() to avoid race conditions with self_cost changes
-    Session.objects.filter(id=parent_session_id).update(
-        subagents_cost=subagents_cost,
-        total_cost=Coalesce(F('self_cost'), Value(Decimal(0))) + subagents_cost,
-    )
-
-
-def _increment_activity(
-    model: type,
-    project_id: str,
-    items_to_create: list[tuple],
-    date_index: int,
-    include_user_message_counts: bool = True,
-) -> None:
-    """Increment activity counters for new items.
-
-    Counts user messages when include_user_message_counts is True,
-    and always sums costs from all items with a cost.
-    Updates both per-project and global (project=NULL) counters
-    via PeriodicActivity.increment_or_create.
-
-    Args:
-        model: The activity model class (WeeklyActivity or DailyActivity).
-        project_id: The project ID.
-        items_to_create: List of (item, parsed) tuples.
-        date_index: Index into activity_keys() tuple (0=day, 1=week_monday).
-        include_user_message_counts: If True, count user_message items. Set to False
-            for subagent sessions (only costs should be tracked).
-    """
-    from twicc.core.enums import ItemKind
-
-    user_message_counts: Counter = Counter()
-    costs: dict = {}
-    for item, _parsed in items_to_create:
-        if item.timestamp:
-            activity_date = item.activity_keys()[date_index]
-            if include_user_message_counts and item.kind == ItemKind.USER_MESSAGE:
-                user_message_counts[activity_date] += 1
-            if item.cost:
-                costs[activity_date] = costs.get(activity_date, Decimal(0)) + item.cost
-
-    if not user_message_counts and not costs:
+    try:
+        parent = Session.objects.get(id=parent_session_id)
+    except Session.DoesNotExist:
         return
+    parent.recalculate_costs()
+    parent.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
 
-    for activity_date in set(user_message_counts.keys()) | set(costs.keys()):
-        user_message_count = user_message_counts.get(activity_date, 0)
-        cost = costs.get(activity_date, Decimal(0))
-        model.increment_or_create(project_id, activity_date, user_message_count, cost=cost)
-        model.increment_or_create(None, activity_date, user_message_count, cost=cost)
-
-
-def apply_activity_counts(
-    project_id: str,
-    weekly_user_message_counts: dict[str, int] | None,
-    daily_user_message_counts: dict[str, int] | None,
-    weekly_costs: dict[str, str] | None = None,
-    daily_costs: dict[str, str] | None = None,
-    weekly_session_counts: dict[str, int] | None = None,
-    daily_session_counts: dict[str, int] | None = None,
-) -> None:
-    """Apply pre-computed activity metrics to the database.
-
-    Used by the background compute path, which passes:
-    - user message counts as {iso_date_string: count} dicts
-    - costs as {iso_date_string: cost_str} dicts
-    - session counts as {iso_date_string: count} dicts
-    in the session_complete message.
-
-    Uses PeriodicActivity.increment_or_create for atomic updates.
-    Values are added to existing rows since multiple sessions
-    contribute to the same project/week or project/date counters.
-    """
-    from datetime import date as date_cls
-
-    from twicc.core.models import DailyActivity, WeeklyActivity
-
-    for model, user_message_counts, costs, session_counts in [
-        (WeeklyActivity, weekly_user_message_counts, weekly_costs, weekly_session_counts),
-        (DailyActivity, daily_user_message_counts, daily_costs, daily_session_counts),
-    ]:
-        user_message_counts = user_message_counts or {}
-        costs = costs or {}
-        session_counts = session_counts or {}
-        all_date_strs = set(user_message_counts.keys()) | set(costs.keys()) | set(session_counts.keys())
-        for date_str in all_date_strs:
-            activity_date = date_cls.fromisoformat(date_str)
-            user_message_count = user_message_counts.get(date_str, 0)
-            session_count = session_counts.get(date_str, 0)
-            cost = Decimal(costs[date_str]) if date_str in costs else Decimal(0)
-            model.increment_or_create(project_id, activity_date, user_message_count, session_count, cost)
-            model.increment_or_create(None, activity_date, user_message_count, session_count, cost)
 
 
 def is_session_file(path: Path) -> bool:
@@ -566,16 +467,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                     session.context_usage = item.context_usage
                     break
 
-            # Increment self_cost with sum of new items' costs
-            new_items_cost = sum(
-                (item.cost for item, _ in items_to_create if item.cost is not None),
-                Decimal(0)
-            )
-            if new_items_cost > 0:
-                session.self_cost = (session.self_cost or Decimal(0)) + new_items_cost
-
-            # Recalculate total_cost = self_cost + subagents_cost
-            session.total_cost = (session.self_cost or Decimal(0)) + (session.subagents_cost or Decimal(0))
+            # Recalculate costs from DB (idempotent)
+            session.recalculate_costs()
 
             # Update runtime environment fields if changed
             if last_cwd and last_cwd != session.cwd:
@@ -593,27 +486,24 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             if is_new_session:
                 session.created_at = first_timestamp
 
-            # Update activity counters:
-            # - user message counts: only for real sessions (not subagents)
-            # - costs: for all sessions (sessions and subagents)
-            include_user_message_counts = session.type == SessionType.SESSION
-            from twicc.core.models import DailyActivity, WeeklyActivity
-            _increment_activity(WeeklyActivity, session.project_id, items_to_create, date_index=1, include_user_message_counts=include_user_message_counts)
-            _increment_activity(DailyActivity, session.project_id, items_to_create, date_index=0, include_user_message_counts=include_user_message_counts)
-
-            # Increment session_count when a real session is first created
-            if is_new_session and session.type == SessionType.SESSION:
-                created_date = first_timestamp.date()
-                created_monday = created_date - timedelta(days=created_date.weekday())
-                DailyActivity.increment_or_create(session.project_id, created_date, session_count=1)
-                DailyActivity.increment_or_create(None, created_date, session_count=1)
-                WeeklyActivity.increment_or_create(session.project_id, created_monday, session_count=1)
-                WeeklyActivity.increment_or_create(None, created_monday, session_count=1)
+            # Recalculate activity counters for affected days (only items that contribute)
+            affected_days = {
+                item.timestamp.date()
+                for item, _ in items_to_create
+                if item.timestamp and (item.kind == ItemKind.USER_MESSAGE or item.cost)
+            }
+            if is_new_session and session.type == SessionType.SESSION and first_timestamp:
+                affected_days.add(first_timestamp.date())
 
         # Update offset to end of file
         session.last_offset = f.tell()
         session.mtime = file_mtime
         session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "model", "created_at"])
+
+        # Recalculate activities after session.save (needs created_at in DB for session_count)
+        if lines:
+            from twicc.core.models import PeriodicActivity
+            PeriodicActivity.recalculate_for_days(session.project_id, affected_days)
 
         # If this is a subagent, propagate cost to parent session
         if session.type == SessionType.SUBAGENT and session.parent_session_id:

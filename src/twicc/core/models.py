@@ -1,7 +1,18 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from typing import TypeAlias
 
 from django.db import models
+
+import logging
+
+from django.db.models import Q
+
+from twicc.core.enums import ItemKind
+
+logger = logging.getLogger(__name__)
+
+DateType: TypeAlias = date
 
 
 class SessionType(models.TextChoices):
@@ -53,6 +64,17 @@ class Project(models.Model):
     class Meta:
         ordering = ["-mtime"]
 
+    def recalculate_total_cost(self) -> None:
+        """Recalculate total_cost from non-stale SESSION-type sessions."""
+        from decimal import Decimal
+        from django.db.models import Sum
+
+        total = SessionItem.objects.filter(
+            session__project_id=self.id,
+            cost__isnull=False,
+        ).aggregate(total=Sum("cost"))["total"] or Decimal(0)
+        self.total_cost = total if total > 0 else None
+
     def __str__(self):
         return self.id
 
@@ -86,38 +108,98 @@ class PeriodicActivity(models.Model):
         ]
 
     @classmethod
-    def increment_or_create(
-        cls, project_id: str | None, activity_date: date,
-        user_message_count: int = 0, session_count: int = 0, cost: Decimal = Decimal(0),
-    ) -> None:
-        """Atomically increment counters for a project+date, creating the row if needed.
+    def date_range(cls, activity_date: DateType) -> tuple[datetime, datetime]:
+        """Return the (start, end) datetime range for the given activity date.
 
-        Uses UPDATE first (common case), falls back to CREATE when the row doesn't exist.
+        Must be overridden by subclasses to define the period length.
         """
-        from django.db.models import F
+        raise NotImplementedError
 
-        update_kwargs = {}
-        if user_message_count:
-            update_kwargs["user_message_count"] = F("user_message_count") + user_message_count
-        if session_count:
-            update_kwargs["session_count"] = F("session_count") + session_count
-        if cost:
-            update_kwargs["cost"] = F("cost") + cost
-        if not update_kwargs:
+    @classmethod
+    def recalculate(cls, project_id: str | None, activity_date: DateType) -> None:
+        """Recalculate all activity counters for a project+date from the database.
+
+        Queries SessionItem and Session to compute accurate values, then
+        sets them via update_or_create (idempotent).
+
+        Args:
+            project_id: The project ID, or None for global (all projects).
+            activity_date: The date (day for DailyActivity, Monday for WeeklyActivity).
+        """
+        from django.db.models import Q, Sum
+
+        from twicc.core.enums import ItemKind
+
+        date_start, date_end = cls.date_range(activity_date)
+
+        # Project filter for items (via session FK) and sessions
+        item_project_filter = Q(session__project_id=project_id) if project_id is not None else Q()
+        session_project_filter = Q(project_id=project_id) if project_id is not None else Q()
+
+        # user_message_count: only from type=SESSION sessions
+        user_message_count = SessionItem.objects.filter(
+            item_project_filter,
+            kind=ItemKind.USER_MESSAGE,
+            timestamp__gte=date_start,
+            timestamp__lt=date_end,
+            session__type=SessionType.SESSION,
+        ).count()
+
+        # cost: from ALL session types
+        cost = SessionItem.objects.filter(
+            item_project_filter,
+            cost__isnull=False,
+            timestamp__gte=date_start,
+            timestamp__lt=date_end,
+        ).aggregate(total=Sum("cost"))["total"] or Decimal(0)
+
+        # session_count: only type=SESSION sessions
+        session_count = Session.objects.filter(
+            session_project_filter,
+            type=SessionType.SESSION,
+            created_at__gte=date_start,
+            created_at__lt=date_end,
+        ).count()
+
+        # If all values are zero, delete the row to keep the table clean
+        if user_message_count == 0 and cost == 0 and session_count == 0:
+            cls.objects.filter(project_id=project_id, date=activity_date).delete()
             return
 
-        filters = {"date": activity_date}
-        if project_id is None:
-            filters["project__isnull"] = True
-        else:
-            filters["project_id"] = project_id
+        cls.objects.update_or_create(
+            project_id=project_id,
+            date=activity_date,
+            defaults={
+                "user_message_count": user_message_count,
+                "session_count": session_count,
+                "cost": cost,
+            },
+        )
 
-        updated = cls.objects.filter(**filters).update(**update_kwargs)
-        if not updated:
-            cls.objects.create(
-                project_id=project_id, date=activity_date,
-                user_message_count=user_message_count, session_count=session_count, cost=cost,
-            )
+    @staticmethod
+    def recalculate_for_days(project_id: str, days: set, do_global: bool = True) -> None:
+        """Recalculate daily and weekly activity for the given days.
+
+        Deduces which weeks (Mondays) are affected from the days,
+        then recalculates both project-specific and global rows
+        by querying SessionItem and Session from the database.
+
+        Args:
+            project_id: The project ID.
+            days: Set of date objects representing affected days.
+            do_global: Whether to recalculate global rows.
+        """
+        if not days:
+            return
+        mondays = {day - timedelta(days=day.weekday()) for day in days}
+        for day in days:
+            DailyActivity.recalculate(project_id, day)
+            if do_global:
+                DailyActivity.recalculate(None, day)
+        for monday in mondays:
+            WeeklyActivity.recalculate(project_id, monday)
+            if do_global:
+                WeeklyActivity.recalculate(None, monday)
 
     def __str__(self):
         label = self.project_id or "global"
@@ -127,9 +209,21 @@ class PeriodicActivity(models.Model):
 class WeeklyActivity(PeriodicActivity):
     """Pre-computed weekly activity metrics (messages, sessions, costs), per project and global."""
 
+    @classmethod
+    def date_range(cls, activity_date: DateType) -> tuple[datetime, datetime]:
+        """Weekly range: Monday 00:00 UTC to next Monday 00:00 UTC."""
+        date_start = datetime.combine(activity_date, datetime.min.time(), tzinfo=timezone.utc)
+        return date_start, date_start + timedelta(days=7)
+
 
 class DailyActivity(PeriodicActivity):
     """Pre-computed daily activity metrics (messages, sessions, costs), per project and global."""
+
+    @classmethod
+    def date_range(cls, activity_date: DateType) -> tuple[datetime, datetime]:
+        """Daily range: day 00:00 UTC to next day 00:00 UTC."""
+        date_start = datetime.combine(activity_date, datetime.min.time(), tzinfo=timezone.utc)
+        return date_start, date_start + timedelta(days=1)
 
 
 class Session(models.Model):
@@ -191,7 +285,31 @@ class Session(models.Model):
         ordering = ["-mtime"]
         indexes = [
             models.Index(fields=["project", "-mtime"], name="idx_session_project_mtime"),
+            models.Index(fields=["project", "type"], name="idx_session_project_type"),
         ]
+
+    def recalculate_costs(self) -> None:
+        """Recalculate self_cost, subagents_cost, and total_cost from SessionItem costs.
+
+        - self_cost = Sum of this session's own SessionItem.cost
+        - subagents_cost = Sum of SessionItem.cost for all subagent sessions
+        - total_cost = self_cost + subagents_cost
+        """
+        from decimal import Decimal
+        from django.db.models import Sum
+
+        self.self_cost = SessionItem.objects.filter(
+            session=self,
+            cost__isnull=False,
+        ).aggregate(total=Sum("cost"))["total"]
+
+        self.subagents_cost = SessionItem.objects.filter(
+            session__parent_session=self,
+            cost__isnull=False,
+        ).aggregate(total=Sum("cost"))["total"]
+
+        total = (self.self_cost or Decimal(0)) + (self.subagents_cost or Decimal(0))
+        self.total_cost = total if total > 0 else None
 
     def __str__(self):
         return self.id
@@ -221,7 +339,7 @@ class SessionItem(models.Model):
     context_usage = models.PositiveIntegerField(null=True, blank=True)  # Total tokens at this point (null if no usage)
 
     # Timestamp from JSONL line (stored as datetime in UTC)
-    timestamp = models.DateTimeField(null=True, blank=True, db_index=True)
+    timestamp = models.DateTimeField(null=True, blank=True)
 
     # Resolved git directory and branch (from filesystem analysis of tool_use paths)
     git_directory = models.CharField(max_length=500, null=True, blank=True)  # Resolved git root directory
@@ -240,16 +358,28 @@ class SessionItem(models.Model):
                 fields=["session", "kind", "line_num"],
                 name="idx_session_kind_line",
             ),
+            # used to recompute activity
+            models.Index(
+                fields=["session", "timestamp"],
+                name="idx_item_user_session",
+                condition=Q(kind=ItemKind.USER_MESSAGE.value)
+            ),
+            models.Index(
+                fields=["timestamp"],
+                name="idx_item_user_all",
+                condition=Q(kind=ItemKind.USER_MESSAGE.value)
+            ),
+            models.Index(
+                fields=["session", "timestamp"],
+                name="idx_item_cost_session",
+                condition=Q(cost__isnull=False)
+            ),
+            models.Index(
+                fields=["timestamp"],
+                name="idx_item_cost_all",
+                condition=Q(cost__isnull=False)
+            ),
         ]
-
-    def activity_keys(self) -> tuple[date, date]:
-        """Return (day, week_monday) derived from this item's timestamp.
-
-        day is the date, week_monday is the Monday of that week.
-        """
-        d = self.timestamp.date()
-        monday = d - timedelta(days=d.weekday())
-        return d, monday
 
     def __str__(self):
         return f"{self.session_id}:{self.line_num}"

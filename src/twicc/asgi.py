@@ -290,6 +290,12 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         elif msg_type == "suggest_title":
             await self._handle_suggest_title(content)
 
+    async def send_json(self, content, close=False):
+        try:
+            await super().send_json(content, close=close)
+        except Exception as exc:
+            logger.exception("Error sending JSON message: %s", exc)
+
     async def _handle_send_message(self, content: dict) -> None:
         """Handle send_message request from client.
 

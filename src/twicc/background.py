@@ -302,83 +302,7 @@ async def run_initial_price_sync() -> None:
 # =============================================================================
 
 
-@sync_to_async
-def _apply_batch_update(msg: dict) -> None:
-    """Apply a batch of SessionItem updates from the worker."""
-    updates = msg['updates']
-    fields = msg['fields']
-
-    # Reconstruct SessionItem objects for bulk_update
-    items = []
-    for upd in updates:
-        item = SessionItem(id=upd['id'])
-        for field in fields:
-            value = upd.get(field)
-            # Handle Decimal fields (serialized as strings)
-            if field == 'cost' and value is not None:
-                value = Decimal(value)
-            setattr(item, field, value)
-        items.append(item)
-
-    if items:
-        SessionItem.objects.bulk_update(items, fields)
-
-
-@sync_to_async
-def _apply_links_create(msg: dict) -> None:
-    """Create ToolResultLinks and AgentLinks from worker data."""
-    tool_result_links_data = msg.get('tool_result_links', [])
-    if tool_result_links_data:
-        links = [ToolResultLink(**d) for d in tool_result_links_data]
-        ToolResultLink.objects.bulk_create(links, ignore_conflicts=True)
-
-    agent_links_data = msg.get('agent_links', [])
-    if agent_links_data:
-        links = [AgentLink(**d) for d in agent_links_data]
-        AgentLink.objects.bulk_create(links, ignore_conflicts=True)
-
-
-@sync_to_async
-def _apply_session_update(msg: dict) -> None:
-    """Update session fields from worker data."""
-    from twicc.compute import ensure_project_directory, update_project_total_cost
-
-    session_id = msg['session_id']
-    fields = msg['fields']
-
-    # Handle Decimal fields
-    for decimal_field in ('self_cost', 'subagents_cost', 'total_cost'):
-        if decimal_field in fields and fields[decimal_field] is not None:
-            fields[decimal_field] = Decimal(fields[decimal_field])
-
-    Session.objects.filter(id=session_id).update(**fields)
-
-    # Update titles if present
-    if 'titles' in msg:
-        for target_id, title in msg['titles'].items():
-            Session.objects.filter(id=target_id).update(title=title)
-
-    # Update project directory if provided
-    if 'project_directory' in msg:
-        project_id = msg['project_id']
-        directory = msg['project_directory']
-        if project_id and directory:
-            ensure_project_directory(project_id, directory)
-
-    # Update project total_cost
-    if 'project_id' in msg:
-        update_project_total_cost(msg['project_id'])
-
-
-@sync_to_async
-def _delete_session_links(session_id: str) -> None:
-    """Delete all links for a session before recomputing."""
-    ToolResultLink.objects.filter(session_id=session_id).delete()
-    AgentLink.objects.filter(session_id=session_id).delete()
-
-
-@sync_to_async
-def _apply_session_complete(msg: dict) -> None:
+def apply_session_complete(msg: dict) -> None:
     """
     Apply all results for a session in one go.
 
@@ -397,17 +321,14 @@ def _apply_session_complete(msg: dict) -> None:
     item_updates = msg.get('item_updates', [])
     item_fields = msg.get('item_fields', [])
     if item_updates and item_fields:
-        items = []
-        for upd in item_updates:
-            item = SessionItem(id=upd['id'])
-            for field in item_fields:
-                value = upd.get(field)
-                if field == 'cost' and value is not None:
-                    value = Decimal(value)
-                setattr(item, field, value)
-            items.append(item)
-        if items:
-            SessionItem.objects.bulk_update(items, item_fields)
+        items = [
+            SessionItem(id=upd['id'], **{
+                field: Decimal(value) if (value := upd.get(field)) is not None and field == 'cost' else value
+                for field in item_fields
+            })
+            for upd in item_updates
+        ]
+        SessionItem.objects.bulk_update(items, item_fields, 50)
 
     # 3. Create links
     tool_result_links_data = msg.get('tool_result_links', [])
@@ -423,43 +344,39 @@ def _apply_session_complete(msg: dict) -> None:
     # 4. Update session fields
     session_fields = msg.get('session_fields', {})
     if session_fields:
-        # Handle Decimal fields
-        for decimal_field in ('self_cost', 'subagents_cost', 'total_cost'):
-            if decimal_field in session_fields and session_fields[decimal_field] is not None:
-                session_fields[decimal_field] = Decimal(session_fields[decimal_field])
         # Handle datetime fields
         if 'created_at' in session_fields and session_fields['created_at'] is not None:
             session_fields['created_at'] = datetime.fromisoformat(session_fields['created_at'])
         Session.objects.filter(id=session_id).update(**session_fields)
 
-    # 5. Update titles
+    # 5. Recalculate session costs from SessionItem data (idempotent, order-independent)
+    session = Session.objects.get(id=session_id)
+    session.recalculate_costs()
+    session.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
+
+    # 6. If this is a subagent, recalculate parent session costs too
+    if session.parent_session_id:
+        parent = Session.objects.get(id=session.parent_session_id)
+        parent.recalculate_costs()
+        parent.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
+
+    # 7. Update titles
     titles = msg.get('titles', {})
     for target_id, title in titles.items():
         Session.objects.filter(id=target_id).update(title=title)
 
-    # 6. Update project directory
+    # 8. Update project directory
     project_id = msg.get('project_id')
     project_directory = msg.get('project_directory')
     if project_id and project_directory:
         ensure_project_directory(project_id, project_directory)
 
-    # 7. Resolve project git_root if session has git info but project doesn't
+    # 9. Resolve project git_root if session has git info but project doesn't
     session_git_dir = session_fields.get('git_directory') if session_fields else None
     if session_git_dir and project_id and get_project_git_root(project_id) is None:
         ensure_project_git_root(project_id)
 
-    # 8. Update activity counters (only present for real sessions, not subagents)
-    activity_weekly_user_message_counts = msg.get('activity_weekly_user_message_counts')
-    activity_daily_user_message_counts = msg.get('activity_daily_user_message_counts')
-    activity_weekly_costs = msg.get('activity_weekly_costs')
-    activity_daily_costs = msg.get('activity_daily_costs')
-    activity_weekly_session_counts = msg.get('activity_weekly_session_counts')
-    activity_daily_session_counts = msg.get('activity_daily_session_counts')
-    if project_id and (activity_weekly_user_message_counts or activity_daily_user_message_counts or activity_weekly_costs or activity_daily_costs or activity_weekly_session_counts or activity_daily_session_counts):
-        from twicc.sync import apply_activity_counts
-        apply_activity_counts(project_id, activity_weekly_user_message_counts, activity_daily_user_message_counts, activity_weekly_costs, activity_daily_costs, activity_weekly_session_counts, activity_daily_session_counts)
-
-    # 9. Update project total_cost
+    # 10. Update project total_cost
     if project_id:
         update_project_total_cost(project_id)
 
@@ -479,6 +396,16 @@ async def _handle_compute_done(session_id: str) -> None:
         logger.error(f"Error broadcasting updates for {session_id}: {e}")
 
 
+@sync_to_async
+def _flush_pending_activities(pending_activity_days: dict[str, set]) -> None:
+    """Flush accumulated activity recalculations for all projects."""
+    from twicc.core.models import PeriodicActivity
+    for project_id, days in pending_activity_days.items():
+        PeriodicActivity.recalculate_for_days(project_id, days, do_global=False)
+    days = set.union(*pending_activity_days.values())
+    PeriodicActivity.recalculate_for_days(None, days, do_global=True)
+
+
 async def consume_compute_results(stop_event: asyncio.Event) -> None:
     """
     Consume results from the compute worker and apply DB writes.
@@ -488,60 +415,66 @@ async def consume_compute_results(stop_event: asyncio.Event) -> None:
     """
     import orjson
 
+    from collections import defaultdict
+    from datetime import date as date_cls
+
     _, result_queue = get_queues()
+
+    # Accumulate affected days per project across multiple sessions
+    batch_activity_count = 50
+    pending_activity_days: dict[str, set] = defaultdict(set)
+    sessions_since_activities_flush = 0
 
     while not stop_event.is_set():
         # Collect available messages (non-blocking)
-        messages = []
         try:
-            while True:
-                raw_msg = result_queue.get_nowait()
-                # Deserialize from orjson bytes
-                msg = orjson.loads(raw_msg)
-                messages.append(msg)
-                if len(messages) >= 10:  # Process in batches of max 10
-                    break
+            raw_msg = result_queue.get_nowait()
+            # Deserialize from orjson bytes
+            msg = orjson.loads(raw_msg)
         except queue.Empty:
-            pass
-
-        if not messages:
-            # No messages, yield and wait a bit
             await asyncio.sleep(0.05)
             continue
 
-        # Process collected messages
-        for msg in messages:
-            msg_type = msg.get('type')
+        # Process collected message
+        msg_type = msg.get('type')
 
-            try:
-                if msg_type == 'session_complete':
-                    # New unified message type - all data in one message
-                    await _apply_session_complete(msg)
-                    await _handle_compute_done(msg['session_id'])
+        try:
+            if msg_type == 'session_complete':
+                # New unified message type - all data in one message
+                await sync_to_async(apply_session_complete)(msg)
+                await _handle_compute_done(msg['session_id'])
 
-                elif msg_type == 'delete_links':
-                    await _delete_session_links(msg['session_id'])
+                # Accumulate affected days for batched activity recalculation
+                affected_days = msg.get('affected_days')
+                project_id = msg.get('project_id')
+                if project_id and affected_days:
+                    pending_activity_days[project_id].update(
+                        date_cls.fromisoformat(d) for d in affected_days
+                    )
+                    sessions_since_activities_flush += 1
 
-                elif msg_type == 'batch':
-                    await _apply_batch_update(msg)
+            elif msg_type == 'error':
+                logger.error(f"Compute error for {msg['session_id']}: {msg['error']}")
 
-                elif msg_type == 'links':
-                    await _apply_links_create(msg)
+            else:
+                logger.error(f"Unexpected result message type: {msg_type} => {msg}")
 
-                elif msg_type == 'session_update':
-                    await _apply_session_update(msg)
+        except Exception as e:
+            logger.error(f"Error processing result message {msg_type}: {e}", exc_info=True)
 
-                elif msg_type == 'done':
-                    await _handle_compute_done(msg['session_id'])
-
-                elif msg_type == 'error':
-                    logger.error(f"Compute error for {msg['session_id']}: {msg['error']}")
-
-            except Exception as e:
-                logger.error(f"Error processing result message {msg_type}: {e}", exc_info=True)
+        # Flush activity recalculations every batch_activity_count sessions
+        if sessions_since_activities_flush >= batch_activity_count:
+            await _flush_pending_activities(pending_activity_days)
+            pending_activity_days.clear()
+            sessions_since_activities_flush = 0
 
         # Yield to event loop between batches
         await asyncio.sleep(0)
+
+    # Flush any remaining pending activity recalculations before shutdown
+    if pending_activity_days:
+        await _flush_pending_activities(pending_activity_days)
+        pending_activity_days.clear()
 
     # Drain result queue on shutdown to prevent blocking
     # (may already be closed by stop_background_task, so handle ValueError)
@@ -780,7 +713,7 @@ async def start_background_compute_task() -> None:
 
             # Skip if already sent to worker
             if session.id in sent_sessions:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.01)
                 continue
 
             # Send command to worker process (non-blocking)
