@@ -176,6 +176,14 @@ const searchQuery = ref('')
 // Show archived sessions filter (persists across project changes)
 const showArchivedSessions = ref(false)
 
+// Compact view: local override initialized from the setting.
+// Toggling from the session list menu changes this local state without affecting the setting.
+// When the setting changes (e.g. from the Settings panel), we re-sync to follow the new default.
+const compactView = ref(settingsStore.isCompactSessionList)
+watch(() => settingsStore.isCompactSessionList, (newValue) => {
+    compactView.value = newValue
+})
+
 // Reference to SessionList for keyboard navigation
 const sessionListRef = ref(null)
 
@@ -244,7 +252,7 @@ function handleSessionOptionsSelect(event) {
     if (item.value === 'show-archived') {
         showArchivedSessions.value = item.checked
     } else if (item.value === 'compact-view') {
-        settingsStore.setCompactSessionList(item.checked)
+        compactView.value = item.checked
     }
 }
 
@@ -647,7 +655,7 @@ function updateSidebarClosedClass(closed) {
                         <wa-dropdown-item
                             type="checkbox"
                             value="compact-view"
-                            :checked="settingsStore.isCompactSessionList"
+                            :checked="compactView"
                         >
                             Compact view
                         </wa-dropdown-item>
@@ -696,6 +704,7 @@ function updateSidebarClosedClass(closed) {
                     :show-project-name="isAllProjectsMode"
                     :search-query="searchQuery"
                     :show-archived="showArchivedSessions"
+                    :compact-view="compactView"
                     @select="handleSessionSelect"
                     @focus-search="focusSearchInput"
                 />

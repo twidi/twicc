@@ -31,6 +31,10 @@ const props = defineProps({
     showArchived: {
         type: Boolean,
         default: false
+    },
+    compactView: {
+        type: Boolean,
+        default: false
     }
 })
 
@@ -41,8 +45,7 @@ const settingsStore = useSettingsStore()
 const sessionTimeFormat = computed(() => settingsStore.getSessionTimeFormat)
 // Costs setting
 const showCosts = computed(() => settingsStore.areCostsShown)
-// Compact view setting
-const compactView = computed(() => settingsStore.isCompactSessionList)
+// Compact view (driven by parent via prop, not by the setting directly)
 const useRelativeTime = computed(() =>
     sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_SHORT ||
     sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_NARROW
@@ -113,7 +116,7 @@ const loadMoreError = ref(false)
 
 // Virtual scroller configuration
 // Session items have relatively uniform height (~80-100px normal, ~35-40px compact)
-const minSessionHeight = computed(() => compactView.value ? 35 : 70)
+const minSessionHeight = computed(() => props.compactView ? 35 : 70)
 const SCROLLER_BUFFER = 300
 
 // Reference to the VirtualScroller component
