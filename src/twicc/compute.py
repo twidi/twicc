@@ -1268,6 +1268,9 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     seen_message_ids: set[str] = set()
     last_context_usage: int | None = None
 
+    # Track first timestamp (for session.created_at)
+    first_timestamp: datetime | None = None
+
     # Track runtime environment fields (last seen values)
     first_cwd: str | None = None  # First cwd = project directory
     last_cwd: str | None = None
@@ -1292,6 +1295,8 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
 
         # Extract timestamp
         item.timestamp = extract_item_timestamp(parsed)
+        if first_timestamp is None and item.timestamp is not None:
+            first_timestamp = item.timestamp
 
         # Compute cost and context usage
         compute_item_cost_and_usage(item, parsed, seen_message_ids)
@@ -1483,6 +1488,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             'git_directory': last_resolved_git_directory,
             'git_branch': last_resolved_git_branch,
             'model': last_model,
+            'created_at': first_timestamp.isoformat() if first_timestamp else None,
         },
         'titles': session_titles,
         'project_directory': project_directory,

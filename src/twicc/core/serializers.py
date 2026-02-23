@@ -54,6 +54,7 @@ def serialize_session(session):
         "parent_session_id": session.parent_session_id,  # None for regular sessions, set for subagents
         "last_line": session.last_line,
         "mtime": session.mtime,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
         "stale": session.stale,
         "title": title,  # Session title (from pending, first user message, or custom-title)
         "message_count": session.message_count,  # Number of user/assistant messages

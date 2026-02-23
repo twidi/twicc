@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import queue
+from datetime import datetime
 from decimal import Decimal
 from multiprocessing import Event as MPEvent, Process, Queue
 
@@ -426,6 +427,9 @@ def _apply_session_complete(msg: dict) -> None:
         for decimal_field in ('self_cost', 'subagents_cost', 'total_cost'):
             if decimal_field in session_fields and session_fields[decimal_field] is not None:
                 session_fields[decimal_field] = Decimal(session_fields[decimal_field])
+        # Handle datetime fields
+        if 'created_at' in session_fields and session_fields['created_at'] is not None:
+            session_fields['created_at'] = datetime.fromisoformat(session_fields['created_at'])
         Session.objects.filter(id=session_id).update(**session_fields)
 
     # 5. Update titles

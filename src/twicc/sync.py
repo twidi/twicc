@@ -363,6 +363,9 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Track if we've already set initial title for this session (from first user message ever)
             initial_title_needs_set = session.title is None
 
+            # Track first timestamp in this batch (for session.created_at)
+            first_timestamp: datetime | None = None
+
             # Track last seen values for runtime environment fields
             first_cwd: str | None = None  # First cwd in this batch
             last_cwd: str | None = None
@@ -405,6 +408,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
 
                 # Extract timestamp
                 item.timestamp = extract_item_timestamp(parsed)
+                if first_timestamp is None and item.timestamp is not None:
+                    first_timestamp = item.timestamp
 
                 # Compute cost and context usage (with deduplication)
                 compute_item_cost_and_usage(item, parsed, seen_message_ids)
@@ -577,6 +582,8 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 session.cwd_git_branch = last_cwd_git_branch
             if last_model and last_model != session.model:
                 session.model = last_model
+            if session.created_at is None and first_timestamp is not None:
+                session.created_at = first_timestamp
 
             # Update activity counters:
             # - user message counts: only for real sessions (not subagents)
@@ -589,7 +596,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
         # Update offset to end of file
         session.last_offset = f.tell()
         session.mtime = file_mtime
-        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "model"])
+        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "model", "created_at"])
 
         # If this is a subagent, propagate cost to parent session
         if session.type == SessionType.SUBAGENT and session.parent_session_id:

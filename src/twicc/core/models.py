@@ -169,6 +169,9 @@ class Session(models.Model):
     cwd_git_branch = models.CharField(max_length=255, null=True, blank=True)  # Git branch from cwd (unreliable for worktrees)
     model = models.CharField(max_length=100, null=True, blank=True)  # Model name (e.g., "claude-opus-4-5-20251101")
 
+    # Session creation timestamp (from first JSONL item with a timestamp)
+    created_at = models.DateTimeField(null=True, blank=True)
+
     # Resolved git directory and branch (from filesystem analysis of tool_use paths)
     git_directory = models.CharField(max_length=500, null=True, blank=True)  # Resolved git root directory
     git_branch = models.CharField(max_length=255, null=True, blank=True)  # Resolved branch name (or commit hash for detached HEAD)
