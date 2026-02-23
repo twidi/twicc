@@ -123,7 +123,7 @@ function handleEditClick() {
                                 :data="weeklyActivity"
                             />
                         </span>
-                        <AppTooltip :for="`detail-sparkline-${projectId}`">Project activity</AppTooltip>
+                        <AppTooltip :for="`detail-sparkline-${projectId}`">Project activity (user messages sent per week)</AppTooltip>
                         <ProjectProcessIndicator :project-id="projectId" size="small" />
                     </template>
                     <template v-else>
@@ -134,7 +134,7 @@ function handleEditClick() {
                                 :data="weeklyActivity"
                             />
                         </span>
-                        <AppTooltip for="detail-sparkline-all-projects">Overall activity</AppTooltip>
+                        <AppTooltip for="detail-sparkline-all-projects">Overall activity (user messages sent per week)</AppTooltip>
                     </template>
                 </div>
                 <wa-button

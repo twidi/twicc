@@ -39,7 +39,7 @@ async function handleRetry() {
             <span id="home-global-sparkline" class="global-sparkline">
                 <ActivitySparkline :data="globalWeeklyActivity" />
             </span>
-            <AppTooltip for="home-global-sparkline">Overall activity</AppTooltip>
+            <AppTooltip for="home-global-sparkline">Overall activity (user messages sent per week)</AppTooltip>
             <router-link :to="{ name: 'projects-all' }" class="view-all-link">
                 View all sessions ({{ totalSessionsCount }})
             </router-link>
