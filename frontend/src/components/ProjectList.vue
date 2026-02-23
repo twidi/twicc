@@ -103,7 +103,7 @@ function handleEditClick(event, project) {
                     <div :id="`project-sparkline-${project.id}`" class="project-graph">
                         <ActivitySparkline :id-suffix="project.id" :data="store.weeklyActivity[project.id] || []" />
                     </div>
-                    <AppTooltip :for="`project-sparkline-${project.id}`">Project activity (user messages sent per week)</AppTooltip>
+                    <AppTooltip :for="`project-sparkline-${project.id}`">Project activity (message turns per week)</AppTooltip>
                 </div>
             </div>
         </wa-card>

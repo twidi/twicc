@@ -121,7 +121,7 @@ const periodDefs = [
         key: 'monthly',
         label: 'Monthly',
         sublabel: 'rolling 30 days',
-        icon: 'calendar',
+        icon: 'calendar-days',
         previousLabel: 'the previous 30 days period',
         offsetCurrent: -29,
         offsetPrevious: -59,
@@ -212,7 +212,7 @@ const periods = computed(() => {
             key: 'total',
             label: 'Total',
             sublabel: 'all time',
-            icon: 'calendar-range',
+            icon: 'calendar',
             isTotal: true,
             mainValue,
             sub1Value,
@@ -226,21 +226,24 @@ const periods = computed(() => {
 
 <template>
     <div v-if="periods.length > 0" class="activity-dashboard">
-        <h3 class="dashboard-title">{{ isSessionsMode ? 'Sessions overview' : 'Messages overview' }}</h3>
-        <div class="wa-grid dashboard-grid">
+        <h3 class="dashboard-title">{{ isSessionsMode ? 'Sessions overview' : 'Message turns overview' }}</h3>
+        <div class="wa-cluster dashboard-grid">
             <wa-card v-for="period in periods" :key="period.label">
                 <div class="wa-flank wa-align-items-start">
-                    <wa-avatar shape="rounded">
-                        <wa-icon slot="icon" :name="period.icon"></wa-icon>
-                    </wa-avatar>
-                    <div class="wa-stack wa-gap-m">
-                        <h3 class="wa-caption-m">{{ period.label }} <span v-if="period.sublabel" class="wa-caption-2xs period-sublabel">({{ period.sublabel }})</span></h3>
+                    <div class="wa-stack wa-gap-l">
+                        <h3 class="wa-caption-m wa-cluster wa-gap-s">
+                            <wa-icon :name="period.icon"></wa-icon>
+                            {{ period.label }} <span v-if="period.sublabel" class="wa-caption-2xs period-sublabel">({{ period.sublabel }})</span>
+                        </h3>
 
                         <!-- Main metric -->
-                        <div class="wa-stack wa-gap-2xs">
-                            <div class="wa-cluster wa-gap-xs">
-                                <span v-if="period.mainTrend" class="wa-caption-2xs prev-value">{{ period.prevMainValue }} →</span>
-                                <span class="wa-heading-xl">{{ period.mainValue }}</span>
+                        <div class="wa-stack wa-gap-xs">
+                            <div class="wa-cluster wa-gap-m">
+                                <div class="wa-stack wa-gap-3xs wa-align-items-center">
+                                    <span v-if="period.mainTrend && period.mainTrend.direction !== 'up'" class="wa-caption-xs prev-value">{{ period.prevMainValue }}</span>
+                                    <span class="wa-heading-2xl">{{ period.mainValue }}</span>
+                                    <span v-if="period.mainTrend && period.mainTrend.direction === 'up'" class="wa-caption-xs prev-value">{{ period.prevMainValue }}</span>
+                                </div>
                                 <wa-tag
                                     v-if="period.mainTrend"
                                     :variant="period.mainTrend.variant"
@@ -257,24 +260,27 @@ const periods = computed(() => {
                                     <AppTooltip v-if="!period.mainTrend" :for="`na-main-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
                                 </template>
                             </div>
-                            <span class="wa-caption-s kpi-label">{{ isSessionsMode ? 'sessions created' : 'user messages sent' }}</span>
+                            <span class="wa-caption-s kpi-label">{{ isSessionsMode ? 'sessions created' : 'message turns' }}</span>
                         </div>
 
                         <wa-divider></wa-divider>
 
                         <!-- Sub metric 1 -->
-                        <div class="wa-stack wa-gap-2xs">
-                            <div class="wa-cluster wa-gap-xs sub-metric">
+                        <div class="wa-stack wa-gap-xs">
+                            <div class="wa-cluster wa-gap-m sub-metric">
                                 <!-- Cost display for messages mode, plain number for sessions mode -->
-                                <template v-if="isSessionsMode">
-                                    <span v-if="period.sub1Trend" class="wa-caption-2xs prev-value">{{ formatAvg(period.prevSub1Value) }} →</span>
-                                    <span class="wa-heading-s">{{ formatAvg(period.sub1Value) }}</span>
-                                </template>
-                                <template v-else>
-                                    <CostDisplay v-if="period.sub1Trend" :cost="period.prevSub1Value" class="wa-caption-2xs prev-value" />
-                                    <span v-if="period.sub1Trend" class="wa-caption-2xs prev-value">→</span>
-                                    <CostDisplay :cost="period.sub1Value" class="wa-heading-s" />
-                                </template>
+                                <div class="wa-stack wa-gap-2xs wa-align-items-center">
+                                    <template v-if="isSessionsMode">
+                                        <span v-if="period.sub1Trend && period.sub1Trend.direction !== 'up'" class="wa-caption-xs prev-value">{{ formatAvg(period.prevSub1Value) }}</span>
+                                        <span class="wa-heading-l">{{ formatAvg(period.sub1Value) }}</span>
+                                        <span v-if="period.sub1Trend && period.sub1Trend.direction === 'up'" class="wa-caption-xs prev-value">{{ formatAvg(period.prevSub1Value) }}</span>
+                                    </template>
+                                    <template v-else>
+                                        <CostDisplay v-if="period.sub1Trend && period.sub1Trend.direction !== 'up'" :cost="period.prevSub1Value" :icon="false" class="wa-caption-s prev-value" />
+                                        <CostDisplay :cost="period.sub1Value" class="wa-heading-l" />
+                                        <CostDisplay v-if="period.sub1Trend && period.sub1Trend.direction === 'up'" :cost="period.prevSub1Value" :icon="false" class="wa-caption-xs prev-value" />
+                                    </template>
+                                </div>
                                 <wa-tag
                                     v-if="period.sub1Trend"
                                     :variant="period.sub1Trend.variant"
@@ -292,15 +298,17 @@ const periods = computed(() => {
                                     <AppTooltip v-if="!period.sub1Trend" :for="`na-sub1-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
                                 </template>
                             </div>
-                            <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? 'avg. user messages sent per session' : 'total cost' }}</span>
+                            <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? 'avg. turns per session' : 'total cost' }}</span>
                         </div>
 
                         <!-- Sub metric 2 -->
-                        <div class="wa-stack wa-gap-2xs">
-                            <div class="wa-cluster wa-gap-xs sub-metric">
-                                <CostDisplay v-if="period.sub2Trend" :cost="period.prevSub2Value" class="wa-caption-2xs prev-value" />
-                                <span v-if="period.sub2Trend" class="wa-caption-2xs prev-value">→</span>
-                                <CostDisplay :cost="period.sub2Value" class="wa-heading-s" />
+                        <div class="wa-stack wa-gap-xs">
+                            <div class="wa-cluster wa-gap-m sub-metric">
+                                <div class="wa-stack wa-gap-2xs wa-align-items-center">
+                                    <CostDisplay v-if="period.sub2Trend && period.sub2Trend.direction !== 'up'" :cost="period.prevSub2Value" :icon="false" class="wa-caption-xs prev-value" />
+                                    <CostDisplay :cost="period.sub2Value" class="wa-heading-l" />
+                                    <CostDisplay v-if="period.sub2Trend && period.sub2Trend.direction === 'up'" :cost="period.prevSub2Value" :icon="false" class="wa-caption-xs prev-value" />
+                                </div>
                                 <wa-tag
                                     v-if="period.sub2Trend"
                                     :variant="period.sub2Trend.variant"
@@ -318,7 +326,7 @@ const periods = computed(() => {
                                     <AppTooltip v-if="!period.sub2Trend" :for="`na-sub2-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
                                 </template>
                             </div>
-                            <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? 'avg. cost per session' : 'avg. cost per user message' }}</span>
+                            <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? 'avg. cost per session' : 'avg. cost per turn' }}</span>
                         </div>
                     </div>
                 </div>
@@ -330,6 +338,11 @@ const periods = computed(() => {
 <style scoped>
 .activity-dashboard {
     padding-inline: var(--wa-space-m);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    max-width: 85rem;
+    margin-inline: auto;
 }
 
 .dashboard-title {
@@ -340,7 +353,12 @@ const periods = computed(() => {
 }
 
 .dashboard-grid {
-    --min-column-size: 22ch;
+    justify-content: center;
+    align-items: stretch;
+}
+
+wa-card {
+    min-width: 16rem;
 }
 
 .kpi-label {
@@ -356,10 +374,10 @@ const periods = computed(() => {
 }
 
 wa-tag {
-    font-size: var(--wa-font-size-xs);
+    font-size: var(--wa-font-size-m);
 }
 .sub-metric wa-tag {
-    font-size: var(--wa-font-size-2xs);
+    font-size: var(--wa-font-size-s);
 }
 
 </style>

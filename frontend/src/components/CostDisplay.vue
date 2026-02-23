@@ -1,7 +1,8 @@
 <script setup>
-// CostDisplay.vue - Consistent cost display with dollar icon + formatted amount.
-// Renders: <span><wa-icon dollar-sign /> X.XX</span>
+// CostDisplay.vue - Consistent cost display with optional dollar icon + formatted amount.
+// Renders: <span>[<wa-icon dollar-sign />] X.XX</span>
 // If cost is null/undefined, displays a dash instead.
+// The `icon` prop (default: true) controls whether the dollar icon is shown.
 
 import { computed } from 'vue'
 
@@ -10,6 +11,11 @@ const props = defineProps({
     cost: {
         type: Number,
         default: null,
+    },
+    /** Whether to show the dollar icon */
+    icon: {
+        type: Boolean,
+        default: true,
     },
 })
 
@@ -26,7 +32,7 @@ const formattedCost = computed(() => {
 
 <template>
     <span class="cost-display">
-        <wa-icon auto-width name="dollar-sign" class="cost-icon"></wa-icon>
+        <wa-icon v-if="icon" auto-width name="dollar-sign" class="cost-icon"></wa-icon>
         <span v-if="formattedCost != null">{{ formattedCost }}</span>
         <span v-else>-</span>
     </span>

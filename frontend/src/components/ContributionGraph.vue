@@ -111,7 +111,7 @@ function tooltipFormatter(item, unit) {
 
 <template>
     <div ref="graphContainer" class="contribution-graph" :class="{ vertical: isVertical }">
-        <h3 class="contribution-graph-title">{{ isCostMode ? 'Cost per day' : isSessionsMode ? 'Sessions created per day' : 'User messages sent per day' }}</h3>
+        <h3 class="contribution-graph-title">{{ isCostMode ? 'Cost per day' : isSessionsMode ? 'Sessions created per day' : 'Message turns per day' }}</h3>
         <CalendarHeatmap
             v-if="heatmapValues.length > 0 && rangeColor.length === 6"
             :key="`${rangeColor.join(',')}-${isVertical}-${mode}`"
@@ -120,7 +120,7 @@ function tooltipFormatter(item, unit) {
             :range-color="rangeColor"
             :round="2"
             :tooltip="true"
-            :tooltip-unit="isCostMode ? 'cost' : isSessionsMode ? 'sessions created' : 'user messages sent'"
+            :tooltip-unit="isCostMode ? 'cost' : isSessionsMode ? 'sessions created' : 'message turns'"
             :tooltip-formatter="tooltipFormatter"
             :dark-mode="isDark"
             :vertical="isVertical"
