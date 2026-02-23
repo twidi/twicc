@@ -259,19 +259,19 @@ function onPopoverShow() {
     </wa-button>
     <AppTooltip for="settings-trigger">Toggle settings</AppTooltip>
     <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
+        <wa-button
+            v-if="showLogout"
+            :id="logoutButtonId"
+            class="logout-button"
+            variant="danger"
+            appearance="plain"
+            size="small"
+            @click="handleLogout"
+        >
+            <wa-icon name="right-from-bracket"></wa-icon>
+        </wa-button>
+        <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
         <div class="settings-content">
-            <wa-button
-                v-if="showLogout"
-                :id="logoutButtonId"
-                class="logout-button"
-                variant="danger"
-                appearance="plain"
-                size="small"
-                @click="handleLogout"
-            >
-                <wa-icon name="right-from-bracket"></wa-icon>
-            </wa-button>
-            <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
             <div class="settings-sections">
                 <!-- Global Section -->
                 <section class="settings-section">
@@ -320,6 +320,9 @@ function onPopoverShow() {
                         >Only when needed</wa-switch>
                     </div>
                 </section>
+
+                <!-- Notifications Section -->
+                <NotificationSettings ref="notificationSettingsRef" />
 
                 <!-- Sessions Section -->
                 <section class="settings-section">
@@ -401,7 +404,7 @@ function onPopoverShow() {
                                 :value.prop="titleSystemPrompt"
                                 @input="onTitleSystemPromptChange"
                                 size="small"
-                                rows="4"
+                                rows="7"
                                 resize="vertical"
                                 class="title-prompt-textarea"
                             ></wa-textarea>
@@ -418,9 +421,6 @@ function onPopoverShow() {
                         </div>
                     </div>
                 </section>
-
-                <!-- Notifications Section -->
-                <NotificationSettings ref="notificationSettingsRef" />
 
                 <!-- Editor Section -->
                 <section class="settings-section">
@@ -472,9 +472,10 @@ function onPopoverShow() {
 .settings-popover {
     --max-width: 90vw;
     --arrow-size: 16px;
-    &::part(body) {
-        width: fit-content;
-    }
+}
+
+.settings-popover::part(body) {
+    position: relative;
 }
 
 .settings-content {
@@ -484,15 +485,16 @@ function onPopoverShow() {
 
 .logout-button {
     position: absolute;
-    top: var(--wa-space-s);
-    right: var(--wa-space-s);
+    top: calc(-1 * var(--wa-space-xs));
+    right: calc(-1 * var(--wa-space-xs));
     z-index: 1;
 }
 
 .settings-sections {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--wa-space-m);
+    columns: 15rem;
+    column-gap: var(--wa-space-m);
+    width: 90vw;
+    max-width: 100%;
 }
 
 .title-prompt-section {
@@ -535,11 +537,10 @@ function onPopoverShow() {
     gap: var(--wa-space-m);
     padding: var(--wa-space-s);
     background: var(--wa-color-surface-alt);
-    border-radius: var(--wa-radius-m);
-    --min-width: 15rem;
-    max-width: 20rem;
-    min-width: var(--min-width);
-    flex: 1 1 var(--min-width); /* grow, shrink, basis */
+    border-radius: var(--wa-border-radius-m);
+    border: solid 1px var(--wa-color-border-quiet);
+    break-inside: avoid;
+    margin-bottom: var(--wa-space-m);
 }
 
 .settings-sections .settings-section-title {
