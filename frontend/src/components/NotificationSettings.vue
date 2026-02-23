@@ -179,46 +179,6 @@ defineExpose({ sync })
 </template>
 
 <style scoped>
-.settings-section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wa-space-m);
-    padding: var(--wa-space-s);
-    background: var(--wa-color-surface-alt);
-    border-radius: var(--wa-radius-m);
-    --min-width: 15rem;
-    max-width: 20rem;
-    min-width: var(--min-width);
-    flex: 1 1 var(--min-width);
-}
-
-.settings-section-title {
-    font-size: var(--wa-font-size-s);
-    font-weight: var(--wa-font-weight-bold);
-    color: var(--wa-color-text-loud);
-    margin: 0;
-    padding-bottom: var(--wa-space-xs);
-    border-bottom: 1px solid var(--wa-color-border-subtle);
-}
-
-.setting-group {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wa-space-xs);
-}
-
-.setting-group-label {
-    font-size: var(--wa-font-size-xs);
-    font-weight: var(--wa-font-weight-semibold);
-    color: var(--wa-color-text-quiet);
-}
-
-.setting-group-hint {
-    font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-quiet);
-    font-style: italic;
-}
-
 .notif-test-link {
     display: inline-flex;
     align-items: center;
