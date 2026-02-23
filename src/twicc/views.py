@@ -895,7 +895,7 @@ _DAILY_ACTIVITY_MAX_DAYS = 365
 def daily_activity(request, project_id=None):
     """GET /api/daily-activity/ or /api/projects/<id>/daily-activity/
 
-    Returns daily activity data for the contribution graph.
+    Returns daily activity data for the contribution graph, plus all-time totals.
     Sparse format: only days with activity are returned.
     The frontend heatmap component handles missing days as empty cells.
 
@@ -903,21 +903,29 @@ def daily_activity(request, project_id=None):
     If project_id is omitted, returns global data (all projects).
 
     Returns:
-        { "daily_activity": [ { "date": "YYYY-MM-DD", "user_message_count": N, "session_count": N, "cost": "X.XX" }, ... ] }
+        {
+            "daily_activity": [ { "date": "YYYY-MM-DD", "user_message_count": N, "session_count": N, "cost": "X.XX" }, ... ],
+            "totals": { "user_message_count": N, "session_count": N, "cost": "X.XX" }
+        }
     """
+    from django.db.models import Sum
+
     today = timezone.now().date()
     cutoff = today - timedelta(days=_DAILY_ACTIVITY_MAX_DAYS - 1)
 
-    filters = {"date__gte": cutoff}
-    if project_id:
-        filters["project_id"] = project_id
-    else:
-        filters["project__isnull"] = True
+    project_filters = {"project_id": project_id} if project_id else {"project__isnull": True}
 
     rows = (
-        DailyActivity.objects.filter(**filters)
+        DailyActivity.objects.filter(date__gte=cutoff, **project_filters)
         .order_by("date")
         .values("date", "user_message_count", "session_count", "cost")
+    )
+
+    # All-time totals (no date filter)
+    totals = DailyActivity.objects.filter(**project_filters).aggregate(
+        total_user_message_count=Sum("user_message_count"),
+        total_session_count=Sum("session_count"),
+        total_cost=Sum("cost"),
     )
 
     return JsonResponse({
@@ -930,6 +938,11 @@ def daily_activity(request, project_id=None):
             }
             for row in rows
         ],
+        "totals": {
+            "user_message_count": totals["total_user_message_count"] or 0,
+            "session_count": totals["total_session_count"] or 0,
+            "cost": str(totals["total_cost"] or 0),
+        },
     })
 
 

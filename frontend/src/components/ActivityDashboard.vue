@@ -1,6 +1,6 @@
 <script setup>
-// ActivityDashboard.vue - KPI cards for daily/weekly/monthly periods,
-// with trend badges comparing to the previous period.
+// ActivityDashboard.vue - KPI cards for daily/weekly/monthly periods + all-time total,
+// with trend badges comparing to the previous period (except total which has no comparison).
 // Supports two modes:
 //   - 'messages': main metric = user message count, sub-metrics = total cost + cost per message
 //   - 'sessions': main metric = session count, sub-metrics = avg messages/session + avg cost/session
@@ -15,6 +15,11 @@ const props = defineProps({
     dailyActivity: {
         type: Array,
         required: true,
+    },
+    /** All-time totals from API: { user_message_count: N, session_count: N, cost: "X.XX" } */
+    totals: {
+        type: Object,
+        default: null,
     },
     /** Display mode: 'messages' or 'sessions' */
     mode: {
@@ -132,7 +137,7 @@ const periods = computed(() => {
     today.setHours(0, 0, 0, 0)
     const tomorrow = addDays(today, 1)
 
-    return periodDefs.map(({ key, label, sublabel, icon, previousLabel, offsetCurrent, offsetPrevious, days }) => {
+    const rollingPeriods = periodDefs.map(({ key, label, sublabel, icon, previousLabel, offsetCurrent, offsetPrevious, days }) => {
         const currentStart = addDays(today, offsetCurrent)
         const previousStart = addDays(today, offsetPrevious)
         const previousEnd = addDays(previousStart, days)
@@ -179,6 +184,43 @@ const periods = computed(() => {
             sub2Value, prevSub2Value, sub2Trend,
         }
     })
+
+    // All-time total column (no trend, no previous value)
+    if (props.totals) {
+        const t = props.totals
+        const userMessageCount = t.user_message_count || 0
+        const sessionCount = t.session_count || 0
+        const cost = parseFloat(t.cost) || 0
+
+        const mainValue = isSessionsMode.value ? sessionCount : userMessageCount
+
+        let sub1Value
+        if (isSessionsMode.value) {
+            sub1Value = sessionCount > 0 ? userMessageCount / sessionCount : null
+        } else {
+            sub1Value = cost
+        }
+
+        let sub2Value
+        if (isSessionsMode.value) {
+            sub2Value = sessionCount > 0 ? cost / sessionCount : null
+        } else {
+            sub2Value = userMessageCount > 0 ? cost / userMessageCount : null
+        }
+
+        rollingPeriods.push({
+            key: 'total',
+            label: 'Total',
+            sublabel: 'all time',
+            icon: 'calendar-range',
+            isTotal: true,
+            mainValue,
+            sub1Value,
+            sub2Value,
+        })
+    }
+
+    return rollingPeriods
 })
 </script>
 
@@ -210,8 +252,10 @@ const periods = computed(() => {
                                     ></wa-icon>
                                     {{ period.mainTrend.value }}%
                                 </wa-tag>
-                                <wa-tag v-else :id="`na-main-${mode}-${period.key}`" variant="neutral" appearance="outlined">N/A</wa-tag>
-                                <AppTooltip v-if="!period.mainTrend" :for="`na-main-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                <template v-if="!period.isTotal">
+                                    <wa-tag v-if="!period.mainTrend" :id="`na-main-${mode}-${period.key}`" variant="neutral" appearance="outlined">N/A</wa-tag>
+                                    <AppTooltip v-if="!period.mainTrend" :for="`na-main-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                </template>
                             </div>
                             <span class="wa-caption-s kpi-label">{{ isSessionsMode ? 'sessions created' : 'user messages sent' }}</span>
                         </div>
@@ -243,8 +287,10 @@ const periods = computed(() => {
                                     ></wa-icon>
                                     {{ period.sub1Trend.value }}%
                                 </wa-tag>
-                                <wa-tag v-else :id="`na-sub1-${mode}-${period.key}`" variant="neutral" appearance="outlined" size="small">N/A</wa-tag>
-                                <AppTooltip v-if="!period.sub1Trend" :for="`na-sub1-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                <template v-if="!period.isTotal">
+                                    <wa-tag v-if="!period.sub1Trend" :id="`na-sub1-${mode}-${period.key}`" variant="neutral" appearance="outlined" size="small">N/A</wa-tag>
+                                    <AppTooltip v-if="!period.sub1Trend" :for="`na-sub1-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                </template>
                             </div>
                             <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? 'avg. user messages sent per session' : 'total cost' }}</span>
                         </div>
@@ -267,8 +313,10 @@ const periods = computed(() => {
                                     ></wa-icon>
                                     {{ period.sub2Trend.value }}%
                                 </wa-tag>
-                                <wa-tag v-else :id="`na-sub2-${mode}-${period.key}`" variant="neutral" appearance="outlined" size="small">N/A</wa-tag>
-                                <AppTooltip v-if="!period.sub2Trend" :for="`na-sub2-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                <template v-if="!period.isTotal">
+                                    <wa-tag v-if="!period.sub2Trend" :id="`na-sub2-${mode}-${period.key}`" variant="neutral" appearance="outlined" size="small">N/A</wa-tag>
+                                    <AppTooltip v-if="!period.sub2Trend" :for="`na-sub2-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                </template>
                             </div>
                             <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? 'avg. cost per session' : 'avg. cost per user message' }}</span>
                         </div>

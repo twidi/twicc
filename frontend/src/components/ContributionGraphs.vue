@@ -17,6 +17,7 @@ const props = defineProps({
 })
 
 const dailyActivity = ref([])
+const activityTotals = ref(null)
 
 async function fetchDailyActivity() {
     try {
@@ -28,6 +29,7 @@ async function fetchDailyActivity() {
         if (res.ok) {
             const data = await res.json()
             dailyActivity.value = data.daily_activity || []
+            activityTotals.value = data.totals || null
         }
     } catch (error) {
         console.error('Failed to load daily activity:', error)
@@ -39,8 +41,8 @@ watch(() => props.projectId, fetchDailyActivity)
 </script>
 
 <template>
-    <ActivityDashboard :daily-activity="dailyActivity" mode="sessions" />
-    <ActivityDashboard :daily-activity="dailyActivity" mode="messages" />
+    <ActivityDashboard :daily-activity="dailyActivity" :totals="activityTotals" mode="sessions" />
+    <ActivityDashboard :daily-activity="dailyActivity" :totals="activityTotals" mode="messages" />
     <ContributionGraph :daily-activity="dailyActivity" mode="sessions" />
     <ContributionGraph :daily-activity="dailyActivity" mode="messages" />
     <ContributionGraph :daily-activity="dailyActivity" mode="cost" />
