@@ -13,7 +13,6 @@ import orjson
 import sys
 import time
 from collections import Counter
-from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -77,154 +76,84 @@ def _update_parent_session_costs(parent_session_id: str) -> None:
     )
 
 
-def _increment_weekly_activity(
+def _increment_activity(
+    model: type,
     project_id: str,
     items_to_create: list[tuple],
+    date_index: int,
+    include_counts: bool = True,
 ) -> None:
-    """Increment WeeklyActivity counters for new user_message items.
+    """Increment activity counters for new items.
 
-    Counts user messages by week (Monday), then updates both per-project
-    and global (project=NULL) counters. Uses UPDATE first (common case),
-    falls back to CREATE only when the week row doesn't exist yet.
+    Counts user messages when include_counts is True,
+    and always sums costs from all items with a cost.
+    Updates both per-project and global (project=NULL) counters
+    via PeriodicActivity.increment_or_create.
+
+    Args:
+        model: The activity model class (WeeklyActivity or DailyActivity).
+        project_id: The project ID.
+        items_to_create: List of (item, parsed) tuples.
+        date_index: Index into activity_keys() tuple (0=day, 1=week_monday).
+        include_counts: If True, count user_message items. Set to False
+            for subagent sessions (only costs should be tracked).
     """
-    from django.db.models import F
-
     from twicc.core.enums import ItemKind
-    from twicc.core.models import WeeklyActivity
 
-    # Count user messages by week monday
-    week_counts: Counter = Counter()
+    counts: Counter = Counter()
+    costs: dict = {}
     for item, _parsed in items_to_create:
-        if item.kind == ItemKind.USER_MESSAGE and item.timestamp:
-            monday = item.timestamp.date() - timedelta(days=item.timestamp.weekday())
-            week_counts[monday] += 1
+        if item.timestamp:
+            activity_date = item.activity_keys()[date_index]
+            if include_counts and item.kind == ItemKind.USER_MESSAGE:
+                counts[activity_date] += 1
+            if item.cost:
+                costs[activity_date] = costs.get(activity_date, Decimal(0)) + item.cost
 
-    if not week_counts:
+    if not counts and not costs:
         return
 
-    for week_monday, count in week_counts.items():
-        # Per-project counter
-        updated = WeeklyActivity.objects.filter(
-            project_id=project_id, week=week_monday
-        ).update(count=F("count") + count)
-        if not updated:
-            WeeklyActivity.objects.create(
-                project_id=project_id, week=week_monday, count=count
-            )
-
-        # Global counter (project=NULL)
-        updated = WeeklyActivity.objects.filter(
-            project__isnull=True, week=week_monday
-        ).update(count=F("count") + count)
-        if not updated:
-            WeeklyActivity.objects.create(
-                project=None, week=week_monday, count=count
-            )
-
-
-def _increment_daily_activity(
-    project_id: str,
-    items_to_create: list[tuple],
-) -> None:
-    """Increment DailyActivity counters for new user_message items.
-
-    Counts user messages by date, then updates both per-project
-    and global (project=NULL) counters. Uses UPDATE first (common case),
-    falls back to CREATE only when the day row doesn't exist yet.
-    """
-    from django.db.models import F
-
-    from twicc.core.enums import ItemKind
-    from twicc.core.models import DailyActivity
-
-    # Count user messages by date
-    day_counts: Counter = Counter()
-    for item, _parsed in items_to_create:
-        if item.kind == ItemKind.USER_MESSAGE and item.timestamp:
-            day_counts[item.timestamp.date()] += 1
-
-    if not day_counts:
-        return
-
-    for day, count in day_counts.items():
-        # Per-project counter
-        updated = DailyActivity.objects.filter(
-            project_id=project_id, date=day
-        ).update(count=F("count") + count)
-        if not updated:
-            DailyActivity.objects.create(
-                project_id=project_id, date=day, count=count
-            )
-
-        # Global counter (project=NULL)
-        updated = DailyActivity.objects.filter(
-            project__isnull=True, date=day
-        ).update(count=F("count") + count)
-        if not updated:
-            DailyActivity.objects.create(
-                project=None, date=day, count=count
-            )
+    for activity_date in set(counts.keys()) | set(costs.keys()):
+        count = counts.get(activity_date, 0)
+        cost = costs.get(activity_date, Decimal(0))
+        model.increment_or_create(project_id, activity_date, count, cost)
+        model.increment_or_create(None, activity_date, count, cost)
 
 
 def apply_activity_counts(
     project_id: str,
     weekly: dict[str, int] | None,
     daily: dict[str, int] | None,
+    weekly_costs: dict[str, str] | None = None,
+    daily_costs: dict[str, str] | None = None,
 ) -> None:
-    """Apply pre-computed activity counts to the database.
+    """Apply pre-computed activity counts and costs to the database.
 
     Used by the background compute path, which passes activity counts
-    as {iso_date_string: count} dicts in the session_complete message.
+    as {iso_date_string: count} dicts and costs as {iso_date_string: cost_str}
+    dicts in the session_complete message.
 
-    Uses the same UPDATE-or-CREATE pattern as the live sync increment
-    functions. Counts are added to existing rows since multiple sessions
-    contribute to the same project/week or project/date counters.
+    Uses PeriodicActivity.increment_or_create for atomic updates.
+    Counts and costs are added to existing rows since multiple
+    sessions contribute to the same project/week or project/date counters.
     """
     from datetime import date as date_cls
 
-    from django.db.models import F
-
     from twicc.core.models import DailyActivity, WeeklyActivity
 
-    if weekly:
-        for week_str, count in weekly.items():
-            week_date = date_cls.fromisoformat(week_str)
-            # Per-project counter
-            updated = WeeklyActivity.objects.filter(
-                project_id=project_id, week=week_date
-            ).update(count=F("count") + count)
-            if not updated:
-                WeeklyActivity.objects.create(
-                    project_id=project_id, week=week_date, count=count
-                )
-            # Global counter (project=NULL)
-            updated = WeeklyActivity.objects.filter(
-                project__isnull=True, week=week_date
-            ).update(count=F("count") + count)
-            if not updated:
-                WeeklyActivity.objects.create(
-                    project=None, week=week_date, count=count
-                )
-
-    if daily:
-        for day_str, count in daily.items():
-            day_date = date_cls.fromisoformat(day_str)
-            # Per-project counter
-            updated = DailyActivity.objects.filter(
-                project_id=project_id, date=day_date
-            ).update(count=F("count") + count)
-            if not updated:
-                DailyActivity.objects.create(
-                    project_id=project_id, date=day_date, count=count
-                )
-            # Global counter (project=NULL)
-            updated = DailyActivity.objects.filter(
-                project__isnull=True, date=day_date
-            ).update(count=F("count") + count)
-            if not updated:
-                DailyActivity.objects.create(
-                    project=None, date=day_date, count=count
-                )
+    for model, counts, costs in [
+        (WeeklyActivity, weekly, weekly_costs),
+        (DailyActivity, daily, daily_costs),
+    ]:
+        counts = counts or {}
+        costs = costs or {}
+        all_date_strs = set(counts.keys()) | set(costs.keys())
+        for date_str in all_date_strs:
+            activity_date = date_cls.fromisoformat(date_str)
+            count = counts.get(date_str, 0)
+            cost = Decimal(costs[date_str]) if date_str in costs else Decimal(0)
+            model.increment_or_create(project_id, activity_date, count, cost)
+            model.increment_or_create(None, activity_date, count, cost)
 
 
 def is_session_file(path: Path) -> bool:
@@ -649,10 +578,13 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             if last_model and last_model != session.model:
                 session.model = last_model
 
-            # Update activity counters for new user messages (only for real sessions, not subagents)
-            if session.type == SessionType.SESSION:
-                _increment_weekly_activity(session.project_id, items_to_create)
-                _increment_daily_activity(session.project_id, items_to_create)
+            # Update activity counters:
+            # - counts: only for real sessions (not subagents)
+            # - costs: for all sessions (sessions and subagents)
+            include_counts = session.type == SessionType.SESSION
+            from twicc.core.models import DailyActivity, WeeklyActivity
+            _increment_activity(WeeklyActivity, session.project_id, items_to_create, date_index=1, include_counts=include_counts)
+            _increment_activity(DailyActivity, session.project_id, items_to_create, date_index=0, include_counts=include_counts)
 
         # Update offset to end of file
         session.last_offset = f.tell()

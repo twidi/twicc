@@ -790,14 +790,14 @@ def _format_weekly_activity(rows, current_monday):
     """Format sparse WeeklyActivity rows into a dense list with zero-filling.
 
     Args:
-        rows: Iterable of dicts with "week" (date) and "count" keys.
+        rows: Iterable of dicts with "week" (date object), "count" and "cost" keys.
         current_monday: The Monday of the current week.
 
     Returns:
-        List of dicts with "week" (ISO string) and "count" keys.
+        List of dicts with "week" (ISO date string), "count" and "cost" keys.
         Leading zero-count weeks are trimmed, with up to 3 padding weeks.
     """
-    data_by_week = {row["week"]: row["count"] for row in rows}
+    data_by_week = {row["week"]: (row["count"], row.get("cost", 0)) for row in rows}
 
     start_monday = current_monday - timedelta(weeks=_WEEKLY_ACTIVITY_MAX_WEEKS - 1)
 
@@ -805,7 +805,8 @@ def _format_weekly_activity(rows, current_monday):
     first_active_monday = None
     for i in range(_WEEKLY_ACTIVITY_MAX_WEEKS):
         monday = start_monday + timedelta(weeks=i)
-        if data_by_week.get(monday, 0) > 0:
+        count, cost = data_by_week.get(monday, (0, 0))
+        if count > 0 or cost:
             first_active_monday = monday
             break
 
@@ -816,9 +817,11 @@ def _format_weekly_activity(rows, current_monday):
     result = []
     monday = first_active_monday
     while monday <= current_monday:
+        count, cost = data_by_week.get(monday, (0, 0))
         result.append({
             "week": monday.isoformat(),
-            "count": data_by_week.get(monday, 0),
+            "count": count,
+            "cost": str(cost) if cost else "0",
         })
         monday += timedelta(weeks=1)
 
@@ -828,6 +831,7 @@ def _format_weekly_activity(rows, current_monday):
         result.insert(0, {
             "week": (first_active_monday - timedelta(weeks=i)).isoformat(),
             "count": 0,
+            "cost": "0",
         })
 
     return result
@@ -850,14 +854,15 @@ def home_data(request):
 
     # Load all weekly activities in a single query (within the 52-week window)
     all_activities = WeeklyActivity.objects.filter(
-        week__gte=cutoff,
-    ).values("project_id", "week", "count")
+        date__gte=cutoff,
+    ).values("project_id", "date", "count", "cost")
 
     # Group by project_id (None = global)
     from collections import defaultdict
 
     activities_by_project = defaultdict(list)
     for a in all_activities:
+        a["week"] = a.pop("date")
         activities_by_project[a["project_id"]].append(a)
 
     data = []
@@ -906,12 +911,12 @@ def daily_activity(request, project_id=None):
     rows = (
         DailyActivity.objects.filter(**filters)
         .order_by("date")
-        .values("date", "count")
+        .values("date", "count", "cost")
     )
 
     return JsonResponse({
         "daily_activity": [
-            {"date": row["date"].isoformat(), "count": row["count"]}
+            {"date": row["date"].isoformat(), "count": row["count"], "cost": str(row["cost"]) if row["cost"] else "0"}
             for row in rows
         ],
     })

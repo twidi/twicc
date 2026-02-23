@@ -57,66 +57,72 @@ class Project(models.Model):
         return self.id
 
 
-class WeeklyActivity(models.Model):
-    """Pre-computed weekly user message count, per project and global.
+class PeriodicActivity(models.Model):
+    """Pre-computed periodic user message count and costs, per project and global.
 
-    Each row stores the count of user_message items for a given week (Monday).
-    project=NULL means global (all projects combined).
-    Incremented live by sync.py when new user messages are detected.
+    Each row stores the data for a given date (Monday for week, for example)
+    `project=NULL` means global (all projects combined).
     """
 
     project = models.ForeignKey(
         Project,
         on_delete=models.CASCADE,
-        related_name="weekly_activities",
-        null=True,
-        blank=True,  # NULL = global (all projects)
-    )
-    week = models.DateField()  # Monday of the ISO week
-    count = models.PositiveIntegerField(default=0)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["project", "week"],
-                name="unique_project_week",
-            ),
-        ]
-
-    def __str__(self):
-        label = self.project_id or "global"
-        return f"{label} / {self.week} = {self.count}"
-
-
-class DailyActivity(models.Model):
-    """Pre-computed daily user message count, per project and global.
-
-    Each row stores the count of user_message items for a given day.
-    project=NULL means global (all projects combined).
-    Incremented live by sync.py when new user messages are detected.
-    """
-
-    project = models.ForeignKey(
-        Project,
-        on_delete=models.CASCADE,
-        related_name="daily_activities",
+        related_name="%(class)s_set",
         null=True,
         blank=True,  # NULL = global (all projects)
     )
     date = models.DateField()
     count = models.PositiveIntegerField(default=0)
+    cost = models.DecimalField(max_digits=12, decimal_places=6, default=0)
 
     class Meta:
+        abstract = True
         constraints = [
             models.UniqueConstraint(
                 fields=["project", "date"],
-                name="unique_project_date",
+                name="unique_project_%(class)s",
             ),
         ]
+
+    @classmethod
+    def increment_or_create(cls, project_id: str | None, activity_date: date, count: int = 0, cost: Decimal = Decimal(0)) -> None:
+        """Atomically increment count/cost for a project+date, creating the row if needed.
+
+        Uses UPDATE first (common case), falls back to CREATE when the row doesn't exist.
+        """
+        from django.db.models import F
+
+        update_kwargs = {}
+        if count:
+            update_kwargs["count"] = F("count") + count
+        if cost:
+            update_kwargs["cost"] = F("cost") + cost
+        if not update_kwargs:
+            return
+
+        filters = {"date": activity_date}
+        if project_id is None:
+            filters["project__isnull"] = True
+        else:
+            filters["project_id"] = project_id
+
+        updated = cls.objects.filter(**filters).update(**update_kwargs)
+        if not updated:
+            cls.objects.create(
+                project_id=project_id, date=activity_date, count=count, cost=cost,
+            )
 
     def __str__(self):
         label = self.project_id or "global"
         return f"{label} / {self.date} = {self.count}"
+
+
+class WeeklyActivity(PeriodicActivity):
+    """Pre-computed weekly user message count and costs, per project and global."""
+
+
+class DailyActivity(PeriodicActivity):
+    """Pre-computed daily user message count and costs, per project and global."""
 
 
 class Session(models.Model):
@@ -225,6 +231,15 @@ class SessionItem(models.Model):
                 name="idx_session_kind_line",
             ),
         ]
+
+    def activity_keys(self) -> tuple[date, date]:
+        """Return (day, week_monday) derived from this item's timestamp.
+
+        day is the date, week_monday is the Monday of that week.
+        """
+        d = self.timestamp.date()
+        monday = d - timedelta(days=d.weekday())
+        return d, monday
 
     def __str__(self):
         return f"{self.session_id}:{self.line_num}"
