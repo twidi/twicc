@@ -589,16 +589,24 @@ defineExpose({
                             <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
                             <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                             <span class="session-name">{{ getSessionDisplayName(session) }}</span>
-                            <!-- Compact mode: inline process indicator -->
+                            <!-- Compact mode: pending request indicator (takes priority over process indicator) -->
+                            <wa-icon
+                                v-if="compactView && store.getPendingRequest(session.id)"
+                                :id="`compact-pending-request-${session.id}`"
+                                name="hand"
+                                class="compact-pending-request-indicator"
+                            ></wa-icon>
+                            <AppTooltip v-if="compactView && store.getPendingRequest(session.id)" :for="`compact-pending-request-${session.id}`">Waiting for your response</AppTooltip>
+                            <!-- Compact mode: process indicator (hidden when pending request is shown) -->
                             <ProcessIndicator
-                                v-if="compactView && !session.draft && getProcessState(session.id)"
+                                v-if="compactView && !session.draft && getProcessState(session.id) && !store.getPendingRequest(session.id)"
                                 :id="`compact-process-indicator-${session.id}`"
                                 :state="getProcessState(session.id).state"
                                 size="small"
                                 :animate-states="animateStates"
                                 class="compact-process-indicator"
                             />
-                            <AppTooltip v-if="compactView && !session.draft && getProcessState(session.id)" :for="`compact-process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</AppTooltip>
+                            <AppTooltip v-if="compactView && !session.draft && getProcessState(session.id) && !store.getPendingRequest(session.id)" :for="`compact-process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[getProcessState(session.id).state] }}</AppTooltip>
                         </div>
                         <!-- Project badge line (hidden in compact mode, dot is shown inline instead) -->
                         <ProjectBadge v-if="!compactView && showProjectName" :project-id="session.project_id" class="session-project" />
@@ -843,6 +851,17 @@ defineExpose({
     box-sizing: border-box;
     background-color: var(--dot-color, transparent);
     border-color: var(--dot-color, var(--wa-color-border-quiet));
+}
+
+/* Compact mode: inline pending request indicator */
+.compact-pending-request-indicator {
+    margin-left: auto;
+    flex-shrink: 0;
+    color: var(--wa-color-warning-60);
+    font-size: var(--wa-font-size-xs);
+    animation: pending-pulse 1.5s ease-in-out infinite;
+    position: relative;
+    left: -1.5rem;
 }
 
 /* Compact mode: inline process indicator pushed to the right */
