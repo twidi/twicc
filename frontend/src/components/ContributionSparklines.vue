@@ -6,7 +6,11 @@
 // Supports a "combined" mode that overlays all three curves in a single SVG
 // with distinct colors (green for messages, blue for sessions, red for cost).
 
-import { computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { useSettingsStore } from '../stores/settings'
+
+const settingsStore = useSettingsStore()
+const isTouchDevice = computed(() => settingsStore.isTouchDevice)
 
 const props = defineProps({
     /** Daily activity data: array of { date, user_message_count, session_count, cost } */
@@ -29,7 +33,7 @@ const props = defineProps({
 const DAYS = 365
 const SVG_HEIGHT = 150
 const GRAPH_HEIGHT = 146
-const VIEWBOX_HEIGHT = 200 // viewBox goes from 0 to 200, graph draws within 0..SVG_HEIGHT
+const VIEWBOX_HEIGHT = 150 // viewBox goes from 0 to VIEWBOX_HEIGHT, graph draws within 0..SVG_HEIGHT
 const MIN_Y = 1.0
 
 /**
@@ -192,6 +196,98 @@ function colorVars(prefix) {
         stroke: `var(--sparkline-${prefix}-stroke-color)`,
     }
 }
+
+// ── Tooltip hover state ──────────────────────────────────────────────
+
+/** Index of the hovered data point in displayData, or null when not hovering */
+const hoveredIndex = ref(null)
+
+// Reset hover when the displayed data changes (e.g. range slider moves)
+watch(displayData, () => { hoveredIndex.value = null })
+
+/**
+ * Map a mouse event to the closest data-point index.
+ * Works because points are evenly distributed and preserveAspectRatio="none"
+ * linearly maps the SVG viewBox to the rendered CSS width.
+ */
+function onSvgMouseMove(event) {
+    if (isTouchDevice.value) return
+    const svg = event.currentTarget
+    const rect = svg.getBoundingClientRect()
+    const ratio = (event.clientX - rect.left) / rect.width
+    const count = displayData.value.length
+    hoveredIndex.value = Math.max(0, Math.min(count - 1, Math.round(ratio * (count - 1))))
+}
+
+function onSvgMouseLeave() {
+    hoveredIndex.value = null
+}
+
+/** SVG x-coordinate for the vertical cursor line */
+const cursorSvgX = computed(() => {
+    if (hoveredIndex.value === null) return 0
+    const count = displayData.value.length
+    if (count <= 1) return 0
+    return (hoveredIndex.value / (count - 1)) * svgWidth.value
+})
+
+/** Horizontal position of the tooltip as a percentage (0–100) */
+const tooltipLeftPct = computed(() => {
+    if (hoveredIndex.value === null) return 0
+    const count = displayData.value.length
+    if (count <= 1) return 0
+    return (hoveredIndex.value / (count - 1)) * 100
+})
+
+/** The data entry at the hovered index */
+const hoveredData = computed(() => {
+    if (hoveredIndex.value === null) return null
+    return displayData.value[hoveredIndex.value]
+})
+
+/**
+ * Format a "YYYY-MM-DD" date string as "Jan 1, 2026".
+ * Same convention as ContributionGraph.vue tooltipFormatter.
+ */
+function formatTooltipDate(dateStr) {
+    const [y, m, d] = dateStr.split('-').map(Number)
+    const date = new Date(y, m - 1, d)
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+/** Format a metric value for display in the tooltip */
+function formatMetricValue(key, value) {
+    if (key === 'cost') {
+        return value === 0 ? 'No cost' : `$${value.toFixed(2)}`
+    }
+    if (key === 'sessions') {
+        return `${value} ${value === 1 ? 'session' : 'sessions'}`
+    }
+    return `${value} ${value === 1 ? 'message turn' : 'message turns'}`
+}
+
+/**
+ * Computed averages for the hovered data point.
+ * - avgTurnsPerSession: messages / sessions
+ * - avgCostPerSession: cost / sessions
+ * - avgCostPerTurn: cost / messages
+ */
+const hoveredAverages = computed(() => {
+    const d = hoveredData.value
+    if (!d) return null
+    const { sessions, messages, cost } = d
+    return {
+        avgTurnsPerSession: sessions > 0 ? messages / sessions : null,
+        avgCostPerSession: sessions > 0 ? cost / sessions : null,
+        avgCostPerTurn: messages > 0 ? cost / messages : null,
+    }
+})
+
+function formatAverage(value, isCost) {
+    if (value === null) return '–'
+    if (isCost) return `$${value.toFixed(2)}`
+    return value.toFixed(1)
+}
 </script>
 
 <template>
@@ -201,46 +297,79 @@ function colorVars(prefix) {
         <template v-if="combined">
             <div class="sparkline-row">
                 <h3 class="sparkline-title">Activity per day</h3>
-                <svg
-                    :width="svgWidth"
-                    aria-hidden="true"
-                    :height="SVG_HEIGHT"
-                    class="contribution-sparkline"
-                    :viewBox="`0 0 ${svgWidth} ${VIEWBOX_HEIGHT}`"
-                    preserveAspectRatio="none"
-                >
-                    <defs>
-                        <template v-for="curve in combinedCurves" :key="curve.key">
-                            <linearGradient :id="curve.gradientId" x1="0" x2="0" y1="1" y2="0">
-                                <stop offset="0%" :stop-color="colorVars(curve.colorPrefix).g1"></stop>
-                                <stop offset="10%" :stop-color="colorVars(curve.colorPrefix).g2"></stop>
-                                <stop offset="25%" :stop-color="colorVars(curve.colorPrefix).g3"></stop>
-                                <stop offset="50%" :stop-color="colorVars(curve.colorPrefix).g4"></stop>
-                            </linearGradient>
-                            <mask :id="curve.maskId" x="0" y="0" :width="svgWidth" :height="GRAPH_HEIGHT">
-                                <polyline
-                                    :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
-                                    :points="curve.points"
-                                    fill="transparent"
-                                    :stroke="colorVars(curve.colorPrefix).stroke"
-                                    stroke-width="2"
-                                ></polyline>
-                            </mask>
-                        </template>
-                    </defs>
+                <div class="sparkline-graph-wrapper">
+                    <svg
+                        :width="svgWidth"
+                        aria-hidden="true"
+                        :height="SVG_HEIGHT"
+                        class="contribution-sparkline"
+                        :viewBox="`0 0 ${svgWidth} ${VIEWBOX_HEIGHT}`"
+                        preserveAspectRatio="none"
+                        @mousemove="onSvgMouseMove"
+                        @mouseleave="onSvgMouseLeave"
+                    >
+                        <defs>
+                            <template v-for="curve in combinedCurves" :key="curve.key">
+                                <linearGradient :id="curve.gradientId" x1="0" x2="0" y1="1" y2="0">
+                                    <stop offset="0%" :stop-color="colorVars(curve.colorPrefix).g1"></stop>
+                                    <stop offset="10%" :stop-color="colorVars(curve.colorPrefix).g2"></stop>
+                                    <stop offset="25%" :stop-color="colorVars(curve.colorPrefix).g3"></stop>
+                                    <stop offset="50%" :stop-color="colorVars(curve.colorPrefix).g4"></stop>
+                                </linearGradient>
+                                <mask :id="curve.maskId" x="0" y="0" :width="svgWidth" :height="GRAPH_HEIGHT">
+                                    <polyline
+                                        :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
+                                        :points="curve.points"
+                                        fill="transparent"
+                                        :stroke="colorVars(curve.colorPrefix).stroke"
+                                        stroke-width="2"
+                                    ></polyline>
+                                </mask>
+                            </template>
+                        </defs>
 
-                    <g transform="translate(0, 2.0)">
-                        <rect
-                            v-for="curve in combinedCurves"
-                            :key="curve.key"
-                            x="0"
-                            y="-2"
-                            :width="svgWidth"
-                            :height="GRAPH_HEIGHT + 2"
-                            :style="`stroke: none; fill: url(#${curve.gradientId}); mask: url(#${curve.maskId});`"
-                        ></rect>
-                    </g>
-                </svg>
+                        <g transform="translate(0, 2.0)">
+                            <rect
+                                v-for="curve in combinedCurves"
+                                :key="curve.key"
+                                x="0"
+                                y="-2"
+                                :width="svgWidth"
+                                :height="GRAPH_HEIGHT + 2"
+                                :style="`stroke: none; fill: url(#${curve.gradientId}); mask: url(#${curve.maskId});`"
+                            ></rect>
+                        </g>
+
+                        <!-- Vertical cursor line at hovered point -->
+                        <line
+                            v-if="hoveredIndex !== null"
+                            :x1="cursorSvgX" :x2="cursorSvgX"
+                            y1="0" :y2="VIEWBOX_HEIGHT"
+                            class="sparkline-cursor-line"
+                            stroke="var(--wa-color-text-quiet)"
+                            stroke-width="1"
+                            stroke-dasharray="4 3"
+                            vector-effect="non-scaling-stroke"
+                        />
+                    </svg>
+
+                    <!-- Hover tooltip (combined: shows all three metrics + averages) -->
+                    <div
+                        v-if="hoveredIndex !== null && hoveredData && hoveredAverages && !isTouchDevice"
+                        class="sparkline-tooltip"
+                        :style="{ left: `${tooltipLeftPct}%`, transform: `translateX(-${tooltipLeftPct}%)` }"
+                    >
+                        <div v-for="c in combinedCurves" :key="c.key" class="sparkline-tooltip-row">
+                            <span class="sparkline-tooltip-swatch" :class="`sparkline-tooltip-swatch--${c.colorPrefix}`"></span>
+                            <span>{{ formatMetricValue(c.key, hoveredData[c.key]) }}</span>
+                        </div>
+                        <div class="sparkline-tooltip-separator"></div>
+                        <div class="sparkline-tooltip-avg">Avg. turns/session: {{ formatAverage(hoveredAverages.avgTurnsPerSession, false) }}</div>
+                        <div class="sparkline-tooltip-avg">Avg. cost/session: {{ formatAverage(hoveredAverages.avgCostPerSession, true) }}</div>
+                        <div class="sparkline-tooltip-avg">Avg. cost/turn: {{ formatAverage(hoveredAverages.avgCostPerTurn, true) }}</div>
+                        <div class="sparkline-tooltip-date">{{ formatTooltipDate(hoveredData.date) }}</div>
+                    </div>
+                </div>
 
                 <!-- Legend -->
                 <div class="sparkline-legend">
@@ -256,42 +385,81 @@ function colorVars(prefix) {
         <template v-else>
             <div v-for="curve in separateCurves" :key="curve.key" class="sparkline-row">
                 <h3 class="sparkline-title">{{ curve.label }}</h3>
-                <svg
-                    :width="svgWidth"
-                    aria-hidden="true"
-                    :height="SVG_HEIGHT"
-                    class="contribution-sparkline"
-                    :viewBox="`0 0 ${svgWidth} ${VIEWBOX_HEIGHT}`"
-                    preserveAspectRatio="none"
-                >
-                    <defs>
-                        <linearGradient :id="curve.gradientId" x1="0" x2="0" y1="1" y2="0">
-                            <stop offset="0%" :stop-color="colorVars(curve.colorPrefix).g1"></stop>
-                            <stop offset="10%" :stop-color="colorVars(curve.colorPrefix).g2"></stop>
-                            <stop offset="25%" :stop-color="colorVars(curve.colorPrefix).g3"></stop>
-                            <stop offset="50%" :stop-color="colorVars(curve.colorPrefix).g4"></stop>
-                        </linearGradient>
-                        <mask :id="curve.maskId" x="0" y="0" :width="svgWidth" :height="GRAPH_HEIGHT">
-                            <polyline
-                                :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
-                                :points="curve.points"
-                                fill="transparent"
-                                :stroke="colorVars(curve.colorPrefix).stroke"
-                                stroke-width="2"
-                            ></polyline>
-                        </mask>
-                    </defs>
+                <div class="sparkline-graph-wrapper">
+                    <svg
+                        :width="svgWidth"
+                        aria-hidden="true"
+                        :height="SVG_HEIGHT"
+                        class="contribution-sparkline"
+                        :viewBox="`0 0 ${svgWidth} ${VIEWBOX_HEIGHT}`"
+                        preserveAspectRatio="none"
+                        @mousemove="onSvgMouseMove"
+                        @mouseleave="onSvgMouseLeave"
+                    >
+                        <defs>
+                            <linearGradient :id="curve.gradientId" x1="0" x2="0" y1="1" y2="0">
+                                <stop offset="0%" :stop-color="colorVars(curve.colorPrefix).g1"></stop>
+                                <stop offset="10%" :stop-color="colorVars(curve.colorPrefix).g2"></stop>
+                                <stop offset="25%" :stop-color="colorVars(curve.colorPrefix).g3"></stop>
+                                <stop offset="50%" :stop-color="colorVars(curve.colorPrefix).g4"></stop>
+                            </linearGradient>
+                            <mask :id="curve.maskId" x="0" y="0" :width="svgWidth" :height="GRAPH_HEIGHT">
+                                <polyline
+                                    :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
+                                    :points="curve.points"
+                                    fill="transparent"
+                                    :stroke="colorVars(curve.colorPrefix).stroke"
+                                    stroke-width="2"
+                                ></polyline>
+                            </mask>
+                        </defs>
 
-                    <g transform="translate(0, 2.0)">
-                        <rect
-                            x="0"
-                            y="-2"
-                            :width="svgWidth"
-                            :height="GRAPH_HEIGHT + 2"
-                            :style="`stroke: none; fill: url(#${curve.gradientId}); mask: url(#${curve.maskId});`"
-                        ></rect>
-                    </g>
-                </svg>
+                        <g transform="translate(0, 2.0)">
+                            <rect
+                                x="0"
+                                y="-2"
+                                :width="svgWidth"
+                                :height="GRAPH_HEIGHT + 2"
+                                :style="`stroke: none; fill: url(#${curve.gradientId}); mask: url(#${curve.maskId});`"
+                            ></rect>
+                        </g>
+
+                        <!-- Vertical cursor line at hovered point -->
+                        <line
+                            v-if="hoveredIndex !== null"
+                            :x1="cursorSvgX" :x2="cursorSvgX"
+                            y1="0" :y2="VIEWBOX_HEIGHT"
+                            class="sparkline-cursor-line"
+                            stroke="var(--wa-color-text-quiet)"
+                            stroke-width="1"
+                            stroke-dasharray="4 3"
+                            vector-effect="non-scaling-stroke"
+                        />
+                    </svg>
+
+                    <!-- Hover tooltip (separate: single metric + relevant averages) -->
+                    <div
+                        v-if="hoveredIndex !== null && hoveredData && hoveredAverages && !isTouchDevice"
+                        class="sparkline-tooltip"
+                        :style="{ left: `${tooltipLeftPct}%`, transform: `translateX(-${tooltipLeftPct}%)` }"
+                    >
+                        <div class="sparkline-tooltip-value">{{ formatMetricValue(curve.key, hoveredData[curve.key]) }}</div>
+                        <div class="sparkline-tooltip-separator"></div>
+                        <template v-if="curve.key === 'sessions'">
+                            <div class="sparkline-tooltip-avg">Avg. turns/session: {{ formatAverage(hoveredAverages.avgTurnsPerSession, false) }}</div>
+                            <div class="sparkline-tooltip-avg">Avg. cost/session: {{ formatAverage(hoveredAverages.avgCostPerSession, true) }}</div>
+                        </template>
+                        <template v-else-if="curve.key === 'messages'">
+                            <div class="sparkline-tooltip-avg">Avg. turns/session: {{ formatAverage(hoveredAverages.avgTurnsPerSession, false) }}</div>
+                            <div class="sparkline-tooltip-avg">Avg. cost/turn: {{ formatAverage(hoveredAverages.avgCostPerTurn, true) }}</div>
+                        </template>
+                        <template v-else-if="curve.key === 'cost'">
+                            <div class="sparkline-tooltip-avg">Avg. cost/session: {{ formatAverage(hoveredAverages.avgCostPerSession, true) }}</div>
+                            <div class="sparkline-tooltip-avg">Avg. cost/turn: {{ formatAverage(hoveredAverages.avgCostPerTurn, true) }}</div>
+                        </template>
+                        <div class="sparkline-tooltip-date">{{ formatTooltipDate(hoveredData.date) }}</div>
+                    </div>
+                </div>
             </div>
         </template>
 
@@ -318,6 +486,11 @@ function colorVars(prefix) {
     align-items: center;
 }
 
+.sparkline-graph-wrapper {
+    position: relative;
+    width: 100%;
+}
+
 .sparkline-title {
     margin-block: var(--wa-space-l) var(--wa-space-s);
     padding-inline: var(--wa-space-m);
@@ -328,7 +501,7 @@ function colorVars(prefix) {
 .contribution-sparkline {
     display: block;
     width: 100%;
-    height: 200px;
+    height: 150px;
 }
 
 /* Legend */
@@ -367,6 +540,68 @@ function colorVars(prefix) {
 .sparkline-legend-text {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
+}
+
+/* Hover tooltip */
+.sparkline-tooltip {
+    position: absolute;
+    bottom: 100%;
+    margin-bottom: var(--wa-space-2xs);
+    pointer-events: none;
+    z-index: 10;
+    background: var(--wa-color-surface-raised);
+    border-radius: var(--wa-border-radius-m);
+    padding: var(--wa-space-xs) var(--wa-space-s);
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-normal);
+    white-space: nowrap;
+    box-shadow: var(--wa-shadow-s);
+}
+
+.sparkline-tooltip-separator {
+    border-top: 1px solid var(--wa-color-text-quiet);
+    margin-block: var(--wa-space-3xs);
+}
+
+.sparkline-tooltip-avg {
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-s);
+}
+
+.sparkline-tooltip-date {
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-xs);
+    margin-top: var(--wa-space-3xs);
+}
+
+.sparkline-tooltip-row {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+}
+
+.sparkline-tooltip-swatch {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.sparkline-tooltip-swatch--green {
+    background: var(--sparkline-project-gradient-color-3);
+}
+
+.sparkline-tooltip-swatch--blue {
+    background: var(--sparkline-blue-gradient-color-3);
+}
+
+.sparkline-tooltip-swatch--red {
+    background: var(--sparkline-red-gradient-color-3);
+}
+
+/* Vertical cursor line inside SVG */
+.sparkline-cursor-line {
+    pointer-events: none;
 }
 
 .no-data {
