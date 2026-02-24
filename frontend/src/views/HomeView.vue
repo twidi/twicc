@@ -40,9 +40,9 @@ async function handleRetry() {
                 <ActivitySparkline :data="globalWeeklyActivity" />
             </span>
             <AppTooltip for="home-global-sparkline">Overall activity (message turns per week)</AppTooltip>
-            <router-link :to="{ name: 'projects-all' }" class="view-all-link">
-                View all sessions ({{ totalSessionsCount }})
-            </router-link>
+            <wa-button class="view-all-button" variant="brand" appearance="filled-outlined" size="small" @click="router.push({ name: 'projects-all' })">
+                All {{ totalSessionsCount }} session{{ totalSessionsCount === 1 ? '' : 's' }} <wa-icon slot="end" name="arrow-right"></wa-icon>
+            </wa-button>
         </header>
         <main class="home-content">
             <!-- Error state -->
@@ -86,7 +86,7 @@ async function handleRetry() {
 .home-header {
     display: flex;
     justify-content: start;
-    align-items: baseline;
+    align-items: center;
     flex-wrap: wrap;
     gap: var(--wa-space-s);
     margin-bottom: var(--wa-space-xl);
@@ -100,16 +100,8 @@ async function handleRetry() {
     color: var(--wa-color-text-normal);
 }
 
-.view-all-link {
-    font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-quiet);
-    text-decoration: none;
+.view-all-button {
     margin-left: auto;
-}
-
-.view-all-link:hover {
-    color: var(--wa-color-text-normal);
-    text-decoration: underline;
 }
 
 .global-sparkline {
