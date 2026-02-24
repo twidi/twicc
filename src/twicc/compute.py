@@ -9,6 +9,8 @@ and the watcher (single item).
 from __future__ import annotations
 
 import os
+from decimal import Decimal
+
 import orjson
 import logging
 from collections import Counter
@@ -21,7 +23,7 @@ from django.conf import settings
 from django.core.exceptions import MultipleObjectsReturned
 
 from twicc.core.enums import ItemDisplayLevel, ItemKind
-from twicc.core.models import Project, Session, SessionItem, SessionType
+from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType, ToolResultLink
 from twicc.core.pricing import (
     calculate_line_cost,
     calculate_line_context_usage,
@@ -1472,8 +1474,6 @@ def apply_compute_results(result_queue) -> None:
     """
     import queue as queue_module
 
-    from twicc.background import apply_session_complete
-
     while True:
         try:
             raw_msg = result_queue.get_nowait()
@@ -1991,3 +1991,80 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
         # (will be updated by next item's compute_item_metadata_live)
 
     return modified_line_nums
+
+
+def apply_session_complete(msg: dict) -> None:
+    """
+    Apply all results for a session in one go.
+
+    This handles the new 'session_complete' message type that contains
+    all updates for a session in a single message.
+    """
+    session_id = msg['session_id']
+
+    # 1. Delete existing links
+    ToolResultLink.objects.filter(session_id=session_id).delete()
+    AgentLink.objects.filter(session_id=session_id).delete()
+
+    # 2. Apply item updates
+    item_updates = msg.get('item_updates', [])
+    item_fields = msg.get('item_fields', [])
+    if item_updates and item_fields:
+        items = [
+            SessionItem(id=upd['id'], **{
+                field: Decimal(value) if (value := upd.get(field)) is not None and field == 'cost' else value
+                for field in item_fields
+            })
+            for upd in item_updates
+        ]
+        SessionItem.objects.bulk_update(items, item_fields, 50)
+
+    # 3. Create links
+    tool_result_links_data = msg.get('tool_result_links', [])
+    if tool_result_links_data:
+        links = [ToolResultLink(**d) for d in tool_result_links_data]
+        ToolResultLink.objects.bulk_create(links, ignore_conflicts=True)
+
+    agent_links_data = msg.get('agent_links', [])
+    if agent_links_data:
+        links = [AgentLink(**d) for d in agent_links_data]
+        AgentLink.objects.bulk_create(links, ignore_conflicts=True)
+
+    # 4. Update session fields
+    session_fields = msg.get('session_fields', {})
+    if session_fields:
+        # Handle datetime fields
+        if 'created_at' in session_fields and session_fields['created_at'] is not None:
+            session_fields['created_at'] = datetime.fromisoformat(session_fields['created_at'])
+        Session.objects.filter(id=session_id).update(**session_fields)
+
+    # 5. Recalculate session costs from SessionItem data (idempotent, order-independent)
+    session = Session.objects.get(id=session_id)
+    session.recalculate_costs()
+    session.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
+
+    # 6. If this is a subagent, recalculate parent session costs too
+    if session.parent_session_id:
+        parent = Session.objects.get(id=session.parent_session_id)
+        parent.recalculate_costs()
+        parent.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
+
+    # 7. Update titles
+    titles = msg.get('titles', {})
+    for target_id, title in titles.items():
+        Session.objects.filter(id=target_id).update(title=title)
+
+    # 8. Update project directory
+    project_id = msg.get('project_id')
+    project_directory = msg.get('project_directory')
+    if project_id and project_directory:
+        ensure_project_directory(project_id, project_directory)
+
+    # 9. Resolve project git_root if session has git info but project doesn't
+    session_git_dir = session_fields.get('git_directory') if session_fields else None
+    if session_git_dir and project_id and get_project_git_root(project_id) is None:
+        ensure_project_git_root(project_id)
+
+    # 10. Update project total_cost
+    if project_id:
+        update_project_total_cost(project_id)

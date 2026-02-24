@@ -22,7 +22,7 @@ from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
 from twicc.agent.manager import get_process_manager
 from twicc.agent.states import ProcessInfo, ProcessState, serialize_process_info
-from twicc.background import get_usage_message_for_connection
+from twicc.usage_task import get_usage_message_for_connection
 from twicc.terminal import terminal_application
 
 logger = logging.getLogger(__name__)

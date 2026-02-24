@@ -32,15 +32,9 @@ from twicc.core.models import Project, Session, SessionType
 from twicc.sync import sync_all
 from twicc.watcher import start_watcher, stop_watcher
 from twicc.agent import shutdown_process_manager
-from twicc.background import (
-    run_initial_price_sync,
-    start_background_compute_task,
-    start_price_sync_task,
-    start_usage_sync_task,
-    stop_background_task,
-    stop_price_sync_task,
-    stop_usage_sync_task,
-)
+from twicc.background_task import ComputeContext, start_background_compute_task, stop_background_task
+from twicc.pricing_task import run_initial_price_sync, start_price_sync_task, stop_price_sync_task
+from twicc.usage_task import start_usage_sync_task, stop_usage_sync_task
 
 
 async def run_server(port: int):
@@ -57,7 +51,8 @@ async def run_server(port: int):
     watcher_task = asyncio.create_task(start_watcher())
 
     # Start background compute task (prices are now available)
-    compute_task = asyncio.create_task(start_background_compute_task())
+    compute_ctx = ComputeContext()
+    compute_task = asyncio.create_task(start_background_compute_task(compute_ctx))
 
     # Start price sync task (periodic sync every 24h)
     price_sync_task = asyncio.create_task(start_price_sync_task())
@@ -102,7 +97,7 @@ async def run_server(port: int):
 
         # Clean shutdown of background compute task
         print("  Stopping background compute task...")
-        stop_background_task()
+        stop_background_task(compute_ctx)
         compute_task.cancel()
         try:
             await compute_task
