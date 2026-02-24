@@ -242,6 +242,11 @@ def compute_worker_main(command_queue: Queue, result_queue: Queue, stop_event: M
         except Exception as e:
             worker_logger.error(f"Unexpected error in compute worker: {e}")
 
+    # Signal the consumer that the worker is done
+    import orjson
+    result_queue.put(orjson.dumps({'type': 'done'}))
+    worker_logger.info("Compute worker sent 'done' signal")
+
     # Drain command queue before exiting to prevent blocking
     worker_logger.info("Compute worker draining command queue...")
     drained = 0
@@ -406,12 +411,15 @@ def _flush_pending_activities(pending_activity_days: dict[str, set]) -> None:
     PeriodicActivity.recalculate_for_days(None, days, do_global=True)
 
 
-async def consume_compute_results(stop_event: asyncio.Event) -> None:
+async def consume_compute_results(stop_event: asyncio.Event, worker_done_event: asyncio.Event) -> None:
     """
     Consume results from the compute worker and apply DB writes.
 
     Runs in the main process event loop. All DB writes happen here,
     ensuring no concurrent writes with the FileWatcher.
+
+    Sets worker_done_event when the worker signals it has finished processing
+    all sessions (via a 'done' message in the result queue).
     """
     import orjson
 
@@ -453,6 +461,11 @@ async def consume_compute_results(stop_event: asyncio.Event) -> None:
                     )
                     sessions_since_activities_flush += 1
 
+            elif msg_type == 'done':
+                # Worker has finished processing all sessions
+                logger.info("consume_compute_results: received 'done' from worker")
+                break
+
             elif msg_type == 'error':
                 logger.error(f"Compute error for {msg['session_id']}: {msg['error']}")
 
@@ -476,22 +489,9 @@ async def consume_compute_results(stop_event: asyncio.Event) -> None:
         await _flush_pending_activities(pending_activity_days)
         pending_activity_days.clear()
 
-    # Drain result queue on shutdown to prevent blocking
-    # (may already be closed by stop_background_task, so handle ValueError)
-    logger.info("consume_compute_results: draining result queue...")
-    drained = 0
-    try:
-        while True:
-            try:
-                result_queue.get_nowait()
-                drained += 1
-            except queue.Empty:
-                break
-    except ValueError:
-        # Queue already closed, nothing to drain
-        pass
-    if drained:
-        logger.info(f"consume_compute_results: drained {drained} messages from queue")
+    # Signal that all results have been processed and activities flushed
+    worker_done_event.set()
+
     logger.info("consume_compute_results: stopped")
 
 
@@ -695,7 +695,8 @@ async def start_background_compute_task() -> None:
     start_compute_process()
 
     # Start the result consumer as a concurrent task
-    consumer_task = asyncio.create_task(consume_compute_results(stop_event))
+    worker_done_event = asyncio.Event()
+    consumer_task = asyncio.create_task(consume_compute_results(stop_event, worker_done_event))
 
     logger.info(f"Background compute task started ({_total_to_compute} sessions to process)")
 
@@ -746,29 +747,16 @@ async def start_background_compute_task() -> None:
 
     logger.info(f"Background compute: all sessions sent to worker ({_processed_count}/{_total_to_compute})")
 
-    # Wait for the worker to finish processing remaining results.
-    # The consumer needs time to apply all DB writes from the result queue.
-    # We wait until the result queue is empty and give it a moment to finalize.
-    _, result_queue = get_queues()
-    while not stop_event.is_set():
-        try:
-            if result_queue.empty():
-                # Give consumer one last chance to process any in-flight messages
-                await asyncio.sleep(0.2)
-                if result_queue.empty():
-                    break
-            await asyncio.sleep(0.1)
-        except (ValueError, OSError):
-            # Queue already closed
-            break
+    # Send stop signal to worker so it finishes and sends 'done'
+    command_queue.put(None)
 
-    # Stop the consumer task
+    # Wait for the consumer to receive the worker's 'done' signal
+    # (which means all results have been processed and activities flushed)
+    await worker_done_event.wait()
+
+    # Stop the consumer task gracefully via stop_event
     stop_event.set()
-    consumer_task.cancel()
-    try:
-        await consumer_task
-    except asyncio.CancelledError:
-        pass
+    await consumer_task
 
     # Stop the worker process
     stop_background_task()
