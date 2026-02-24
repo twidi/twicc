@@ -12,7 +12,7 @@ function updateViewportHeight() {
     const vh = window.visualViewport?.height || window.innerHeight
     if (vh !== currentHeight) {
         currentHeight = vh
-        document.documentElement.style.setProperty('--visual-viewport-height', `${vh}px`)
+        // document.documentElement.style.setProperty('--visual-viewport-height', `${vh}px`)
 
         // Fix: Mobile browsers may scroll the <html> element to keep the focused input
         // visible when the virtual keyboard opens. This scroll persists after the keyboard
