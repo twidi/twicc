@@ -198,6 +198,7 @@ function handleEditClick() {
     height: 100%;
     padding-top: var(--wa-space-s);
     overflow-y: auto;
+    padding-bottom: 3rem;
 }
 
 .detail-content {

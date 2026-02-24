@@ -124,13 +124,27 @@ body {
     /* --main-header-footer-bg-color: var(--wa-color-surface-raised); */
     --main-header-footer-bg-color: transparent;
 
-    /* Sparkline / heatmap graph colors (light mode) */
+    /* Sparkline / heatmap graph colors (light mode) — green (default) */
     --sparkline-project-gradient-color-0: #ebedf0;
     --sparkline-project-gradient-color-1: #aceebb;
     --sparkline-project-gradient-color-2: #4ac26b;
     --sparkline-project-gradient-color-3: #2da44e;
     --sparkline-project-gradient-color-4: #116329;
     --sparkline-project-stroke-color: #8cc665;
+
+    /* Sparkline graph colors — blue (sessions) */
+    --sparkline-blue-gradient-color-1: #a8d4ff;
+    --sparkline-blue-gradient-color-2: #4da6ff;
+    --sparkline-blue-gradient-color-3: #1a7fdb;
+    --sparkline-blue-gradient-color-4: #0a4f8a;
+    --sparkline-blue-stroke-color: #6ab8f7;
+
+    /* Sparkline graph colors — red (cost) */
+    --sparkline-red-gradient-color-1: #ffb3b3;
+    --sparkline-red-gradient-color-2: #ff5c5c;
+    --sparkline-red-gradient-color-3: #d63333;
+    --sparkline-red-gradient-color-4: #8b1a1a;
+    --sparkline-red-stroke-color: #f77070;
 }
 
 .wa-dark {
@@ -144,13 +158,27 @@ body {
     --user-card-base-color: #323b45;
     --assistant-card-base-color: #252e38;
 
-    /* Sparkline / heatmap graph colors (dark mode) */
+    /* Sparkline / heatmap graph colors (dark mode) — green (default) */
     --sparkline-project-gradient-color-0: #151b23;
     --sparkline-project-gradient-color-1: #033a16;
     --sparkline-project-gradient-color-2: #196c2e;
     --sparkline-project-gradient-color-3: #2ea043;
     --sparkline-project-gradient-color-4: #56d364;
     --sparkline-project-stroke-color: #8cc665;
+
+    /* Sparkline graph colors — blue (sessions, dark mode) */
+    --sparkline-blue-gradient-color-1: #0a2d4f;
+    --sparkline-blue-gradient-color-2: #1a5a8a;
+    --sparkline-blue-gradient-color-3: #3a8fd4;
+    --sparkline-blue-gradient-color-4: #6abef7;
+    --sparkline-blue-stroke-color: #6ab8f7;
+
+    /* Sparkline graph colors — red (cost, dark mode) */
+    --sparkline-red-gradient-color-1: #4f0a0a;
+    --sparkline-red-gradient-color-2: #8a1a1a;
+    --sparkline-red-gradient-color-3: #d44040;
+    --sparkline-red-gradient-color-4: #f77070;
+    --sparkline-red-stroke-color: #f77070;
 }
 
 /* Reset Web Awesome button styles inside Notivue notifications */
