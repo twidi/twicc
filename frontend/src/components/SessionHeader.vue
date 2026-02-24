@@ -381,9 +381,9 @@ defineExpose({
 
                 <span :id="`session-header-${sessionId}-messages`" class="meta-item">
                     <wa-icon auto-width name="comment" variant="regular"></wa-icon>
-                    <span>{{ session.message_count ?? '??' }}</span>
+                    <span>{{ session.user_message_count ?? '??' }}</span>
                 </span>
-                <AppTooltip :for="`session-header-${sessionId}-messages`">Number of user and assistant messages</AppTooltip>
+                <AppTooltip :for="`session-header-${sessionId}-messages`">Number of message turns</AppTooltip>
 
                 <span :id="`session-header-${sessionId}-lines`" class="meta-item nb_lines">
                     <wa-icon auto-width name="bars"></wa-icon>

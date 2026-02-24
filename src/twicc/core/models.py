@@ -241,7 +241,7 @@ class Session(models.Model):
     stale = models.BooleanField(default=False)  # True if folder/file no longer exists on disk
     compute_version = models.PositiveIntegerField(null=True, blank=True)  # NULL = never computed
     title = models.CharField(max_length=250, null=True, blank=True)  # Session title (from first user message or custom-title)
-    message_count = models.PositiveIntegerField(default=0)  # Number of user/assistant messages (user_count * 2 - 1 if last is user)
+    user_message_count = models.PositiveIntegerField(default=0)  # Number of user messages (message turns)
 
     # Cost and context usage fields (computed from items)
     context_usage = models.PositiveIntegerField(null=True, blank=True)  # Current context usage (last known value in tokens)

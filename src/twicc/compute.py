@@ -1246,9 +1246,8 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     # Track sessions that need title updates (session_id -> title)
     session_titles: dict[str, str] = {}
 
-    # Track message count
+    # Track user message count (message turns)
     user_message_count = 0
-    last_relevant_kind: ItemKind | None = None
 
     # Track affected days for activity recalculation
     affected_days: set[str] = set()  # ISO date strings
@@ -1333,12 +1332,9 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             if custom_title and isinstance(custom_title, str):
                 session_titles[target_session_id] = custom_title
 
-        # Track message count: count user messages and track last relevant kind
+        # Track user message count (message turns)
         if item.kind == ItemKind.USER_MESSAGE:
             user_message_count += 1
-            last_relevant_kind = ItemKind.USER_MESSAGE
-        elif item.kind == ItemKind.ASSISTANT_MESSAGE:
-            last_relevant_kind = ItemKind.ASSISTANT_MESSAGE
 
         # Track affected days for activity recalculation (only for items that contribute)
         if item.timestamp and (item.kind == ItemKind.USER_MESSAGE or item.cost):
@@ -1426,13 +1422,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     flush_tool_result_links(tool_result_links_to_create)
     flush_agent_links(agent_links_to_create)
 
-    # Compute message count: user_count * 2 - 1 if last is user, else user_count * 2
-    if user_message_count == 0:
-        message_count = 0
-    elif last_relevant_kind == ItemKind.USER_MESSAGE:
-        message_count = user_message_count * 2 - 1
-    else:
-        message_count = user_message_count * 2
+    # user_message_count is already tracked as a simple counter (incremented for each USER_MESSAGE)
 
     # Determine project directory update (for real sessions only)
     project_directory = first_cwd if first_cwd and session.type == SessionType.SESSION else None
@@ -1451,7 +1441,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         'agent_links': all_agent_links,
         'session_fields': {
             'compute_version': settings.CURRENT_COMPUTE_VERSION,
-            'message_count': message_count,
+            'user_message_count': user_message_count,
             'context_usage': last_context_usage,
             'cwd': last_cwd,
             'cwd_git_branch': last_cwd_git_branch,

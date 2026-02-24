@@ -440,25 +440,11 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Update session tracking fields
             session.last_line = current_line_num
 
-            # Recompute message_count using the optimized index
-            user_count = SessionItem.objects.filter(
+            # Recompute user_message_count using the optimized index
+            session.user_message_count = SessionItem.objects.filter(
                 session=session,
                 kind=ItemKind.USER_MESSAGE
             ).count()
-
-            if user_count == 0:
-                session.message_count = 0
-            else:
-                # Find the last user_message or assistant_message
-                last_relevant = SessionItem.objects.filter(
-                    session=session,
-                    kind__in=[ItemKind.USER_MESSAGE, ItemKind.ASSISTANT_MESSAGE]
-                ).order_by('-line_num').first()
-
-                if last_relevant and last_relevant.kind == ItemKind.USER_MESSAGE:
-                    session.message_count = user_count * 2 - 1
-                else:
-                    session.message_count = user_count * 2
 
             # Update session cost and context usage from the new items
             # Find last context_usage among new items (most recent non-null value)
@@ -498,7 +484,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
         # Update offset to end of file
         session.last_offset = f.tell()
         session.mtime = file_mtime
-        session.save(update_fields=["last_offset", "last_line", "mtime", "message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "model", "created_at"])
+        session.save(update_fields=["last_offset", "last_line", "mtime", "user_message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "model", "created_at"])
 
         # Recalculate activities after session.save (needs created_at in DB for session_count)
         if lines:

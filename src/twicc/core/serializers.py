@@ -57,7 +57,7 @@ def serialize_session(session):
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "stale": session.stale,
         "title": title,  # Session title (from pending, first user message, or custom-title)
-        "message_count": session.message_count,  # Number of user/assistant messages
+        "user_message_count": session.user_message_count,  # Number of user messages (message turns)
         # Boolean indicating if session metadata is up-to-date
         "compute_version_up_to_date": session.compute_version == settings.CURRENT_COMPUTE_VERSION,
         # Cost and context usage fields

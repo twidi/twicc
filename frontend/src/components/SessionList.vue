@@ -641,8 +641,8 @@ defineExpose({
                     </div>
                     <!-- Meta row (not shown for draft sessions, hidden in compact mode) -->
                     <div v-if="!compactView && !session.draft" class="session-meta" :class="{ 'session-meta--no-cost': !showCosts }">
-                        <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.message_count ?? '??' }}</span>
-                        <AppTooltip :for="`session-messages-${session.id}`">Number of user and assistant messages</AppTooltip>
+                        <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.user_message_count ?? '??' }}</span>
+                        <AppTooltip :for="`session-messages-${session.id}`">Number of message turns</AppTooltip>
 
                         <template v-if="showCosts">
                             <CostDisplay :id="`session-cost-${session.id}`" :cost="session.total_cost" class="session-cost" />
