@@ -192,6 +192,7 @@ function handleEditClick() {
 
 <style scoped>
 .project-detail-panel {
+    container: project-detail / inline-size;
     display: flex;
     align-items: start;
     justify-content: center;

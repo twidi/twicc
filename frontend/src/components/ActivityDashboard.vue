@@ -101,6 +101,7 @@ const periodDefs = [
     {
         key: 'daily',
         label: 'Daily',
+        sublabel: 'current day',
         icon: 'calendar-day',
         previousLabel: 'yesterday',
         offsetCurrent: 0,
@@ -233,7 +234,9 @@ const periods = computed(() => {
                     <div class="wa-stack wa-gap-l">
                         <h3 class="wa-caption-m wa-cluster wa-gap-s">
                             <wa-icon :name="period.icon"></wa-icon>
-                            {{ period.label }} <span v-if="period.sublabel" class="wa-caption-2xs period-sublabel">({{ period.sublabel }})</span>
+                            <span class="wa-cluster wa-gap-s wa-stack-wrap">
+                                {{ period.label }} <span v-if="period.sublabel" class="wa-caption-2xs period-sublabel">({{ period.sublabel }})</span>
+                            </span>
                         </h3>
 
                         <!-- Main metric -->
@@ -357,6 +360,10 @@ const periods = computed(() => {
     align-items: stretch;
 }
 
+h3 > span {
+    row-gap: var(--wa-space-3xs);
+}
+
 wa-card {
     min-width: 16rem;
 }
@@ -378,6 +385,22 @@ wa-tag {
 }
 .sub-metric wa-tag {
     font-size: var(--wa-font-size-s);
+}
+
+@container project-detail (width < 640px) {
+    wa-card {
+        --spacing: var(--wa-space-m);
+        min-width: 13rem;
+    }
+}
+@container project-detail (width < 550px) {
+    .dashboard-grid {
+        justify-content: center;
+    }
+    wa-card {
+        max-width: 100%;
+        min-width: 16rem;
+    }
 }
 
 </style>
