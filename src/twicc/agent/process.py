@@ -501,12 +501,6 @@ class ClaudeProcess:
         try:
             async for msg in self._client.receive_messages():
                 self.last_activity = time.time()
-                msg_type = type(msg).__name__
-                logger.debug(
-                    "Received message for session %s: %s",
-                    self.session_id,
-                    msg_type,
-                )
 
                 if isinstance(msg, ResultMessage):
                     # Claude finished responding, ready for user input
@@ -526,10 +520,6 @@ class ClaudeProcess:
                         )
                         return
 
-                    logger.debug(
-                        "ResultMessage received for session %s",
-                        self.session_id,
-                    )
                     self._set_state(ProcessState.USER_TURN)
                     await self._notify_state_change()
 

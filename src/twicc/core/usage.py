@@ -196,9 +196,7 @@ def fetch_and_save_usage() -> UsageSnapshot | None:
         return None
 
     try:
-        snapshot = save_usage_snapshot(raw)
-        logger.info("Usage snapshot saved (id=%s)", snapshot.id)
-        return snapshot
+        return save_usage_snapshot(raw)
     except Exception as e:
         logger.error("Failed to save usage snapshot: %s", e, exc_info=True)
         return None

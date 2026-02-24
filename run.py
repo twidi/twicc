@@ -147,7 +147,8 @@ def main():
     call_command("migrate", verbosity=0)
     print("✓ Migrations applied")
 
-    # Sync initial
+    # Sync initial (can take several minutes on first run or with a fresh database)
+    logger.info("Starting data synchronization (may take a while on first run)...")
     sync_all()
     projects_count = Project.objects.filter(stale=False).count()
     sessions_count = Session.objects.filter(stale=False, type=SessionType.SESSION).count()
