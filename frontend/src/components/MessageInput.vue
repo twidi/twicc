@@ -423,6 +423,7 @@ async function handleClear() {
             @input="onInput"
             @keydown="onKeydown"
             @paste="onPaste"
+            @focus="adjustTextareaHeight"
         ></wa-textarea>
 
         <div class="message-input-toolbar">
