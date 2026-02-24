@@ -29,8 +29,8 @@ django.setup()
 from django.core.management import call_command
 
 from twicc.core.models import Project, Session, SessionType
-from twicc.sync import sync_all
-from twicc.watcher import start_watcher, stop_watcher
+from twicc.initial_sync import sync_all
+from twicc.sessions_watcher import start_watcher, stop_watcher
 from twicc.agent import shutdown_process_manager
 from twicc.background_task import ComputeContext, start_background_compute_task, stop_background_task
 from twicc.pricing_task import run_initial_price_sync, start_price_sync_task, stop_price_sync_task
