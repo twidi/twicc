@@ -750,9 +750,12 @@ function updateSidebarClosedClass(closed) {
                             <ProjectBadge :project-id="p.id" />
                         </wa-dropdown-item>
                     </wa-dropdown>
+                </wa-button-group>
+
+                <template v-if="!isAllProjectsMode">
                     <AppTooltip for="new-session-button">Create a new session in this project</AppTooltip>
                     <AppTooltip for="new-session-project-picker">Choose a different project</AppTooltip>
-                </wa-button-group>
+                </template>
 
                 <!-- In all projects mode: dropdown to choose project -->
                 <wa-dropdown
