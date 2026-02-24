@@ -28,6 +28,11 @@ const props = defineProps({
         type: Number,
         default: 365,
     },
+    /** Granularity: 'day' | 'week' | 'month' | 'quarter' */
+    granularity: {
+        type: String,
+        default: 'day',
+    },
 })
 
 const DAYS = 365
@@ -74,15 +79,211 @@ function toDateStr(date) {
     return `${y}-${m}-${d}`
 }
 
-// Displayed data: slice the full year to the requested number of days
-const displayData = computed(() => {
+// ── Aggregation helpers ─────────────────────────────────────────────
+
+function parseDateStr(dateStr) {
+    const [y, m, d] = dateStr.split('-').map(Number)
+    return new Date(y, m - 1, d)
+}
+
+/** Return ISO week key "YYYY-Www" for a date (weeks start Monday). */
+function getISOWeekKey(date) {
+    const d = new Date(date)
+    d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7))
+    const yearStart = new Date(d.getFullYear(), 0, 4)
+    const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7)
+    return `${d.getFullYear()}-W${String(weekNo).padStart(2, '0')}`
+}
+
+/** Format a week range like "Jan 6–12, 2026" or "Dec 30–Jan 5, 2026" (cross-month). */
+function formatWeekRange(startStr, endStr) {
+    const start = parseDateStr(startStr)
+    const end = parseDateStr(endStr)
+    const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()
+    if (sameMonth) {
+        return `${start.toLocaleDateString('en-US', { month: 'short' })} ${start.getDate()}\u2013${end.getDate()}, ${end.getFullYear()}`
+    }
+    return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}\u2013${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+}
+
+/** Format a month key "YYYY-MM" as "January 2026". */
+function formatMonthLabel(monthKey) {
+    const [y, m] = monthKey.split('-').map(Number)
+    const date = new Date(y, m - 1, 1)
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+/**
+ * Aggregate daily data by ISO week (Monday–Sunday).
+ * Drops the first group if its first day is not a Monday (incomplete week at data start).
+ */
+function aggregateByWeek(days) {
+    if (!days.length) return []
+    const groups = []
+    let currentGroup = null
+
+    for (const d of days) {
+        const date = parseDateStr(d.date)
+        const weekKey = getISOWeekKey(date)
+
+        if (!currentGroup || currentGroup.weekKey !== weekKey) {
+            currentGroup = {
+                weekKey,
+                startDate: d.date,
+                endDate: d.date,
+                sessions: 0,
+                messages: 0,
+                cost: 0,
+            }
+            groups.push(currentGroup)
+        }
+
+        currentGroup.endDate = d.date
+        currentGroup.sessions += d.sessions
+        currentGroup.messages += d.messages
+        currentGroup.cost += d.cost
+    }
+
+    // Drop first group if incomplete (doesn't start on Monday)
+    if (groups.length > 0) {
+        const firstDay = parseDateStr(groups[0].startDate)
+        const dayOfWeek = firstDay.getDay() // 0=Sun, 1=Mon
+        if (dayOfWeek !== 1) {
+            groups.shift()
+        }
+    }
+
+    return groups.map(g => ({
+        sessions: g.sessions,
+        messages: g.messages,
+        cost: g.cost,
+        dateLabel: formatWeekRange(g.startDate, g.endDate),
+    }))
+}
+
+/**
+ * Aggregate daily data by calendar month.
+ * Drops the first group if its first day is not the 1st (incomplete month at data start).
+ */
+function aggregateByMonth(days) {
+    if (!days.length) return []
+    const groups = []
+    let currentGroup = null
+
+    for (const d of days) {
+        const monthKey = d.date.substring(0, 7) // "YYYY-MM"
+
+        if (!currentGroup || currentGroup.monthKey !== monthKey) {
+            currentGroup = {
+                monthKey,
+                firstDayOfMonth: d.date,
+                sessions: 0,
+                messages: 0,
+                cost: 0,
+            }
+            groups.push(currentGroup)
+        }
+
+        currentGroup.sessions += d.sessions
+        currentGroup.messages += d.messages
+        currentGroup.cost += d.cost
+    }
+
+    // Drop first group if incomplete (doesn't start on 1st)
+    if (groups.length > 0) {
+        const firstDate = parseDateStr(groups[0].firstDayOfMonth)
+        if (firstDate.getDate() !== 1) {
+            groups.shift()
+        }
+    }
+
+    return groups.map(g => ({
+        sessions: g.sessions,
+        messages: g.messages,
+        cost: g.cost,
+        dateLabel: formatMonthLabel(g.monthKey),
+    }))
+}
+
+/**
+ * Aggregate daily data by quarter (Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec).
+ * Drops the first group if its first day is not the 1st day of its quarter.
+ */
+function aggregateByQuarter(days) {
+    if (!days.length) return []
+    const groups = []
+    let currentGroup = null
+
+    for (const d of days) {
+        const [y, m] = d.date.split('-').map(Number)
+        const q = Math.ceil(m / 3)
+        const qKey = `${y}-Q${q}`
+
+        if (!currentGroup || currentGroup.qKey !== qKey) {
+            currentGroup = {
+                qKey,
+                year: y,
+                quarter: q,
+                firstDayOfQuarter: d.date,
+                sessions: 0,
+                messages: 0,
+                cost: 0,
+            }
+            groups.push(currentGroup)
+        }
+
+        currentGroup.sessions += d.sessions
+        currentGroup.messages += d.messages
+        currentGroup.cost += d.cost
+    }
+
+    // Drop first group if incomplete (doesn't start on 1st day of its quarter)
+    if (groups.length > 0) {
+        const g0 = groups[0]
+        const quarterStartMonth = (g0.quarter - 1) * 3 + 1 // 1, 4, 7, or 10
+        const firstDate = parseDateStr(g0.firstDayOfQuarter)
+        if (firstDate.getMonth() + 1 !== quarterStartMonth || firstDate.getDate() !== 1) {
+            groups.shift()
+        }
+    }
+
+    return groups.map(g => ({
+        sessions: g.sessions,
+        messages: g.messages,
+        cost: g.cost,
+        dateLabel: `Q${g.quarter} ${g.year}`,
+    }))
+}
+
+// ── Displayed data: slice then aggregate ────────────────────────────
+
+const slicedData = computed(() => {
     const data = fullYearData.value
     if (props.days >= DAYS) return data
     return data.slice(data.length - props.days)
 })
 
+const displayData = computed(() => {
+    const data = slicedData.value
+    switch (props.granularity) {
+        case 'week': return aggregateByWeek(data)
+        case 'month': return aggregateByMonth(data)
+        case 'quarter': return aggregateByQuarter(data)
+        default: return data.map(d => ({ ...d, dateLabel: formatTooltipDate(d.date) }))
+    }
+})
+
+/** Label suffix that adapts to the selected granularity */
+const periodLabel = computed(() => ({
+    day: 'per day',
+    week: 'per week',
+    month: 'per month',
+    quarter: 'per quarter',
+}[props.granularity] || 'per day'))
+
 // SVG width is always based on 365 days to keep a consistent stroke thickness
-// regardless of the displayed time range (avoids stroke scaling with preserveAspectRatio="none")
+// regardless of the displayed time range or granularity (avoids stroke scaling
+// with preserveAspectRatio="none")
 const svgWidth = computed(() => DAYS * 3 - 1)
 
 /**
@@ -91,7 +292,7 @@ const svgWidth = computed(() => DAYS * 3 - 1)
  */
 function buildPolylinePoints(values, maxValue, graphHeight) {
     if (!values.length) return ''
-    const xStep = svgWidth.value / (values.length - 1)
+    const xStep = values.length > 1 ? svgWidth.value / (values.length - 1) : 0
     return values
         .map((count, i) => {
             const x = Math.round(i * xStep * 100) / 100
@@ -122,7 +323,7 @@ const costPoints = computed(() => buildPolylinePoints(costValues.value, costMax.
 const separateCurves = computed(() => [
     {
         key: 'sessions',
-        label: 'Sessions created per day',
+        label: `Sessions created ${periodLabel.value}`,
         points: sessionsPoints.value,
         gradientId: 'sparkline-contrib-sessions-gradient',
         maskId: 'sparkline-contrib-sessions-mask',
@@ -130,7 +331,7 @@ const separateCurves = computed(() => [
     },
     {
         key: 'messages',
-        label: 'Message turns per day',
+        label: `Message turns ${periodLabel.value}`,
         points: messagesPoints.value,
         gradientId: 'sparkline-contrib-messages-gradient',
         maskId: 'sparkline-contrib-messages-mask',
@@ -138,7 +339,7 @@ const separateCurves = computed(() => [
     },
     {
         key: 'cost',
-        label: 'Cost per day',
+        label: `Cost ${periodLabel.value}`,
         points: costPoints.value,
         gradientId: 'sparkline-contrib-cost-gradient',
         maskId: 'sparkline-contrib-cost-mask',
@@ -296,7 +497,7 @@ function formatAverage(value, isCost) {
         <!-- Combined mode: single SVG with all three curves overlaid -->
         <template v-if="combined">
             <div class="sparkline-row">
-                <h3 class="sparkline-title">Activity per day</h3>
+                <h3 class="sparkline-title">Activity {{ periodLabel }}</h3>
                 <div class="sparkline-graph-wrapper">
                     <svg
                         :width="svgWidth"
@@ -367,7 +568,7 @@ function formatAverage(value, isCost) {
                         <div class="sparkline-tooltip-avg">Avg. turns/session: {{ formatAverage(hoveredAverages.avgTurnsPerSession, false) }}</div>
                         <div class="sparkline-tooltip-avg">Avg. cost/session: {{ formatAverage(hoveredAverages.avgCostPerSession, true) }}</div>
                         <div class="sparkline-tooltip-avg">Avg. cost/turn: {{ formatAverage(hoveredAverages.avgCostPerTurn, true) }}</div>
-                        <div class="sparkline-tooltip-date">{{ formatTooltipDate(hoveredData.date) }}</div>
+                        <div class="sparkline-tooltip-date">{{ hoveredData.dateLabel }}</div>
                     </div>
                 </div>
 
@@ -457,7 +658,7 @@ function formatAverage(value, isCost) {
                             <div class="sparkline-tooltip-avg">Avg. cost/session: {{ formatAverage(hoveredAverages.avgCostPerSession, true) }}</div>
                             <div class="sparkline-tooltip-avg">Avg. cost/turn: {{ formatAverage(hoveredAverages.avgCostPerTurn, true) }}</div>
                         </template>
-                        <div class="sparkline-tooltip-date">{{ formatTooltipDate(hoveredData.date) }}</div>
+                        <div class="sparkline-tooltip-date">{{ hoveredData.dateLabel }}</div>
                     </div>
                 </div>
             </div>

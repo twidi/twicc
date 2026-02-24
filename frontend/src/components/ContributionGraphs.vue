@@ -30,19 +30,47 @@ const viewSwitchRef = ref(null)
 const isCombined = ref(false)
 const combinedSwitchRef = ref(null)
 
-/** Time range slider: discrete steps mapped to day counts */
-const rangeSteps = [
-    { days: 7, label: '1 week' },
-    { days: 14, label: '2 weeks' },
-    { days: 30, label: '1 month' },
-    { days: 90, label: '3 months' },
-    { days: 182, label: '6 months' },
-    { days: 365, label: '1 year' },
+/** Granularity slider: group data by day, week, month, or quarter */
+const granularitySteps = [
+    { key: 'day', label: 'Day' },
+    { key: 'week', label: 'Week' },
+    { key: 'month', label: 'Month' },
+    { key: 'quarter', label: 'Quarter' },
 ]
+const granularitySliderRef = ref(null)
+const granularityStepIndex = ref(0) // default: Day
+const granularity = computed(() => granularitySteps[granularityStepIndex.value].key)
+const granularityLabel = computed(() => granularitySteps[granularityStepIndex.value].label)
+
+function onGranularityChange(e) {
+    granularityStepIndex.value = parseInt(e.target.value, 10)
+}
+
+/** Time range slider: discrete steps depend on the selected granularity */
+const rangeStepsMap = {
+    day: [
+        { days: 7, label: '1 week' },
+        { days: 14, label: '2 weeks' },
+        { days: 30, label: '1 month' },
+        { days: 90, label: '3 months' },
+        { days: 182, label: '6 months' },
+        { days: 365, label: '1 year' },
+    ],
+    week: [
+        { days: 28, label: '4 weeks' },
+        { days: 84, label: '12 weeks' },
+        { days: 168, label: '24 weeks' },
+        { days: 365, label: '1 year' },
+    ],
+    month: [{ days: 0, label: '' }, { days: 365, label: '1 year' }],      // 2 steps so slider shows at right; disabled
+    quarter: [{ days: 0, label: '' }, { days: 365, label: '1 year' }],   // 2 steps so slider shows at right; disabled
+}
+const rangeSteps = computed(() => rangeStepsMap[granularity.value])
 const rangeSliderRef = ref(null)
-const rangeStepIndex = ref(rangeSteps.length - 1) // default: 1Y (last step)
-const displayDays = computed(() => rangeSteps[rangeStepIndex.value].days)
-const rangeLabel = computed(() => rangeSteps[rangeStepIndex.value].label)
+const rangeStepIndex = ref(5) // default: last step (1Y)
+const isRangeDisabled = computed(() => granularity.value === 'month' || granularity.value === 'quarter')
+const displayDays = computed(() => rangeSteps.value[rangeStepIndex.value].days)
+const rangeLabel = computed(() => rangeSteps.value[rangeStepIndex.value].label)
 
 function onRangeChange(e) {
     rangeStepIndex.value = parseInt(e.target.value, 10)
@@ -64,6 +92,29 @@ function onCombinedModeChange(e) {
     isCombined.value = e.target.checked
 }
 
+// When granularity changes, find the closest range step >= the previous duration.
+// E.g. switching from quarter (365 days) to week should land on "1 year", not "4 weeks".
+// E.g. switching from week/24 weeks (168 days) to day should land on "6 months" (182 days).
+watch(granularity, (_, oldGranularity) => {
+    const oldSteps = rangeStepsMap[oldGranularity]
+    const prevDays = oldSteps[Math.min(rangeStepIndex.value, oldSteps.length - 1)].days
+
+    const newSteps = rangeSteps.value
+    // Find first step with days >= prevDays, fall back to last step
+    const idx = newSteps.findIndex(s => s.days >= prevDays)
+    rangeStepIndex.value = idx !== -1 ? idx : newSteps.length - 1
+})
+
+// Update range slider Web Component max when available steps change
+watch(rangeSteps, (steps) => {
+    nextTick(() => {
+        if (rangeSliderRef.value && steps.length > 0) {
+            rangeSliderRef.value.max = steps.length - 1
+            rangeSliderRef.value.value = rangeStepIndex.value
+        }
+    })
+})
+
 // Sync Web Component states when they re-mount after being hidden by v-if.
 // Web Components don't reliably pick up Vue's prop bindings on mount.
 watch(isSparkline, (val) => {
@@ -72,7 +123,12 @@ watch(isSparkline, (val) => {
             if (combinedSwitchRef.value && combinedSwitchRef.value.checked !== isCombined.value) {
                 combinedSwitchRef.value.checked = isCombined.value
             }
-            if (rangeSliderRef.value && rangeSliderRef.value.value !== rangeStepIndex.value) {
+            if (granularitySliderRef.value && granularitySliderRef.value.value !== granularityStepIndex.value) {
+                granularitySliderRef.value.value = granularityStepIndex.value
+            }
+            const steps = rangeSteps.value
+            if (rangeSliderRef.value && steps.length > 0) {
+                rangeSliderRef.value.max = steps.length - 1
                 rangeSliderRef.value.value = rangeStepIndex.value
             }
         })
@@ -143,15 +199,31 @@ watch(() => props.projectId, fetchDailyActivity)
             ><span class="view-toggle-label" :class="{ active: isCombined }">Combined</span></wa-switch>
         </div>
 
-        <!-- Time range slider (only visible in graph mode) -->
+        <!-- Granularity slider (only visible in graph mode) -->
         <div v-if="isSparkline" class="range-control">
-            <span class="range-label">{{ rangeLabel }}</span>
+            <span class="range-label">{{ granularityLabel }}</span>
+            <wa-slider
+                ref="granularitySliderRef"
+                :min.prop="0"
+                :max.prop="granularitySteps.length - 1"
+                :step.prop="1"
+                :value.prop="granularityStepIndex"
+                @input="onGranularityChange"
+                size="small"
+                class="range-slider"
+            ></wa-slider>
+        </div>
+
+        <!-- Time range slider (only visible in graph mode, disabled for month/quarter) -->
+        <div v-if="isSparkline" class="range-control">
+            <span class="range-label" :class="{ disabled: isRangeDisabled }">{{ rangeLabel }}</span>
             <wa-slider
                 ref="rangeSliderRef"
                 :min.prop="0"
                 :max.prop="rangeSteps.length - 1"
                 :step.prop="1"
                 :value.prop="rangeStepIndex"
+                :disabled="isRangeDisabled"
                 @input="onRangeChange"
                 size="small"
                 class="range-slider"
@@ -168,7 +240,7 @@ watch(() => props.projectId, fetchDailyActivity)
 
     <!-- Sparkline view -->
     <template v-else>
-        <ContributionSparklines :daily-activity="dailyActivity" :combined="isCombined" :days="displayDays" />
+        <ContributionSparklines :daily-activity="dailyActivity" :combined="isCombined" :days="displayDays" :granularity="granularity" />
     </template>
 </template>
 
@@ -212,6 +284,10 @@ watch(() => props.projectId, fetchDailyActivity)
     font-weight: 600;
     min-width: 5.5em;
     text-align: center;
+}
+
+.range-label.disabled {
+    color: var(--wa-color-text-quiet);
 }
 
 .range-slider {
