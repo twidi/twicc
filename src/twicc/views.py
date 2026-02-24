@@ -34,7 +34,7 @@ def _get_sessions_page(project_id: str | None, before_mtime: str | None) -> dict
     Returns:
         Dict with "sessions" (list) and "has_more" (bool).
     """
-    sessions = Session.objects.filter(type=SessionType.SESSION)
+    sessions = Session.objects.filter(type=SessionType.SESSION, created_at__isnull=False)
 
     if project_id is not None:
         sessions = sessions.filter(project_id=project_id)

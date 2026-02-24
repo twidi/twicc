@@ -603,9 +603,6 @@ def sync_project(
     }
     db_session_ids = set(db_sessions.keys())
 
-    # Track which sessions are non-empty (for counting and mtime)
-    non_empty_session_ids: set[str] = set()
-
     # Process sessions that exist on disk
     sessions_to_sync = list(disk_session_ids)
     total_sessions = len(sessions_to_sync)
@@ -635,8 +632,6 @@ def sync_project(
             # Sync items (raw insert only, compute_version is already NULL for new sessions)
             new_line_nums = _sync_session_items_raw(session, file_path)
 
-            # Track as non-empty and update stats
-            non_empty_session_ids.add(session_id)
             stats["items_added"] += len(new_line_nums)
 
             # Track max mtime for project
@@ -659,10 +654,7 @@ def sync_project(
             session.compute_version = None
             session.save(update_fields=["compute_version"])
 
-        # Track as non-empty if it has lines
         if session.last_line > 0:
-            non_empty_session_ids.add(session_id)
-            # Track max mtime for project (only for non-empty sessions)
             if session.mtime > max_mtime:
                 max_mtime = session.mtime
 
@@ -680,16 +672,12 @@ def sync_project(
         )
         stats["sessions_stale"] += len(stale_session_ids)
 
-    # Update project metadata (count non-empty sessions, including stale ones)
-    stale_non_empty_count = (
-        Session.objects.filter(
-            project=project,
-            stale=True,
-            last_line__gt=0,
-            type=SessionType.SESSION,
-        ).count()
-    )
-    project.sessions_count = len(non_empty_session_ids) + stale_non_empty_count
+    # Update project metadata (count sessions with created_at, including stale ones)
+    project.sessions_count = Session.objects.filter(
+        project=project,
+        type=SessionType.SESSION,
+        created_at__isnull=False,
+    ).count()
     project.mtime = max_mtime
     if project.stale:
         project.stale = False
