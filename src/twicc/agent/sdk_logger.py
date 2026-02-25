@@ -2,9 +2,9 @@
 Raw SDK message logger.
 
 Intercepts all messages sent to and received from the Claude CLI subprocess
-and writes them as raw JSON lines to a log file in logs/sdk/.
+and writes them as raw JSON lines to a log file in <data_dir>/logs/sdk/.
 
-Each session gets its own log file: logs/sdk/{session_id}.jsonl
+Each session gets its own log file: <data_dir>/logs/sdk/{session_id}.jsonl
 Each line is a JSON object with:
   - "direction": "sent" or "received"
   - "timestamp": ISO 8601 timestamp
@@ -22,10 +22,12 @@ from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk._internal.message_parser import parse_message
 from claude_agent_sdk.types import Message
 
+from twicc.paths import get_sdk_logs_dir
+
 logger = logging.getLogger(__name__)
 
-# Resolve once at import time
-LOGS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "logs" / "sdk"
+# Resolve once at import time — SDK logs go in <data_dir>/logs/sdk/
+LOGS_DIR = get_sdk_logs_dir()
 
 
 def _get_log_path(session_id: str) -> Path:

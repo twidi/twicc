@@ -29,6 +29,30 @@ TwiCC (Twi for Twidi, CC for Claude Code)  - A standalone, self-contained web ap
 | UI Components | Web Awesome (wa-* elements) |
 
 
+## Data Directory
+
+All persistent data (database, SDK logs, configuration) lives in a **data directory**:
+
+| Priority | Condition | Data directory |
+|---|---|---|
+| 1 | `$TWICC_DATA_DIR` is set | `$TWICC_DATA_DIR` |
+| 2 | Running in a git worktree | Project/worktree root (automatic) |
+| 3 | Default | `~/.twicc/` |
+
+```
+<data_dir>/
+├── .env                              # Configuration (ports, password hash)
+├── db/
+│   └── data.sqlite (+shm, +wal)     # SQLite database
+└── logs/
+    ├── backend.log                   # Backend application logs
+    ├── frontend.log                  # Frontend (Vite) process output
+    └── sdk/
+        └── {session_id}.jsonl        # Raw SDK message logs
+```
+
+Path resolution is centralized in `src/twicc/paths.py`. The `devctl.py` script has its own equivalent logic (since it doesn't depend on Django).
+
 ## Development Process Controller (devctl.py)
 
 Script to manage frontend and backend dev servers as background processes. Use this when the user asks to start, stop, or restart the dev servers.
@@ -43,18 +67,26 @@ uv run ./devctl.py logs [front|back]        # Show recent logs (--lines=N)
 
 **Default ports:** Frontend on 5173, Backend on 3500. The script verifies correct port binding after start.
 
-**Log files:** `.devctl/logs/frontend.log` and `.devctl/logs/backend.log` - read these to debug issues.
+**Log files:** `<data_dir>/logs/backend.log` and `<data_dir>/logs/frontend.log` — read these to debug issues.
+
+**devctl-specific files** (always local to the project/worktree root):
+- `.devctl/pids/` — PID files for running processes
+
+When starting the backend, devctl passes `TWICC_DATA_DIR` to the backend process so it uses the correct data directory.
 
 ### Worktree Support
 
-The application is able to run in multiple worktrees, each worktree has its own:
+devctl automatically detects git worktrees (by comparing `git rev-parse --git-dir` vs `--git-common-dir`). When running in a worktree, it sets `TWICC_DATA_DIR` to the worktree root, so database, logs, and `.env` are all local to that worktree.
+
+Each worktree has its own:
 - instances of the backend and frontend servers
-- `.env` file with port configuration
-- `.devctl/` directory (logs, PIDs)
-- `data.sqlite` database (3 files: `data.sqlite`, `data.sqlite-shm`, `data.sqlite-wal`)
- 
+- `.env` file with port configuration (in the worktree root)
+- `.devctl/` directory (PIDs)
+- `db/data.sqlite*` database (in `<worktree>/db/`)
+- `logs/` directory (backend.log, frontend.log, sdk/) in `<worktree>/logs/`
+
 If you are in a worktree and asked to run the dev servers, you MUST:
-- copy the database file from the main worktree to the worktree root: `cp /path/to/main/worktree/data.sqlite* ./` (ONLY IF IT DOESN'T EXIST IN THE WORKTREE ROOT YET)
+- copy the database from the main data directory to the worktree: `cp ~/.twicc/db/data.sqlite* ./db/` (ONLY IF `./db/data.sqlite` DOESN'T EXIST YET — create the `db/` directory first if needed)
 - configure ports to use to run the servers, ONLY IF THEY ARE NOT ALREADY CONFIGURED IN THE WORKTREE ROOT `.env` FILE:
   - find available ports on the system that we'll use for the frontend and backend servers
   - configure those ports in a `.env` file in the worktree root like in this example:
@@ -67,7 +99,7 @@ TWICC_PORT=3600
 VITE_PORT=5273
 ```
 
-Always check your current working directory before starting the servers so you'll know if you are in a worktree or not. 
+Always check your current working directory before starting the servers so you'll know if you are in a worktree or not.
 When the user asks to start the servers, if you are in a worktree, you MUST proceed as described above. And give them the localhost urls for the frontend and backend servers based on the ports configured in the worktree `.env` file (e.g., `Frontend: http://localhost:5273`, `Backend: http://localhost:3600`).
 When the user asks you to exit/kill/delete (etc...) a worktree, you MUST run the "stop all" command to kill the processes, even if you didn't start them yourself.
 

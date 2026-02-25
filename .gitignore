@@ -213,7 +213,10 @@ Thumbs.db
 # Project specific
 # =========================
 
-# SQLite database (development)
+# Data directory (database, SDK logs) — used in worktrees
+db/
+
+# SQLite database (legacy location, kept for safety)
 data.sqlite
 data.sqlite-wal
 data.sqlite-shm

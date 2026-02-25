@@ -5,12 +5,13 @@ Development process controller for TWICC.
 Manages frontend (npm run dev) and backend (uv run ./run.py) processes
 as independent background daemons with logging.
 
-Port configuration is read from .env file (if present) or uses defaults:
-    TWICC_PORT=3500   (backend)
-    VITE_PORT=5173    (frontend)
+Data directory resolution:
+    1. TWICC_DATA_DIR environment variable (if set)
+    2. In a git worktree: forced to the worktree root (PROJECT_ROOT)
+    3. Default: ~/.twicc/
 
-This allows running multiple instances in different git worktrees,
-each with its own .env file specifying different ports.
+The .env file (ports, password hash, etc.) is read from the data directory.
+The backend process receives TWICC_DATA_DIR so it uses the same paths.
 """
 import os
 import re
@@ -23,17 +24,66 @@ from pathlib import Path
 # Paths
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEVCTL_DIR = PROJECT_ROOT / ".devctl"
-LOGS_DIR = DEVCTL_DIR / "logs"
 PIDS_DIR = DEVCTL_DIR / "pids"
-ENV_FILE = PROJECT_ROOT / ".env"
 
 # Default ports
 DEFAULT_BACKEND_PORT = 3500
 DEFAULT_FRONTEND_PORT = 5173
 
+# Default data directory (same as twicc.paths)
+DEFAULT_DATA_DIR = Path.home() / ".twicc"
+TWICC_DATA_DIR_ENV = "TWICC_DATA_DIR"
+
+
+def is_git_worktree() -> bool:
+    """Detect if we're running inside a git worktree (not the main working tree).
+
+    Compares git-dir (per-worktree) with git-common-dir (shared).
+    In the main worktree they resolve to the same path; in a secondary
+    worktree, git-dir points to .git/worktrees/<name>.
+    """
+    try:
+        git_dir = subprocess.check_output(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=PROJECT_ROOT,
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        common_dir = subprocess.check_output(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=PROJECT_ROOT,
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        git_dir_resolved = os.path.realpath(os.path.join(str(PROJECT_ROOT), git_dir))
+        common_dir_resolved = os.path.realpath(os.path.join(str(PROJECT_ROOT), common_dir))
+        return git_dir_resolved != common_dir_resolved
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def get_data_dir() -> Path:
+    """Resolve the data directory for this devctl instance.
+
+    Priority:
+    1. TWICC_DATA_DIR environment variable (explicit override)
+    2. Git worktree detected → PROJECT_ROOT (local data per worktree)
+    3. Default → ~/.twicc/
+    """
+    env_value = os.environ.get(TWICC_DATA_DIR_ENV, "").strip()
+    if env_value:
+        return Path(env_value).resolve()
+    if is_git_worktree():
+        return PROJECT_ROOT
+    return DEFAULT_DATA_DIR
+
+
+# Resolve once at module level
+DATA_DIR = get_data_dir()
+ENV_FILE = DATA_DIR / ".env"
+LOGS_DIR = DATA_DIR / "logs"
+
 
 def load_env_file() -> dict[str, str]:
-    """Load environment variables from .env file if it exists."""
+    """Load environment variables from .env file in the data directory."""
     env_vars = {}
     if ENV_FILE.exists():
         with open(ENV_FILE) as f:
@@ -96,15 +146,16 @@ def get_process_config() -> dict:
             "port": backend_port,
             "env": {
                 "TWICC_PORT": str(backend_port),
+                TWICC_DATA_DIR_ENV: str(DATA_DIR),
             },
         },
     }
 
 
 def ensure_dirs():
-    """Create .devctl directory structure if needed."""
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    """Create directory structure for PIDs and logs."""
     PIDS_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def is_running(proc_key: str, processes: dict) -> tuple[bool, int | None]:
@@ -211,13 +262,19 @@ def start(proc_key: str, processes: dict) -> bool:
     if config["log"].exists():
         log_start_pos = config["log"].stat().st_size
 
-    # Open log file in append mode
-    log_file = open(config["log"], "a")
-
     # Prepare environment with custom variables
     proc_env = os.environ.copy()
     if "env" in config:
         proc_env.update(config["env"])
+
+    # Backend: stdout/stderr → DEVNULL (logs go via Python logging FileHandler)
+    # Frontend: stdout/stderr → log file (Vite has no Python logger)
+    if proc_key == "back":
+        stdout_target = subprocess.DEVNULL
+        log_file_handle = None
+    else:
+        log_file_handle = open(config["log"], "a")
+        stdout_target = log_file_handle
 
     # Start detached process
     # stdin must be redirected to DEVNULL to prevent child processes
@@ -229,15 +286,16 @@ def start(proc_key: str, processes: dict) -> bool:
         config["cmd"],
         cwd=config["cwd"],
         stdin=subprocess.DEVNULL,
-        stdout=log_file,
+        stdout=stdout_target,
         stderr=subprocess.STDOUT,
         env=proc_env,
         start_new_session=True,  # Detach from parent
     )
 
-    # Close the log file handle in the parent process;
+    # Close the log file handle in the parent process (if opened);
     # the child has its own copy of the file descriptor
-    log_file.close()
+    if log_file_handle is not None:
+        log_file_handle.close()
 
     # Save PID
     config["pid"].write_text(str(proc.pid))
@@ -288,6 +346,16 @@ def stop(proc_key: str, processes: dict) -> bool:
 def status(processes: dict):
     """Show status of all processes."""
     backend_port, frontend_port = get_ports()
+
+    print(f"Data directory: {DATA_DIR}")
+    if is_git_worktree():
+        print("  (git worktree detected, using project root)")
+    elif os.environ.get(TWICC_DATA_DIR_ENV, "").strip():
+        print(f"  (from ${TWICC_DATA_DIR_ENV})")
+    else:
+        print("  (default)")
+    print()
+
     print(f"Port configuration: frontend={frontend_port}, backend={backend_port}")
     if ENV_FILE.exists():
         print(f"  (from {ENV_FILE})")
@@ -366,16 +434,25 @@ TARGETS:
 OPTIONS:
     --lines=N          Number of log lines to show (default: 50)
 
+DATA DIRECTORY:
+    All persistent data (database, logs, config) lives in a data directory:
+    1. $TWICC_DATA_DIR environment variable (if set)
+    2. Git worktree detected → project root (automatic)
+    3. Default → ~/.twicc/
+
+    The .env file is read from the data directory.
+    The backend process receives TWICC_DATA_DIR automatically.
+
 PORT CONFIGURATION:
-    Ports are configured via .env file in the project root.
+    Ports are configured via .env file in the data directory.
     If no .env file exists, defaults are used.
 
-    Create a .env file with:
+    .env file contents:
         TWICC_PORT=3500   # Backend port (default: 3500)
         VITE_PORT=5173    # Frontend port (default: 5173)
 
-    This is useful for running multiple instances in different git worktrees.
-    Each worktree can have its own .env with different ports.
+    In git worktrees, .env is read from the worktree root,
+    allowing each worktree to have its own port configuration.
 
     Example for a secondary worktree:
         TWICC_PORT=3600
@@ -391,10 +468,12 @@ EXAMPLES:
     uv run ./devctl.py logs front --lines=100
 
 FILES:
-    .env                          Port configuration (optional)
-    .devctl/logs/frontend.log     Frontend stdout/stderr
-    .devctl/logs/backend.log      Backend stdout/stderr
-    .devctl/pids/                 PID files for running processes
+    <data_dir>/.env               Configuration (ports, password hash)
+    <data_dir>/db/data.sqlite     SQLite database
+    <data_dir>/logs/backend.log   Backend application logs
+    <data_dir>/logs/frontend.log  Frontend (Vite) process output
+    <data_dir>/logs/sdk/          Raw SDK message logs (per session)
+    .devctl/pids/                 PID files for running processes (local)
 """
     print(help_text.strip())
 

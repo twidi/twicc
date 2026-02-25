@@ -6,24 +6,36 @@ Handles Django setup, migrations, initial sync, and starts the server
 with file watcher running concurrently.
 """
 import asyncio
+import logging
 import os
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Add src/ directory to Python path
+# Add src/ directory to Python path BEFORE importing twicc modules
 src_dir = Path(__file__).resolve().parent / "src"
 sys.path.insert(0, str(src_dir))
+
+# Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env)
+from twicc.paths import get_env_path  # noqa: E402
+
+load_dotenv(get_env_path())
 
 # Configure Django before any Django imports
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "twicc.settings")
 
 import django
 django.setup()
+
+# Logger must be created AFTER django.setup() so LOGGING config is applied
+logger = logging.getLogger("twicc.run")
+
+# Add a temporary console handler for startup messages (just the text, no timestamp/level).
+# It will be removed once the server is about to start, so only the file handler remains.
+_startup_console = logging.StreamHandler()
+_startup_console.setFormatter(logging.Formatter("%(message)s"))
+logging.getLogger("twicc").addHandler(_startup_console)
 
 # Now we can import Django-dependent modules
 from django.core.management import call_command
@@ -61,11 +73,14 @@ async def run_server(port: int):
     usage_sync_task = asyncio.create_task(start_usage_sync_task())
 
     # Configure uvicorn
+    # log_config=None prevents Uvicorn from installing its own StreamHandlers;
+    # uvicorn loggers are handled by Django's LOGGING config instead.
     config = uvicorn.Config(
         application,
         host="0.0.0.0",
         port=port,
         log_level="info",
+        log_config=None,
     )
     server = uvicorn.Server(config)
 
@@ -73,7 +88,7 @@ async def run_server(port: int):
     shutdown_event = asyncio.Event()
 
     def handle_signal(signum, frame):
-        print(f"\n→ Received signal {signum}, initiating shutdown...")
+        logger.info("Received signal %s, initiating shutdown...", signum)
         shutdown_event.set()
         server.should_exit = True
 
@@ -83,64 +98,64 @@ async def run_server(port: int):
     try:
         await server.serve()
     finally:
-        print("→ Server shutdown initiated...")
+        logger.info("Server shutdown initiated...")
 
         # Clean shutdown of watcher
-        print("  Stopping watcher...")
+        logger.info("Stopping watcher...")
         stop_watcher()
         watcher_task.cancel()
         try:
             await watcher_task
         except asyncio.CancelledError:
             pass
-        print("  ✓ Watcher stopped")
+        logger.info("Watcher stopped")
 
         # Clean shutdown of background compute task
-        print("  Stopping background compute task...")
+        logger.info("Stopping background compute task...")
         stop_background_task(compute_ctx)
         compute_task.cancel()
         try:
             await compute_task
         except asyncio.CancelledError:
             pass
-        print("  ✓ Background compute task stopped")
+        logger.info("Background compute task stopped")
 
         # Clean shutdown of price sync task
-        print("  Stopping price sync task...")
+        logger.info("Stopping price sync task...")
         stop_price_sync_task()
         price_sync_task.cancel()
         try:
             await price_sync_task
         except asyncio.CancelledError:
             pass
-        print("  ✓ Price sync task stopped")
+        logger.info("Price sync task stopped")
 
         # Clean shutdown of usage sync task
-        print("  Stopping usage sync task...")
+        logger.info("Stopping usage sync task...")
         stop_usage_sync_task()
         usage_sync_task.cancel()
         try:
             await usage_sync_task
         except asyncio.CancelledError:
             pass
-        print("  ✓ Usage sync task stopped")
+        logger.info("Usage sync task stopped")
 
         # Clean shutdown of Claude processes (also stops the internal timeout monitor)
         # This gracefully terminates any active Claude SDK processes
-        print("  Stopping process manager...")
+        logger.info("Stopping process manager...")
         await shutdown_process_manager()
-        print("  ✓ Process manager stopped")
+        logger.info("Process manager stopped")
 
-        print("→ Server shutdown complete")
+        logger.info("Server shutdown complete")
 
 
 def main():
-    print("TWICC Starting...")
-    print("✓ Environment loaded")
+    logger.info("TWICC starting...")
+    logger.info("Environment loaded")
 
     # Migrations auto
     call_command("migrate", verbosity=0)
-    print("✓ Migrations applied")
+    logger.info("Migrations applied")
 
     # Sync initial (can take several minutes on first run or with a fresh database)
     logger.info("Starting data synchronization (may take a while on first run)...")
@@ -148,7 +163,10 @@ def main():
     projects_count = Project.objects.filter(stale=False).count()
     sessions_count = Session.objects.filter(stale=False, type=SessionType.SESSION).count()
     subagents_count = Session.objects.filter(stale=False, type=SessionType.SUBAGENT).count()
-    print(f"✓ Data synchronized ({projects_count} projects, {sessions_count} sessions, {subagents_count} subagents)")
+    logger.info(
+        "Data synchronized (%d projects, %d sessions, %d subagents)",
+        projects_count, sessions_count, subagents_count,
+    )
 
     # Parse port
     port = os.environ.get("TWICC_PORT", "3500")
@@ -157,10 +175,13 @@ def main():
         if not (1 <= port_int <= 65535):
             raise ValueError()
     except ValueError:
-        print(f"Error: Invalid port '{port}'. Must be a number between 1 and 65535.")
+        logger.error("Invalid port '%s'. Must be a number between 1 and 65535.", port)
         sys.exit(1)
 
-    print(f"→ Server starting on http://0.0.0.0:{port_int}")
+    logger.info("Server starting on http://0.0.0.0:%d", port_int)
+
+    # Remove the startup console handler — from now on, only the file handler remains
+    logging.getLogger("twicc").removeHandler(_startup_console)
 
     # Run async server
     asyncio.run(run_server(port_int))

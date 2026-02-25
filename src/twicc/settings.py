@@ -3,10 +3,16 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from twicc.paths import ensure_data_dirs, get_backend_log_path, get_db_path, get_env_path
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-# Load .env file (idempotent: no-op if already loaded by run.py)
-load_dotenv(BASE_DIR / ".env")
+# Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env)
+# Idempotent: no-op if already loaded by run.py
+load_dotenv(get_env_path())
+
+# Ensure data directories exist (db/, logs/)
+ensure_data_dirs()
 
 SECRET_KEY = "dev-insecure-key-do-not-use-in-production"
 DEBUG = True
@@ -52,7 +58,7 @@ CHANNEL_LAYERS = {
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "data.sqlite",
+        "NAME": get_db_path(),
         "OPTIONS": {
             "timeout": 30,
             "init_command": """
@@ -76,6 +82,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 # Logging configuration
+# All logs go to file (<data_dir>/logs/backend.log)
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -86,15 +93,22 @@ LOGGING = {
         },
     },
     "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": str(get_backend_log_path()),
             "formatter": "standard",
+            "encoding": "utf-8",
         },
     },
     "loggers": {
         "twicc": {
-            "handlers": ["console"],
+            "handlers": ["file"],
             "level": "DEBUG",
+            "propagate": False,
+        },
+        "uvicorn": {
+            "handlers": ["file"],
+            "level": "INFO",
             "propagate": False,
         },
     },
