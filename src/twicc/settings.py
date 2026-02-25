@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 from twicc.paths import ensure_data_dirs, get_backend_log_path, get_db_path, get_env_path
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+PACKAGE_DIR = Path(__file__).resolve().parent  # src/twicc/
 
 # Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env)
 # Idempotent: no-op if already loaded by run.py
@@ -86,9 +86,12 @@ DATABASES = {
 }
 
 # Static files
+# Built frontend assets live inside the package: src/twicc/static/frontend/
+# This path works both in dev (after npm run build) and when installed via pip/uvx.
 STATIC_URL = "/static/"
-STATICFILES_DIRS = [BASE_DIR / "frontend" / "dist"]
-STATIC_ROOT = BASE_DIR / "staticfiles"
+FRONTEND_DIST_DIR = PACKAGE_DIR / "static" / "frontend"
+STATICFILES_DIRS = [FRONTEND_DIST_DIR]
+STATIC_ROOT = PACKAGE_DIR / "staticfiles"
 
 # Source des donnees Claude
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"

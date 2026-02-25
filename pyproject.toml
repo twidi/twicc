@@ -30,6 +30,9 @@ twicc = "twicc:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+twicc = ["static/frontend/**/*"]
+
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "twicc.settings_test"
 python_files = ["test_*.py"]

@@ -121,6 +121,8 @@ jspm_packages/
 
 # Build outputs
 frontend/dist/
+src/twicc/static/frontend/
+src/twicc/staticfiles/
 
 # Logs
 npm-debug.log*

@@ -948,7 +948,7 @@ def daily_activity(request, project_id=None):
 
 def spa_index(request):
     """Catch-all for Vue Router - serves index.html."""
-    index_path = settings.BASE_DIR / "frontend" / "dist" / "index.html"
+    index_path = settings.FRONTEND_DIST_DIR / "index.html"
     if not index_path.exists():
         raise Http404("Frontend not built. Run 'npm run build' in frontend/")
     return FileResponse(open(index_path, "rb"), content_type="text/html")

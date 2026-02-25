@@ -18,7 +18,7 @@ export default defineConfig(({ command }) => ({
     // In dev mode, use root path
     base: command === 'build' ? '/static/' : '/',
     build: {
-        outDir: 'dist',
+        outDir: '../src/twicc/static/frontend',
         emptyOutDir: true
     },
     server: {
