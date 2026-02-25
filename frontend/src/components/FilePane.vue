@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount, useId, onActivated } from 'vue'
+import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount, useId, onActivated, inject } from 'vue'
 import { useMonaco } from '@guolao/vue-monaco-editor'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
@@ -44,6 +44,11 @@ const emit = defineEmits(['revert'])
 const prevChangeButtonId = useId()
 const nextChangeButtonId = useId()
 const markdownPreviewButtonId = useId()
+const viewInFilesButtonId = useId()
+
+// Injected from SessionView: function to switch to Files tab and reveal a file.
+// null when FilePane is not inside a SessionView (or no Files tab available).
+const viewFileInFilesTab = inject('viewFileInFilesTab', null)
 
 // API prefix: project-level for drafts, session-level otherwise
 const apiPrefix = computed(() => {
@@ -616,6 +621,18 @@ function formatSize(bytes) {
         <!-- Header toolbar (visible once a file has been loaded) -->
         <div v-if="showHeader" class="header">
             <div class="header-left">
+                <!-- "View in Files tab" button: shown only in diff mode (Git tab context) -->
+                <wa-button
+                    v-if="viewFileInFilesTab && diffMode"
+                    :id="viewInFilesButtonId"
+                    size="small"
+                    variant="neutral"
+                    appearance="outlined"
+                    @click="viewFileInFilesTab(filePath)"
+                >
+                    <wa-icon name="folder-open"></wa-icon>
+                </wa-button>
+                <AppTooltip :for="viewInFilesButtonId">View in Files tab</AppTooltip>
                 <!-- Edit controls: hidden in read-only diff mode (commit diffs) -->
                 <template v-if="!diffMode || !diffReadOnly">
                     <wa-switch

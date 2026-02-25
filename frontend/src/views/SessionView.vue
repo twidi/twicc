@@ -20,6 +20,9 @@ const sessionHeaderRef = ref(null)
 // Reference to session items list for scroll compensation
 const sessionItemsListRef = ref(null)
 
+// Reference to FilesPanel for cross-tab file reveal
+const filesPanelRef = ref(null)
+
 // ═══════════════════════════════════════════════════════════════════════════
 // KeepAlive lifecycle: active state, listener setup/teardown
 // ═══════════════════════════════════════════════════════════════════════════
@@ -74,6 +77,23 @@ onDeactivated(() => {
 })
 
 provide('sessionActive', readonly(isActive))
+
+// ─── Cross-tab file reveal (Git → Files) ─────────────────────────────────────
+
+/**
+ * Switch to the Files tab and reveal a specific file.
+ * Provided to descendant components (e.g., FilePane in the Git panel).
+ *
+ * @param {string} absolutePath — the absolute filesystem path to reveal
+ */
+async function viewFileInFilesTab(absolutePath) {
+    switchToTab('files')
+    // Wait for the tab panel to become active and the FilesPanel to be ready
+    await nextTick()
+    await filesPanelRef.value?.revealFile(absolutePath)
+}
+
+provide('viewFileInFilesTab', viewFileInFilesTab)
 
 // Current session from route params
 // IMPORTANT: projectId and sessionId are captured at creation time (not reactive
@@ -580,6 +600,7 @@ function handleNeedsTitle() {
             <!-- Tool panels -->
             <wa-tab-panel name="files">
                 <FilesPanel
+                    ref="filesPanelRef"
                     :project-id="session?.project_id"
                     :session-id="session?.id"
                     :git-directory="session?.git_directory"

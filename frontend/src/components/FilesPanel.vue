@@ -421,6 +421,52 @@ watch(isMobile, (mobile) => {
 onMounted(() => {
     nextTick(() => reparentNodes(isMobile.value))
 })
+
+// ─── External file reveal (used by "View in Files tab" from Git panel) ───────
+
+/**
+ * Navigate to and select a file by its absolute path.
+ * Ensures the panel is started (tree loaded), clears any active search,
+ * then scrolls to the file and selects it.
+ *
+ * @param {string} absolutePath — the absolute filesystem path to reveal
+ * @returns {boolean} true if the file was found and selected
+ */
+async function revealFile(absolutePath) {
+    // Ensure the panel is started (triggers tree fetch via the watcher if needed)
+    if (!started.value) {
+        started.value = true
+        // Wait for the tree to be fetched by the watcher
+        await new Promise(resolve => {
+            const stop = watch(
+                () => [tree.value, error.value],
+                ([t, err]) => {
+                    if (t !== null || err) {
+                        stop()
+                        resolve()
+                    }
+                },
+                { immediate: true },
+            )
+        })
+    }
+
+    if (!tree.value) return false
+
+    // Clear any active search first (without triggering a reveal)
+    fileTreePanelRef.value?.clearSearch(false)
+
+    // scrollToPath handles lazy-loading directories, setting revealedPaths,
+    // and scrolling to the target
+    const found = await fileTreePanelRef.value?.scrollToPath(absolutePath)
+    if (found) {
+        // Select the file (triggers FilePane content fetch)
+        fileTreePanelRef.value?.onFileSelect(absolutePath)
+    }
+    return !!found
+}
+
+defineExpose({ revealFile })
 </script>
 
 <template>
