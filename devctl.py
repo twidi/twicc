@@ -13,8 +13,10 @@ Data directory resolution:
 The .env file (ports, password hash, etc.) is read from the data directory.
 The backend process receives TWICC_DATA_DIR so it uses the same paths.
 """
+import glob
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -116,6 +118,61 @@ def save_ports_to_env(backend_port: int, frontend_port: int) -> None:
     ]
     with open(ENV_FILE, "a") as f:
         f.write("\n".join(lines_to_add))
+
+
+def copy_database_from_main() -> bool:
+    """Copy the database from the main data directory to the worktree.
+
+    Copies data.sqlite and any WAL/SHM files (data.sqlite-wal, data.sqlite-shm).
+    Only called in worktree mode when the local database doesn't exist yet.
+
+    Returns True if the copy succeeded (or source doesn't exist), False on error.
+    """
+    source_db = DEFAULT_DATA_DIR / "db" / "data.sqlite"
+    target_db_dir = DATA_DIR / "db"
+    target_db = target_db_dir / "data.sqlite"
+
+    if target_db.exists():
+        return True  # Already have a local database
+
+    if not source_db.exists():
+        print("  No main database found, starting fresh")
+        return True  # No source to copy, Django migrate will create it
+
+    print(f"  Copying database from {source_db.parent}...", end=" ", flush=True)
+
+    # Ensure target directory exists
+    target_db_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy data.sqlite and any associated files (-wal, -shm)
+    source_pattern = str(source_db) + "*"
+    copied_files = []
+    for source_file in glob.glob(source_pattern):
+        filename = os.path.basename(source_file)
+        shutil.copy2(source_file, target_db_dir / filename)
+        copied_files.append(filename)
+
+    print("OK")
+    print(f"    Files: {', '.join(copied_files)}")
+    return True
+
+
+def clear_local_database() -> None:
+    """Delete the local database files in the worktree.
+
+    Removes data.sqlite and any WAL/SHM files so Django migrate
+    creates a fresh empty database on next start.
+    """
+    target_db = DATA_DIR / "db" / "data.sqlite"
+    if not target_db.exists():
+        return  # Nothing to clear
+
+    removed_files = []
+    for db_file in glob.glob(str(target_db) + "*"):
+        os.remove(db_file)
+        removed_files.append(os.path.basename(db_file))
+
+    print(f"  Cleared local database: {', '.join(removed_files)}")
 
 
 def load_env_file() -> dict[str, str]:
@@ -485,6 +542,8 @@ TARGETS:
     all                Both frontend and backend (default for start/stop/restart)
 
 OPTIONS:
+    --empty-db         Start with an empty database instead of copying from
+                       the main data directory (worktree mode only)
     --lines=N          Number of log lines to show (default: 50)
 
 DATA DIRECTORY:
@@ -509,6 +568,11 @@ PORT CONFIGURATION:
     default+1 (3501→3502→3503... and 5174→5175→5176...) and saves
     them to the worktree's .env file on first start.
 
+DATABASE (WORKTREE MODE):
+    On start/restart in a worktree, devctl automatically copies the
+    database from ~/.twicc/db/ if no local database exists yet.
+    Use --empty-db to skip the copy and start with a fresh database.
+
 EXAMPLES:
     uv run ./devctl.py start           # Start both servers
     uv run ./devctl.py start back      # Start only backend
@@ -517,6 +581,7 @@ EXAMPLES:
     uv run ./devctl.py status          # Check what's running and port config
     uv run ./devctl.py logs back       # Show last 50 lines of backend logs
     uv run ./devctl.py logs front --lines=100
+    uv run ./devctl.py start --empty-db    # Worktree: start with fresh database
 
 FILES:
     <data_dir>/.env               Configuration (ports, password hash)
@@ -535,7 +600,24 @@ def main():
         sys.exit(0)
 
     command = sys.argv[1]
-    target = sys.argv[2] if len(sys.argv) > 2 else None
+
+    # Parse positional target and flags from remaining args
+    target = None
+    empty_db = False
+    for arg in sys.argv[2:]:
+        if arg == "--empty-db":
+            empty_db = True
+        elif not arg.startswith("--") and target is None:
+            target = arg
+
+    # Validate --empty-db: only allowed in worktree mode
+    if empty_db:
+        if not is_git_worktree():
+            print("Error: --empty-db is only supported in git worktree mode")
+            sys.exit(1)
+        if command not in ("start", "restart"):
+            print("Error: --empty-db is only supported with start/restart commands")
+            sys.exit(1)
 
     # Auto-find ports only on start/restart (may write to .env in worktree mode)
     auto_find = command in ("start", "restart")
@@ -544,6 +626,12 @@ def main():
 
     if command == "start":
         targets = parse_target(target, processes)
+        # In worktree mode: copy DB from main data dir, or clear it if --empty-db
+        if is_git_worktree():
+            if empty_db:
+                clear_local_database()
+            else:
+                copy_database_from_main()
         print(f"Starting processes (frontend:{frontend_port}, backend:{backend_port})...")
         for key in targets:
             start(key, processes)
@@ -556,6 +644,12 @@ def main():
 
     elif command == "restart":
         targets = parse_target(target, processes)
+        # In worktree mode: copy DB from main data dir, or clear it if --empty-db
+        if is_git_worktree():
+            if empty_db:
+                clear_local_database()
+            else:
+                copy_database_from_main()
         print(f"Restarting processes (frontend:{frontend_port}, backend:{backend_port})...")
         for key in targets:
             stop(key, processes)

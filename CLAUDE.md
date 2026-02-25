@@ -85,9 +85,12 @@ Each worktree has its own:
 - `db/data.sqlite*` database (in `<worktree>/db/`)
 - `logs/` directory (backend.log, frontend.log, sdk/) in `<worktree>/logs/`
 
-If you are in a worktree and asked to run the dev servers, you MUST:
-- copy the database from the main data directory to the worktree: `cp ~/.twicc/db/data.sqlite* ./db/` (ONLY IF `./db/data.sqlite` DOESN'T EXIST YET — create the `db/` directory first if needed)
-- start the servers with `uv run ./devctl.py start` — devctl automatically detects the worktree and finds available ports (incrementing from default+1: 3501 for backend, 5174 for frontend), then saves them to the worktree's `.env` file
+When starting dev servers in a worktree, just run `uv run ./devctl.py start`. devctl automatically:
+- copies the database from `~/.twicc/db/` (if no local DB exists yet)
+- finds available ports (incrementing from default+1: 3501 for backend, 5174 for frontend)
+- saves the port configuration to the worktree's `.env` file
+
+If the user explicitly asks to start with an empty/fresh database, use `uv run ./devctl.py start --empty-db`.
 
 Always check your current working directory before starting the servers so you'll know if you are in a worktree or not.
 When the user asks to start the servers in a worktree, give them the localhost urls for the frontend and backend servers based on the ports shown in devctl's output (e.g., `Frontend: http://localhost:5274`, `Backend: http://localhost:3501`).
