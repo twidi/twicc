@@ -6,8 +6,8 @@ Manages frontend (npm run dev) and backend (uv run ./run.py) processes
 as independent background daemons with logging.
 
 Data directory resolution:
-    1. TWICC_DATA_DIR environment variable (if set)
-    2. In a git worktree: forced to the worktree root (PROJECT_ROOT)
+    1. In a git worktree: forced to the worktree root (PROJECT_ROOT)
+    2. TWICC_DATA_DIR environment variable (if set)
     3. Default: ~/.twicc/
 
 The .env file (ports, password hash, etc.) is read from the data directory.
@@ -67,15 +67,15 @@ def get_data_dir() -> Path:
     """Resolve the data directory for this devctl instance.
 
     Priority:
-    1. TWICC_DATA_DIR environment variable (explicit override)
-    2. Git worktree detected → PROJECT_ROOT (local data per worktree)
+    1. Git worktree detected → PROJECT_ROOT (always forced, no override)
+    2. TWICC_DATA_DIR environment variable (if set)
     3. Default → ~/.twicc/
     """
+    if is_git_worktree():
+        return PROJECT_ROOT
     env_value = os.environ.get(TWICC_DATA_DIR_ENV, "").strip()
     if env_value:
         return Path(env_value).resolve()
-    if is_git_worktree():
-        return PROJECT_ROOT
     return DEFAULT_DATA_DIR
 
 
@@ -548,8 +548,8 @@ OPTIONS:
 
 DATA DIRECTORY:
     All persistent data (database, logs, config) lives in a data directory:
-    1. $TWICC_DATA_DIR environment variable (if set)
-    2. Git worktree detected → project root (automatic)
+    1. Git worktree detected → project root (always forced)
+    2. $TWICC_DATA_DIR environment variable (if set)
     3. Default → ~/.twicc/
 
     The .env file is read from the data directory.

@@ -35,8 +35,8 @@ All persistent data (database, SDK logs, configuration) lives in a **data direct
 
 | Priority | Condition | Data directory |
 |---|---|---|
-| 1 | `$TWICC_DATA_DIR` is set | `$TWICC_DATA_DIR` |
-| 2 | Running in a git worktree | Project/worktree root (automatic) |
+| 1 | Running in a git worktree | Project/worktree root (always forced) |
+| 2 | `$TWICC_DATA_DIR` is set | `$TWICC_DATA_DIR` |
 | 3 | Default | `~/.twicc/` |
 
 ```
