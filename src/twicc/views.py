@@ -4,7 +4,7 @@ import os
 from datetime import timedelta
 
 from django.conf import settings
-from django.http import FileResponse, Http404, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.utils import timezone
 
 import orjson
@@ -951,4 +951,4 @@ def spa_index(request):
     index_path = settings.FRONTEND_DIST_DIR / "index.html"
     if not index_path.exists():
         raise Http404("Frontend not built. Run 'npm run build' in frontend/")
-    return FileResponse(open(index_path, "rb"), content_type="text/html")
+    return HttpResponse(index_path.read_bytes(), content_type="text/html")

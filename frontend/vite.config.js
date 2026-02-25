@@ -2,7 +2,10 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 // Backend port for proxy (passed by devctl.py via environment)
-const backendPort = process.env.VITE_BACKEND_PORT || '3500'
+const backendPort = process.env.BACKEND_PORT || '3500'
+
+// Optional: allow a custom host for dev tunnels (e.g. ngrok, Cloudflare Tunnel)
+const devAllowedHost = process.env.DEV_HOSTNAME
 
 export default defineConfig(({ command }) => ({
     plugins: [
@@ -22,6 +25,7 @@ export default defineConfig(({ command }) => ({
         emptyOutDir: true
     },
     server: {
+        allowedHosts: devAllowedHost ? [devAllowedHost] : [],
         proxy: {
             '/api': `http://localhost:${backendPort}`,
             '/ws': { target: `ws://localhost:${backendPort}`, ws: true }

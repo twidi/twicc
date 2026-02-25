@@ -79,6 +79,8 @@ Two ways to run in development:
 ./devctl.py start
 ```
 
+Run `./devctl.py --help` for all available commands and configuration options.
+
 **With `run.py`** — runs the backend only, requires a frontend build first:
 
 ```bash

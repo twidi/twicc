@@ -185,10 +185,13 @@ def load_env_file() -> dict[str, str]:
                 # Skip empty lines and comments
                 if not line or line.startswith("#"):
                     continue
-                # Parse KEY=VALUE
+                # Parse KEY=VALUE (strip optional quotes around value)
                 if "=" in line:
                     key, _, value = line.partition("=")
-                    env_vars[key.strip()] = value.strip()
+                    value = value.strip()
+                    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                        value = value[1:-1]
+                    env_vars[key.strip()] = value
     return env_vars
 
 
@@ -234,6 +237,15 @@ def get_ports(auto_find: bool = False) -> tuple[int, int]:
 
 def get_process_config(backend_port: int, frontend_port: int) -> dict:
     """Build process configuration with the given port settings."""
+    env_vars = load_env_file()
+    dev_hostname = env_vars.get("TWICC_DEV_HOSTNAME", "")
+
+    frontend_env = {
+        "BACKEND_PORT": str(backend_port),
+    }
+    if dev_hostname:
+        frontend_env["DEV_HOSTNAME"] = dev_hostname
+
     return {
         "front": {
             "name": "Frontend (Vite)",
@@ -242,9 +254,7 @@ def get_process_config(backend_port: int, frontend_port: int) -> dict:
             "log": LOGS_DIR / "frontend.log",
             "pid": PIDS_DIR / "frontend.pid",
             "port": frontend_port,
-            "env": {
-                "VITE_BACKEND_PORT": str(backend_port),
-            },
+            "env": frontend_env,
         },
         "back": {
             "name": "Backend (Django)",
@@ -577,6 +587,15 @@ PORT CONFIGURATION:
     default+1 (3501→3502→3503... and 5174→5175→5176...) and saves
     them to the worktree's .env file on first start.
 
+DEV HOSTNAME:
+    If you access the dev server through a custom hostname (e.g. via a
+    reverse proxy or tunnel), set it in the .env file:
+
+        TWICC_DEV_HOSTNAME=myhost.example.com
+
+    This adds the hostname to Vite's allowedHosts so it accepts requests
+    for that host. Without this, Vite rejects requests from unknown hosts.
+
 DATABASE (WORKTREE MODE):
     On start/restart in a worktree, devctl automatically copies the
     database from ~/.twicc/db/ if no local database exists yet.
@@ -601,6 +620,17 @@ FILES:
     .devctl/pids/                 PID files for running processes (local)
 """
     print(help_text.strip())
+
+
+def print_access_urls(frontend_port: int) -> None:
+    """Print URLs where the application can be accessed."""
+    env_vars = load_env_file()
+    dev_hostname = env_vars.get("TWICC_DEV_HOSTNAME", "")
+
+    print()
+    print(f"  Access: http://localhost:{frontend_port}")
+    if dev_hostname:
+        print(f"          https://{dev_hostname}")
 
 
 def main():
@@ -644,6 +674,7 @@ def main():
         print(f"Starting processes (frontend:{frontend_port}, backend:{backend_port})...")
         for key in targets:
             start(key, processes)
+        print_access_urls(frontend_port)
 
     elif command == "stop":
         targets = parse_target(target, processes)
@@ -663,6 +694,7 @@ def main():
         for key in targets:
             stop(key, processes)
             start(key, processes)
+        print_access_urls(frontend_port)
 
     elif command == "status":
         status(processes)
