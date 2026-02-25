@@ -373,6 +373,14 @@ def start(proc_key: str, processes: dict) -> bool:
 
     # Prepare environment with custom variables
     proc_env = os.environ.copy()
+    # In worktree mode, purge inherited TWICC_* variables so the child
+    # process only sees values from the worktree's .env (loaded by run.py).
+    # Without this, variables like TWICC_PASSWORD_HASH from the parent
+    # shell would leak into the backend and override the worktree config.
+    if is_git_worktree():
+        for key in list(proc_env):
+            if key.startswith("TWICC_"):
+                del proc_env[key]
     if "env" in config:
         proc_env.update(config["env"])
 
