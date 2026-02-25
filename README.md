@@ -12,9 +12,15 @@ uvx twicc
 
 Then open http://localhost:3500.
 
-> **Note:** On first launch, TWICC synchronizes Claude Code's data files into its own database. This can take a minute or two depending on the number of projects and sessions. Subsequent starts are much faster.
+> **Don't have `uvx`?** It comes with [uv](https://docs.astral.sh/uv/), a fast Python package manager. Install it with:
+> ```bash
+> curl -LsSf https://astral.sh/uv/install.sh | sh
+> ```
+> If you prefer using `pip install twicc` in your own virtualenv, that works too.
 
-TWICC is designed to run with [uv](https://docs.astral.sh/uv/). If you prefer using `pip install twicc` in your own virtualenv, that works too.
+**Important note**
+
+> On first launch, TWICC synchronizes Claude Code's data files into its own database. This can take a minute or two depending on the number of projects and sessions. Subsequent starts are much faster.
 
 ## Features
 
