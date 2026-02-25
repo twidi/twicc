@@ -23,7 +23,7 @@ from twicc.compute import cache_agent_prompt, compute_item_cost_and_usage, compu
     get_project_git_root, is_agent_link_done, \
     is_tool_result_item, load_project_directories, \
     load_project_git_roots, \
-    update_project_total_cost
+    update_project_metadata as _update_project_metadata_sync
 from twicc.core.enums import ItemDisplayLevel, ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
 from twicc.core.serializers import (
@@ -121,16 +121,7 @@ def get_or_create_project(project_id: str) -> tuple[Project, bool]:
 @sync_to_async
 def update_project_metadata(project: Project) -> None:
     """Update project sessions_count, mtime, and total_cost from its sessions."""
-    sessions = Session.objects.filter(
-        project=project, type=SessionType.SESSION, created_at__isnull=False
-    )
-    project.sessions_count = sessions.count()
-    max_mtime = sessions.order_by("-mtime").values_list("mtime", flat=True).first()
-    project.mtime = max_mtime or 0
-    project.save(update_fields=["sessions_count", "mtime"])
-
-    # Update total_cost
-    update_project_total_cost(project.id)
+    _update_project_metadata_sync(project.id)
 
 
 @sync_to_async

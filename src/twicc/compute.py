@@ -14,8 +14,7 @@ from decimal import Decimal
 import orjson
 import logging
 from collections import Counter
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 from typing import Any, NamedTuple
 
 import xmltodict
@@ -165,6 +164,23 @@ def update_project_total_cost(project_id: str) -> None:
         return
     project.recalculate_total_cost()
     project.save(update_fields=["total_cost"])
+
+
+def update_project_metadata(project_id: str) -> None:
+    """Update project sessions_count, mtime, and total_cost from its sessions."""
+    try:
+        project = Project.objects.get(id=project_id)
+    except Project.DoesNotExist:
+        return
+    sessions = Session.objects.filter(
+        project=project, type=SessionType.SESSION, created_at__isnull=False
+    )
+    project.sessions_count = sessions.count()
+    max_mtime = sessions.order_by("-mtime").values_list("mtime", flat=True).first()
+    project.mtime = max_mtime or 0
+    project.save(update_fields=["sessions_count", "mtime"])
+
+    update_project_total_cost(project_id)
 
 
 # =============================================================================
@@ -1460,46 +1476,6 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     connection.close()
 
 
-def apply_compute_results(result_queue) -> None:
-    """
-    Apply compute results from the queue to the database.
-
-    Consumes all messages from the queue and applies corresponding DB operations.
-    Used by tests to apply results after calling compute_session_metadata().
-    Delegates to apply_session_complete() for the actual DB writes, so tests
-    exercise the same code path as the background process.
-
-    Args:
-        result_queue: Queue containing compute result messages
-    """
-    import queue as queue_module
-
-    while True:
-        try:
-            raw_msg = result_queue.get_nowait()
-        except queue_module.Empty:
-            break
-
-        msg = orjson.loads(raw_msg)
-        msg_type = msg.get('type')
-
-        if msg_type == 'session_complete':
-            apply_session_complete(msg)
-
-            # Recalculate activity counters for affected days
-            # (in the background process this is batched, but for tests we do it immediately)
-            affected_days = msg.get('affected_days')
-            project_id = msg.get('project_id')
-            if project_id and affected_days:
-                from datetime import date as date_cls
-                from twicc.core.models import PeriodicActivity
-                days = {date_cls.fromisoformat(d) for d in affected_days}
-                PeriodicActivity.recalculate_for_days(project_id, days)
-
-        elif msg_type == 'error':
-            logger.error(f"Compute error for {msg['session_id']}: {msg['error']}")
-
-
 # =============================================================================
 # Live Processing: compute_item_metadata_live
 # =============================================================================
@@ -2065,6 +2041,6 @@ def apply_session_complete(msg: dict) -> None:
     if session_git_dir and project_id and get_project_git_root(project_id) is None:
         ensure_project_git_root(project_id)
 
-    # 10. Update project total_cost
+    # 10. Update project metadata (sessions_count, mtime, total_cost)
     if project_id:
-        update_project_total_cost(project_id)
+        update_project_metadata(project_id)

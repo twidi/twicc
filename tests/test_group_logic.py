@@ -18,14 +18,14 @@ Legend:
 import json
 import queue
 
+import orjson
 import pytest
 
 from twicc.compute import (
-    apply_compute_results,
+    apply_session_complete,
     compute_item_metadata_live,
     compute_session_metadata,
 )
-from twicc.core.enums import ItemDisplayLevel
 from twicc.core.models import Project, Session, SessionItem
 
 
@@ -79,6 +79,43 @@ def make_debug() -> str:
         "subtype": "info",
         "message": "Some system info"
     })
+
+
+def apply_compute_results(result_queue) -> None:
+    """
+    Apply compute results from the queue to the database.
+
+    Consumes all messages from the queue and applies corresponding DB operations.
+    Used by tests to apply results after calling compute_session_metadata().
+    Delegates to apply_session_complete() for the actual DB writes, so tests
+    exercise the same code path as the background process.
+
+    Args:
+        result_queue: Queue containing compute result messages
+    """
+    from queue import Empty
+
+    while True:
+        try:
+            raw_msg = result_queue.get_nowait()
+        except Empty:
+            break
+
+        msg = orjson.loads(raw_msg)
+        msg_type = msg.get('type')
+
+        if msg_type == 'session_complete':
+            apply_session_complete(msg)
+
+            # Recalculate activity counters for affected days
+            # (in the background process this is batched, but for tests we do it immediately)
+            affected_days = msg.get('affected_days')
+            project_id = msg.get('project_id')
+            if project_id and affected_days:
+                from datetime import date as date_cls
+                from twicc.core.models import PeriodicActivity
+                days = {date_cls.fromisoformat(d) for d in affected_days}
+                PeriodicActivity.recalculate_for_days(project_id, days)
 
 
 # =============================================================================
