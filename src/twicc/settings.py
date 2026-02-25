@@ -15,7 +15,11 @@ load_dotenv(get_env_path())
 ensure_data_dirs()
 
 SECRET_KEY = "dev-insecure-key-do-not-use-in-production"
-DEBUG = True
+
+# TWICC_DEBUG is set by devctl when launching the backend process.
+# It controls Django's DEBUG mode and the twicc logger level.
+DEBUG = os.environ.get("TWICC_DEBUG", "").strip().lower() in ("1", "true", "yes")
+
 ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [
@@ -103,7 +107,7 @@ LOGGING = {
     "loggers": {
         "twicc": {
             "handlers": ["file"],
-            "level": "DEBUG",
+            "level": "DEBUG" if DEBUG else "INFO",
             "propagate": False,
         },
         "uvicorn": {

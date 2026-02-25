@@ -13,6 +13,7 @@ Each line is a JSON object with:
 
 import json
 import logging
+import os
 from collections.abc import AsyncIterable, AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Resolve once at import time — SDK logs go in <data_dir>/logs/sdk/
 LOGS_DIR = get_sdk_logs_dir()
+
+# SDK message logging is only active in debug mode (TWICC_DEBUG set by devctl)
+SDK_LOGGING_ENABLED = os.environ.get("TWICC_DEBUG", "").strip().lower() in ("1", "true", "yes")
 
 
 def _get_log_path(session_id: str) -> Path:
@@ -61,10 +65,17 @@ def patch_client(client: ClaudeSDKClient, session_id: str) -> None:
     so that each message is logged as raw JSON before being parsed or after being
     serialized.
 
+    SDK message logging is only active when TWICC_DEBUG is set (by devctl).
+    When disabled, this function is a no-op.
+
     Args:
         client: The SDK client instance to patch.
         session_id: The session ID (used for the log filename).
     """
+    if not SDK_LOGGING_ENABLED:
+        logger.debug("SDK logging disabled (TWICC_DEBUG not set)")
+        return
+
     log_path = _get_log_path(session_id)
 
     # Ensure the directory exists (should already, but be safe)

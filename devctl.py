@@ -256,6 +256,7 @@ def get_process_config(backend_port: int, frontend_port: int) -> dict:
             "env": {
                 "TWICC_PORT": str(backend_port),
                 TWICC_DATA_DIR_ENV: str(DATA_DIR),
+                "TWICC_DEBUG": "1",
             },
         },
     }
