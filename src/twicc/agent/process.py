@@ -340,6 +340,7 @@ class ClaudeProcess:
             options = ClaudeAgentOptions(
                 cwd=self.cwd,
                 permission_mode="bypassPermissions",
+                setting_sources=["user", "project", "local"],
                 can_use_tool=self._handle_pending_request,
                 hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_dummy_hook])]},
                 stderr=self._log_stderr,

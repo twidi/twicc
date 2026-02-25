@@ -105,7 +105,6 @@ uv sync --group dev
 
 - Claude agents always run with **permission bypass mode** enabled (no tool-use confirmations)
 - The built-in **MCP server** (Chrome integration) is always active
-- **Skills** are not yet available
 
 Configuration options for these will be added in a future release.
 
