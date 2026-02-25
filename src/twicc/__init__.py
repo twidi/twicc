@@ -1,3 +1,3 @@
-def main():
-    """Entry point for the application."""
-    pass
+from twicc.cli import main
+
+__all__ = ["main"]
