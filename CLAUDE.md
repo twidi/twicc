@@ -1,43 +1,70 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository!
-
 ## Project Overview
 
-TwiCC (Twi for Twidi, CC for Claude Code)  - A standalone, self-contained web application to replace the Claude Code CLI. Single process, zero external services, one command to launch.
-
-**Status:** Active development. Original (POC) implementation details are documented in `docs/2026-01-23-architecture-decisions.md`.
+**TwiCC** — *Twi* for Twidi, *CC* for Claude Code — The Web Interface for Claude Code. A standalone, self-contained web application that provides a rich UI for browsing and interacting with Claude Code sessions. Single process, zero external services, one command to launch.
 
 **Quality approach:** We aim to implement everything to the best standards possible. The only shortcuts we allow: no tests and no linting.
 
-**IMPORTANT - Development workflow:** Never start implementing code without being explicitly invited to do so. When the user explains requirements or shares thoughts, wait for them to finish and confirm before writing any code. Ask clarifying questions if needed, but do not assume that an explanation is an invitation to implement.
+**IMPORTANT — Development workflow:** Never start implementing code without being explicitly invited to do so. When the user explains requirements or shares thoughts, wait for them to finish and confirm before writing any code. Ask clarifying questions if needed, but do not assume that an explanation is an invitation to implement.
 
-**IMPORTANT - Git rebase:** Never rebase on remote branches (e.g., `origin/main`) unless explicitly requested. Always rebase on local branches. If the local branch exists, use it.
-
+**IMPORTANT — Git rebase:** Never rebase on remote branches (e.g., `origin/main`) unless explicitly requested. Always rebase on local branches. If the local branch exists, use it.
 
 ## Stack
 
-| Layer | Technology |
-|-------|------------|
-| Package Manager | uv |
-| Backend | Django (ASGI) + Uvicorn |
-| WebSocket | Django Channels + InMemoryChannelLayer |
-| Database | SQLite |
-| File Watching | watchfiles |
-| Frontend | Vue.js 3 (SFC) + Vite |
-| State Management | Vue reactive + VueUse |
-| UI Components | Web Awesome (wa-* elements) |
+| Layer            | Technology                                  |
+|------------------|---------------------------------------------|
+| Package Manager  | uv (Python), npm (frontend)                 |
+| Backend          | Django 6 (ASGI) + Uvicorn, Python ≥ 3.13    |
+| WebSocket        | Django Channels + InMemoryChannelLayer      |
+| Database         | SQLite (WAL mode)                           |
+| File Watching    | watchfiles                                  |
+| Claude SDK       | claude-agent-sdk (for interactive sessions) |
+| Frontend         | Vue.js 3 (SFC, Composition API) + Vite 7    |
+| State Management | Pinia + VueUse                              |
+| UI Components    | Web Awesome 3+ (wa-* elements)              |
+| Code Editor      | Monaco (CDN-loaded via vue-monaco-editor)   |
+| Terminal         | xterm.js with PTY backend                   |
+| Markdown         | markdown-it + shiki + mermaid               |
 
+## Architecture
+
+```
+twicc (entry: run.py → cli.main())
+├── Startup
+│   ├── Initial sync — scans ~/.claude/projects/, bulk-inserts raw SessionItems (no metadata)
+│   └── Background compute (multiprocessing) — computes metadata for all sessions if
+│       CURRENT_COMPUTE_VERSION changed (display_level, kind, groups, costs, git info).
+│       Runs once at startup for sessions needing it, then exits.
+├── Django ASGI (Uvicorn)
+│   ├── HTTP — REST API + SPA catch-all serving Vue frontend
+│   └── WebSocket
+│       ├── /ws/ — UpdatesConsumer (Channels): data sync, process control, title suggestions
+│       └── /ws/terminal/<session_id>/ — Raw ASGI PTY terminal (optional tmux)
+├── watchfiles (asyncio task)
+│   └── JSONL file changed → incremental read → save to DB (with full metadata) → broadcast via WS
+├── Periodic tasks
+│   ├── Price sync from OpenRouter API (every 24h)
+│   └── Usage quota fetch from Anthropic OAuth API (every 5min)
+└── ProcessManager (Claude SDK)
+    └── Manages interactive Claude sessions → SDK writes JSONL → watcher picks up
+```
+
+**Startup flow:** Initial sync bulk-inserts raw JSONL lines (fast, no computation). Then background compute (separate process) fills in metadata for sessions whose `compute_version` is outdated. The watcher computes metadata inline for real-time accuracy during normal operation.
+
+**Data flow:** Claude SDK writes JSONL → watchfiles detects change → incremental read from last offset → save to Django models (with metadata) → WebSocket broadcast → Pinia store updates → Vue UI re-renders.
+
+**Agent flow:** User sends message via WS → ProcessManager creates/resumes ClaudeProcess (SDK) → SDK writes JSONL → watcher picks up → broadcast back to frontend.
 
 ## Data Directory
 
-All persistent data (database, SDK logs, configuration) lives in a **data directory**:
+All persistent data (database, logs, configuration) lives in a **data directory**:
 
-| Priority | Condition | Data directory |
-|---|---|---|
-| 1 | Running in a git worktree | Project/worktree root (always forced) |
-| 2 | `$TWICC_DATA_DIR` is set | `$TWICC_DATA_DIR` |
-| 3 | Default | `~/.twicc/` |
+| Priority | Condition                 | Data directory                        |
+|----------|---------------------------|---------------------------------------|
+| 1        | Running in a git worktree | Project/worktree root (always forced) |
+| 2        | `$TWICC_DATA_DIR` is set  | `$TWICC_DATA_DIR`                     |
+| 3        | Default                   | `~/.twicc/`                           |
 
 ```
 <data_dir>/
@@ -48,7 +75,7 @@ All persistent data (database, SDK logs, configuration) lives in a **data direct
     ├── backend.log                   # Backend application logs
     ├── frontend.log                  # Frontend (Vite) process output
     └── sdk/
-        └── {session_id}.jsonl        # Raw SDK message logs
+        └── {session_id}.jsonl        # Raw SDK message logs (debug mode)
 ```
 
 Path resolution is centralized in `src/twicc/paths.py`. The `devctl.py` script has its own equivalent logic (since it doesn't depend on Django).
@@ -100,82 +127,40 @@ When the user asks you to exit/kill/delete (etc...) a worktree, you MUST run the
 
 Claude never runs these operations on its own initiative. If the user explicitly asks you to run one of these operations, do it without asking for confirmation. Otherwise, notify the user at the end of a task or, if absolutely necessary during your work, pause the task and ask them the permission to do it or to do them manually:
 
-- **Django migrations:** After modifying models (and having created the migration yourself), remind the user to run and `migrate`
+- **Django migrations:** After modifying models (and having created the migration yourself), remind the user to run `migrate`
 - **Dev server restart:** After backend changes, remind the user to restart via `devctl.py`
 - **Package installation:** After adding dependencies, remind the user to run `npm install` or `uv add`
 
-## Architecture
+## Database Models
 
-```
-uv run ./run.py
-├── Django ASGI (Uvicorn)
-│   ├── HTTP (pages, API)
-│   └── Channels WebSocket ← InMemoryChannelLayer
-├── watchfiles (asyncio task)
-│   └── JSONL file changed → parse → save to DB → signal post_save → broadcast WS
-├── SQLite
-└── Frontend (Vue.js)
-    └── WebSocket JSON → reactive store → auto-update UI
-```
+Key models in `src/twicc/core/models.py`:
 
-**Data flow:** watchfiles monitors JSONL files → parses changes → saves to Django models → post_save signal triggers → Django Channels broadcasts via WebSocket → Vue store updates reactively → UI re-renders automatically.
-
-## Database Schema
-
-Two tables for append-only JSONL sync:
-
-- `files`: tracks file read state (`path`, `last_offset`, `last_line`, `mtime`)
-- `lines`: stores JSONL content (`path`, `line_num`, `content` as TEXT)
+| Model | Purpose |
+|-------|---------|
+| `Project` | Maps to a `~/.claude/projects/{id}/` folder. Has `name`, `color`, `total_cost`, `sessions_count`. |
+| `Session` | One JSONL file per session. Tracks `last_offset`/`last_line` for incremental sync. Has `title`, costs (`self_cost`, `subagents_cost`, `total_cost`), `type` (session/subagent), `parent_session` (self FK), `model`, `archived`, `pinned`. |
+| `SessionItem` | One row per JSONL line. Has `display_level` (ALWAYS/COLLAPSIBLE/DEBUG_ONLY), `kind` (user_message, assistant_message, etc.), `group_head`/`group_tail` for collapsible groups, `cost`, `timestamp`. |
+| `ToolResultLink` | Links tool_use to tool_result items within a session. |
+| `AgentLink` | Links Task tool_use to spawned subagent session. |
+| `ModelPrice` | Historical model pricing from OpenRouter API. |
+| `UsageSnapshot` | Anthropic OAuth usage quota snapshots (5h and 7-day quotas). |
+| `WeeklyActivity` / `DailyActivity` | Pre-computed activity stats per project. |
 
 **Sync strategy:** On file change, compare `mtime` → `seek()` to `last_offset` → read new lines → insert to DB → update offset. Files are append-only.
 
-**JSON querying:** SQLite 3.38+ native JSON support with `->>` operator. Index frequently queried JSON paths with expression indexes or generated columns.
-
-## Project Structure (Planned)
-
-```
-.
-├── run.py                      # Entry point
-├── pyproject.toml
-├── frontend/
-│   ├── src/
-│   │   ├── main.js
-│   │   ├── store.js            # Vue reactive state + WebSocket handling
-│   │   ├── async.js            # Async component definitions
-│   │   ├── wa.js               # Web Awesome setup
-│   │   ├── App.vue
-│   │   └── components/
-│   │       └── messages/       # Dynamic message type components
-│   └── dist/
-└── src/claude_code_web/
-    ├── __init__.py
-    ├── bootstrap.py            # Auto-setup (npm, build, migrations)
-    ├── settings.py
-    ├── asgi.py                 # WebSocket consumer + routing
-    ├── watcher.py              # JSONL file watcher
-    └── core/
-        └── signals.py          # Django signals for broadcasts
-```
-
 ## Code Quality
 
-- Python: ruff (line-length=120), mypy (strict, Python 3.13)
-- Tests: pytest with pytest-django
 - **Language:** All code content (UI strings, comments, variable names) must be in English. Only documentation files (*.md) may contain French. **Important:** Even when the user speaks French, always write UI text and code in English.
+- Python: ruff (line-length=120)
+- Tests: pytest with pytest-django
+- Vue components use Composition API with `<script setup>`
 
 ## Python Patterns
 
 - **Immutable data containers:** Always use `NamedTuple` for simple immutable data structures (return values, decisions, configs). Works with all field types including lists. Prefer over `@dataclass` when mutability is not needed.
 - **JSON parsing:** Use `orjson` instead of the standard `json` module for all JSON operations in the backend. It's ~6x faster and handles the high-volume JSONL file parsing efficiently.
 
-## Key Implementation Notes
-
-- Bootstrap auto-handles: npm install (if needed), frontend build (if outdated), Django migrations
-- Vue components use Composition API with `<script setup>`
-- Web Awesome custom elements use `wa-` prefix (configured in Vite)
-- KeepAlive caches up to 5 conversations (preserves scroll, collapsed states)
-- UI state persisted to localStorage via VueUse
-- No authentication layer (current design)
+## Frontend Patterns
 
 ### Avoiding Circular Imports (HMR)
 
@@ -192,9 +177,17 @@ Two tables for append-only JSONL sync:
   - `store ↔ composable` (lazy import in one direction)
   - `composable → component → store → composable` (use defineAsyncComponent)
 
+### Draft System
+
+Draft sessions, messages, and media attachments are persisted to IndexedDB (via `frontend/src/utils/draftStorage.js`). Hydrated on startup before Vue app mount.
+
+### Virtual Scrolling
+
+Large session item lists use a custom virtual scroller (`useVirtualScroll.js`, `VirtualScroller.vue`). Items go through a visual pipeline: raw items → `computeVisualItems()` (applies display mode, group expansion) → rendered in the scroller.
+
 ## Web Awesome Components
 
-**Version:** Web Awesome 3 (using next, which is > 3). Since version 3, **native** browser events are no longer prefixed with `wa-` (e.g., `@click`, `@focus`, `@input`). However, **custom** Web Awesome events still use the `wa-` prefix (e.g., `@wa-show`, `@wa-hide`, `@wa-after-show`).
+**Version:** Web Awesome 3.1. Since version 3, **native** browser events are no longer prefixed with `wa-` (e.g., `@click`, `@focus`, `@input`). However, **custom** Web Awesome events still use the `wa-` prefix (e.g., `@wa-show`, `@wa-hide`, `@wa-after-show`).
 
 **IMPORTANT:** Each Web Awesome component used must be explicitly imported in `frontend/src/main.js`. Imports load both the component JS and its styles (via shadow DOM).
 
@@ -210,7 +203,6 @@ If a `wa-*` component appears unstyled in production (but works in dev), it's li
 
 A nearly complete "one file" version of the docs is available at `frontend/node_modules/@awesome.me/webawesome/dist/llms.txt`
 Full documentation is also at `./frontend/node_modules/@awesome.me/webawesome/dist/skills/` (`references/components/`, `references/usage.md` and `references/frameworks/vue.md`)
-
 
 ## Dialog Forms Pattern
 

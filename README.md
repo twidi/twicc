@@ -51,11 +51,11 @@ On each startup, TWICC detects changes and updates its database accordingly. Whi
 
 All configuration is via environment variables, set in `~/.twicc/.env`:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TWICC_PORT` | `3500` | Server port |
-| `TWICC_PASSWORD_HASH` | *(empty)* | SHA-256 hash to enable password protection |
-| `TWICC_DATA_DIR` | `~/.twicc/` | Data directory (database, logs) |
+| Variable              | Default     | Description                                |
+|-----------------------|-------------|--------------------------------------------|
+| `TWICC_PORT`          | `3500`      | Server port                                |
+| `TWICC_PASSWORD_HASH` | *(empty)*   | SHA-256 hash to enable password protection |
+| `TWICC_DATA_DIR`      | `~/.twicc/` | Data directory (database, logs)            |
 
 Generate a password hash:
 
