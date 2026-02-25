@@ -1,8 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "twicc"
 version = "0.1.0"
 description = "Claude Code Web UI"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.13"
+authors = [
+    { name = "Stéphane Angel", email = "s.angel@twidi.com" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: Django :: 6.0",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
 dependencies = [
     "channels>=4.3.2",
     "claude-agent-sdk>=0.1.31",
@@ -24,14 +44,22 @@ test = [
     "pytest-django>=4.8.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/twidi/twicc"
+Repository = "https://github.com/twidi/twicc"
+"Bug Tracker" = "https://github.com/twidi/twicc/issues"
+
 [project.scripts]
 twicc = "twicc:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/twicc"]
 
-[tool.setuptools.package-data]
-twicc = ["static/frontend/**/*"]
+# Built frontend assets are gitignored but must be included in the package.
+# force-include pulls them into the sdist; from there hatchling discovers them
+# automatically when building the wheel.
+[tool.hatch.build.targets.sdist.force-include]
+"src/twicc/static/frontend" = "src/twicc/static/frontend"
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "twicc.settings_test"
