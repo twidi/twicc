@@ -16,6 +16,7 @@ The backend process receives TWICC_DATA_DIR so it uses the same paths.
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -82,6 +83,41 @@ ENV_FILE = DATA_DIR / ".env"
 LOGS_DIR = DATA_DIR / "logs"
 
 
+def find_available_port(start: int, max_attempts: int = 100) -> int:
+    """Find an available port by incrementing from start.
+
+    Tries start, start+1, start+2, ... until a free port is found.
+    Raises RuntimeError if no port is available within max_attempts.
+    """
+    for offset in range(max_attempts):
+        port = start + offset
+        if port > 65535:
+            break
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", port))
+                return port
+        except OSError:
+            continue
+    raise RuntimeError(
+        f"Could not find an available port starting from {start} "
+        f"(tried {max_attempts} ports)"
+    )
+
+
+def save_ports_to_env(backend_port: int, frontend_port: int) -> None:
+    """Append port configuration to the .env file in the data directory."""
+    lines_to_add = [
+        "",
+        "# Ports auto-configured by devctl (worktree mode)",
+        f"TWICC_PORT={backend_port}",
+        f"VITE_PORT={frontend_port}",
+        "",
+    ]
+    with open(ENV_FILE, "a") as f:
+        f.write("\n".join(lines_to_add))
+
+
 def load_env_file() -> dict[str, str]:
     """Load environment variables from .env file in the data directory."""
     env_vars = {}
@@ -99,32 +135,48 @@ def load_env_file() -> dict[str, str]:
     return env_vars
 
 
-def get_ports() -> tuple[int, int]:
-    """Get backend and frontend ports from .env file or defaults."""
+def get_ports(auto_find: bool = False) -> tuple[int, int]:
+    """Get backend and frontend ports from .env file or defaults.
+
+    If auto_find is True and we're in a worktree, automatically find
+    available ports (incrementing from defaults) and save them to .env.
+    This avoids port conflicts when running multiple worktrees.
+    """
     env_vars = load_env_file()
 
     backend_port = DEFAULT_BACKEND_PORT
     frontend_port = DEFAULT_FRONTEND_PORT
 
-    if "TWICC_PORT" in env_vars:
+    has_backend_port = "TWICC_PORT" in env_vars
+    has_frontend_port = "VITE_PORT" in env_vars
+
+    if has_backend_port:
         try:
             backend_port = int(env_vars["TWICC_PORT"])
         except ValueError:
             print(f"Warning: Invalid TWICC_PORT in .env, using default {DEFAULT_BACKEND_PORT}")
 
-    if "VITE_PORT" in env_vars:
+    if has_frontend_port:
         try:
             frontend_port = int(env_vars["VITE_PORT"])
         except ValueError:
             print(f"Warning: Invalid VITE_PORT in .env, using default {DEFAULT_FRONTEND_PORT}")
 
+    # In worktree mode, auto-find available ports if not already configured
+    if auto_find and is_git_worktree() and (not has_backend_port or not has_frontend_port):
+        if not has_backend_port:
+            backend_port = find_available_port(DEFAULT_BACKEND_PORT + 1)
+        if not has_frontend_port:
+            frontend_port = find_available_port(DEFAULT_FRONTEND_PORT + 1)
+        save_ports_to_env(backend_port, frontend_port)
+        print(f"  Auto-configured ports for worktree: backend={backend_port}, frontend={frontend_port}")
+        print(f"  Saved to {ENV_FILE}")
+
     return backend_port, frontend_port
 
 
-def get_process_config() -> dict:
-    """Build process configuration with current port settings."""
-    backend_port, frontend_port = get_ports()
-
+def get_process_config(backend_port: int, frontend_port: int) -> dict:
+    """Build process configuration with the given port settings."""
     return {
         "front": {
             "name": "Frontend (Vite)",
@@ -345,7 +397,8 @@ def stop(proc_key: str, processes: dict) -> bool:
 
 def status(processes: dict):
     """Show status of all processes."""
-    backend_port, frontend_port = get_ports()
+    backend_port = processes["back"]["port"]
+    frontend_port = processes["front"]["port"]
 
     print(f"Data directory: {DATA_DIR}")
     if is_git_worktree():
@@ -451,12 +504,10 @@ PORT CONFIGURATION:
         TWICC_PORT=3500   # Backend port (default: 3500)
         VITE_PORT=5173    # Frontend port (default: 5173)
 
-    In git worktrees, .env is read from the worktree root,
-    allowing each worktree to have its own port configuration.
-
-    Example for a secondary worktree:
-        TWICC_PORT=3600
-        VITE_PORT=5273
+    In git worktrees, if ports are not configured in .env, devctl
+    automatically finds available ports by incrementing from
+    default+1 (3501→3502→3503... and 5174→5175→5176...) and saves
+    them to the worktree's .env file on first start.
 
 EXAMPLES:
     uv run ./devctl.py start           # Start both servers
@@ -486,12 +537,13 @@ def main():
     command = sys.argv[1]
     target = sys.argv[2] if len(sys.argv) > 2 else None
 
-    # Build process config with current port settings
-    processes = get_process_config()
+    # Auto-find ports only on start/restart (may write to .env in worktree mode)
+    auto_find = command in ("start", "restart")
+    backend_port, frontend_port = get_ports(auto_find=auto_find)
+    processes = get_process_config(backend_port, frontend_port)
 
     if command == "start":
         targets = parse_target(target, processes)
-        backend_port, frontend_port = get_ports()
         print(f"Starting processes (frontend:{frontend_port}, backend:{backend_port})...")
         for key in targets:
             start(key, processes)
@@ -504,7 +556,6 @@ def main():
 
     elif command == "restart":
         targets = parse_target(target, processes)
-        backend_port, frontend_port = get_ports()
         print(f"Restarting processes (frontend:{frontend_port}, backend:{backend_port})...")
         for key in targets:
             stop(key, processes)

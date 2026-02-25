@@ -87,20 +87,10 @@ Each worktree has its own:
 
 If you are in a worktree and asked to run the dev servers, you MUST:
 - copy the database from the main data directory to the worktree: `cp ~/.twicc/db/data.sqlite* ./db/` (ONLY IF `./db/data.sqlite` DOESN'T EXIST YET — create the `db/` directory first if needed)
-- configure ports to use to run the servers, ONLY IF THEY ARE NOT ALREADY CONFIGURED IN THE WORKTREE ROOT `.env` FILE:
-  - find available ports on the system that we'll use for the frontend and backend servers
-  - configure those ports in a `.env` file in the worktree root like in this example:
-
-```env
-# Backend port (Uvicorn server)
-TWICC_PORT=3600
-
-# Frontend port (Vite dev server)
-VITE_PORT=5273
-```
+- start the servers with `uv run ./devctl.py start` — devctl automatically detects the worktree and finds available ports (incrementing from default+1: 3501 for backend, 5174 for frontend), then saves them to the worktree's `.env` file
 
 Always check your current working directory before starting the servers so you'll know if you are in a worktree or not.
-When the user asks to start the servers, if you are in a worktree, you MUST proceed as described above. And give them the localhost urls for the frontend and backend servers based on the ports configured in the worktree `.env` file (e.g., `Frontend: http://localhost:5273`, `Backend: http://localhost:3600`).
+When the user asks to start the servers in a worktree, give them the localhost urls for the frontend and backend servers based on the ports shown in devctl's output (e.g., `Frontend: http://localhost:5274`, `Backend: http://localhost:3501`).
 When the user asks you to exit/kill/delete (etc...) a worktree, you MUST run the "stop all" command to kill the processes, even if you didn't start them yourself.
 
 ## Operations Reserved to User
