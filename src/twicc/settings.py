@@ -26,10 +26,18 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.staticfiles",
-    "django_extensions",
     "channels",
     "twicc.core.apps.CoreConfig",
 ]
+
+# In debug mode, try to load django-extensions (dev dependency, not required at runtime)
+if DEBUG:
+    try:
+        import django_extensions  # noqa: F401
+
+        INSTALLED_APPS.insert(-1, "django_extensions")
+    except ImportError:
+        pass
 
 MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
