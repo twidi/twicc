@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 
+import orjson
 from django.conf import settings
 
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
@@ -24,6 +25,49 @@ _process_manager: ProcessManager | None = None
 
 # Type alias for the broadcast callback
 BroadcastCallback = Callable[[ProcessInfo], Coroutine[Any, Any, None]]
+
+
+def _get_last_session_slug_sync(session_id: str) -> str | None:
+    """Retrieve the most recent slug from a session's JSONL items (synchronous).
+
+    Iterates backwards through the session items (by descending line_num),
+    parsing each content JSON to find a root-level "slug" key. Returns
+    the first slug found, or None if no item has one.
+
+    This is a sync function meant to be called via asyncio.to_thread().
+
+    Args:
+        session_id: The session identifier to look up
+
+    Returns:
+        The slug string, or None if not found
+    """
+    from twicc.core.models import SessionItem
+
+    items = (
+        SessionItem.objects
+        .filter(session_id=session_id)
+        .order_by("-line_num")
+        .only("content")
+        .iterator(chunk_size=1)
+    )
+    for item in items:
+        try:
+            data = orjson.loads(item.content)
+        except (orjson.JSONDecodeError, TypeError):
+            continue
+        slug = data.get("slug")
+        if slug:
+            return slug
+    return None
+
+
+async def get_last_session_slug(session_id: str) -> str | None:
+    """Async wrapper around _get_last_session_slug_sync.
+
+    Runs the DB query in a thread to avoid blocking the event loop.
+    """
+    return await asyncio.to_thread(_get_last_session_slug_sync, session_id)
 
 
 class ProcessManager:
@@ -212,7 +256,7 @@ class ProcessManager:
             project_id,
             resume,
         )
-        process = ClaudeProcess(session_id, project_id, cwd)
+        process = ClaudeProcess(session_id, project_id, cwd, get_last_session_slug=get_last_session_slug)
         self._processes[session_id] = process
 
         # Broadcast the starting state before starting

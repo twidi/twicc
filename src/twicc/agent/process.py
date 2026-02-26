@@ -55,13 +55,22 @@ class ClaudeProcess:
         error: Error message if the process died due to error
     """
 
-    def __init__(self, session_id: str, project_id: str, cwd: str) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        project_id: str,
+        cwd: str,
+        get_last_session_slug: Callable[[str], Coroutine[Any, Any, str | None]],
+    ) -> None:
         """Initialize a Claude process wrapper.
 
         Args:
             session_id: The session to resume
             project_id: The TwiCC project this belongs to
             cwd: Working directory for Claude operations
+            get_last_session_slug: Async callback that retrieves the most recent
+                slug from a session's JSONL items. Takes a session_id and returns the slug
+                string or None if not found.
         """
         self.session_id = session_id
         self.project_id = project_id
@@ -79,6 +88,7 @@ class ClaudeProcess:
         self._state_change_callback: StateChangeCallback | None = None
         self._pending_request: PendingRequest | None = None
         self._pending_request_future: asyncio.Future[PermissionResultAllow | PermissionResultDeny] | None = None
+        self._get_last_session_slug = get_last_session_slug
 
         logger.debug(
             "ClaudeProcess created for session %s, project %s, cwd=%s",
@@ -221,6 +231,17 @@ class ClaudeProcess:
 
         # Block here until frontend responds
         response = await self._pending_request_future
+
+        # For ExitPlanMode: Detect if the user modified the plan content
+        # Because of a "bug" in claude agent sdk / claude code, the plan passed via the response is not taken into
+        #  account, so we'll update it ourselves in the plan file (via the `_update_plan` method)
+        if (
+            tool_name == "ExitPlanMode"
+            and isinstance(response, PermissionResultAllow)
+            and response.updated_input is not None
+            and response.updated_input.get("plan") != input_data.get("plan")
+        ):
+            await self._update_plan(response.updated_input["plan"])
 
         # Clear pending state
         self._pending_request = None
@@ -628,6 +649,50 @@ class ClaudeProcess:
         # Run in thread executor for complete isolation from async context
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _do_kill)
+
+    async def _update_plan(self, new_plan: str) -> None:
+        """Handle a user-modified plan for ExitPlanMode.
+
+        Called when the user approves ExitPlanMode with changes and the plan
+        content differs from the original. Retrieves the session slug from the
+        database, then overwrites the plan file at ~/.claude/plans/{slug}.md.
+
+        Args:
+            new_plan: The modified plan content from the user
+        """
+        from pathlib import Path
+
+        slug = await self._get_last_session_slug(self.session_id)
+        if slug is None:
+            logger.warning(
+                "Cannot update plan for session %s: no slug found in session items",
+                self.session_id,
+            )
+            return
+
+        plan_file = Path.home() / ".claude" / "plans" / f"{slug}.md"
+        if not plan_file.exists():
+            logger.warning(
+                "Plan file does not exist for session %s: %s",
+                self.session_id,
+                plan_file,
+            )
+            return
+
+        try:
+            plan_file.write_text(new_plan, encoding="utf-8")
+            logger.info(
+                "Plan file updated for session %s: %s (%d chars)",
+                self.session_id,
+                plan_file,
+                len(new_plan),
+            )
+        except OSError as e:
+            logger.error(
+                "Failed to write plan file for session %s: %s",
+                self.session_id,
+                e,
+            )
 
     async def _notify_state_change(self) -> None:
         """Invoke the state change callback if set."""

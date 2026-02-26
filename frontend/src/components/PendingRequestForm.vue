@@ -80,6 +80,12 @@ const showDenyReason = ref(false)
 // Template ref for the deny reason input
 const denyReasonInputRef = ref(null)
 
+// Whether the form is in "approve with changes" edit mode
+const isEditing = ref(false)
+
+// Deep copy of tool input being edited (null when not editing)
+const editedToolInput = ref(null)
+
 // ============================================================================
 // Ask user question state
 // ============================================================================
@@ -111,6 +117,8 @@ watch(() => props.pendingRequest?.request_id, () => {
     // Tool approval state
     denyReason.value = ''
     showDenyReason.value = false
+    isEditing.value = false
+    editedToolInput.value = null
     // Ask user question state
     Object.keys(questionSelections).forEach(k => delete questionSelections[k])
     Object.keys(otherTexts).forEach(k => delete otherTexts[k])
@@ -127,8 +135,12 @@ const toolName = computed(() => props.pendingRequest.tool_name || 'Unknown tool'
 // Tool name formatted for display (underscores → spaces, collapse multiple)
 const toolNameDisplay = computed(() => toolName.value.replace(/_+/g, ' '))
 
-// Tool input data
-const toolInput = computed(() => props.pendingRequest.tool_input || {})
+// Tool input data: uses the edited copy when in edit mode, otherwise the original from the pending request.
+const toolInput = computed(() =>
+    isEditing.value && editedToolInput.value != null
+        ? editedToolInput.value
+        : (props.pendingRequest.tool_input || {})
+)
 
 // Overrides for JsonHumanView based on tool name, enriched with language from file path.
 // For tools like Write/Edit/NotebookEdit, detects the language from the file_path/notebook_path
@@ -235,6 +247,51 @@ function onDenyReasonKeydown(event) {
         event.preventDefault()
         cancelDeny()
     }
+}
+
+/**
+ * Enter "approve with changes" edit mode.
+ * Deep-clones the current tool input so the user can modify it.
+ */
+function handleStartEdit() {
+    editedToolInput.value = JSON.parse(JSON.stringify(props.pendingRequest.tool_input || {}))
+    isEditing.value = true
+    // Also close the deny reason if it was open
+    showDenyReason.value = false
+    denyReason.value = ''
+}
+
+/**
+ * Cancel edit mode and discard changes.
+ * Restores the original (read-only) tool input view.
+ */
+function cancelEdit() {
+    isEditing.value = false
+    editedToolInput.value = null
+}
+
+/**
+ * Handle "approve with changes" action.
+ * Sends the modified tool input as updated_input.
+ */
+function handleApproveWithChanges() {
+    if (isResponding.value) return
+    isResponding.value = true
+
+    store.respondToPendingRequest(props.sessionId, props.pendingRequest.request_id, {
+        request_type: 'tool_approval',
+        decision: 'allow',
+        updated_input: editedToolInput.value,
+    })
+}
+
+/**
+ * Handle update from JsonHumanView in edit mode.
+ * Updates the editedToolInput ref with the new value.
+ * @param {Object} newValue - The updated tool input object
+ */
+function onToolInputUpdate(newValue) {
+    editedToolInput.value = newValue
 }
 
 // ============================================================================
@@ -406,12 +463,18 @@ function handleSubmitQuestions() {
                     <wa-badge variant="neutral">{{ toolNameDisplay }}</wa-badge>
                 </div>
 
-                <JsonHumanView :value="toolInput" :overrides="toolOverrides" />
+                <JsonHumanView
+                    :value="toolInput"
+                    :overrides="toolOverrides"
+                    :editable="isEditing"
+                    @update:value="onToolInputUpdate"
+                />
             </div>
 
-            <!-- Action buttons -->
+            <!-- Action buttons: three states — default / deny reason / editing -->
             <div class="pending-request-actions">
-                <template v-if="!showDenyReason">
+                <!-- Default state: Deny / Approve with changes / Approve -->
+                <template v-if="!showDenyReason && !isEditing">
                     <wa-button
                         variant="danger"
                         appearance="outlined"
@@ -424,6 +487,16 @@ function handleSubmitQuestions() {
                         Deny
                     </wa-button>
                     <wa-button
+                        variant="neutral"
+                        appearance="outlined"
+                        size="small"
+                        :disabled="isResponding"
+                        @click="handleStartEdit"
+                    >
+                        <wa-icon name="pen" variant="classic" slot="prefix"></wa-icon>
+                        Approve with changes
+                    </wa-button>
+                    <wa-button
                         variant="brand"
                         size="small"
                         :disabled="isResponding"
@@ -434,7 +507,8 @@ function handleSubmitQuestions() {
                         Approve
                     </wa-button>
                 </template>
-                <template v-else>
+                <!-- Deny state: textarea + Cancel / Deny -->
+                <template v-else-if="showDenyReason">
                     <div class="deny-reason-row">
                         <wa-textarea
                             ref="denyReasonInputRef"
@@ -466,6 +540,27 @@ function handleSubmitQuestions() {
                             Deny
                         </wa-button>
                     </div>
+                </template>
+                <!-- Edit state: Cancel / Approve with changes -->
+                <template v-else-if="isEditing">
+                    <wa-button
+                        variant="neutral"
+                        appearance="outlined"
+                        size="small"
+                        @click="cancelEdit"
+                    >
+                        Cancel
+                    </wa-button>
+                    <wa-button
+                        variant="brand"
+                        size="small"
+                        :disabled="isResponding"
+                        @click="handleApproveWithChanges"
+                    >
+                        <wa-spinner v-if="isResponding" slot="prefix"></wa-spinner>
+                        <wa-icon v-else name="check" variant="classic" slot="prefix"></wa-icon>
+                        Approve with changes
+                    </wa-button>
                 </template>
             </div>
         </template>

@@ -4,6 +4,7 @@ and ClaudeProcess pending request mechanism.
 """
 
 import asyncio
+import uuid
 from unittest.mock import AsyncMock
 
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
@@ -202,12 +203,18 @@ class TestSerializeProcessInfoPendingRequest:
 # =============================================================================
 
 
+async def _dummy_get_slug(session_id: str) -> str:
+    """Return a random slug for testing."""
+    return f"test-slug-{uuid.uuid4().hex[:8]}"
+
+
 def _make_claude_process() -> ClaudeProcess:
     """Create a ClaudeProcess for testing, without starting it."""
     return ClaudeProcess(
         session_id="test-session-1",
         project_id="test-project-1",
         cwd="/tmp/test",
+        get_last_session_slug=_dummy_get_slug,
     )
 
 
@@ -732,7 +739,7 @@ def _make_manager_with_process(
     Returns the manager and the process for further test manipulation.
     """
     manager = ProcessManager()
-    process = ClaudeProcess(session_id, "test-project", "/tmp/test")
+    process = ClaudeProcess(session_id, "test-project", "/tmp/test", get_last_session_slug=_dummy_get_slug)
     process.state = state
     process._state_change_callback = AsyncMock()
     if pending_request is not None:
@@ -818,13 +825,13 @@ class TestManagerResolvePendingRequest:
             manager = ProcessManager()
 
             # Process 1: no pending request
-            process1 = ClaudeProcess("session-1", "project-1", "/tmp/test")
+            process1 = ClaudeProcess("session-1", "project-1", "/tmp/test", get_last_session_slug=_dummy_get_slug)
             process1.state = ProcessState.ASSISTANT_TURN
             process1._state_change_callback = AsyncMock()
             manager._processes["session-1"] = process1
 
             # Process 2: has pending request
-            process2 = ClaudeProcess("session-2", "project-1", "/tmp/test")
+            process2 = ClaudeProcess("session-2", "project-1", "/tmp/test", get_last_session_slug=_dummy_get_slug)
             process2.state = ProcessState.ASSISTANT_TURN
             process2._state_change_callback = AsyncMock()
             process2._pending_request = _make_pending_request()
@@ -915,7 +922,7 @@ class TestTimeoutExemptionForPendingRequest:
             manager = ProcessManager()
 
             # Process 1: has pending request, should survive
-            process1 = ClaudeProcess("session-1", "project-1", "/tmp/test")
+            process1 = ClaudeProcess("session-1", "project-1", "/tmp/test", get_last_session_slug=_dummy_get_slug)
             process1.state = ProcessState.ASSISTANT_TURN
             process1._state_change_callback = AsyncMock()
             process1._pending_request = _make_pending_request()
@@ -924,7 +931,7 @@ class TestTimeoutExemptionForPendingRequest:
             manager._processes["session-1"] = process1
 
             # Process 2: no pending request, should be killed
-            process2 = ClaudeProcess("session-2", "project-1", "/tmp/test")
+            process2 = ClaudeProcess("session-2", "project-1", "/tmp/test", get_last_session_slug=_dummy_get_slug)
             process2.state = ProcessState.ASSISTANT_TURN
             process2._state_change_callback = AsyncMock()
             process2.last_activity = far_past

@@ -110,7 +110,7 @@ function monacoHeight(content) {
     const lineHeight = 19 // default Monaco line height
     const padding = 32 // top + bottom padding
     const raw = lineCount * lineHeight + padding
-    const clamped = Math.max(64, Math.min(raw, 400))
+    const clamped = Math.max(64, Math.min(raw, 800))
     return clamped + 'px'
 }
 
@@ -1240,6 +1240,7 @@ function generateDiff(oldStr, newStr) {
     border-radius: var(--wa-form-control-border-radius);
     overflow: hidden;
     border: var(--wa-form-control-border-width) var(--wa-form-control-border-style) var(--wa-form-control-border-color);
+    max-height: 40vh;
 }
 
 .jhv-edit-diff {
