@@ -9,6 +9,7 @@
 import { computed } from 'vue'
 import MarkdownContent from './MarkdownContent.vue'
 import { getIconUrl, getFileIconId } from '../utils/fileIcons'
+import { getLanguageFromPath } from '../utils/languages'
 import { structuredPatch } from 'diff'
 
 defineOptions({ name: 'JsonHumanView' })
@@ -83,6 +84,17 @@ function keyLooksLikeCode(key) {
 }
 
 /**
+ * Check if a key name refers to code content (text body of a file).
+ * Matches: content, contents, *_content, content_*, *_contents, contents_*.
+ * @param {string|null} key
+ * @returns {boolean}
+ */
+function keyLooksLikeCodeContent(key) {
+    if (!key) return false
+    return keyMatches(key.toLowerCase(), ['content'])
+}
+
+/**
  * Determine the display type of a value.
  * Returns fine-grained types for strings (string, string-multiline, string-markdown, string-file, string-url).
  * When a key is provided, uses it to auto-detect file paths and URLs.
@@ -139,6 +151,55 @@ const diffPairs = computed(() => {
         return findDiffPairs(props.value)
     }
     return { pairs: [], consumed: new Set() }
+})
+
+/**
+ * Computed overrides derived from sibling keys when the value is an object.
+ * When an object has a path-like key (e.g. "file_path"), extracts the programming language
+ * from its value and generates string-code overrides for content-like sibling keys
+ * (e.g. "content") and for diff pair old/new keys.
+ *
+ * Returns a flat object: { [key]: { valueType: 'string-code', language } }
+ * Language may be null if the extension is unknown (still renders as string-code, just without highlighting).
+ *
+ * Explicit parent overrides always take priority over these (merged in the template).
+ */
+const siblingOverrides = computed(() => {
+    if (typeof props.value !== 'object' || props.value === null || Array.isArray(props.value)) {
+        return {}
+    }
+
+    // Find the first path-like key with a string value
+    const keys = Object.keys(props.value)
+    let pathFound = false
+    let language = null
+    for (const key of keys) {
+        if (keyLooksLikePath(key) && typeof props.value[key] === 'string') {
+            pathFound = true
+            language = getLanguageFromPath(props.value[key])
+            break
+        }
+    }
+    // No path sibling found → no overrides to generate
+    if (!pathFound) return {}
+
+    const result = {}
+    const codeOverride = { valueType: 'string-code', ...(language != null && { language }) }
+
+    // Generate overrides for content-like keys
+    for (const key of keys) {
+        if (keyLooksLikeCodeContent(key) && typeof props.value[key] === 'string') {
+            result[key] = codeOverride
+        }
+    }
+
+    // Generate overrides for diff pair old/new keys
+    for (const pair of diffPairs.value.pairs) {
+        result[pair.oldKey] = codeOverride
+        result[pair.newKey] = codeOverride
+    }
+
+    return result
 })
 
 /**
@@ -505,7 +566,7 @@ function generateDiff(oldStr, newStr) {
                                 :value="value[key]"
                                 :name="key"
                                 :depth="depth + 1"
-                                :override="overrides[key]"
+                                :override="overrides[key] ?? siblingOverrides[key]"
                             />
                         </template>
                     </template>
@@ -522,13 +583,13 @@ function generateDiff(oldStr, newStr) {
                                     :value="value[pair.oldKey]"
                                     :name="pair.oldKey"
                                     :depth="depth + 1"
-                                    :override="overrides[pair.oldKey] ?? { valueType: 'string-multiline' }"
+                                    :override="overrides[pair.oldKey] ?? siblingOverrides[pair.oldKey] ?? { valueType: 'string-multiline' }"
                                 />
                                 <JsonHumanView
                                     :value="value[pair.newKey]"
                                     :name="pair.newKey"
                                     :depth="depth + 1"
-                                    :override="overrides[pair.newKey] ?? { valueType: 'string-multiline' }"
+                                    :override="overrides[pair.newKey] ?? siblingOverrides[pair.newKey] ?? { valueType: 'string-multiline' }"
                                 />
                             </div>
                         </details>

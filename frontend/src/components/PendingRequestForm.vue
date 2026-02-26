@@ -9,10 +9,12 @@ import { ref, computed, reactive, watch, nextTick, useId } from 'vue'
 import { useDataStore } from '../stores/data'
 import JsonHumanView from './JsonHumanView.vue'
 import AppTooltip from './AppTooltip.vue'
+import { getLanguageFromPath } from '../utils/languages'
 
 // Per-tool overrides for JsonHumanView display types.
 // Only keys that need an override (not auto-detected) are listed.
-const TOOL_OVERRIDES = {
+// Language is added dynamically by toolOverrides based on the file path in tool input.
+const TOOL_OVERRIDES_BASE = {
     Bash: {
         command: { valueType: 'string-code' },
     },
@@ -26,6 +28,13 @@ const TOOL_OVERRIDES = {
     NotebookEdit: {
         new_source: { valueType: 'string-code' },
     },
+}
+
+// Maps tool names to the key in tool input that contains the file path.
+const TOOL_PATH_KEYS = {
+    Write: 'file_path',
+    Edit: 'file_path',
+    NotebookEdit: 'notebook_path',
 }
 
 const props = defineProps({
@@ -121,8 +130,29 @@ const toolNameDisplay = computed(() => toolName.value.replace(/_+/g, ' '))
 // Tool input data
 const toolInput = computed(() => props.pendingRequest.tool_input || {})
 
-// Overrides for JsonHumanView based on tool name
-const toolOverrides = computed(() => TOOL_OVERRIDES[toolName.value] || {})
+// Overrides for JsonHumanView based on tool name, enriched with language from file path.
+// For tools like Write/Edit/NotebookEdit, detects the language from the file_path/notebook_path
+// in tool input and adds it to the overrides so code gets syntax highlighting.
+const toolOverrides = computed(() => {
+    const base = TOOL_OVERRIDES_BASE[toolName.value]
+    if (!base) return {}
+
+    const pathKey = TOOL_PATH_KEYS[toolName.value]
+    if (!pathKey) return base
+
+    const filePath = toolInput.value[pathKey]
+    if (!filePath || typeof filePath !== 'string') return base
+
+    const language = getLanguageFromPath(filePath)
+    if (!language) return base
+
+    // Enrich each override entry with the detected language
+    const enriched = {}
+    for (const [key, override] of Object.entries(base)) {
+        enriched[key] = { ...override, language }
+    }
+    return enriched
+})
 
 // ============================================================================
 // Ask user question computed

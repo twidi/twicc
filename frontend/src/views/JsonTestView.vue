@@ -15,7 +15,7 @@ const testCases = [
         overrides: { command: { valueType: 'string-code' } }
     },
     {
-        title: 'Write tool (with override: content → string-code)',
+        title: 'Write tool (with override: content → string-code, language from sibling path)',
         json: {
             file_path: '/home/user/project/src/utils/helpers.py',
             content: 'import os\nimport sys\nfrom pathlib import Path\n\n\ndef find_project_root(start_dir: str) -> Path:\n    """Walk up the directory tree to find the project root."""\n    current = Path(start_dir).resolve()\n    while current != current.parent:\n        if (current / "pyproject.toml").exists():\n            return current\n        current = current.parent\n    raise FileNotFoundError("No project root found")\n'
@@ -23,7 +23,7 @@ const testCases = [
         overrides: { content: { valueType: 'string-code', language: 'python' } }
     },
     {
-        title: 'Edit tool (auto-generates diff from old_string / new_string)',
+        title: 'Edit tool (diff + language from sibling path)',
         json: {
             file_path: '/home/user/project/src/main.py',
             old_string: 'def process(data):\n    return data',
@@ -162,7 +162,44 @@ const testCases = [
             prompt: 'You are a helpful assistant that analyzes code repositories. Given a repository URL, clone it, analyze the structure, identify the main programming languages used, count the lines of code per language, and provide a summary of the architecture including entry points, key modules, and dependency relationships between components.',
             temperature: 0.7
         }
-    }
+    },
+    // ─── Sibling path language detection test cases ──────────────────────────
+    {
+        title: 'Sibling path detection: content + file_path (auto → string-code with JS highlighting)',
+        json: {
+            file_path: '/home/user/project/src/utils/api.js',
+            content: 'export async function fetchData(url) {\n    const response = await fetch(url)\n    if (!response.ok) {\n        throw new Error(`HTTP ${response.status}`)\n    }\n    return response.json()\n}\n'
+        },
+    },
+    {
+        title: 'Sibling path detection: content + path (auto → string-code with Rust highlighting)',
+        json: {
+            path: '/home/user/project/src/main.rs',
+            content: 'use std::io;\n\nfn main() -> io::Result<()> {\n    let mut input = String::new();\n    io::stdin().read_line(&mut input)?;\n    println!("Hello, {}!", input.trim());\n    Ok(())\n}\n'
+        },
+    },
+    {
+        title: 'Sibling path detection: diff pairs + file_path (auto → string-code for old/new)',
+        json: {
+            file_path: '/home/user/project/src/components/Header.vue',
+            old_string: '<template>\n    <header>\n        <h1>{{ title }}</h1>\n    </header>\n</template>',
+            new_string: '<template>\n    <header class="main-header">\n        <h1>{{ title }}</h1>\n        <nav>\n            <slot name="nav" />\n        </nav>\n    </header>\n</template>'
+        },
+    },
+    {
+        title: 'Sibling path detection: unknown extension (auto → string-code, no highlighting)',
+        json: {
+            file_path: '/home/user/project/config.obscure',
+            content: 'setting1 = value1\nsetting2 = value2\nsetting3 = value3\n'
+        },
+    },
+    {
+        title: 'Sibling path detection: no path key (content stays string-multiline)',
+        json: {
+            description: 'Some tool without a path',
+            content: 'This is plain text content\nwith multiple lines\nbut no sibling path key.\n'
+        },
+    },
 ]
 </script>
 
