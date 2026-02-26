@@ -7,19 +7,23 @@
 // No collapse/expand, no truncation, no tool-specific logic.
 //
 // Supports an `editable` mode where each field becomes an input widget matching its detected type:
-// - boolean → wa-switch
+// - boolean → native checkbox
 // - number → wa-input[type=number]
 // - string (single-line) → wa-input
-// - string (multi-line/markdown/code) → wa-textarea
+// - string (multi-line/markdown/code) → Monaco editor (with language detection)
 // - null → not editable (displayed as-is)
 // - object/array → recursive editing of children
 // Changes propagate upward via update:value emit.
 
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
+import { useMonaco } from '@guolao/vue-monaco-editor'
 import MarkdownContent from './MarkdownContent.vue'
 import { getIconUrl, getFileIconId } from '../utils/fileIcons'
 import { getLanguageFromPath } from '../utils/languages'
 import { structuredPatch } from 'diff'
+import { useSettingsStore } from '../stores/settings'
+import githubDark from '../assets/monaco-themes/github-dark.json'
+import githubLight from '../assets/monaco-themes/github-light.json'
 
 defineOptions({ name: 'JsonHumanView' })
 
@@ -51,31 +55,75 @@ const props = defineProps({
 
 const emit = defineEmits(['update:value'])
 
-/**
- * Determine the base JSON type of a value (ignoring display sub-types).
- * Used in edit mode to pick the right input widget.
- * @param {*} val
- * @returns {'null'|'boolean'|'number'|'string'|'array'|'object'}
- */
-function baseType(val) {
-    if (val === null || val === undefined) return 'null'
-    if (typeof val === 'boolean') return 'boolean'
-    if (typeof val === 'number') return 'number'
-    if (typeof val === 'string') return 'string'
-    if (Array.isArray(val)) return 'array'
-    return 'object'
+// ============================================================================
+// Monaco editor setup (only used in editable mode for multiline strings)
+// ============================================================================
+
+const settingsStore = useSettingsStore()
+const { monacoRef } = useMonaco()
+
+// Register Monaco themes (same as FilePane — Monaco is a singleton so themes are shared)
+watch(monacoRef, (monaco) => {
+    if (!monaco) return
+    monaco.editor.defineTheme('github-dark', {
+        ...githubDark,
+        colors: {
+            ...githubDark.colors,
+            'editor.background': '#1b2733',  // var(--wa-color-surface-default) on dark mode
+        },
+    })
+    monaco.editor.defineTheme('github-light', githubLight)
+}, { immediate: true })
+
+const monacoTheme = computed(() =>
+    settingsStore.getEffectiveTheme === 'dark' ? 'github-dark' : 'github-light'
+)
+
+/** Shared Monaco editor options for inline editing (compact, no chrome). */
+const monacoEditOptions = {
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    lineNumbers: 'off',
+    glyphMargin: false,
+    folding: true,
+    lineDecorationsWidth: 0,
+    lineNumbersMinChars: 0,
+    renderLineHighlight: 'line',
+    overviewRulerLanes: 0,
+    hideCursorInOverviewRuler: true,
+    overviewRulerBorder: false,
+    scrollbar: { vertical: 'auto', horizontal: 'auto', verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+    automaticLayout: true,
+    wordWrap: 'on',
+    padding: { top: 16, bottom: 16 },
+    tabSize: 4,
 }
 
 /**
- * Determine the edit widget type for a value.
- * For strings, distinguishes single-line vs multi-line to choose between wa-input and wa-textarea.
- * @param {*} val
- * @returns {'null'|'boolean'|'number'|'string'|'string-multiline'|'array'|'object'}
+ * Compute the editor height in pixels based on line count.
+ * Clamps between a min and max to keep the UI usable.
+ * @param {string} content
+ * @returns {string} CSS height value (e.g. '180px')
  */
-function editType(val) {
-    const bt = baseType(val)
-    if (bt === 'string' && isMultiLine(val)) return 'string-multiline'
-    return bt
+function monacoHeight(content) {
+    const lineCount = (content || '').split('\n').length
+    const lineHeight = 19 // default Monaco line height
+    const padding = 32 // top + bottom padding
+    const raw = lineCount * lineHeight + padding
+    const clamped = Math.max(64, Math.min(raw, 400))
+    return clamped + 'px'
+}
+
+/**
+ * Get the Monaco language for this node's value when in edit mode.
+ * Uses override language if available, otherwise attempts path-based detection.
+ * Returns undefined to let Monaco auto-detect (or default to plaintext).
+ * @returns {string|undefined}
+ */
+function monacoLanguage() {
+    // Explicit language from override (e.g. 'python', 'javascript')
+    if (props.override?.language) return props.override.language
+    return undefined
 }
 
 /**
@@ -110,7 +158,7 @@ function onChildArrayUpdate(index, newChildValue) {
 }
 
 /**
- * Handle input event from a wa-input or wa-textarea for string values.
+ * Handle input event from a wa-input for string values.
  * @param {Event} event
  */
 function onStringInput(event) {
@@ -560,14 +608,15 @@ function generateDiff(oldStr, newStr) {
         <template v-else-if="effectiveType() === 'string-markdown'">
             <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
             <template v-if="editable">
-                <wa-textarea
-                    size="small"
-                    class="jhv-edit-textarea"
-                    :value.prop="value"
-                    @input="onStringInput"
-                    resize="auto"
-                    rows="4"
-                ></wa-textarea>
+                <div class="jhv-edit-monaco" :style="{ height: monacoHeight(value) }">
+                    <vue-monaco-editor
+                        :value="value"
+                        language="markdown"
+                        :theme="monacoTheme"
+                        :options="monacoEditOptions"
+                        @change="emitUpdate"
+                    />
+                </div>
             </template>
             <div v-else class="jhv-markdown">
                 <MarkdownContent :source="value" />
@@ -577,17 +626,18 @@ function generateDiff(oldStr, newStr) {
         <!-- String: code (not auto-detected, only via override) -->
         <template v-else-if="effectiveType() === 'string-code'">
             <template v-if="editable">
-                <!-- Multi-line code: textarea -->
+                <!-- Multi-line code: Monaco editor -->
                 <template v-if="override?.language || isMultiLine(value)">
                     <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
-                    <wa-textarea
-                        size="small"
-                        class="jhv-edit-textarea jhv-edit-code"
-                        :value.prop="value"
-                        @input="onStringInput"
-                        resize="auto"
-                        rows="4"
-                    ></wa-textarea>
+                    <div class="jhv-edit-monaco" :style="{ height: monacoHeight(value) }">
+                        <vue-monaco-editor
+                            :value="value"
+                            :language="monacoLanguage()"
+                            :theme="monacoTheme"
+                            :options="monacoEditOptions"
+                            @change="emitUpdate"
+                        />
+                    </div>
                 </template>
                 <!-- Single-line code: input -->
                 <template v-else>
@@ -665,14 +715,15 @@ function generateDiff(oldStr, newStr) {
         <template v-else-if="effectiveType() === 'string-multiline'">
             <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
             <template v-if="editable">
-                <wa-textarea
-                    size="small"
-                    class="jhv-edit-textarea"
-                    :value.prop="value"
-                    @input="onStringInput"
-                    resize="auto"
-                    rows="4"
-                ></wa-textarea>
+                <div class="jhv-edit-monaco" :style="{ height: monacoHeight(value) }">
+                    <vue-monaco-editor
+                        :value="value"
+                        language="plaintext"
+                        :theme="monacoTheme"
+                        :options="monacoEditOptions"
+                        @change="emitUpdate"
+                    />
+                </div>
             </template>
             <pre v-else class="jhv-pre">{{ value.trim() }}</pre>
         </template>
@@ -1015,12 +1066,10 @@ function generateDiff(oldStr, newStr) {
     max-width: 12rem;
 }
 
-.jhv-edit-textarea {
-    width: 100%;
-}
-
-.jhv-edit-code {
-    font-family: var(--wa-font-mono);
+.jhv-edit-monaco {
+    border-radius: var(--wa-form-control-border-radius);
+    overflow: hidden;
+    border: var(--wa-form-control-border-width) var(--wa-form-control-border-style) var(--wa-form-control-border-color);
 }
 
 .jhv-edit-checkbox {
