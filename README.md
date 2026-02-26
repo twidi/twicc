@@ -40,6 +40,12 @@ The interface is fully usable on mobile. Combined with a tunnel service like [Cl
 
 > **Important:** If you expose TWICC over the internet, make sure to enable password protection (see [Configuration](#configuration) below).
 
+## Mobile usage
+
+The interface is designed to work well on mobile devices. The terminal includes touch-based text selection (drag to select, auto-copied to clipboard) and scrollbar support.
+
+For a comfortable terminal experience on Android, we recommend [Unexpected Keyboard](https://play.google.com/store/apps/details?id=juloo.keyboard2) — a keyboard that natively supports Ctrl, Esc, Tab, and other keys essential for terminal use.
+
 ## How it works
 
 TWICC reads the JSONL data files that Claude Code stores in `~/.claude/projects/` and indexes them into a local SQLite database (`~/.twicc/db/data.sqlite`). These data files remain the source of truth for everything displayed in the interface — TWICC never modifies them. Whether you use Claude Code directly from the terminal or interact through TWICC, everything shows up in the same place.

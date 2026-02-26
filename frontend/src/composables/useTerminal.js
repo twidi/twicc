@@ -7,6 +7,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
+import { toast } from '../composables/useToast'
 import '@xterm/xterm/css/xterm.css'
 
 // ── Terminal themes ──────────────────────────────────────────────────────
@@ -98,6 +99,12 @@ export function useTerminal(sessionId) {
     /** @type {boolean} */
     let intentionalClose = false
 
+    // ── Touch selection state (mobile) ─────────────────────────────────────
+    let selectStartCol = 0
+    let selectStartRow = 0
+    /** @type {AbortController | null} */
+    let touchAbortController = null
+
     /**
      * Check whether tmux should actually be used for this session.
      * Tmux is skipped for draft and archived sessions.
@@ -182,6 +189,105 @@ export function useTerminal(sessionId) {
         }
     }
 
+    // ── Touch selection helpers (mobile) ──────────────────────────────────
+
+    /**
+     * Convert screen pixel coordinates to terminal cell (col, row).
+     */
+    function screenToTerminalCoords(clientX, clientY) {
+        const screenEl = terminal.element?.querySelector('.xterm-screen')
+        if (!screenEl) return { col: 0, row: 0 }
+        const rect = screenEl.getBoundingClientRect()
+        const cellWidth = rect.width / terminal.cols
+        const cellHeight = rect.height / terminal.rows
+        const col = Math.max(0, Math.min(terminal.cols - 1, Math.floor((clientX - rect.left) / cellWidth)))
+        const viewportRow = Math.floor((clientY - rect.top) / cellHeight)
+        const bufferRow = viewportRow + terminal.buffer.active.viewportY
+        return { col, row: bufferRow }
+    }
+
+    /**
+     * Copy text to clipboard with execCommand fallback for mobile reliability.
+     */
+    function clipboardWrite(text) {
+        // Try execCommand first — synchronous, more reliable on mobile
+        try {
+            const textArea = document.createElement('textarea')
+            textArea.value = text
+            textArea.style.position = 'fixed'
+            textArea.style.top = '0'
+            textArea.style.left = '0'
+            textArea.style.opacity = '0'
+            document.body.appendChild(textArea)
+            textArea.focus()
+            textArea.select()
+            const success = document.execCommand('copy')
+            document.body.removeChild(textArea)
+            if (success) return
+        } catch {
+            // Fall through to async API
+        }
+        // Fallback to async clipboard API
+        navigator.clipboard.writeText(text).catch(() => {})
+    }
+
+    /** Whether the current touch gesture is a selection (vs scrollbar drag). */
+    let touchIsSelecting = false
+
+    function onTouchStart(e) {
+        // Ignore touches on the custom scrollbar — let xterm.js handle those via pointer events
+        if (e.target?.closest('.scrollbar')) {
+            touchIsSelecting = false
+            return
+        }
+        touchIsSelecting = true
+        const touch = e.touches[0]
+        const coords = screenToTerminalCoords(touch.clientX, touch.clientY)
+        selectStartCol = coords.col
+        selectStartRow = coords.row
+        terminal?.clearSelection()
+    }
+
+    function onTouchMove(e) {
+        if (!touchIsSelecting || !terminal) return
+        const touch = e.touches[0]
+        const coords = screenToTerminalCoords(touch.clientX, touch.clientY)
+        const startOffset = selectStartRow * terminal.cols + selectStartCol
+        const currentOffset = coords.row * terminal.cols + coords.col
+        const length = currentOffset - startOffset
+
+        if (length > 0) {
+            terminal.select(selectStartCol, selectStartRow, length)
+        } else if (length < 0) {
+            terminal.select(coords.col, coords.row, -length)
+        }
+        e.preventDefault()
+    }
+
+    /**
+     * Attach touch event listeners for text selection on mobile.
+     * Uses an AbortController for clean removal.
+     */
+    function attachTouchListeners() {
+        if (!containerRef.value || !settingsStore.isTouchDevice) return
+
+        touchAbortController = new AbortController()
+        const signal = touchAbortController.signal
+
+        containerRef.value.addEventListener('touchstart', onTouchStart, { passive: true, signal })
+        containerRef.value.addEventListener('touchmove', onTouchMove, { passive: false, signal })
+    }
+
+    /**
+     * Detach touch event listeners.
+     */
+    function detachTouchListeners() {
+        if (touchAbortController) {
+            touchAbortController.abort()
+            touchAbortController = null
+        }
+    }
+
     /**
      * Initialize the xterm.js Terminal and attach it to the container,
      * then connect the WebSocket.
@@ -225,11 +331,27 @@ export function useTerminal(sessionId) {
             return true
         })
 
-        // Copy selection to system clipboard on mouse select (replaces the removed copyOnSelect option)
+        // Copy selection to system clipboard automatically.
+        // On desktop (mouse): copy immediately on selection change.
+        // On mobile (touch): debounce 1s after last selection change, then copy + show toast.
+        let selectionDebounceTimer = null
         terminal.onSelectionChange(() => {
             const selection = terminal.getSelection()
-            if (selection) {
+            if (!selection) return
+
+            if (!settingsStore.isTouchDevice) {
+                // Desktop: immediate copy
                 navigator.clipboard.writeText(selection)
+            } else {
+                // Mobile: debounce — wait 0.5s after user stops adjusting selection
+                clearTimeout(selectionDebounceTimer)
+                selectionDebounceTimer = setTimeout(() => {
+                    const finalSelection = terminal?.getSelection()
+                    if (finalSelection) {
+                        clipboardWrite(finalSelection)
+                        toast.success('Copied to clipboard', { duration: 2000 })
+                    }
+                }, 500)
             }
         })
 
@@ -250,6 +372,9 @@ export function useTerminal(sessionId) {
             })
         })
         resizeObserver.observe(containerRef.value)
+
+        // Attach touch listeners for mobile text selection
+        attachTouchListeners()
 
         // Connect to the backend
         connectWs()
@@ -283,6 +408,8 @@ export function useTerminal(sessionId) {
      */
     function cleanup() {
         intentionalClose = true
+
+        detachTouchListeners()
 
         if (resizeObserver) {
             resizeObserver.disconnect()
