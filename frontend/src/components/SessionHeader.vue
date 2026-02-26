@@ -348,6 +348,15 @@ defineExpose({
                     }"
                 ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
 
+                <!-- Process state indicator duplicate for compact mode (visible only on small viewports when not expanded) -->
+                <ProcessIndicator
+                    v-if="processState"
+                    class="compact-process-indicator"
+                    :state="processState.state"
+                    size="small"
+                    :animate-states="animateStates"
+                />
+
                 <!-- Compact mode: expand/collapse chevron (only visible on small viewports via CSS) -->
                 <wa-icon
                     v-if="!session.draft"
@@ -675,6 +684,12 @@ body:not([data-display-mode="debug"]) .cost-breakdown-item {
     align-self: center;
 }
 
+/* Compact process indicator: hidden by default, shown in compact mode when not expanded */
+.compact-process-indicator {
+    display: none;
+    align-self: center;
+}
+
 wa-divider {
     --width: 4px;
     --spacing: 0;
@@ -838,6 +853,11 @@ wa-divider {
 
     /* Show the compact context ring when not expanded */
     .session-header.compact-collapsed .compact-context-ring {
+        display: inline-flex;
+    }
+
+    /* Show the compact process indicator when not expanded */
+    .session-header.compact-collapsed .compact-process-indicator {
         display: inline-flex;
     }
 
