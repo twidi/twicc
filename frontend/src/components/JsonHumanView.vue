@@ -15,8 +15,8 @@
 // - object/array → recursive editing of children
 // Changes propagate upward via update:value emit.
 
-import { computed, watch } from 'vue'
-import { useMonaco } from '@guolao/vue-monaco-editor'
+import { computed, reactive, watch } from 'vue'
+import { useMonaco, DiffEditor as VueMonacoDiffEditor } from '@guolao/vue-monaco-editor'
 import MarkdownContent from './MarkdownContent.vue'
 import { getIconUrl, getFileIconId } from '../utils/fileIcons'
 import { getLanguageFromPath } from '../utils/languages'
@@ -115,15 +115,102 @@ function monacoHeight(content) {
 }
 
 /**
- * Get the Monaco language for this node's value when in edit mode.
- * Uses override language if available, otherwise attempts path-based detection.
- * Returns undefined to let Monaco auto-detect (or default to plaintext).
- * @returns {string|undefined}
+ * Compute the diff editor height based on the longer of the two strings.
+ * Slightly taller default since diff editors need more vertical space.
+ * @param {string} oldStr
+ * @param {string} newStr
+ * @returns {string} CSS height value
  */
-function monacoLanguage() {
-    // Explicit language from override (e.g. 'python', 'javascript')
-    if (props.override?.language) return props.override.language
-    return undefined
+function monacoDiffHeight(oldStr, newStr) {
+    const oldLines = (oldStr || '').split('\n').length
+    const newLines = (newStr || '').split('\n').length
+    const lineCount = Math.max(oldLines, newLines)
+    const lineHeight = 19
+    const padding = 32
+    const raw = lineCount * lineHeight + padding
+    const clamped = Math.max(80, Math.min(raw, 500))
+    return clamped + 'px'
+}
+
+/** Shared Monaco diff editor options (read-only original, editable modified). */
+const monacoDiffOptions = {
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    lineNumbers: 'off',
+    glyphMargin: false,
+    folding: true,
+    lineDecorationsWidth: 0,
+    lineNumbersMinChars: 0,
+    renderLineHighlight: 'line',
+    overviewRulerLanes: 0,
+    overviewRulerBorder: false,
+    scrollbar: { vertical: 'auto', horizontal: 'auto', verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+    automaticLayout: true,
+    wordWrap: 'on',
+    padding: { top: 16, bottom: 16 },
+    tabSize: 4,
+    originalEditable: false,
+    readOnly: false,
+    renderSideBySide: true,
+}
+
+// Map shiki language identifiers (used by siblingOverrides/getLanguageFromPath) to Monaco equivalents.
+// Monaco uses different identifiers for some languages. This mapping ensures correct highlighting
+// both via the `language` prop and via model path extension auto-detection.
+// Format: { shikiId: [monacoId, extension] }
+// When shikiId IS a valid Monaco id, monacoId can be the same value.
+const SHIKI_TO_MONACO = {
+    javascript: ['javascript', 'js'], typescript: ['typescript', 'ts'],
+    jsx: ['javascript', 'jsx'], tsx: ['typescript', 'tsx'],
+    python: ['python', 'py'], rust: ['rust', 'rs'], go: ['go', 'go'],
+    java: ['java', 'java'], kotlin: ['kotlin', 'kt'],
+    c: ['c', 'c'], cpp: ['cpp', 'cpp'], csharp: ['csharp', 'cs'],
+    'objective-c': ['objective-c', 'm'],
+    swift: ['swift', 'swift'], ruby: ['ruby', 'rb'], php: ['php', 'php'],
+    bash: ['shell', 'sh'], zsh: ['shell', 'sh'],
+    lua: ['lua', 'lua'], perl: ['perl', 'pl'], scala: ['scala', 'scala'],
+    haskell: ['plaintext', 'hs'], elixir: ['plaintext', 'ex'],
+    erlang: ['plaintext', 'erl'], zig: ['plaintext', 'zig'],
+    dart: ['dart', 'dart'], clojure: ['clojure', 'clj'],
+    r: ['r', 'r'], sql: ['sql', 'sql'], graphql: ['graphql', 'gql'],
+    html: ['html', 'html'], css: ['css', 'css'],
+    scss: ['scss', 'scss'], sass: ['scss', 'sass'], less: ['less', 'less'],
+    json: ['json', 'json'], jsonc: ['json', 'jsonc'], yaml: ['yaml', 'yml'],
+    toml: ['plaintext', 'toml'], xml: ['xml', 'xml'], markdown: ['markdown', 'md'],
+    vue: ['html', 'vue'], svelte: ['html', 'svelte'],
+    dockerfile: ['dockerfile', 'dockerfile'],
+    ini: ['ini', 'ini'], nix: ['plaintext', 'nix'], terraform: ['hcl', 'tf'],
+    plaintext: ['plaintext', 'txt'],
+}
+
+/**
+ * Resolve a shiki language identifier to a valid Monaco language identifier.
+ * Falls back to the input if not found in the mapping.
+ * @param {string} lang - Shiki language identifier
+ * @returns {string} Monaco language identifier
+ */
+function toMonacoLanguage(lang) {
+    return SHIKI_TO_MONACO[lang]?.[0] ?? lang
+}
+
+/**
+ * Build a synthetic model path for Monaco, so it can auto-detect language from the
+ * file extension — the same approach FilePane uses for instant syntax highlighting.
+ *
+ * Uses a per-instance ID + suffix to ensure uniqueness across all JHV instances,
+ * while remaining stable across re-renders of the same instance.
+ *
+ * @param {string} [suffix] - Distinguishes multiple editors within the same instance (e.g. '.original')
+ * @param {string} [languageOverride] - Shiki language identifier (e.g. 'python')
+ * @returns {string|undefined} A synthetic file path or undefined if no language
+ */
+let _jhvInstanceCounter = 0
+const _instanceId = ++_jhvInstanceCounter
+function monacoPath(suffix, languageOverride) {
+    const lang = languageOverride ?? props.override?.language
+    if (!lang) return undefined
+    const ext = SHIKI_TO_MONACO[lang]?.[1] ?? lang
+    return `/jhv/${_instanceId}${suffix ?? ''}.${ext}`
 }
 
 /**
@@ -185,6 +272,36 @@ function onNumberInput(event) {
  */
 function onBooleanChange(event) {
     emitUpdate(event.target.checked)
+}
+
+/**
+ * Handle the diff editor mount event.
+ * Subscribes to the modified editor's content changes and emits updates
+ * for the new_string key of the diff pair.
+ * @param {Object} diffEditor - The Monaco diff editor instance
+ * @param {string} newKey - The key name for the modified side (e.g. 'new_string')
+ */
+function onDiffEditorMount(diffEditor, newKey) {
+    const modifiedEditor = diffEditor.getModifiedEditor()
+    modifiedEditor.onDidChangeModelContent(() => {
+        const newValue = modifiedEditor.getValue()
+        onChildObjectUpdate(newKey, newValue)
+    })
+}
+
+/**
+ * Tracks whether each diff pair (by baseName) is in "split" mode (old/new separately)
+ * instead of the default diff editor mode.
+ * Only used in edit mode. Keys are pair baseName strings, values are booleans.
+ */
+const diffSplitMode = reactive({})
+
+/**
+ * Toggle a diff pair between diff editor and split (old read-only / new editable) modes.
+ * @param {string} baseName - The diff pair base name (e.g. 'string')
+ */
+function toggleDiffSplitMode(baseName) {
+    diffSplitMode[baseName] = !diffSplitMode[baseName]
 }
 
 /**
@@ -611,7 +728,7 @@ function generateDiff(oldStr, newStr) {
                 <div class="jhv-edit-monaco" :style="{ height: monacoHeight(value) }">
                     <vue-monaco-editor
                         :value="value"
-                        language="markdown"
+                        :path="monacoPath(null, 'markdown')"
                         :theme="monacoTheme"
                         :options="monacoEditOptions"
                         @change="emitUpdate"
@@ -632,7 +749,7 @@ function generateDiff(oldStr, newStr) {
                     <div class="jhv-edit-monaco" :style="{ height: monacoHeight(value) }">
                         <vue-monaco-editor
                             :value="value"
-                            :language="monacoLanguage()"
+                            :path="monacoPath()"
                             :theme="monacoTheme"
                             :options="monacoEditOptions"
                             @change="emitUpdate"
@@ -718,7 +835,7 @@ function generateDiff(oldStr, newStr) {
                 <div class="jhv-edit-monaco" :style="{ height: monacoHeight(value) }">
                     <vue-monaco-editor
                         :value="value"
-                        language="plaintext"
+                        :path="monacoPath(null, 'plaintext')"
                         :theme="monacoTheme"
                         :options="monacoEditOptions"
                         @change="emitUpdate"
@@ -833,17 +950,70 @@ function generateDiff(oldStr, newStr) {
             <template v-else>
                 <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
                 <div class="jhv-children">
-                    <!-- In edit mode: render ALL keys individually (no diff grouping) -->
+                    <!-- In edit mode: render keys individually, but use DiffEditor for diff pairs -->
                     <template v-if="editable">
                         <template v-for="key in Object.keys(value)" :key="key">
-                            <JsonHumanView
-                                :value="value[key]"
-                                :name="key"
-                                :depth="depth + 1"
-                                :override="overrides[key] ?? siblingOverrides[key]"
-                                :editable="true"
-                                @update:value="onChildObjectUpdate(key, $event)"
-                            />
+                            <!-- Skip keys consumed by diff pairs (handled in diff section below) -->
+                            <template v-if="!diffPairs.consumed.has(key)">
+                                <JsonHumanView
+                                    :value="value[key]"
+                                    :name="key"
+                                    :depth="depth + 1"
+                                    :override="overrides[key] ?? siblingOverrides[key]"
+                                    :editable="true"
+                                    @update:value="onChildObjectUpdate(key, $event)"
+                                />
+                            </template>
+                        </template>
+                        <!-- Diff pairs: DiffEditor or split old/new -->
+                        <template v-for="pair in diffPairs.pairs" :key="'diff_' + pair.baseName">
+                            <div class="jhv-diff-header">
+                                <span class="jhv-key jhv-block-key">{{ formatLabel(pair.baseName) }} diff:</span>
+                                <wa-button
+                                    size="small"
+                                    variant="neutral"
+                                    appearance="plain"
+                                    class="jhv-diff-toggle"
+                                    @click="toggleDiffSplitMode(pair.baseName)"
+                                >
+                                    <wa-icon
+                                        :name="diffSplitMode[pair.baseName] ? 'code-compare' : 'pen'"
+                                        variant="classic"
+                                    ></wa-icon>
+                                    {{ diffSplitMode[pair.baseName] ? 'Diff mode' : 'Old/new mode' }}
+                                </wa-button>
+                            </div>
+                            <!-- Diff editor mode (default) — v-show keeps the DiffEditor alive
+                                 so toggling back from split mode is instant (no grammar reload). -->
+                            <div v-show="!diffSplitMode[pair.baseName]" class="jhv-edit-diff" :style="{ height: monacoDiffHeight(value[pair.oldKey], value[pair.newKey]) }">
+                                <VueMonacoDiffEditor
+                                    :original="value[pair.oldKey]"
+                                    :modified="value[pair.newKey]"
+                                    :language="toMonacoLanguage((overrides[pair.newKey] ?? siblingOverrides[pair.newKey])?.language ?? 'plaintext')"
+                                    :original-model-path="monacoPath('.original', (overrides[pair.oldKey] ?? siblingOverrides[pair.oldKey])?.language ?? 'plaintext')"
+                                    :modified-model-path="monacoPath('.modified', (overrides[pair.newKey] ?? siblingOverrides[pair.newKey])?.language ?? 'plaintext')"
+                                    :theme="monacoTheme"
+                                    :options="monacoDiffOptions"
+                                    @mount="(editor) => onDiffEditorMount(editor, pair.newKey)"
+                                />
+                            </div>
+                            <!-- Split mode: old read-only + new editable -->
+                            <div v-if="diffSplitMode[pair.baseName]" class="jhv-diff-split">
+                                <JsonHumanView
+                                    :value="value[pair.oldKey]"
+                                    :name="pair.oldKey"
+                                    :depth="depth + 1"
+                                    :override="overrides[pair.oldKey] ?? siblingOverrides[pair.oldKey] ?? { valueType: 'string-multiline' }"
+                                />
+                                <JsonHumanView
+                                    :value="value[pair.newKey]"
+                                    :name="pair.newKey"
+                                    :depth="depth + 1"
+                                    :override="overrides[pair.newKey] ?? siblingOverrides[pair.newKey] ?? { valueType: 'string-multiline' }"
+                                    :editable="true"
+                                    @update:value="onChildObjectUpdate(pair.newKey, $event)"
+                                />
+                            </div>
                         </template>
                     </template>
                     <!-- In read mode: existing rendering with diff pairs and content block sources -->
@@ -1070,6 +1240,36 @@ function generateDiff(oldStr, newStr) {
     border-radius: var(--wa-form-control-border-radius);
     overflow: hidden;
     border: var(--wa-form-control-border-width) var(--wa-form-control-border-style) var(--wa-form-control-border-color);
+}
+
+.jhv-edit-diff {
+    border-radius: var(--wa-form-control-border-radius);
+    overflow: hidden;
+    border: var(--wa-form-control-border-width) var(--wa-form-control-border-style) var(--wa-form-control-border-color);
+    margin-left: var(--wa-space-m);
+}
+
+.jhv-diff-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wa-space-s);
+}
+
+.jhv-diff-header .jhv-block-key {
+    margin-bottom: 0;
+}
+
+.jhv-diff-toggle {
+    flex-shrink: 0;
+    font-size: var(--wa-font-size-xs);
+}
+
+.jhv-diff-split {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-2xs);
+    margin-left: var(--wa-space-m);
 }
 
 .jhv-edit-checkbox {
