@@ -3,6 +3,8 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import '@xterm/xterm/css/xterm.css'
@@ -195,15 +197,41 @@ export function useTerminal(sessionId) {
             theme: THEMES[effectiveTheme] || THEMES.dark,
             scrollback: 5000,
             convertEol: true,
+            scrollOnUserInput: true,
+            macOptionIsMeta: true,
+            macOptionClickForcesSelection: true,
         })
 
         fitAddon = new FitAddon()
         terminal.loadAddon(fitAddon)
+        terminal.loadAddon(new WebLinksAddon())
+        terminal.loadAddon(new ClipboardAddon())
 
         terminal.open(containerRef.value)
 
         // Fit immediately
         fitAddon.fit()
+
+        // Intercept Ctrl+Shift+C to copy selection instead of opening DevTools
+        terminal.attachCustomKeyEventHandler((event) => {
+            if (event.type === 'keydown' && event.ctrlKey && event.shiftKey && event.code === 'KeyC') {
+                const selection = terminal.getSelection()
+                if (selection) {
+                    navigator.clipboard.writeText(selection)
+                }
+                event.preventDefault()
+                return false
+            }
+            return true
+        })
+
+        // Copy selection to system clipboard on mouse select (replaces the removed copyOnSelect option)
+        terminal.onSelectionChange(() => {
+            const selection = terminal.getSelection()
+            if (selection) {
+                navigator.clipboard.writeText(selection)
+            }
+        })
 
         // Forward user input to the WebSocket
         terminal.onData((data) => {
