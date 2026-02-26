@@ -5,6 +5,15 @@
 // with appropriate formatting. Multi-line strings are analyzed for markdown patterns
 // and rendered with MarkdownContent when detected, otherwise as plain preformatted text.
 // No collapse/expand, no truncation, no tool-specific logic.
+//
+// Supports an `editable` mode where each field becomes an input widget matching its detected type:
+// - boolean → wa-switch
+// - number → wa-input[type=number]
+// - string (single-line) → wa-input
+// - string (multi-line/markdown/code) → wa-textarea
+// - null → not editable (displayed as-is)
+// - object/array → recursive editing of children
+// Changes propagate upward via update:value emit.
 
 import { computed } from 'vue'
 import MarkdownContent from './MarkdownContent.vue'
@@ -33,8 +42,124 @@ const props = defineProps({
     override: {
         type: Object,
         default: null
+    },
+    editable: {
+        type: Boolean,
+        default: false
     }
 })
+
+const emit = defineEmits(['update:value'])
+
+/**
+ * Determine the base JSON type of a value (ignoring display sub-types).
+ * Used in edit mode to pick the right input widget.
+ * @param {*} val
+ * @returns {'null'|'boolean'|'number'|'string'|'array'|'object'}
+ */
+function baseType(val) {
+    if (val === null || val === undefined) return 'null'
+    if (typeof val === 'boolean') return 'boolean'
+    if (typeof val === 'number') return 'number'
+    if (typeof val === 'string') return 'string'
+    if (Array.isArray(val)) return 'array'
+    return 'object'
+}
+
+/**
+ * Determine the edit widget type for a value.
+ * For strings, distinguishes single-line vs multi-line to choose between wa-input and wa-textarea.
+ * @param {*} val
+ * @returns {'null'|'boolean'|'number'|'string'|'string-multiline'|'array'|'object'}
+ */
+function editType(val) {
+    const bt = baseType(val)
+    if (bt === 'string' && isMultiLine(val)) return 'string-multiline'
+    return bt
+}
+
+/**
+ * Emit an updated value for this node.
+ * @param {*} newValue
+ */
+function emitUpdate(newValue) {
+    emit('update:value', newValue)
+}
+
+/**
+ * Handle a child value update within an object.
+ * Rebuilds the object with the updated key and emits the new object.
+ * @param {string} key - The key that was updated
+ * @param {*} newChildValue - The new value for that key
+ */
+function onChildObjectUpdate(key, newChildValue) {
+    const updated = { ...props.value, [key]: newChildValue }
+    emitUpdate(updated)
+}
+
+/**
+ * Handle a child value update within an array.
+ * Rebuilds the array with the updated index and emits the new array.
+ * @param {number} index - The array index that was updated
+ * @param {*} newChildValue - The new value at that index
+ */
+function onChildArrayUpdate(index, newChildValue) {
+    const updated = [...props.value]
+    updated[index] = newChildValue
+    emitUpdate(updated)
+}
+
+/**
+ * Handle input event from a wa-input or wa-textarea for string values.
+ * @param {Event} event
+ */
+function onStringInput(event) {
+    emitUpdate(event.target.value)
+}
+
+/**
+ * Handle input event from a wa-input[type=number] for number values.
+ * Parses the string value as a number (int or float).
+ * @param {Event} event
+ */
+function onNumberInput(event) {
+    const raw = event.target.value
+    if (raw === '' || raw === '-') return
+    const parsed = Number(raw)
+    if (!Number.isNaN(parsed)) {
+        emitUpdate(parsed)
+    }
+}
+
+/**
+ * Handle change event from a wa-switch for boolean values.
+ * @param {Event} event
+ */
+function onBooleanChange(event) {
+    emitUpdate(event.target.checked)
+}
+
+/**
+ * Handle input event for a scalar array item.
+ * Updates the single item at the given index and emits the new array.
+ * @param {number} index - The array index
+ * @param {Event} event
+ */
+function onScalarArrayItemInput(index, event) {
+    const updated = [...props.value]
+    const raw = event.target.value
+    const original = props.value[index]
+    // Preserve the original type when possible
+    if (typeof original === 'number') {
+        const parsed = Number(raw)
+        updated[index] = Number.isNaN(parsed) ? raw : parsed
+    } else if (typeof original === 'boolean') {
+        updated[index] = raw === 'true'
+    } else {
+        updated[index] = raw
+    }
+    emitUpdate(updated)
+}
 
 /**
  * Check if a lowercased key matches any of the given keywords (singular and plural forms).
@@ -386,7 +511,7 @@ function generateDiff(oldStr, newStr) {
 
 <template>
     <div class="jhv-node" :class="{ 'jhv-nested': depth >= 1 }">
-        <!-- Null / undefined -->
+        <!-- Null / undefined (not editable — no meaningful type to edit into) -->
         <template v-if="effectiveType() === 'null'">
             <div class="jhv-entry">
                 <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
@@ -400,10 +525,15 @@ function generateDiff(oldStr, newStr) {
             <div class="jhv-entry">
                 <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
                 <span v-if="name != null" class="jhv-separator">: </span>
-                <template v-if="value">
-                    <wa-icon name="square-check" class="jhv-boolean-icon jhv-boolean-true"></wa-icon>
+                <template v-if="editable">
+                    <input type="checkbox" class="jhv-edit-checkbox" :checked="value" @change="onBooleanChange" />
                 </template>
-                <span v-else class="jhv-boolean-false">no</span>
+                <template v-else>
+                    <template v-if="value">
+                        <wa-icon name="square-check" class="jhv-boolean-icon jhv-boolean-true"></wa-icon>
+                    </template>
+                    <span v-else class="jhv-boolean-false">no</span>
+                </template>
             </div>
         </template>
 
@@ -412,34 +542,83 @@ function generateDiff(oldStr, newStr) {
             <div class="jhv-entry">
                 <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
                 <span v-if="name != null" class="jhv-separator">: </span>
-                <span class="jhv-number">{{ value }}</span>
+                <template v-if="editable">
+                    <wa-input
+                        type="number"
+                        size="small"
+                        class="jhv-edit-input jhv-edit-number"
+                        :value.prop="String(value)"
+                        @input="onNumberInput"
+                        no-spin-buttons
+                    ></wa-input>
+                </template>
+                <span v-else class="jhv-number">{{ value }}</span>
             </div>
         </template>
 
         <!-- String: markdown -->
         <template v-else-if="effectiveType() === 'string-markdown'">
             <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
-            <div class="jhv-markdown">
+            <template v-if="editable">
+                <wa-textarea
+                    size="small"
+                    class="jhv-edit-textarea"
+                    :value.prop="value"
+                    @input="onStringInput"
+                    resize="auto"
+                    rows="4"
+                ></wa-textarea>
+            </template>
+            <div v-else class="jhv-markdown">
                 <MarkdownContent :source="value" />
             </div>
         </template>
 
         <!-- String: code (not auto-detected, only via override) -->
         <template v-else-if="effectiveType() === 'string-code'">
-            <!-- With language or multi-line: fenced code block -->
-            <template v-if="override?.language || isMultiLine(value)">
-                <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
-                <div class="jhv-markdown">
-                    <MarkdownContent :source="'```' + (override?.language ?? '') + '\n' + value + '\n```'" />
-                </div>
+            <template v-if="editable">
+                <!-- Multi-line code: textarea -->
+                <template v-if="override?.language || isMultiLine(value)">
+                    <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
+                    <wa-textarea
+                        size="small"
+                        class="jhv-edit-textarea jhv-edit-code"
+                        :value.prop="value"
+                        @input="onStringInput"
+                        resize="auto"
+                        rows="4"
+                    ></wa-textarea>
+                </template>
+                <!-- Single-line code: input -->
+                <template v-else>
+                    <div class="jhv-entry">
+                        <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
+                        <span v-if="name != null" class="jhv-separator">: </span>
+                        <wa-input
+                            size="small"
+                            class="jhv-edit-input"
+                            :value.prop="value"
+                            @input="onStringInput"
+                        ></wa-input>
+                    </div>
+                </template>
             </template>
-            <!-- Single-line without language: inline code -->
             <template v-else>
-                <div class="jhv-entry">
-                    <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
-                    <span v-if="name != null" class="jhv-separator">: </span>
-                    <code class="jhv-code">{{ value }}</code>
-                </div>
+                <!-- With language or multi-line: fenced code block -->
+                <template v-if="override?.language || isMultiLine(value)">
+                    <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
+                    <div class="jhv-markdown">
+                        <MarkdownContent :source="'```' + (override?.language ?? '') + '\n' + value + '\n```'" />
+                    </div>
+                </template>
+                <!-- Single-line without language: inline code -->
+                <template v-else>
+                    <div class="jhv-entry">
+                        <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
+                        <span v-if="name != null" class="jhv-separator">: </span>
+                        <code class="jhv-code">{{ value }}</code>
+                    </div>
+                </template>
             </template>
         </template>
 
@@ -448,7 +627,15 @@ function generateDiff(oldStr, newStr) {
             <div class="jhv-entry">
                 <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
                 <span v-if="name != null" class="jhv-separator">: </span>
-                <span class="jhv-file">
+                <template v-if="editable">
+                    <wa-input
+                        size="small"
+                        class="jhv-edit-input"
+                        :value.prop="value"
+                        @input="onStringInput"
+                    ></wa-input>
+                </template>
+                <span v-else class="jhv-file">
                     <img v-if="fileIconUrl(value)" :src="fileIconUrl(value)" class="jhv-file-icon" loading="lazy" width="16" height="16" />
                     <span>{{ value }}</span>
                 </span>
@@ -460,14 +647,34 @@ function generateDiff(oldStr, newStr) {
             <div class="jhv-entry">
                 <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
                 <span v-if="name != null" class="jhv-separator">: </span>
-                <a :href="value" target="_blank" rel="noopener noreferrer nofollow" class="jhv-url">{{ value }}<wa-icon name="arrow-up-right-from-square" class="jhv-url-external"></wa-icon></a>
+                <template v-if="editable">
+                    <wa-input
+                        size="small"
+                        class="jhv-edit-input"
+                        :value.prop="value"
+                        @input="onStringInput"
+                    ></wa-input>
+                </template>
+                <template v-else>
+                    <a :href="value" target="_blank" rel="noopener noreferrer nofollow" class="jhv-url">{{ value }}<wa-icon name="arrow-up-right-from-square" class="jhv-url-external"></wa-icon></a>
+                </template>
             </div>
         </template>
 
         <!-- String: multi-line plain text -->
         <template v-else-if="effectiveType() === 'string-multiline'">
             <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
-            <pre class="jhv-pre">{{ value.trim() }}</pre>
+            <template v-if="editable">
+                <wa-textarea
+                    size="small"
+                    class="jhv-edit-textarea"
+                    :value.prop="value"
+                    @input="onStringInput"
+                    resize="auto"
+                    rows="4"
+                ></wa-textarea>
+            </template>
+            <pre v-else class="jhv-pre">{{ value.trim() }}</pre>
         </template>
 
         <!-- String: single-line -->
@@ -475,13 +682,34 @@ function generateDiff(oldStr, newStr) {
             <div class="jhv-entry">
                 <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
                 <span v-if="name != null" class="jhv-separator">: </span>
-                <span class="jhv-string">{{ value }}</span>
+                <template v-if="editable">
+                    <wa-input
+                        size="small"
+                        class="jhv-edit-input"
+                        :value.prop="value"
+                        @input="onStringInput"
+                    ></wa-input>
+                </template>
+                <span v-else class="jhv-string">{{ value }}</span>
             </div>
         </template>
 
         <!-- Array of URLs: inline comma-separated links -->
         <template v-else-if="effectiveType() === 'array-string-url'">
-            <div class="jhv-entry">
+            <template v-if="editable">
+                <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
+                <div class="jhv-edit-scalar-array">
+                    <wa-input
+                        v-for="(item, idx) in value"
+                        :key="idx"
+                        size="small"
+                        class="jhv-edit-input"
+                        :value.prop="String(item)"
+                        @input="onScalarArrayItemInput(idx, $event)"
+                    ></wa-input>
+                </div>
+            </template>
+            <div v-else class="jhv-entry">
                 <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
                 <span v-if="name != null" class="jhv-separator">: </span>
                 <span class="jhv-url-list">
@@ -503,9 +731,22 @@ function generateDiff(oldStr, newStr) {
                     <span class="jhv-null">&mdash;</span>
                 </div>
             </template>
-            <!-- Scalar array: inline comma-separated, same line as key -->
+            <!-- Scalar array: editable as individual inputs, read-only as comma-separated -->
             <template v-else-if="isScalarArray(value)">
-                <div class="jhv-entry">
+                <template v-if="editable">
+                    <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
+                    <div class="jhv-edit-scalar-array">
+                        <wa-input
+                            v-for="(item, idx) in value"
+                            :key="idx"
+                            size="small"
+                            class="jhv-edit-input"
+                            :value.prop="formatScalar(item)"
+                            @input="onScalarArrayItemInput(idx, $event)"
+                        ></wa-input>
+                    </div>
+                </template>
+                <div v-else class="jhv-entry">
                     <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
                     <span v-if="name != null" class="jhv-separator">: </span>
                     <span class="jhv-string">{{ value.map(formatScalar).join(', ') }}</span>
@@ -520,6 +761,8 @@ function generateDiff(oldStr, newStr) {
                         <JsonHumanView
                             :value="item"
                             :depth="depth + 1"
+                            :editable="editable"
+                            @update:value="onChildArrayUpdate(idx, $event)"
                         />
                     </div>
                 </div>
@@ -539,60 +782,76 @@ function generateDiff(oldStr, newStr) {
             <template v-else>
                 <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
                 <div class="jhv-children">
-                    <template v-for="key in Object.keys(value)" :key="key">
-                        <!-- Skip keys consumed by diff pairs (shown below in diff section) -->
-                        <template v-if="!diffPairs.consumed.has(key)">
-                            <!-- Content block source: render "data" as image or binary blob -->
-                            <template v-if="key === 'data' && contentBlockSource">
-                                <!-- Image: show the image inline -->
-                                <template v-if="contentBlockSource.kind === 'image'">
-                                    <div class="jhv-key jhv-block-key">{{ formatLabel('data') }}:</div>
-                                    <div class="jhv-content-block">
-                                        <img :src="'data:' + contentBlockSource.mediaType + ';base64,' + contentBlockSource.data" class="jhv-content-image" loading="lazy" />
-                                    </div>
-                                </template>
-                                <!-- Binary: show placeholder instead of raw data -->
-                                <template v-else>
-                                    <div class="jhv-entry">
-                                        <span class="jhv-key">{{ formatLabel('data') }}</span>
-                                        <span class="jhv-separator">: </span>
-                                        <span class="jhv-null jhv-binary-blob">&lsquo;binary blob&rsquo;</span>
-                                    </div>
-                                </template>
-                            </template>
-                            <!-- Normal key rendering -->
+                    <!-- In edit mode: render ALL keys individually (no diff grouping) -->
+                    <template v-if="editable">
+                        <template v-for="key in Object.keys(value)" :key="key">
                             <JsonHumanView
-                                v-else
                                 :value="value[key]"
                                 :name="key"
                                 :depth="depth + 1"
                                 :override="overrides[key] ?? siblingOverrides[key]"
+                                :editable="true"
+                                @update:value="onChildObjectUpdate(key, $event)"
                             />
                         </template>
                     </template>
-                    <!-- Render auto-generated diffs for old/new pairs -->
-                    <template v-for="pair in diffPairs.pairs" :key="'diff_' + pair.baseName">
-                        <div class="jhv-key jhv-block-key">{{ formatLabel(pair.baseName) }} diff:</div>
-                        <div class="jhv-markdown jhv-diff">
-                            <MarkdownContent :source="'```diff\n' + generateDiff(value[pair.oldKey], value[pair.newKey]) + '\n```'" />
-                        </div>
-                        <details class="jhv-diff-originals">
-                            <summary class="jhv-diff-originals-toggle">Old/new values</summary>
-                            <div class="jhv-children">
+                    <!-- In read mode: existing rendering with diff pairs and content block sources -->
+                    <template v-else>
+                        <template v-for="key in Object.keys(value)" :key="key">
+                            <!-- Skip keys consumed by diff pairs (shown below in diff section) -->
+                            <template v-if="!diffPairs.consumed.has(key)">
+                                <!-- Content block source: render "data" as image or binary blob -->
+                                <template v-if="key === 'data' && contentBlockSource">
+                                    <!-- Image: show the image inline -->
+                                    <template v-if="contentBlockSource.kind === 'image'">
+                                        <div class="jhv-key jhv-block-key">{{ formatLabel('data') }}:</div>
+                                        <div class="jhv-content-block">
+                                            <img :src="'data:' + contentBlockSource.mediaType + ';base64,' + contentBlockSource.data" class="jhv-content-image" loading="lazy" />
+                                        </div>
+                                    </template>
+                                    <!-- Binary: show placeholder instead of raw data -->
+                                    <template v-else>
+                                        <div class="jhv-entry">
+                                            <span class="jhv-key">{{ formatLabel('data') }}</span>
+                                            <span class="jhv-separator">: </span>
+                                            <span class="jhv-null jhv-binary-blob">&lsquo;binary blob&rsquo;</span>
+                                        </div>
+                                    </template>
+                                </template>
+                                <!-- Normal key rendering -->
                                 <JsonHumanView
-                                    :value="value[pair.oldKey]"
-                                    :name="pair.oldKey"
+                                    v-else
+                                    :value="value[key]"
+                                    :name="key"
                                     :depth="depth + 1"
-                                    :override="overrides[pair.oldKey] ?? siblingOverrides[pair.oldKey] ?? { valueType: 'string-multiline' }"
+                                    :override="overrides[key] ?? siblingOverrides[key]"
                                 />
-                                <JsonHumanView
-                                    :value="value[pair.newKey]"
-                                    :name="pair.newKey"
-                                    :depth="depth + 1"
-                                    :override="overrides[pair.newKey] ?? siblingOverrides[pair.newKey] ?? { valueType: 'string-multiline' }"
-                                />
+                            </template>
+                        </template>
+                        <!-- Render auto-generated diffs for old/new pairs -->
+                        <template v-for="pair in diffPairs.pairs" :key="'diff_' + pair.baseName">
+                            <div class="jhv-key jhv-block-key">{{ formatLabel(pair.baseName) }} diff:</div>
+                            <div class="jhv-markdown jhv-diff">
+                                <MarkdownContent :source="'```diff\n' + generateDiff(value[pair.oldKey], value[pair.newKey]) + '\n```'" />
                             </div>
-                        </details>
+                            <details class="jhv-diff-originals">
+                                <summary class="jhv-diff-originals-toggle">Old/new values</summary>
+                                <div class="jhv-children">
+                                    <JsonHumanView
+                                        :value="value[pair.oldKey]"
+                                        :name="pair.oldKey"
+                                        :depth="depth + 1"
+                                        :override="overrides[pair.oldKey] ?? siblingOverrides[pair.oldKey] ?? { valueType: 'string-multiline' }"
+                                    />
+                                    <JsonHumanView
+                                        :value="value[pair.newKey]"
+                                        :name="pair.newKey"
+                                        :depth="depth + 1"
+                                        :override="overrides[pair.newKey] ?? siblingOverrides[pair.newKey] ?? { valueType: 'string-multiline' }"
+                                    />
+                                </div>
+                            </details>
+                        </template>
                     </template>
                 </div>
             </template>
@@ -741,5 +1000,41 @@ function generateDiff(oldStr, newStr) {
     &:hover {
         opacity: 1;
     }
+}
+
+/* =========================================================================
+   Edit mode styles
+   ========================================================================= */
+
+.jhv-edit-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.jhv-edit-number {
+    max-width: 12rem;
+}
+
+.jhv-edit-textarea {
+    width: 100%;
+}
+
+.jhv-edit-code {
+    font-family: var(--wa-font-mono);
+}
+
+.jhv-edit-checkbox {
+    width: 1.1em;
+    height: 1.1em;
+    accent-color: var(--wa-color-primary);
+    cursor: pointer;
+    vertical-align: middle;
+}
+
+.jhv-edit-scalar-array {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-2xs);
+    margin-left: var(--wa-space-m);
 }
 </style>

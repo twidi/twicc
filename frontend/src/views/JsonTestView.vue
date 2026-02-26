@@ -2,9 +2,21 @@
 // JsonTestView.vue - Temporary test page for JsonHumanView component.
 // Access at /json-test
 
+import { reactive, ref } from 'vue'
 import JsonHumanView from '../components/JsonHumanView.vue'
 
-const testCases = [
+// Track which test cases are in edit mode (by index)
+const editingStates = reactive({})
+
+function toggleEdit(index) {
+    editingStates[index] = !editingStates[index]
+}
+
+function onUpdate(index, newValue) {
+    testCases[index].json = newValue
+}
+
+const testCases = reactive([
     {
         title: 'Bash tool (with override: command → string-code)',
         json: {
@@ -200,7 +212,7 @@ const testCases = [
             content: 'This is plain text content\nwith multiple lines\nbut no sibling path key.\n'
         },
     },
-]
+])
 </script>
 
 <template>
@@ -213,12 +225,28 @@ const testCases = [
             :key="index"
             class="test-case"
         >
-            <h2 class="test-title">{{ testCase.title }}</h2>
+            <h2 class="test-title">
+                <span>{{ testCase.title }}</span>
+                <wa-button
+                    size="small"
+                    :variant="editingStates[index] ? 'brand' : 'neutral'"
+                    :appearance="editingStates[index] ? 'filled' : 'outlined'"
+                    @click="toggleEdit(index)"
+                >
+                    <wa-icon :name="editingStates[index] ? 'eye' : 'pen'" variant="classic" slot="prefix"></wa-icon>
+                    {{ editingStates[index] ? 'Read' : 'Edit' }}
+                </wa-button>
+            </h2>
             <div class="test-render">
-                <JsonHumanView :value="testCase.json" :overrides="testCase.overrides ?? {}" />
+                <JsonHumanView
+                    :value="testCase.json"
+                    :overrides="testCase.overrides ?? {}"
+                    :editable="!!editingStates[index]"
+                    @update:value="onUpdate(index, $event)"
+                />
             </div>
             <details class="test-raw">
-                <summary>Raw JSON</summary>
+                <summary>Raw JSON{{ editingStates[index] ? ' (live)' : '' }}</summary>
                 <pre>{{ JSON.stringify(testCase.json, null, 2) }}</pre>
             </details>
         </div>
@@ -259,6 +287,10 @@ h1 {
     background: var(--wa-color-neutral-5);
     border-bottom: 1px solid var(--wa-color-surface-border);
     margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
 }
 
 .test-render {
