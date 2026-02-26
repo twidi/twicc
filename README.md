@@ -100,6 +100,15 @@ Optionally, install dev tools (django-extensions, ipython):
 uv sync --group dev
 ```
 
+### Building and publishing
+
+```bash
+uv build        # Build sdist + wheel → dist/
+uv publish      # Publish to PyPI
+```
+
+The build automatically runs `npm ci` + `npm run build` in `frontend/` via a hatch build hook — no manual frontend build step needed.
+
 ## Tech stack
 
 - **Backend:** Django 6, Uvicorn, Django Channels (WebSocket)

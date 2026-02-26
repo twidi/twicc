@@ -52,14 +52,16 @@ Repository = "https://github.com/twidi/twicc"
 [project.scripts]
 twicc = "twicc:main"
 
+[tool.hatch.build]
+# Built frontend assets are gitignored but must be included in the package.
+artifacts = ["src/twicc/static/frontend/**"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/twicc"]
 
-# Built frontend assets are gitignored but must be included in the package.
-# force-include pulls them into the sdist; from there hatchling discovers them
-# automatically when building the wheel.
-[tool.hatch.build.targets.sdist.force-include]
-"src/twicc/static/frontend" = "src/twicc/static/frontend"
+# Build hook (hatch_build.py) runs npm ci + npm run build before packaging.
+# Applied globally so both sdist and wheel contain fresh frontend assets.
+[tool.hatch.build.hooks.custom]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "twicc.settings_test"
