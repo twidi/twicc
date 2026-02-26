@@ -78,6 +78,7 @@ async def _call_haiku(user_message: str, system_prompt: str, source: str = "unkn
         model="haiku",
         permission_mode="default",
         extra_args={"no-session-persistence": None},
+        allowed_tools=[],
     )
 
     client = ClaudeSDKClient(options=options)
@@ -113,7 +114,7 @@ async def _call_haiku(user_message: str, system_prompt: str, source: str = "unkn
             logger.warning("Title suggestion: empty response (source=%s)", source)
             return None
         if len(suggestion) > 200:
-            logger.warning("Title suggestion: too long (%d chars), source=%s", len(suggestion), source)
+            logger.warning("Title suggestion: too long (%d chars), source=%s: %s", len(suggestion), source, suggestion)
             return None
 
         logger.info("Title suggestion generated: %r (source=%s)", suggestion, source)
