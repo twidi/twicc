@@ -240,3 +240,4 @@ logs/
 
 # Agent local files
 CLAUDE.local.md
+/.claude/

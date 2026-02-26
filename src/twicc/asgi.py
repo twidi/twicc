@@ -18,7 +18,7 @@ from django.conf import settings
 from django.core.asgi import get_asgi_application
 from django.urls import path
 
-from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny, PermissionRuleValue, PermissionUpdate
 
 from twicc.agent.manager import get_process_manager
 from twicc.agent.states import ProcessInfo, ProcessState, serialize_process_info
@@ -30,6 +30,40 @@ logger = logging.getLogger(__name__)
 # WebSocket close code for authentication failure.
 # 4000-4999 range is reserved for application use by the WebSocket spec.
 WS_CLOSE_AUTH_FAILURE = 4001
+
+
+def _permission_update_from_dict(data: dict) -> PermissionUpdate:
+    """Reconstruct a PermissionUpdate from its serialized dict form.
+
+    The SDK's ``PermissionUpdate.to_dict()`` uses camelCase keys (e.g., ``toolName``,
+    ``ruleContent``). This function reverses that conversion back to the dataclass
+    with snake_case field names.
+
+    Args:
+        data: Dictionary as produced by ``PermissionUpdate.to_dict()``
+
+    Returns:
+        A ``PermissionUpdate`` instance ready to pass back to the SDK.
+    """
+    rules = None
+    raw_rules = data.get("rules")
+    if raw_rules is not None:
+        rules = [
+            PermissionRuleValue(
+                tool_name=r["toolName"],
+                rule_content=r.get("ruleContent"),
+            )
+            for r in raw_rules
+        ]
+
+    return PermissionUpdate(
+        type=data["type"],
+        rules=rules,
+        behavior=data.get("behavior"),
+        mode=data.get("mode"),
+        directories=data.get("directories"),
+        destination=data.get("destination"),
+    )
 
 
 @sync_to_async
@@ -490,6 +524,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             "decision": "allow" | "deny",
             "message": "optional reason for deny",
             "updated_input": { ... }  // optional, for approve with modifications
+            "updated_permissions": [ ... ]  // optional, checked permission suggestions
         }
 
         Expected content for ask_user_question:
@@ -521,7 +556,17 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             decision = content.get("decision")
             if decision == "allow":
                 updated_input = content.get("updated_input")
-                response = PermissionResultAllow(updated_input=updated_input)
+
+                # Reconstruct accepted permission suggestions (if any) from the frontend
+                updated_permissions = None
+                raw_permissions = content.get("updated_permissions")
+                if raw_permissions:
+                    updated_permissions = [_permission_update_from_dict(p) for p in raw_permissions]
+
+                response = PermissionResultAllow(
+                    updated_input=updated_input,
+                    updated_permissions=updated_permissions,
+                )
             else:
                 message = content.get("message", "User denied this action")
                 response = PermissionResultDeny(message=message)

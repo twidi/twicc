@@ -18,7 +18,7 @@ from claude_agent_sdk import (
     HookMatcher,
     PermissionResultAllow,
     PermissionResultDeny,
-    ResultMessage, ToolPermissionContext,
+    PermissionUpdate, ResultMessage, ToolPermissionContext,
 )
 
 from .sdk_logger import patch_client as patch_client_for_logging
@@ -181,6 +181,52 @@ class ClaudeProcess:
             pending_request=self._pending_request,
         )
 
+    def get_permission_suggestions(
+        self, input_data: dict, context: ToolPermissionContext
+    ) -> list[dict] | None:
+        """Extract, serialize and filter permission suggestions from the SDK context.
+
+        The SDK may provide suggestions as ``PermissionUpdate`` dataclass instances
+        or, in some cases, as plain dicts. This method normalises both forms into
+        a list of JSON-serialisable dicts ready for transmission to the frontend.
+
+        Filtering applied:
+        - For ``addDirectories`` / ``removeDirectories`` suggestions, the project
+          directory (``self.cwd``) is removed from the directories list (it is always
+          implicitly allowed). If the directories list becomes empty after filtering,
+          the suggestion is dropped entirely.
+
+        Args:
+            input_data: The tool's input parameters (reserved for future filtering)
+            context: SDK ``ToolPermissionContext`` containing the suggestions list
+
+        Returns:
+            A list of serialised permission suggestion dicts, or ``None`` if there
+            are none (or all were filtered out).
+        """
+        if not context.suggestions:
+            return None
+
+        serialized = [s.to_dict() if isinstance(s, PermissionUpdate) else s for s in context.suggestions]
+
+        result = []
+        for suggestion in serialized:
+            suggestion_type = suggestion.get("type")
+
+            if suggestion_type in ("addDirectories", "removeDirectories"):
+                directories = suggestion.get("directories")
+                if directories is not None:
+                    # Filter out the project directory — it is always implicitly allowed
+                    directories = [d for d in directories if d != self.cwd]
+                    if not directories:
+                        # Nothing left to suggest after filtering
+                        continue
+                    suggestion = {**suggestion, "directories": directories}
+
+            result.append(suggestion)
+
+        return result or None
+
     async def _handle_pending_request(
         self,
         tool_name: str,
@@ -196,13 +242,13 @@ class ClaudeProcess:
         Args:
             tool_name: The tool Claude wants to use (e.g., "Bash", "AskUserQuestion")
             input_data: The tool's input parameters
-            context: SDK ToolPermissionContext (unused)
+            context: SDK ToolPermissionContext with optional permission suggestions
 
         Returns:
             PermissionResultAllow or PermissionResultDeny from the user's response
         """
         logger.debug(
-            "can_use_tool called: tool_name=%s, input_data=%s, suggestions=%s",
+            "can_use_tool called: tool_name=%s, input_data=%s, permission_suggestions=%s",
             tool_name,
             orjson.dumps(input_data, option=orjson.OPT_INDENT_2).decode(),
             getattr(context, "suggestions", None),
@@ -215,12 +261,15 @@ class ClaudeProcess:
         else:
             request_type = "tool_approval"
 
+        permission_suggestions = self.get_permission_suggestions(input_data, context)
+
         self._pending_request = PendingRequest(
             request_id=request_id,
             request_type=request_type,
             tool_name=tool_name,
             tool_input=input_data,
             created_at=time.time(),
+            permission_suggestions=permission_suggestions,
         )
 
         # Create a Future for the response

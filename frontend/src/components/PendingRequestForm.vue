@@ -86,6 +86,9 @@ const isEditing = ref(false)
 // Deep copy of tool input being edited (null when not editing)
 const editedToolInput = ref(null)
 
+// Set of suggestion indices that the user has checked (for permission suggestions)
+const checkedSuggestions = reactive(new Set())
+
 // ============================================================================
 // Ask user question state
 // ============================================================================
@@ -119,6 +122,7 @@ watch(() => props.pendingRequest?.request_id, () => {
     showDenyReason.value = false
     isEditing.value = false
     editedToolInput.value = null
+    checkedSuggestions.clear()
     // Ask user question state
     Object.keys(questionSelections).forEach(k => delete questionSelections[k])
     Object.keys(otherTexts).forEach(k => delete otherTexts[k])
@@ -166,6 +170,37 @@ const toolOverrides = computed(() => {
     return enriched
 })
 
+// Permission suggestions from the SDK (list of PermissionUpdate dicts, or empty)
+const permissionSuggestions = computed(() => props.pendingRequest.permission_suggestions || [])
+
+// Whether there are any permission suggestions to display
+const hasPermissionSuggestions = computed(() => permissionSuggestions.value.length > 0)
+
+/**
+ * Toggle a permission suggestion's checked state.
+ * @param {number} index - Index in the permissionSuggestions array
+ */
+function togglePermissionSuggestion(index) {
+    if (checkedSuggestions.has(index)) {
+        checkedSuggestions.delete(index)
+    } else {
+        checkedSuggestions.add(index)
+    }
+}
+
+/**
+ * Get the list of checked permission suggestion dicts (to send back as updated_permissions).
+ * @returns {Array<Object>} The checked permission suggestion objects
+ */
+function getCheckedPermissionSuggestions() {
+    if (checkedSuggestions.size === 0) return null
+    const result = []
+    for (const index of checkedSuggestions) {
+        result.push(permissionSuggestions.value[index])
+    }
+    return result
+}
+
 // ============================================================================
 // Ask user question computed
 // ============================================================================
@@ -186,18 +221,36 @@ const canSubmitQuestions = computed(() => {
 // ============================================================================
 
 /**
+ * Build the base approval response payload, including checked permission suggestions.
+ * @param {Object} toolInputValue - The tool input to include (original or edited)
+ * @returns {Object} The response payload for respondToPendingRequest
+ */
+function buildApprovalResponse(toolInputValue) {
+    const response = {
+        request_type: 'tool_approval',
+        decision: 'allow',
+        updated_input: toolInputValue,
+    }
+    const permissions = getCheckedPermissionSuggestions()
+    if (permissions) {
+        response.updated_permissions = permissions
+    }
+    return response
+}
+
+/**
  * Handle approve action.
- * Sends the tool approval with the original input data.
+ * Sends the tool approval with the original input data and any checked permission suggestions.
  */
 function handleApprove() {
     if (isResponding.value) return
     isResponding.value = true
 
-    store.respondToPendingRequest(props.sessionId, props.pendingRequest.request_id, {
-        request_type: 'tool_approval',
-        decision: 'allow',
-        updated_input: toolInput.value,
-    })
+    store.respondToPendingRequest(
+        props.sessionId,
+        props.pendingRequest.request_id,
+        buildApprovalResponse(toolInput.value),
+    )
 }
 
 /**
@@ -272,17 +325,17 @@ function cancelEdit() {
 
 /**
  * Handle "approve with changes" action.
- * Sends the modified tool input as updated_input.
+ * Sends the modified tool input as updated_input and any checked permission suggestions.
  */
 function handleApproveWithChanges() {
     if (isResponding.value) return
     isResponding.value = true
 
-    store.respondToPendingRequest(props.sessionId, props.pendingRequest.request_id, {
-        request_type: 'tool_approval',
-        decision: 'allow',
-        updated_input: editedToolInput.value,
-    })
+    store.respondToPendingRequest(
+        props.sessionId,
+        props.pendingRequest.request_id,
+        buildApprovalResponse(editedToolInput.value),
+    )
 }
 
 /**
@@ -470,6 +523,36 @@ function handleSubmitQuestions() {
                     @update:value="onToolInputUpdate"
                 />
             </div>
+
+            <!-- Permission suggestions (wa-details, closed by default) -->
+            <wa-details v-if="hasPermissionSuggestions" class="permission-suggestions-details">
+                <span slot="summary">
+                    <wa-icon name="key" variant="classic"></wa-icon>
+                    Permission suggestions
+                </span>
+                <div class="permission-suggestions-list">
+                    <wa-card
+                        v-for="(suggestion, sIndex) in permissionSuggestions"
+                        :key="sIndex"
+                        appearance="outlined"
+                        class="permission-suggestion-card"
+                        :class="{ selected: checkedSuggestions.has(sIndex) }"
+                        @click="togglePermissionSuggestion(sIndex)"
+                    >
+                        <div class="permission-suggestion-card-body">
+                            <JsonHumanView :value="suggestion" />
+                        </div>
+                        <div class="permission-suggestion-card-footer">
+                            <wa-switch
+                                size="small"
+                                :checked.prop="checkedSuggestions.has(sIndex)"
+                                @click.stop
+                                @change.stop="togglePermissionSuggestion(sIndex)"
+                            >Apply this permission</wa-switch>
+                        </div>
+                    </wa-card>
+                </div>
+            </wa-details>
 
             <!-- Action buttons: three states — default / deny reason / editing -->
             <div class="pending-request-actions">
@@ -708,6 +791,73 @@ wa-divider {
 
 .tool-name-badge {
     margin-bottom: var(--wa-space-2xs);
+}
+
+/* =========================================================================
+   Permission suggestions styles
+   ========================================================================= */
+
+.permission-suggestions-details {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+    --spacing: var(--wa-space-xs);
+
+    &::part(base) {
+        display: inline-block;
+    }
+    [slot="summary"] {
+        display: flex !important;
+        align-items: center;
+        gap: var(--wa-space-s);
+        font-weight: 600;
+    }
+    &::part(content) {
+        padding-block-start: 0 !important;
+        padding-block-end: calc(var(--spacing) + 4px);
+    }
+}
+
+.permission-suggestions-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wa-space-s);
+}
+
+.permission-suggestion-card {
+    flex: 1 1 0;
+    min-width: min-content;
+    max-width: 20rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background-color 0.15s;
+    --spacing: var(--wa-space-s);
+
+    --border-color-base: var(--wa-color-surface-border);
+    --background-color-base: var(--wa-color-surface-raised);
+    --border-color: var(--border-color-base);
+    --background-color: var(--background-color-base);
+
+    border-color: var(--border-color);
+    background: var(--background-color);
+    box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) 0 0 var(--border-color);
+    &:hover {
+        --border-color: oklch(from var(--border-color-base)calc(l + 0.025) c h);
+        --background-color: oklch(from var(--background-color-base)calc(l + 0.025) c h);
+    }
+}
+
+.permission-suggestion-card.selected {
+    --border-color-base: var(--wa-color-border-normal);
+    --background-color-base: var(--wa-color-fill-normal);
+}
+
+.permission-suggestion-card-body {
+    font-size: var(--wa-font-size-s);
+}
+
+.permission-suggestion-card-footer {
+    margin-top: var(--wa-space-xs);
+    padding-top: var(--wa-space-xs);
+    border-top: 1px solid var(--wa-color-neutral-15);
 }
 
 .pending-request-actions {

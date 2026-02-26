@@ -57,6 +57,8 @@ class PendingRequest:
         tool_name: SDK tool name (e.g., "Bash", "Write", "AskUserQuestion")
         tool_input: SDK tool input data (parameters for tool approval, questions for ask_user_question)
         created_at: Unix timestamp when the request was created
+        permission_suggestions: Serialized permission update suggestions from the SDK (list of dicts).
+            Only present for tool_approval requests when the SDK provides permission suggestions.
     """
 
     request_id: str
@@ -64,6 +66,7 @@ class PendingRequest:
     tool_name: str
     tool_input: dict
     created_at: float
+    permission_suggestions: list[dict] | None = None
 
 
 class ProcessState(StrEnum):
@@ -149,4 +152,6 @@ def serialize_process_info(info: ProcessInfo) -> dict:
             "tool_input": info.pending_request.tool_input,
             "created_at": info.pending_request.created_at,
         }
+        if info.pending_request.permission_suggestions:
+            data["pending_request"]["permission_suggestions"] = info.pending_request.permission_suggestions
     return data
