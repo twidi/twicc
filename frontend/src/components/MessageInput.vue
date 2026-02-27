@@ -8,7 +8,7 @@ import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSock
 import { useVisualViewport } from '../composables/useVisualViewport'
 import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
-import { PERMISSION_MODE, PERMISSION_MODE_LABELS } from '../constants'
+import { PERMISSION_MODE, PERMISSION_MODE_LABELS, CLAUDE_MODEL, CLAUDE_MODEL_LABELS } from '../constants'
 import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -59,8 +59,17 @@ const permissionModeOptions = Object.values(PERMISSION_MODE).map(value => ({
     label: PERMISSION_MODE_LABELS[value],
 }))
 
+// Claude model options for the dropdown
+const claudeModelOptions = Object.values(CLAUDE_MODEL).map(value => ({
+    value,
+    label: CLAUDE_MODEL_LABELS[value],
+}))
+
 // Selected permission mode for the current session
 const selectedPermissionMode = ref('default')
+
+// Selected Claude model for the current session
+const selectedClaudeModel = ref('opus')
 
 // Get process state for this session
 const processState = computed(() => store.getProcessState(props.sessionId))
@@ -95,9 +104,9 @@ const placeholderText = computed(() => {
     return 'Type your message...'
 })
 
-// Whether the permission mode dropdown should be disabled
+// Whether the permission mode / model dropdowns should be disabled
 // Disabled when a process is actively running on this session
-const isPermissionModeDisabled = computed(() => {
+const isDropdownsDisabled = computed(() => {
     const state = processState.value?.state
     return state === 'starting' || state === 'assistant_turn' || state === 'user_turn'
 })
@@ -112,10 +121,20 @@ function resolvePermissionMode(sess) {
     return sess?.permission_mode || settingsStore.getDefaultPermissionMode
 }
 
-// Sync permission mode when session changes
+// Determine the effective Claude model for the current session.
+// Same logic as permission mode: "always apply" overrides, otherwise DB or settings default.
+function resolveClaudeModel(sess) {
+    if (settingsStore.isAlwaysApplyDefaultClaudeModel) {
+        return settingsStore.getDefaultClaudeModel
+    }
+    return sess?.selected_model || settingsStore.getDefaultClaudeModel
+}
+
+// Sync permission mode and model when session changes
 watch(() => props.sessionId, (newId) => {
     const sess = store.getSession(newId)
     selectedPermissionMode.value = resolvePermissionMode(sess)
+    selectedClaudeModel.value = resolveClaudeModel(sess)
 }, { immediate: true })
 
 // When the default permission mode setting changes, or the "always apply" toggle
@@ -123,9 +142,20 @@ watch(() => props.sessionId, (newId) => {
 watch(
     () => [settingsStore.getDefaultPermissionMode, settingsStore.isAlwaysApplyDefaultPermissionMode],
     () => {
-        if (isPermissionModeDisabled.value) return
+        if (isDropdownsDisabled.value) return
         const sess = store.getSession(props.sessionId)
         selectedPermissionMode.value = resolvePermissionMode(sess)
+    }
+)
+
+// When the default Claude model setting changes, or the "always apply" toggle
+// changes, update the dropdown for sessions that should follow the default
+watch(
+    () => [settingsStore.getDefaultClaudeModel, settingsStore.isAlwaysApplyDefaultClaudeModel],
+    () => {
+        if (isDropdownsDisabled.value) return
+        const sess = store.getSession(props.sessionId)
+        selectedClaudeModel.value = resolveClaudeModel(sess)
     }
 )
 
@@ -133,8 +163,18 @@ watch(
 watch(
     () => store.getSession(props.sessionId)?.permission_mode,
     (newMode) => {
-        if (newMode && !isPermissionModeDisabled.value) {
+        if (newMode && !isDropdownsDisabled.value) {
             selectedPermissionMode.value = newMode
+        }
+    }
+)
+
+// React when selected_model data arrives from backend
+watch(
+    () => store.getSession(props.sessionId)?.selected_model,
+    (newModel) => {
+        if (newModel && !isDropdownsDisabled.value) {
+            selectedClaudeModel.value = newModel
         }
     }
 )
@@ -358,6 +398,7 @@ async function handleSend() {
         project_id: props.projectId,
         text: text,
         permission_mode: selectedPermissionMode.value,
+        selected_model: selectedClaudeModel.value,
     }
 
     // For draft sessions with a title, include it
@@ -543,13 +584,28 @@ async function handleClear() {
             </div>
 
             <div class="message-input-actions">
+                <!-- Claude model selector -->
+                <wa-select
+                    :value.prop="selectedClaudeModel"
+                    @change="selectedClaudeModel = $event.target.value"
+                    size="small"
+                    class="claude-model-select"
+                    :disabled="isDropdownsDisabled"
+                >
+                    <wa-option
+                        v-for="option in claudeModelOptions"
+                        :key="option.value"
+                        :value="option.value"
+                    >{{ option.label }}</wa-option>
+                </wa-select>
+
                 <!-- Permission mode selector -->
                 <wa-select
                     :value.prop="selectedPermissionMode"
                     @change="selectedPermissionMode = $event.target.value"
                     size="small"
                     class="permission-mode-select"
-                    :disabled="isPermissionModeDisabled"
+                    :disabled="isDropdownsDisabled"
                 >
                     <wa-option
                         v-for="option in permissionModeOptions"
@@ -641,12 +697,21 @@ body.sidebar-closed .message-input-toolbar {
     }
 }
 
+.claude-model-select {
+    min-width: 6rem;
+    max-width: 8rem;
+}
+
 .permission-mode-select {
     min-width: 8rem;
     max-width: 10rem;
 }
 
 @media (width < 400px) {
+    .claude-model-select {
+        min-width: 5rem;
+        max-width: 6rem;
+    }
     .permission-mode-select {
         min-width: 6rem;
         max-width: 8rem;

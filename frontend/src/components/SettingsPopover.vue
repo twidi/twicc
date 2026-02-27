@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
-import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS } from '../constants'
+import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, CLAUDE_MODEL, CLAUDE_MODEL_LABELS, CLAUDE_MODEL_DESCRIPTIONS } from '../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -54,6 +54,8 @@ const tmuxSwitch = ref(null)
 const compactSessionListSwitch = ref(null)
 const permissionModeSelect = ref(null)
 const alwaysApplyDefaultPermissionModeSwitch = ref(null)
+const claudeModelSelect = ref(null)
+const alwaysApplyDefaultClaudeModelSwitch = ref(null)
 const diffSideBySideSwitch = ref(null)
 const editorWordWrapSwitch = ref(null)
 const notificationSettingsRef = ref(null)
@@ -73,6 +75,8 @@ const terminalUseTmux = computed(() => store.isTerminalUseTmux)
 const compactSessionList = computed(() => store.isCompactSessionList)
 const defaultPermissionMode = computed(() => store.getDefaultPermissionMode)
 const alwaysApplyDefaultPermissionMode = computed(() => store.isAlwaysApplyDefaultPermissionMode)
+const defaultClaudeModel = computed(() => store.getDefaultClaudeModel)
+const alwaysApplyDefaultClaudeModel = computed(() => store.isAlwaysApplyDefaultClaudeModel)
 const diffSideBySide = computed(() => store.isDiffSideBySide)
 const editorWordWrap = computed(() => store.isEditorWordWrap)
 
@@ -92,6 +96,13 @@ const permissionModeOptions = Object.values(PERMISSION_MODE).map(value => ({
     value,
     label: PERMISSION_MODE_LABELS[value],
     description: PERMISSION_MODE_DESCRIPTIONS[value],
+}))
+
+// Claude model options for the select
+const claudeModelOptions = Object.values(CLAUDE_MODEL).map(value => ({
+    value,
+    label: CLAUDE_MODEL_LABELS[value],
+    description: CLAUDE_MODEL_DESCRIPTIONS[value],
 }))
 
 // Sync switch checked state with store values
@@ -146,11 +157,17 @@ function syncSwitchState() {
         if (alwaysApplyDefaultPermissionModeSwitch.value && alwaysApplyDefaultPermissionModeSwitch.value.checked !== alwaysApplyDefaultPermissionMode.value) {
             alwaysApplyDefaultPermissionModeSwitch.value.checked = alwaysApplyDefaultPermissionMode.value
         }
+        if (claudeModelSelect.value && claudeModelSelect.value.value !== defaultClaudeModel.value) {
+            claudeModelSelect.value.value = defaultClaudeModel.value
+        }
+        if (alwaysApplyDefaultClaudeModelSwitch.value && alwaysApplyDefaultClaudeModelSwitch.value.checked !== alwaysApplyDefaultClaudeModel.value) {
+            alwaysApplyDefaultClaudeModelSwitch.value.checked = alwaysApplyDefaultClaudeModel.value
+        }
     })
 }
 
 // Watch for store changes and sync switches
-watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, defaultPermissionMode, alwaysApplyDefaultPermissionMode, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide, editorWordWrap], syncSwitchState, { immediate: true })
+watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, defaultPermissionMode, alwaysApplyDefaultPermissionMode, defaultClaudeModel, alwaysApplyDefaultClaudeModel, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide, editorWordWrap], syncSwitchState, { immediate: true })
 
 /**
  * Handle display mode change.
@@ -241,6 +258,20 @@ function onDefaultPermissionModeChange(event) {
  */
 function onAlwaysApplyDefaultPermissionModeChange(event) {
     store.setAlwaysApplyDefaultPermissionMode(event.target.checked)
+}
+
+/**
+ * Handle default Claude model change.
+ */
+function onDefaultClaudeModelChange(event) {
+    store.setDefaultClaudeModel(event.target.value)
+}
+
+/**
+ * Toggle "always apply default Claude model" setting.
+ */
+function onAlwaysApplyDefaultClaudeModelChange(event) {
+    store.setAlwaysApplyDefaultClaudeModel(event.target.checked)
 }
 
 /**
@@ -378,6 +409,30 @@ function onPopoverShow() {
                             size="small"
                         >Enabled</wa-switch>
                         <span class="setting-group-hint">Override the per-session mode with the default above.</span>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Default model</label>
+                        <wa-select
+                            ref="claudeModelSelect"
+                            :value.prop="defaultClaudeModel"
+                            @change="onDefaultClaudeModelChange"
+                            size="small"
+                        >
+                            <wa-option
+                                v-for="option in claudeModelOptions"
+                                :key="option.value"
+                                :value="option.value"
+                            >{{ option.label }}</wa-option>
+                        </wa-select>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Always apply default model</label>
+                        <wa-switch
+                            ref="alwaysApplyDefaultClaudeModelSwitch"
+                            @change="onAlwaysApplyDefaultClaudeModelChange"
+                            size="small"
+                        >Enabled</wa-switch>
+                        <span class="setting-group-hint">Override the per-session model with the default above.</span>
                     </div>
                 </section>
 

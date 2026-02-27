@@ -3,7 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_CLAUDE_MODEL, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, CLAUDE_MODEL } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
 import { setThemeMode } from '../utils/theme'
@@ -32,6 +32,8 @@ const SETTINGS_SCHEMA = {
     compactSessionList: false,
     defaultPermissionMode: DEFAULT_PERMISSION_MODE,
     alwaysApplyDefaultPermissionMode: false,
+    defaultClaudeModel: DEFAULT_CLAUDE_MODEL,
+    alwaysApplyDefaultClaudeModel: false,
     // Notification settings: sound + browser notification for each event type
     notifUserTurnSound: NOTIFICATION_SOUNDS.NONE,
     notifUserTurnBrowser: false,
@@ -65,6 +67,8 @@ const SETTINGS_VALIDATORS = {
     compactSessionList: (v) => typeof v === 'boolean',
     defaultPermissionMode: (v) => Object.values(PERMISSION_MODE).includes(v),
     alwaysApplyDefaultPermissionMode: (v) => typeof v === 'boolean',
+    defaultClaudeModel: (v) => Object.values(CLAUDE_MODEL).includes(v),
+    alwaysApplyDefaultClaudeModel: (v) => typeof v === 'boolean',
     notifUserTurnSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
     notifUserTurnBrowser: (v) => typeof v === 'boolean',
     notifPendingRequestSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
@@ -151,6 +155,8 @@ export const useSettingsStore = defineStore('settings', {
         isCompactSessionList: (state) => state.compactSessionList,
         getDefaultPermissionMode: (state) => state.defaultPermissionMode,
         isAlwaysApplyDefaultPermissionMode: (state) => state.alwaysApplyDefaultPermissionMode,
+        getDefaultClaudeModel: (state) => state.defaultClaudeModel,
+        isAlwaysApplyDefaultClaudeModel: (state) => state.alwaysApplyDefaultClaudeModel,
         getNotifUserTurnSound: (state) => state.notifUserTurnSound,
         isNotifUserTurnBrowser: (state) => state.notifUserTurnBrowser,
         getNotifPendingRequestSound: (state) => state.notifPendingRequestSound,
@@ -339,6 +345,27 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set the default Claude model for new sessions.
+         * @param {string} model - One of CLAUDE_MODEL values
+         */
+        setDefaultClaudeModel(model) {
+            if (SETTINGS_VALIDATORS.defaultClaudeModel(model)) {
+                this.defaultClaudeModel = model
+            }
+        },
+
+        /**
+         * Set whether the default Claude model should always be applied,
+         * even for sessions that have an explicit model in the database.
+         * @param {boolean} enabled
+         */
+        setAlwaysApplyDefaultClaudeModel(enabled) {
+            if (SETTINGS_VALIDATORS.alwaysApplyDefaultClaudeModel(enabled)) {
+                this.alwaysApplyDefaultClaudeModel = enabled
+            }
+        },
+
+        /**
          * Set notification sound for user turn events.
          * @param {string} sound - One of NOTIFICATION_SOUNDS values
          */
@@ -432,6 +459,8 @@ export function initSettings() {
             compactSessionList: store.compactSessionList,
             defaultPermissionMode: store.defaultPermissionMode,
             alwaysApplyDefaultPermissionMode: store.alwaysApplyDefaultPermissionMode,
+            defaultClaudeModel: store.defaultClaudeModel,
+            alwaysApplyDefaultClaudeModel: store.alwaysApplyDefaultClaudeModel,
             notifUserTurnSound: store.notifUserTurnSound,
             notifUserTurnBrowser: store.notifUserTurnBrowser,
             notifPendingRequestSound: store.notifPendingRequestSound,

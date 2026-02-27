@@ -100,6 +100,14 @@ def update_session_permission_mode(session_id: str, permission_mode: str) -> Non
     Session.objects.filter(id=session_id).update(permission_mode=permission_mode)
 
 
+@sync_to_async
+def update_session_selected_model(session_id: str, selected_model: str) -> None:
+    """Update the selected_model for an existing session in the database."""
+    from twicc.core.models import Session
+
+    Session.objects.filter(id=session_id).update(selected_model=selected_model)
+
+
 def _get_project_display_name(project) -> str:
     """Compute a human-readable display name for a project.
 
@@ -369,6 +377,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         images = content.get("images")  # Optional: SDK ImageBlockParam list
         documents = content.get("documents")  # Optional: SDK DocumentBlockParam list
         permission_mode = content.get("permission_mode", "default")
+        selected_model = content.get("selected_model")  # Optional: SDK model shorthand
 
         # Validate required fields
         if not session_id or not project_id or not text:
@@ -428,12 +437,15 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         manager = get_process_manager()
         try:
             if exists:
-                # Update permission_mode in DB for existing sessions
+                # Update permission_mode and selected_model in DB for existing sessions
                 await update_session_permission_mode(session_id, permission_mode)
+                if selected_model:
+                    await update_session_selected_model(session_id, selected_model)
                 # Session exists: send message to it
                 await manager.send_to_session(
                     session_id, project_id, cwd, text,
                     permission_mode=permission_mode,
+                    selected_model=selected_model,
                     images=images, documents=documents
                 )
             else:
@@ -449,9 +461,16 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
                 set_pending_permission_mode(session_id, permission_mode)
 
+                # Store selected_model as pending (will be applied when watcher creates the session row)
+                if selected_model:
+                    from twicc.pending_selected_model import set_pending_selected_model
+
+                    set_pending_selected_model(session_id, selected_model)
+
                 await manager.create_session(
                     session_id, project_id, cwd, text,
                     permission_mode=permission_mode,
+                    selected_model=selected_model,
                     images=images, documents=documents
                 )
         except RuntimeError as e:

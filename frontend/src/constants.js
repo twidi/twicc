@@ -169,3 +169,33 @@ export const PERMISSION_MODE_DESCRIPTIONS = {
     [PERMISSION_MODE.DONT_ASK]: 'Auto-denies tools unless pre-approved via permission rules',
     [PERMISSION_MODE.BYPASS]: 'Skips all permission prompts',
 }
+
+/**
+ * Claude model values (matches SDK model parameter).
+ * Controls which model Claude Code uses.
+ */
+export const CLAUDE_MODEL = {
+    OPUS: 'opus',
+    SONNET: 'sonnet',
+    HAIKU: 'haiku',
+}
+
+export const DEFAULT_CLAUDE_MODEL = CLAUDE_MODEL.OPUS
+
+/**
+ * Human-friendly labels for each model.
+ */
+export const CLAUDE_MODEL_LABELS = {
+    [CLAUDE_MODEL.OPUS]: 'Opus',
+    [CLAUDE_MODEL.SONNET]: 'Sonnet',
+    [CLAUDE_MODEL.HAIKU]: 'Haiku',
+}
+
+/**
+ * Short descriptions for each model (for tooltips/settings).
+ */
+export const CLAUDE_MODEL_DESCRIPTIONS = {
+    [CLAUDE_MODEL.OPUS]: 'Most capable model, best for complex tasks',
+    [CLAUDE_MODEL.SONNET]: 'Balanced model, good for most tasks',
+    [CLAUDE_MODEL.HAIKU]: 'Fastest model, best for simple tasks',
+}

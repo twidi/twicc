@@ -75,6 +75,8 @@ def serialize_session(session):
         "pinned": session.pinned,  # Whether the session is pinned
         # Permission mode
         "permission_mode": session.permission_mode,
+        # User-selected model
+        "selected_model": session.selected_model,
     }
 
 

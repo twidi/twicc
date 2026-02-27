@@ -283,6 +283,8 @@ class Session(models.Model):
 
     # Permission mode for the Claude SDK (e.g., "default", "acceptEdits", "plan", "bypassPermissions")
     permission_mode = models.CharField(max_length=30, null=True, default=None)
+    # User-selected model for the Claude SDK (e.g., "opus", "sonnet", "haiku")
+    selected_model = models.CharField(max_length=30, null=True, default=None)
 
     class Meta:
         ordering = ["-mtime"]
