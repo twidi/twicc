@@ -3,6 +3,7 @@ import { computed, ref, watch, onMounted, onUnmounted, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
+import { useStartupPolling } from '../composables/useStartupPolling'
 import SessionList from '../components/SessionList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
@@ -18,6 +19,10 @@ const route = useRoute()
 const router = useRouter()
 const store = useDataStore()
 const settingsStore = useSettingsStore()
+
+// Poll home data during startup so sparklines and project stats update
+// as sessions are indexed by background compute.
+useStartupPolling(() => store.loadHomeData())
 
 // Costs setting
 const showCosts = computed(() => settingsStore.areCostsShown)

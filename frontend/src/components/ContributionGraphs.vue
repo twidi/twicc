@@ -6,6 +6,7 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { apiFetch } from '../utils/api'
 import { ALL_PROJECTS_ID } from '../stores/data'
+import { useStartupPolling } from '../composables/useStartupPolling'
 import ActivityDashboard from './ActivityDashboard.vue'
 import ContributionGraph from './ContributionGraph.vue'
 import ContributionSparklines from './ContributionSparklines.vue'
@@ -151,8 +152,15 @@ async function fetchDailyActivity() {
         const res = await apiFetch(url)
         if (res.ok) {
             const data = await res.json()
-            dailyActivity.value = data.daily_activity || []
-            activityTotals.value = data.totals || null
+            // Compare before updating to avoid unnecessary re-renders of charts
+            const newActivity = data.daily_activity || []
+            if (JSON.stringify(newActivity) !== JSON.stringify(dailyActivity.value)) {
+                dailyActivity.value = newActivity
+            }
+            const newTotals = data.totals || null
+            if (JSON.stringify(newTotals) !== JSON.stringify(activityTotals.value)) {
+                activityTotals.value = newTotals
+            }
         }
     } catch (error) {
         console.error('Failed to load daily activity:', error)
@@ -161,6 +169,9 @@ async function fetchDailyActivity() {
 
 onMounted(fetchDailyActivity)
 watch(() => props.projectId, fetchDailyActivity)
+
+// Poll daily activity during startup so charts update as sessions are indexed
+useStartupPolling(fetchDailyActivity)
 </script>
 
 <template>

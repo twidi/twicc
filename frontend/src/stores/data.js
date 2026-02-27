@@ -670,33 +670,52 @@ export const useDataStore = defineStore('data', {
          * Weekly activity is stored separately in weeklyActivity (not on project objects).
          */
         async loadHomeData() {
-            this.localState.projectsList.loading = true
+            // Only show loading indicator on initial load, not on background
+            // refreshes (e.g. startup polling) — otherwise the project list
+            // flashes away and back on every poll tick.
+            const isInitialLoad = Object.keys(this.projects).length === 0
+            if (isInitialLoad) {
+                this.localState.projectsList.loading = true
+            }
             try {
                 const res = await apiFetch('/api/home/')
                 if (!res.ok) {
                     console.error('Failed to load home data:', res.status, res.statusText)
-                    this.localState.projectsList.loadingError = true
+                    if (isInitialLoad) {
+                        this.localState.projectsList.loadingError = true
+                    }
                     return
                 }
                 const data = await res.json()
 
-                // Update projects (strip weekly_activity from project objects)
+                // Update projects and weekly activity (strip weekly_activity
+                // from project objects, compare before updating to avoid
+                // unnecessary re-renders of chart components).
                 for (const fresh of data.projects) {
                     const { weekly_activity, ...projectData } = fresh
                     this.projects[projectData.id] = projectData
-                    // Store per-project weekly activity separately
-                    this.weeklyActivity[projectData.id] = weekly_activity || []
+                    const activity = weekly_activity || []
+                    if (JSON.stringify(activity) !== JSON.stringify(this.weeklyActivity[projectData.id])) {
+                        this.weeklyActivity[projectData.id] = activity
+                    }
                 }
 
-                // Store global weekly activity
-                this.weeklyActivity._global = data.global_weekly_activity || []
+                // Store global weekly activity (compare before updating)
+                const globalActivity = data.global_weekly_activity || []
+                if (JSON.stringify(globalActivity) !== JSON.stringify(this.weeklyActivity._global)) {
+                    this.weeklyActivity._global = globalActivity
+                }
 
                 this.localState.projectsList.loadingError = false
             } catch (error) {
                 console.error('Failed to load home data:', error)
-                this.localState.projectsList.loadingError = true
+                if (isInitialLoad) {
+                    this.localState.projectsList.loadingError = true
+                }
             } finally {
-                this.localState.projectsList.loading = false
+                if (isInitialLoad) {
+                    this.localState.projectsList.loading = false
+                }
             }
         },
         /**

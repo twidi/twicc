@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
+import { useStartupPolling } from '../composables/useStartupPolling'
 import ProjectList from '../components/ProjectList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
@@ -11,6 +12,10 @@ import StartupProgressCallout from '../components/StartupProgressCallout.vue'
 
 const router = useRouter()
 const store = useDataStore()
+
+// Poll home data during startup so sparklines and project stats update
+// as sessions are indexed by background compute.
+useStartupPolling(() => store.loadHomeData())
 
 // Total sessions count (sum of all projects)
 const totalSessionsCount = computed(() =>
