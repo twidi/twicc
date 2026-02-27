@@ -92,20 +92,48 @@ def session_exists(session_id: str) -> bool:
     return Session.objects.filter(id=session_id).exists()
 
 
-@sync_to_async
-def update_session_permission_mode(session_id: str, permission_mode: str) -> None:
-    """Update the permission_mode for an existing session in the database."""
+async def update_session_permission_mode(session_id: str, permission_mode: str) -> None:
+    """Update the permission_mode for an existing session and broadcast the change."""
     from twicc.core.models import Session
+    from twicc.core.serializers import serialize_session
 
-    Session.objects.filter(id=session_id).update(permission_mode=permission_mode)
+    await sync_to_async(Session.objects.filter(id=session_id).update)(permission_mode=permission_mode)
+
+    session = await sync_to_async(Session.objects.filter(id=session_id).first)()
+    channel_layer = get_channel_layer()
+    await channel_layer.group_send(
+        "updates",
+        {
+            "type": "broadcast",
+            "data": {
+                "type": "session_updated",
+                "session": serialize_session(session),
+            },
+        },
+    )
+    logger.info(f"Session {session_id} updated with permission_mode {permission_mode}")
 
 
-@sync_to_async
-def update_session_selected_model(session_id: str, selected_model: str) -> None:
-    """Update the selected_model for an existing session in the database."""
+async def update_session_selected_model(session_id: str, selected_model: str) -> None:
+    """Update the selected_model for an existing session and broadcast the change."""
     from twicc.core.models import Session
+    from twicc.core.serializers import serialize_session
 
-    Session.objects.filter(id=session_id).update(selected_model=selected_model)
+    await sync_to_async(Session.objects.filter(id=session_id).update)(selected_model=selected_model)
+
+    session = await sync_to_async(Session.objects.filter(id=session_id).first)()
+    channel_layer = get_channel_layer()
+    await channel_layer.group_send(
+        "updates",
+        {
+            "type": "broadcast",
+            "data": {
+                "type": "session_updated",
+                "session": serialize_session(session),
+            },
+        },
+    )
+    logger.info(f"Session {session_id} updated with model {selected_model}")
 
 
 def _get_project_display_name(project) -> str:
@@ -354,7 +382,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             "type": "send_message",
             "session_id": "claude-conv-xxx",
             "project_id": "proj-xyz",
-            "text": "The message text",
+            "text": "The message text",       // May be empty for settings-only updates
             "title": "Optional session title",  // Only for new sessions
             "images": [...],  // Optional: array of SDK ImageBlockParam objects
             "documents": [...]  // Optional: array of SDK DocumentBlockParam objects
@@ -369,28 +397,30 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         when the process becomes safe.
 
         The optional images and documents fields contain attachments in SDK format.
+
+        Text may be empty for settings-only updates (changing model or permission mode
+        on a live process). In that case, the SDK methods are called but no query is sent.
         """
         session_id = content.get("session_id")
         project_id = content.get("project_id")
-        text = content.get("text")
+        text = content.get("text", "")  # May be empty for settings-only updates
         title = content.get("title")  # Optional, only for new sessions
         images = content.get("images")  # Optional: SDK ImageBlockParam list
         documents = content.get("documents")  # Optional: SDK DocumentBlockParam list
         permission_mode = content.get("permission_mode", "default")
         selected_model = content.get("selected_model")  # Optional: SDK model shorthand
 
-        # Validate required fields
-        if not session_id or not project_id or not text:
+        # Validate required fields (text is allowed to be empty for settings-only updates)
+        if not session_id or not project_id:
             logger.warning(
-                "send_message missing required fields: session_id=%s, project_id=%s, text=%s",
+                "send_message missing required fields: session_id=%s, project_id=%s",
                 session_id,
                 project_id,
-                bool(text),
             )
             await self.send_json(
                 {
                     "type": "error",
-                    "message": "send_message requires session_id, project_id, and text",
+                    "message": "send_message requires session_id and project_id",
                 }
             )
             return
@@ -449,6 +479,16 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                     images=images, documents=documents
                 )
             else:
+                # New session requires text (settings-only update makes no sense here)
+                if not text:
+                    await self.send_json(
+                        {
+                            "type": "error",
+                            "message": "Text is required to create a new session",
+                        }
+                    )
+                    return
+
                 # Session doesn't exist: create new with client-provided ID
                 # Store title as pending if provided (will be written when process is safe)
                 if title:

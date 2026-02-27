@@ -152,7 +152,7 @@ export const DEFAULT_PERMISSION_MODE = PERMISSION_MODE.DEFAULT
  * Human-friendly labels for each permission mode.
  */
 export const PERMISSION_MODE_LABELS = {
-    [PERMISSION_MODE.DEFAULT]: 'Default permission',
+    [PERMISSION_MODE.DEFAULT]: 'Default',
     [PERMISSION_MODE.ACCEPT_EDITS]: 'Accept Edits',
     [PERMISSION_MODE.PLAN]: 'Plan',
     [PERMISSION_MODE.DONT_ASK]: "Don't Ask",
@@ -171,22 +171,58 @@ export const PERMISSION_MODE_DESCRIPTIONS = {
 }
 
 /**
- * Claude model values (matches SDK model parameter).
- * Controls which model Claude Code uses.
+ * FontAwesome icon names for each permission mode (classic/solid style).
  */
-export const CLAUDE_MODEL = {
-    OPUS: 'opus',
-    SONNET: 'sonnet',
-    HAIKU: 'haiku',
+export const PERMISSION_MODE_ICONS = {
+    [PERMISSION_MODE.DEFAULT]: 'shield-halved',
+    [PERMISSION_MODE.ACCEPT_EDITS]: 'pen-to-square',
+    [PERMISSION_MODE.PLAN]: 'eye',
+    [PERMISSION_MODE.DONT_ASK]: 'lock',
+    [PERMISSION_MODE.BYPASS]: 'triangle-exclamation',
 }
 
-export const DEFAULT_CLAUDE_MODEL = CLAUDE_MODEL.OPUS
+/**
+ * Accent colors for each permission mode icon.
+ */
+export const PERMISSION_MODE_COLORS = {
+    [PERMISSION_MODE.DEFAULT]: '#3b82f6',
+    [PERMISSION_MODE.ACCEPT_EDITS]: '#22c55e',
+    [PERMISSION_MODE.PLAN]: '#06b6d4',
+    [PERMISSION_MODE.DONT_ASK]: '#f59e0b',
+    [PERMISSION_MODE.BYPASS]: '#ef4444',
+}
+
+/**
+ * Model values (matches SDK model parameter).
+ * Controls which model Claude Code uses.
+ */
+export const MODEL = {
+    OPUS: 'opus',
+    SONNET: 'sonnet',
+}
+
+export const DEFAULT_MODEL = MODEL.OPUS
 
 /**
  * Human-friendly labels for each model.
  */
-export const CLAUDE_MODEL_LABELS = {
-    [CLAUDE_MODEL.OPUS]: 'Opus',
-    [CLAUDE_MODEL.SONNET]: 'Sonnet',
-    [CLAUDE_MODEL.HAIKU]: 'Haiku',
+export const MODEL_LABELS = {
+    [MODEL.OPUS]: 'Opus',
+    [MODEL.SONNET]: 'Sonnet',
+}
+
+/**
+ * FontAwesome icon names for each model (classic/solid style).
+ */
+export const MODEL_ICONS = {
+    [MODEL.OPUS]: 'star',
+    [MODEL.SONNET]: 'bolt',
+}
+
+/**
+ * Accent colors for each model icon.
+ */
+export const MODEL_COLORS = {
+    [MODEL.OPUS]: '#e0a526',
+    [MODEL.SONNET]: '#9b59b6',
 }

@@ -71,7 +71,7 @@ class ClaudeProcess:
             project_id: The TwiCC project this belongs to
             cwd: Working directory for Claude operations
             permission_mode: SDK permission mode (e.g., "default", "bypassPermissions")
-            selected_model: SDK model shorthand (e.g., "opus", "sonnet", "haiku") or None for default
+            selected_model: SDK model shorthand (e.g., "opus", "sonnet") or None for default
             get_last_session_slug: Async callback that retrieves the most recent
                 slug from a session's JSONL items. Takes a session_id and returns the slug
                 string or None if not found.
@@ -475,6 +475,54 @@ class ClaudeProcess:
             # spec requires process errors to be logged and reported, never propagated.
             # The error is communicated to the frontend via WebSocket broadcast.
             await self._handle_error(f"Failed to start process: {e}")
+
+    async def set_permission_mode(self, mode: str) -> None:
+        """Change permission mode on the live SDK client.
+
+        Calls the SDK's set_permission_mode() method to update the permission mode
+        on the running Claude process, then updates the local attribute to keep
+        the in-memory state in sync.
+
+        Args:
+            mode: The permission mode to set (e.g., "default", "acceptEdits", "bypassPermissions")
+
+        Raises:
+            RuntimeError: If the process is not started
+        """
+        if self._client is None:
+            raise RuntimeError("Process not started")
+
+        logger.debug(
+            "Setting permission mode to '%s' for session %s",
+            mode,
+            self.session_id,
+        )
+        await self._client.set_permission_mode(mode)
+        self.permission_mode = mode
+
+    async def set_model(self, model: str | None) -> None:
+        """Change the AI model on the live SDK client.
+
+        Calls the SDK's set_model() method to update the model on the running
+        Claude process, then updates the local attribute to keep the in-memory
+        state in sync.
+
+        Args:
+            model: The model shorthand (e.g., "opus", "sonnet") or None for default
+
+        Raises:
+            RuntimeError: If the process is not started
+        """
+        if self._client is None:
+            raise RuntimeError("Process not started")
+
+        logger.debug(
+            "Setting model to '%s' for session %s",
+            model,
+            self.session_id,
+        )
+        await self._client.set_model(model)
+        self.selected_model = model
 
     async def send(
         self,

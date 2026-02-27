@@ -8,7 +8,7 @@ import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSock
 import { useVisualViewport } from '../composables/useVisualViewport'
 import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
-import { PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, CLAUDE_MODEL, CLAUDE_MODEL_LABELS } from '../constants'
+import { PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_ICONS, PERMISSION_MODE_COLORS, MODEL, MODEL_LABELS, MODEL_ICONS, MODEL_COLORS } from '../constants'
 import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -45,6 +45,8 @@ const messageText = ref('')
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const attachButtonId = useId()
+const modelSelectId = useId()
+const permissionSelectId = useId()
 
 // Attachments for this session
 const attachments = computed(() => store.getAttachments(props.sessionId))
@@ -58,19 +60,31 @@ const permissionModeOptions = Object.values(PERMISSION_MODE).map(value => ({
     value,
     label: PERMISSION_MODE_LABELS[value],
     description: PERMISSION_MODE_DESCRIPTIONS[value],
+    icon: PERMISSION_MODE_ICONS[value],
+    color: PERMISSION_MODE_COLORS[value],
 }))
 
-// Claude model options for the dropdown
-const claudeModelOptions = Object.values(CLAUDE_MODEL).map(value => ({
+// Model options for the dropdown
+const modelOptions = Object.values(MODEL).map(value => ({
     value,
-    label: CLAUDE_MODEL_LABELS[value],
+    label: MODEL_LABELS[value],
+    icon: MODEL_ICONS[value],
+    color: MODEL_COLORS[value],
 }))
+
+// Dynamic icon and color for the selected model (shown in the select's start slot)
+const selectedModelIcon = computed(() => MODEL_ICONS[selectedModel.value] || 'star')
+const selectedModelColor = computed(() => MODEL_COLORS[selectedModel.value] || 'inherit')
+
+// Dynamic icon and color for the selected permission mode (shown in the select's start slot)
+const selectedPermissionIcon = computed(() => PERMISSION_MODE_ICONS[selectedPermissionMode.value] || 'shield-halved')
+const selectedPermissionColor = computed(() => PERMISSION_MODE_COLORS[selectedPermissionMode.value] || 'inherit')
 
 // Selected permission mode for the current session
 const selectedPermissionMode = ref('default')
 
-// Selected Claude model for the current session
-const selectedClaudeModel = ref('opus')
+// Selected model for the current session
+const selectedModel = ref('opus')
 
 // Get process state for this session
 const processState = computed(() => store.getProcessState(props.sessionId))
@@ -81,6 +95,14 @@ const isDisabled = computed(() => {
     // Disabled only during starting - we allow sending during assistant_turn
     // (Claude Agent SDK supports receiving messages while responding)
     return state === 'starting'
+})
+
+// Model dropdown is disabled during starting and assistant_turn.
+// The SDK's set_model() does not work on a live process, so model can only
+// be changed during user_turn (sent with the next message) or when no process runs.
+const isModelDisabled = computed(() => {
+    const state = processState.value?.state
+    return state === 'starting' || state === 'assistant_turn'
 })
 
 // Button label based on process state
@@ -105,11 +127,40 @@ const placeholderText = computed(() => {
     return 'Type your message...'
 })
 
-// Whether the permission mode / model dropdowns should be disabled
-// Disabled when a process is actively running on this session
-const isDropdownsDisabled = computed(() => {
+// Whether a process is actively running (not starting, not dead)
+const processIsActive = computed(() => {
     const state = processState.value?.state
-    return state === 'starting' || state === 'assistant_turn' || state === 'user_turn'
+    return state === 'assistant_turn' || state === 'user_turn'
+})
+
+// Track the "active" values currently applied on the live SDK process.
+// These are updated when a session is loaded or after a successful send/update.
+const activeModel = ref(null)
+const activePermissionMode = ref(null)
+
+// Detect whether the user has changed the dropdowns from the active process values
+const hasModelChanged = computed(() =>
+    processIsActive.value && selectedModel.value !== activeModel.value
+)
+const hasPermissionChanged = computed(() =>
+    processIsActive.value && selectedPermissionMode.value !== activePermissionMode.value
+)
+const hasSettingsChanged = computed(() => hasModelChanged.value || hasPermissionChanged.value)
+
+// Show the "Update..." button only when settings changed, process is active, and no text typed
+const showUpdateButton = computed(() =>
+    hasSettingsChanged.value && !messageText.value.trim()
+)
+
+// Dynamic label for the update button
+const updateButtonLabel = computed(() => {
+    if (hasModelChanged.value && hasPermissionChanged.value) {
+        return 'Update model & permissions'
+    }
+    if (hasModelChanged.value) {
+        return 'Update model'
+    }
+    return 'Update permissions'
 })
 
 // Determine the effective permission mode for the current session.
@@ -122,60 +173,75 @@ function resolvePermissionMode(sess) {
     return sess?.permission_mode || settingsStore.getDefaultPermissionMode
 }
 
-// Determine the effective Claude model for the current session.
+// Determine the effective model for the current session.
 // Same logic as permission mode: "always apply" overrides, otherwise DB or settings default.
-function resolveClaudeModel(sess) {
-    if (settingsStore.isAlwaysApplyDefaultClaudeModel) {
-        return settingsStore.getDefaultClaudeModel
+function resolveModel(sess) {
+    if (settingsStore.isAlwaysApplyDefaultModel) {
+        return settingsStore.getDefaultModel
     }
-    return sess?.selected_model || settingsStore.getDefaultClaudeModel
+    return sess?.selected_model || settingsStore.getDefaultModel
 }
 
 // Sync permission mode and model when session changes
 watch(() => props.sessionId, (newId) => {
     const sess = store.getSession(newId)
     selectedPermissionMode.value = resolvePermissionMode(sess)
-    selectedClaudeModel.value = resolveClaudeModel(sess)
+    selectedModel.value = resolveModel(sess)
+    // Initialize active values from the session (what the process is currently using)
+    activePermissionMode.value = sess?.permission_mode || null
+    activeModel.value = sess?.selected_model || null
 }, { immediate: true })
 
 // When the default permission mode setting changes, or the "always apply" toggle
-// changes, update the dropdown for sessions that should follow the default
+// changes, update the dropdown for sessions that should follow the default.
+// Don't overwrite user's selection when a process is active (they may be changing it intentionally).
 watch(
     () => [settingsStore.getDefaultPermissionMode, settingsStore.isAlwaysApplyDefaultPermissionMode],
     () => {
-        if (isDropdownsDisabled.value) return
+        if (processIsActive.value) return
         const sess = store.getSession(props.sessionId)
         selectedPermissionMode.value = resolvePermissionMode(sess)
     }
 )
 
-// When the default Claude model setting changes, or the "always apply" toggle
-// changes, update the dropdown for sessions that should follow the default
+// When the default model setting changes, or the "always apply" toggle
+// changes, update the dropdown for sessions that should follow the default.
+// Don't overwrite user's selection when a process is active (they may be changing it intentionally).
 watch(
-    () => [settingsStore.getDefaultClaudeModel, settingsStore.isAlwaysApplyDefaultClaudeModel],
+    () => [settingsStore.getDefaultModel, settingsStore.isAlwaysApplyDefaultModel],
     () => {
-        if (isDropdownsDisabled.value) return
+        if (processIsActive.value) return
         const sess = store.getSession(props.sessionId)
-        selectedClaudeModel.value = resolveClaudeModel(sess)
+        selectedModel.value = resolveModel(sess)
     }
 )
 
-// Also react when session data arrives from backend (e.g., after watcher creates the row)
+// Also react when session data arrives from backend (e.g., after watcher creates the row).
+// Don't overwrite user's selection when a process is active.
+// Always update the active values to track what the process is currently using.
 watch(
     () => store.getSession(props.sessionId)?.permission_mode,
     (newMode) => {
-        if (newMode && !isDropdownsDisabled.value) {
-            selectedPermissionMode.value = newMode
+        if (newMode) {
+            activePermissionMode.value = newMode
+            if (!processIsActive.value) {
+                selectedPermissionMode.value = newMode
+            }
         }
     }
 )
 
-// React when selected_model data arrives from backend
+// React when selected_model data arrives from backend.
+// Don't overwrite user's selection when a process is active.
+// Always update the active values to track what the process is currently using.
 watch(
     () => store.getSession(props.sessionId)?.selected_model,
     (newModel) => {
-        if (newModel && !isDropdownsDisabled.value) {
-            selectedClaudeModel.value = newModel
+        if (newModel) {
+            activeModel.value = newModel
+            if (!processIsActive.value) {
+                selectedModel.value = newModel
+            }
         }
     }
 )
@@ -387,10 +453,17 @@ function removeAllAttachments() {
  * Backend handles both new and existing sessions with the same message type.
  * For draft sessions with a custom title, include the title in the message.
  * For draft sessions without a title, send the message AND open the rename dialog.
+ *
+ * Also handles settings-only updates: when text is empty but model/permission
+ * mode has changed on an active process, sends a payload with empty text so
+ * the backend applies the settings via SDK methods without sending a query.
  */
 async function handleSend() {
     const text = messageText.value.trim()
-    if (!text || isDisabled.value) return
+    const isSettingsOnlyUpdate = !text && hasSettingsChanged.value
+
+    // Need either text or settings change to proceed
+    if ((!text && !isSettingsOnlyUpdate) || isDisabled.value) return
 
     // Build the message payload
     const payload = {
@@ -399,7 +472,7 @@ async function handleSend() {
         project_id: props.projectId,
         text: text,
         permission_mode: selectedPermissionMode.value,
-        selected_model: selectedClaudeModel.value,
+        selected_model: selectedModel.value,
     }
 
     // For draft sessions with a title, include it
@@ -427,6 +500,14 @@ async function handleSend() {
     const success = sendWsMessage(payload)
 
     if (success) {
+        // Sync active values to match what was just sent to the backend.
+        // This makes the "Update..." button disappear immediately.
+        activeModel.value = selectedModel.value
+        activePermissionMode.value = selectedPermissionMode.value
+
+        // For settings-only updates, nothing else to clean up
+        if (isSettingsOnlyUpdate) return
+
         // Show optimistic user message immediately (only when not in assistant_turn,
         // because during assistant_turn the message is queued and the user_message
         // won't arrive until later)
@@ -585,39 +666,79 @@ async function handleClear() {
             </div>
 
             <div class="message-input-actions">
-                <!-- Claude model selector -->
+                <!-- Model selector -->
                 <wa-select
-                    :value.prop="selectedClaudeModel"
-                    @change="selectedClaudeModel = $event.target.value"
+                    :id="modelSelectId"
+                    :value.prop="selectedModel"
+                    @change="selectedModel = $event.target.value"
                     size="small"
-                    class="claude-model-select"
-                    :disabled="isDropdownsDisabled"
+                    class="model-select"
+                    :disabled="isModelDisabled"
+                    placement="top"
                 >
+                    <wa-icon
+                        slot="start"
+                        :name="selectedModelIcon"
+                        variant="classic"
+                        :style="{ color: selectedModelColor }"
+                    ></wa-icon>
                     <wa-option
-                        v-for="option in claudeModelOptions"
+                        v-for="option in modelOptions"
                         :key="option.value"
                         :value="option.value"
-                    >{{ option.label }}</wa-option>
+                    >
+                        <span class="select-option">
+                            <wa-icon :name="option.icon" variant="classic" :style="{ color: option.color }"></wa-icon>
+                            <span class="model-label">{{ option.label }}</span>
+                        </span>
+                    </wa-option>
                 </wa-select>
+                <AppTooltip :for="modelSelectId">Model selection. Can only be changed on your turn.</AppTooltip>
 
                 <!-- Permission mode selector -->
                 <wa-select
+                    :id="permissionSelectId"
                     :value.prop="selectedPermissionMode"
                     @change="selectedPermissionMode = $event.target.value"
                     size="small"
                     class="permission-mode-select"
-                    :disabled="isDropdownsDisabled"
+                    :disabled="isDisabled"
+                    placement="top"
                 >
+                    <wa-icon
+                        slot="start"
+                        :name="selectedPermissionIcon"
+                        variant="classic"
+                        :style="{ color: selectedPermissionColor }"
+                    ></wa-icon>
                     <wa-option
                         v-for="option in permissionModeOptions"
                         :key="option.value"
                         :value="option.value"
                         :label="option.label"
                     >
-                        <span>{{ option.label }}</span>
-                        <span class="option-description">{{ option.description }}</span>
+                        <span class="select-option">
+                            <wa-icon :name="option.icon" variant="classic" :style="{ color: option.color }"></wa-icon>
+                            <span>
+                                <span>{{ option.label }}</span>
+                                <span class="option-description">{{ option.description }}</span>
+                            </span>
+                        </span>
                     </wa-option>
                 </wa-select>
+                <AppTooltip :for="permissionSelectId">Permission mode. Can be changed at any time, even while Claude is working.</AppTooltip>
+
+                <!-- Update settings button: visible when settings changed on active process and no text -->
+                <wa-button
+                    v-if="showUpdateButton"
+                    variant="neutral"
+                    @click="handleSend"
+                    size="small"
+                    class="update-settings-button"
+                >
+                    <wa-icon name="arrows-rotate" variant="classic"></wa-icon>
+                    <span>{{ updateButtonLabel }}</span>
+                </wa-button>
 
                 <!-- Cancel button for draft sessions -->
                 <wa-button
@@ -665,6 +786,7 @@ async function handleClear() {
     gap: var(--wa-space-s);
     padding: var(--wa-space-s);
     background: var(--main-header-footer-bg-color);
+    container: message-input / inline-size;
 }
 
 .message-input wa-textarea::part(textarea) {
@@ -680,7 +802,7 @@ async function handleClear() {
     justify-content: space-between;
     gap: var(--wa-space-s);
     @media (width < 640px) {
-        padding-left: calc(2.75rem + var(--wa-space-s) + 2.75rem + var(--wa-space-s));
+        padding-left: 2.75rem;
     }
 }
 
@@ -702,33 +824,70 @@ body.sidebar-closed .message-input-toolbar {
     }
 }
 
-.claude-model-select {
-    min-width: 6rem;
-    max-width: 8rem;
+.model-select, .permission-mode-select {
+    .select-option {
+        display: flex;
+        align-items: baseline;
+        gap: var(--wa-space-s);
+        wa-icon {
+            position: relative;
+            top: var(--wa-space-3xs);
+        }
+    }
+    .option-description {
+        display: block;
+        font-size: var(--wa-font-size-s);
+        color: var(--wa-color-text-quiet);
+    }
 }
 
+.model-select {
+    &::part(display-input) {
+        max-width: 3rem;
+    }
+    &::part(listbox) {
+        width: 10rem;
+    }
+}
 .permission-mode-select {
-    min-width: 10rem;
-    max-width: 15rem;
-}
-
-@media (width < 400px) {
-    .claude-model-select {
-        min-width: 5rem;
+    &::part(display-input) {
         max-width: 6rem;
     }
-    .permission-mode-select {
-        min-width: 6rem;
-        max-width: 8rem;
+    &::part(listbox) {
+        width: 16rem;
     }
 }
+
+/* On mobile, hide the model label text in the closed select — only the icon is visible */
+@container message-input (width < 35rem) {
+    .model-select, .permission-mode-select {
+        &::part(display-input) {
+            display: none;
+        }
+        &::part(combobox) {
+            padding-inline: var(--wa-space-s);
+        }
+        &:deep(> wa-icon)  {
+            margin-inline-end: 0;
+        }
+        &::part(expand-icon) {
+            display: none;
+        }
+    }
+    .permission-mode-select {
+        &::part(listbox) {
+            translate: -13.5rem 0;
+        }
+    }
+}
+
 
 .message-input-actions {
     display: flex;
     gap: var(--wa-space-s);
     flex-shrink: 0;
 
-    .cancel-button, .clear-button, .send-button {
+    .update-settings-button, .cancel-button, .clear-button, .send-button {
         wa-icon {
             display: none;
         }
@@ -772,12 +931,6 @@ body.sidebar-closed .message-input-toolbar {
     display: flex;
     justify-content: center;
     margin-top: var(--wa-space-l);
-}
-
-.option-description {
-    display: block;
-    font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-quiet);
 }
 
 </style>

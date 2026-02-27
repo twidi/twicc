@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
-import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, CLAUDE_MODEL, CLAUDE_MODEL_LABELS } from '../constants'
+import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_ICONS, PERMISSION_MODE_COLORS, MODEL, MODEL_LABELS, MODEL_ICONS, MODEL_COLORS } from '../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -54,8 +54,8 @@ const tmuxSwitch = ref(null)
 const compactSessionListSwitch = ref(null)
 const permissionModeSelect = ref(null)
 const alwaysApplyDefaultPermissionModeSwitch = ref(null)
-const claudeModelSelect = ref(null)
-const alwaysApplyDefaultClaudeModelSwitch = ref(null)
+const modelSelect = ref(null)
+const alwaysApplyDefaultModelSwitch = ref(null)
 const diffSideBySideSwitch = ref(null)
 const editorWordWrapSwitch = ref(null)
 const notificationSettingsRef = ref(null)
@@ -75,8 +75,8 @@ const terminalUseTmux = computed(() => store.isTerminalUseTmux)
 const compactSessionList = computed(() => store.isCompactSessionList)
 const defaultPermissionMode = computed(() => store.getDefaultPermissionMode)
 const alwaysApplyDefaultPermissionMode = computed(() => store.isAlwaysApplyDefaultPermissionMode)
-const defaultClaudeModel = computed(() => store.getDefaultClaudeModel)
-const alwaysApplyDefaultClaudeModel = computed(() => store.isAlwaysApplyDefaultClaudeModel)
+const defaultModel = computed(() => store.getDefaultModel)
+const alwaysApplyDefaultModel = computed(() => store.isAlwaysApplyDefaultModel)
 const diffSideBySide = computed(() => store.isDiffSideBySide)
 const editorWordWrap = computed(() => store.isEditorWordWrap)
 
@@ -96,12 +96,16 @@ const permissionModeOptions = Object.values(PERMISSION_MODE).map(value => ({
     value,
     label: PERMISSION_MODE_LABELS[value],
     description: PERMISSION_MODE_DESCRIPTIONS[value],
+    icon: PERMISSION_MODE_ICONS[value],
+    color: PERMISSION_MODE_COLORS[value],
 }))
 
-// Claude model options for the select
-const claudeModelOptions = Object.values(CLAUDE_MODEL).map(value => ({
+// Model options for the select
+const modelOptions = Object.values(MODEL).map(value => ({
     value,
-    label: CLAUDE_MODEL_LABELS[value],
+    label: MODEL_LABELS[value],
+    icon: MODEL_ICONS[value],
+    color: MODEL_COLORS[value],
 }))
 
 // Sync switch checked state with store values
@@ -156,17 +160,17 @@ function syncSwitchState() {
         if (alwaysApplyDefaultPermissionModeSwitch.value && alwaysApplyDefaultPermissionModeSwitch.value.checked !== alwaysApplyDefaultPermissionMode.value) {
             alwaysApplyDefaultPermissionModeSwitch.value.checked = alwaysApplyDefaultPermissionMode.value
         }
-        if (claudeModelSelect.value && claudeModelSelect.value.value !== defaultClaudeModel.value) {
-            claudeModelSelect.value.value = defaultClaudeModel.value
+        if (modelSelect.value && modelSelect.value.value !== defaultModel.value) {
+            modelSelect.value.value = defaultModel.value
         }
-        if (alwaysApplyDefaultClaudeModelSwitch.value && alwaysApplyDefaultClaudeModelSwitch.value.checked !== alwaysApplyDefaultClaudeModel.value) {
-            alwaysApplyDefaultClaudeModelSwitch.value.checked = alwaysApplyDefaultClaudeModel.value
+        if (alwaysApplyDefaultModelSwitch.value && alwaysApplyDefaultModelSwitch.value.checked !== alwaysApplyDefaultModel.value) {
+            alwaysApplyDefaultModelSwitch.value.checked = alwaysApplyDefaultModel.value
         }
     })
 }
 
 // Watch for store changes and sync switches
-watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, defaultPermissionMode, alwaysApplyDefaultPermissionMode, defaultClaudeModel, alwaysApplyDefaultClaudeModel, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide, editorWordWrap], syncSwitchState, { immediate: true })
+watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, defaultPermissionMode, alwaysApplyDefaultPermissionMode, defaultModel, alwaysApplyDefaultModel, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide, editorWordWrap], syncSwitchState, { immediate: true })
 
 /**
  * Handle display mode change.
@@ -260,17 +264,17 @@ function onAlwaysApplyDefaultPermissionModeChange(event) {
 }
 
 /**
- * Handle default Claude model change.
+ * Handle default model change.
  */
-function onDefaultClaudeModelChange(event) {
-    store.setDefaultClaudeModel(event.target.value)
+function onDefaultModelChange(event) {
+    store.setDefaultModel(event.target.value)
 }
 
 /**
- * Toggle "always apply default Claude model" setting.
+ * Toggle "always apply default model" setting.
  */
-function onAlwaysApplyDefaultClaudeModelChange(event) {
-    store.setAlwaysApplyDefaultClaudeModel(event.target.checked)
+function onAlwaysApplyDefaultModelChange(event) {
+    store.setAlwaysApplyDefaultModel(event.target.checked)
 }
 
 /**
@@ -399,8 +403,13 @@ function onPopoverShow() {
                                 :value="option.value"
                                 :label="option.label"
                             >
-                                <span>{{ option.label }}</span>
-                                <span class="option-description">{{ option.description }}</span>
+                                <span class="select-option">
+                                    <wa-icon :name="option.icon" variant="classic" :style="{ color: option.color }"></wa-icon>
+                                    <span>
+                                        <span>{{ option.label }}</span>
+                                        <span class="option-description">{{ option.description }}</span>
+                                    </span>
+                                </span>
                             </wa-option>
                         </wa-select>
                     </div>
@@ -411,31 +420,36 @@ function onPopoverShow() {
                             @change="onAlwaysApplyDefaultPermissionModeChange"
                             size="small"
                         >Enabled</wa-switch>
-                        <span class="setting-group-hint">Override the per-session mode with the default above.</span>
+                        <span class="setting-group-hint">Override the per-session saved mode with the default above.</span>
                     </div>
                     <div class="setting-group">
                         <label class="setting-group-label">Default model</label>
                         <wa-select
-                            ref="claudeModelSelect"
-                            :value.prop="defaultClaudeModel"
-                            @change="onDefaultClaudeModelChange"
+                            ref="modelSelect"
+                            :value.prop="defaultModel"
+                            @change="onDefaultModelChange"
                             size="small"
                         >
                             <wa-option
-                                v-for="option in claudeModelOptions"
+                                v-for="option in modelOptions"
                                 :key="option.value"
                                 :value="option.value"
-                            >{{ option.label }}</wa-option>
+                            >
+                                <span class="select-option">
+                                    <wa-icon :name="option.icon" variant="classic" :style="{ color: option.color }"></wa-icon>
+                                    <span>{{ option.label }}</span>
+                                </span>
+                            </wa-option>
                         </wa-select>
                     </div>
                     <div class="setting-group">
                         <label class="setting-group-label">Always apply default model</label>
                         <wa-switch
-                            ref="alwaysApplyDefaultClaudeModelSwitch"
-                            @change="onAlwaysApplyDefaultClaudeModelChange"
+                            ref="alwaysApplyDefaultModelSwitch"
+                            @change="onAlwaysApplyDefaultModelChange"
                             size="small"
                         >Enabled</wa-switch>
-                        <span class="setting-group-hint">Override the per-session model with the default above.</span>
+                        <span class="setting-group-hint">Override the per-session saved odel with the default above.</span>
                     </div>
                 </section>
 
@@ -642,6 +656,16 @@ function onPopoverShow() {
 
     wa-button {
         align-self: end;
+    }
+}
+
+.select-option {
+    display: flex;
+    align-items: baseline;
+    gap: var(--wa-space-s);
+    wa-icon {
+        position: relative;
+        top: var(--wa-space-3xs);
     }
 }
 

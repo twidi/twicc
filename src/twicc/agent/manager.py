@@ -131,7 +131,7 @@ class ProcessManager:
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
     ) -> None:
-        """Send a message to an existing session.
+        """Send a message to an existing session, optionally updating model/permission settings.
 
         If no active process exists for this session, a new one is created
         with the resume option to continue the existing conversation.
@@ -139,11 +139,17 @@ class ProcessManager:
         Messages can be sent during USER_TURN (normal) or ASSISTANT_TURN
         (Claude Agent SDK queues them and processes after current response).
 
+        When a live process exists, model and permission mode are updated on the
+        SDK client before sending the message. If text is empty and there are no
+        attachments, only the settings are applied (no query is sent to Claude).
+
         Args:
             session_id: The Claude session identifier (must exist in database)
             project_id: The TwiCC project identifier
             cwd: Working directory for Claude operations
-            text: The message text to send
+            text: The message text to send (may be empty for settings-only updates)
+            permission_mode: Permission mode to apply
+            selected_model: Model shorthand to apply, or None for default
             images: Optional list of SDK ImageBlockParam objects
             documents: Optional list of SDK DocumentBlockParam objects
 
@@ -162,9 +168,16 @@ class ProcessManager:
                     )
                     del self._processes[session_id]
                 elif process.state in (ProcessState.USER_TURN, ProcessState.ASSISTANT_TURN):
-                    # Process ready for input or busy responding - send message
-                    # (SDK queues messages during ASSISTANT_TURN)
-                    await process.send(text, images=images, documents=documents)
+                    # Process ready for input or busy responding.
+                    # Apply settings changes on the live SDK client before sending.
+                    # Permission mode works in any state; model only in USER_TURN.
+                    await self._apply_live_settings(process, permission_mode, selected_model)
+
+                    # If there is actual content to send, forward it to Claude
+                    has_content = bool(text) or bool(images) or bool(documents)
+                    if has_content:
+                        await process.send(text, images=images, documents=documents)
+
                     return
                 else:
                     # Process starting - cannot send yet
@@ -172,12 +185,44 @@ class ProcessManager:
                         f"Cannot send message: process is in state {process.state}"
                     )
 
+            # No live process — text is required to start a new one
+            if not text:
+                raise RuntimeError(
+                    "Cannot start a new process without a message"
+                )
+
             # Create and start new process with resume
             await self._start_process(
                 session_id, project_id, cwd, text, resume=True,
                 permission_mode=permission_mode, selected_model=selected_model,
                 images=images, documents=documents
             )
+
+    @staticmethod
+    async def _apply_live_settings(
+        process: ClaudeProcess,
+        permission_mode: str,
+        selected_model: str | None,
+    ) -> None:
+        """Apply permission mode and model changes to a live process.
+
+        Compares the requested values with the process's current values and
+        calls the SDK methods only when they differ.
+
+        Permission mode can be changed in any active state (USER_TURN or ASSISTANT_TURN).
+        Model can only be changed during USER_TURN (the SDK's set_model() has no effect
+        during ASSISTANT_TURN).
+
+        Args:
+            process: The live ClaudeProcess instance
+            permission_mode: Desired permission mode
+            selected_model: Desired model shorthand, or None
+        """
+        if permission_mode != process.permission_mode:
+            await process.set_permission_mode(permission_mode)
+
+        if selected_model != process.selected_model and process.state == ProcessState.USER_TURN:
+            await process.set_model(selected_model)
 
     async def create_session(
         self,
