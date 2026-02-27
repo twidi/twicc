@@ -87,6 +87,10 @@ export const useDataStore = defineStore('data', {
         // { success: bool, raw: serialized snapshot, computed: computeUsageData() result }
         usage: null,
 
+        // Startup progress (from WebSocket startup_progress messages)
+        // { initial_sync?: { current, total, completed }, background_compute?: { current, total, completed } }
+        startupProgress: {},
+
         // Local UI state (separate from server data to avoid being overwritten)
         localState: {
             projectsList: {
@@ -242,6 +246,12 @@ export const useDataStore = defineStore('data', {
             return count
         },
 
+        // Startup progress getters
+        initialSyncProgress: (state) => state.startupProgress.initial_sync || null,
+        backgroundComputeProgress: (state) => state.startupProgress.background_compute || null,
+        isStartupInProgress: (state) =>
+            Object.values(state.startupProgress).some(p => p && !p.completed),
+
         // Local state getters - loading
         isProjectsListLoading: (state) => state.localState.projectsList.loading,
         areSessionsLoading: (state) => (projectId) =>
@@ -382,6 +392,14 @@ export const useDataStore = defineStore('data', {
         // Usage
         setUsage(hasOauth, success, reason, rawData, computedData) {
             this.usage = { hasOauth, success, reason, raw: rawData, computed: computedData }
+        },
+
+        // Startup progress
+        setStartupProgress(phase, current, total, completed) {
+            this.startupProgress = {
+                ...this.startupProgress,
+                [phase]: { current, total, completed },
+            }
         },
 
         // Projects

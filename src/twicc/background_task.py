@@ -26,8 +26,9 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 
 from twicc.compute import apply_session_complete, load_project_directories, load_project_git_roots
-from twicc.core.models import Project, Session
+from twicc.core.models import Project, Session, SessionType
 from twicc.core.serializers import serialize_project, serialize_session
+from twicc.startup_progress import broadcast_startup_progress
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +239,13 @@ def _flush_pending_activities(pending_activity_days: dict[str, set]) -> None:
     PeriodicActivity.recalculate_for_days(None, days, do_global=True)
 
 
-async def consume_compute_results(ctx: ComputeContext, worker_done_event: asyncio.Event) -> None:
+async def consume_compute_results(
+    ctx: ComputeContext,
+    worker_done_event: asyncio.Event,
+    *,
+    display_session_ids: set[str] | None = None,
+    total_display: int = 0,
+) -> None:
     """
     Consume results from the compute worker and apply DB writes.
 
@@ -247,6 +254,13 @@ async def consume_compute_results(ctx: ComputeContext, worker_done_event: asynci
 
     Sets worker_done_event when the worker signals it has finished processing
     all sessions (via a 'done' message in the result queue).
+
+    Args:
+        ctx: The compute context with queues and events.
+        worker_done_event: Set when all results have been processed.
+        display_session_ids: Set of session IDs that are real sessions (not subagents),
+            used to filter progress broadcasting. If None, all sessions are counted.
+        total_display: Total number of real sessions for progress display.
     """
     import orjson
 
@@ -257,6 +271,9 @@ async def consume_compute_results(ctx: ComputeContext, worker_done_event: asynci
     batch_activity_count = 50
     pending_activity_days: dict[str, set] = defaultdict(set)
     sessions_since_activities_flush = 0
+
+    # Progress broadcasting — only count real sessions (not subagents) for display
+    completed_count = 0
 
     while not ctx.stop_event.is_set():
         # Collect available messages (non-blocking)
@@ -276,6 +293,14 @@ async def consume_compute_results(ctx: ComputeContext, worker_done_event: asynci
                 # New unified message type - all data in one message
                 await sync_to_async(apply_session_complete)(msg)
                 await _handle_compute_done(msg['session_id'])
+
+                # Broadcast progress only for real sessions (not subagents)
+                session_id = msg['session_id']
+                if display_session_ids is None or session_id in display_session_ids:
+                    completed_count += 1
+                    await broadcast_startup_progress(
+                        "background_compute", completed_count, total_display
+                    )
 
                 # Accumulate affected days for batched activity recalculation
                 affected_days = msg.get('affected_days')
@@ -347,7 +372,22 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
 
     if total_to_compute == 0:
         logger.info("Background compute: no sessions to process")
+        await broadcast_startup_progress("background_compute", 0, 0, completed=True)
         return
+
+    # Count only real sessions (not subagents) for progress display.
+    # The actual compute processes ALL sessions, but users only care about session count.
+    sessions_to_display = await sync_to_async(
+        lambda: set(
+            Session.objects.filter(type=SessionType.SESSION)
+            .exclude(compute_version=settings.CURRENT_COMPUTE_VERSION)
+            .values_list("id", flat=True)
+        )
+    )()
+    total_display = len(sessions_to_display)
+
+    # Broadcast initial progress state (0/N) — using display total (sessions only)
+    await broadcast_startup_progress("background_compute", 0, total_display)
 
     # Load project caches at startup
     await sync_to_async(load_project_directories)()
@@ -356,9 +396,15 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
     # Start the worker process
     start_compute_process(ctx)
 
-    # Start the result consumer as a concurrent task
+    # Start the result consumer as a concurrent task (passes display info for progress broadcasting)
     worker_done_event = asyncio.Event()
-    consumer_task = asyncio.create_task(consume_compute_results(ctx, worker_done_event))
+    consumer_task = asyncio.create_task(
+        consume_compute_results(
+            ctx, worker_done_event,
+            display_session_ids=sessions_to_display,
+            total_display=total_display,
+        )
+    )
 
     logger.info(f"Background compute task started ({total_to_compute} sessions to process)")
 
@@ -417,6 +463,9 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
     # Wait for the consumer to receive the worker's 'done' signal
     # (which means all results have been processed and activities flushed)
     await worker_done_event.wait()
+
+    # Broadcast completion (using display total — sessions only, not subagents)
+    await broadcast_startup_progress("background_compute", total_display, total_display, completed=True)
 
     # Stop the consumer task gracefully via stop_event
     ctx.stop_event.set()

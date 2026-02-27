@@ -400,6 +400,9 @@ export function useWebSocket() {
                     useSettingsStore().applySyncedSettings(msg.settings)
                 })
                 break
+            case 'startup_progress':
+                store.setStartupProgress(msg.phase, msg.current, msg.total, msg.completed)
+                break
         }
     }
 

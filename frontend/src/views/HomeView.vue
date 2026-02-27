@@ -7,6 +7,7 @@ import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
 import ActivitySparkline from '../components/ActivitySparkline.vue'
 import AppTooltip from '../components/AppTooltip.vue'
+import StartupProgressCallout from '../components/StartupProgressCallout.vue'
 
 const router = useRouter()
 const store = useDataStore()
@@ -40,10 +41,14 @@ async function handleRetry() {
                 <ActivitySparkline :data="globalWeeklyActivity" />
             </span>
             <AppTooltip for="home-global-sparkline">Overall activity (message turns per week)</AppTooltip>
-            <wa-button class="view-all-button" variant="brand" appearance="filled-outlined" size="small" @click="router.push({ name: 'projects-all' })">
+            <wa-button v-if="totalSessionsCount > 0" class="view-all-button" variant="brand" appearance="filled-outlined" size="small" @click="router.push({ name: 'projects-all' })">
                 All {{ totalSessionsCount }} session{{ totalSessionsCount === 1 ? '' : 's' }} <wa-icon slot="end" name="arrow-right"></wa-icon>
             </wa-button>
         </header>
+
+        <!-- Startup progress (initial sync / background compute) -->
+        <StartupProgressCallout />
+
         <main class="home-content">
             <!-- Error state -->
             <FetchErrorPanel

@@ -353,6 +353,11 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         synced_settings = await sync_to_async(read_synced_settings)()
         await self.send_json({"type": "synced_settings_updated", "settings": synced_settings})
 
+        # Send current startup progress (if any phase is still active)
+        from twicc.startup_progress import get_startup_progress
+        for progress_msg in get_startup_progress():
+            await self.send_json(progress_msg)
+
     async def disconnect(self, close_code):
         """Remove from the updates group on disconnect."""
         await self.channel_layer.group_discard("updates", self.channel_name)

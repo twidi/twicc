@@ -18,10 +18,6 @@ Then open http://localhost:3500.
 > ```
 > If you prefer using `pip install twicc` in your own virtualenv, that works too.
 
-**Important note**
-
-> On first launch, TWICC synchronizes Claude Code's data files into its own database. This can take a minute or two depending on the number of projects and sessions. Subsequent starts are much faster.
-
 ## Features
 
 - Browse all your Claude Code projects and sessions
