@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import sys
+import threading
 
 from dotenv import load_dotenv
 
@@ -97,6 +98,9 @@ async def run_server(port: int):
     sync_done = asyncio.Event()
     price_done = asyncio.Event()
 
+    # Threading event to cooperatively stop the initial sync thread on shutdown
+    sync_stop_event = threading.Event()
+
     # --- Mutable container for tasks created by the orchestrator ---
     # These may still be None during shutdown if orchestrator hasn't started them yet.
     deferred = {
@@ -130,7 +134,7 @@ async def run_server(port: int):
             )
 
         logger.info("Starting data synchronization...")
-        await asyncio.to_thread(sync_all, on_session_progress=on_session_progress)
+        await asyncio.to_thread(sync_all, on_session_progress=on_session_progress, stop_event=sync_stop_event)
 
         # Broadcast completion
         await broadcast_startup_progress("initial_sync", total_sessions, total_sessions, completed=True)
@@ -201,6 +205,7 @@ async def run_server(port: int):
 
     def handle_signal(signum, frame):
         logger.info("Received signal %s, initiating shutdown...", signum)
+        sync_stop_event.set()
         shutdown_event.set()
         server.should_exit = True
 

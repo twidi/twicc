@@ -8,8 +8,8 @@ with the database, and reads new lines from modified JSONL files.
 from __future__ import annotations
 
 import logging
-
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -249,6 +249,7 @@ def _sync_session_subagents(
 def sync_project(
     project_id: str,
     on_session_progress: Callable[[str, int, int], None] | None = None,
+    stop_event: threading.Event | None = None,
 ) -> dict[str, int]:
     """
     Synchronize a single project, its sessions, and their subagents.
@@ -257,6 +258,7 @@ def sync_project(
         project_id: The project folder name.
         on_session_progress: Optional callback called after each session sync
             with (session_id, current_index, total_sessions).
+        stop_event: Optional threading event; when set, sync stops early.
 
     Returns a dict with sync statistics:
         - sessions_created: number of new sessions (including subagents)
@@ -293,6 +295,10 @@ def sync_project(
     logger.info(f"  Syncing project {project_id} ({total_sessions} sessions)")
 
     for idx, session_id in enumerate(sessions_to_sync, start=1):
+        if stop_event is not None and stop_event.is_set():
+            logger.info("  Sync interrupted for project %s (after %d/%d sessions)", project_id, idx - 1, total_sessions)
+            return stats
+
         file_path = session_files[session_id]
 
         # Check if session exists in DB
@@ -381,6 +387,7 @@ def sync_all(
     on_project_start: Callable[[str, int, int], None] | None = None,
     on_project_done: Callable[[str, dict[str, int]], None] | None = None,
     on_session_progress: Callable[[str, int, int], None] | None = None,
+    stop_event: threading.Event | None = None,
 ) -> dict[str, int]:
     """
     Synchronize all projects from CLAUDE_PROJECTS_DIR.
@@ -391,6 +398,7 @@ def sync_all(
         on_project_done: Callback called after syncing a project
             with (project_id, project_stats).
         on_session_progress: Callback passed to sync_project.
+        stop_event: Optional threading event; when set, sync stops early.
 
     Returns aggregate statistics.
     """
@@ -431,10 +439,14 @@ def sync_all(
     logger.info(f"Sync started — {total_projects} projects found")
 
     for idx, project_id in enumerate(projects_to_sync, start=1):
+        if stop_event is not None and stop_event.is_set():
+            logger.info("Sync interrupted (after %d/%d projects)", idx - 1, total_projects)
+            break
+
         if on_project_start:
             on_project_start(project_id, idx, total_projects)
 
-        project_stats = sync_project(project_id, on_session_progress=on_session_progress)
+        project_stats = sync_project(project_id, on_session_progress=on_session_progress, stop_event=stop_event)
 
         # Aggregate stats
         stats["sessions_created"] += project_stats["sessions_created"]
@@ -444,16 +456,26 @@ def sync_all(
         if on_project_done:
             on_project_done(project_id, project_stats)
 
-    # Resolve git_root for all projects with a directory
-    for project in Project.objects.filter(directory__isnull=False, stale=False):
-        ensure_project_git_root(project.id, project.directory)
+    interrupted = stop_event is not None and stop_event.is_set()
+
+    # Resolve git_root for all projects with a directory (skip if interrupted)
+    if not interrupted:
+        for project in Project.objects.filter(directory__isnull=False, stale=False):
+            ensure_project_git_root(project.id, project.directory)
 
     elapsed = time.monotonic() - sync_start
-    logger.info(
-        f"✓ Sync complete in {elapsed:.1f}s — "
-        f"{stats['sessions_created']} sessions created, "
-        f"{stats['items_added']} items added"
-    )
+    if interrupted:
+        logger.info(
+            f"⚠ Sync interrupted after {elapsed:.1f}s — "
+            f"{stats['sessions_created']} sessions created, "
+            f"{stats['items_added']} items added"
+        )
+    else:
+        logger.info(
+            f"✓ Sync complete in {elapsed:.1f}s — "
+            f"{stats['sessions_created']} sessions created, "
+            f"{stats['items_added']} items added"
+        )
 
     return stats
 
@@ -546,7 +568,10 @@ class ProgressDisplay:
         self._write(f"  Items: {stats['items_added']} added")
 
 
-def sync_all_with_progress(stream=None) -> dict[str, int]:
+def sync_all_with_progress(
+    stream=None,
+    stop_event: threading.Event | None = None,
+) -> dict[str, int]:
     """
     Synchronize all projects with console progress display.
 
@@ -558,6 +583,7 @@ def sync_all_with_progress(stream=None) -> dict[str, int]:
         on_project_start=display.on_project_start,
         on_project_done=display.on_project_done,
         on_session_progress=display.on_session_progress,
+        stop_event=stop_event,
     )
 
     display.on_sync_complete(stats)
