@@ -4,16 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "twicc"
-version = "0.1.0"
+version = "1.0.0"
 description = "Claude Code Web UI"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.13"
 authors = [
-    { name = "Stéphane Angel", email = "s.angel@twidi.com" },
+    { name = "Stéphane 'Twidi' Angel", email = "s.angel@twidi.com" },
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Web Environment",
     "Framework :: Django :: 6.0",
     "Intended Audience :: Developers",
