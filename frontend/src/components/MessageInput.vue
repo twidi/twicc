@@ -109,13 +109,31 @@ const isModelDisabled = computed(() => {
     return state === 'starting' || state === 'assistant_turn'
 })
 
-// Button label based on process state
+// Button label based on process state and whether this is a settings-only update
 const buttonLabel = computed(() => {
     const state = processState.value?.state
     if (state === 'starting') {
         return 'Starting...'
     }
+    // When settings changed and no text, show what will be updated
+    if (hasSettingsChanged.value && !messageText.value.trim()) {
+        if (hasModelChanged.value && hasPermissionChanged.value) {
+            return 'Update model & permissions'
+        }
+        if (hasModelChanged.value) {
+            return 'Update model'
+        }
+        return 'Update permissions'
+    }
     return 'Send'
+})
+
+// Button icon changes based on mode (settings-only update vs regular send)
+const buttonIcon = computed(() => {
+    if (hasSettingsChanged.value && !messageText.value.trim()) {
+        return 'arrows-rotate'
+    }
+    return 'paper-plane'
 })
 
 // Placeholder text based on process state
@@ -138,11 +156,21 @@ const processIsActive = computed(() => {
 })
 
 // Track the "active" values currently applied on the live SDK process.
-// These are updated when a session is loaded or after a successful send/update.
+// Also serve as reference values for Reset: initialized to resolved defaults
+// so that dropdown change detection works even when no process is active.
 const activeModel = ref(null)
 const activePermissionMode = ref(null)
 
-// Detect whether the user has changed the dropdowns from the active process values
+// Detect whether the user has changed the dropdowns from their reference values.
+// This works regardless of process state (used for Reset button visibility).
+const hasDropdownsChanged = computed(() =>
+    selectedModel.value !== activeModel.value ||
+    selectedPermissionMode.value !== activePermissionMode.value
+)
+
+// Detect dropdown changes on an active process (used for Send button "Update" mode).
+// Only meaningful when a process is running, since updating settings via SDK
+// requires an active process.
 const hasModelChanged = computed(() =>
     processIsActive.value && selectedModel.value !== activeModel.value
 )
@@ -150,22 +178,6 @@ const hasPermissionChanged = computed(() =>
     processIsActive.value && selectedPermissionMode.value !== activePermissionMode.value
 )
 const hasSettingsChanged = computed(() => hasModelChanged.value || hasPermissionChanged.value)
-
-// Show the "Update..." button only when settings changed, process is active, and no text typed
-const showUpdateButton = computed(() =>
-    hasSettingsChanged.value && !messageText.value.trim()
-)
-
-// Dynamic label for the update button
-const updateButtonLabel = computed(() => {
-    if (hasModelChanged.value && hasPermissionChanged.value) {
-        return 'Update model & permissions'
-    }
-    if (hasModelChanged.value) {
-        return 'Update model'
-    }
-    return 'Update permissions'
-})
 
 // Determine the effective permission mode for the current session.
 // If "always apply default" is on, the settings default wins regardless of DB value.
@@ -189,34 +201,43 @@ function resolveModel(sess) {
 // Sync permission mode and model when session changes
 watch(() => props.sessionId, (newId) => {
     const sess = store.getSession(newId)
-    selectedPermissionMode.value = resolvePermissionMode(sess)
-    selectedModel.value = resolveModel(sess)
-    // Initialize active values from the session (what the process is currently using)
-    activePermissionMode.value = sess?.permission_mode || null
-    activeModel.value = sess?.selected_model || null
+    const resolvedPermission = resolvePermissionMode(sess)
+    const resolvedModel = resolveModel(sess)
+    selectedPermissionMode.value = resolvedPermission
+    selectedModel.value = resolvedModel
+    // Initialize active values from the session, falling back to resolved defaults
+    // so that dropdown change detection works even when no process is active.
+    activePermissionMode.value = sess?.permission_mode || resolvedPermission
+    activeModel.value = sess?.selected_model || resolvedModel
 }, { immediate: true })
 
 // When the default permission mode setting changes, or the "always apply" toggle
 // changes, update the dropdown for sessions that should follow the default.
 // Don't overwrite user's selection when a process is active (they may be changing it intentionally).
+// Also update the active reference value so Reset detection stays in sync.
 watch(
     () => [settingsStore.getDefaultPermissionMode, settingsStore.isAlwaysApplyDefaultPermissionMode],
     () => {
         if (processIsActive.value) return
         const sess = store.getSession(props.sessionId)
-        selectedPermissionMode.value = resolvePermissionMode(sess)
+        const resolved = resolvePermissionMode(sess)
+        selectedPermissionMode.value = resolved
+        activePermissionMode.value = resolved
     }
 )
 
 // When the default model setting changes, or the "always apply" toggle
 // changes, update the dropdown for sessions that should follow the default.
 // Don't overwrite user's selection when a process is active (they may be changing it intentionally).
+// Also update the active reference value so Reset detection stays in sync.
 watch(
     () => [settingsStore.getDefaultModel, settingsStore.isAlwaysApplyDefaultModel],
     () => {
         if (processIsActive.value) return
         const sess = store.getSession(props.sessionId)
-        selectedModel.value = resolveModel(sess)
+        const resolved = resolveModel(sess)
+        selectedModel.value = resolved
+        activeModel.value = resolved
     }
 )
 
@@ -576,22 +597,35 @@ function handleCancel() {
 }
 
 /**
- * Clear the textarea content for existing sessions.
+ * Reset the form to its initial state: clear textarea text and
+ * restore dropdowns to their active (server-side) values.
  */
-async function handleClear() {
-    messageText.value = ''
-    store.clearDraftMessage(props.sessionId)
-    if (textareaRef.value) {
-        await nextTick()
-        if (textareaRef.value.updateComplete) {
-            await textareaRef.value.updateComplete
+async function handleReset() {
+    // Clear text if any
+    if (messageText.value) {
+        messageText.value = ''
+        store.clearDraftMessage(props.sessionId)
+        if (textareaRef.value) {
+            await nextTick()
+            if (textareaRef.value.updateComplete) {
+                await textareaRef.value.updateComplete
+            }
+            const innerTextarea = textareaRef.value.shadowRoot?.querySelector('textarea')
+            if (innerTextarea) {
+                innerTextarea.value = ''
+            }
+            textareaRef.value.value = ''
+            adjustTextareaHeight()
         }
-        const innerTextarea = textareaRef.value.shadowRoot?.querySelector('textarea')
-        if (innerTextarea) {
-            innerTextarea.value = ''
+    }
+    // Reset dropdowns to their reference values (active process or resolved defaults)
+    if (hasDropdownsChanged.value) {
+        if (activeModel.value !== null) {
+            selectedModel.value = activeModel.value
         }
-        textareaRef.value.value = ''
-        adjustTextareaHeight()
+        if (activePermissionMode.value !== null) {
+            selectedPermissionMode.value = activePermissionMode.value
+        }
     }
 }
 </script>
@@ -732,18 +766,6 @@ async function handleClear() {
                 </wa-select>
                 <AppTooltip :for="permissionSelectId">Permission mode. Can be changed at any time, even while Claude is working.</AppTooltip>
 
-                <!-- Update settings button: visible when settings changed on active process and no text -->
-                <wa-button
-                    v-if="showUpdateButton"
-                    variant="neutral"
-                    @click="handleSend"
-                    size="small"
-                    class="update-settings-button"
-                >
-                    <wa-icon name="arrows-rotate" variant="classic"></wa-icon>
-                    <span>{{ updateButtonLabel }}</span>
-                </wa-button>
-
                 <!-- Cancel button for draft sessions -->
                 <wa-button
                     v-if="isDraft"
@@ -756,26 +778,27 @@ async function handleClear() {
                     <wa-icon name="xmark" variant="classic"></wa-icon>
                     <span>Cancel</span>
                 </wa-button>
-                <!-- Clear button for existing sessions when there's text -->
+                <!-- Reset button for existing sessions: resets text and/or dropdowns -->
                 <wa-button
-                    v-else-if="messageText.trim()"
+                    v-else-if="messageText.trim() || hasDropdownsChanged"
                     variant="neutral"
                     appearance="outlined"
-                    @click="handleClear"
+                    @click="handleReset"
                     size="small"
-                    class="clear-button"
+                    class="reset-button"
                 >
                     <wa-icon name="xmark" variant="classic"></wa-icon>
-                    <span>Clear</span>
+                    <span>Reset</span>
                 </wa-button>
+                <!-- Send / Update button: dynamically labeled based on state -->
                 <wa-button
                     variant="brand"
-                    :disabled="isDisabled || !messageText.trim()"
+                    :disabled="isDisabled || (!messageText.trim() && !hasSettingsChanged)"
                     @click="handleSend"
                     size="small"
                     class="send-button"
                 >
-                    <wa-icon name="paper-plane" variant="classic"></wa-icon>
+                    <wa-icon :name="buttonIcon" variant="classic"></wa-icon>
                     <span>{{ buttonLabel }}</span>
                 </wa-button>
             </div>
@@ -891,7 +914,7 @@ body.sidebar-closed .message-input-toolbar {
     gap: var(--wa-space-s);
     flex-shrink: 0;
 
-    .update-settings-button, .cancel-button, .clear-button, .send-button {
+    .cancel-button, .reset-button, .send-button {
         wa-icon {
             display: none;
         }
