@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useStartupPolling } from '../composables/useStartupPolling'
@@ -36,6 +36,15 @@ const globalWeeklyActivity = computed(() => store.weeklyActivity._global || [])
 async function handleRetry() {
     await store.loadHomeData()
 }
+
+// Allow native page scroll on HomeView (the root has overflow:hidden for
+// ProjectView/SessionView which manage their own internal scroll panels).
+onMounted(() => {
+    document.documentElement.style.overflowY = 'auto'
+})
+onUnmounted(() => {
+    document.documentElement.style.overflowY = ''
+})
 </script>
 
 <template>
@@ -87,10 +96,8 @@ async function handleRetry() {
     margin: 0 auto;
     display: flex;
     flex-direction: column;
-    /* The root has overflow:hidden for ProjectView/SessionView which manage their
-       own internal scroll. HomeView needs its own scrollable container. */
-    height: 100vh;
-    overflow-y: auto;
+    /* Native page scroll is enabled via onMounted (overrides :root overflow:hidden) */
+    min-height: 100vh;
 }
 
 .home-header {
@@ -122,6 +129,7 @@ async function handleRetry() {
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0;
 }
 
 .loading-state {
@@ -129,7 +137,7 @@ async function handleRetry() {
     align-items: center;
     justify-content: center;
     gap: var(--wa-space-s);
-    flex: 1;
+    min-height: 50vh;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-m);
 }
