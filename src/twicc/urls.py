@@ -47,12 +47,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/<str:session_id>/file-search/", views.file_search),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/file-content/", views.file_content),
     # Catch-all for Vue Router (must be last)
+    # Static files (/static/) are served by BlackNoise at the ASGI level,
+    # before reaching Django's URL routing (see asgi.py).
     re_path(r"^(?!api/|static/|ws/).*$", views.spa_index),
-]
-
-# Serve static files directly (no reverse proxy in front).
-# Uses our own serve_static view instead of Django's django.views.static.serve
-# to avoid the StreamingHttpResponse warning under ASGI.
-urlpatterns += [
-    re_path(r"^static/(?P<path>.*)$", views.serve_static),
 ]

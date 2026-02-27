@@ -946,53 +946,6 @@ def daily_activity(request, project_id=None):
     })
 
 
-def serve_static(request, path):
-    """Serve static files without StreamingHttpResponse.
-
-    Django's built-in ``django.views.static.serve`` returns a ``FileResponse``
-    (a ``StreamingHttpResponse`` subclass) that uses a synchronous file
-    iterator. Under ASGI this triggers a warning on every request because
-    Django has to bridge the sync iterator into an async context.
-
-    For frontend assets (JS, CSS, images) the files are small enough to read
-    entirely into memory, so we use a plain ``HttpResponse`` — same approach
-    as ``spa_index`` below. We keep ``If-Modified-Since`` / ``Last-Modified``
-    support so browsers still benefit from conditional requests.
-    """
-    import mimetypes
-    import posixpath
-    from pathlib import Path
-
-    from django.http import HttpResponseNotModified
-    from django.utils._os import safe_join
-    from django.utils.http import http_date, parse_http_date
-
-    path = posixpath.normpath(path).lstrip("/")
-    fullpath = Path(safe_join(str(settings.FRONTEND_DIST_DIR), path))
-
-    if not fullpath.is_file():
-        raise Http404
-
-    # Respect If-Modified-Since
-    statobj = fullpath.stat()
-    header = request.META.get("HTTP_IF_MODIFIED_SINCE")
-    if header:
-        try:
-            if int(statobj.st_mtime) <= parse_http_date(header):
-                return HttpResponseNotModified()
-        except (ValueError, OverflowError):
-            pass
-
-    content_type, encoding = mimetypes.guess_type(str(fullpath))
-    content_type = content_type or "application/octet-stream"
-
-    response = HttpResponse(fullpath.read_bytes(), content_type=content_type)
-    response.headers["Last-Modified"] = http_date(statobj.st_mtime)
-    if encoding:
-        response.headers["Content-Encoding"] = encoding
-    return response
-
-
 def spa_index(request):
     """Catch-all for Vue Router - serves index.html."""
     index_path = settings.FRONTEND_DIST_DIR / "index.html"

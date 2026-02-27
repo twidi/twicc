@@ -25,7 +25,6 @@ ALLOWED_HOSTS = ["*"]
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
-    "django.contrib.staticfiles",
     "channels",
     "twicc.core.apps.CoreConfig",
 ]
@@ -86,13 +85,11 @@ DATABASES = {
     }
 }
 
-# Static files
+# Frontend build directory
 # Built frontend assets live inside the package: src/twicc/static/frontend/
 # This path works both in dev (after npm run build) and when installed via pip/uvx.
-STATIC_URL = "/static/"
+# Static file serving is handled by BlackNoise at the ASGI level (see asgi.py).
 FRONTEND_DIST_DIR = PACKAGE_DIR / "static" / "frontend"
-STATICFILES_DIRS = [FRONTEND_DIST_DIR]
-STATIC_ROOT = PACKAGE_DIR / "staticfiles"
 
 # Source des donnees Claude
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"

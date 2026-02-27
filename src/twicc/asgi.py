@@ -10,6 +10,7 @@ import asyncio
 import logging
 
 from asgiref.sync import sync_to_async
+from blacknoise import BlackNoise
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.layers import get_channel_layer
 from channels.routing import ProtocolTypeRouter, URLRouter
@@ -823,3 +824,7 @@ application = ProtocolTypeRouter(
         ),
     }
 )
+
+# Serve static files via BlackNoise at the ASGI level.
+application = BlackNoise(application, immutable_file_test=lambda *_: True)
+application.add(settings.FRONTEND_DIST_DIR, "/static")

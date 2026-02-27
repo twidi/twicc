@@ -24,6 +24,7 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
+    "blacknoise>=1.2.0",
     "channels>=4.3.2",
     "claude-agent-sdk>=0.1.31",
     "daphne>=4.2.1",

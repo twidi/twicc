@@ -86,6 +86,18 @@ wheels = [
 ]
 
 [[package]]
+name = "blacknoise"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "starlette" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2e/67/ec7cf9bf75b02d7224d1bf8fb93a61c0886c323248710d12dbfa761cc6d7/blacknoise-1.2.0.tar.gz", hash = "sha256:e44d38fbabba18dffb682d9463b670b63c4fbc94c128263aa1a6365618912593", size = 8308, upload-time = "2024-12-09T08:48:50.795Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/70/7425bd7047bf4fa56719aa2a8f17bf098fc80f496ea9bcd315339d3af7d1/blacknoise-1.2.0-py3-none-any.whl", hash = "sha256:1914b179ed37c237e3b914f759afb926371dd60f87649684b5e17a9c55c60b32", size = 6378, upload-time = "2024-12-09T08:48:52.58Z" },
+]
+
+[[package]]
 name = "cbor2"
 version = "5.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1067,6 +1079,7 @@ name = "twicc"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "blacknoise" },
     { name = "channels" },
     { name = "claude-agent-sdk" },
     { name = "daphne" },
@@ -1095,6 +1108,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "blacknoise", specifier = ">=1.2.0" },
     { name = "channels", specifier = ">=4.3.2" },
     { name = "claude-agent-sdk", specifier = ">=0.1.31" },
     { name = "daphne", specifier = ">=4.2.1" },
