@@ -119,6 +119,16 @@ export function notifyUserDraftUpdated(sessionId) {
 }
 
 /**
+ * Send synced settings to the backend for persistence in settings.json.
+ * The backend will broadcast the updated settings to all connected clients.
+ * @param {Object} settings - The synced settings key-value pairs
+ * @returns {boolean} - True if message was sent, false if not connected
+ */
+export function sendSyncedSettings(settings) {
+    return sendWsMessage({ type: 'update_synced_settings', settings })
+}
+
+/**
  * Build a notification body string from the enriched WebSocket message.
  * Format: "Project: <name>\nSession: <title>" (both truncated).
  *
@@ -383,6 +393,13 @@ export function useWebSocket() {
                 store.setUsage(msg.has_oauth, msg.success, msg.reason, msg.usage, computed)
                 break
             }
+            case 'synced_settings_updated':
+                // Apply synced settings from backend (on connect or when another client updates)
+                // Lazy import to avoid circular dependency (useWebSocket.js → settings.js)
+                import('../stores/settings').then(({ useSettingsStore }) => {
+                    useSettingsStore().applySyncedSettings(msg.settings)
+                })
+                break
         }
     }
 

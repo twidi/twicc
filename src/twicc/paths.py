@@ -7,7 +7,8 @@ All data (database, logs, config) lives in a single "data directory":
 
 Structure:
     <data_dir>/
-    ├── .env          # Configuration (ports, password hash, etc.)
+    ├── .env              # Infrastructure config (ports, password hash, etc.)
+    ├── settings.json     # User preferences synced across devices
     ├── db/
     │   └── data.sqlite (+shm, +wal)
     └── logs/
@@ -76,6 +77,11 @@ def get_frontend_log_path() -> Path:
 def get_env_path() -> Path:
     """Return the .env file path (<data_dir>/.env)."""
     return get_data_dir() / ".env"
+
+
+def get_synced_settings_path() -> Path:
+    """Return the synced settings file path (<data_dir>/settings.json)."""
+    return get_data_dir() / "settings.json"
 
 
 def ensure_data_dirs() -> None:

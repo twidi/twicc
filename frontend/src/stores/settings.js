@@ -1,9 +1,9 @@
 // frontend/src/stores/settings.js
-// Persistent settings store with localStorage support
+// Persistent settings store with localStorage + backend sync for global settings
 
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_MODEL, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, MODEL } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_MODEL, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, MODEL, SYNCED_SETTINGS_KEYS } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
 import { setThemeMode } from '../utils/theme'
@@ -43,6 +43,8 @@ const SETTINGS_SCHEMA = {
     _effectiveTheme: null,
     // Not persisted - detected once at startup, true when primary input is touch
     _isTouchDevice: false,
+    // Not persisted - guard flag to prevent re-broadcasting when applying remote settings
+    _isApplyingRemoteSettings: false,
 }
 
 /**
@@ -406,6 +408,28 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Apply synced settings received from the backend.
+         * Merges with schema: validates each key, ignores unknown keys,
+         * keeps current value if validation fails.
+         * Sets a guard flag to prevent the synced-settings watcher from
+         * sending these values back to the backend.
+         * @param {Object} remoteSettings - Settings object from backend
+         */
+        applySyncedSettings(remoteSettings) {
+            if (!remoteSettings || typeof remoteSettings !== 'object') return
+            this._isApplyingRemoteSettings = true
+            for (const key of SYNCED_SETTINGS_KEYS) {
+                if (key in remoteSettings) {
+                    const validator = SETTINGS_VALIDATORS[key]
+                    if (!validator || validator(remoteSettings[key])) {
+                        this[key] = remoteSettings[key]
+                    }
+                }
+            }
+            this._isApplyingRemoteSettings = false
+        },
+
+        /**
          * Update the effective theme based on themeMode and system preference.
          * Called internally when themeMode changes or system preference changes.
          */
@@ -491,6 +515,26 @@ export function initSettings() {
     watch(() => store.fontSize, (size) => {
         document.documentElement.style.fontSize = `${size}px`
     })
+
+    // Watch synced settings and send to backend when changed by the user.
+    // The guard flag (_isApplyingRemoteSettings) prevents re-sending when
+    // changes come from the backend via WebSocket.
+    // Lazy import of useWebSocket avoids circular dependency (settings.js ↔ useWebSocket.js).
+    watch(
+        () => {
+            const synced = {}
+            for (const key of SYNCED_SETTINGS_KEYS) {
+                synced[key] = store[key]
+            }
+            return synced
+        },
+        async (newSynced) => {
+            if (store._isApplyingRemoteSettings) return
+            const { sendSyncedSettings } = await import('../composables/useWebSocket')
+            sendSyncedSettings(newSynced)
+        },
+        { deep: true }
+    )
 
     // Watch for display mode changes
     // Recompute all visual items when display mode changes

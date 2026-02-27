@@ -226,3 +226,18 @@ export const MODEL_COLORS = {
     [MODEL.OPUS]: '#e0a526',
     [MODEL.SONNET]: '#9b59b6',
 }
+
+/**
+ * Settings keys that are synced across devices via backend settings.json.
+ * All other settings remain local to the browser (localStorage only).
+ */
+export const SYNCED_SETTINGS_KEYS = new Set([
+    'titleGenerationEnabled',
+    'titleSystemPrompt',
+    'defaultPermissionMode',
+    'alwaysApplyDefaultPermissionMode',
+    'defaultModel',
+    'alwaysApplyDefaultModel',
+    'autoUnpinOnArchive',
+    'terminalUseTmux',
+])

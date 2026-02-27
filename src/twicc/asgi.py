@@ -22,6 +22,7 @@ from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny, 
 
 from twicc.agent.manager import get_process_manager
 from twicc.agent.states import ProcessInfo, ProcessState, serialize_process_info
+from twicc.synced_settings import read_synced_settings, write_synced_settings
 from twicc.usage_task import get_usage_message_for_connection
 from twicc.terminal import terminal_application
 
@@ -348,6 +349,10 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         usage_message = await get_usage_message_for_connection()
         await self.send_json(usage_message)
 
+        # Send synced settings to the connecting client
+        synced_settings = await sync_to_async(read_synced_settings)()
+        await self.send_json({"type": "synced_settings_updated", "settings": synced_settings})
+
     async def disconnect(self, close_code):
         """Remove from the updates group on disconnect."""
         await self.channel_layer.group_discard("updates", self.channel_name)
@@ -361,6 +366,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         - kill_process: kill a running Claude process
         - pending_request_response: respond to a pending tool approval or clarifying question
         - suggest_title: request a title suggestion for a session
+        - update_synced_settings: update synced settings and broadcast to all clients
         """
         msg_type = content.get("type")
 
@@ -381,6 +387,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         elif msg_type == "suggest_title":
             await self._handle_suggest_title(content)
+
+        elif msg_type == "update_synced_settings":
+            await self._handle_update_synced_settings(content)
 
     async def send_json(self, content, close=False):
         try:
@@ -763,6 +772,27 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             "suggestion": suggestion,  # Can be None
             "sourcePrompt": prompt,    # Always included for regeneration
         })
+
+    async def _handle_update_synced_settings(self, content: dict) -> None:
+        """Handle update_synced_settings request from client.
+
+        Writes the received settings to settings.json and broadcasts
+        the updated settings to all connected clients.
+        """
+        synced_settings = content.get("settings")
+        if not isinstance(synced_settings, dict):
+            return
+
+        await sync_to_async(write_synced_settings)(synced_settings)
+
+        # Broadcast to all clients (including the sender — harmless, same values)
+        await self.channel_layer.group_send(
+            "updates",
+            {
+                "type": "broadcast",
+                "data": {"type": "synced_settings_updated", "settings": synced_settings},
+            },
+        )
 
     async def broadcast(self, event):
         """Handle broadcast events by sending data to the client."""

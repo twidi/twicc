@@ -338,6 +338,15 @@ function onPopoverShow() {
         <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
         <div class="settings-content">
             <div class="settings-sections">
+                <!-- Synced Settings Notice -->
+                <section class="settings-section settings-notice">
+                    <p>
+                        <wa-icon name="cloud" class="synced-icon"></wa-icon>
+                        Settings marked with a cloud icon are synced across all your devices.
+                        Others are specific to this browser.
+                    </p>
+                </section>
+
                 <!-- Global Section -->
                 <section class="settings-section">
                     <h3 class="settings-section-title">Global</h3>
@@ -390,7 +399,7 @@ function onPopoverShow() {
                 <section class="settings-section">
                     <h3 class="settings-section-title">Claude settings</h3>
                     <div class="setting-group">
-                        <label class="setting-group-label">Default permission mode</label>
+                        <label class="setting-group-label">Default permission mode <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-select
                             ref="permissionModeSelect"
                             :value.prop="defaultPermissionMode"
@@ -414,7 +423,7 @@ function onPopoverShow() {
                         </wa-select>
                     </div>
                     <div class="setting-group">
-                        <label class="setting-group-label">Always apply default mode</label>
+                        <label class="setting-group-label">Always apply default mode <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-switch
                             ref="alwaysApplyDefaultPermissionModeSwitch"
                             @change="onAlwaysApplyDefaultPermissionModeChange"
@@ -423,7 +432,7 @@ function onPopoverShow() {
                         <span class="setting-group-hint">Override the per-session saved mode with the default above.</span>
                     </div>
                     <div class="setting-group">
-                        <label class="setting-group-label">Default model</label>
+                        <label class="setting-group-label">Default model <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-select
                             ref="modelSelect"
                             :value.prop="defaultModel"
@@ -443,7 +452,7 @@ function onPopoverShow() {
                         </wa-select>
                     </div>
                     <div class="setting-group">
-                        <label class="setting-group-label">Always apply default model</label>
+                        <label class="setting-group-label">Always apply default model <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-switch
                             ref="alwaysApplyDefaultModelSwitch"
                             @change="onAlwaysApplyDefaultModelChange"
@@ -491,7 +500,7 @@ function onPopoverShow() {
                         </wa-select>
                     </div>
                     <div class="setting-group">
-                        <label class="setting-group-label">Auto-unpin on archive</label>
+                        <label class="setting-group-label">Auto-unpin on archive <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-switch
                             ref="autoUnpinOnArchiveSwitch"
                             @change="onAutoUnpinOnArchiveChange"
@@ -528,9 +537,9 @@ function onPopoverShow() {
                             ref="titleGenerationSwitch"
                             @change="onTitleGenerationChange"
                             size="small"
-                        >Enabled (Haiku)</wa-switch>
+                        >Enabled (Haiku) <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
                         <div v-if="titleGenerationEnabled" class="title-prompt-section">
-                            <label class="setting-group-label">System prompt</label>
+                            <label class="setting-group-label">System prompt <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <wa-textarea
                                 ref="titleSystemPromptTextarea"
                                 :value.prop="titleSystemPrompt"
@@ -581,7 +590,7 @@ function onPopoverShow() {
                 <section class="settings-section">
                     <h3 class="settings-section-title">Terminal</h3>
                     <div class="setting-group">
-                        <label class="setting-group-label">Persistent sessions (tmux)</label>
+                        <label class="setting-group-label">Persistent sessions (tmux) <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-switch
                             ref="tmuxSwitch"
                             @change="onTmuxChange"
@@ -673,6 +682,28 @@ function onPopoverShow() {
     display: block;
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
+}
+
+.synced-icon {
+    font-size: 0.75em;
+    color: var(--wa-color-brand);
+    vertical-align: middle;
+}
+
+.settings-notice p {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: var(--wa-space-xs);
+
+    .synced-icon {
+        font-size: 1em;
+        position: relative;
+        top: 0.1em;
+        flex-shrink: 0;
+    }
 }
 
 </style>
