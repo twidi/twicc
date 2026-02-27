@@ -172,18 +172,26 @@ export const useDataStore = defineStore('data', {
         getProjects: (state) => Object.values(state.projects).sort((a, b) => b.mtime - a.mtime),
         getProject: (state) => (id) => state.projects[id],
         getProjectSessions: (state) => (projectId) => {
-            const oldestMtime = state.localState.projects[projectId]?.oldestSessionMtime
+            const projectState = state.localState.projects[projectId]
+            // Only apply the mtime lower-bound when there are more pages to load.
+            // When all pages have been fetched (hasMoreSessions=false), every
+            // session in the store should be visible — including ones added via
+            // WS during background compute whose mtime may be older than the bound.
+            const oldestMtime = projectState?.hasMoreSessions
+                ? projectState.oldestSessionMtime
+                : null
             return Object.values(state.sessions)
                 .filter(s => s.project_id === projectId && !s.parent_session_id)
-                // Filter to only sessions within the fetched range (mtime >= oldestMtime)
                 .filter(s => oldestMtime == null || s.mtime >= oldestMtime)
                 .sort(sessionSortComparator(state.processStates))
         },
         getAllSessions: (state) => {
-            const oldestMtime = state.localState.projects[ALL_PROJECTS_ID]?.oldestSessionMtime
+            const allState = state.localState.projects[ALL_PROJECTS_ID]
+            const oldestMtime = allState?.hasMoreSessions
+                ? allState.oldestSessionMtime
+                : null
             return Object.values(state.sessions)
                 .filter(s => !s.parent_session_id)
-                // Filter to only sessions within the fetched range (mtime >= oldestMtime)
                 .filter(s => oldestMtime == null || s.mtime >= oldestMtime)
                 .sort(sessionSortComparator(state.processStates))
         },
@@ -422,7 +430,6 @@ export const useDataStore = defineStore('data', {
         updateSession(session) {
             this.$patch({ sessions: { [session.id]: session } })
         },
-
         /**
          * Create a draft session for a project.
          * Draft sessions exist only in the frontend until the first message is sent.

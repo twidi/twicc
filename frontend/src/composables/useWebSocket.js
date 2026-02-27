@@ -343,9 +343,14 @@ export function useWebSocket() {
                 }
                 break
             case 'session_updated':
-                // Only update if session exists in store (was previously fetched)
                 if (store.getSession(msg.session.id)) {
                     store.updateSession(msg.session)
+                } else if (store.areProjectSessionsFetched(msg.session.project_id) ||
+                    store.areAllProjectsSessionsFetched) {
+                    // Session not yet in store but sessions for this project have been
+                    // fetched — add it (happens during background compute when sessions
+                    // are indexed after the initial page was loaded).
+                    store.addSession(msg.session)
                 }
                 break
             case 'session_items_added':

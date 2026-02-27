@@ -48,7 +48,7 @@ const computePercent = computed(() => {
 <template>
     <Transition name="callout-fade">
         <wa-callout v-if="isVisible" variant="brand" class="startup-callout">
-            <wa-icon slot="icon" name="arrows-rotate" class="spin-icon"></wa-icon>
+            <wa-spinner slot="icon"></wa-spinner>
             <div class="progress-phases">
                 <!-- Phase 1: Syncing sessions from disk -->
                 <div class="progress-phase">
@@ -122,15 +122,6 @@ const computePercent = computed(() => {
     margin: var(--wa-space-s) 0 0;
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
-}
-
-.spin-icon {
-    animation: spin 2s linear infinite;
-}
-
-@keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
 }
 
 /* Transition for callout disappearance */
