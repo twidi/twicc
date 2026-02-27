@@ -953,7 +953,7 @@ export const useDataStore = defineStore('data', {
          */
         recomputeVisualItems(sessionId) {
             const items = this.sessionItems[sessionId]
-            if (!items) {
+            if (!items && !this.localState.optimisticMessages[sessionId]) {
                 this.localState.sessionVisualItems[sessionId] = []
                 return
             }
@@ -968,7 +968,7 @@ export const useDataStore = defineStore('data', {
             const processState = this.processStates[sessionId]
             const isAssistantTurn = processState?.state === PROCESS_STATE.ASSISTANT_TURN
 
-            let allItems = items
+            let allItems = items || []
             // Append optimistic message if one exists for this session
             const optimistic = this.localState.optimisticMessages[sessionId]
             if (optimistic) {
