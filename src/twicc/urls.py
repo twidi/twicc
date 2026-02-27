@@ -1,6 +1,4 @@
-from django.conf import settings
 from django.urls import path, re_path
-from django.views.static import serve
 
 from . import views
 from .auth import views as auth_views
@@ -53,12 +51,8 @@ urlpatterns = [
 ]
 
 # Serve static files directly (no reverse proxy in front).
-# Django's static() helper is a no-op when DEBUG=False, but twicc always serves
-# its own static files (no nginx/CDN in front), so we wire the view explicitly.
+# Uses our own serve_static view instead of Django's django.views.static.serve
+# to avoid the StreamingHttpResponse warning under ASGI.
 urlpatterns += [
-    re_path(
-        r"^static/(?P<path>.*)$",
-        serve,
-        {"document_root": settings.FRONTEND_DIST_DIR},
-    ),
+    re_path(r"^static/(?P<path>.*)$", views.serve_static),
 ]
