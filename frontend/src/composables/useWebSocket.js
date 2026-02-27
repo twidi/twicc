@@ -419,6 +419,7 @@ export function useWebSocket() {
         if (newStatus === 'OPEN') {
             // Store send function at module level for global access
             __hmrState.wsSendFn = send
+            store.wsConnected = true
 
             const currentProjectId = route.params.projectId || null
             const currentSessionId = route.params.sessionId || null
@@ -429,6 +430,7 @@ export function useWebSocket() {
         } else if (newStatus === 'CLOSED') {
             // Clear send function when disconnected
             __hmrState.wsSendFn = null
+            store.wsConnected = false
         }
     })
 

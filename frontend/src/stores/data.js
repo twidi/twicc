@@ -87,6 +87,9 @@ export const useDataStore = defineStore('data', {
         // { success: bool, raw: serialized snapshot, computed: computeUsageData() result }
         usage: null,
 
+        // WebSocket connection state (updated by useWebSocket composable)
+        wsConnected: false,
+
         // Startup progress (from WebSocket startup_progress messages)
         // { initial_sync?: { current, total, completed }, background_compute?: { current, total, completed } }
         startupProgress: {},
@@ -259,6 +262,10 @@ export const useDataStore = defineStore('data', {
         backgroundComputeProgress: (state) => state.startupProgress.background_compute || null,
         isStartupInProgress: (state) =>
             Object.values(state.startupProgress).some(p => p && !p.completed),
+        isInitialSyncInProgress: (state) => {
+            const sync = state.startupProgress.initial_sync
+            return sync != null && !sync.completed
+        },
 
         // Local state getters - loading
         isProjectsListLoading: (state) => state.localState.projectsList.loading,

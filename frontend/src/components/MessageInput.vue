@@ -91,9 +91,13 @@ const processState = computed(() => store.getProcessState(props.sessionId))
 
 // Determine if input/button should be disabled
 const isDisabled = computed(() => {
-    const state = processState.value?.state
-    // Disabled only during starting - we allow sending during assistant_turn
+    // Cannot send without a WebSocket connection
+    if (!store.wsConnected) return true
+    // Cannot send while the initial sync is running (sessions not available yet)
+    if (store.isInitialSyncInProgress) return true
+    // Disabled during process startup - we allow sending during assistant_turn
     // (Claude Agent SDK supports receiving messages while responding)
+    const state = processState.value?.state
     return state === 'starting'
 })
 
