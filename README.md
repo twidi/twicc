@@ -4,6 +4,14 @@
 
 A web UI to browse and interact with your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions. View projects, sessions, conversation history, costs, and run Claude agents — all from your browser.
 
+## Disclaimer
+
+This is a personal project made by Twidi for his own needs. It is freely available and you are welcome to use it however you see fit.
+
+That said, **no support is guaranteed**. I am open to suggestions, improvements, and contributions, but there is no commitment to address issues or review pull requests.
+
+Note: The project was almost entirely vibe-coded, with general oversight from the author.
+
 ## Quick start
 
 ```bash
