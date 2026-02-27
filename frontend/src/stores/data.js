@@ -1,6 +1,6 @@
 // frontend/src/stores/data.js
 
-import { defineStore } from 'pinia'
+import { defineStore, acceptHMRUpdate } from 'pinia'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
 import { DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
@@ -1956,3 +1956,10 @@ export const useDataStore = defineStore('data', {
         }
     }
 })
+
+// Pinia HMR support: allows Vite to hot-replace the store definition
+// without propagating the update to importers (like main.js), which would
+// cause a full page reload.
+if (import.meta.hot) {
+    import.meta.hot.accept(acceptHMRUpdate(useDataStore, import.meta.hot))
+}

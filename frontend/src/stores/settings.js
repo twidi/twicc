@@ -1,7 +1,7 @@
 // frontend/src/stores/settings.js
 // Persistent settings store with localStorage support
 
-import { defineStore } from 'pinia'
+import { defineStore, acceptHMRUpdate } from 'pinia'
 import { watch } from 'vue'
 import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_CLAUDE_MODEL, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, CLAUDE_MODEL } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
@@ -503,4 +503,11 @@ export function initSettings() {
             dataStore.recomputeAllVisualItems()
         }
     )
+}
+
+// Pinia HMR support: allows Vite to hot-replace the store definition
+// without propagating the update to importers (like main.js), which would
+// cause a full page reload.
+if (import.meta.hot) {
+    import.meta.hot.accept(acceptHMRUpdate(useSettingsStore, import.meta.hot))
 }

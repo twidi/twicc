@@ -1,6 +1,6 @@
 // frontend/src/stores/auth.js
 
-import { defineStore } from 'pinia'
+import { defineStore, acceptHMRUpdate } from 'pinia'
 
 export const useAuthStore = defineStore('auth', {
     state: () => ({
@@ -160,3 +160,10 @@ export const useAuthStore = defineStore('auth', {
         },
     },
 })
+
+// Pinia HMR support: allows Vite to hot-replace the store definition
+// without propagating the update to importers (like main.js), which would
+// cause a full page reload.
+if (import.meta.hot) {
+    import.meta.hot.accept(acceptHMRUpdate(useAuthStore, import.meta.hot))
+}
