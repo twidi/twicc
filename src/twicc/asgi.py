@@ -93,11 +93,18 @@ def session_exists(session_id: str) -> bool:
 
 
 async def update_session_permission_mode(session_id: str, permission_mode: str) -> None:
-    """Update the permission_mode for an existing session and broadcast the change."""
+    """Update the permission_mode for an existing session and broadcast the change.
+
+    Skips the DB update and broadcast if the value is already the same.
+    """
     from twicc.core.models import Session
     from twicc.core.serializers import serialize_session
 
-    await sync_to_async(Session.objects.filter(id=session_id).update)(permission_mode=permission_mode)
+    rows = await sync_to_async(
+        Session.objects.filter(id=session_id).exclude(permission_mode=permission_mode).update
+    )(permission_mode=permission_mode)
+    if not rows:
+        return
 
     session = await sync_to_async(Session.objects.filter(id=session_id).first)()
     channel_layer = get_channel_layer()
@@ -115,11 +122,18 @@ async def update_session_permission_mode(session_id: str, permission_mode: str) 
 
 
 async def update_session_selected_model(session_id: str, selected_model: str) -> None:
-    """Update the selected_model for an existing session and broadcast the change."""
+    """Update the selected_model for an existing session and broadcast the change.
+
+    Skips the DB update and broadcast if the value is already the same.
+    """
     from twicc.core.models import Session
     from twicc.core.serializers import serialize_session
 
-    await sync_to_async(Session.objects.filter(id=session_id).update)(selected_model=selected_model)
+    rows = await sync_to_async(
+        Session.objects.filter(id=session_id).exclude(selected_model=selected_model).update
+    )(selected_model=selected_model)
+    if not rows:
+        return
 
     session = await sync_to_async(Session.objects.filter(id=session_id).first)()
     channel_layer = get_channel_layer()

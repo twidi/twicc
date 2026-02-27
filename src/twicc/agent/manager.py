@@ -171,7 +171,7 @@ class ProcessManager:
                     # Process ready for input or busy responding.
                     # Apply settings changes on the live SDK client before sending.
                     # Permission mode works in any state; model only in USER_TURN.
-                    await self._apply_live_settings(process, permission_mode, selected_model)
+                    await process.apply_live_settings(permission_mode, selected_model)
 
                     # If there is actual content to send, forward it to Claude
                     has_content = bool(text) or bool(images) or bool(documents)
@@ -197,32 +197,6 @@ class ProcessManager:
                 permission_mode=permission_mode, selected_model=selected_model,
                 images=images, documents=documents
             )
-
-    @staticmethod
-    async def _apply_live_settings(
-        process: ClaudeProcess,
-        permission_mode: str,
-        selected_model: str | None,
-    ) -> None:
-        """Apply permission mode and model changes to a live process.
-
-        Compares the requested values with the process's current values and
-        calls the SDK methods only when they differ.
-
-        Permission mode can be changed in any active state (USER_TURN or ASSISTANT_TURN).
-        Model can only be changed during USER_TURN (the SDK's set_model() has no effect
-        during ASSISTANT_TURN).
-
-        Args:
-            process: The live ClaudeProcess instance
-            permission_mode: Desired permission mode
-            selected_model: Desired model shorthand, or None
-        """
-        if permission_mode != process.permission_mode:
-            await process.set_permission_mode(permission_mode)
-
-        if selected_model != process.selected_model and process.state == ProcessState.USER_TURN:
-            await process.set_model(selected_model)
 
     async def create_session(
         self,

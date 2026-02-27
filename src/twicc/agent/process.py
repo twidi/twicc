@@ -524,6 +524,30 @@ class ClaudeProcess:
         await self._client.set_model(model)
         self.selected_model = model
 
+    async def apply_live_settings(
+        self,
+        permission_mode: str,
+        selected_model: str | None,
+    ) -> None:
+        """Apply permission mode and model changes to the live SDK client.
+
+        Compares the requested values with the current values and calls the SDK
+        methods only when they differ.
+
+        Permission mode can be changed in any active state (USER_TURN or ASSISTANT_TURN).
+        Model can only be changed during USER_TURN (the SDK's set_model() has no effect
+        during ASSISTANT_TURN).
+
+        Args:
+            permission_mode: Desired permission mode
+            selected_model: Desired model shorthand, or None
+        """
+        if permission_mode != self.permission_mode:
+            await self.set_permission_mode(permission_mode)
+
+        if selected_model != self.selected_model and self.state == ProcessState.USER_TURN:
+            await self.set_model(selected_model)
+
     async def send(
         self,
         text: str,
