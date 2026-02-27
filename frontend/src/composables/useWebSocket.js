@@ -306,8 +306,25 @@ export function useWebSocket() {
                 // Check if this is a draft session being confirmed by the backend
                 const existingSession = store.getSession(msg.session.id)
                 if (existingSession?.draft) {
+                    // Preserve locally-set title if the backend doesn't have one.
+                    // This handles the race condition where the user sets a title via
+                    // the rename dialog (needs-title flow) before session_added arrives:
+                    // the dialog stores the title locally, but the backend never received
+                    // it (title wasn't in the send_message payload). We keep it in the
+                    // store to avoid a visual flash, then persist it via API.
+                    const localTitle = existingSession.title
+                    const hasOrphanedLocalTitle = localTitle && !msg.session.title
                     // Draft session confirmed - update with real data and remove draft flag
-                    store.updateSession({ ...msg.session, draft: false })
+                    store.updateSession({
+                        ...msg.session,
+                        draft: false,
+                        // Keep local title to avoid flashing null before renameSession restores it
+                        ...(hasOrphanedLocalTitle ? { title: localTitle } : {}),
+                    })
+                    // Persist the local title to the backend (session now exists in DB)
+                    if (hasOrphanedLocalTitle) {
+                        store.renameSession(msg.session.project_id, msg.session.id, localTitle)
+                    }
                 } else if (store.areProjectSessionsFetched(msg.session.project_id) ||
                     store.areAllProjectsSessionsFetched) {
                     // Only add if we've fetched sessions for this project or all projects
