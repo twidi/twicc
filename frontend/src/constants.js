@@ -152,7 +152,7 @@ export const DEFAULT_PERMISSION_MODE = PERMISSION_MODE.DEFAULT
  * Human-friendly labels for each permission mode.
  */
 export const PERMISSION_MODE_LABELS = {
-    [PERMISSION_MODE.DEFAULT]: 'Default',
+    [PERMISSION_MODE.DEFAULT]: 'Default permission',
     [PERMISSION_MODE.ACCEPT_EDITS]: 'Accept Edits',
     [PERMISSION_MODE.PLAN]: 'Plan',
     [PERMISSION_MODE.DONT_ASK]: "Don't Ask",
@@ -189,13 +189,4 @@ export const CLAUDE_MODEL_LABELS = {
     [CLAUDE_MODEL.OPUS]: 'Opus',
     [CLAUDE_MODEL.SONNET]: 'Sonnet',
     [CLAUDE_MODEL.HAIKU]: 'Haiku',
-}
-
-/**
- * Short descriptions for each model (for tooltips/settings).
- */
-export const CLAUDE_MODEL_DESCRIPTIONS = {
-    [CLAUDE_MODEL.OPUS]: 'Most capable model, best for complex tasks',
-    [CLAUDE_MODEL.SONNET]: 'Balanced model, good for most tasks',
-    [CLAUDE_MODEL.HAIKU]: 'Fastest model, best for simple tasks',
 }

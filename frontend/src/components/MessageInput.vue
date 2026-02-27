@@ -8,7 +8,7 @@ import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSock
 import { useVisualViewport } from '../composables/useVisualViewport'
 import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
-import { PERMISSION_MODE, PERMISSION_MODE_LABELS, CLAUDE_MODEL, CLAUDE_MODEL_LABELS } from '../constants'
+import { PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, CLAUDE_MODEL, CLAUDE_MODEL_LABELS } from '../constants'
 import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -57,6 +57,7 @@ const mediaItems = computed(() => attachments.value.map(a => draftMediaToMediaIt
 const permissionModeOptions = Object.values(PERMISSION_MODE).map(value => ({
     value,
     label: PERMISSION_MODE_LABELS[value],
+    description: PERMISSION_MODE_DESCRIPTIONS[value],
 }))
 
 // Claude model options for the dropdown
@@ -611,7 +612,11 @@ async function handleClear() {
                         v-for="option in permissionModeOptions"
                         :key="option.value"
                         :value="option.value"
-                    >{{ option.label }}</wa-option>
+                        :label="option.label"
+                    >
+                        <span>{{ option.label }}</span>
+                        <span class="option-description">{{ option.description }}</span>
+                    </wa-option>
                 </wa-select>
 
                 <!-- Cancel button for draft sessions -->
@@ -703,8 +708,8 @@ body.sidebar-closed .message-input-toolbar {
 }
 
 .permission-mode-select {
-    min-width: 8rem;
-    max-width: 10rem;
+    min-width: 10rem;
+    max-width: 15rem;
 }
 
 @media (width < 400px) {
@@ -767,6 +772,12 @@ body.sidebar-closed .message-input-toolbar {
     display: flex;
     justify-content: center;
     margin-top: var(--wa-space-l);
+}
+
+.option-description {
+    display: block;
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
 }
 
 </style>

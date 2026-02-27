@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
-import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, CLAUDE_MODEL, CLAUDE_MODEL_LABELS, CLAUDE_MODEL_DESCRIPTIONS } from '../constants'
+import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, CLAUDE_MODEL, CLAUDE_MODEL_LABELS } from '../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -102,7 +102,6 @@ const permissionModeOptions = Object.values(PERMISSION_MODE).map(value => ({
 const claudeModelOptions = Object.values(CLAUDE_MODEL).map(value => ({
     value,
     label: CLAUDE_MODEL_LABELS[value],
-    description: CLAUDE_MODEL_DESCRIPTIONS[value],
 }))
 
 // Sync switch checked state with store values
@@ -398,7 +397,11 @@ function onPopoverShow() {
                                 v-for="option in permissionModeOptions"
                                 :key="option.value"
                                 :value="option.value"
-                            >{{ option.label }}</wa-option>
+                                :label="option.label"
+                            >
+                                <span>{{ option.label }}</span>
+                                <span class="option-description">{{ option.description }}</span>
+                            </wa-option>
                         </wa-select>
                     </div>
                     <div class="setting-group">
@@ -640,6 +643,12 @@ function onPopoverShow() {
     wa-button {
         align-self: end;
     }
+}
+
+.option-description {
+    display: block;
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
 }
 
 </style>

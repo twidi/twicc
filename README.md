@@ -124,10 +124,7 @@ The build automatically runs `npm ci` + `npm run build` in `frontend/` via a hat
 
 ## Current limitations
 
-- Claude agents always run with **permission bypass mode** enabled (no tool-use confirmations)
 - The built-in **MCP server** (Chrome integration) is always active
-
-Configuration options for these will be added in a future release.
 
 ## FAQ
 
