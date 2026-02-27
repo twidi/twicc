@@ -149,6 +149,25 @@ export function fileToText(file) {
 }
 
 // =============================================================================
+// Image Format Detection
+// =============================================================================
+
+/**
+ * Detect actual image format from base64-encoded data using magic bytes.
+ * Falls back to the provided mimeType if detection fails.
+ * @param {string} base64Data - Base64 encoded image data (without data URL prefix)
+ * @param {string} fallbackMimeType - MIME type to use if detection fails
+ * @returns {string} Detected MIME type
+ */
+export function detectImageMimeType(base64Data, fallbackMimeType) {
+    if (base64Data.startsWith('iVBOR')) return 'image/png'   // \x89PNG\r
+    if (base64Data.startsWith('/9j/'))  return 'image/jpeg'  // \xFF\xD8\xFF
+    if (base64Data.startsWith('UklGR')) return 'image/webp'  // RIFF.
+    if (base64Data.startsWith('R0lGO')) return 'image/gif'   // GIF8.
+    return fallbackMimeType
+}
+
+// =============================================================================
 // Image Resizing
 // =============================================================================
 
@@ -241,9 +260,14 @@ export async function processFile(file, sessionId) {
 
         // Resize images that exceed the API dimension limit
         if (type === FILE_TYPES.IMAGE) {
+            // Detect actual format from magic bytes — file.type can be wrong
+            // (e.g., WebP file saved with .png extension)
+            mimeType = detectImageMimeType(data, mimeType)
             const resized = await resizeImageIfNeeded(data, mimeType)
             data = resized.data
-            mimeType = resized.mimeType
+            // Re-detect after resize — canvas.toDataURL() may not honor the
+            // requested output format in all browsers
+            mimeType = detectImageMimeType(resized.data, resized.mimeType)
         }
     }
 
