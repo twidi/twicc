@@ -651,6 +651,11 @@ class ClaudeProcess:
                     self._set_state(ProcessState.USER_TURN)
                     await self._notify_state_change()
 
+                elif self.state != ProcessState.ASSISTANT_TURN:
+                    # Enforce assistant state if another message came after the ResultMessage
+                    self._set_state(ProcessState.ASSISTANT_TURN)
+                    await self._notify_state_change()
+
         except asyncio.CancelledError:
             # Normal cancellation during shutdown
             raise
