@@ -73,6 +73,8 @@ def serialize_session(session):
         # User-controlled fields
         "archived": session.archived,  # Whether the session is archived
         "pinned": session.pinned,  # Whether the session is pinned
+        # Permission mode
+        "permission_mode": session.permission_mode,
     }
 
 

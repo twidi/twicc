@@ -125,6 +125,7 @@ class ProcessManager:
         project_id: str,
         cwd: str,
         text: str,
+        permission_mode: str = "default",
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
@@ -173,6 +174,7 @@ class ProcessManager:
             # Create and start new process with resume
             await self._start_process(
                 session_id, project_id, cwd, text, resume=True,
+                permission_mode=permission_mode,
                 images=images, documents=documents
             )
 
@@ -182,6 +184,7 @@ class ProcessManager:
         project_id: str,
         cwd: str,
         text: str,
+        permission_mode: str = "default",
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
@@ -220,6 +223,7 @@ class ProcessManager:
             # Create and start new process without resume
             await self._start_process(
                 session_id, project_id, cwd, text, resume=False,
+                permission_mode=permission_mode,
                 images=images, documents=documents
             )
 
@@ -230,6 +234,7 @@ class ProcessManager:
         cwd: str,
         text: str,
         resume: bool,
+        permission_mode: str = "default",
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
@@ -256,7 +261,7 @@ class ProcessManager:
             project_id,
             resume,
         )
-        process = ClaudeProcess(session_id, project_id, cwd, get_last_session_slug=get_last_session_slug)
+        process = ClaudeProcess(session_id, project_id, cwd, permission_mode, get_last_session_slug=get_last_session_slug)
         self._processes[session_id] = process
 
         # Broadcast the starting state before starting

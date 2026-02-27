@@ -92,6 +92,14 @@ def session_exists(session_id: str) -> bool:
     return Session.objects.filter(id=session_id).exists()
 
 
+@sync_to_async
+def update_session_permission_mode(session_id: str, permission_mode: str) -> None:
+    """Update the permission_mode for an existing session in the database."""
+    from twicc.core.models import Session
+
+    Session.objects.filter(id=session_id).update(permission_mode=permission_mode)
+
+
 def _get_project_display_name(project) -> str:
     """Compute a human-readable display name for a project.
 
@@ -360,6 +368,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         title = content.get("title")  # Optional, only for new sessions
         images = content.get("images")  # Optional: SDK ImageBlockParam list
         documents = content.get("documents")  # Optional: SDK DocumentBlockParam list
+        permission_mode = content.get("permission_mode", "default")
 
         # Validate required fields
         if not session_id or not project_id or not text:
@@ -419,9 +428,13 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         manager = get_process_manager()
         try:
             if exists:
+                # Update permission_mode in DB for existing sessions
+                await update_session_permission_mode(session_id, permission_mode)
                 # Session exists: send message to it
                 await manager.send_to_session(
-                    session_id, project_id, cwd, text, images=images, documents=documents
+                    session_id, project_id, cwd, text,
+                    permission_mode=permission_mode,
+                    images=images, documents=documents
                 )
             else:
                 # Session doesn't exist: create new with client-provided ID
@@ -431,8 +444,15 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
                     set_pending_title(session_id, title)
 
+                # Store permission_mode as pending (will be applied when watcher creates the session row)
+                from twicc.pending_permission_mode import set_pending_permission_mode
+
+                set_pending_permission_mode(session_id, permission_mode)
+
                 await manager.create_session(
-                    session_id, project_id, cwd, text, images=images, documents=documents
+                    session_id, project_id, cwd, text,
+                    permission_mode=permission_mode,
+                    images=images, documents=documents
                 )
         except RuntimeError as e:
             # Process busy or other expected errors
@@ -595,6 +615,20 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                 request_type,
             )
             return
+
+        # Persist setMode suggestions in DB so future resumes use the correct mode
+        if request_type == "tool_approval" and content.get("decision") == "allow":
+            raw_permissions = content.get("updated_permissions")
+            if raw_permissions:
+                for perm in raw_permissions:
+                    if perm.get("type") == "setMode" and perm.get("mode"):
+                        await update_session_permission_mode(session_id, perm["mode"])
+                        logger.info(
+                            "Permission mode updated to %r for session %s (from setMode suggestion)",
+                            perm["mode"],
+                            session_id,
+                        )
+                        break  # Only one setMode should be applied
 
         resolved = await manager.resolve_pending_request(session_id, response)
         if not resolved:

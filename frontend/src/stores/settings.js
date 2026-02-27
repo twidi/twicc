@@ -3,7 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
 import { setThemeMode } from '../utils/theme'
@@ -30,6 +30,8 @@ const SETTINGS_SCHEMA = {
     diffSideBySide: true,
     editorWordWrap: true,
     compactSessionList: false,
+    defaultPermissionMode: DEFAULT_PERMISSION_MODE,
+    alwaysApplyDefaultPermissionMode: false,
     // Notification settings: sound + browser notification for each event type
     notifUserTurnSound: NOTIFICATION_SOUNDS.NONE,
     notifUserTurnBrowser: false,
@@ -61,6 +63,8 @@ const SETTINGS_VALIDATORS = {
     diffSideBySide: (v) => typeof v === 'boolean',
     editorWordWrap: (v) => typeof v === 'boolean',
     compactSessionList: (v) => typeof v === 'boolean',
+    defaultPermissionMode: (v) => Object.values(PERMISSION_MODE).includes(v),
+    alwaysApplyDefaultPermissionMode: (v) => typeof v === 'boolean',
     notifUserTurnSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
     notifUserTurnBrowser: (v) => typeof v === 'boolean',
     notifPendingRequestSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
@@ -145,6 +149,8 @@ export const useSettingsStore = defineStore('settings', {
         isDiffSideBySide: (state) => state.diffSideBySide,
         isEditorWordWrap: (state) => state.editorWordWrap,
         isCompactSessionList: (state) => state.compactSessionList,
+        getDefaultPermissionMode: (state) => state.defaultPermissionMode,
+        isAlwaysApplyDefaultPermissionMode: (state) => state.alwaysApplyDefaultPermissionMode,
         getNotifUserTurnSound: (state) => state.notifUserTurnSound,
         isNotifUserTurnBrowser: (state) => state.notifUserTurnBrowser,
         getNotifPendingRequestSound: (state) => state.notifPendingRequestSound,
@@ -312,6 +318,27 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set the default permission mode for new sessions.
+         * @param {string} mode - One of PERMISSION_MODE values
+         */
+        setDefaultPermissionMode(mode) {
+            if (SETTINGS_VALIDATORS.defaultPermissionMode(mode)) {
+                this.defaultPermissionMode = mode
+            }
+        },
+
+        /**
+         * Set whether the default permission mode should always be applied,
+         * even for sessions that have an explicit mode in the database.
+         * @param {boolean} enabled
+         */
+        setAlwaysApplyDefaultPermissionMode(enabled) {
+            if (SETTINGS_VALIDATORS.alwaysApplyDefaultPermissionMode(enabled)) {
+                this.alwaysApplyDefaultPermissionMode = enabled
+            }
+        },
+
+        /**
          * Set notification sound for user turn events.
          * @param {string} sound - One of NOTIFICATION_SOUNDS values
          */
@@ -403,6 +430,8 @@ export function initSettings() {
             diffSideBySide: store.diffSideBySide,
             editorWordWrap: store.editorWordWrap,
             compactSessionList: store.compactSessionList,
+            defaultPermissionMode: store.defaultPermissionMode,
+            alwaysApplyDefaultPermissionMode: store.alwaysApplyDefaultPermissionMode,
             notifUserTurnSound: store.notifUserTurnSound,
             notifUserTurnBrowser: store.notifUserTurnBrowser,
             notifPendingRequestSound: store.notifPendingRequestSound,

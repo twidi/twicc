@@ -3,10 +3,12 @@
 import { ref, computed, watch, nextTick, useId } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSocket'
 import { useVisualViewport } from '../composables/useVisualViewport'
 import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
+import { PERMISSION_MODE, PERMISSION_MODE_LABELS } from '../constants'
 import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -27,6 +29,7 @@ const props = defineProps({
 const router = useRouter()
 const route = useRoute()
 const store = useDataStore()
+const settingsStore = useSettingsStore()
 
 // Detect "All Projects" mode from route name
 const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
@@ -49,6 +52,15 @@ const attachmentCount = computed(() => store.getAttachmentCount(props.sessionId)
 
 // Convert DraftMedia objects to normalized MediaItem format for the thumbnail group
 const mediaItems = computed(() => attachments.value.map(a => draftMediaToMediaItem(a)))
+
+// Permission mode options for the dropdown
+const permissionModeOptions = Object.values(PERMISSION_MODE).map(value => ({
+    value,
+    label: PERMISSION_MODE_LABELS[value],
+}))
+
+// Selected permission mode for the current session
+const selectedPermissionMode = ref('default')
 
 // Get process state for this session
 const processState = computed(() => store.getProcessState(props.sessionId))
@@ -82,6 +94,50 @@ const placeholderText = computed(() => {
     // user_turn, dead, or no process
     return 'Type your message...'
 })
+
+// Whether the permission mode dropdown should be disabled
+// Disabled when a process is actively running on this session
+const isPermissionModeDisabled = computed(() => {
+    const state = processState.value?.state
+    return state === 'starting' || state === 'assistant_turn' || state === 'user_turn'
+})
+
+// Determine the effective permission mode for the current session.
+// If "always apply default" is on, the settings default wins regardless of DB value.
+// Otherwise, use the DB value if present, or fall back to settings default.
+function resolvePermissionMode(sess) {
+    if (settingsStore.isAlwaysApplyDefaultPermissionMode) {
+        return settingsStore.getDefaultPermissionMode
+    }
+    return sess?.permission_mode || settingsStore.getDefaultPermissionMode
+}
+
+// Sync permission mode when session changes
+watch(() => props.sessionId, (newId) => {
+    const sess = store.getSession(newId)
+    selectedPermissionMode.value = resolvePermissionMode(sess)
+}, { immediate: true })
+
+// When the default permission mode setting changes, or the "always apply" toggle
+// changes, update the dropdown for sessions that should follow the default
+watch(
+    () => [settingsStore.getDefaultPermissionMode, settingsStore.isAlwaysApplyDefaultPermissionMode],
+    () => {
+        if (isPermissionModeDisabled.value) return
+        const sess = store.getSession(props.sessionId)
+        selectedPermissionMode.value = resolvePermissionMode(sess)
+    }
+)
+
+// Also react when session data arrives from backend (e.g., after watcher creates the row)
+watch(
+    () => store.getSession(props.sessionId)?.permission_mode,
+    (newMode) => {
+        if (newMode && !isPermissionModeDisabled.value) {
+            selectedPermissionMode.value = newMode
+        }
+    }
+)
 
 // Restore draft message when session changes
 watch(() => props.sessionId, async (newId) => {
@@ -300,7 +356,8 @@ async function handleSend() {
         type: 'send_message',
         session_id: props.sessionId,
         project_id: props.projectId,
-        text: text
+        text: text,
+        permission_mode: selectedPermissionMode.value,
     }
 
     // For draft sessions with a title, include it
@@ -486,6 +543,21 @@ async function handleClear() {
             </div>
 
             <div class="message-input-actions">
+                <!-- Permission mode selector -->
+                <wa-select
+                    :value.prop="selectedPermissionMode"
+                    @change="selectedPermissionMode = $event.target.value"
+                    size="small"
+                    class="permission-mode-select"
+                    :disabled="isPermissionModeDisabled"
+                >
+                    <wa-option
+                        v-for="option in permissionModeOptions"
+                        :key="option.value"
+                        :value="option.value"
+                    >{{ option.label }}</wa-option>
+                </wa-select>
+
                 <!-- Cancel button for draft sessions -->
                 <wa-button
                     v-if="isDraft"
@@ -566,6 +638,18 @@ body.sidebar-closed .message-input-toolbar {
     min-width: 0;
     @media (width < 640px) {
         gap: var(--wa-space-xs);
+    }
+}
+
+.permission-mode-select {
+    min-width: 8rem;
+    max-width: 10rem;
+}
+
+@media (width < 400px) {
+    .permission-mode-select {
+        min-width: 6rem;
+        max-width: 8rem;
     }
 }
 

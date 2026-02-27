@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
-import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS } from '../constants'
+import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS } from '../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -52,6 +52,8 @@ const titleGenerationSwitch = ref(null)
 const titleSystemPromptTextarea = ref(null)
 const tmuxSwitch = ref(null)
 const compactSessionListSwitch = ref(null)
+const permissionModeSelect = ref(null)
+const alwaysApplyDefaultPermissionModeSwitch = ref(null)
 const diffSideBySideSwitch = ref(null)
 const editorWordWrapSwitch = ref(null)
 const notificationSettingsRef = ref(null)
@@ -69,6 +71,8 @@ const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 const terminalUseTmux = computed(() => store.isTerminalUseTmux)
 const compactSessionList = computed(() => store.isCompactSessionList)
+const defaultPermissionMode = computed(() => store.getDefaultPermissionMode)
+const alwaysApplyDefaultPermissionMode = computed(() => store.isAlwaysApplyDefaultPermissionMode)
 const diffSideBySide = computed(() => store.isDiffSideBySide)
 const editorWordWrap = computed(() => store.isEditorWordWrap)
 
@@ -82,6 +86,13 @@ const displayModeOptions = [
     { value: DISPLAY_MODE.NORMAL, label: 'Detailed' },
     { value: DISPLAY_MODE.DEBUG, label: 'Debug' },
 ]
+
+// Permission mode options for the select
+const permissionModeOptions = Object.values(PERMISSION_MODE).map(value => ({
+    value,
+    label: PERMISSION_MODE_LABELS[value],
+    description: PERMISSION_MODE_DESCRIPTIONS[value],
+}))
 
 // Sync switch checked state with store values
 // Web Components don't always pick up initial prop values from Vue bindings
@@ -129,11 +140,17 @@ function syncSwitchState() {
         if (editorWordWrapSwitch.value && editorWordWrapSwitch.value.checked !== editorWordWrap.value) {
             editorWordWrapSwitch.value.checked = editorWordWrap.value
         }
+        if (permissionModeSelect.value && permissionModeSelect.value.value !== defaultPermissionMode.value) {
+            permissionModeSelect.value.value = defaultPermissionMode.value
+        }
+        if (alwaysApplyDefaultPermissionModeSwitch.value && alwaysApplyDefaultPermissionModeSwitch.value.checked !== alwaysApplyDefaultPermissionMode.value) {
+            alwaysApplyDefaultPermissionModeSwitch.value.checked = alwaysApplyDefaultPermissionMode.value
+        }
     })
 }
 
 // Watch for store changes and sync switches
-watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide, editorWordWrap], syncSwitchState, { immediate: true })
+watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, defaultPermissionMode, alwaysApplyDefaultPermissionMode, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide, editorWordWrap], syncSwitchState, { immediate: true })
 
 /**
  * Handle display mode change.
@@ -210,6 +227,20 @@ function onTitleSystemPromptChange(event) {
  */
 function onTmuxChange(event) {
     store.setTerminalUseTmux(event.target.checked)
+}
+
+/**
+ * Handle default permission mode change.
+ */
+function onDefaultPermissionModeChange(event) {
+    store.setDefaultPermissionMode(event.target.value)
+}
+
+/**
+ * Toggle "always apply default permission mode" setting.
+ */
+function onAlwaysApplyDefaultPermissionModeChange(event) {
+    store.setAlwaysApplyDefaultPermissionMode(event.target.checked)
 }
 
 /**
@@ -318,6 +349,35 @@ function onPopoverShow() {
                             @change="onExtraUsageOnlyWhenNeededChange"
                             size="small"
                         >Only when needed</wa-switch>
+                    </div>
+                </section>
+
+                <!-- Claude Settings Section -->
+                <section class="settings-section">
+                    <h3 class="settings-section-title">Claude settings</h3>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Default permission mode</label>
+                        <wa-select
+                            ref="permissionModeSelect"
+                            :value.prop="defaultPermissionMode"
+                            @change="onDefaultPermissionModeChange"
+                            size="small"
+                        >
+                            <wa-option
+                                v-for="option in permissionModeOptions"
+                                :key="option.value"
+                                :value="option.value"
+                            >{{ option.label }}</wa-option>
+                        </wa-select>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Always apply default mode</label>
+                        <wa-switch
+                            ref="alwaysApplyDefaultPermissionModeSwitch"
+                            @change="onAlwaysApplyDefaultPermissionModeChange"
+                            size="small"
+                        >Enabled</wa-switch>
+                        <span class="setting-group-hint">Override the per-session mode with the default above.</span>
                     </div>
                 </section>
 

@@ -133,3 +133,39 @@ export const PROCESS_STATE_COLORS = {
     [PROCESS_STATE.USER_TURN]: 'var(--wa-color-success-60)',
     [PROCESS_STATE.DEAD]: 'var(--wa-color-danger-60)',
 }
+
+/**
+ * Permission mode values (matches SDK PermissionMode).
+ * Controls how Claude Code handles tool permission prompts.
+ */
+export const PERMISSION_MODE = {
+    DEFAULT: 'default',
+    ACCEPT_EDITS: 'acceptEdits',
+    PLAN: 'plan',
+    DONT_ASK: 'dontAsk',
+    BYPASS: 'bypassPermissions',
+}
+
+export const DEFAULT_PERMISSION_MODE = PERMISSION_MODE.DEFAULT
+
+/**
+ * Human-friendly labels for each permission mode.
+ */
+export const PERMISSION_MODE_LABELS = {
+    [PERMISSION_MODE.DEFAULT]: 'Default',
+    [PERMISSION_MODE.ACCEPT_EDITS]: 'Accept Edits',
+    [PERMISSION_MODE.PLAN]: 'Plan',
+    [PERMISSION_MODE.DONT_ASK]: "Don't Ask",
+    [PERMISSION_MODE.BYPASS]: 'Bypass',
+}
+
+/**
+ * Short descriptions for each permission mode (for tooltips/settings).
+ */
+export const PERMISSION_MODE_DESCRIPTIONS = {
+    [PERMISSION_MODE.DEFAULT]: 'Prompts for permission on first use of each tool',
+    [PERMISSION_MODE.ACCEPT_EDITS]: 'Auto-accepts file edit permissions',
+    [PERMISSION_MODE.PLAN]: 'Read-only: Claude can analyze but not modify files',
+    [PERMISSION_MODE.DONT_ASK]: 'Auto-denies tools unless pre-approved via permission rules',
+    [PERMISSION_MODE.BYPASS]: 'Skips all permission prompts',
+}

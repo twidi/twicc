@@ -138,10 +138,12 @@ def create_session(
     parsed: ParsedPath,
     project: Project,
     parent_session: Session | None = None,
+    permission_mode: str | None = None,
 ) -> Session:
     """Create a session or subagent in the database.
 
     For subagents, parent_session must be provided.
+    If permission_mode is provided, it overrides the default.
     Returns the created session.
     """
     if parsed.type == SessionType.SUBAGENT:
@@ -156,11 +158,14 @@ def create_session(
             compute_version=settings.CURRENT_COMPUTE_VERSION,
         )
     else:
-        return Session.objects.create(
+        kwargs = dict(
             id=parsed.session_id,
             project=project,
             compute_version=settings.CURRENT_COMPUTE_VERSION,
         )
+        if permission_mode is not None:
+            kwargs["permission_mode"] = permission_mode
+        return Session.objects.create(**kwargs)
 
 
 @sync_to_async
@@ -345,7 +350,11 @@ async def sync_and_broadcast(
             })
 
         # Create session (regular or subagent)
-        session = await create_session(parsed, project, parent_session)
+        # Pop any pending permission_mode set by the WS handler for new sessions
+        from twicc.pending_permission_mode import pop_pending_permission_mode
+
+        pending_mode = pop_pending_permission_mode(parsed.session_id)
+        session = await create_session(parsed, project, parent_session, permission_mode=pending_mode)
 
         # Sync items (session is saved, has valid PK)
         new_line_nums, modified_line_nums = await sync_session_items_async(session, path)

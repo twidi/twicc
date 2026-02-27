@@ -281,6 +281,9 @@ class Session(models.Model):
     archived = models.BooleanField(default=False)  # User can archive sessions to hide them from default list
     pinned = models.BooleanField(default=False)  # User can pin sessions to keep them at the top of the list
 
+    # Permission mode for the Claude SDK (e.g., "default", "acceptEdits", "plan", "bypassPermissions")
+    permission_mode = models.CharField(max_length=30, null=True, default=None)
+
     class Meta:
         ordering = ["-mtime"]
         indexes = [

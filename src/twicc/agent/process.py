@@ -60,6 +60,7 @@ class ClaudeProcess:
         session_id: str,
         project_id: str,
         cwd: str,
+        permission_mode: str,
         get_last_session_slug: Callable[[str], Coroutine[Any, Any, str | None]],
     ) -> None:
         """Initialize a Claude process wrapper.
@@ -68,6 +69,7 @@ class ClaudeProcess:
             session_id: The session to resume
             project_id: The TwiCC project this belongs to
             cwd: Working directory for Claude operations
+            permission_mode: SDK permission mode (e.g., "default", "bypassPermissions")
             get_last_session_slug: Async callback that retrieves the most recent
                 slug from a session's JSONL items. Takes a session_id and returns the slug
                 string or None if not found.
@@ -75,6 +77,7 @@ class ClaudeProcess:
         self.session_id = session_id
         self.project_id = project_id
         self.cwd = cwd
+        self.permission_mode = permission_mode
         self.state = ProcessState.STARTING
         self.previous_state: ProcessState | None = None
         self.started_at = time.time()
@@ -91,10 +94,11 @@ class ClaudeProcess:
         self._get_last_session_slug = get_last_session_slug
 
         logger.debug(
-            "ClaudeProcess created for session %s, project %s, cwd=%s",
+            "ClaudeProcess created for session %s, project %s, cwd=%s, permission_mode=%s",
             session_id,
             project_id,
             cwd,
+            permission_mode,
         )
 
     def _log_stderr(self, line: str) -> None:
@@ -409,7 +413,7 @@ class ClaudeProcess:
             # Create options - either resume existing session or create new with custom ID
             options = ClaudeAgentOptions(
                 cwd=self.cwd,
-                permission_mode="bypassPermissions",
+                permission_mode=self.permission_mode,
                 setting_sources=["user", "project", "local"],
                 can_use_tool=self._handle_pending_request,
                 hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_dummy_hook])]},
