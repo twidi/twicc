@@ -140,8 +140,9 @@ function buildNotificationBody(msg) {
  * for process state changes.
  * @param {Object} msg - The WebSocket process_state message (enriched with session_title / project_name)
  * @param {Object|null} previousState - The previous process state (before update), null if new process
+ * @param {Object} route - The current Vue route object (used to suppress toasts when viewing the session)
  */
-function notifyProcessStateChange(msg, previousState) {
+function notifyProcessStateChange(msg, previousState, route) {
     const sessionId = msg.session_id
     const settings = useSettingsStore()
 
@@ -160,10 +161,15 @@ function notifyProcessStateChange(msg, previousState) {
 
     // --- Pending request: "Claude needs your attention" ---
     if (msg.pending_request && !previousState?.pending_request) {
-        const pendingTitle = msg.pending_request.request_type === 'ask_user_question'
-            ? '🖐️ Claude has a question for you'
-            : '🖐️ Claude needs your approval'
-        toast.session(sessionId, { type: 'warning', title: pendingTitle })
+        // Skip toast if the user is already viewing this session (they see the
+        // pending-request indicator directly in the Chat tab)
+        const isViewingSession = route?.params?.sessionId === sessionId
+        if (!isViewingSession) {
+            const pendingTitle = msg.pending_request.request_type === 'ask_user_question'
+                ? '🖐️ Claude has a question for you'
+                : '🖐️ Claude needs your approval'
+            toast.session(sessionId, { type: 'warning', title: pendingTitle })
+        }
 
         // Sound notification
         playNotificationSound(settings.notifPendingRequestSound)
@@ -335,7 +341,7 @@ export function useWebSocket() {
                     project_name: msg.project_name,
                 })
                 // Show toast + sound + browser notifications for process state changes
-                notifyProcessStateChange(msg, previousProcessState)
+                notifyProcessStateChange(msg, previousProcessState, route)
                 break
             }
             case 'active_processes':
