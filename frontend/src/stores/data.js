@@ -1,6 +1,7 @@
 // frontend/src/stores/data.js
 
 import { defineStore, acceptHMRUpdate } from 'pinia'
+import { toRaw } from 'vue'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems } from '../utils/visualItems'
 import { DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
@@ -1957,9 +1958,37 @@ export const useDataStore = defineStore('data', {
     }
 })
 
-// Pinia HMR support: allows Vite to hot-replace the store definition
-// without propagating the update to importers (like main.js), which would
-// cause a full page reload.
+// Pinia HMR support: hot-replace actions/getters without full page reload.
+// We wrap acceptHMRUpdate with state save/restore because Pinia's patchObject
+// loses dynamic keys: it skips keys present in the old state but absent from
+// the fresh state() initializer (e.g. projects: {} starts empty, so all
+// runtime-added project IDs are dropped during the merge).
 if (import.meta.hot) {
-    import.meta.hot.accept(acceptHMRUpdate(useDataStore, import.meta.hot))
+    // Create the HMR handler once at module eval time (standard Pinia pattern).
+    // We wrap it to save/restore state around the call because Pinia's patchObject
+    // loses dynamic keys (it skips old keys absent from the fresh state() initializer).
+    const piniaHmrHandler = acceptHMRUpdate(useDataStore, import.meta.hot)
+
+    import.meta.hot.accept((newModule) => {
+        const pinia = import.meta.hot.data?.pinia || useDataStore._pinia
+        if (!pinia) return
+        const store = pinia._s.get('data')
+        if (!store) return
+
+        // Save current state values (raw references, no cloning needed)
+        const savedState = {}
+        for (const key of Object.keys(store.$state)) {
+            savedState[key] = toRaw(store.$state[key])
+        }
+
+        // Apply Pinia's HMR update (updates actions/getters but loses dynamic state keys)
+        piniaHmrHandler(newModule)
+
+        // Restore state values that were lost by patchObject
+        store.$patch((state) => {
+            for (const [key, value] of Object.entries(savedState)) {
+                state[key] = value
+            }
+        })
+    })
 }
