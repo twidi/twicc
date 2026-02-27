@@ -267,6 +267,9 @@ def get_process_config(backend_port: int, frontend_port: int) -> dict:
                 "TWICC_PORT": str(backend_port),
                 TWICC_DATA_DIR_ENV: str(DATA_DIR),
                 "TWICC_DEBUG": "1",
+                # In worktree mode, use a distinct session cookie name to avoid
+                # conflicts with the main instance (browsers share cookies across ports).
+                **({"TWICC_SESSION_COOKIE": f"sessionid_{backend_port}"} if is_git_worktree() else {}),
             },
         },
     }

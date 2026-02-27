@@ -51,6 +51,7 @@ MIDDLEWARE = [
 TWICC_PASSWORD_HASH = os.environ.get("TWICC_PASSWORD_HASH", "")
 
 # Session settings
+SESSION_COOKIE_NAME = os.environ.get("TWICC_SESSION_COOKIE", "sessionid")
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 30  # 30 days
 SESSION_COOKIE_HTTPONLY = True
