@@ -1,6 +1,6 @@
 <script setup>
-// ProjectEditDialog.vue - Dialog for editing project name and color
-import { ref, watch, nextTick } from 'vue'
+// ProjectEditDialog.vue - Dialog for editing/creating projects
+import { ref, computed, watch, nextTick, useId } from 'vue'
 import { useDataStore } from '../stores/data'
 import { apiFetch } from '../utils/api'
 
@@ -17,24 +17,37 @@ const store = useDataStore()
 
 // Refs for the dialog and form elements
 const dialogRef = ref(null)
+const directoryInputRef = ref(null)
 const nameInputRef = ref(null)
 const colorPickerRef = ref(null)
 const saveButtonRef = ref(null)
 
 // Local state for form values
+const localDirectory = ref('')
 const localName = ref('')
 const localColor = ref('')
 const isSaving = ref(false)
 const errorMessage = ref('')
+
+// Mode detection
+const isCreateMode = computed(() => !props.project)
+// Unique form ID per instance to avoid conflicts when multiple dialog instances coexist in the DOM
+const instanceId = useId()
+const formId = `project-dialog-form-${instanceId}`
 
 // Sync form values when project changes
 watch(
     () => props.project,
     (newProject) => {
         if (newProject) {
-            // Pre-fill with displayName (computed from name, directory, or id)
+            // Edit mode: pre-fill with displayName (computed from name, directory, or id)
             localName.value = store.getProjectDisplayName(newProject.id)
             localColor.value = newProject.color || ''
+        } else {
+            // Create mode: reset all fields
+            localDirectory.value = ''
+            localName.value = ''
+            localColor.value = ''
         }
     },
     { immediate: true }
@@ -45,6 +58,9 @@ watch(
  */
 function syncFormState() {
     nextTick(() => {
+        if (isCreateMode.value && directoryInputRef.value) {
+            directoryInputRef.value.value = localDirectory.value
+        }
         if (nameInputRef.value) {
             nameInputRef.value.value = localName.value
         }
@@ -53,22 +69,29 @@ function syncFormState() {
         }
         // Set form attribute on save button (wa-button doesn't expose this as a property)
         if (saveButtonRef.value) {
-            saveButtonRef.value.setAttribute('form', 'project-edit-form')
+            saveButtonRef.value.setAttribute('form', formId)
         }
     })
 }
 
 /**
- * Focus the name input after the dialog opening animation completes.
- * Positions cursor at the end of the text.
+ * Focus the first input after the dialog opening animation completes.
+ * In create mode: focus the directory input.
+ * In edit mode: focus the name input with cursor at end.
  */
-function focusNameInput() {
-    const input = nameInputRef.value
-    if (!input) return
-    input.focus()
-    // Move cursor to end of text
-    const len = input.value?.length || 0
-    input.setSelectionRange(len, len)
+function focusFirstInput() {
+    if (isCreateMode.value) {
+        const input = directoryInputRef.value
+        if (!input) return
+        input.focus()
+    } else {
+        const input = nameInputRef.value
+        if (!input) return
+        input.focus()
+        // Move cursor to end of text
+        const len = input.value?.length || 0
+        input.setSelectionRange(len, len)
+    }
 }
 
 /**
@@ -76,6 +99,11 @@ function focusNameInput() {
  */
 function open() {
     errorMessage.value = ''
+    if (isCreateMode.value) {
+        localDirectory.value = ''
+        localName.value = ''
+        localColor.value = ''
+    }
     syncFormState()
     if (dialogRef.value) {
         dialogRef.value.open = true
@@ -89,6 +117,13 @@ function close() {
     if (dialogRef.value) {
         dialogRef.value.open = false
     }
+}
+
+/**
+ * Handle directory input change.
+ */
+function onDirectoryInput(event) {
+    localDirectory.value = event.target.value
 }
 
 /**
@@ -106,10 +141,10 @@ function onColorChange(event) {
 }
 
 /**
- * Save the project changes.
+ * Save the project (create or update).
  */
 async function handleSave() {
-    if (!props.project) return
+    if (isSaving.value) return
 
     // Trim whitespace from name
     const trimmedName = localName.value.trim()
@@ -120,45 +155,97 @@ async function handleSave() {
         return
     }
 
-    // Check uniqueness among other projects
-    const otherProjects = store.getProjects.filter(p => p.id !== props.project.id)
-    const isDuplicate = otherProjects.some(p => p.name && p.name === trimmedName)
-    if (trimmedName && isDuplicate) {
-        errorMessage.value = 'A project with this name already exists'
-        return
-    }
+    if (isCreateMode.value) {
+        // --- Create mode ---
+        const trimmedDirectory = localDirectory.value.trim()
+        if (!trimmedDirectory) {
+            errorMessage.value = 'Directory path is required'
+            return
+        }
 
-    isSaving.value = true
-    errorMessage.value = ''
+        // Check name uniqueness client-side (same logic as edit mode)
+        const isDuplicate = store.getProjects.some(p => p.name && p.name === trimmedName)
+        if (trimmedName && isDuplicate) {
+            errorMessage.value = 'A project with this name already exists'
+            return
+        }
 
-    let response
-    try {
-        response = await apiFetch(`/api/projects/${props.project.id}/`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                name: trimmedName || null,
-                color: localColor.value || null,
-            }),
-        })
-    } catch (error) {
-        errorMessage.value = 'Network error. Please try again.'
+        isSaving.value = true
+        errorMessage.value = ''
+
+        let response
+        try {
+            response = await apiFetch('/api/projects/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    directory: trimmedDirectory,
+                    name: trimmedName || null,
+                    color: localColor.value || null,
+                }),
+            })
+        } catch (error) {
+            errorMessage.value = 'Network error. Please try again.'
+            isSaving.value = false
+            return
+        }
+
+        if (!response.ok) {
+            const data = await response.json()
+            errorMessage.value = data.error || 'Failed to create project'
+            isSaving.value = false
+            return
+        }
+
+        const createdProject = await response.json()
+        store.addProject(createdProject)
+        emit('saved', createdProject)
         isSaving.value = false
-        return
-    }
+        close()
+    } else {
+        // --- Edit mode ---
+        if (!props.project) return
 
-    if (!response.ok) {
-        const data = await response.json()
-        errorMessage.value = data.error || 'Failed to save project'
+        // Check uniqueness among other projects
+        const otherProjects = store.getProjects.filter(p => p.id !== props.project.id)
+        const isDuplicate = otherProjects.some(p => p.name && p.name === trimmedName)
+        if (trimmedName && isDuplicate) {
+            errorMessage.value = 'A project with this name already exists'
+            return
+        }
+
+        isSaving.value = true
+        errorMessage.value = ''
+
+        let response
+        try {
+            response = await apiFetch(`/api/projects/${props.project.id}/`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: trimmedName || null,
+                    color: localColor.value || null,
+                }),
+            })
+        } catch (error) {
+            errorMessage.value = 'Network error. Please try again.'
+            isSaving.value = false
+            return
+        }
+
+        if (!response.ok) {
+            const data = await response.json()
+            errorMessage.value = data.error || 'Failed to save project'
+            isSaving.value = false
+            return
+        }
+
+        const updatedProject = await response.json()
+        store.updateProject(updatedProject)
+        emit('saved', updatedProject)
         isSaving.value = false
-        return
+        close()
     }
-
-    const updatedProject = await response.json()
-    store.updateProject(updatedProject)
-    emit('saved', updatedProject)
-    isSaving.value = false
-    close()
 }
 
 // Expose methods for parent components
@@ -169,19 +256,33 @@ defineExpose({
 </script>
 
 <template>
-    <wa-dialog ref="dialogRef" label="Edit Project" class="project-edit-dialog" @wa-show="syncFormState" @wa-after-show="focusNameInput">
-        <form v-if="project" id="project-edit-form" class="dialog-content" @submit.prevent="handleSave">
-            <!-- Read-only info -->
-            <div class="info-group">
-                <label class="info-label">ID</label>
-                <div class="info-value">{{ project.id }}</div>
-            </div>
-            <div v-if="project.directory" class="info-group">
-                <label class="info-label">Directory</label>
-                <div class="info-value">{{ project.directory }}</div>
+    <wa-dialog ref="dialogRef" :label="isCreateMode ? 'New Project' : 'Edit Project'" class="project-edit-dialog" @wa-show="syncFormState" @wa-after-show="focusFirstInput">
+        <form :id="formId" class="dialog-content" @submit.prevent="handleSave">
+            <!-- Create mode: directory input -->
+            <div v-if="isCreateMode" class="form-group">
+                <label class="form-label">Directory</label>
+                <wa-input
+                    ref="directoryInputRef"
+                    :value.prop="localDirectory"
+                    @input="onDirectoryInput"
+                    placeholder="/path/to/your/project"
+                ></wa-input>
+                <div class="form-hint">Absolute path to the project directory</div>
             </div>
 
-            <wa-divider></wa-divider>
+            <!-- Edit mode: read-only info -->
+            <template v-else>
+                <div class="info-group">
+                    <label class="info-label">ID</label>
+                    <div class="info-value">{{ project.id }}</div>
+                </div>
+                <div v-if="project.directory" class="info-group">
+                    <label class="info-label">Directory</label>
+                    <div class="info-value">{{ project.directory }}</div>
+                </div>
+
+                <wa-divider></wa-divider>
+            </template>
 
             <!-- Editable fields -->
             <div class="form-group">
@@ -218,7 +319,7 @@ defineExpose({
             </wa-button>
             <wa-button ref="saveButtonRef" type="submit" variant="brand" :disabled="isSaving">
                 <wa-spinner v-if="isSaving" slot="prefix"></wa-spinner>
-                Save
+                {{ isCreateMode ? 'Create' : 'Save' }}
             </wa-button>
         </div>
     </wa-dialog>

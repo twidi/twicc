@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useStartupPolling } from '../composables/useStartupPolling'
@@ -9,6 +9,7 @@ import SettingsPopover from '../components/SettingsPopover.vue'
 import ActivitySparkline from '../components/ActivitySparkline.vue'
 import AppTooltip from '../components/AppTooltip.vue'
 import StartupProgressCallout from '../components/StartupProgressCallout.vue'
+import ProjectEditDialog from '../components/ProjectEditDialog.vue'
 
 const router = useRouter()
 const store = useDataStore()
@@ -27,6 +28,16 @@ const isLoading = computed(() => store.isProjectsListLoading)
 const hasError = computed(() => store.didProjectsListFailToLoad)
 
 function handleProjectSelect(project) {
+    router.push({ name: 'project', params: { projectId: project.id } })
+}
+
+const createDialogRef = ref(null)
+
+function openCreateDialog() {
+    createDialogRef.value?.open()
+}
+
+function handleProjectCreated(project) {
     router.push({ name: 'project', params: { projectId: project.id } })
 }
 
@@ -55,6 +66,10 @@ onUnmounted(() => {
                 <ActivitySparkline :data="globalWeeklyActivity" />
             </span>
             <AppTooltip for="home-global-sparkline">Overall activity (message turns per week)</AppTooltip>
+            <wa-button class="new-project-button" variant="neutral" appearance="outlined" size="small" @click="openCreateDialog">
+                <wa-icon slot="prefix" name="plus-lg"></wa-icon>
+                New project
+            </wa-button>
             <wa-button v-if="totalSessionsCount > 0" class="view-all-button" variant="brand" appearance="filled-outlined" size="small" @click="router.push({ name: 'projects-all' })">
                 All {{ totalSessionsCount }} session{{ totalSessionsCount === 1 ? '' : 's' }} <wa-icon slot="end" name="arrow-right"></wa-icon>
             </wa-button>
@@ -86,6 +101,8 @@ onUnmounted(() => {
         <div class="home-settings">
             <SettingsPopover />
         </div>
+
+        <ProjectEditDialog ref="createDialogRef" @saved="handleProjectCreated" />
     </div>
 </template>
 
@@ -117,7 +134,7 @@ onUnmounted(() => {
     color: var(--wa-color-text-normal);
 }
 
-.view-all-button {
+.new-project-button {
     margin-left: auto;
 }
 

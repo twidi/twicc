@@ -1,9 +1,11 @@
 """API views and SPA catch-all for serving the frontend."""
 
 import os
+import re
 from datetime import timedelta
 
 from django.conf import settings
+from django.db import IntegrityError
 from django.http import Http404, HttpResponse, JsonResponse
 from django.utils import timezone
 
@@ -67,10 +69,88 @@ def all_sessions(request):
 
 
 def project_list(request):
-    """GET /api/projects/ - List all projects."""
+    """GET /api/projects/ - List all projects.
+    POST /api/projects/ - Create a new project from a directory path.
+    """
+    if request.method == "POST":
+        return _create_project(request)
+
     projects = Project.objects.all()
     data = [serialize_project(p) for p in projects]
     return JsonResponse(data, safe=False)
+
+
+def _create_project(request):
+    """Create a new project from a directory path.
+
+    Body: { "directory": "/absolute/path", "name": "optional", "color": "optional" }
+    """
+    try:
+        data = orjson.loads(request.body)
+    except orjson.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    # 1. Extract and validate directory
+    directory = data.get("directory")
+    if not directory or not isinstance(directory, str):
+        return JsonResponse({"error": "directory is required"}, status=400)
+
+    resolved = os.path.realpath(directory)
+    if not os.path.isabs(resolved):
+        return JsonResponse({"error": "Directory must be an absolute path"}, status=400)
+    if not os.path.isdir(resolved):
+        return JsonResponse({"error": "Directory does not exist or is not a directory"}, status=400)
+
+    # 2. Generate project ID: all non-alphanumeric chars become dashes
+    project_id = re.sub(r'[^a-zA-Z0-9]', '-', resolved)
+
+    # 3. Check project doesn't already exist
+    if Project.objects.filter(id=project_id).exists():
+        return JsonResponse({"error": "A project already exists for this directory"}, status=409)
+
+    # 4. Validate optional name
+    name = data.get("name")
+    if name is not None:
+        name = name.strip()
+        if not name:
+            name = None
+        elif len(name) > 25:
+            return JsonResponse({"error": "Name must be 25 characters or less"}, status=400)
+        elif Project.objects.filter(name=name).exists():
+            return JsonResponse({"error": "A project with this name already exists"}, status=400)
+
+    # 5. Validate optional color
+    color = data.get("color")
+    if color is not None and not isinstance(color, str):
+        color = None
+
+    # 6. Create project (IntegrityError guards against race conditions on id/name uniqueness)
+    try:
+        project = Project.objects.create(
+            id=project_id,
+            directory=resolved,
+            name=name,
+            color=color or None,
+        )
+    except IntegrityError:
+        return JsonResponse({"error": "A project already exists for this directory"}, status=409)
+
+    # 7. Broadcast via WebSocket
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+    channel_layer = get_channel_layer()
+    async_to_sync(channel_layer.group_send)(
+        "updates",
+        {
+            "type": "broadcast",
+            "data": {
+                "type": "project_added",
+                "project": serialize_project(project),
+            },
+        },
+    )
+
+    return JsonResponse(serialize_project(project), status=201)
 
 
 def project_detail(request, project_id):
