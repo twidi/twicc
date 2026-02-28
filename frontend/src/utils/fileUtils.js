@@ -1,6 +1,8 @@
 // frontend/src/utils/fileUtils.js
 // File validation, base64 encoding, and type detection for document uploads
 
+import { generateUUID } from './crypto'
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -272,7 +274,7 @@ export async function processFile(file, sessionId) {
     }
 
     return {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         sessionId,
         name: file.name || `file.${type}`,
         type,

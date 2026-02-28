@@ -22,6 +22,7 @@ import {
     getAllDraftMedias
 } from '../utils/draftStorage'
 import { processFile, mediasToSdkFormat } from '../utils/fileUtils'
+import { generateUUID } from '../utils/crypto'
 import { debounce } from '../utils/debounce'
 import { apiFetch } from '../utils/api'
 // Note: respondToPendingRequest is imported lazily to avoid circular dependency
@@ -444,7 +445,7 @@ export const useDataStore = defineStore('data', {
          * @returns {string} The generated session ID (UUID)
          */
         createDraftSession(projectId) {
-            const id = crypto.randomUUID()
+            const id = generateUUID()
             const now = Date.now() / 1000  // Unix timestamp in seconds
             this.sessions[id] = {
                 id,
