@@ -8,6 +8,7 @@ with the database, and reads new lines from modified JSONL files.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 import time
@@ -383,7 +384,10 @@ def sync_project(
         created_at__isnull=False,
     ).count()
     project.mtime = max_mtime
-    if project.stale:
+    # Project folder exists (we're syncing it), but working directory may have been removed
+    if project.directory is not None:
+        project.stale = not os.path.isdir(project.directory)
+    elif project.stale:
         project.stale = False
     project.save(update_fields=["sessions_count", "mtime", "stale"])
 

@@ -108,8 +108,9 @@ def ensure_project_directory(project_id: str, cwd: str) -> None:
     if _project_directories[project_id] == cwd:
         return
 
-    # Update DB and cache
-    Project.objects.filter(id=project_id).update(directory=cwd)
+    # Update DB and cache, and set stale based on directory existence
+    should_be_stale = not os.path.isdir(cwd)
+    Project.objects.filter(id=project_id).update(directory=cwd, stale=should_be_stale)
     _project_directories[project_id] = cwd
 
     # Re-resolve git_root when directory changes
