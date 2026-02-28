@@ -14,6 +14,10 @@
 // - null → not editable (displayed as-is)
 // - object/array → recursive editing of children
 // Changes propagate upward via update:value emit.
+//
+// Also supports a `select` override type (via overrides prop) that renders a wa-select dropdown
+// with predefined options. Always interactive regardless of the editable prop.
+// Override shape: { valueType: 'select', options: ['opt1', 'opt2', ...] }
 
 import { computed, reactive, watch } from 'vue'
 import { useMonaco, DiffEditor as VueMonacoDiffEditor } from '@guolao/vue-monaco-editor'
@@ -272,6 +276,14 @@ function onNumberInput(event) {
  */
 function onBooleanChange(event) {
     emitUpdate(event.target.checked)
+}
+
+/**
+ * Handle change event from a wa-select for select-override values.
+ * @param {Event} event
+ */
+function onSelectChange(event) {
+    emitUpdate(event.target.value)
 }
 
 /**
@@ -721,6 +733,22 @@ function generateDiff(oldStr, newStr) {
             </div>
         </template>
 
+        <!-- Select: dropdown from override options (always interactive, no editable check) -->
+        <template v-else-if="effectiveType() === 'select'">
+            <div class="jhv-entry">
+                <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
+                <span v-if="name != null" class="jhv-separator">: </span>
+                <wa-select
+                    size="small"
+                    class="jhv-select"
+                    :value.prop="value"
+                    @change="onSelectChange"
+                >
+                    <wa-option v-for="opt in override.options" :key="opt" :value="opt">{{ opt }}</wa-option>
+                </wa-select>
+            </div>
+        </template>
+
         <!-- String: markdown -->
         <template v-else-if="effectiveType() === 'string-markdown'">
             <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
@@ -1039,13 +1067,14 @@ function generateDiff(oldStr, newStr) {
                                         </div>
                                     </template>
                                 </template>
-                                <!-- Normal key rendering -->
+                                <!-- Normal key rendering (update:value needed for always-interactive overrides like select) -->
                                 <JsonHumanView
                                     v-else
                                     :value="value[key]"
                                     :name="key"
                                     :depth="depth + 1"
                                     :override="overrides[key] ?? siblingOverrides[key]"
+                                    @update:value="onChildObjectUpdate(key, $event)"
                                 />
                             </template>
                         </template>
@@ -1234,6 +1263,11 @@ function generateDiff(oldStr, newStr) {
 
 .jhv-edit-number {
     max-width: 12rem;
+}
+
+.jhv-select {
+    display: inline-block;
+    min-width: 10rem;
 }
 
 .jhv-edit-monaco {

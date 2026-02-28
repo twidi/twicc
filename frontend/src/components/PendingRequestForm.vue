@@ -30,6 +30,14 @@ const TOOL_OVERRIDES_BASE = {
     },
 }
 
+// Overrides for permission suggestion JsonHumanView: the destination field is rendered as a select.
+const SUGGESTION_OVERRIDES = {
+    destination: {
+        valueType: 'select',
+        options: ['userSettings', 'projectSettings', 'localSettings', 'session'],
+    },
+}
+
 // Maps tool names to the key in tool input that contains the file path.
 const TOOL_PATH_KEYS = {
     Write: 'file_path',
@@ -95,6 +103,9 @@ const hasEditableContent = computed(() => {
 // Set of suggestion indices that the user has checked (for permission suggestions)
 const checkedSuggestions = reactive(new Set())
 
+// Edited copies of permission suggestions (only entries modified by the user)
+const editedSuggestions = reactive(new Map())
+
 // ============================================================================
 // Ask user question state
 // ============================================================================
@@ -129,6 +140,7 @@ watch(() => props.pendingRequest?.request_id, () => {
     isEditing.value = false
     editedToolInput.value = null
     checkedSuggestions.clear()
+    editedSuggestions.clear()
     // Ask user question state
     Object.keys(questionSelections).forEach(k => delete questionSelections[k])
     Object.keys(otherTexts).forEach(k => delete otherTexts[k])
@@ -183,6 +195,27 @@ const permissionSuggestions = computed(() => props.pendingRequest.permission_sug
 const hasPermissionSuggestions = computed(() => permissionSuggestions.value.length > 0)
 
 /**
+ * Get the suggestion object for a given index, using the edited version if available.
+ * @param {number} index - Index in the permissionSuggestions array
+ * @returns {Object} The original or edited suggestion object
+ */
+function editedSuggestion(index) {
+    return editedSuggestions.get(index) ?? permissionSuggestions.value[index]
+}
+
+/**
+ * Handle update from a suggestion's JsonHumanView (e.g., destination select changed).
+ * Stores the edited suggestion copy.
+ * @param {number} index - Index in the permissionSuggestions array
+ * @param {Object} newValue - The updated suggestion object
+ */
+function onSuggestionUpdate(index, newValue) {
+    editedSuggestions.set(index, newValue)
+    // Auto-accept: editing a suggestion implies the user wants to apply it
+    checkedSuggestions.add(index)
+}
+
+/**
  * Toggle a permission suggestion's checked state.
  * @param {number} index - Index in the permissionSuggestions array
  */
@@ -196,13 +229,14 @@ function togglePermissionSuggestion(index) {
 
 /**
  * Get the list of checked permission suggestion dicts (to send back as updated_permissions).
- * @returns {Array<Object>} The checked permission suggestion objects
+ * Returns edited versions when the user has modified a suggestion (e.g., changed destination).
+ * @returns {Array<Object>|null} The checked permission suggestion objects, or null if none checked
  */
 function getCheckedPermissionSuggestions() {
     if (checkedSuggestions.size === 0) return null
     const result = []
     for (const index of checkedSuggestions) {
-        result.push(permissionSuggestions.value[index])
+        result.push(editedSuggestion(index))
     }
     return result
 }
@@ -545,8 +579,12 @@ function handleSubmitQuestions() {
                         :class="{ selected: checkedSuggestions.has(sIndex) }"
                         @click="togglePermissionSuggestion(sIndex)"
                     >
-                        <div class="permission-suggestion-card-body">
-                            <JsonHumanView :value="suggestion" />
+                        <div class="permission-suggestion-card-body" @click.stop>
+                            <JsonHumanView
+                                :value="editedSuggestion(sIndex)"
+                                :overrides="SUGGESTION_OVERRIDES"
+                                @update:value="onSuggestionUpdate(sIndex, $event)"
+                            />
                         </div>
                         <div class="permission-suggestion-card-footer">
                             <wa-switch
