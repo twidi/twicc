@@ -159,6 +159,14 @@ const effectiveProjectId = computed(() =>
 
 // All projects for the selector (already sorted by mtime desc in store)
 const allProjects = computed(() => store.getProjects)
+// Non-stale projects only — used in "new session" dropdowns to prevent creating sessions in stale projects
+const nonStaleProjects = computed(() => allProjects.value.filter(p => !p.stale))
+// Whether the current project (single-project mode) is stale
+const isCurrentProjectStale = computed(() => {
+    if (isAllProjectsMode.value) return false
+    const project = store.getProject(projectId.value)
+    return project?.stale ?? false
+})
 
 // Selected project color for display in the closed select
 const selectedProjectColor = computed(() => {
@@ -727,6 +735,7 @@ function updateSidebarClosedClass(closed) {
                         variant="brand"
                         appearance="accent"
                         size="small"
+                        :disabled="isCurrentProjectStale"
                         @click="handleNewSession()"
                     >
                         <wa-icon name="plus"></wa-icon>
@@ -748,7 +757,7 @@ function updateSidebarClosedClass(closed) {
                             <wa-icon name="chevron-up" label="Choose another project"></wa-icon>
                         </wa-button>
                         <wa-dropdown-item
-                            v-for="p in allProjects"
+                            v-for="p in nonStaleProjects"
                             :key="p.id"
                             :value="p.id"
                         >
@@ -782,7 +791,7 @@ function updateSidebarClosedClass(closed) {
                         <span>New session</span>
                     </wa-button>
                     <wa-dropdown-item
-                        v-for="p in allProjects"
+                        v-for="p in nonStaleProjects"
                         :key="p.id"
                         :value="p.id"
                     >
