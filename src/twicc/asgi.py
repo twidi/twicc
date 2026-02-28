@@ -53,7 +53,10 @@ def _permission_update_from_dict(data: dict) -> PermissionUpdate:
         rules = [
             PermissionRuleValue(
                 tool_name=r["toolName"],
-                rule_content=r.get("ruleContent"),
+                # SDK bug workaround: PermissionUpdate.to_dict() serializes None as
+                # "ruleContent": null, but Claude Code CLI's Zod schema rejects null
+                # (expects string | undefined). Using "" instead of None avoids the error.
+                rule_content=r.get("ruleContent") or "",
             )
             for r in raw_rules
         ]
@@ -675,6 +678,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                     updated_input=updated_input,
                     updated_permissions=updated_permissions,
                 )
+                logger.debug("Tool approval allowed for session %s with responses=%s", session_id, response)
             else:
                 message = content.get("message", "User denied this action")
                 response = PermissionResultDeny(message=message)
