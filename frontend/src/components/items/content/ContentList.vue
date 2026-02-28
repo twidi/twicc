@@ -9,6 +9,7 @@ import TextContent from './TextContent.vue'
 import MediaThumbnailGroup from '../../MediaThumbnailGroup.vue'
 import DocumentContent from './DocumentContent.vue'
 import ToolUseContent from './ToolUseContent.vue'
+import ThinkingContent from './ThinkingContent.vue'
 import UnknownEntry from '../UnknownEntry.vue'
 
 const store = useDataStore()
@@ -251,6 +252,10 @@ function toggleInternalGroup(startIndex) {
                 :session-id="sessionId"
                 :parent-session-id="parentSessionId"
                 :line-num="lineNum"
+            />
+            <ThinkingContent
+                v-else-if="entry.item.type === 'thinking'"
+                :thinking="entry.item.thinking"
             />
             <UnknownEntry
                 v-else
