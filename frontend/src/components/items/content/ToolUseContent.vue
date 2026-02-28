@@ -252,9 +252,22 @@ const displayResult = computed(() => {
 const FILE_PATH_TOOLS = new Set(['Edit', 'Write', 'Read'])
 const usesFilePath = computed(() => FILE_PATH_TOOLS.has(props.name) && !!props.input?.file_path)
 
+// Make file_path relative to session's working directory when possible
+const sessionBaseDir = computed(() => {
+    const session = dataStore.getSession(props.sessionId)
+    return session?.git_directory || session?.cwd || null
+})
+
 // Extract summary detail: file_path for file tools, description for others
 const description = computed(() => {
-    if (usesFilePath.value) return props.input.file_path
+    if (usesFilePath.value) {
+        const filePath = props.input.file_path
+        const baseDir = sessionBaseDir.value
+        if (baseDir && filePath.startsWith(baseDir + '/')) {
+            return filePath.slice(baseDir.length + 1)
+        }
+        return filePath
+    }
     return props.input?.description || null
 })
 
