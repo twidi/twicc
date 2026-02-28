@@ -86,6 +86,12 @@ const isEditing = ref(false)
 // Deep copy of tool input being edited (null when not editing)
 const editedToolInput = ref(null)
 
+// Whether the tool input has any fields that can be edited
+const hasEditableContent = computed(() => {
+    const input = props.pendingRequest.tool_input
+    return input && typeof input === 'object' && Object.keys(input).length > 0
+})
+
 // Set of suggestion indices that the user has checked (for permission suggestions)
 const checkedSuggestions = reactive(new Set())
 
@@ -570,6 +576,7 @@ function handleSubmitQuestions() {
                         Deny
                     </wa-button>
                     <wa-button
+                        v-if="hasEditableContent"
                         variant="neutral"
                         appearance="outlined"
                         size="small"
