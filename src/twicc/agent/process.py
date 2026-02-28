@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
+from urllib.parse import urlparse
 
 import orjson
 from collections.abc import AsyncIterator, Callable, Coroutine
@@ -236,7 +237,7 @@ class ClaudeProcess:
             rules = suggestion.get("rules")
             if rules and len(rules) > 1:
                 for rule in rules:
-                    result.append({k: ([rule] if k == "rules" else v) for k, v in suggestion.items()})
+                    result.append({**suggestion, "rules": [rule]})
             else:
                 result.append(suggestion)
 
@@ -264,6 +265,60 @@ class ClaudeProcess:
                 })
                 existing_tool_names.add(tool_name)
 
+        # If the current tool is WebFetch, ensure both a domain-specific and a global suggestion exist.
+        # Domain-specific: ruleContent = "domain:<host>" extracted from the URL in input_data.
+        # Global: no ruleContent, allows WebFetch on any domain.
+        if tool_name == "WebFetch":
+            url = input_data.get("url")
+            if url:
+                host = urlparse(url if "://" in url else f"https://{url}").hostname
+                if host:
+                    domain_rule = f"domain:{host}"
+                    has_domain = any(
+                        rule.get("toolName") == "WebFetch" and rule.get("ruleContent") == domain_rule
+                        for s in result for rule in s.get("rules") or ()
+                    )
+                    if not has_domain:
+                        result.append({
+                            'type': 'addRules',
+                            'rules': [{'toolName': 'WebFetch', 'ruleContent': domain_rule}],
+                            'behavior': 'allow',
+                            'destination': 'session',
+                        })
+            # Global suggestion inherits the destination from the domain-specific one
+            # (either from the SDK or the one we just created above).
+            domain_suggestion = next(
+                (s for s in result for rule in s.get("rules") or ()
+                 if rule.get("toolName") == "WebFetch" and rule.get("ruleContent")),
+                None,
+            )
+            domain_destination = domain_suggestion["destination"] if domain_suggestion else "session"
+            has_global = any(
+                rule.get("toolName") == "WebFetch" and not rule.get("ruleContent")
+                for s in result for rule in s.get("rules") or ()
+            )
+            if not has_global:
+                result.append({
+                    'type': 'addRules',
+                    'rules': [{'toolName': 'WebFetch'}],
+                    'behavior': 'allow',
+                    'destination': domain_destination,
+                })
+
+        # If the current tool is WebSearch and no suggestion exists for it, create one.
+        if tool_name == "WebSearch":
+            has_web_search = any(
+                rule.get("toolName") == "WebSearch"
+                for s in result for rule in s.get("rules") or ()
+            )
+            if not has_web_search:
+                result.append({
+                    'type': 'addRules',
+                    'rules': [{'toolName': 'WebSearch'}],
+                    'behavior': 'allow',
+                    'destination': 'session',
+                })
+
         # For each specific MCP tool suggestion, add a server-wide wildcard variant
         # (mcp__{name}__*) so the user can allow all tools from that server at once.
         seen_mcp_prefixes: set[str] = set()
@@ -282,11 +337,16 @@ class ClaudeProcess:
                 wildcard = f"{mcp_prefix}__*"
                 # Only add if neither the bare prefix nor the wildcard already exist
                 if mcp_prefix not in existing_tool_names and wildcard not in existing_tool_names:
-                    extra.append(
-                        {k: ([{"toolName": wildcard}] if k == "rules" else v) for k, v in s.items()}
-                    )
+                    extra.append({**s, "rules": [{"toolName": wildcard}]})
 
         result.extend(extra)
+
+        # Normalize field order to match PermissionUpdate dataclass definition.
+        field_order = ("type", "rules", "behavior", "mode", "directories", "destination")
+        result = [
+            {k: s[k] for k in field_order if k in s}
+            for s in result
+        ]
 
         return result or None
 
