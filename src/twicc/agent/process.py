@@ -190,7 +190,7 @@ class ClaudeProcess:
         )
 
     def get_permission_suggestions(
-        self, input_data: dict, context: ToolPermissionContext
+        self, tool_name: str, input_data: dict, context: ToolPermissionContext
     ) -> list[dict] | None:
         """Extract, serialize and filter permission suggestions from the SDK context.
 
@@ -205,6 +205,8 @@ class ClaudeProcess:
           the suggestion is dropped entirely.
 
         Args:
+            tool_name: The name of the tool requesting permission (used to generate
+                MCP suggestions when the SDK provides none)
             input_data: The tool's input parameters (reserved for future filtering)
             context: SDK ``ToolPermissionContext`` containing the suggestions list
 
@@ -212,15 +214,13 @@ class ClaudeProcess:
             A list of serialised permission suggestion dicts, or ``None`` if there
             are none (or all were filtered out).
         """
-        if not context.suggestions:
-            return None
-
-        serialized = [s.to_dict() if isinstance(s, PermissionUpdate) else s for s in context.suggestions]
+        serialized = [s.to_dict() if isinstance(s, PermissionUpdate) else s for s in context.suggestions or ()]
 
         result = []
         for suggestion in serialized:
             suggestion_type = suggestion.get("type")
 
+            # Strip the project directory from directory suggestions (always implicitly allowed).
             if suggestion_type in ("addDirectories", "removeDirectories"):
                 directories = suggestion.get("directories")
                 if directories is not None:
@@ -247,17 +247,32 @@ class ClaudeProcess:
         existing_tool_names: set[str] = set()
         for s in result:
             for rule in s.get("rules") or ():
-                tool_name = rule.get("toolName", "")
-                if tool_name:
-                    existing_tool_names.add(tool_name)
+                tn = rule.get("toolName", "")
+                if tn:
+                    existing_tool_names.add(tn)
 
+        # If no suggestion covers the current tool and it's an MCP tool, create one.
+        # The wildcard loop below will then automatically add the server-wide variant.
+        if tool_name not in existing_tool_names:
+            parts = tool_name.split("__")
+            if len(parts) == 3 and parts[0] == "mcp":
+                result.append({
+                    'type': 'addRules',
+                    'rules': [{'toolName': tool_name}],
+                    'behavior': 'allow',
+                    'destination': 'localSettings',
+                })
+                existing_tool_names.add(tool_name)
+
+        # For each specific MCP tool suggestion, add a server-wide wildcard variant
+        # (mcp__{name}__*) so the user can allow all tools from that server at once.
         seen_mcp_prefixes: set[str] = set()
         extra: list[dict] = []
         for s in result:
             for rule in s.get("rules") or ():
-                tool_name = rule.get("toolName", "")
+                tn = rule.get("toolName", "")
                 # Match mcp__{name}__{tool} — exactly 3 parts separated by "__"
-                parts = tool_name.split("__")
+                parts = tn.split("__")
                 if len(parts) != 3 or parts[0] != "mcp":
                     continue
                 mcp_prefix = f"mcp__{parts[1]}"
@@ -309,7 +324,7 @@ class ClaudeProcess:
         else:
             request_type = "tool_approval"
 
-        permission_suggestions = self.get_permission_suggestions(input_data, context)
+        permission_suggestions = self.get_permission_suggestions(tool_name, input_data, context)
 
         self._pending_request = PendingRequest(
             request_id=request_id,
