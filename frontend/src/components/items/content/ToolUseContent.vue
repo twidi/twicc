@@ -3,6 +3,7 @@ import { computed, ref, inject, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../../stores/data'
 import { apiFetch } from '../../../utils/api'
+import { getIconUrl, getFileIconId } from '../../../utils/fileIcons'
 import JsonHumanView from '../../JsonHumanView.vue'
 
 const route = useRoute()
@@ -258,6 +259,14 @@ const sessionBaseDir = computed(() => {
     return session?.git_directory || session?.cwd || null
 })
 
+// File icon URL for file tools (null if no specific icon found)
+const fileIconSrc = computed(() => {
+    if (!usesFilePath.value) return null
+    const filename = props.input.file_path.split('/').pop() || props.input.file_path
+    const iconId = getFileIconId(filename)
+    return iconId !== 'default-file' ? getIconUrl(iconId) : null
+})
+
 // Extract summary detail: file_path for file tools, description for others
 const description = computed(() => {
     if (usesFilePath.value) {
@@ -417,7 +426,11 @@ function navigateToSubagent(agentId) {
                 <strong class="items-details-summary-name">{{ name.replaceAll('__', ' ') }}</strong>
                 <template v-if="description">
                     <span class="items-details-summary-separator"> — </span>
-                    <span class="items-details-summary-description">{{ description }}</span>
+                    <span v-if="fileIconSrc" class="items-details-summary-file">
+                        <img :src="fileIconSrc" class="items-details-summary-file-icon" loading="lazy" width="16" height="16" />
+                        <span class="items-details-summary-description">{{ description }}</span>
+                    </span>
+                    <span v-else class="items-details-summary-description">{{ description }}</span>
                 </template>
             </span>
             <!-- View Agent button for Task tool_use (only in regular sessions) -->
@@ -503,6 +516,25 @@ wa-details.with-right-part {
         /* Description can wrap on multiple lines */
         word-wrap: break-word;
     }
+}
+
+wa-details {
+    .items-details-summary-left {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--wa-space-xs);
+    }
+}
+
+.items-details-summary-file {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+}
+
+.items-details-summary-file-icon {
+    vertical-align: text-bottom;
+    flex-shrink: 0;
 }
 
 .tool-input {
