@@ -251,35 +251,24 @@ async def sync_project_and_broadcast(
     channel_layer,
 ) -> None:
     """
-    Handle a new project directory being created.
+    Handle a project directory being created or deleted.
 
-    Creates the project in the database and broadcasts project_added.
+    Projects are NOT created eagerly here. They are created lazily when the
+    first session with content appears (in sync_and_broadcast). This avoids
+    polluting the project list with empty folders (e.g. folders left behind
+    after Claude sublimates old sessions).
+
+    This handler only updates the stale flag on existing projects:
+    - Folder deleted → mark as stale
+    - Folder (re)appeared → mark as not stale
     """
-    project_id = path.name
-
-    if change_type == Change.deleted:
-        # Project folder deleted - mark as stale
-        project = await get_project_by_id(project_id)
-        if project and not project.stale:
-            project.stale = True
-            await sync_to_async(project.save)(update_fields=["stale"])
-            await broadcast_message(channel_layer, {
-                "type": "project_updated",
-                "project": serialize_project(project),
-            })
+    project = await get_project_by_id(path.name)
+    if project is None:
         return
 
-    # New project folder
-    project, created = await get_or_create_project(project_id)
-
-    if created:
-        await broadcast_message(channel_layer, {
-            "type": "project_added",
-            "project": serialize_project(project),
-        })
-    elif project.stale:
-        # Project was stale but folder reappeared
-        project.stale = False
+    should_be_stale = change_type == Change.deleted
+    if project.stale != should_be_stale:
+        project.stale = should_be_stale
         await sync_to_async(project.save)(update_fields=["stale"])
         await broadcast_message(channel_layer, {
             "type": "project_updated",

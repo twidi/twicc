@@ -273,18 +273,24 @@ def sync_project(
         "items_added": 0,
     }
 
-    # Get or create project
-    project, _ = Project.objects.get_or_create(id=project_id)
+    # Try to get existing project (don't create yet — defer until first session with content)
+    try:
+        project = Project.objects.get(id=project_id)
+    except Project.DoesNotExist:
+        project = None
 
     # Scan session files on disk
     session_files = scan_sessions(project_id)
     disk_session_ids = set(session_files.keys())
 
     # Get existing sessions from database (only main sessions, not subagents)
-    db_sessions = {
-        s.id: s
-        for s in Session.objects.filter(project=project, type=SessionType.SESSION)
-    }
+    if project is not None:
+        db_sessions = {
+            s.id: s
+            for s in Session.objects.filter(project=project, type=SessionType.SESSION)
+        }
+    else:
+        db_sessions = {}
     db_session_ids = set(db_sessions.keys())
 
     # Process sessions that exist on disk
@@ -312,7 +318,11 @@ def sync_project(
                     on_session_progress(session_id, idx, total_sessions)
                 continue
 
-            # File has content, create and save the session first
+            # File has content — ensure project exists before creating session
+            if project is None:
+                project = Project.objects.create(id=project_id)
+                stats["project_created"] = 1
+
             session = Session(id=session_id, project=project, type=SessionType.SESSION)
             session.save()
             stats["sessions_created"] += 1
@@ -351,6 +361,12 @@ def sync_project(
 
         if on_session_progress:
             on_session_progress(session_id, idx, total_sessions)
+
+    # Skip remaining steps if project was never created (no sessions with content)
+    if project is None:
+        elapsed = time.monotonic() - project_start
+        logger.info(f"  ⊘ Project {project_id} skipped in {elapsed:.1f}s — no sessions with content")
+        return stats
 
     # Mark stale sessions (exist in DB but not on disk)
     stale_session_ids = db_session_ids - disk_session_ids
@@ -418,11 +434,10 @@ def sync_all(
     # Get existing projects from database
     db_project_ids = set(Project.objects.values_list("id", flat=True))
 
-    # Create missing projects
-    new_project_ids = disk_project_ids - db_project_ids
-    for project_id in new_project_ids:
-        Project.objects.create(id=project_id)
-        stats["projects_created"] += 1
+    # Note: projects are NOT created eagerly here. They are created lazily
+    # inside sync_project() only when they contain at least one session with content.
+    # This avoids polluting the project list with empty project folders
+    # (e.g. folders left behind after Claude sublimates old sessions).
 
     # Mark stale projects (exist in DB but not on disk)
     stale_project_ids = db_project_ids - disk_project_ids
@@ -449,6 +464,7 @@ def sync_all(
         project_stats = sync_project(project_id, on_session_progress=on_session_progress, stop_event=stop_event)
 
         # Aggregate stats
+        stats["projects_created"] += project_stats.get("project_created", 0)
         stats["sessions_created"] += project_stats["sessions_created"]
         stats["sessions_stale"] += project_stats["sessions_stale"]
         stats["items_added"] += project_stats["items_added"]
