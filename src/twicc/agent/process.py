@@ -235,11 +235,43 @@ class ClaudeProcess:
             # suggestion per rule so the frontend can present them individually.
             rules = suggestion.get("rules")
             if rules and len(rules) > 1:
-                base = {k: v for k, v in suggestion.items() if k != "rules"}
                 for rule in rules:
-                    result.append({**base, "rules": [rule]})
+                    result.append({k: ([rule] if k == "rules" else v) for k, v in suggestion.items()})
             else:
                 result.append(suggestion)
+
+        # Inject wildcard MCP suggestions: for each rule targeting a specific MCP tool
+        # (mcp__{name}__{tool}), add a wildcard suggestion (mcp__{name}__*) so the user
+        # can choose to allow all tools from that MCP server at once.
+        # Collect all existing toolNames to know what's already covered.
+        existing_tool_names: set[str] = set()
+        for s in result:
+            for rule in s.get("rules") or ():
+                tool_name = rule.get("toolName", "")
+                if tool_name:
+                    existing_tool_names.add(tool_name)
+
+        seen_mcp_prefixes: set[str] = set()
+        extra: list[dict] = []
+        for s in result:
+            for rule in s.get("rules") or ():
+                tool_name = rule.get("toolName", "")
+                # Match mcp__{name}__{tool} — exactly 3 parts separated by "__"
+                parts = tool_name.split("__")
+                if len(parts) != 3 or parts[0] != "mcp":
+                    continue
+                mcp_prefix = f"mcp__{parts[1]}"
+                if mcp_prefix in seen_mcp_prefixes:
+                    continue
+                seen_mcp_prefixes.add(mcp_prefix)
+                wildcard = f"{mcp_prefix}__*"
+                # Only add if neither the bare prefix nor the wildcard already exist
+                if mcp_prefix not in existing_tool_names and wildcard not in existing_tool_names:
+                    extra.append(
+                        {k: ([{"toolName": wildcard}] if k == "rules" else v) for k, v in s.items()}
+                    )
+
+        result.extend(extra)
 
         return result or None
 
