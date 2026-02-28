@@ -11,6 +11,7 @@ import ProjectBadge from '../components/ProjectBadge.vue'
 import ProjectProcessIndicator from '../components/ProjectProcessIndicator.vue'
 import ProjectDetailPanel from '../components/ProjectDetailPanel.vue'
 import SessionRenameDialog from '../components/SessionRenameDialog.vue'
+import ProjectEditDialog from '../components/ProjectEditDialog.vue'
 import { getUsageRingColor } from '../utils/usage'
 import CostDisplay from '../components/CostDisplay.vue'
 import AppTooltip from '../components/AppTooltip.vue'
@@ -347,6 +348,22 @@ function handleNewSession(targetProjectId = null) {
             params: { projectId: projectIdToUse, sessionId: newSessionId }
         })
     }
+}
+
+// Create project from the "New session" dropdown
+const createProjectDialogRef = ref(null)
+
+function handleNewSessionSelect(e) {
+    const value = e.detail.item.value
+    if (value === '__new_project__') {
+        createProjectDialogRef.value?.open()
+    } else {
+        handleNewSession(value)
+    }
+}
+
+function handleProjectCreated(project) {
+    handleNewSession(project.id)
 }
 
 // Sidebar state persistence
@@ -745,7 +762,7 @@ function updateSidebarClosedClass(closed) {
                     <!-- Dropdown arrow: choose a different project -->
                     <wa-dropdown
                         placement="top-end"
-                        @wa-select="(e) => handleNewSession(e.detail.item.value)"
+                        @wa-select="handleNewSessionSelect"
                     >
                         <wa-button
                             id="new-session-project-picker"
@@ -756,6 +773,11 @@ function updateSidebarClosedClass(closed) {
                         >
                             <wa-icon name="chevron-up" label="Choose another project"></wa-icon>
                         </wa-button>
+                        <wa-dropdown-item value="__new_project__">
+                            <wa-icon slot="prefix" name="plus-lg"></wa-icon>
+                            New project
+                        </wa-dropdown-item>
+                        <wa-divider></wa-divider>
                         <wa-dropdown-item
                             v-for="p in nonStaleProjects"
                             :key="p.id"
@@ -777,7 +799,7 @@ function updateSidebarClosedClass(closed) {
                     id="new-session-dropdown"
                     class="new-session-dropdown"
                     placement="top-end"
-                    @wa-select="(e) => handleNewSession(e.detail.item.value)"
+                    @wa-select="handleNewSessionSelect"
                 >
                     <wa-button
                         id="new-session-all-projects-button"
@@ -790,6 +812,11 @@ function updateSidebarClosedClass(closed) {
                         <wa-icon name="plus"></wa-icon>
                         <span>New session</span>
                     </wa-button>
+                    <wa-dropdown-item value="__new_project__">
+                        <wa-icon slot="prefix" name="plus-lg"></wa-icon>
+                        New project
+                    </wa-dropdown-item>
+                    <wa-divider></wa-divider>
                     <wa-dropdown-item
                         v-for="p in nonStaleProjects"
                         :key="p.id"
@@ -936,6 +963,9 @@ function updateSidebarClosedClass(closed) {
         ref="renameDialogRef"
         :session="sessionToRename"
     />
+
+    <!-- Create project dialog (opened from "New session" dropdown) -->
+    <ProjectEditDialog ref="createProjectDialogRef" @saved="handleProjectCreated" />
     </div>
 </template>
 
