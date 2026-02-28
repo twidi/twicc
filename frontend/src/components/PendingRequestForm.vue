@@ -556,16 +556,8 @@ function handleSubmitQuestions() {
                     <wa-badge variant="neutral">{{ toolNameDisplay }}</wa-badge>
                 </div>
 
-                <JsonHumanView
-                    :value="toolInput"
-                    :overrides="toolOverrides"
-                    :editable="isEditing"
-                    @update:value="onToolInputUpdate"
-                />
-            </div>
-
-            <!-- Permission suggestions (wa-details, closed by default) -->
-            <wa-details v-if="hasPermissionSuggestions" class="permission-suggestions-details">
+                <!-- Permission suggestions (wa-details, closed by default) -->
+                <wa-details v-if="hasPermissionSuggestions" class="permission-suggestions-details">
                 <span slot="summary">
                     <wa-icon name="key" variant="classic"></wa-icon>
                     Permission suggestions
@@ -597,6 +589,14 @@ function handleSubmitQuestions() {
                     </wa-card>
                 </div>
             </wa-details>
+
+                <JsonHumanView
+                    :value="toolInput"
+                    :overrides="toolOverrides"
+                    :editable="isEditing"
+                    @update:value="onToolInputUpdate"
+                />
+            </div>
 
             <!-- Action buttons: three states — default / deny reason / editing -->
             <div class="pending-request-actions">
@@ -794,10 +794,12 @@ wa-divider {
     flex-direction: column;
     gap: var(--wa-space-s);
     padding: var(--wa-space-s);
-    background: var(--main-header-footer-bg-color);
+    background: var(--wa-color-surface-default);
     max-height: 50vh;
     &.expanded {
-        max-height: 80vh;
+        max-height: unset;
+        position: absolute;
+        inset: 0;
     }
 }
 
@@ -907,20 +909,23 @@ wa-divider {
 
 .pending-request-actions {
     display: flex;
+    flex-wrap: wrap;
     justify-content: flex-end;
     gap: var(--wa-space-s);
 }
 
 .deny-reason-row {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--wa-space-s);
+    justify-content: flex-end;
     align-items: center;
     width: 100%;
 }
 
 .deny-reason-input {
     flex: 1;
-    min-width: 0;
+    min-width: min(20rem, calc(100vw - 2 * var(--wa-space-s)));
 }
 
 /* =========================================================================

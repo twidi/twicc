@@ -1036,6 +1036,10 @@ defineExpose({
         --spacing: 0;
     }
 }
+.session-footer:has(.pending-request-form.expanded) {
+    background: red;
+    position: static;
+}
 
 .stale-banner {
     padding: var(--wa-space-s);
