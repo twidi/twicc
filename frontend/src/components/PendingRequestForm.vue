@@ -194,6 +194,17 @@ const permissionSuggestions = computed(() => props.pendingRequest.permission_sug
 // Whether there are any permission suggestions to display
 const hasPermissionSuggestions = computed(() => permissionSuggestions.value.length > 0)
 
+// Summary label for the permission suggestions details element
+const permissionSummaryLabel = computed(() => {
+    const count = permissionSuggestions.value.length
+    const accepted = checkedSuggestions.size
+    let label = `${count} Permission suggestion${count > 1 ? 's' : ''}`
+    if (accepted > 0) {
+        label += accepted === count ? ' (All accepted)' : ` (${accepted} accepted)`
+    }
+    return label
+})
+
 /**
  * Get the suggestion object for a given index, using the edited version if available.
  * @param {number} index - Index in the permissionSuggestions array
@@ -560,7 +571,7 @@ function handleSubmitQuestions() {
                 <wa-details v-if="hasPermissionSuggestions" class="permission-suggestions-details">
                 <span slot="summary">
                     <wa-icon name="key" variant="classic"></wa-icon>
-                    Permission suggestions
+                    {{ permissionSummaryLabel }}
                 </span>
                 <div class="permission-suggestions-list">
                     <wa-card

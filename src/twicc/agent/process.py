@@ -231,7 +231,15 @@ class ClaudeProcess:
                         continue
                     suggestion = {**suggestion, "directories": directories}
 
-            result.append(suggestion)
+            # Ungroup suggestions that bundle multiple rules: split into one
+            # suggestion per rule so the frontend can present them individually.
+            rules = suggestion.get("rules")
+            if rules and len(rules) > 1:
+                base = {k: v for k, v in suggestion.items() if k != "rules"}
+                for rule in rules:
+                    result.append({**base, "rules": [rule]})
+            else:
+                result.append(suggestion)
 
         return result or None
 
