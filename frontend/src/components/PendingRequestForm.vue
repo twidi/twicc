@@ -30,12 +30,38 @@ const TOOL_OVERRIDES_BASE = {
     },
 }
 
-// Overrides for permission suggestion JsonHumanView: the destination field is rendered as a select.
-const SUGGESTION_OVERRIDES = {
+// Base overrides for permission suggestion JsonHumanView: the destination field is rendered as a select.
+const BASE_SUGGESTION_OVERRIDES = {
     destination: {
         valueType: 'select',
         options: ['userSettings', 'projectSettings', 'localSettings', 'session'],
     },
+}
+
+/**
+ * Compute overrides for a given suggestion, merging base overrides with dynamic ones.
+ * If the suggestion contains _ruleContentOptions, the ruleContent field inside rules[0]
+ * gets a select override. The _ruleContentOptions key itself is hidden.
+ */
+function suggestionOverrides(suggestion) {
+    const options = suggestion?._ruleContentOptions
+    if (!options?.length) return { ...BASE_SUGGESTION_OVERRIDES, _ruleContentOptions: { hidden: true } }
+    return {
+        ...BASE_SUGGESTION_OVERRIDES,
+        _ruleContentOptions: { hidden: true },
+        rules: {
+            children: {
+                0: {
+                    children: {
+                        ruleContent: {
+                            valueType: 'select',
+                            options,
+                        },
+                    },
+                },
+            },
+        },
+    }
 }
 
 // Maps tool names to the key in tool input that contains the file path.
@@ -247,7 +273,18 @@ function getCheckedPermissionSuggestions() {
     if (checkedSuggestions.size === 0) return null
     const result = []
     for (const index of checkedSuggestions) {
-        result.push(editedSuggestion(index))
+        const suggestion = { ...editedSuggestion(index) }
+        // Strip private fields (e.g. _ruleContentOptions) — not part of the SDK protocol.
+        for (const key of Object.keys(suggestion)) {
+            if (key.startsWith('_')) delete suggestion[key]
+        }
+        // If ruleContent is empty (user chose "allow all"), remove it from the rule.
+        for (const rule of suggestion.rules || []) {
+            if ('ruleContent' in rule && !rule.ruleContent) {
+                delete rule.ruleContent
+            }
+        }
+        result.push(suggestion)
     }
     return result
 }
@@ -585,7 +622,7 @@ function handleSubmitQuestions() {
                         <div class="permission-suggestion-card-body" @click.stop>
                             <JsonHumanView
                                 :value="editedSuggestion(sIndex)"
-                                :overrides="SUGGESTION_OVERRIDES"
+                                :overrides="suggestionOverrides(editedSuggestion(sIndex))"
                                 @update:value="onSuggestionUpdate(sIndex, $event)"
                             />
                         </div>

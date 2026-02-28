@@ -430,6 +430,7 @@ function valueType(val, key = null) {
  * @returns {string}
  */
 function effectiveType() {
+    if (props.override?.hidden) return 'hidden'
     return props.override?.valueType ?? valueType(props.value, props.name)
 }
 
@@ -688,8 +689,11 @@ function generateDiff(oldStr, newStr) {
 
 <template>
     <div class="jhv-node" :class="{ 'jhv-nested': depth >= 1 }">
+        <!-- Hidden: override says this field should not be rendered -->
+        <template v-if="effectiveType() === 'hidden'" />
+
         <!-- Null / undefined (not editable — no meaningful type to edit into) -->
-        <template v-if="effectiveType() === 'null'">
+        <template v-else-if="effectiveType() === 'null'">
             <div class="jhv-entry">
                 <span v-if="name != null" class="jhv-key">{{ formatLabel(name) }}</span>
                 <span v-if="name != null" class="jhv-separator">: </span>
@@ -744,7 +748,7 @@ function generateDiff(oldStr, newStr) {
                     :value.prop="value"
                     @change="onSelectChange"
                 >
-                    <wa-option v-for="opt in override.options" :key="opt" :value="opt">{{ opt }}</wa-option>
+                    <wa-option v-for="opt in override.options" :key="opt" :value="opt">{{ opt || 'Allow all' }}</wa-option>
                 </wa-select>
             </div>
         </template>
@@ -958,6 +962,8 @@ function generateDiff(oldStr, newStr) {
                             :value="item"
                             :depth="depth + 1"
                             :editable="editable"
+                            :override="override?.children?.[idx]"
+                            :overrides="override?.children?.[idx]?.children ?? {}"
                             @update:value="onChildArrayUpdate(idx, $event)"
                         />
                     </div>

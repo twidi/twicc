@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
+from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
 import orjson
@@ -319,6 +320,47 @@ class ClaudeProcess:
                     'destination': 'session',
                 })
 
+        # If the current tool is Read, Edit, or Write, generate a suggestion with a
+        # ruleContent select covering: exact file, then for each ancestor directory
+        # (from deepest to shallowest) the extension glob and the catch-all glob,
+        # and finally "allow all" (no ruleContent). Write maps to Edit rules.
+        if tool_name in ("Read", "Edit", "Write"):
+            file_path = input_data.get("file_path")
+            if file_path and file_path.startswith("/"):
+                suggestion_tool = "Read" if tool_name == "Read" else "Edit"
+                path = PurePosixPath(file_path)
+                ext = path.suffix  # e.g. ".py"
+
+                # Build ruleContent options: exact file first
+                options = [f"//{file_path.lstrip('/')}"]
+
+                # For each ancestor directory, add extension glob then catch-all glob
+                parent = path.parent
+                while parent != PurePosixPath("/"):
+                    prefix = f"//{str(parent).lstrip('/')}"
+                    if ext:
+                        options.append(f"{prefix}/*{ext}")
+                    options.append(f"{prefix}/*")
+                    if ext:
+                        options.append(f"{prefix}/**/*{ext}")
+                    options.append(f"{prefix}/**")
+                    parent = parent.parent
+
+                # Root-level extension glob (e.g. //**/*.py) — no //** since that equals "allow all"
+                if ext:
+                    options.append(f"//**/*{ext}")
+
+                # Last option: allow all (empty ruleContent rendered as tool name only)
+                options.append("")
+
+                result.append({
+                    'type': 'addRules',
+                    'rules': [{'toolName': suggestion_tool, 'ruleContent': options[0]}],
+                    'behavior': 'allow',
+                    'destination': 'session',
+                    '_ruleContentOptions': options,
+                })
+
         # For each specific MCP tool suggestion, add a server-wide wildcard variant
         # (mcp__{name}__*) so the user can allow all tools from that server at once.
         seen_mcp_prefixes: set[str] = set()
@@ -342,9 +384,11 @@ class ClaudeProcess:
         result.extend(extra)
 
         # Normalize field order to match PermissionUpdate dataclass definition.
+        # Private fields (prefixed with _) are preserved at the end for frontend use.
         field_order = ("type", "rules", "behavior", "mode", "directories", "destination")
         result = [
             {k: s[k] for k in field_order if k in s}
+            | {k: v for k, v in s.items() if k.startswith("_")}
             for s in result
         ]
 
