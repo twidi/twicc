@@ -15,7 +15,7 @@ Note: The project was almost entirely vibe-coded, with general oversight from th
 ## Quick start
 
 ```bash
-uvx twicc
+uvx twicc@latest
 ```
 
 Then open http://localhost:3500.
