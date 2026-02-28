@@ -248,8 +248,15 @@ const displayResult = computed(() => {
     return resultData.value
 })
 
-// Extract description from input if present
-const description = computed(() => props.input?.description || null)
+// Tools that show file_path instead of description in the summary
+const FILE_PATH_TOOLS = new Set(['Edit', 'Write', 'Read'])
+const usesFilePath = computed(() => FILE_PATH_TOOLS.has(props.name) && !!props.input?.file_path)
+
+// Extract summary detail: file_path for file tools, description for others
+const description = computed(() => {
+    if (usesFilePath.value) return props.input.file_path
+    return props.input?.description || null
+})
 
 // Input without description for display
 const displayInput = computed(() => {
