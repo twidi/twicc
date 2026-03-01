@@ -23,6 +23,9 @@ const sessionItemsListRef = ref(null)
 // Reference to FilesPanel for cross-tab file reveal
 const filesPanelRef = ref(null)
 
+// Reference to TerminalPanel for navigator toggle
+const terminalPanelRef = ref(null)
+
 // ═══════════════════════════════════════════════════════════════════════════
 // KeepAlive lifecycle: active state, listener setup/teardown
 // ═══════════════════════════════════════════════════════════════════════════
@@ -240,6 +243,13 @@ function switchToTabAndCollapse(panel) {
 function onTabShow(event) {
     const panel = event.detail?.name
     if (!panel) return
+
+    // Toggle navigator when re-clicking the terminal tab
+    if (panel === 'terminal' && activeTabId.value === 'terminal') {
+        terminalPanelRef.value?.toggleNavigator()
+        return
+    }
+
     switchToTab(panel)
 }
 
@@ -622,6 +632,7 @@ function handleNeedsTitle() {
             </wa-tab-panel>
             <wa-tab-panel name="terminal">
                 <TerminalPanel
+                    ref="terminalPanelRef"
                     :session-id="session?.id"
                     :active="isActive && activeTabId === 'terminal'"
                 />
