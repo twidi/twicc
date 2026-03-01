@@ -1,7 +1,10 @@
 <script setup>
 import { watch } from 'vue'
 import { useTerminal } from '../composables/useTerminal'
+import { useSettingsStore } from '../stores/settings'
 import TmuxNavigator from './TmuxNavigator.vue'
+
+const settingsStore = useSettingsStore()
 
 const props = defineProps({
     sessionId: {
@@ -15,7 +18,7 @@ const props = defineProps({
 })
 
 const {
-    containerRef, isConnected, started, start, reconnect,
+    containerRef, isConnected, started, start, reconnect, sendInput,
     windows, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
 } = useTerminal(props.sessionId)
 
@@ -52,6 +55,16 @@ defineExpose({ toggleNavigator })
 
 <template>
     <div class="terminal-panel">
+        <!-- Mobile control toolbar -->
+        <div v-if="settingsStore.isTouchDevice && started && !showNavigator" class="control-toolbar">
+            <wa-button size="small" appearance="plain" variant="neutral" @click="sendInput('\x03')">
+                Ctrl+C
+            </wa-button>
+            <wa-button size="small" appearance="plain" variant="neutral" @click="sendInput('\x1a')">
+                Ctrl+Z
+            </wa-button>
+        </div>
+
         <!-- Terminal xterm.js container — hidden when navigator is shown -->
         <div ref="containerRef" class="terminal-container" :class="{ hidden: showNavigator }"></div>
 
@@ -90,6 +103,14 @@ defineExpose({ toggleNavigator })
     display: flex;
     flex-direction: column;
     position: relative;
+}
+
+.control-toolbar {
+    display: flex;
+    gap: var(--wa-space-2xs);
+    padding: var(--wa-space-2xs) var(--wa-space-xs);
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--wa-color-border-default);
 }
 
 .terminal-container {

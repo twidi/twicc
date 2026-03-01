@@ -434,6 +434,14 @@ export function useTerminal(sessionId) {
         connectWs()
     }
 
+    /**
+     * Send raw input data to the PTY (e.g. control characters).
+     * @param {string} data
+     */
+    function sendInput(data) {
+        wsSend({ type: 'input', data })
+    }
+
     // ── tmux window control ─────────────────────────────────────────────
 
     /**
@@ -546,7 +554,7 @@ export function useTerminal(sessionId) {
     })
 
     return {
-        containerRef, isConnected, started, start, reconnect,
+        containerRef, isConnected, started, start, reconnect, sendInput,
         windows, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
     }
 }
