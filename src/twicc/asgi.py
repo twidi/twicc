@@ -302,7 +302,18 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         If password protection is enabled, rejects unauthenticated WebSocket
         connections. The session is populated by SessionMiddlewareStack from
         the browser's session cookie (sent during the HTTP upgrade handshake).
+
+        Supports an optional ``subscribe`` query parameter to filter outgoing
+        messages by type. Example: ``?subscribe=process_state,active_processes``
+        When set, only messages whose ``type`` matches the list are sent.
+        When absent, all messages are sent (backward compatible).
         """
+        # Parse optional subscribe filter from query string
+        query_string = self.scope.get("query_string", b"").decode()
+        params = dict(p.split("=", 1) for p in query_string.split("&") if "=" in p)
+        subscribe = params.get("subscribe")
+        self._subscribe_filter: set[str] | None = set(subscribe.split(",")) if subscribe else None
+
         # Check authentication if password protection is enabled
         if settings.TWICC_PASSWORD_HASH:
             session = self.scope.get("session", {})
@@ -350,17 +361,20 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         )
 
         # Send latest usage snapshot to the connecting client
-        usage_message = await get_usage_message_for_connection()
-        await self.send_json(usage_message)
+        if not self._subscribe_filter or "usage_updated" in self._subscribe_filter:
+            usage_message = await get_usage_message_for_connection()
+            await self.send_json(usage_message)
 
         # Send synced settings to the connecting client
-        synced_settings = await sync_to_async(read_synced_settings)()
-        await self.send_json({"type": "synced_settings_updated", "settings": synced_settings})
+        if not self._subscribe_filter or "synced_settings_updated" in self._subscribe_filter:
+            synced_settings = await sync_to_async(read_synced_settings)()
+            await self.send_json({"type": "synced_settings_updated", "settings": synced_settings})
 
         # Send current startup progress (if any phase is still active)
-        from twicc.startup_progress import get_startup_progress
-        for progress_msg in get_startup_progress():
-            await self.send_json(progress_msg)
+        if not self._subscribe_filter or "startup_progress" in self._subscribe_filter:
+            from twicc.startup_progress import get_startup_progress
+            for progress_msg in get_startup_progress():
+                await self.send_json(progress_msg)
 
     async def disconnect(self, close_code):
         """Remove from the updates group on disconnect."""
@@ -805,8 +819,16 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         )
 
     async def broadcast(self, event):
-        """Handle broadcast events by sending data to the client."""
-        await self.send_json(event["data"])
+        """Handle broadcast events by sending data to the client.
+
+        If the client connected with a ``subscribe`` filter, only messages
+        whose type is in the filter are forwarded. Otherwise all messages
+        are sent (default behavior for the TwiCC web UI).
+        """
+        data = event["data"]
+        if self._subscribe_filter and data.get("type") not in self._subscribe_filter:
+            return
+        await self.send_json(data)
 
 
 websocket_urlpatterns = [
