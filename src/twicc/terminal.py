@@ -10,11 +10,17 @@ WebSocket endpoint (`/ws/terminal/<session_id>/`).
 
 Protocol:
   Client → Server (JSON text frames):
-    { "type": "input", "data": "ls -la\n" }       — keyboard input
+    { "type": "input", "data": "ls -la\\n" }       — keyboard input
     { "type": "resize", "cols": 120, "rows": 30 }  — terminal resize
+    { "type": "list_windows" }                      — list tmux windows
+    { "type": "create_window", "name": "build" }    — create named window
+    { "type": "select_window", "name": "build" }    — switch to window
 
-  Server → Client (plain text frames):
-    Raw PTY output (no JSON wrapping for performance).
+  Server → Client:
+    Plain text frames — raw PTY output (no JSON wrapping for performance).
+    JSON text frames (when type field present) — control responses:
+      { "type": "windows", "windows": [...] }       — window list
+      { "type": "window_changed", "name": "..." }   — window switched
 """
 
 import asyncio
@@ -440,6 +446,12 @@ async def terminal_application(scope, receive, send):
     # ── Accept connection ─────────────────────────────────────────────
     await send({"type": "websocket.accept"})
 
+    # Rename the default tmux window to "main" for fresh sessions
+    if use_tmux:
+        windows = tmux_list_windows(session_id)
+        if windows and windows[0]["name"] != "main":
+            tmux_rename_window(session_id, "0", "main")
+
     # ── PTY output reader task ────────────────────────────────────────
     # Uses add_reader for event-driven reading, and an asyncio.Queue
     # to bridge the sync callback to the async send loop.
@@ -522,6 +534,26 @@ async def terminal_application(scope, receive, send):
                             set_winsize(master_fd, cols, rows)
                         except OSError:
                             pass
+
+                # ── tmux window control messages ──────────────────
+                elif msg_type == "list_windows" and use_tmux:
+                    win_list = tmux_list_windows(session_id)
+                    await send({"type": "websocket.send",
+                                "text": json.dumps({"type": "windows", "windows": win_list})})
+
+                elif msg_type == "create_window" and use_tmux:
+                    window_name = msg.get("name", "").strip()
+                    if window_name:
+                        tmux_create_window(session_id, window_name)
+                        win_list = tmux_list_windows(session_id)
+                        await send({"type": "websocket.send",
+                                    "text": json.dumps({"type": "windows", "windows": win_list})})
+
+                elif msg_type == "select_window" and use_tmux:
+                    window_name = msg.get("name", "")
+                    if window_name and tmux_select_window(session_id, window_name):
+                        await send({"type": "websocket.send",
+                                    "text": json.dumps({"type": "window_changed", "name": window_name})})
 
             elif message["type"] == "websocket.disconnect":
                 return
