@@ -1,6 +1,7 @@
 <script setup>
 import { watch } from 'vue'
 import { useTerminal } from '../composables/useTerminal'
+import TmuxNavigator from './TmuxNavigator.vue'
 
 const props = defineProps({
     sessionId: {
@@ -13,7 +14,10 @@ const props = defineProps({
     },
 })
 
-const { containerRef, isConnected, started, start, reconnect } = useTerminal(props.sessionId)
+const {
+    containerRef, isConnected, started, start, reconnect,
+    windows, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
+} = useTerminal(props.sessionId)
 
 // Lazy init: start the terminal only when the tab becomes active for the first time
 watch(
@@ -25,14 +29,42 @@ watch(
     },
     { immediate: true },
 )
+
+function handleNavigatorSelect(name) {
+    selectWindow(name)
+}
+
+function handleNavigatorCreate(name) {
+    createWindow(name)
+    // Backend responds with updated windows list automatically
+}
+
+// Fetch window list when navigator is shown
+watch(showNavigator, (show) => {
+    if (show) {
+        listWindows()
+    }
+})
+
+// Expose toggleNavigator for parent component (SessionView tab re-click)
+defineExpose({ toggleNavigator })
 </script>
 
 <template>
     <div class="terminal-panel">
-        <div ref="containerRef" class="terminal-container"></div>
+        <!-- Terminal xterm.js container — hidden when navigator is shown -->
+        <div ref="containerRef" class="terminal-container" :class="{ hidden: showNavigator }"></div>
+
+        <!-- Tmux Navigator overlay -->
+        <TmuxNavigator
+            v-if="showNavigator"
+            :windows="windows"
+            @select="handleNavigatorSelect"
+            @create="handleNavigatorCreate"
+        />
 
         <!-- Disconnect overlay -->
-        <div v-if="started && !isConnected" class="disconnect-overlay">
+        <div v-if="started && !isConnected && !showNavigator" class="disconnect-overlay">
             <wa-callout variant="warning" appearance="outlined">
                 <wa-icon slot="icon" name="plug-circle-xmark"></wa-icon>
                 <div class="disconnect-content">
@@ -65,6 +97,10 @@ watch(
     min-height: 0;
     width: 100%;
     padding: var(--wa-space-2xs);
+}
+
+.terminal-container.hidden {
+    display: none;
 }
 
 /* Ensure xterm fills its container */
