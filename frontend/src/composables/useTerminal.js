@@ -99,6 +99,12 @@ export function useTerminal(sessionId) {
     /** @type {boolean} */
     let intentionalClose = false
 
+    // ── tmux window management state ────────────────────────────────────
+    const windows = ref([])
+    const showNavigator = ref(false)
+    /** @type {((wins: Array) => void) | null} — resolver for pending listWindows() call */
+    let windowsResolver = null
+
     // ── Touch selection state (mobile) ─────────────────────────────────────
     let selectStartCol = 0
     let selectStartRow = 0
@@ -157,8 +163,33 @@ export function useTerminal(sessionId) {
         }
 
         ws.onmessage = (event) => {
-            // Server sends raw PTY output as text
-            terminal?.write(event.data)
+            const data = event.data
+            // Detect JSON control messages from the server
+            if (data.charAt(0) === '{') {
+                try {
+                    const msg = JSON.parse(data)
+                    if (msg.type === 'windows') {
+                        windows.value = msg.windows
+                        if (windowsResolver) {
+                            windowsResolver(msg.windows)
+                            windowsResolver = null
+                        }
+                        return
+                    }
+                    if (msg.type === 'window_changed') {
+                        // Update active flag in local list
+                        for (const w of windows.value) {
+                            w.active = (w.name === msg.name)
+                        }
+                        showNavigator.value = false
+                        return
+                    }
+                } catch {
+                    // Not valid JSON — fall through to terminal.write
+                }
+            }
+            // Raw PTY output
+            terminal?.write(data)
         }
 
         ws.onclose = (event) => {
@@ -403,6 +434,49 @@ export function useTerminal(sessionId) {
         connectWs()
     }
 
+    // ── tmux window control ─────────────────────────────────────────────
+
+    /**
+     * Request the list of tmux windows from the backend.
+     * Returns a Promise that resolves with the window list.
+     */
+    function listWindows() {
+        return new Promise((resolve) => {
+            windowsResolver = resolve
+            wsSend({ type: 'list_windows' })
+            // Timeout fallback — resolve with current state after 3s
+            setTimeout(() => {
+                if (windowsResolver === resolve) {
+                    windowsResolver = null
+                    resolve(windows.value)
+                }
+            }, 3000)
+        })
+    }
+
+    /**
+     * Create a new tmux window with the given name.
+     * The backend responds with an updated window list.
+     */
+    function createWindow(name) {
+        wsSend({ type: 'create_window', name })
+    }
+
+    /**
+     * Switch to a tmux window by name.
+     * The backend responds with window_changed, which hides the navigator.
+     */
+    function selectWindow(name) {
+        wsSend({ type: 'select_window', name })
+    }
+
+    /**
+     * Toggle the shell navigator visibility.
+     */
+    function toggleNavigator() {
+        showNavigator.value = !showNavigator.value
+    }
+
     /**
      * Clean up everything: terminal, WebSocket, observers.
      */
@@ -471,5 +545,8 @@ export function useTerminal(sessionId) {
         cleanup()
     })
 
-    return { containerRef, isConnected, started, start, reconnect }
+    return {
+        containerRef, isConnected, started, start, reconnect,
+        windows, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
+    }
 }
