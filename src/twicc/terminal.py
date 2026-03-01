@@ -291,6 +291,102 @@ def kill_tmux_session(session_id: str) -> bool:
         return False
 
 
+# ── tmux window management ───────────────────────────────────────────────
+
+
+def tmux_list_windows(session_id: str) -> list[dict[str, object]]:
+    """List all windows in the tmux session for the given twicc session ID.
+
+    Returns a list of dicts: [{"name": "main", "active": True}, ...]
+    Returns an empty list if the session doesn't exist or tmux is not installed.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return []
+
+    name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "list-windows",
+             "-t", name, "-F", "#{window_name}\t#{window_active}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+        windows = []
+        for line in result.stdout.strip().splitlines():
+            parts = line.split("\t")
+            if len(parts) == 2:
+                windows.append({"name": parts[0], "active": parts[1] == "1"})
+        return windows
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+
+
+def tmux_create_window(session_id: str, window_name: str) -> bool:
+    """Create a new window in the tmux session with the given name.
+
+    Returns True on success, False on failure.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    session_name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "new-window",
+             "-t", session_name, "-n", window_name],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def tmux_select_window(session_id: str, window_name: str) -> bool:
+    """Switch the active window in the tmux session.
+
+    Returns True on success, False on failure.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    session_name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "select-window",
+             "-t", f"{session_name}:{window_name}"],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def tmux_rename_window(session_id: str, target: str, new_name: str) -> bool:
+    """Rename a window in the tmux session.
+
+    target can be a window index (e.g., "0") or name.
+    Returns True on success, False on failure.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    session_name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "rename-window",
+             "-t", f"{session_name}:{target}", new_name],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 # ── Raw ASGI WebSocket application ────────────────────────────────────────
 
 async def terminal_application(scope, receive, send):
