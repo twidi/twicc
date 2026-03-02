@@ -194,7 +194,6 @@ onBeforeUnmount(() => {
 const canSideBySide = computed(() => editorAreaWidth.value > SIDE_BY_SIDE_MIN_WIDTH)
 
 // Responsive thresholds for minimap and compact mode
-const COMPACT_MODE_MAX_WIDTH = 600       // diff editor compact mode below this width
 const MINIMAP_EDITOR_MIN_WIDTH = 1200    // show minimap in editor above this
 
 // Whether the editor content differs from the last saved/fetched content.
@@ -223,6 +222,7 @@ const monacoTheme = computed(() =>
 
 const editorOptions = computed(() => ({
     readOnly: !isEditing.value,
+    domReadOnly: !isEditing.value,  // prevents mobile keyboard from showing when read-only
     automaticLayout: true,
     minimap: { enabled: editorAreaWidth.value > MINIMAP_EDITOR_MIN_WIDTH },
     scrollBeyondLastLine: false,
@@ -236,11 +236,14 @@ const editorOptions = computed(() => ({
 const diffEditorOptions = computed(() => ({
     // Commit diffs: always read-only. Index diffs: editable when edit mode is on.
     readOnly: props.diffReadOnly || !isEditing.value,
+    domReadOnly: props.diffReadOnly || !isEditing.value,  // prevents mobile keyboard from showing when read-only
     originalEditable: false,
     renderSideBySide: sideBySide.value,
     enableSplitViewResizing: true,
     automaticLayout: true,
-    compactMode: editorAreaWidth.value <= COMPACT_MODE_MAX_WIDTH,
+    // compactMode disabled: the compact widget has no interactivity (no way to
+    // expand hidden regions), so we always use the full widget with the unfold icon.
+    compactMode: false,
     minimap: { enabled: editorAreaWidth.value > MINIMAP_EDITOR_MIN_WIDTH },
     scrollBeyondLastLine: false,
     fontSize: settingsStore.getFontSize,
