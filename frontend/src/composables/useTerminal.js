@@ -101,6 +101,7 @@ export function useTerminal(sessionId) {
 
     // ── tmux window management state ────────────────────────────────────
     const windows = ref([])
+    const presets = ref([])
     const showNavigator = ref(false)
     /** @type {((wins: Array) => void) | null} — resolver for pending listWindows() call */
     let windowsResolver = null
@@ -170,6 +171,7 @@ export function useTerminal(sessionId) {
                     const msg = JSON.parse(data)
                     if (msg.type === 'windows') {
                         windows.value = msg.windows
+                        if (msg.presets) presets.value = msg.presets
                         if (windowsResolver) {
                             windowsResolver(msg.windows)
                             windowsResolver = null
@@ -463,11 +465,20 @@ export function useTerminal(sessionId) {
     }
 
     /**
-     * Create a new tmux window with the given name.
-     * The backend responds with an updated window list.
+     * Create a new tmux window.
+     *
+     * Accepts either a plain string (manual create) or a preset object
+     * with {name, cwd?, command?} from .twicc-tmux.json presets.
      */
-    function createWindow(name) {
-        wsSend({ type: 'create_window', name })
+    function createWindow(nameOrPreset) {
+        if (typeof nameOrPreset === 'string') {
+            wsSend({ type: 'create_window', name: nameOrPreset })
+        } else {
+            const msg = { type: 'create_window', name: nameOrPreset.name }
+            if (nameOrPreset.cwd) msg.preset_cwd = nameOrPreset.cwd
+            if (nameOrPreset.command) msg.command = nameOrPreset.command
+            wsSend(msg)
+        }
     }
 
     /**
@@ -555,6 +566,6 @@ export function useTerminal(sessionId) {
 
     return {
         containerRef, isConnected, started, start, reconnect, sendInput,
-        windows, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
+        windows, presets, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
     }
 }

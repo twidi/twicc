@@ -1,8 +1,12 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 
-defineProps({
+const props = defineProps({
     windows: {
+        type: Array,
+        default: () => [],
+    },
+    presets: {
         type: Array,
         default: () => [],
     },
@@ -11,6 +15,12 @@ defineProps({
 const emit = defineEmits(['select', 'create'])
 
 const newName = ref('')
+
+/** Presets that don't already have a running window (matched by name). */
+const availablePresets = computed(() => {
+    const runningNames = new Set(props.windows.map(w => w.name))
+    return props.presets.filter(p => !runningNames.has(p.name))
+})
 
 function handleSelect(name) {
     emit('select', name)
@@ -21,6 +31,10 @@ function handleCreate() {
     if (!name) return
     emit('create', name)
     newName.value = ''
+}
+
+function handlePresetCreate(preset) {
+    emit('create', preset)
 }
 </script>
 
@@ -44,6 +58,30 @@ function handleCreate() {
                     {{ win.name }}
                 </wa-button>
             </div>
+
+            <!-- Preset shells from .twicc-tmux.json -->
+            <template v-if="availablePresets.length">
+                <h4 class="presets-title">Presets</h4>
+                <div class="shell-list">
+                    <wa-button
+                        v-for="preset in availablePresets"
+                        :key="preset.name"
+                        class="shell-button preset-button"
+                        variant="neutral"
+                        appearance="plain"
+                        size="medium"
+                        @click="handlePresetCreate(preset)"
+                    >
+                        <span class="preset-row">
+                            <wa-icon name="circle-play" class="preset-icon"></wa-icon>
+                            <span class="preset-label">
+                                <span>{{ preset.name }}</span>
+                                <span v-if="preset.command" class="preset-command">{{ preset.command }}</span>
+                            </span>
+                        </span>
+                    </wa-button>
+                </div>
+            </template>
 
             <form class="create-form" @submit.prevent="handleCreate">
                 <wa-input
@@ -90,6 +128,15 @@ function handleCreate() {
     color: var(--wa-color-text-default);
 }
 
+.presets-title {
+    margin: 0;
+    font-size: var(--wa-font-size-s);
+    font-weight: 500;
+    color: var(--wa-color-text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
 .shell-list {
     display: flex;
     flex-direction: column;
@@ -115,6 +162,41 @@ function handleCreate() {
     display: inline-block;
     width: 0.8em;
     margin-right: var(--wa-space-xs);
+}
+
+.preset-button {
+    opacity: 0.7;
+}
+
+.preset-button:hover {
+    opacity: 1;
+}
+
+.preset-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    width: 100%;
+}
+
+.preset-icon {
+    margin-right: var(--wa-space-xs);
+    margin-top: 0.15em;
+    font-size: 0.9em;
+    flex-shrink: 0;
+}
+
+.preset-label {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.3;
+}
+
+.preset-command {
+    font-size: 0.8em;
+    color: var(--wa-color-text-subtle);
+    font-family: var(--wa-font-family-mono, monospace);
 }
 
 .create-form {

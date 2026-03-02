@@ -12,8 +12,10 @@ Protocol:
   Client → Server (JSON text frames):
     { "type": "input", "data": "ls -la\\n" }       — keyboard input
     { "type": "resize", "cols": 120, "rows": 30 }  — terminal resize
-    { "type": "list_windows" }                      — list tmux windows
+    { "type": "list_windows" }                      — list tmux windows + presets
     { "type": "create_window", "name": "build" }    — create named window
+    { "type": "create_window", "name": "dev",        — create from preset
+      "preset_cwd": "/path", "command": "npm run dev" }
     { "type": "select_window", "name": "build" }    — switch to window
 
   Server → Client:
@@ -389,6 +391,68 @@ def tmux_rename_window(session_id: str, target: str, new_name: str) -> bool:
         return False
 
 
+def tmux_send_keys(session_id: str, window_name: str, keys: str) -> bool:
+    """Send keys to a specific tmux window.
+
+    Used to execute a command in a newly created preset window.
+    Appends Enter to simulate pressing the Enter key.
+
+    Returns True on success, False on failure.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    session_name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "send-keys",
+             "-t", f"{session_name}:{window_name}", keys, "Enter"],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def load_tmux_presets(project_dir: str) -> list[dict]:
+    """Load tmux shell presets from a .twicc-tmux.json file.
+
+    Looks for the file in the given project directory. Each preset
+    has a name (required), optional cwd (relative or absolute), and
+    optional command to run on creation.
+
+    Relative cwd paths are resolved against the project directory.
+
+    Returns a list of preset dicts, or [] on missing file / parse error.
+    """
+    config_path = os.path.join(project_dir, ".twicc-tmux.json")
+    try:
+        with open(config_path, "r") as f:
+            data = json.loads(f.read())
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    presets = []
+    for entry in data:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        preset: dict = {"name": str(entry["name"])}
+        if "command" in entry:
+            preset["command"] = str(entry["command"])
+        # Resolve cwd: relative paths are relative to project directory
+        if "cwd" in entry:
+            entry_cwd = str(entry["cwd"])
+            if not os.path.isabs(entry_cwd):
+                entry_cwd = os.path.normpath(os.path.join(project_dir, entry_cwd))
+            preset["cwd"] = entry_cwd
+        presets.append(preset)
+    return presets
+
+
 # ── Raw ASGI WebSocket application ────────────────────────────────────────
 
 async def terminal_application(scope, receive, send):
@@ -543,16 +607,25 @@ async def terminal_application(scope, receive, send):
                 # ── tmux window control messages ──────────────────
                 elif msg_type == "list_windows" and use_tmux:
                     win_list = tmux_list_windows(session_id)
+                    presets = load_tmux_presets(cwd)
                     await send({"type": "websocket.send",
-                                "text": json.dumps({"type": "windows", "windows": win_list})})
+                                "text": json.dumps({"type": "windows", "windows": win_list,
+                                                    "presets": presets})})
 
                 elif msg_type == "create_window" and use_tmux:
                     window_name = msg.get("name", "").strip()
                     if window_name:
-                        tmux_create_window(session_id, window_name, cwd=cwd)
+                        window_cwd = msg.get("preset_cwd") or cwd
+                        tmux_create_window(session_id, window_name, cwd=window_cwd)
+                        # Run optional command in the new window
+                        command = msg.get("command")
+                        if command:
+                            tmux_send_keys(session_id, window_name, command)
                         win_list = tmux_list_windows(session_id)
+                        presets = load_tmux_presets(cwd)
                         await send({"type": "websocket.send",
-                                    "text": json.dumps({"type": "windows", "windows": win_list})})
+                                    "text": json.dumps({"type": "windows", "windows": win_list,
+                                                        "presets": presets})})
 
                 elif msg_type == "select_window" and use_tmux:
                     window_name = msg.get("name", "")

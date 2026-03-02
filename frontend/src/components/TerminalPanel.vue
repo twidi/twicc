@@ -19,7 +19,7 @@ const props = defineProps({
 
 const {
     containerRef, isConnected, started, start, reconnect, sendInput,
-    windows, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
+    windows, presets, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
 } = useTerminal(props.sessionId)
 
 // Lazy init: start the terminal only when the tab becomes active for the first time
@@ -37,8 +37,8 @@ function handleNavigatorSelect(name) {
     selectWindow(name)
 }
 
-function handleNavigatorCreate(name) {
-    createWindow(name)
+function handleNavigatorCreate(nameOrPreset) {
+    createWindow(nameOrPreset)
     // Backend responds with updated windows list automatically
 }
 
@@ -72,6 +72,7 @@ defineExpose({ toggleNavigator })
         <TmuxNavigator
             v-if="showNavigator"
             :windows="windows"
+            :presets="presets"
             @select="handleNavigatorSelect"
             @create="handleNavigatorCreate"
         />
