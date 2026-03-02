@@ -18,7 +18,7 @@ const props = defineProps({
 })
 
 const {
-    containerRef, isConnected, started, start, reconnect, sendInput, focusTerminal,
+    containerRef, isConnected, started, start, reconnect, sendInput, focusTerminal, copyMode,
     windows, presets, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
 } = useTerminal(props.sessionId)
 
@@ -73,6 +73,15 @@ defineExpose({ toggleNavigator })
                 >{{ win.name }}</wa-option>
             </wa-select>
             <span class="toolbar-spacer"></span>
+            <wa-button
+                size="small"
+                :appearance="copyMode ? 'filled' : 'plain'"
+                :variant="copyMode ? 'brand' : 'neutral'"
+                @click="copyMode = !copyMode"
+            >
+                <wa-icon slot="start" name="copy"></wa-icon>
+                Copy
+            </wa-button>
             <wa-button size="small" appearance="plain" variant="neutral" @click="sendInput('\x03')">
                 Ctrl+C
             </wa-button>

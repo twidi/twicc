@@ -290,6 +290,50 @@ def kill_tmux_session(session_id: str) -> bool:
         return False
 
 
+def tmux_set_option(session_id: str, option: str, value: str) -> bool:
+    """Set a tmux session option.
+
+    Returns True on success, False on failure.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "set-option", "-t", name, option, value],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def tmux_pane_is_alternate(session_id: str) -> bool:
+    """Check if the active pane of the active window is in alternate screen mode.
+
+    Alternate screen is used by full-screen apps (less, vim, htop, etc.).
+    This allows the frontend to choose the right scroll strategy:
+    - Alternate on: send arrow keys (the app handles scrolling)
+    - Alternate off: send mouse wheel (tmux copy-mode scrolls the buffer)
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "display-message",
+             "-t", name, "-p", "#{alternate_on}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip() == "1"
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 # ── tmux window management ───────────────────────────────────────────────
 
 
@@ -453,6 +497,42 @@ def load_tmux_presets(project_dir: str) -> list[dict]:
     return presets
 
 
+def _configure_tmux_scroll_bindings() -> None:
+    """Configure tmux mouse wheel bindings for proper scroll in all contexts.
+
+    Overrides the default WheelUpPane / WheelDownPane bindings so that:
+    - If the pane is already in copy-mode or the app captures the mouse
+      (e.g. vim with mouse): pass the mouse event through (send-keys -M).
+    - If the pane is in alternate screen mode (less, htop, etc.) WITHOUT
+      mouse capture: send arrow keys so the app scrolls natively.
+    - Otherwise (shell prompt): enter copy-mode for tmux scrollback.
+
+    These bindings are server-wide (shared by all twicc tmux sessions on
+    the same socket), so setting them repeatedly is harmless.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return
+
+    condition = "#{||:#{pane_in_mode},#{mouse_any_flag}}"
+
+    for event, arrow_keys, normal_cmd in [
+        ("WheelUpPane", "Up Up Up", "copy-mode -e ; send-keys -M"),
+        ("WheelDownPane", "Down Down Down", "send-keys -M"),
+    ]:
+        alt_branch = (
+            f'if-shell -F "#{{alternate_on}}" '
+            f'"send-keys {arrow_keys}" '
+            f'"{normal_cmd}"'
+        )
+        subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME,
+             "bind-key", "-T", "root", event,
+             "if-shell", "-F", condition, "send-keys -M", alt_branch],
+            capture_output=True, timeout=5,
+        )
+
+
 # ── tmux window monitor ──────────────────────────────────────────────────
 
 # Polling interval for detecting external window changes (close, rename, etc.)
@@ -460,24 +540,30 @@ _WINDOW_POLL_INTERVAL = 2  # seconds
 
 
 async def _tmux_window_monitor(session_id: str, send, cwd: str) -> None:
-    """Periodically check for tmux window changes and push updates.
+    """Periodically check for tmux window and pane state changes and push updates.
 
     Detects when windows are created or destroyed externally (e.g., shell
-    exits, user closes a pane) and sends an updated window list to the
-    frontend so the tab bar / dropdown stays in sync.
+    exits, user closes a pane) and when the active pane switches between
+    normal and alternate screen (e.g., entering/exiting less or vim).
+    Sends updated state to the frontend so the tab bar / dropdown and
+    scroll behavior stay in sync.
     """
     # Initialize with current state to avoid a duplicate update on first poll
     prev_windows = await asyncio.to_thread(tmux_list_windows, session_id)
+    prev_alternate = await asyncio.to_thread(tmux_pane_is_alternate, session_id)
     try:
         while True:
             await asyncio.sleep(_WINDOW_POLL_INTERVAL)
             win_list = await asyncio.to_thread(tmux_list_windows, session_id)
-            if win_list != prev_windows:
+            alternate = await asyncio.to_thread(tmux_pane_is_alternate, session_id)
+            if win_list != prev_windows or alternate != prev_alternate:
                 prev_windows = win_list
+                prev_alternate = alternate
                 presets = await asyncio.to_thread(load_tmux_presets, cwd)
                 await send({"type": "websocket.send",
                             "text": json.dumps({"type": "windows", "windows": win_list,
-                                                "presets": presets})})
+                                                "presets": presets,
+                                                "alternate_on": alternate})})
     except asyncio.CancelledError:
         return
     except Exception:
@@ -546,8 +632,13 @@ async def terminal_application(scope, receive, send):
     # ── Accept connection ─────────────────────────────────────────────
     await send({"type": "websocket.accept"})
 
-    # Rename the default tmux window to "main" for fresh sessions
+    # Configure tmux session
     if use_tmux:
+        # Enable mouse mode so wheel events scroll the buffer (not command history)
+        tmux_set_option(session_id, "mouse", "on")
+        # Override default wheel bindings for proper scroll in less/htop/etc.
+        _configure_tmux_scroll_bindings()
+        # Rename the default tmux window to "main" for fresh sessions
         windows = tmux_list_windows(session_id)
         if windows and windows[0]["name"] != "main":
             tmux_rename_window(session_id, "0", "main")
@@ -639,9 +730,11 @@ async def terminal_application(scope, receive, send):
                 elif msg_type == "list_windows" and use_tmux:
                     win_list = tmux_list_windows(session_id)
                     presets = load_tmux_presets(cwd)
+                    alternate = tmux_pane_is_alternate(session_id)
                     await send({"type": "websocket.send",
                                 "text": json.dumps({"type": "windows", "windows": win_list,
-                                                    "presets": presets})})
+                                                    "presets": presets,
+                                                    "alternate_on": alternate})})
 
                 elif msg_type == "create_window" and use_tmux:
                     window_name = msg.get("name", "").strip()
@@ -654,9 +747,11 @@ async def terminal_application(scope, receive, send):
                             tmux_send_keys(session_id, window_name, command)
                         win_list = tmux_list_windows(session_id)
                         presets = load_tmux_presets(cwd)
+                        alternate = tmux_pane_is_alternate(session_id)
                         await send({"type": "websocket.send",
                                     "text": json.dumps({"type": "windows", "windows": win_list,
-                                                        "presets": presets})})
+                                                        "presets": presets,
+                                                        "alternate_on": alternate})})
 
                 elif msg_type == "select_window" and use_tmux:
                     window_name = msg.get("name", "")
