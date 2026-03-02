@@ -329,8 +329,13 @@ def tmux_list_windows(session_id: str) -> list[dict[str, object]]:
         return []
 
 
-def tmux_create_window(session_id: str, window_name: str) -> bool:
+def tmux_create_window(session_id: str, window_name: str, cwd: str | None = None) -> bool:
     """Create a new window in the tmux session with the given name.
+
+    Args:
+        session_id: The Claude session ID
+        window_name: Display name for the new tmux window
+        cwd: Working directory for the new window. If None, inherits tmux default.
 
     Returns True on success, False on failure.
     """
@@ -339,12 +344,12 @@ def tmux_create_window(session_id: str, window_name: str) -> bool:
         return False
 
     session_name = tmux_session_name(session_id)
+    cmd = [tmux_path, "-L", TMUX_SOCKET_NAME, "new-window",
+           "-t", session_name, "-n", window_name]
+    if cwd:
+        cmd.extend(["-c", cwd])
     try:
-        result = subprocess.run(
-            [tmux_path, "-L", TMUX_SOCKET_NAME, "new-window",
-             "-t", session_name, "-n", window_name],
-            capture_output=True, timeout=5,
-        )
+        result = subprocess.run(cmd, capture_output=True, timeout=5)
         return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         return False
@@ -553,7 +558,7 @@ async def terminal_application(scope, receive, send):
                 elif msg_type == "create_window" and use_tmux:
                     window_name = msg.get("name", "").strip()
                     if window_name:
-                        tmux_create_window(session_id, window_name)
+                        tmux_create_window(session_id, window_name, cwd=cwd)
                         win_list = tmux_list_windows(session_id)
                         await send({"type": "websocket.send",
                                     "text": json.dumps({"type": "windows", "windows": win_list})})
