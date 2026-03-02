@@ -1,8 +1,10 @@
 <script setup>
 import { computed } from 'vue'
 import { useDataStore } from '../../../stores/data'
+import { useSettingsStore } from '../../../stores/settings'
 import { DISPLAY_MODE } from '../../../constants'
 import { sdkBlockToMediaItem } from '../../../utils/fileUtils'
+import { makeRelativePath } from '../../../utils/editFiles'
 import { getInternalCollapsibleGroups, getPrefixSuffixBoundaries, isVisibleItem } from '../../../utils/contentVisibility'
 import GroupToggle from '../../GroupToggle.vue'
 import TextContent from './TextContent.vue'
@@ -13,6 +15,7 @@ import ThinkingContent from './ThinkingContent.vue'
 import UnknownEntry from '../UnknownEntry.vue'
 
 const store = useDataStore()
+const settingsStore = useSettingsStore()
 
 // Check if we're in simplified mode (only mode with collapsible groups)
 const isSimplifiedMode = computed(() => store.getDisplayMode === DISPLAY_MODE.SIMPLIFIED)
@@ -203,6 +206,55 @@ const firstImageIndex = computed(() => {
 function toggleInternalGroup(startIndex) {
     store.toggleInternalExpandedGroup(props.sessionId, props.lineNum, startIndex)
 }
+
+// Base directory for making file paths relative (git_directory > cwd from session)
+const baseDir = computed(() => {
+    const session = store.getSession(props.sessionId)
+    return session?.git_directory || session?.cwd || null
+})
+
+/**
+ * Extract Edit file paths from a range of content blocks.
+ * Content blocks have { type: 'tool_use', name: 'Edit', input: { file_path: '...' } }.
+ */
+function getEditFilesForRange(startIndex, endIndex) {
+    if (!settingsStore.isShowEditFilesInGroups) return []
+    const base = baseDir.value
+    const pathSet = new Set()
+    for (let i = startIndex; i <= endIndex; i++) {
+        const item = props.items[i]
+        if (item?.type === 'tool_use' && item.name === 'Edit' && item.input?.file_path) {
+            pathSet.add(makeRelativePath(item.input.file_path, base))
+        }
+    }
+    return [...pathSet].sort()
+}
+
+/**
+ * Map of internal group startIndex → edit files array.
+ */
+const internalGroupEditFiles = computed(() => {
+    if (!settingsStore.isShowEditFilesInGroups || !isSimplifiedMode.value) return new Map()
+    const groups = internalGroups.value
+    const map = new Map()
+    for (const group of groups) {
+        const files = getEditFilesForRange(group.startIndex, group.endIndex)
+        if (files.length > 0) {
+            map.set(group.startIndex, files)
+        }
+    }
+    return map
+})
+
+/**
+ * Edit files for the suffix group.
+ */
+const suffixEditFiles = computed(() => {
+    if (!settingsStore.isShowEditFilesInGroups || !isSimplifiedMode.value) return []
+    const { suffixStartIndex } = prefixSuffixBoundaries.value
+    if (suffixStartIndex == null) return []
+    return getEditFilesForRange(suffixStartIndex, props.items.length - 1)
+})
 </script>
 
 <template>
@@ -212,6 +264,7 @@ function toggleInternalGroup(startIndex) {
             v-if="entry.showToggleBefore && entry.toggleType === 'internal'"
             :expanded="entry.toggleExpanded"
             :item-count="entry.groupSize"
+            :edit-files="internalGroupEditFiles.get(entry.groupStartIndex) || []"
             @toggle="toggleInternalGroup(entry.groupStartIndex)"
         />
         <!-- Toggle for suffix (emits to parent for session-level handling) -->
@@ -219,6 +272,7 @@ function toggleInternalGroup(startIndex) {
             v-else-if="entry.showToggleBefore && entry.toggleType === 'suffix'"
             :expanded="entry.toggleExpanded"
             :item-count="entry.groupSize"
+            :edit-files="suffixEditFiles"
             @toggle="emit('toggle-suffix')"
         />
 

@@ -52,6 +52,7 @@ const titleGenerationSwitch = ref(null)
 const titleSystemPromptTextarea = ref(null)
 const tmuxSwitch = ref(null)
 const compactSessionListSwitch = ref(null)
+const showEditFilesInGroupsSwitch = ref(null)
 const permissionModeSelect = ref(null)
 const alwaysApplyDefaultPermissionModeSwitch = ref(null)
 const modelSelect = ref(null)
@@ -73,6 +74,7 @@ const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 const terminalUseTmux = computed(() => store.isTerminalUseTmux)
 const compactSessionList = computed(() => store.isCompactSessionList)
+const showEditFilesInGroups = computed(() => store.isShowEditFilesInGroups)
 const defaultPermissionMode = computed(() => store.getDefaultPermissionMode)
 const alwaysApplyDefaultPermissionMode = computed(() => store.isAlwaysApplyDefaultPermissionMode)
 const defaultModel = computed(() => store.getDefaultModel)
@@ -148,6 +150,9 @@ function syncSwitchState() {
         if (compactSessionListSwitch.value && compactSessionListSwitch.value.checked !== compactSessionList.value) {
             compactSessionListSwitch.value.checked = compactSessionList.value
         }
+        if (showEditFilesInGroupsSwitch.value && showEditFilesInGroupsSwitch.value.checked !== showEditFilesInGroups.value) {
+            showEditFilesInGroupsSwitch.value.checked = showEditFilesInGroups.value
+        }
         if (diffSideBySideSwitch.value && diffSideBySideSwitch.value.checked !== diffSideBySide.value) {
             diffSideBySideSwitch.value.checked = diffSideBySide.value
         }
@@ -170,7 +175,7 @@ function syncSwitchState() {
 }
 
 // Watch for store changes and sync switches
-watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, defaultPermissionMode, alwaysApplyDefaultPermissionMode, defaultModel, alwaysApplyDefaultModel, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide, editorWordWrap], syncSwitchState, { immediate: true })
+watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, showEditFilesInGroups, defaultPermissionMode, alwaysApplyDefaultPermissionMode, defaultModel, alwaysApplyDefaultModel, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide, editorWordWrap], syncSwitchState, { immediate: true })
 
 /**
  * Handle display mode change.
@@ -282,6 +287,13 @@ function onAlwaysApplyDefaultModelChange(event) {
  */
 function onCompactSessionListChange(event) {
     store.setCompactSessionList(event.target.checked)
+}
+
+/**
+ * Toggle show edit files in collapsed groups.
+ */
+function onShowEditFilesInGroupsChange(event) {
+    store.setShowEditFilesInGroups(event.target.checked)
 }
 
 /**
@@ -514,6 +526,15 @@ function onPopoverShow() {
                             @change="onCompactSessionListChange"
                             size="small"
                         >Enabled</wa-switch>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Show edited files in groups</label>
+                        <wa-switch
+                            ref="showEditFilesInGroupsSwitch"
+                            @change="onShowEditFilesInGroupsChange"
+                            size="small"
+                        >Enabled</wa-switch>
+                        <span class="setting-group-hint">Show file names next to collapsed group toggles in simplified mode.</span>
                     </div>
                     <div class="setting-group">
                         <label class="setting-group-label">LRU cached sessions ({{ maxCachedSessions }})</label>

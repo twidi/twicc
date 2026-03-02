@@ -2,7 +2,9 @@
 import { computed, watch, ref, nextTick, inject, onActivated, onDeactivated } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { useDataStore } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import { INITIAL_ITEMS_COUNT } from '../constants'
+import { extractEditFilePaths, makeRelativePath } from '../utils/editFiles'
 import { isSupportedMimeType, MAX_FILE_SIZE } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
 import { apiFetch } from '../utils/api'
@@ -36,6 +38,7 @@ const props = defineProps({
 })
 
 const store = useDataStore()
+const settingsStore = useSettingsStore()
 
 const emit = defineEmits(['needs-title'])
 
@@ -109,6 +112,43 @@ const items = computed(() => store.getSessionItems(props.sessionId))
 
 // Visual items (filtered by display mode and expanded groups)
 const visualItems = computed(() => store.getSessionVisualItems(props.sessionId))
+
+// Base directory for making file paths relative (git_directory > cwd)
+const baseDir = computed(() => session.value?.git_directory || session.value?.cwd || null)
+
+/**
+ * Map of groupHead lineNum → deduplicated sorted relative Edit file paths.
+ * Only computed when the setting is enabled. Iterates all session items once.
+ */
+const groupEditFiles = computed(() => {
+    if (!settingsStore.isShowEditFilesInGroups) return new Map()
+    const allItems = items.value
+    if (!allItems || allItems.length === 0) return new Map()
+
+    const base = baseDir.value
+    // group_head → Set<relativePath>
+    const map = new Map()
+    for (const item of allItems) {
+        if (item.group_head == null || !item.content) continue
+        const paths = extractEditFilePaths(item.content)
+        if (paths.length === 0) continue
+        let pathSet = map.get(item.group_head)
+        if (!pathSet) {
+            pathSet = new Set()
+            map.set(item.group_head, pathSet)
+        }
+        for (const p of paths) {
+            pathSet.add(makeRelativePath(p, base))
+        }
+    }
+
+    // Convert Sets to sorted arrays
+    const result = new Map()
+    for (const [key, pathSet] of map) {
+        result.set(key, [...pathSet].sort())
+    }
+    return result
+})
 
 // Check if session computation is pending
 const isComputePending = computed(() => {
@@ -886,6 +926,7 @@ defineExpose({
                     <GroupToggle
                         :expanded="item.isExpanded"
                         :item-count="item.groupSize"
+                        :edit-files="groupEditFiles.get(item.lineNum) || []"
                         @toggle="toggleGroup(item.lineNum)"
                     />
                     <SessionItem

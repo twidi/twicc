@@ -30,6 +30,7 @@ const SETTINGS_SCHEMA = {
     diffSideBySide: true,
     editorWordWrap: true,
     compactSessionList: false,
+    showEditFilesInGroups: true,
     defaultPermissionMode: DEFAULT_PERMISSION_MODE,
     alwaysApplyDefaultPermissionMode: false,
     defaultModel: DEFAULT_MODEL,
@@ -67,6 +68,7 @@ const SETTINGS_VALIDATORS = {
     diffSideBySide: (v) => typeof v === 'boolean',
     editorWordWrap: (v) => typeof v === 'boolean',
     compactSessionList: (v) => typeof v === 'boolean',
+    showEditFilesInGroups: (v) => typeof v === 'boolean',
     defaultPermissionMode: (v) => Object.values(PERMISSION_MODE).includes(v),
     alwaysApplyDefaultPermissionMode: (v) => typeof v === 'boolean',
     defaultModel: (v) => Object.values(MODEL).includes(v),
@@ -155,6 +157,7 @@ export const useSettingsStore = defineStore('settings', {
         isDiffSideBySide: (state) => state.diffSideBySide,
         isEditorWordWrap: (state) => state.editorWordWrap,
         isCompactSessionList: (state) => state.compactSessionList,
+        isShowEditFilesInGroups: (state) => state.showEditFilesInGroups,
         getDefaultPermissionMode: (state) => state.defaultPermissionMode,
         isAlwaysApplyDefaultPermissionMode: (state) => state.alwaysApplyDefaultPermissionMode,
         getDefaultModel: (state) => state.defaultModel,
@@ -322,6 +325,16 @@ export const useSettingsStore = defineStore('settings', {
         setCompactSessionList(enabled) {
             if (SETTINGS_VALIDATORS.compactSessionList(enabled)) {
                 this.compactSessionList = enabled
+            }
+        },
+
+        /**
+         * Set show edit files in groups enabled/disabled.
+         * @param {boolean} enabled
+         */
+        setShowEditFilesInGroups(enabled) {
+            if (SETTINGS_VALIDATORS.showEditFilesInGroups(enabled)) {
+                this.showEditFilesInGroups = enabled
             }
         },
 
