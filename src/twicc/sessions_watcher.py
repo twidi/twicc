@@ -18,7 +18,7 @@ from watchfiles import Change, awatch
 from twicc.compute import cache_agent_prompt, compute_item_cost_and_usage, compute_item_metadata, \
     compute_item_metadata_live, create_agent_link_from_subagent, create_agent_link_from_tool_result, \
     create_agent_link_from_tool_use, create_tool_result_link_live, ensure_project_directory, ensure_project_git_root, \
-    extract_item_timestamp, \
+    extract_item_timestamp, resolve_git_from_cwd, \
     extract_text_from_content, extract_title_from_user_message, get_cached_agent_prompt, get_message_content, \
     get_project_git_root, is_agent_link_done, \
     is_tool_result_item, load_project_directories, \
@@ -767,6 +767,24 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 session.cwd_git_branch = last_cwd_git_branch
             if last_model and last_model != session.model:
                 session.model = last_model
+
+            # Update resolved git directory/branch from the latest item that has one
+            # (items are processed in order, so the last one wins)
+            for item, _ in reversed(items_to_create):
+                if item.git_directory:
+                    if item.git_directory != session.git_directory:
+                        session.git_directory = item.git_directory
+                        session.git_branch = item.git_branch
+                    break
+
+            # Fallback: if no item provided git info, try resolving from the session's cwd.
+            # This handles sessions where the agent only uses Bash (no Read/Edit/Write/Grep/Glob),
+            # so resolve_git_for_item has no file paths to work with.
+            if not session.git_directory and session.cwd:
+                cwd_git = resolve_git_from_cwd(session.cwd)
+                if cwd_git:
+                    session.git_directory, session.git_branch = cwd_git
+
             is_new_session = session.created_at is None and first_timestamp is not None
             if is_new_session:
                 session.created_at = first_timestamp
@@ -783,7 +801,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
         # Update offset to end of file
         session.last_offset = f.tell()
         session.mtime = file_mtime
-        session.save(update_fields=["last_offset", "last_line", "mtime", "user_message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "model", "created_at"])
+        session.save(update_fields=["last_offset", "last_line", "mtime", "user_message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "git_directory", "git_branch", "model", "created_at"])
 
         # Recalculate activities after session.save (needs created_at in DB for session_count)
         if lines:
