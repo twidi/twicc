@@ -23,6 +23,7 @@ const {
 } = useTerminal(props.sessionId)
 
 const activeWindowName = computed(() => windows.value.find(w => w.active)?.name ?? '')
+const presetNames = computed(() => new Set(presets.value.map(p => p.name)))
 
 // Lazy init: start the terminal only when the tab becomes active for the first time
 watch(
@@ -70,7 +71,7 @@ defineExpose({ toggleNavigator })
                     v-for="win in windows"
                     :key="win.name"
                     :value="win.name"
-                >{{ win.name }}</wa-option>
+                ><wa-icon v-if="presetNames.has(win.name)" name="circle-play" class="option-preset-icon"></wa-icon>{{ win.name }}</wa-option>
             </wa-select>
             <span class="toolbar-spacer"></span>
             <wa-button
@@ -99,6 +100,7 @@ defineExpose({ toggleNavigator })
                 :class="{ active: win.active }"
                 @click="selectWindow(win.name); focusTerminal()"
             >
+                <wa-icon v-if="presetNames.has(win.name)" name="circle-play" class="tab-preset-icon"></wa-icon>
                 {{ win.name }}
             </button>
         </div>
@@ -178,6 +180,17 @@ defineExpose({ toggleNavigator })
 .window-tab.active {
     color: var(--wa-color-brand-600);
     border-bottom-color: var(--wa-color-brand-600);
+}
+
+.tab-preset-icon {
+    font-size: 0.75em;
+    margin-right: 0.25em;
+}
+
+.option-preset-icon {
+    font-size: 0.85em;
+    margin-right: 0.25em;
+    vertical-align: -0.1em;
 }
 
 .mobile-toolbar {

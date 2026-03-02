@@ -16,10 +16,13 @@ const emit = defineEmits(['select', 'create'])
 
 const newName = ref('')
 
-/** Presets that don't already have a running window (matched by name). */
-const availablePresets = computed(() => {
-    const runningNames = new Set(props.windows.map(w => w.name))
-    return props.presets.filter(p => !runningNames.has(p.name))
+/** Set of running window names for quick lookup. */
+const runningNames = computed(() => new Set(props.windows.map(w => w.name)))
+
+/** Running windows that are NOT presets (ad-hoc shells). */
+const adHocWindows = computed(() => {
+    const presetNames = new Set(props.presets.map(p => p.name))
+    return props.windows.filter(w => !presetNames.has(w.name))
 })
 
 function handleSelect(name) {
@@ -33,8 +36,12 @@ function handleCreate() {
     newName.value = ''
 }
 
-function handlePresetCreate(preset) {
-    emit('create', preset)
+function handlePresetClick(preset) {
+    if (runningNames.value.has(preset.name)) {
+        emit('select', preset.name)
+    } else {
+        emit('create', preset)
+    }
 }
 </script>
 
@@ -43,9 +50,10 @@ function handlePresetCreate(preset) {
         <div class="navigator-content">
             <h3 class="navigator-title">Shells</h3>
 
-            <div class="shell-list">
+            <!-- Ad-hoc shells (not from presets) -->
+            <div v-if="adHocWindows.length" class="shell-list">
                 <wa-button
-                    v-for="win in windows"
+                    v-for="win in adHocWindows"
                     :key="win.name"
                     class="shell-button"
                     :variant="win.active ? 'brand' : 'neutral'"
@@ -59,21 +67,26 @@ function handlePresetCreate(preset) {
                 </wa-button>
             </div>
 
-            <!-- Preset shells from .twicc-tmux.json -->
-            <template v-if="availablePresets.length">
+            <!-- Preset shells (always visible) -->
+            <template v-if="presets.length">
                 <h4 class="presets-title">Presets</h4>
                 <div class="shell-list">
                     <wa-button
-                        v-for="preset in availablePresets"
+                        v-for="preset in presets"
                         :key="preset.name"
                         class="shell-button preset-button"
+                        :class="{ 'preset-running': runningNames.has(preset.name) }"
                         variant="neutral"
                         appearance="plain"
                         size="medium"
-                        @click="handlePresetCreate(preset)"
+                        @click="handlePresetClick(preset)"
                     >
                         <span class="preset-row">
-                            <wa-icon name="circle-play" class="preset-icon"></wa-icon>
+                            <wa-icon
+                                name="circle-play"
+                                class="preset-icon"
+                                :class="{ 'preset-icon--running': runningNames.has(preset.name) }"
+                            ></wa-icon>
                             <span class="preset-label">
                                 <span>{{ preset.name }}</span>
                                 <span v-if="preset.command" class="preset-command">{{ preset.command }}</span>
@@ -164,11 +177,11 @@ function handlePresetCreate(preset) {
     margin-right: var(--wa-space-xs);
 }
 
-.preset-button {
+.preset-button:not(.preset-running) {
     opacity: 0.7;
 }
 
-.preset-button:hover {
+.preset-button:not(.preset-running):hover {
     opacity: 1;
 }
 
@@ -184,6 +197,10 @@ function handlePresetCreate(preset) {
     margin-top: 0.15em;
     font-size: 0.9em;
     flex-shrink: 0;
+}
+
+.preset-icon--running {
+    color: #4ade80;
 }
 
 .preset-label {
