@@ -4,10 +4,12 @@ from . import views
 from .auth import views as auth_views
 
 urlpatterns = [
-    # Auth endpoints (always accessible, no auth required)
+    # Auth endpoints (always accessible, no middleware auth required)
     path("api/auth/check/", auth_views.auth_check),
     path("api/auth/login/", auth_views.login),
     path("api/auth/logout/", auth_views.logout),
+    path("api/auth/token/", auth_views.api_token),
+    path("api/auth/token/regenerate/", auth_views.api_token_regenerate),
     # API endpoints
     path("api/home/", views.home_data),
     path("api/daily-activity/", views.daily_activity),  # Global daily activity

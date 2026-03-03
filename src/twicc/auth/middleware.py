@@ -1,7 +1,8 @@
-"""Password authentication middleware.
+"""Authentication middleware.
 
 When TWICC_PASSWORD_HASH is set, all requests (except login, static files)
-require an authenticated session. Unauthenticated requests get a 401 response.
+require either an authenticated session or a valid API token. Unauthenticated
+requests get a 401 response.
 
 When TWICC_PASSWORD_HASH is empty/unset, all requests pass through (no protection).
 """
@@ -10,6 +11,8 @@ import logging
 
 from django.conf import settings
 from django.http import JsonResponse
+
+from twicc.auth.token import extract_bearer_token, verify_api_token
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +53,12 @@ class PasswordAuthMiddleware:
         if not request.path.startswith("/api/"):
             return self.get_response(request)
 
-        # Check session authentication for API requests
+        # Check API token first (stateless, no session needed)
+        bearer_token = extract_bearer_token(request)
+        if bearer_token and verify_api_token(bearer_token):
+            return self.get_response(request)
+
+        # Fall back to session authentication
         if not request.session.get("authenticated"):
             return JsonResponse(
                 {"error": "Authentication required"},

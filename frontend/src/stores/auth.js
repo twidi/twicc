@@ -12,6 +12,10 @@ export const useAuthStore = defineStore('auth', {
         checking: true,
         // True when checkAuth is retrying after network errors
         connectionError: false,
+        // API token state
+        hasApiToken: false,
+        apiToken: null,
+        apiTokenLoading: false,
     }),
 
     getters: {
@@ -60,6 +64,7 @@ export const useAuthStore = defineStore('auth', {
                     const data = await res.json()
                     this.authenticated = data.authenticated
                     this.passwordRequired = data.password_required
+                    this.hasApiToken = data.has_api_token ?? false
                     this.connectionError = false
                     this.checking = false
                     return // Success
@@ -94,6 +99,7 @@ export const useAuthStore = defineStore('auth', {
                 const data = await res.json()
                 this.authenticated = data.authenticated
                 this.passwordRequired = data.password_required
+                this.hasApiToken = data.has_api_token ?? false
                 // If we were in a connection error state, clear it
                 if (this.connectionError) {
                     this.connectionError = false
@@ -147,6 +153,46 @@ export const useAuthStore = defineStore('auth', {
                 console.error('Logout failed:', e)
             }
             this.authenticated = false
+        },
+
+        /**
+         * Fetch the current API token from the server.
+         * Only works with session auth (not token auth).
+         */
+        async fetchApiToken() {
+            this.apiTokenLoading = true
+            try {
+                const res = await fetch('/api/auth/token/')
+                if (res.ok) {
+                    const data = await res.json()
+                    this.apiToken = data.token
+                }
+            } catch (e) {
+                console.error('Failed to fetch API token:', e)
+            } finally {
+                this.apiTokenLoading = false
+            }
+        },
+
+        /**
+         * Regenerate the API token. Returns the new token on success.
+         * @returns {{ success: boolean, error?: string }}
+         */
+        async regenerateApiToken() {
+            this.apiTokenLoading = true
+            try {
+                const res = await fetch('/api/auth/token/regenerate/', { method: 'POST' })
+                if (res.ok) {
+                    const data = await res.json()
+                    this.apiToken = data.token
+                    return { success: true }
+                }
+                return { success: false, error: 'Failed to regenerate token' }
+            } catch (e) {
+                return { success: false, error: 'Network error' }
+            } finally {
+                this.apiTokenLoading = false
+            }
         },
 
         /**

@@ -827,14 +827,23 @@ async def terminal_application(scope, receive, send):
 
     # ── Authentication ────────────────────────────────────────────────
     if settings.TWICC_PASSWORD_HASH:
-        session = scope.get("session", {})
-        is_authenticated = await sync_to_async(session.get)("authenticated")
-        if not is_authenticated:
-            logger.warning("Terminal WebSocket rejected: not authenticated")
-            await send({"type": "websocket.accept"})
-            await send({"type": "websocket.send", "text": json.dumps({"type": "auth_failure"})})
-            await send({"type": "websocket.close", "code": WS_CLOSE_AUTH_FAILURE})
-            return
+        # Check API token from query parameter first
+        qs_auth = parse_qs(scope.get("query_string", b"").decode("utf-8", errors="replace"))
+        token_value = qs_auth.get("token", [None])[0]
+        token_authenticated = False
+        if token_value:
+            from twicc.auth.token import verify_api_token
+            token_authenticated = verify_api_token(token_value)
+
+        if not token_authenticated:
+            session = scope.get("session", {})
+            is_authenticated = await sync_to_async(session.get)("authenticated")
+            if not is_authenticated:
+                logger.warning("Terminal WebSocket rejected: not authenticated")
+                await send({"type": "websocket.accept"})
+                await send({"type": "websocket.send", "text": json.dumps({"type": "auth_failure"})})
+                await send({"type": "websocket.close", "code": WS_CLOSE_AUTH_FAILURE})
+                return
 
     # ── Resolve working directory and session state ──────────────────
     session_id = scope["url_route"]["kwargs"]["session_id"]

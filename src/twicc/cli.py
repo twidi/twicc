@@ -14,6 +14,7 @@ Used by:
 import asyncio
 import logging
 import os
+import secrets
 import sys
 import threading
 
@@ -30,6 +31,20 @@ purge_claude_code_vars(os.environ)
 
 # Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env)
 load_dotenv(get_env_path())
+
+
+def _ensure_api_token() -> None:
+    """Generate TWICC_API_TOKEN and append to .env if not already set."""
+    if os.environ.get("TWICC_API_TOKEN"):
+        return
+    token = secrets.token_hex(32)
+    env_path = get_env_path()
+    with open(env_path, "a") as f:
+        f.write(f"TWICC_API_TOKEN={token}\n")
+    os.environ["TWICC_API_TOKEN"] = token
+
+
+_ensure_api_token()
 
 # Configure Django before any Django imports
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "twicc.settings")

@@ -52,6 +52,11 @@ MIDDLEWARE = [
 # If not set or empty, the app is accessible without authentication.
 TWICC_PASSWORD_HASH = os.environ.get("TWICC_PASSWORD_HASH", "")
 
+# API token authentication
+# Auto-generated on first startup. Allows programmatic access via
+# Authorization: Bearer <token> (HTTP) or ?token=<token> (WebSocket).
+TWICC_API_TOKEN = os.environ.get("TWICC_API_TOKEN", "")
+
 # Session settings
 SESSION_COOKIE_NAME = os.environ.get("TWICC_SESSION_COOKIE", "sessionid")
 SESSION_ENGINE = "django.contrib.sessions.backends.db"

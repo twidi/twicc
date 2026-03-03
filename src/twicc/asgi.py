@@ -398,23 +398,31 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         """
         # Check authentication if password protection is enabled
         if settings.TWICC_PASSWORD_HASH:
-            session = self.scope.get("session", {})
-            # Session.get() triggers a synchronous DB load, so we must
-            # wrap it with sync_to_async in this async consumer.
-            is_authenticated = await sync_to_async(session.get)("authenticated")
-            if not is_authenticated:
-                logger.warning("WebSocket connection rejected: not authenticated")
-                # Accept first so we can send a message and a close code.
-                # Closing before accept causes the close code to be lost
-                # (the WebSocket handshake is never completed).
-                await self.accept()
-                # Send an auth_failure message as a fallback: some proxies
-                # (notably Vite's dev proxy via node-http-proxy) may strip
-                # the WebSocket close code, delivering 1006 instead of 4001.
-                # The client handles both the message and the close code.
-                await self.send_json({"type": "auth_failure"})
-                await self.close(code=WS_CLOSE_AUTH_FAILURE)
-                return
+            # Check API token from query parameter first
+            token_authenticated = False
+            token_value = params.get("token")
+            if token_value:
+                from twicc.auth.token import verify_api_token
+                token_authenticated = verify_api_token(token_value)
+
+            if not token_authenticated:
+                session = self.scope.get("session", {})
+                # Session.get() triggers a synchronous DB load, so we must
+                # wrap it with sync_to_async in this async consumer.
+                is_authenticated = await sync_to_async(session.get)("authenticated")
+                if not is_authenticated:
+                    logger.warning("WebSocket connection rejected: not authenticated")
+                    # Accept first so we can send a message and a close code.
+                    # Closing before accept causes the close code to be lost
+                    # (the WebSocket handshake is never completed).
+                    await self.accept()
+                    # Send an auth_failure message as a fallback: some proxies
+                    # (notably Vite's dev proxy via node-http-proxy) may strip
+                    # the WebSocket close code, delivering 1006 instead of 4001.
+                    # The client handles both the message and the close code.
+                    await self.send_json({"type": "auth_failure"})
+                    await self.close(code=WS_CLOSE_AUTH_FAILURE)
+                    return
 
         # Parse optional subscribe filter from query string
         query_string = self.scope.get("query_string", b"").decode()
