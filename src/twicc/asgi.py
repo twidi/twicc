@@ -8,6 +8,7 @@ messages for sending messages to Claude sessions.
 
 import asyncio
 import logging
+from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
 from blacknoise import BlackNoise
@@ -302,6 +303,11 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         If password protection is enabled, rejects unauthenticated WebSocket
         connections. The session is populated by SessionMiddlewareStack from
         the browser's session cookie (sent during the HTTP upgrade handshake).
+
+        Supports an optional ``subscribe`` query parameter to filter outgoing
+        messages by type. Example: ``?subscribe=process_state,active_processes``
+        When set, only messages whose ``type`` matches the list are sent.
+        When absent, all messages are sent (backward compatible).
         """
         # Check authentication if password protection is enabled
         if settings.TWICC_PASSWORD_HASH:
@@ -323,6 +329,18 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                 await self.close(code=WS_CLOSE_AUTH_FAILURE)
                 return
 
+        # Parse optional subscribe filter from query string
+        query_string = self.scope.get("query_string", b"").decode()
+        params = parse_qs(query_string)
+        subscribe_values = params.get("subscribe")
+        if subscribe_values:
+            # parse_qs returns a list of values; split each on comma and flatten
+            self._subscribe_filter: set[str] | None = {
+                t for value in subscribe_values for t in value.split(",") if t
+            }
+        else:
+            self._subscribe_filter = None
+
         await self.channel_layer.group_add("updates", self.channel_name)
         await self.accept()
 
@@ -332,35 +350,39 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         # Send current active processes to the connecting client,
         # enriched with session titles and project names for notification display.
-        processes = manager.get_active_processes()
-        serialized = [serialize_process_info(p) for p in processes]
-        if serialized:
-            display_info = await get_bulk_session_and_project_display(serialized)
-            for proc in serialized:
-                session_title, project_name = display_info.get(proc["session_id"], (None, None))
-                if session_title is not None:
-                    proc["session_title"] = session_title
-                if project_name is not None:
-                    proc["project_name"] = project_name
-        await self.send_json(
-            {
-                "type": "active_processes",
-                "processes": serialized,
-            }
-        )
+        if self._should_send("active_processes"):
+            processes = manager.get_active_processes()
+            serialized = [serialize_process_info(p) for p in processes]
+            if serialized:
+                display_info = await get_bulk_session_and_project_display(serialized)
+                for proc in serialized:
+                    session_title, project_name = display_info.get(proc["session_id"], (None, None))
+                    if session_title is not None:
+                        proc["session_title"] = session_title
+                    if project_name is not None:
+                        proc["project_name"] = project_name
+            await self.send_json(
+                {
+                    "type": "active_processes",
+                    "processes": serialized,
+                }
+            )
 
         # Send latest usage snapshot to the connecting client
-        usage_message = await get_usage_message_for_connection()
-        await self.send_json(usage_message)
+        if self._should_send("usage_updated"):
+            usage_message = await get_usage_message_for_connection()
+            await self.send_json(usage_message)
 
         # Send synced settings to the connecting client
-        synced_settings = await sync_to_async(read_synced_settings)()
-        await self.send_json({"type": "synced_settings_updated", "settings": synced_settings})
+        if self._should_send("synced_settings_updated"):
+            synced_settings = await sync_to_async(read_synced_settings)()
+            await self.send_json({"type": "synced_settings_updated", "settings": synced_settings})
 
         # Send current startup progress (if any phase is still active)
-        from twicc.startup_progress import get_startup_progress
-        for progress_msg in get_startup_progress():
-            await self.send_json(progress_msg)
+        if self._should_send("startup_progress"):
+            from twicc.startup_progress import get_startup_progress
+            for progress_msg in get_startup_progress():
+                await self.send_json(progress_msg)
 
     async def disconnect(self, close_code):
         """Remove from the updates group on disconnect."""
@@ -804,9 +826,25 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             },
         )
 
+    def _should_send(self, msg_type: str) -> bool:
+        """Check if a message type should be sent to this client.
+
+        Returns True if no subscribe filter is set (all messages pass)
+        or if the given type is in the filter.
+        """
+        return not self._subscribe_filter or msg_type in self._subscribe_filter
+
     async def broadcast(self, event):
-        """Handle broadcast events by sending data to the client."""
-        await self.send_json(event["data"])
+        """Handle broadcast events by sending data to the client.
+
+        If the client connected with a ``subscribe`` filter, only messages
+        whose type is in the filter are forwarded. Otherwise all messages
+        are sent (default behavior for the TwiCC web UI).
+        """
+        data = event["data"]
+        if not self._should_send(data.get("type", "")):
+            return
+        await self.send_json(data)
 
 
 websocket_urlpatterns = [
