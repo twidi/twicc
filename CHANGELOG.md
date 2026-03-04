@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Handle `Agent` tool type as an alias for `Task`
+- Handle display of TodoWrite tool
 
 ## [1.0.3] - 2026-03-04
 
