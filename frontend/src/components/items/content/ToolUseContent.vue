@@ -4,9 +4,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../../stores/data'
 import { apiFetch } from '../../../utils/api'
 import { getIconUrl, getFileIconId } from '../../../utils/fileIcons'
+import { getLanguageFromPath } from '../../../utils/languages'
 import { AGENT_TOOL_NAMES } from '../../../constants'
 import { getTodoDescription } from '../../../utils/todoList'
 import JsonHumanView from '../../JsonHumanView.vue'
+import MarkdownContent from '../../MarkdownContent.vue'
 import TodoContent from './TodoContent.vue'
 
 const route = useRoute()
@@ -255,6 +257,73 @@ const displayResult = computed(() => {
     if (!resultData.value || resultData.value.length === 0) return null
     if (resultData.value.length === 1) return resultData.value[0]
     return resultData.value
+})
+
+// --- Read tool: syntax-highlighted result ---
+
+// Regex to match a cat -n formatted line: optional spaces, digits, → arrow, then content
+const CAT_N_LINE_RE = /^(\s*\d+)→(.*)$/
+
+/**
+ * Parse cat -n formatted content (as produced by Claude's Read tool).
+ * Returns the clean code, start line, and end line — or null if the content
+ * doesn't match the expected format.
+ */
+function parseCatNContent(content) {
+    if (typeof content !== 'string') return null
+
+    const lines = content.split('\n')
+    // Remove trailing empty line (common from trailing newline)
+    if (lines.length > 0 && lines[lines.length - 1] === '') {
+        lines.pop()
+    }
+    if (lines.length === 0) return null
+
+    // Validate that the first non-empty line matches the pattern
+    const firstNonEmpty = lines.find(l => l.length > 0)
+    if (!firstNonEmpty || !CAT_N_LINE_RE.test(firstNonEmpty)) return null
+
+    let startLine = null
+    let endLine = null
+    const codeLines = []
+
+    for (const line of lines) {
+        const match = line.match(CAT_N_LINE_RE)
+        if (match) {
+            const lineNum = parseInt(match[1], 10)
+            if (startLine === null) startLine = lineNum
+            endLine = lineNum
+            codeLines.push(match[2])
+        } else {
+            // Line doesn't match pattern — keep as-is (shouldn't happen in well-formed output)
+            codeLines.push(line)
+        }
+    }
+
+    return { code: codeLines.join('\n'), startLine, endLine }
+}
+
+const isRead = computed(() => props.name === 'Read')
+
+/**
+ * For Read tool results: parsed code content with language info for syntax highlighting.
+ * Returns { code, language, startLine, endLine, markdownSource } or null.
+ */
+const readResultCode = computed(() => {
+    if (!isRead.value || !displayResult.value) return null
+
+    // displayResult is the tool_result object { tool_use_id, type, content }
+    const result = displayResult.value
+    const content = typeof result === 'string' ? result : result?.content
+    const parsed = parseCatNContent(content)
+    if (!parsed) return null
+
+    const language = getLanguageFromPath(props.input?.file_path) || ''
+    return {
+        ...parsed,
+        language,
+        markdownSource: '```' + language + '\n' + parsed.code + '\n```'
+    }
 })
 
 // Tools that show file_path instead of description in the summary
@@ -592,7 +661,12 @@ function navigateToSubagent(agentId) {
                         No result available
                     </div>
                     <div v-else-if="resultState === 'loaded' && displayResult" class="tool-result-data">
+                        <template v-if="readResultCode">
+                            <div class="read-result-header">Lines {{ readResultCode.startLine }}–{{ readResultCode.endLine }}</div>
+                            <MarkdownContent :source="readResultCode.markdownSource" />
+                        </template>
                         <JsonHumanView
+                            v-else
                             :value="displayResult"
                         />
                     </div>
@@ -717,6 +791,12 @@ wa-details {
 
 .tool-result-data {
     overflow-x: auto;
+}
+
+.read-result-header {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+    margin-bottom: var(--wa-space-xs);
 }
 
 .todo-icon {
