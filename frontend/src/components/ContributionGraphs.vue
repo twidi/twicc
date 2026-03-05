@@ -3,7 +3,7 @@
 // the user messages, sessions, and cost contribution graphs.
 // Supports toggling between heatmap view and sparkline view.
 
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { apiFetch } from '../utils/api'
 import { ALL_PROJECTS_ID } from '../stores/data'
 import { useStartupPolling } from '../composables/useStartupPolling'
@@ -38,7 +38,6 @@ const granularitySteps = [
     { key: 'month', label: 'Month' },
     { key: 'quarter', label: 'Quarter' },
 ]
-const granularitySliderRef = ref(null)
 const granularityStepIndex = ref(0) // default: Day
 const granularity = computed(() => granularitySteps[granularityStepIndex.value].key)
 const granularityLabel = computed(() => granularitySteps[granularityStepIndex.value].label)
@@ -67,7 +66,6 @@ const rangeStepsMap = {
     quarter: [{ days: 0, label: '' }, { days: 365, label: '1 year' }],   // 2 steps so slider shows at right; disabled
 }
 const rangeSteps = computed(() => rangeStepsMap[granularity.value])
-const rangeSliderRef = ref(null)
 const rangeStepIndex = ref(5) // default: last step (1Y)
 const isRangeDisabled = computed(() => granularity.value === 'month' || granularity.value === 'quarter')
 const displayDays = computed(() => rangeSteps.value[rangeStepIndex.value].days)
@@ -106,35 +104,6 @@ watch(granularity, (_, oldGranularity) => {
     rangeStepIndex.value = idx !== -1 ? idx : newSteps.length - 1
 })
 
-// Update range slider Web Component max when available steps change
-watch(rangeSteps, (steps) => {
-    nextTick(() => {
-        if (rangeSliderRef.value && steps.length > 0) {
-            rangeSliderRef.value.max = steps.length - 1
-            rangeSliderRef.value.value = rangeStepIndex.value
-        }
-    })
-})
-
-// Sync Web Component states when they re-mount after being hidden by v-if.
-// Web Components don't reliably pick up Vue's prop bindings on mount.
-watch(isSparkline, (val) => {
-    if (val) {
-        nextTick(() => {
-            if (combinedSwitchRef.value && combinedSwitchRef.value.checked !== isCombined.value) {
-                combinedSwitchRef.value.checked = isCombined.value
-            }
-            if (granularitySliderRef.value && granularitySliderRef.value.value !== granularityStepIndex.value) {
-                granularitySliderRef.value.value = granularityStepIndex.value
-            }
-            const steps = rangeSteps.value
-            if (rangeSliderRef.value && steps.length > 0) {
-                rangeSliderRef.value.max = steps.length - 1
-                rangeSliderRef.value.value = rangeStepIndex.value
-            }
-        })
-    }
-})
 
 /** Click on the left "Separate" label toggles the switch back to separate mode */
 function onSeparateLabelClick() {
@@ -214,7 +183,6 @@ useStartupPolling(fetchDailyActivity)
         <div v-if="isSparkline" class="range-control">
             <span class="range-label">{{ granularityLabel }}</span>
             <wa-slider
-                ref="granularitySliderRef"
                 :min.prop="0"
                 :max.prop="granularitySteps.length - 1"
                 :step.prop="1"
@@ -229,7 +197,6 @@ useStartupPolling(fetchDailyActivity)
         <div v-if="isSparkline" class="range-control">
             <span class="range-label" :class="{ disabled: isRangeDisabled }">{{ rangeLabel }}</span>
             <wa-slider
-                ref="rangeSliderRef"
                 :min.prop="0"
                 :max.prop="rangeSteps.length - 1"
                 :step.prop="1"

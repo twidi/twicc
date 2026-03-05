@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount, useId, onActivated, inject } from 'vue'
+import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount, useId, inject } from 'vue'
 import { useMonaco } from '@guolao/vue-monaco-editor'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
@@ -37,9 +37,19 @@ const props = defineProps({
         type: Boolean,
         default: true,
     },
+    // Optional overrides: when provided, used as initial value instead of settings store.
+    // The parent can persist these across FilePane destruction/recreation (e.g. Git tab).
+    initialWordWrap: {
+        type: Boolean,
+        default: null,
+    },
+    initialSideBySide: {
+        type: Boolean,
+        default: null,
+    },
 })
 
-const emit = defineEmits(['revert'])
+const emit = defineEmits(['revert', 'update:wordWrap', 'update:sideBySide'])
 
 const prevChangeButtonId = useId()
 const nextChangeButtonId = useId()
@@ -104,9 +114,6 @@ const showMarkdownPreview = ref(false)
 const isEditing = ref(false)
 const saving = ref(false)
 const saveError = ref(null)
-const editSwitchRef = ref(null)
-const wordWrapSwitchRef = ref(null)
-const sideBySideSwitchRef = ref(null)
 
 // --- Diff navigation ---
 // Monaco's goToDiff() and setPosition() on the diff sub-editor freeze the
@@ -152,12 +159,12 @@ function goToNextDiff() {
 }
 
 // --- Word wrap state ---
-// Initialize from settings store; local ref allows per-session override via the toggle.
-const wordWrap = ref(settingsStore.isEditorWordWrap)
+// Initialize from parent override (if provided) or settings store.
+const wordWrap = ref(props.initialWordWrap ?? settingsStore.isEditorWordWrap)
 
 // --- Diff layout state ---
-// Initialize from settings store; local ref allows per-session override via the toggle.
-const sideBySide = ref(settingsStore.isDiffSideBySide)
+// Initialize from parent override (if provided) or settings store.
+const sideBySide = ref(props.initialSideBySide ?? settingsStore.isDiffSideBySide)
 
 // Monaco switches to inline when the diff editor width <= 900px
 // (renderSideBySideInlineBreakpoint default). We track the editor area width
@@ -378,48 +385,6 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
     }
 }
 
-// Sync all wa-switch checked states whenever the header first appears in the DOM.
-watch(showHeader, (visible) => {
-    if (visible) {
-        syncEditSwitch()
-        syncWordWrapSwitch()
-        syncSideBySideSwitch()
-    }
-}, { immediate: true })
-
-// Markdown preview toggle: Wrap and Side-by-side switches use v-if="!showMarkdownPreview"
-// so they are destroyed when the preview is activated and recreated when it's deactivated.
-// The newly created wa-switch elements need their checked state synced.
-watch(showMarkdownPreview, (previewing) => {
-    if (!previewing) {
-        syncWordWrapSwitch()
-        syncSideBySideSwitch()
-    }
-})
-
-// KeepAlive reactivation: wa-switch web components lose their visual checked
-// state when hidden by wa-tab-panel. Re-sync when the component becomes active again.
-onActivated(() => {
-    syncEditSwitch()
-    syncWordWrapSwitch()
-    syncSideBySideSwitch()
-})
-
-// Tab switch within the same session: wa-tab-panel hides/shows panels via
-// display:none which can desync wa-switch visual state. The `active` prop
-// is set by the parent (FilesPanel/GitPanel) and reflects the tab visibility.
-// We use requestAnimationFrame to ensure the wa-tab-panel has finished its
-// display transition before re-syncing the switches.
-watch(() => props.active, (isActive) => {
-    if (isActive) {
-        requestAnimationFrame(() => {
-            syncEditSwitch()
-            syncWordWrapSwitch()
-            syncSideBySideSwitch()
-        })
-    }
-})
-
 watch(() => props.filePath, async (newPath) => {
     if (!newPath) {
         currentContent.value = ''
@@ -427,14 +392,12 @@ watch(() => props.filePath, async (newPath) => {
         isBinary.value = false
         // Reset edit mode when file is deselected
         isEditing.value = false
-        syncEditSwitch()
         return
     }
 
     // Reset edit mode, markdown preview and diff navigation index when switching files
     isEditing.value = false
     showMarkdownPreview.value = false
-    syncEditSwitch()
     currentDiffIndex.value = 0
 
     // In diff mode, content is passed via props — don't fetch.
@@ -453,7 +416,6 @@ watch(() => props.filePath, async (newPath) => {
 watch(() => props.modifiedContent, (newContent) => {
     if (!props.diffMode) return
     isEditing.value = false
-    syncEditSwitch()
     currentContent.value = newContent ?? ''
 })
 
@@ -591,23 +553,15 @@ async function revert() {
     await fetchFileContent(props.filePath, { isSwitch: true })
 }
 
-// Sync wa-switch checked state.
-// Web Components (Lit-based) need `updateComplete` before setting `.checked`
-// has a visual effect — a simple nextTick only updates the Vue DOM, but the
-// custom element may not have finished its first render yet.
-async function syncSwitch(switchRef, value) {
-    await nextTick()
-    const el = switchRef.value
-    if (!el) return
-    if (el.updateComplete) await el.updateComplete
-    if (el.checked !== value) {
-        el.checked = value
-    }
+function onWordWrapToggle(event) {
+    wordWrap.value = event.target.checked
+    emit('update:wordWrap', wordWrap.value)
 }
 
-function syncEditSwitch() { syncSwitch(editSwitchRef, isEditing.value) }
-function syncSideBySideSwitch() { syncSwitch(sideBySideSwitchRef, sideBySide.value) }
-function syncWordWrapSwitch() { syncSwitch(wordWrapSwitchRef, wordWrap.value) }
+function onSideBySideToggle(event) {
+    sideBySide.value = event.target.checked
+    emit('update:sideBySide', sideBySide.value)
+}
 
 // Expose dirty state so parent components can check for unsaved changes
 defineExpose({ isDirty })
@@ -639,7 +593,7 @@ function formatSize(bytes) {
                 <!-- Edit controls: hidden in read-only diff mode (commit diffs) -->
                 <template v-if="!diffMode || !diffReadOnly">
                     <wa-switch
-                        ref="editSwitchRef"
+                        :checked="isEditing"
                         size="small"
                         @change="onEditToggle"
                     >Edit</wa-switch>
@@ -699,17 +653,17 @@ function formatSize(bytes) {
             <div class="header-right">
                 <wa-spinner v-if="switching" class="header-spinner"></wa-spinner>
                 <wa-switch
-                    ref="wordWrapSwitchRef"
                     v-if="!showMarkdownPreview"
+                    :checked="wordWrap"
                     size="small"
-                    @change="wordWrap = $event.target.checked"
+                    @change="onWordWrapToggle"
                 >Wrap</wa-switch>
                 <wa-switch
-                    ref="sideBySideSwitchRef"
                     v-if="diffMode && !showMarkdownPreview && canSideBySide"
+                    :checked="sideBySide"
                     size="small"
                     class="diff-layout-toggle"
-                    @change="sideBySide = $event.target.checked"
+                    @change="onSideBySideToggle"
                 >Side by side</wa-switch>
                 <!-- Markdown preview toggle: shown for .md files when not editing -->
                 <wa-button

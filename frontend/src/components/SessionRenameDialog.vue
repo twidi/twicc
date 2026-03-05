@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { requestTitleSuggestion } from '../composables/useWebSocket'
@@ -58,17 +58,6 @@ watch(
 )
 
 /**
- * Sync Web Component values with local state when dialog opens.
- */
-function syncFormState() {
-    nextTick(() => {
-        if (titleInputRef.value) {
-            titleInputRef.value.value = localTitle.value
-        }
-    })
-}
-
-/**
  * Focus the title input after the dialog opening animation completes.
  * Positions cursor at the end of the text.
  */
@@ -99,8 +88,6 @@ function open({ showHint = false, session = null } = {}) {
     if (currentSession) {
         localTitle.value = currentSession.title || ''
     }
-    syncFormState()
-
     if (dialogRef.value) {
         dialogRef.value.open = true
     }
@@ -157,9 +144,6 @@ function onTitleInput(event) {
 function applySuggestion() {
     if (suggestion.value) {
         localTitle.value = suggestion.value
-        if (titleInputRef.value) {
-            titleInputRef.value.value = suggestion.value
-        }
     }
 }
 
@@ -239,7 +223,6 @@ defineExpose({
         ref="dialogRef"
         label="Rename Session"
         class="session-rename-dialog"
-        @wa-show="syncFormState"
         @wa-after-show="focusTitleInput"
     >
         <form v-if="session" :id="formId" class="dialog-content" @submit.prevent="handleSave">

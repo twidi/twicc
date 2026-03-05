@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Syntax-highlighted code display for Read tool results
 - Show URL for WebFetch and search query for WebSearch in tool use summaries
 
+### Changed
+
+- Upgrade Web Awesome 3.2 → 3.3.1 (and removes a lot of workarounds for problems now fixed)
+
 ## [1.0.3] - 2026-03-04
 
 ### Added

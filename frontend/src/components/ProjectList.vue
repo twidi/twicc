@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed } from 'vue'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { buildProjectTree } from '../utils/projectTree'
@@ -25,18 +25,6 @@ const treeRoots = computed(() => {
 })
 
 const emit = defineEmits(['select'])
-
-// Ref for the show-archived switch (Web Components need manual .checked sync)
-const showArchivedSwitch = ref(null)
-
-// Sync switch checked state with store value
-watch(showArchivedProjects, () => {
-    nextTick(() => {
-        if (showArchivedSwitch.value && showArchivedSwitch.value.checked !== showArchivedProjects.value) {
-            showArchivedSwitch.value.checked = showArchivedProjects.value
-        }
-    })
-}, { immediate: true })
 
 // Ref for the edit dialog component
 const editDialogRef = ref(null)
@@ -73,9 +61,9 @@ function handleToggleShowArchived(event) {
 <template>
     <div class="project-list">
         <wa-switch
-            ref="showArchivedSwitch"
             size="small"
             class="show-archived-toggle"
+            :checked="showArchivedProjects"
             @change="handleToggleShowArchived"
         >
             Show archived projects

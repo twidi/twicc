@@ -1,6 +1,6 @@
 <script setup>
 // SettingsPopover.vue - Settings button with popover panel
-import { computed, ref, watch, nextTick, useId } from 'vue'
+import { computed, ref, useId } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
@@ -39,25 +39,6 @@ const sessionTimeFormatOptions = [
     { value: SESSION_TIME_FORMAT.RELATIVE_NARROW, label: 'Relative (narrow)' },
 ]
 
-// Refs for wa-switch elements (needed to sync checked property with Web Components)
-const displayModeSelect = ref(null)
-const showCostsSwitch = ref(null)
-const fontSizeSlider = ref(null)
-const themeSelect = ref(null)
-const sessionTimeFormatSelect = ref(null)
-const extraUsageOnlyWhenNeededSwitch = ref(null)
-const maxCachedSessionsSlider = ref(null)
-const autoUnpinOnArchiveSwitch = ref(null)
-const titleGenerationSwitch = ref(null)
-const titleSystemPromptTextarea = ref(null)
-const tmuxSwitch = ref(null)
-const compactSessionListSwitch = ref(null)
-const permissionModeSelect = ref(null)
-const alwaysApplyDefaultPermissionModeSwitch = ref(null)
-const modelSelect = ref(null)
-const alwaysApplyDefaultModelSwitch = ref(null)
-const diffSideBySideSwitch = ref(null)
-const editorWordWrapSwitch = ref(null)
 const notificationSettingsRef = ref(null)
 
 // Settings from store
@@ -107,70 +88,6 @@ const modelOptions = Object.values(MODEL).map(value => ({
     icon: MODEL_ICONS[value],
     color: MODEL_COLORS[value],
 }))
-
-// Sync switch checked state with store values
-// Web Components don't always pick up initial prop values from Vue bindings
-function syncSwitchState() {
-    nextTick(() => {
-        if (displayModeSelect.value && displayModeSelect.value.value !== displayMode.value) {
-            displayModeSelect.value.value = displayMode.value
-        }
-        if (fontSizeSlider.value && fontSizeSlider.value.value !== fontSize.value) {
-            fontSizeSlider.value.value = fontSize.value
-        }
-        if (themeSelect.value && themeSelect.value.value !== themeMode.value) {
-            themeSelect.value.value = themeMode.value
-        }
-        if (sessionTimeFormatSelect.value && sessionTimeFormatSelect.value.value !== sessionTimeFormat.value) {
-            sessionTimeFormatSelect.value.value = sessionTimeFormat.value
-        }
-        if (showCostsSwitch.value && showCostsSwitch.value.checked !== showCosts.value) {
-            showCostsSwitch.value.checked = showCosts.value
-        }
-        if (extraUsageOnlyWhenNeededSwitch.value && extraUsageOnlyWhenNeededSwitch.value.checked !== extraUsageOnlyWhenNeeded.value) {
-            extraUsageOnlyWhenNeededSwitch.value.checked = extraUsageOnlyWhenNeeded.value
-        }
-        if (maxCachedSessionsSlider.value && maxCachedSessionsSlider.value.value !== maxCachedSessions.value) {
-            maxCachedSessionsSlider.value.value = maxCachedSessions.value
-        }
-        if (autoUnpinOnArchiveSwitch.value && autoUnpinOnArchiveSwitch.value.checked !== autoUnpinOnArchive.value) {
-            autoUnpinOnArchiveSwitch.value.checked = autoUnpinOnArchive.value
-        }
-        if (titleGenerationSwitch.value && titleGenerationSwitch.value.checked !== titleGenerationEnabled.value) {
-            titleGenerationSwitch.value.checked = titleGenerationEnabled.value
-        }
-        if (titleSystemPromptTextarea.value && titleSystemPromptTextarea.value.value !== titleSystemPrompt.value) {
-            titleSystemPromptTextarea.value.value = titleSystemPrompt.value
-        }
-        if (tmuxSwitch.value && tmuxSwitch.value.checked !== terminalUseTmux.value) {
-            tmuxSwitch.value.checked = terminalUseTmux.value
-        }
-        if (compactSessionListSwitch.value && compactSessionListSwitch.value.checked !== compactSessionList.value) {
-            compactSessionListSwitch.value.checked = compactSessionList.value
-        }
-        if (diffSideBySideSwitch.value && diffSideBySideSwitch.value.checked !== diffSideBySide.value) {
-            diffSideBySideSwitch.value.checked = diffSideBySide.value
-        }
-        if (editorWordWrapSwitch.value && editorWordWrapSwitch.value.checked !== editorWordWrap.value) {
-            editorWordWrapSwitch.value.checked = editorWordWrap.value
-        }
-        if (permissionModeSelect.value && permissionModeSelect.value.value !== defaultPermissionMode.value) {
-            permissionModeSelect.value.value = defaultPermissionMode.value
-        }
-        if (alwaysApplyDefaultPermissionModeSwitch.value && alwaysApplyDefaultPermissionModeSwitch.value.checked !== alwaysApplyDefaultPermissionMode.value) {
-            alwaysApplyDefaultPermissionModeSwitch.value.checked = alwaysApplyDefaultPermissionMode.value
-        }
-        if (modelSelect.value && modelSelect.value.value !== defaultModel.value) {
-            modelSelect.value.value = defaultModel.value
-        }
-        if (alwaysApplyDefaultModelSwitch.value && alwaysApplyDefaultModelSwitch.value.checked !== alwaysApplyDefaultModel.value) {
-            alwaysApplyDefaultModelSwitch.value.checked = alwaysApplyDefaultModel.value
-        }
-    })
-}
-
-// Watch for store changes and sync switches
-watch([displayMode, fontSize, themeMode, sessionTimeFormat, showCosts, extraUsageOnlyWhenNeeded, maxCachedSessions, autoUnpinOnArchive, compactSessionList, defaultPermissionMode, alwaysApplyDefaultPermissionMode, defaultModel, alwaysApplyDefaultModel, titleGenerationEnabled, titleSystemPrompt, terminalUseTmux, diffSideBySide, editorWordWrap], syncSwitchState, { immediate: true })
 
 /**
  * Handle display mode change.
@@ -303,17 +220,12 @@ function onEditorWordWrapChange(event) {
  */
 function resetTitleSystemPrompt() {
     store.resetTitleSystemPrompt()
-    // Sync the textarea value
-    if (titleSystemPromptTextarea.value) {
-        titleSystemPromptTextarea.value.value = DEFAULT_TITLE_SYSTEM_PROMPT
-    }
 }
 
 /**
- * Called when popover opens - sync switch states.
+ * Called when popover opens - refresh notification permission state.
  */
 function onPopoverShow() {
-    syncSwitchState()
     notificationSettingsRef.value?.sync()
 }
 </script>
@@ -353,7 +265,6 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Theme</label>
                         <wa-select
-                            ref="themeSelect"
                             :value.prop="themeMode"
                             @change="onThemeModeChange"
                             size="small"
@@ -368,7 +279,6 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Font size ({{fontSize}}px)</label>
                         <wa-slider
-                            ref="fontSizeSlider"
                             :min.prop="12"
                             :max.prop="32"
                             :step.prop="1"
@@ -380,7 +290,7 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Show costs</label>
                         <wa-switch
-                            ref="showCostsSwitch"
+                            :checked="showCosts"
                             @change="onShowCostsChange"
                             size="small"
                         >Enabled</wa-switch>
@@ -388,7 +298,7 @@ function onPopoverShow() {
                     <div class="setting-group" v-if="showExtraUsageSetting">
                         <label class="setting-group-label">Show extra usage quota</label>
                         <wa-switch
-                            ref="extraUsageOnlyWhenNeededSwitch"
+                            :checked="extraUsageOnlyWhenNeeded"
                             @change="onExtraUsageOnlyWhenNeededChange"
                             size="small"
                         >Only when needed</wa-switch>
@@ -401,7 +311,6 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Default permission mode <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-select
-                            ref="permissionModeSelect"
                             :value.prop="defaultPermissionMode"
                             @change="onDefaultPermissionModeChange"
                             size="small"
@@ -425,7 +334,7 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Always apply default mode <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-switch
-                            ref="alwaysApplyDefaultPermissionModeSwitch"
+                            :checked="alwaysApplyDefaultPermissionMode"
                             @change="onAlwaysApplyDefaultPermissionModeChange"
                             size="small"
                         >Enabled</wa-switch>
@@ -434,7 +343,6 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Default model <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-select
-                            ref="modelSelect"
                             :value.prop="defaultModel"
                             @change="onDefaultModelChange"
                             size="small"
@@ -454,7 +362,7 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Always apply default model <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-switch
-                            ref="alwaysApplyDefaultModelSwitch"
+                            :checked="alwaysApplyDefaultModel"
                             @change="onAlwaysApplyDefaultModelChange"
                             size="small"
                         >Enabled</wa-switch>
@@ -471,7 +379,6 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Display mode</label>
                         <wa-select
-                            ref="displayModeSelect"
                             :value.prop="displayMode"
                             @change="onDisplayModeChange"
                             size="small"
@@ -486,7 +393,6 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Time display</label>
                         <wa-select
-                            ref="sessionTimeFormatSelect"
                             :value.prop="sessionTimeFormat"
                             @change="onSessionTimeFormatChange"
                             size="small"
@@ -502,7 +408,7 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Auto-unpin on archive <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-switch
-                            ref="autoUnpinOnArchiveSwitch"
+                            :checked="autoUnpinOnArchive"
                             @change="onAutoUnpinOnArchiveChange"
                             size="small"
                         >Enabled</wa-switch>
@@ -510,7 +416,7 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Compact session list</label>
                         <wa-switch
-                            ref="compactSessionListSwitch"
+                            :checked="compactSessionList"
                             @change="onCompactSessionListChange"
                             size="small"
                         >Enabled</wa-switch>
@@ -518,7 +424,6 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">LRU cached sessions ({{ maxCachedSessions }})</label>
                         <wa-slider
-                            ref="maxCachedSessionsSlider"
                             :min.prop="1"
                             :max.prop="50"
                             :step.prop="1"
@@ -534,14 +439,13 @@ function onPopoverShow() {
                     <h3 class="settings-section-title">Auto title</h3>
                     <div class="setting-group">
                         <wa-switch
-                            ref="titleGenerationSwitch"
+                            :checked="titleGenerationEnabled"
                             @change="onTitleGenerationChange"
                             size="small"
                         >Enabled (Haiku) <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
                         <div v-if="titleGenerationEnabled" class="title-prompt-section">
                             <label class="setting-group-label">System prompt <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <wa-textarea
-                                ref="titleSystemPromptTextarea"
                                 :value.prop="titleSystemPrompt"
                                 @input="onTitleSystemPromptChange"
                                 size="small"
@@ -569,7 +473,7 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Word wrap</label>
                         <wa-switch
-                            ref="editorWordWrapSwitch"
+                            :checked="editorWordWrap"
                             @change="onEditorWordWrapChange"
                             size="small"
                         >Enabled</wa-switch>
@@ -578,7 +482,7 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Default diff layout</label>
                         <wa-switch
-                            ref="diffSideBySideSwitch"
+                            :checked="diffSideBySide"
                             @change="onDiffSideBySideChange"
                             size="small"
                         >Side by side</wa-switch>
@@ -592,7 +496,7 @@ function onPopoverShow() {
                     <div class="setting-group">
                         <label class="setting-group-label">Persistent sessions (tmux) <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <wa-switch
-                            ref="tmuxSwitch"
+                            :checked="terminalUseTmux"
                             @change="onTmuxChange"
                             size="small"
                         >Enabled</wa-switch>

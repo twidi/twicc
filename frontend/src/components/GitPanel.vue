@@ -358,6 +358,12 @@ const diffData = ref(null)        // { original, modified, binary, error }
 const diffLoading = ref(false)
 const diffError = ref(null)
 
+// Persist word-wrap and side-by-side toggle state across FilePane destruction/recreation.
+// FilePane is destroyed on every file switch (v-else-if + diffLoading gate), so local
+// toggle state would be lost. We maintain it here and pass it via props.
+const diffWordWrap = ref(settingsStore.isEditorWordWrap)
+const diffSideBySide = ref(settingsStore.isDiffSideBySide)
+
 /** Absolute file path for the selected file (needed by FilePane for language detection and save). */
 const selectedFilePath = computed(() => {
     if (!selectedFile.value) return null
@@ -779,7 +785,11 @@ onMounted(() => {
                             :original-content="diffData.original"
                             :modified-content="diffData.modified"
                             :diff-read-only="!isViewingIndex"
+                            :initial-word-wrap="diffWordWrap"
+                            :initial-side-by-side="diffSideBySide"
                             @revert="fetchDiff(selectedFile)"
+                            @update:word-wrap="diffWordWrap = $event"
+                            @update:side-by-side="diffSideBySide = $event"
                         />
 
                         <!-- No file selected / no changes -->

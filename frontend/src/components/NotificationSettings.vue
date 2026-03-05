@@ -3,7 +3,7 @@
 // Two notification types: User Turn and Pending Request
 // Each has a sound selector (with test button) and a browser notification toggle
 
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import { playNotificationSound, getAvailableSoundOptions, NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 
@@ -11,12 +11,6 @@ const store = useSettingsStore()
 
 // Sound options for selects
 const soundOptions = getAvailableSoundOptions()
-
-// Refs for Web Components sync
-const userTurnSoundSelect = ref(null)
-const userTurnBrowserSwitch = ref(null)
-const pendingRequestSoundSelect = ref(null)
-const pendingRequestBrowserSwitch = ref(null)
 
 // Computed from store
 const userTurnSound = computed(() => store.getNotifUserTurnSound)
@@ -31,26 +25,6 @@ function getBrowserNotifPermission() {
     if (!('Notification' in window)) return 'unsupported'
     return Notification.permission
 }
-
-// Sync Web Component states
-function syncState() {
-    nextTick(() => {
-        if (userTurnSoundSelect.value && userTurnSoundSelect.value.value !== userTurnSound.value) {
-            userTurnSoundSelect.value.value = userTurnSound.value
-        }
-        if (userTurnBrowserSwitch.value && userTurnBrowserSwitch.value.checked !== userTurnBrowser.value) {
-            userTurnBrowserSwitch.value.checked = userTurnBrowser.value
-        }
-        if (pendingRequestSoundSelect.value && pendingRequestSoundSelect.value.value !== pendingRequestSound.value) {
-            pendingRequestSoundSelect.value.value = pendingRequestSound.value
-        }
-        if (pendingRequestBrowserSwitch.value && pendingRequestBrowserSwitch.value.checked !== pendingRequestBrowser.value) {
-            pendingRequestBrowserSwitch.value.checked = pendingRequestBrowser.value
-        }
-    })
-}
-
-watch([userTurnSound, userTurnBrowser, pendingRequestSound, pendingRequestBrowser], syncState, { immediate: true })
 
 // Event handlers
 function onUserTurnSoundChange(event) {
@@ -92,11 +66,10 @@ async function requestPermission() {
 }
 
 /**
- * Called when the parent popover opens — re-sync switch states.
+ * Called when the parent popover opens — refresh browser permission state.
  */
 function sync() {
     browserNotifPermission.value = getBrowserNotifPermission()
-    syncState()
 }
 
 defineExpose({ sync })
@@ -126,7 +99,6 @@ defineExpose({ sync })
         <div class="setting-group">
             <label class="setting-group-label">Claude finished working</label>
             <wa-select
-                ref="userTurnSoundSelect"
                 :value.prop="userTurnSound"
                 @change="onUserTurnSoundChange"
                 size="small"
@@ -142,7 +114,7 @@ defineExpose({ sync })
             </a>
             <div v-if="browserNotifPermission === 'granted'" class="notif-browser-row">
                 <wa-switch
-                    ref="userTurnBrowserSwitch"
+                    :checked="userTurnBrowser"
                     @change="onUserTurnBrowserChange"
                     size="small"
                 >Browser notification</wa-switch>
@@ -153,7 +125,6 @@ defineExpose({ sync })
         <div class="setting-group">
             <label class="setting-group-label">Claude needs your attention</label>
             <wa-select
-                ref="pendingRequestSoundSelect"
                 :value.prop="pendingRequestSound"
                 @change="onPendingRequestSoundChange"
                 size="small"
@@ -169,7 +140,7 @@ defineExpose({ sync })
             </a>
             <div v-if="browserNotifPermission === 'granted'" class="notif-browser-row">
                 <wa-switch
-                    ref="pendingRequestBrowserSwitch"
+                    :checked="pendingRequestBrowser"
                     @change="onPendingRequestBrowserChange"
                     size="small"
                 >Browser notification</wa-switch>

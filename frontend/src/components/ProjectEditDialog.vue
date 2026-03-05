@@ -54,20 +54,11 @@ watch(
 )
 
 /**
- * Sync Web Component values with local state when dialog opens.
+ * Set form attribute on save button when dialog opens.
+ * wa-button doesn't expose `form` as a property, so we must use setAttribute.
  */
 function syncFormState() {
     nextTick(() => {
-        if (isCreateMode.value && directoryInputRef.value) {
-            directoryInputRef.value.value = localDirectory.value
-        }
-        if (nameInputRef.value) {
-            nameInputRef.value.value = localName.value
-        }
-        if (colorPickerRef.value) {
-            colorPickerRef.value.value = localColor.value
-        }
-        // Set form attribute on save button (wa-button doesn't expose this as a property)
         if (saveButtonRef.value) {
             saveButtonRef.value.setAttribute('form', formId)
         }
@@ -103,6 +94,11 @@ function open() {
         localDirectory.value = ''
         localName.value = ''
         localColor.value = ''
+    } else if (props.project) {
+        // Reset to current project values (handles reopen for same project
+        // where the watch on props.project won't fire)
+        localName.value = store.getProjectDisplayName(props.project.id)
+        localColor.value = props.project.color || ''
     }
     syncFormState()
     if (dialogRef.value) {
