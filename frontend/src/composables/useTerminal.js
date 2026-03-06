@@ -99,6 +99,18 @@ export function useTerminal(sessionId) {
     /** @type {boolean} */
     let intentionalClose = false
 
+    // ── tmux window management state ────────────────────────────────────
+    const windows = ref([])
+    const presets = ref([])
+    /** Whether the active tmux pane is in alternate screen (less, vim, etc.) */
+    const paneAlternate = ref(false)
+    const showNavigator = ref(false)
+    /** @type {((wins: Array) => void) | null} — resolver for pending listWindows() call */
+    let windowsResolver = null
+
+    // ── Touch mode (mobile): scroll (default) vs copy ─────────────────────
+    const copyMode = ref(false)
+
     // ── Touch selection state (mobile) ─────────────────────────────────────
     let selectStartCol = 0
     let selectStartRow = 0
@@ -154,11 +166,42 @@ export function useTerminal(sessionId) {
             if (terminal) {
                 wsSend({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
             }
+            // Fetch the window list so the tab bar / dropdown appears immediately
+            if (shouldUseTmux()) {
+                wsSend({ type: 'list_windows' })
+            }
         }
 
         ws.onmessage = (event) => {
-            // Server sends raw PTY output as text
-            terminal?.write(event.data)
+            const data = event.data
+            // Detect JSON control messages from the server
+            if (data.charAt(0) === '{') {
+                try {
+                    const msg = JSON.parse(data)
+                    if (msg.type === 'windows') {
+                        windows.value = msg.windows
+                        if (msg.presets) presets.value = msg.presets
+                        if ('alternate_on' in msg) paneAlternate.value = msg.alternate_on
+                        if (windowsResolver) {
+                            windowsResolver(msg.windows)
+                            windowsResolver = null
+                        }
+                        return
+                    }
+                    if (msg.type === 'window_changed') {
+                        // Update active flag in local list
+                        for (const w of windows.value) {
+                            w.active = (w.name === msg.name)
+                        }
+                        showNavigator.value = false
+                        return
+                    }
+                } catch {
+                    // Not valid JSON — fall through to terminal.write
+                }
+            }
+            // Raw PTY output
+            terminal?.write(data)
         }
 
         ws.onclose = (event) => {
@@ -233,6 +276,10 @@ export function useTerminal(sessionId) {
 
     /** Whether the current touch gesture is a selection (vs scrollbar drag). */
     let touchIsSelecting = false
+    /** Y coordinate at touch start — used to compute scroll delta in scroll mode. */
+    let touchStartY = 0
+    /** Accumulated fractional scroll lines (sub-line deltas carry over). */
+    let scrollAccumulator = 0
 
     function onTouchStart(e) {
         // Ignore touches on the custom scrollbar — let xterm.js handle those via pointer events
@@ -240,28 +287,76 @@ export function useTerminal(sessionId) {
             touchIsSelecting = false
             return
         }
-        touchIsSelecting = true
         const touch = e.touches[0]
-        const coords = screenToTerminalCoords(touch.clientX, touch.clientY)
-        selectStartCol = coords.col
-        selectStartRow = coords.row
-        terminal?.clearSelection()
+        if (copyMode.value) {
+            // Copy mode: start text selection
+            touchIsSelecting = true
+            const coords = screenToTerminalCoords(touch.clientX, touch.clientY)
+            selectStartCol = coords.col
+            selectStartRow = coords.row
+            terminal?.clearSelection()
+        } else {
+            // Scroll mode: record start position
+            touchIsSelecting = false
+            touchStartY = touch.clientY
+            scrollAccumulator = 0
+        }
     }
 
     function onTouchMove(e) {
-        if (!touchIsSelecting || !terminal) return
+        if (!terminal) return
         const touch = e.touches[0]
-        const coords = screenToTerminalCoords(touch.clientX, touch.clientY)
-        const startOffset = selectStartRow * terminal.cols + selectStartCol
-        const currentOffset = coords.row * terminal.cols + coords.col
-        const length = currentOffset - startOffset
 
-        if (length > 0) {
-            terminal.select(selectStartCol, selectStartRow, length)
-        } else if (length < 0) {
-            terminal.select(coords.col, coords.row, -length)
+        if (copyMode.value && touchIsSelecting) {
+            // Copy mode: update text selection
+            const coords = screenToTerminalCoords(touch.clientX, touch.clientY)
+            const startOffset = selectStartRow * terminal.cols + selectStartCol
+            const currentOffset = coords.row * terminal.cols + coords.col
+            const length = currentOffset - startOffset
+
+            if (length > 0) {
+                terminal.select(selectStartCol, selectStartRow, length)
+            } else if (length < 0) {
+                terminal.select(coords.col, coords.row, -length)
+            }
+            e.preventDefault()
+        } else if (!copyMode.value) {
+            // Scroll mode: convert touch swipe into terminal scroll.
+            // Uses "natural" scrolling: swipe up → see content below, swipe down → see history.
+            const screenEl = terminal.element?.querySelector('.xterm-screen')
+            if (!screenEl) return
+            const deltaY = touchStartY - touch.clientY
+            touchStartY = touch.clientY
+            const rect = screenEl.getBoundingClientRect()
+            const cellHeight = rect.height / terminal.rows
+
+            scrollAccumulator += deltaY
+            // Process one line per cell-height of accumulated movement
+            while (Math.abs(scrollAccumulator) >= cellHeight) {
+                const direction = scrollAccumulator > 0 ? 1 : -1
+
+                if (paneAlternate.value) {
+                    // Pane is in alternate screen (less, vim, htop, etc.):
+                    // Send arrow keys — the app handles scrolling.
+                    // Natural: swipe up (dir=1) → down arrow, swipe down (dir=-1) → up arrow
+                    wsSend({ type: 'input', data: direction > 0 ? '\x1b[B' : '\x1b[A' })
+                } else if (shouldUseTmux()) {
+                    // Shell prompt inside tmux: send SGR mouse wheel sequences.
+                    // tmux copy-mode handles the scrollback.
+                    // Natural: swipe up (dir=1) → wheel down (65), swipe down (dir=-1) → wheel up (64)
+                    const col = Math.max(1, Math.floor((touch.clientX - rect.left) / (rect.width / terminal.cols)) + 1)
+                    const row = Math.max(1, Math.floor((touch.clientY - rect.top) / cellHeight) + 1)
+                    const button = direction > 0 ? 65 : 64
+                    wsSend({ type: 'input', data: `\x1b[<${button};${col};${row}M` })
+                } else {
+                    // Raw shell (no tmux): scroll xterm.js viewport buffer.
+                    terminal.scrollLines(direction)
+                }
+
+                scrollAccumulator -= direction * cellHeight
+            }
+            e.preventDefault()
         }
-        e.preventDefault()
     }
 
     /**
@@ -350,6 +445,8 @@ export function useTerminal(sessionId) {
                     if (finalSelection) {
                         clipboardWrite(finalSelection)
                         toast.success('Copied to clipboard', { duration: 2000 })
+                        // Auto-exit copy mode after successful copy
+                        copyMode.value = false
                     }
                 }, 500)
             }
@@ -401,6 +498,73 @@ export function useTerminal(sessionId) {
         if (isConnected.value) return
         terminal?.writeln('\x1b[33mReconnecting...\x1b[0m')
         connectWs()
+    }
+
+    /**
+     * Send raw input data to the PTY (e.g. control characters).
+     * @param {string} data
+     */
+    function sendInput(data) {
+        wsSend({ type: 'input', data })
+    }
+
+    // ── tmux window control ─────────────────────────────────────────────
+
+    /**
+     * Request the list of tmux windows from the backend.
+     * Returns a Promise that resolves with the window list.
+     */
+    function listWindows() {
+        return new Promise((resolve) => {
+            windowsResolver = resolve
+            wsSend({ type: 'list_windows' })
+            // Timeout fallback — resolve with current state after 3s
+            setTimeout(() => {
+                if (windowsResolver === resolve) {
+                    windowsResolver = null
+                    resolve(windows.value)
+                }
+            }, 3000)
+        })
+    }
+
+    /**
+     * Create a new tmux window.
+     *
+     * Accepts either a plain string (manual create) or a preset object
+     * with {name, cwd?, command?} from .twicc-tmux.json presets.
+     */
+    function createWindow(nameOrPreset) {
+        if (typeof nameOrPreset === 'string') {
+            wsSend({ type: 'create_window', name: nameOrPreset })
+        } else {
+            const msg = { type: 'create_window', name: nameOrPreset.name }
+            if (nameOrPreset.cwd) msg.preset_cwd = nameOrPreset.cwd
+            if (nameOrPreset.command) msg.command = nameOrPreset.command
+            wsSend(msg)
+        }
+    }
+
+    /**
+     * Switch to a tmux window by name.
+     * The backend responds with window_changed, which hides the navigator.
+     */
+    function selectWindow(name) {
+        wsSend({ type: 'select_window', name })
+    }
+
+    /**
+     * Focus the xterm.js terminal (e.g. after selecting a window from a dropdown).
+     */
+    function focusTerminal() {
+        terminal?.focus()
+    }
+
+    /**
+     * Toggle the shell navigator visibility.
+     */
+    function toggleNavigator() {
+        showNavigator.value = !showNavigator.value
     }
 
     /**
@@ -471,5 +635,8 @@ export function useTerminal(sessionId) {
         cleanup()
     })
 
-    return { containerRef, isConnected, started, start, reconnect }
+    return {
+        containerRef, isConnected, started, start, reconnect, sendInput, focusTerminal, copyMode,
+        windows, presets, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
+    }
 }
