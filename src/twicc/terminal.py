@@ -33,6 +33,8 @@ from urllib.parse import parse_qs
 from asgiref.sync import sync_to_async
 from django.conf import settings
 
+from twicc.env import purge_claude_code_vars
+
 logger = logging.getLogger(__name__)
 
 # WebSocket close code for authentication failure (same as UpdatesConsumer).
@@ -156,9 +158,7 @@ def spawn_pty(cwd: str) -> tuple[int, int]:
         # Remove Claude Code env vars that may have been set by the SDK in the
         # backend process. Without this, Claude Code launched from this terminal
         # would think it's already inside an SDK session.
-        for key in list(os.environ):
-            if key.startswith("CLAUDE_"):
-                del os.environ[key]
+        purge_claude_code_vars(os.environ)
 
         # Exec the shell as a login shell (prefix argv[0] with -)
         os.execvp(shell, [f"-{os.path.basename(shell)}"])
@@ -203,9 +203,7 @@ def spawn_tmux_pty(cwd: str, session_id: str) -> tuple[int, int]:
         # Unset TMUX to avoid nesting issues if the server itself runs in tmux
         os.environ.pop("TMUX", None)
         # Remove Claude Code env vars (same reason as in spawn_pty)
-        for key in list(os.environ):
-            if key.startswith("CLAUDE_"):
-                del os.environ[key]
+        purge_claude_code_vars(os.environ)
 
         os.execvp(tmux_path, [
             "tmux",

@@ -38,6 +38,13 @@ DEFAULT_DATA_DIR = Path.home() / ".twicc"
 TWICC_DATA_DIR_ENV = "TWICC_DATA_DIR"
 
 
+def purge_claude_code_vars(env: dict) -> None:
+    """Remove Claude Code environment variables from *env* in-place."""
+    for key in list(env):
+        if key.startswith(("CLAUDE_CODE", "CLAUDECODE")):
+            del env[key]
+
+
 def is_git_worktree() -> bool:
     """Detect if we're running inside a git worktree (not the main working tree).
 
@@ -391,9 +398,7 @@ def start(proc_key: str, processes: dict) -> bool:
     # don't inherit them (e.g., when devctl is launched from within Claude Code).
     # CLAUDE_CODE_ENTRYPOINT in particular causes Claude Code to think it's
     # already running inside an SDK session, preventing interactive use.
-    for key in list(proc_env):
-        if key.startswith("CLAUDE_"):
-            del proc_env[key]
+    purge_claude_code_vars(proc_env)
     # In worktree mode, purge inherited TWICC_* variables so the child
     # process only sees values from the worktree's .env (loaded by run.py).
     # Without this, variables like TWICC_PASSWORD_HASH from the parent

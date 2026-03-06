@@ -19,15 +19,14 @@ import threading
 
 from dotenv import load_dotenv
 
+from twicc.env import purge_claude_code_vars
 from twicc.paths import get_env_path
 
 # Clean up Claude Code environment variables that may have been inherited from a
 # parent process (e.g., when devctl or TwiCC is launched from within Claude Code).
 # These variables cause Claude Code to think it's already running inside an SDK
 # session, preventing interactive use from TwiCC's terminal.
-for _key in list(os.environ):
-    if _key.startswith("CLAUDE_"):
-        del os.environ[_key]
+purge_claude_code_vars(os.environ)
 
 # Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env)
 load_dotenv(get_env_path())
