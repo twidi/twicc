@@ -84,6 +84,17 @@ async def _cancel_task(task: asyncio.Task, name: str) -> None:
     logger.info("%s stopped", name)
 
 
+def _on_watcher_done(task: asyncio.Task) -> None:
+    """Callback fired when the watcher task finishes unexpectedly."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Watcher task crashed with exception — file changes will no longer be detected!", exc_info=exc)
+    else:
+        logger.warning("Watcher task ended unexpectedly (no exception) — file changes will no longer be detected")
+
+
 async def run_server(port: int):
     """Run the ASGI server with all background tasks.
 
@@ -176,6 +187,7 @@ async def run_server(port: int):
         # Start watcher once initial sync is done
         await sync_done.wait()
         deferred["watcher_task"] = asyncio.create_task(start_watcher())
+        deferred["watcher_task"].add_done_callback(_on_watcher_done)
         logger.info("Watcher started (after initial sync)")
 
         # Start background compute and periodic price sync once initial price sync is done.

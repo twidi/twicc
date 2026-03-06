@@ -445,25 +445,28 @@ async def start_watcher() -> None:
 
     async for changes in awatch(projects_dir, stop_event=stop_event):
         for change_type, path_str in changes:
-            path = Path(path_str)
+            try:
+                path = Path(path_str)
 
-            # Handle project directories (direct children of projects_dir)
-            if path.parent == projects_dir and (path.is_dir() or change_type == Change.deleted):
-                await sync_project_and_broadcast(path, change_type, channel_layer)
-                continue
+                # Handle project directories (direct children of projects_dir)
+                if path.parent == projects_dir and (path.is_dir() or change_type == Change.deleted):
+                    await sync_project_and_broadcast(path, change_type, channel_layer)
+                    continue
 
-            # Skip non-jsonl files
-            if not path_str.endswith(".jsonl"):
-                continue
+                # Skip non-jsonl files
+                if not path_str.endswith(".jsonl"):
+                    continue
 
-            # Parse path to determine type (session or subagent)
-            parsed = parse_jsonl_path(path, projects_dir)
-            if parsed is None:
-                # Invalid path (e.g., old-style agent-*.jsonl at project level)
-                continue
+                # Parse path to determine type (session or subagent)
+                parsed = parse_jsonl_path(path, projects_dir)
+                if parsed is None:
+                    # Invalid path (e.g., old-style agent-*.jsonl at project level)
+                    continue
 
-            # Sync and broadcast (works for both sessions and subagents)
-            await sync_and_broadcast(path, parsed, change_type, channel_layer)
+                # Sync and broadcast (works for both sessions and subagents)
+                await sync_and_broadcast(path, parsed, change_type, channel_layer)
+            except Exception:
+                logger.exception("Error processing watcher change %s on %s", change_type, path_str)
 
 
 def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], list[int]]:
