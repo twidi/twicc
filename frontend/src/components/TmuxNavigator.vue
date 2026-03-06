@@ -6,7 +6,8 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
-    presets: {
+    /** Array of { label, directory, presets: [...] } source groups. */
+    presetSources: {
         type: Array,
         default: () => [],
     },
@@ -19,10 +20,20 @@ const newName = ref('')
 /** Set of running window names for quick lookup. */
 const runningNames = computed(() => new Set(props.windows.map(w => w.name)))
 
+/** All preset names across all sources, for ad-hoc filtering. */
+const allPresetNames = computed(() => {
+    const names = new Set()
+    for (const source of props.presetSources) {
+        for (const p of source.presets) {
+            names.add(p.name)
+        }
+    }
+    return names
+})
+
 /** Running windows that are NOT presets (ad-hoc shells). */
 const adHocWindows = computed(() => {
-    const presetNames = new Set(props.presets.map(p => p.name))
-    return props.windows.filter(w => !presetNames.has(w.name))
+    return props.windows.filter(w => !allPresetNames.value.has(w.name))
 })
 
 function handleSelect(name) {
@@ -67,12 +78,12 @@ function handlePresetClick(preset) {
                 </wa-button>
             </div>
 
-            <!-- Preset shells (always visible) -->
-            <template v-if="presets.length">
-                <h4 class="presets-title">Presets</h4>
-                <div class="shell-list">
+            <!-- Preset sources (one section per source) -->
+            <template v-for="source in presetSources" :key="source.directory">
+                <h4 v-if="source.presets.length" class="presets-title">{{ source.label }}</h4>
+                <div v-if="source.presets.length" class="shell-list">
                     <wa-button
-                        v-for="preset in presets"
+                        v-for="preset in source.presets"
                         :key="preset.name"
                         class="shell-button preset-button"
                         :class="{ 'preset-running': runningNames.has(preset.name) }"

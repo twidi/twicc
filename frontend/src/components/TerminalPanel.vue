@@ -23,7 +23,16 @@ const {
 } = useTerminal(props.sessionId)
 
 const activeWindowName = computed(() => windows.value.find(w => w.active)?.name ?? '')
-const presetNames = computed(() => new Set(presets.value.map(p => p.name)))
+/** Flatten all preset names across all sources for tab bar icons + mobile dropdown. */
+const presetNames = computed(() => {
+    const names = new Set()
+    for (const source of presets.value) {
+        for (const p of source.presets || []) {
+            names.add(p.name)
+        }
+    }
+    return names
+})
 
 // Lazy init: start the terminal only when the tab becomes active for the first time
 watch(
@@ -112,7 +121,7 @@ defineExpose({ toggleNavigator })
         <TmuxNavigator
             v-if="showNavigator"
             :windows="windows"
-            :presets="presets"
+            :preset-sources="presets"
             @select="handleNavigatorSelect"
             @create="handleNavigatorCreate"
         />
