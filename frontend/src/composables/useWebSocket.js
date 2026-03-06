@@ -312,19 +312,18 @@ export function useWebSocket() {
             case 'project_updated':
                 store.updateProject(msg.project)
                 break
-            case 'session_added':
-                // Check if this is a draft session being confirmed by the backend
+            case 'session_updated': {
                 const existingSession = store.getSession(msg.session.id)
                 if (existingSession?.draft) {
+                    // Draft session confirmed by the backend — update with real data.
                     // Preserve locally-set title if the backend doesn't have one.
                     // This handles the race condition where the user sets a title via
-                    // the rename dialog (needs-title flow) before session_added arrives:
-                    // the dialog stores the title locally, but the backend never received
-                    // it (title wasn't in the send_message payload). We keep it in the
-                    // store to avoid a visual flash, then persist it via API.
+                    // the rename dialog (needs-title flow) before the first session_updated
+                    // arrives: the dialog stores the title locally, but the backend never
+                    // received it (title wasn't in the send_message payload). We keep it
+                    // in the store to avoid a visual flash, then persist it via API.
                     const localTitle = existingSession.title
                     const hasOrphanedLocalTitle = localTitle && !msg.session.title
-                    // Draft session confirmed - update with real data and remove draft flag
                     store.updateSession({
                         ...msg.session,
                         draft: false,
@@ -335,24 +334,16 @@ export function useWebSocket() {
                     if (hasOrphanedLocalTitle) {
                         store.renameSession(msg.session.project_id, msg.session.id, localTitle)
                     }
-                } else if (store.areProjectSessionsFetched(msg.session.project_id) ||
-                    store.areAllProjectsSessionsFetched) {
-                    // Only add if we've fetched sessions for this project or all projects
-                    // (subagents are filtered out in getProjectSessions getter)
-                    store.addSession(msg.session)
-                }
-                break
-            case 'session_updated':
-                if (store.getSession(msg.session.id)) {
+                } else if (existingSession) {
                     store.updateSession(msg.session)
                 } else if (store.areProjectSessionsFetched(msg.session.project_id) ||
                     store.areAllProjectsSessionsFetched) {
                     // Session not yet in store but sessions for this project have been
-                    // fetched — add it (happens during background compute when sessions
-                    // are indexed after the initial page was loaded).
+                    // fetched — add it (new session or missed earlier update).
                     store.addSession(msg.session)
                 }
                 break
+            }
             case 'session_items_added':
                 // Only add if we've fetched items for this session
                 if (store.areSessionItemsFetched(msg.session_id)) {

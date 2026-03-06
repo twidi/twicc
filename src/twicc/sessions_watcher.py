@@ -324,22 +324,22 @@ async def sync_and_broadcast(
         return
 
     # Check if session already exists in DB
-    existing_session = await get_session_by_id(parsed.session_id)
+    session = await get_session_by_id(parsed.session_id)
 
-    if existing_session is None:
+    # Ensure project exists first
+    project, project_created = await get_or_create_project(parsed.project_id)
+    if project_created:
+        await broadcast_message(channel_layer, {
+            "type": "project_added",
+            "project": serialize_project(project),
+        })
+
+    if session is None:
         # New file - check if it has content before creating
         has_content = await check_file_has_content_async(path)
         if not has_content:
             # Empty file (0 lines) - ignore completely
             return
-
-        # Ensure project exists first
-        project, project_created = await get_or_create_project(parsed.project_id)
-        if project_created:
-            await broadcast_message(channel_layer, {
-                "type": "project_added",
-                "project": serialize_project(project),
-            })
 
         # Create session (regular or subagent)
         # Pop any pending permission_mode/selected_model set by the WS handler for new sessions
@@ -350,18 +350,20 @@ async def sync_and_broadcast(
         pending_model = pop_pending_selected_model(parsed.session_id)
         session = await create_session(parsed, project, parent_session, permission_mode=pending_mode, selected_model=pending_model)
 
-        # Sync items (session is saved, has valid PK)
-        new_line_nums, modified_line_nums = await sync_session_items_async(session, path)
+    new_line_nums, modified_line_nums = await sync_session_items_async(session, path)
 
-        # Refresh to get computed values
+    if new_line_nums:
+        # Refresh session to get computed values
         session = await refresh_session(session)
 
-        await broadcast_message(channel_layer, {
-            "type": "session_added",
-            "session": serialize_session(session),
-        })
+        # Only broadcast if session has user messages — empty sessions (e.g. just
+        # system/metadata lines) stay silent in DB until a user message arrives.
+        if session.user_message_count > 0:
+            await broadcast_message(channel_layer, {
+                "type": "session_updated",
+                "session": serialize_session(session),
+            })
 
-        if new_line_nums:
             # Broadcast new items (with updated metadata of pre-existing items if any)
             new_items = await get_session_items(session, new_line_nums)
             if new_items:
@@ -393,58 +395,6 @@ async def sync_and_broadcast(
                 "type": "project_updated",
                 "project": serialize_project(project),
             })
-        return
-
-    # Session exists in DB - sync items
-    session = existing_session
-    project = await get_project_by_id(parsed.project_id)
-    if project is None:
-        # Project should exist if session exists, but handle gracefully
-        project, _ = await get_or_create_project(parsed.project_id)
-
-    new_line_nums, modified_line_nums = await sync_session_items_async(session, path)
-
-    if new_line_nums:
-        # Refresh session to get updated values
-        session = await refresh_session(session)
-
-        # Broadcast session update
-        await broadcast_message(channel_layer, {
-            "type": "session_updated",
-            "session": serialize_session(session),
-        })
-
-        # Broadcast new items (with updated metadata of pre-existing items if any)
-        new_items = await get_session_items(session, new_line_nums)
-        if new_items:
-            message = {
-                "type": "session_items_added",
-                "session_id": parsed.session_id,
-                "project_id": parsed.project_id,
-                "parent_session_id": parsed.parent_session_id,
-                "items": new_items,
-            }
-            if modified_line_nums:
-                updated_metadata = await get_items_metadata(session, modified_line_nums)
-                if updated_metadata:
-                    message["updated_metadata"] = updated_metadata
-            await broadcast_message(channel_layer, message)
-
-        # For subagents, broadcast parent session update (costs have changed)
-        if is_subagent and parent_session:
-            parent_session = await refresh_session(parent_session)
-            await broadcast_message(channel_layer, {
-                "type": "session_updated",
-                "session": serialize_session(parent_session),
-            })
-
-        # Update project metadata (includes total_cost which changes for subagents too)
-        await update_project_metadata(project)
-        project = await refresh_project(project)
-        await broadcast_message(channel_layer, {
-            "type": "project_updated",
-            "project": serialize_project(project),
-        })
     elif session.stale:
         # File reappeared - unstale
         session.stale = False

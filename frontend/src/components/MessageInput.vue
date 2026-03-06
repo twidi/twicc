@@ -558,7 +558,7 @@ async function handleSend() {
         }
 
         // Clear draft session from IndexedDB only (if this was a draft session)
-        // Keep in store so session stays visible until backend confirms with session_added/updated
+        // Keep in store so session stays visible until backend confirms with session_updated
         if (isDraft.value) {
             store.deleteDraftSession(props.sessionId, { keepInStore: true })
         }
