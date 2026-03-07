@@ -295,6 +295,7 @@ class ProcessManager:
                 last_started_at=now, last_updated_at=now
             )
         )
+        await self._broadcast_session_updated(session_id)
 
         # Broadcast the starting state before starting
         await self._on_state_change(process)
@@ -661,17 +662,41 @@ class ProcessManager:
             except Exception as e:
                 logger.error("Error flushing pending title: %s", e)
 
-        # Update last_stopped_at when process dies
+        # Update last_stopped_at when process dies, and propagate to recent subagents
         if process.state == ProcessState.DEAD:
             try:
                 from django.utils import timezone as dj_timezone
                 from twicc.core.models import Session
                 now = dj_timezone.now()
+
+                # Get the previous cutoff BEFORE updating, to find subagents started in this run
+                session = await asyncio.to_thread(Session.objects.filter(id=process.session_id).first)
+                previous_cutoff = session.cutoff if session else None
+
                 await asyncio.to_thread(
                     lambda: Session.objects.filter(id=process.session_id).update(
                         last_stopped_at=now, last_updated_at=now
                     )
                 )
+                await self._broadcast_session_updated(process.session_id)
+
+                # Propagate last_stopped_at to subagents started after the previous cutoff
+                if session is not None:
+                    subagent_filter = Session.objects.filter(parent_session_id=process.session_id)
+                    if previous_cutoff is not None:
+                        subagent_filter = subagent_filter.filter(last_started_at__gte=previous_cutoff)
+                    subagent_ids = await asyncio.to_thread(
+                        lambda: list(subagent_filter.values_list('id', flat=True))
+                    )
+                    if subagent_ids:
+                        await asyncio.to_thread(
+                            lambda: Session.objects.filter(id__in=subagent_ids).update(
+                                last_stopped_at=now, last_updated_at=now
+                            )
+                        )
+                        for subagent_id in subagent_ids:
+                            await self._broadcast_session_updated(subagent_id)
+
             except Exception as e:
                 logger.error("Error updating last_stopped_at for session %s: %s", process.session_id, e)
 
@@ -686,6 +711,28 @@ class ProcessManager:
                     process.session_id,
                 )
                 del self._processes[process.session_id]
+
+    async def _broadcast_session_updated(self, session_id: str) -> None:
+        """Broadcast a session_updated message via WebSocket after lifecycle timestamp changes."""
+        from channels.layers import get_channel_layer
+        from twicc.core.models import Session
+        from twicc.core.serializers import serialize_session
+
+        try:
+            session = await asyncio.to_thread(Session.objects.get, id=session_id)
+            channel_layer = get_channel_layer()
+            await channel_layer.group_send(
+                "updates",
+                {
+                    "type": "broadcast",
+                    "data": {
+                        "type": "session_updated",
+                        "session": serialize_session(session),
+                    },
+                },
+            )
+        except Exception as e:
+            logger.error("Error broadcasting session_updated for %s: %s", session_id, e)
 
 
 def get_process_manager() -> ProcessManager:

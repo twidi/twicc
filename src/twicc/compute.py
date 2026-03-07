@@ -47,6 +47,12 @@ class ToolResultUpdate(NamedTuple):
     completed_at: datetime | None  # Timestamp of the latest tool_result
 
 
+class AgentStoppedUpdate(NamedTuple):
+    """Describes a subagent session whose process has naturally finished."""
+    agent_session_id: str
+    stopped_at: datetime
+
+
 # Tool names that spawn subagent sessions (Task is the legacy name, Agent is the new one)
 AGENT_TOOL_NAMES = frozenset({'Task', 'Agent'})
 
@@ -1461,7 +1467,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     # Map tool_use_id → (line_num, tool_name) of the item containing the tool_use
     tool_use_map: dict[str, tuple[int, str]] = {}
     # Map tool_use_id → line_num for Task tool_uses (to link to agents)
-    task_tool_use_map: dict[str, int] = {}
+    task_tool_use_map: dict[str, tuple[int, bool, datetime]] = {}
 
     # Track if we've set the initial title from first user message
     initial_title_set = False
@@ -1494,6 +1500,11 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     # Track resolved git directory/branch (from tool_use paths)
     last_resolved_git_directory: str | None = None
     last_resolved_git_branch: str | None = None
+
+    # Track agent completion: tool_use_id -> (result_count, last_timestamp)
+    agent_tool_result_counts: dict[str, tuple[int, datetime | None]] = {}
+    # Track agent stopped updates to include in session_complete message
+    agent_stopped_list: list[dict] = []  # [{agent_session_id, stopped_at}, ...]
 
     for item in queryset.iterator(chunk_size=batch_size):
         try:
@@ -1607,6 +1618,11 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
                 'tool_name': tu_name,
                 'tool_result_at': item.timestamp,
             })
+            # Track result counts for Agent/Task tools to detect natural completion
+            if tu_name in AGENT_TOOL_NAMES:
+                prev_count, _ = agent_tool_result_counts.get(tool_result_ref, (0, None))
+                agent_tool_result_counts[tool_result_ref] = (prev_count + 1, item.timestamp)
+
         # Check if this is a Task tool_result with agentId and create agent link
         if agent_info := get_tool_result_agent_info(parsed):
             tu_id, agent_id = agent_info
@@ -1673,6 +1689,21 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
 
     # user_message_count is already tracked as a simple counter (incremented for each USER_MESSAGE)
 
+    # Determine which subagents naturally finished based on tool_result counts
+    for tu_id, (result_count, last_ts) in agent_tool_result_counts.items():
+        if last_ts is None:
+            continue
+        # Find agent_id for this tool_use_id from agent_links we're about to create
+        for link in all_agent_links:
+            if link['tool_use_id'] == tu_id:
+                required = 2 if link.get('is_background') else 1
+                if result_count >= required:
+                    agent_stopped_list.append({
+                        'agent_session_id': link['agent_id'],
+                        'stopped_at': last_ts.isoformat(),
+                    })
+                break
+
     # Determine project directory update (for real sessions only)
     project_directory = first_cwd if first_cwd and session.type == SessionType.SESSION else None
 
@@ -1715,6 +1746,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         'titles': session_titles,
         'project_directory': project_directory,
         'affected_days': sorted(affected_days) if affected_days else None,
+        'agent_stopped': agent_stopped_list or None,
     }))
 
     connection.close()
@@ -1820,6 +1852,51 @@ def create_tool_result_link_live(
                 )
 
             return None
+
+    return None
+
+
+def check_agent_naturally_stopped(
+    session_id: str, tool_result_update: ToolResultUpdate
+) -> AgentStoppedUpdate | None:
+    """Check if a Task/Agent tool_result indicates a subagent has naturally finished.
+
+    For non-background agents, 1 tool_result means done.
+    For background agents, 2 tool_results means done.
+
+    If the agent is done, updates its last_stopped_at and last_updated_at.
+
+    Returns an AgentStoppedUpdate if the agent stopped, None otherwise.
+    """
+    from twicc.core.models import AgentLink, Session
+
+    # Find the AgentLink for this tool_use_id
+    agent_link = AgentLink.objects.filter(
+        session_id=session_id,
+        tool_use_id=tool_result_update.tool_use_id,
+    ).first()
+    if agent_link is None:
+        return None
+
+    required_results = 2 if agent_link.is_background else 1
+    if tool_result_update.result_count < required_results:
+        return None
+
+    stopped_at = tool_result_update.completed_at
+    if stopped_at is None:
+        return None
+
+    # Find the agent session and update its lifecycle timestamps
+    agent_session_id = agent_link.agent_id
+    updated = Session.objects.filter(
+        id=agent_session_id,
+    ).update(last_stopped_at=stopped_at, last_updated_at=stopped_at)
+
+    if updated:
+        return AgentStoppedUpdate(
+            agent_session_id=agent_session_id,
+            stopped_at=stopped_at,
+        )
 
     return None
 
@@ -2314,6 +2391,15 @@ def apply_session_complete(msg: dict) -> None:
     if session_git_dir and project_id and get_project_git_root(project_id) is None:
         ensure_project_git_root(project_id)
 
-    # 10. Update project metadata (sessions_count, mtime, total_cost)
+    # 10. Update last_stopped_at for subagents that naturally finished
+    agent_stopped = msg.get('agent_stopped')
+    if agent_stopped:
+        for entry in agent_stopped:
+            stopped_at = datetime.fromisoformat(entry['stopped_at'])
+            Session.objects.filter(id=entry['agent_session_id']).update(
+                last_stopped_at=stopped_at, last_updated_at=stopped_at
+            )
+
+    # 11. Update project metadata (sessions_count, mtime, total_cost)
     if project_id:
         update_project_metadata(project_id)

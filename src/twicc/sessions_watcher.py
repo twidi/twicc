@@ -16,7 +16,8 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from watchfiles import Change, awatch
 
-from twicc.compute import AgentLinkUpdate, ToolResultUpdate, cache_agent_prompt, compute_item_cost_and_usage, \
+from twicc.compute import AgentLinkUpdate, AgentStoppedUpdate, ToolResultUpdate, cache_agent_prompt, \
+    check_agent_naturally_stopped, compute_item_cost_and_usage, \
     compute_item_metadata, \
     compute_item_metadata_live, create_agent_link_from_subagent, create_agent_link_from_tool_result, \
     create_agent_link_from_tool_use, create_tool_result_link_live, ensure_project_directory, ensure_project_git_root, \
@@ -338,7 +339,7 @@ async def sync_and_broadcast(
         pending_model = pop_pending_selected_model(parsed.session_id)
         session = await create_session(parsed, project, parent_session, permission_mode=pending_mode, selected_model=pending_model)
 
-    new_line_nums, modified_line_nums, agent_link_updates, tool_result_updates = await sync_session_items(session, path)
+    new_line_nums, modified_line_nums, agent_link_updates, tool_result_updates, agent_stopped_updates = await sync_session_items(session, path)
 
     if new_line_nums:
         # Refresh session to get computed values
@@ -405,6 +406,16 @@ async def sync_and_broadcast(
                     "result_count": update.result_count,
                     "completed_at": update.completed_at.isoformat() if update.completed_at else None,
                 })
+
+            # Broadcast session_updated for subagents that naturally finished
+            for stopped in agent_stopped_updates:
+                stopped_session = await get_session_by_id(stopped.agent_session_id)
+                if stopped_session:
+                    await broadcast_message(channel_layer, {
+                        "type": "session_updated",
+                        "session": serialize_session(stopped_session),
+                    })
+
     elif session.stale:
         # File reappeared - unstale
         session.stale = False
@@ -482,7 +493,7 @@ async def start_watcher() -> None:
 @sync_to_async
 def sync_session_items(
     session: Session, file_path: Path
-) -> tuple[list[int], list[int], list[AgentLinkUpdate], list[ToolResultUpdate]]:
+) -> tuple[list[int], list[int], list[AgentLinkUpdate], list[ToolResultUpdate], list[AgentStoppedUpdate]]:
     """
     Synchronize session items from a JSONL file.
 
@@ -499,16 +510,17 @@ def sync_session_items(
         - List of line_nums of pre-existing items whose metadata was updated (sorted)
         - List of AgentLinkUpdate for agent state changes to broadcast
         - List of ToolResultUpdate for tool completion state changes to broadcast
+        - List of AgentStoppedUpdate for subagents that naturally finished
     """
     if not file_path.exists():
-        return [], [], [], []
+        return [], [], [], [], [], []
 
     stat = file_path.stat()
     file_mtime = stat.st_mtime
 
     # If mtime hasn't changed, nothing to do
     if session.mtime == file_mtime:
-        return [], [], [], []
+        return [], [], [], [], []
 
     with open(file_path, "r", encoding="utf-8") as f:
         # Seek to last known position
@@ -520,7 +532,7 @@ def sync_session_items(
             # Update mtime even if no new content (file may have been touched)
             session.mtime = file_mtime
             session.save(update_fields=["mtime"])
-            return [], [], [], []
+            return [], [], [], [], []
 
         # Split into lines (filter out empty lines)
         lines = [line for line in new_content.split("\n") if line.strip()]
@@ -533,7 +545,7 @@ def sync_session_items(
 
     if not lines:
         session.save(update_fields=["last_offset", "mtime"])
-        return [], [], [], []
+        return [], [], [], [], []
 
     # Create SessionItem objects for bulk insert
     items_to_create: list[tuple[SessionItem, dict]] = []
@@ -561,6 +573,8 @@ def sync_session_items(
     agent_link_updates: list[AgentLinkUpdate] = []
     # Track tool result updates to broadcast after processing
     tool_result_updates: list[ToolResultUpdate] = []
+    # Track subagents that naturally finished
+    agent_stopped_updates: list[AgentStoppedUpdate] = []
 
     # For subagents: track if we need to create the link between the agent and the parent session tool use
     subagent_needs_link = (
@@ -717,6 +731,9 @@ def sync_session_items(
             tool_result_update = create_tool_result_link_live(session.id, item, parsed)
             if tool_result_update:
                 tool_result_updates.append(tool_result_update)
+                # Check if this completes a subagent naturally
+                if stopped := check_agent_naturally_stopped(session.id, tool_result_update):
+                    agent_stopped_updates.append(stopped)
             # Also check for agent links (Task tool_result with agentId)
             if update := create_agent_link_from_tool_result(session.id, item, parsed):
                 agent_link_updates.append(update)
@@ -870,7 +887,7 @@ def sync_session_items(
         _update_parent_session_costs(session.parent_session_id)
 
     # Exclude new items from modified_line_nums
-    return sorted(new_line_nums), sorted(modified_line_nums - new_line_nums), agent_link_updates, tool_result_updates
+    return sorted(new_line_nums), sorted(modified_line_nums - new_line_nums), agent_link_updates, tool_result_updates, agent_stopped_updates
 
 
 def _update_parent_session_costs(parent_session_id: str) -> None:

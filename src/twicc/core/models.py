@@ -310,6 +310,15 @@ class Session(models.Model):
             ),
         ]
 
+    @property
+    def cutoff(self) -> datetime | None:
+        """The most recent lifecycle boundary: max of last_started_at and last_stopped_at."""
+        if self.last_stopped_at is None:
+            return self.last_started_at
+        if self.last_started_at is None:
+            return self.last_stopped_at
+        return max(self.last_started_at, self.last_stopped_at)
+
     def recalculate_costs(self) -> None:
         """Recalculate self_cost, subagents_cost, and total_cost from SessionItem costs.
 
