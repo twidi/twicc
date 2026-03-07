@@ -127,6 +127,8 @@ class ProcessManager:
         text: str,
         permission_mode: str = "default",
         selected_model: str | None = None,
+        effort: str | None = None,
+        thinking_enabled: bool | None = None,
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
@@ -195,6 +197,7 @@ class ProcessManager:
             await self._start_process(
                 session_id, project_id, cwd, text, resume=True,
                 permission_mode=permission_mode, selected_model=selected_model,
+                effort=effort, thinking_enabled=thinking_enabled,
                 images=images, documents=documents
             )
 
@@ -206,6 +209,8 @@ class ProcessManager:
         text: str,
         permission_mode: str = "default",
         selected_model: str | None = None,
+        effort: str | None = None,
+        thinking_enabled: bool | None = None,
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
@@ -245,6 +250,7 @@ class ProcessManager:
             await self._start_process(
                 session_id, project_id, cwd, text, resume=False,
                 permission_mode=permission_mode, selected_model=selected_model,
+                effort=effort, thinking_enabled=thinking_enabled,
                 images=images, documents=documents
             )
 
@@ -257,6 +263,8 @@ class ProcessManager:
         resume: bool,
         permission_mode: str = "default",
         selected_model: str | None = None,
+        effort: str | None = None,
+        thinking_enabled: bool | None = None,
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
@@ -283,7 +291,7 @@ class ProcessManager:
             project_id,
             resume,
         )
-        process = ClaudeProcess(session_id, project_id, cwd, permission_mode, selected_model, get_last_session_slug=get_last_session_slug)
+        process = ClaudeProcess(session_id, project_id, cwd, permission_mode, selected_model, effort, thinking_enabled, get_last_session_slug=get_last_session_slug)
         self._processes[session_id] = process
 
         # Update lifecycle timestamps: every process start (new or resume) is a session start

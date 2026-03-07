@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
-import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_ICONS, PERMISSION_MODE_COLORS, MODEL, MODEL_LABELS, MODEL_ICONS, MODEL_COLORS } from '../constants'
+import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_ICONS, PERMISSION_MODE_COLORS, MODEL, MODEL_LABELS, MODEL_ICONS, MODEL_COLORS, EFFORT, EFFORT_LABELS, EFFORT_ICONS, EFFORT_COLORS, THINKING, THINKING_LABELS, THINKING_ICONS, THINKING_COLORS } from '../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -58,6 +58,10 @@ const defaultPermissionMode = computed(() => store.getDefaultPermissionMode)
 const alwaysApplyDefaultPermissionMode = computed(() => store.isAlwaysApplyDefaultPermissionMode)
 const defaultModel = computed(() => store.getDefaultModel)
 const alwaysApplyDefaultModel = computed(() => store.isAlwaysApplyDefaultModel)
+const defaultEffort = computed(() => store.getDefaultEffort)
+const alwaysApplyDefaultEffort = computed(() => store.isAlwaysApplyDefaultEffort)
+const defaultThinking = computed(() => store.getDefaultThinking)
+const alwaysApplyDefaultThinking = computed(() => store.isAlwaysApplyDefaultThinking)
 const diffSideBySide = computed(() => store.isDiffSideBySide)
 const editorWordWrap = computed(() => store.isEditorWordWrap)
 
@@ -88,6 +92,20 @@ const modelOptions = Object.values(MODEL).map(value => ({
     icon: MODEL_ICONS[value],
     color: MODEL_COLORS[value],
 }))
+
+// Effort options for the select
+const effortOptions = Object.values(EFFORT).map(value => ({
+    value,
+    label: EFFORT_LABELS[value],
+    icon: EFFORT_ICONS[value],
+    color: EFFORT_COLORS[value],
+}))
+
+// Thinking options for the select (use string values for wa-select compatibility)
+const thinkingOptions = [
+    { value: 'true', label: THINKING_LABELS[true], icon: THINKING_ICONS[true], color: THINKING_COLORS[true] },
+    { value: 'false', label: THINKING_LABELS[false], icon: THINKING_ICONS[false], color: THINKING_COLORS[false] },
+]
 
 /**
  * Handle display mode change.
@@ -192,6 +210,34 @@ function onDefaultModelChange(event) {
  */
 function onAlwaysApplyDefaultModelChange(event) {
     store.setAlwaysApplyDefaultModel(event.target.checked)
+}
+
+/**
+ * Handle default effort change.
+ */
+function onDefaultEffortChange(event) {
+    store.setDefaultEffort(event.target.value)
+}
+
+/**
+ * Toggle "always apply default effort" setting.
+ */
+function onAlwaysApplyDefaultEffortChange(event) {
+    store.setAlwaysApplyDefaultEffort(event.target.checked)
+}
+
+/**
+ * Handle default thinking change.
+ */
+function onDefaultThinkingChange(event) {
+    store.setDefaultThinking(event.target.value === 'true')
+}
+
+/**
+ * Toggle "always apply default thinking" setting.
+ */
+function onAlwaysApplyDefaultThinkingChange(event) {
+    store.setAlwaysApplyDefaultThinking(event.target.checked)
 }
 
 /**
@@ -357,6 +403,54 @@ function onPopoverShow() {
                         <wa-switch
                             :checked="alwaysApplyDefaultModel"
                             @change="onAlwaysApplyDefaultModelChange"
+                            size="small"
+                        >Always apply *</wa-switch>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Default effort</label>
+                        <wa-select
+                            :value.prop="defaultEffort"
+                            @change="onDefaultEffortChange"
+                            size="small"
+                        >
+                            <wa-option
+                                v-for="option in effortOptions"
+                                :key="option.value"
+                                :value="option.value"
+                            >
+                                <span class="select-option">
+                                    <wa-icon :name="option.icon" variant="classic" :style="{ color: option.color }"></wa-icon>
+                                    <span>{{ option.label }}</span>
+                                </span>
+                            </wa-option>
+                        </wa-select>
+                        <wa-switch
+                            :checked="alwaysApplyDefaultEffort"
+                            @change="onAlwaysApplyDefaultEffortChange"
+                            size="small"
+                        >Always apply *</wa-switch>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Default thinking</label>
+                        <wa-select
+                            :value.prop="String(defaultThinking)"
+                            @change="onDefaultThinkingChange"
+                            size="small"
+                        >
+                            <wa-option
+                                v-for="option in thinkingOptions"
+                                :key="option.value"
+                                :value="option.value"
+                            >
+                                <span class="select-option">
+                                    <wa-icon :name="option.icon" variant="classic" :style="{ color: option.color }"></wa-icon>
+                                    <span>{{ option.label }}</span>
+                                </span>
+                            </wa-option>
+                        </wa-select>
+                        <wa-switch
+                            :checked="alwaysApplyDefaultThinking"
+                            @change="onAlwaysApplyDefaultThinkingChange"
                             size="small"
                         >Always apply *</wa-switch>
                     </div>

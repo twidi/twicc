@@ -81,6 +81,10 @@ def serialize_session(session):
         "permission_mode": session.permission_mode,
         # User-selected model
         "selected_model": session.selected_model,
+        # Effort level
+        "effort": session.effort,
+        # Thinking enabled
+        "thinking_enabled": session.thinking_enabled,
     }
 
 

@@ -3,7 +3,7 @@
 
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_MODEL, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, MODEL, SYNCED_SETTINGS_KEYS } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_MODEL, DEFAULT_EFFORT, DEFAULT_THINKING, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, MODEL, EFFORT, SYNCED_SETTINGS_KEYS } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
 import { setThemeMode } from '../utils/theme'
@@ -36,6 +36,10 @@ const SETTINGS_SCHEMA = {
     alwaysApplyDefaultPermissionMode: false,
     defaultModel: DEFAULT_MODEL,
     alwaysApplyDefaultModel: false,
+    defaultEffort: DEFAULT_EFFORT,
+    alwaysApplyDefaultEffort: false,
+    defaultThinking: DEFAULT_THINKING,
+    alwaysApplyDefaultThinking: false,
     // Notification settings: sound + browser notification for each event type
     notifUserTurnSound: NOTIFICATION_SOUNDS.NONE,
     notifUserTurnBrowser: false,
@@ -75,6 +79,10 @@ const SETTINGS_VALIDATORS = {
     alwaysApplyDefaultPermissionMode: (v) => typeof v === 'boolean',
     defaultModel: (v) => Object.values(MODEL).includes(v),
     alwaysApplyDefaultModel: (v) => typeof v === 'boolean',
+    defaultEffort: (v) => Object.values(EFFORT).includes(v),
+    alwaysApplyDefaultEffort: (v) => typeof v === 'boolean',
+    defaultThinking: (v) => typeof v === 'boolean',
+    alwaysApplyDefaultThinking: (v) => typeof v === 'boolean',
     notifUserTurnSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
     notifUserTurnBrowser: (v) => typeof v === 'boolean',
     notifPendingRequestSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
@@ -165,6 +173,10 @@ export const useSettingsStore = defineStore('settings', {
         isAlwaysApplyDefaultPermissionMode: (state) => state.alwaysApplyDefaultPermissionMode,
         getDefaultModel: (state) => state.defaultModel,
         isAlwaysApplyDefaultModel: (state) => state.alwaysApplyDefaultModel,
+        getDefaultEffort: (state) => state.defaultEffort,
+        isAlwaysApplyDefaultEffort: (state) => state.alwaysApplyDefaultEffort,
+        getDefaultThinking: (state) => state.defaultThinking,
+        isAlwaysApplyDefaultThinking: (state) => state.alwaysApplyDefaultThinking,
         getNotifUserTurnSound: (state) => state.notifUserTurnSound,
         isNotifUserTurnBrowser: (state) => state.notifUserTurnBrowser,
         getNotifPendingRequestSound: (state) => state.notifPendingRequestSound,
@@ -398,6 +410,48 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set the default effort level for new sessions.
+         * @param {string} effort - One of EFFORT values
+         */
+        setDefaultEffort(effort) {
+            if (SETTINGS_VALIDATORS.defaultEffort(effort)) {
+                this.defaultEffort = effort
+            }
+        },
+
+        /**
+         * Set whether the default effort level should always be applied,
+         * even for sessions that have an explicit effort in the database.
+         * @param {boolean} enabled
+         */
+        setAlwaysApplyDefaultEffort(enabled) {
+            if (SETTINGS_VALIDATORS.alwaysApplyDefaultEffort(enabled)) {
+                this.alwaysApplyDefaultEffort = enabled
+            }
+        },
+
+        /**
+         * Set the default thinking mode for new sessions.
+         * @param {boolean} thinking - true for adaptive, false for disabled
+         */
+        setDefaultThinking(thinking) {
+            if (SETTINGS_VALIDATORS.defaultThinking(thinking)) {
+                this.defaultThinking = thinking
+            }
+        },
+
+        /**
+         * Set whether the default thinking mode should always be applied,
+         * even for sessions that have an explicit thinking setting in the database.
+         * @param {boolean} enabled
+         */
+        setAlwaysApplyDefaultThinking(enabled) {
+            if (SETTINGS_VALIDATORS.alwaysApplyDefaultThinking(enabled)) {
+                this.alwaysApplyDefaultThinking = enabled
+            }
+        },
+
+        /**
          * Set notification sound for user turn events.
          * @param {string} sound - One of NOTIFICATION_SOUNDS values
          */
@@ -517,6 +571,10 @@ export function initSettings() {
             alwaysApplyDefaultPermissionMode: store.alwaysApplyDefaultPermissionMode,
             defaultModel: store.defaultModel,
             alwaysApplyDefaultModel: store.alwaysApplyDefaultModel,
+            defaultEffort: store.defaultEffort,
+            alwaysApplyDefaultEffort: store.alwaysApplyDefaultEffort,
+            defaultThinking: store.defaultThinking,
+            alwaysApplyDefaultThinking: store.alwaysApplyDefaultThinking,
             notifUserTurnSound: store.notifUserTurnSound,
             notifUserTurnBrowser: store.notifUserTurnBrowser,
             notifPendingRequestSound: store.notifPendingRequestSound,

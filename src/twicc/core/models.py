@@ -292,6 +292,10 @@ class Session(models.Model):
     permission_mode = models.CharField(max_length=30, null=True, default=None)
     # User-selected model for the Claude SDK (e.g., "opus", "sonnet", "haiku")
     selected_model = models.CharField(max_length=30, null=True, default=None)
+    # Effort level for thinking depth (e.g., "low", "medium", "high", "max")
+    effort = models.CharField(max_length=10, null=True, default=None)
+    # Whether extended thinking is enabled (True=adaptive, False=disabled)
+    thinking_enabled = models.BooleanField(null=True, default=None)
 
     class Meta:
         ordering = ["-mtime"]

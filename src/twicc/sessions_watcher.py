@@ -144,11 +144,13 @@ def create_session(
     parent_session: Session | None = None,
     permission_mode: str | None = None,
     selected_model: str | None = None,
+    effort: str | None = None,
+    thinking_enabled: bool | None = None,
 ) -> Session:
     """Create a session or subagent in the database.
 
     For subagents, parent_session must be provided.
-    If permission_mode or selected_model is provided, it overrides the default.
+    If permission_mode, selected_model, effort or thinking_enabled is provided, it overrides the default.
     Returns the created session.
     """
     if parsed.type == SessionType.SUBAGENT:
@@ -172,6 +174,10 @@ def create_session(
             kwargs["permission_mode"] = permission_mode
         if selected_model is not None:
             kwargs["selected_model"] = selected_model
+        if effort is not None:
+            kwargs["effort"] = effort
+        if thinking_enabled is not None:
+            kwargs["thinking_enabled"] = thinking_enabled
         return Session.objects.create(**kwargs)
 
 
@@ -331,13 +337,17 @@ async def sync_and_broadcast(
             return
 
         # Create session (regular or subagent)
-        # Pop any pending permission_mode/selected_model set by the WS handler for new sessions
-        from twicc.pending_permission_mode import pop_pending_permission_mode
-        from twicc.pending_selected_model import pop_pending_selected_model
+        # Pop any pending settings set by the WS handler for new sessions
+        from twicc.pending_settings import pop_pending
 
-        pending_mode = pop_pending_permission_mode(parsed.session_id)
-        pending_model = pop_pending_selected_model(parsed.session_id)
-        session = await create_session(parsed, project, parent_session, permission_mode=pending_mode, selected_model=pending_model)
+        pending = pop_pending(parsed.session_id)
+        session = await create_session(
+            parsed, project, parent_session,
+            permission_mode=pending.get("permission_mode"),
+            selected_model=pending.get("selected_model"),
+            effort=pending.get("effort"),
+            thinking_enabled=pending.get("thinking_enabled"),
+        )
 
     new_line_nums, modified_line_nums, agent_link_updates, tool_result_updates, agent_stopped_updates = await sync_session_items(session, path)
 

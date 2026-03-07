@@ -156,6 +156,64 @@ async def update_session_selected_model(session_id: str, selected_model: str) ->
     logger.info(f"Session {session_id} updated with model {selected_model}")
 
 
+async def update_session_effort(session_id: str, effort: str) -> None:
+    """Update the effort level for an existing session and broadcast the change.
+
+    Skips the DB update and broadcast if the value is already the same.
+    """
+    from twicc.core.models import Session
+    from twicc.core.serializers import serialize_session
+
+    rows = await sync_to_async(
+        Session.objects.filter(id=session_id).exclude(effort=effort).update
+    )(effort=effort)
+    if not rows:
+        return
+
+    session = await sync_to_async(Session.objects.filter(id=session_id).first)()
+    channel_layer = get_channel_layer()
+    await channel_layer.group_send(
+        "updates",
+        {
+            "type": "broadcast",
+            "data": {
+                "type": "session_updated",
+                "session": serialize_session(session),
+            },
+        },
+    )
+    logger.info(f"Session {session_id} updated with effort {effort}")
+
+
+async def update_session_thinking_enabled(session_id: str, thinking_enabled: bool) -> None:
+    """Update the thinking_enabled flag for an existing session and broadcast the change.
+
+    Skips the DB update and broadcast if the value is already the same.
+    """
+    from twicc.core.models import Session
+    from twicc.core.serializers import serialize_session
+
+    rows = await sync_to_async(
+        Session.objects.filter(id=session_id).exclude(thinking_enabled=thinking_enabled).update
+    )(thinking_enabled=thinking_enabled)
+    if not rows:
+        return
+
+    session = await sync_to_async(Session.objects.filter(id=session_id).first)()
+    channel_layer = get_channel_layer()
+    await channel_layer.group_send(
+        "updates",
+        {
+            "type": "broadcast",
+            "data": {
+                "type": "session_updated",
+                "session": serialize_session(session),
+            },
+        },
+    )
+    logger.info(f"Session {session_id} updated with thinking_enabled {thinking_enabled}")
+
+
 def _get_project_display_name(project) -> str:
     """Compute a human-readable display name for a project.
 
@@ -463,6 +521,8 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         documents = content.get("documents")  # Optional: SDK DocumentBlockParam list
         permission_mode = content.get("permission_mode", "default")
         selected_model = content.get("selected_model")  # Optional: SDK model shorthand
+        effort = content.get("effort")  # Optional: SDK effort level
+        thinking_enabled = content.get("thinking_enabled")  # Optional: bool
 
         # Validate required fields (text is allowed to be empty for settings-only updates)
         if not session_id or not project_id:
@@ -521,15 +581,20 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         manager = get_process_manager()
         try:
             if exists:
-                # Update permission_mode and selected_model in DB for existing sessions
+                # Update permission_mode, selected_model, effort, thinking in DB for existing sessions
                 await update_session_permission_mode(session_id, permission_mode)
                 if selected_model:
                     await update_session_selected_model(session_id, selected_model)
+                if effort:
+                    await update_session_effort(session_id, effort)
+                if thinking_enabled is not None:
+                    await update_session_thinking_enabled(session_id, thinking_enabled)
                 # Session exists: send message to it
                 await manager.send_to_session(
                     session_id, project_id, cwd, text,
                     permission_mode=permission_mode,
                     selected_model=selected_model,
+                    effort=effort, thinking_enabled=thinking_enabled,
                     images=images, documents=documents
                 )
             else:
@@ -550,21 +615,23 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
                     set_pending_title(session_id, title)
 
-                # Store permission_mode as pending (will be applied when watcher creates the session row)
-                from twicc.pending_permission_mode import set_pending_permission_mode
+                # Store session settings as pending (will be applied when watcher creates the session row)
+                from twicc.pending_settings import set_pending
 
-                set_pending_permission_mode(session_id, permission_mode)
-
-                # Store selected_model as pending (will be applied when watcher creates the session row)
+                pending_kwargs = {"permission_mode": permission_mode}
                 if selected_model:
-                    from twicc.pending_selected_model import set_pending_selected_model
-
-                    set_pending_selected_model(session_id, selected_model)
+                    pending_kwargs["selected_model"] = selected_model
+                if effort:
+                    pending_kwargs["effort"] = effort
+                if thinking_enabled is not None:
+                    pending_kwargs["thinking_enabled"] = thinking_enabled
+                set_pending(session_id, **pending_kwargs)
 
                 await manager.create_session(
                     session_id, project_id, cwd, text,
                     permission_mode=permission_mode,
                     selected_model=selected_model,
+                    effort=effort, thinking_enabled=thinking_enabled,
                     images=images, documents=documents
                 )
         except RuntimeError as e:

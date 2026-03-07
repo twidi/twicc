@@ -250,6 +250,97 @@ export const MODEL_COLORS = {
 }
 
 /**
+ * Effort level values (matches SDK effort parameter).
+ * Controls the depth of thinking for Claude's responses.
+ */
+export const EFFORT = {
+    HIGH: 'high',
+    MEDIUM: 'medium',
+    LOW: 'low',
+}
+
+export const DEFAULT_EFFORT = EFFORT.HIGH
+
+/**
+ * Human-friendly labels for each effort level.
+ */
+export const EFFORT_LABELS = {
+    [EFFORT.LOW]: 'Low',
+    [EFFORT.MEDIUM]: 'Medium',
+    [EFFORT.HIGH]: 'High',
+}
+
+/**
+ * Display input text for each effort level (shown in the collapsed select).
+ */
+export const EFFORT_DISPLAY_LABELS = {
+    [EFFORT.LOW]: 'Low',
+    [EFFORT.MEDIUM]: 'Medium',
+    [EFFORT.HIGH]: 'High',
+}
+
+/**
+ * FontAwesome icon names for each effort level (classic/solid style).
+ */
+export const EFFORT_ICONS = {
+    [EFFORT.LOW]: 'gauge',
+    [EFFORT.MEDIUM]: 'gauge',
+    [EFFORT.HIGH]: 'gauge-high',
+}
+
+/**
+ * Accent colors for each effort level icon.
+ */
+export const EFFORT_COLORS = {
+    [EFFORT.LOW]: '#94a3b8',
+    [EFFORT.MEDIUM]: '#3b82f6',
+    [EFFORT.HIGH]: '#f59e0b',
+}
+
+/**
+ * Thinking mode values.
+ * Controls whether extended thinking (adaptive) is enabled.
+ */
+export const THINKING = {
+    ENABLED: true,
+    DISABLED: false,
+}
+
+export const DEFAULT_THINKING = THINKING.ENABLED
+
+/**
+ * Human-friendly labels for each thinking mode.
+ */
+export const THINKING_LABELS = {
+    [THINKING.ENABLED]: 'Enabled',
+    [THINKING.DISABLED]: 'Disabled',
+}
+
+/**
+ * Display input text for each thinking mode (shown in the collapsed select).
+ */
+export const THINKING_DISPLAY_LABELS = {
+    [THINKING.ENABLED]: 'Thinking',
+    [THINKING.DISABLED]: 'No thinking',
+}
+
+/**
+ * FontAwesome icon names for each thinking mode (classic/solid style).
+ */
+export const THINKING_ICONS = {
+    [THINKING.ENABLED]: 'brain',
+    [THINKING.DISABLED]: 'brain',
+}
+
+/**
+ * Accent colors for each thinking mode icon.
+ */
+export const THINKING_COLORS = {
+    [THINKING.ENABLED]: '#a855f7',
+    [THINKING.DISABLED]: '#94a3b8',
+}
+
+/**
  * Settings keys that are synced across devices via backend settings.json.
  * All other settings remain local to the browser (localStorage only).
  */
@@ -260,6 +351,10 @@ export const SYNCED_SETTINGS_KEYS = new Set([
     'alwaysApplyDefaultPermissionMode',
     'defaultModel',
     'alwaysApplyDefaultModel',
+    'defaultEffort',
+    'alwaysApplyDefaultEffort',
+    'defaultThinking',
+    'alwaysApplyDefaultThinking',
     'autoUnpinOnArchive',
     'terminalUseTmux',
 ])

@@ -8,7 +8,7 @@ import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSock
 import { useVisualViewport } from '../composables/useVisualViewport'
 import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
-import { PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_ICONS, PERMISSION_MODE_COLORS, MODEL, MODEL_LABELS, MODEL_ICONS, MODEL_COLORS } from '../constants'
+import { PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_ICONS, PERMISSION_MODE_COLORS, MODEL, MODEL_LABELS, MODEL_ICONS, MODEL_COLORS, EFFORT, EFFORT_LABELS, EFFORT_DISPLAY_LABELS, EFFORT_ICONS, EFFORT_COLORS, THINKING, THINKING_DISPLAY_LABELS, THINKING_ICONS, THINKING_COLORS } from '../constants'
 import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -46,6 +46,8 @@ const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const attachButtonId = useId()
 const modelSelectId = useId()
+const effortSelectId = useId()
+const thinkingSelectId = useId()
 const permissionSelectId = useId()
 
 // Attachments for this session
@@ -72,6 +74,21 @@ const modelOptions = Object.values(MODEL).map(value => ({
     color: MODEL_COLORS[value],
 }))
 
+// Effort options for the dropdown
+const effortOptions = Object.values(EFFORT).map(value => ({
+    value,
+    label: EFFORT_LABELS[value],
+    displayLabel: EFFORT_DISPLAY_LABELS[value],
+    icon: EFFORT_ICONS[value],
+    color: EFFORT_COLORS[value],
+}))
+
+// Thinking options for the dropdown (use string values for wa-select compatibility)
+const thinkingOptions = [
+    { value: 'true', label: THINKING_DISPLAY_LABELS[true], icon: THINKING_ICONS[true], color: THINKING_COLORS[true] },
+    { value: 'false', label: THINKING_DISPLAY_LABELS[false], icon: THINKING_ICONS[false], color: THINKING_COLORS[false] },
+]
+
 // Dynamic icon and color for the selected model (shown in the select's start slot)
 const selectedModelIcon = computed(() => MODEL_ICONS[selectedModel.value] || 'star')
 const selectedModelColor = computed(() => MODEL_COLORS[selectedModel.value] || 'inherit')
@@ -80,11 +97,25 @@ const selectedModelColor = computed(() => MODEL_COLORS[selectedModel.value] || '
 const selectedPermissionIcon = computed(() => PERMISSION_MODE_ICONS[selectedPermissionMode.value] || 'shield-halved')
 const selectedPermissionColor = computed(() => PERMISSION_MODE_COLORS[selectedPermissionMode.value] || 'inherit')
 
+// Dynamic icon and color for the selected effort (shown in the select's start slot)
+const selectedEffortIcon = computed(() => EFFORT_ICONS[selectedEffort.value] || 'gauge')
+const selectedEffortColor = computed(() => EFFORT_COLORS[selectedEffort.value] || 'inherit')
+
+// Dynamic icon and color for the selected thinking mode (shown in the select's start slot)
+const selectedThinkingIcon = computed(() => THINKING_ICONS[selectedThinking.value] || 'brain')
+const selectedThinkingColor = computed(() => THINKING_COLORS[selectedThinking.value] || 'inherit')
+
 // Selected permission mode for the current session
 const selectedPermissionMode = ref('default')
 
 // Selected model for the current session
 const selectedModel = ref('opus')
+
+// Selected effort level for the current session
+const selectedEffort = ref('medium')
+
+// Selected thinking mode for the current session
+const selectedThinking = ref(true)
 
 // Get process state for this session
 const processState = computed(() => store.getProcessState(props.sessionId))
@@ -112,6 +143,13 @@ const isDisabled = computed(() => {
 const isModelDisabled = computed(() => {
     const state = processState.value?.state
     return state === 'starting' || state === 'assistant_turn'
+})
+
+// Effort and thinking dropdowns are disabled whenever a process is running.
+// These cannot be changed on a live SDK client — they are only set at process creation.
+const isEffortThinkingDisabled = computed(() => {
+    const state = processState.value?.state
+    return state === 'starting' || state === 'assistant_turn' || state === 'user_turn'
 })
 
 // Button label based on process state and whether this is a settings-only update
@@ -165,12 +203,16 @@ const processIsActive = computed(() => {
 // so that dropdown change detection works even when no process is active.
 const activeModel = ref(null)
 const activePermissionMode = ref(null)
+const activeEffort = ref(null)
+const activeThinking = ref(null)
 
 // Detect whether the user has changed the dropdowns from their reference values.
 // This works regardless of process state (used for Reset button visibility).
 const hasDropdownsChanged = computed(() =>
     selectedModel.value !== activeModel.value ||
-    selectedPermissionMode.value !== activePermissionMode.value
+    selectedPermissionMode.value !== activePermissionMode.value ||
+    selectedEffort.value !== activeEffort.value ||
+    selectedThinking.value !== activeThinking.value
 )
 
 // Detect dropdown changes on an active process (used for Send button "Update" mode).
@@ -203,17 +245,39 @@ function resolveModel(sess) {
     return sess?.selected_model || settingsStore.getDefaultModel
 }
 
+// Determine the effective effort for the current session.
+function resolveEffort(sess) {
+    if (settingsStore.isAlwaysApplyDefaultEffort) {
+        return settingsStore.getDefaultEffort
+    }
+    return sess?.effort || settingsStore.getDefaultEffort
+}
+
+// Determine the effective thinking mode for the current session.
+function resolveThinking(sess) {
+    if (settingsStore.isAlwaysApplyDefaultThinking) {
+        return settingsStore.getDefaultThinking
+    }
+    return sess?.thinking_enabled ?? settingsStore.getDefaultThinking
+}
+
 // Sync permission mode and model when session changes
 watch(() => props.sessionId, (newId) => {
     const sess = store.getSession(newId)
     const resolvedPermission = resolvePermissionMode(sess)
     const resolvedModel = resolveModel(sess)
+    const resolvedEffort = resolveEffort(sess)
+    const resolvedThinking = resolveThinking(sess)
     selectedPermissionMode.value = resolvedPermission
     selectedModel.value = resolvedModel
+    selectedEffort.value = resolvedEffort
+    selectedThinking.value = resolvedThinking
     // Initialize active values from the session, falling back to resolved defaults
     // so that dropdown change detection works even when no process is active.
     activePermissionMode.value = sess?.permission_mode || resolvedPermission
     activeModel.value = sess?.selected_model || resolvedModel
+    activeEffort.value = sess?.effort || resolvedEffort
+    activeThinking.value = sess?.thinking_enabled ?? resolvedThinking
 }, { immediate: true })
 
 // When the default permission mode setting changes, or the "always apply" toggle
@@ -246,6 +310,30 @@ watch(
     }
 )
 
+// When the default effort setting changes, update the dropdown for sessions that should follow the default.
+watch(
+    () => [settingsStore.getDefaultEffort, settingsStore.isAlwaysApplyDefaultEffort],
+    () => {
+        if (processIsActive.value) return
+        const sess = store.getSession(props.sessionId)
+        const resolved = resolveEffort(sess)
+        selectedEffort.value = resolved
+        activeEffort.value = resolved
+    }
+)
+
+// When the default thinking setting changes, update the dropdown for sessions that should follow the default.
+watch(
+    () => [settingsStore.getDefaultThinking, settingsStore.isAlwaysApplyDefaultThinking],
+    () => {
+        if (processIsActive.value) return
+        const sess = store.getSession(props.sessionId)
+        const resolved = resolveThinking(sess)
+        selectedThinking.value = resolved
+        activeThinking.value = resolved
+    }
+)
+
 // Also react when session data arrives from backend (e.g., after watcher creates the row).
 // Don't overwrite user's selection when a process is active.
 // Always update the active values to track what the process is currently using.
@@ -271,6 +359,32 @@ watch(
             activeModel.value = newModel
             if (!processIsActive.value) {
                 selectedModel.value = newModel
+            }
+        }
+    }
+)
+
+// React when effort data arrives from backend.
+watch(
+    () => store.getSession(props.sessionId)?.effort,
+    (newEffort) => {
+        if (newEffort) {
+            activeEffort.value = newEffort
+            if (!processIsActive.value) {
+                selectedEffort.value = newEffort
+            }
+        }
+    }
+)
+
+// React when thinking_enabled data arrives from backend.
+watch(
+    () => store.getSession(props.sessionId)?.thinking_enabled,
+    (newThinking) => {
+        if (newThinking != null) {
+            activeThinking.value = newThinking
+            if (!processIsActive.value) {
+                selectedThinking.value = newThinking
             }
         }
     }
@@ -503,6 +617,8 @@ async function handleSend() {
         text: text,
         permission_mode: selectedPermissionMode.value,
         selected_model: selectedModel.value,
+        effort: selectedEffort.value,
+        thinking_enabled: selectedThinking.value,
     }
 
     // For draft sessions with a title, include it
@@ -534,6 +650,8 @@ async function handleSend() {
         // This makes the "Update..." button disappear immediately.
         activeModel.value = selectedModel.value
         activePermissionMode.value = selectedPermissionMode.value
+        activeEffort.value = selectedEffort.value
+        activeThinking.value = selectedThinking.value
 
         // For settings-only updates, nothing else to clean up
         if (isSettingsOnlyUpdate) return
@@ -634,6 +752,12 @@ async function handleReset() {
         if (activePermissionMode.value !== null) {
             selectedPermissionMode.value = activePermissionMode.value
         }
+        if (activeEffort.value !== null) {
+            selectedEffort.value = activeEffort.value
+        }
+        if (activeThinking.value !== null) {
+            selectedThinking.value = activeThinking.value
+        }
     }
 }
 </script>
@@ -718,7 +842,7 @@ async function handleReset() {
                     :value.prop="selectedModel"
                     @change="selectedModel = $event.target.value"
                     size="small"
-                    class="model-select"
+                    class="option-select model-select"
                     :disabled="isModelDisabled"
                     placement="top"
                 >
@@ -741,13 +865,73 @@ async function handleReset() {
                 </wa-select>
                 <AppTooltip :for="modelSelectId">Model selection. Can only be changed on your turn.</AppTooltip>
 
+                <!-- Effort selector -->
+                <wa-select
+                    :id="effortSelectId"
+                    :value.prop="selectedEffort"
+                    @change="selectedEffort = $event.target.value"
+                    size="small"
+                    class="option-select effort-select"
+                    :disabled="isEffortThinkingDisabled"
+                    placement="top"
+                >
+                    <wa-icon
+                        slot="start"
+                        :name="selectedEffortIcon"
+                        variant="classic"
+                        :style="{ color: selectedEffortColor }"
+                    ></wa-icon>
+                    <wa-option
+                        v-for="option in effortOptions"
+                        :key="option.value"
+                        :value="option.value"
+                        :label="option.displayLabel"
+                    >
+                        <span class="select-option">
+                            <wa-icon :name="option.icon" variant="classic" :style="{ color: option.color }"></wa-icon>
+                            <span>{{ option.label }}</span>
+                        </span>
+                    </wa-option>
+                </wa-select>
+                <AppTooltip :for="effortSelectId">Effort level. Cannot be changed while a process is running.</AppTooltip>
+
+                <!-- Thinking selector -->
+                <wa-select
+                    :id="thinkingSelectId"
+                    :value.prop="String(selectedThinking)"
+                    @change="selectedThinking = $event.target.value === 'true'"
+                    size="small"
+                    class="option-select thinking-select"
+                    :disabled="isEffortThinkingDisabled"
+                    placement="top"
+                >
+                    <wa-icon
+                        slot="start"
+                        :name="selectedThinkingIcon"
+                        variant="classic"
+                        :style="{ color: selectedThinkingColor }"
+                    ></wa-icon>
+                    <wa-option
+                        v-for="option in thinkingOptions"
+                        :key="option.value"
+                        :value="option.value"
+                        :label="option.label"
+                    >
+                        <span class="select-option">
+                            <wa-icon :name="option.icon" variant="classic" :style="{ color: option.color }"></wa-icon>
+                            <span>{{ option.label }}</span>
+                        </span>
+                    </wa-option>
+                </wa-select>
+                <AppTooltip :for="thinkingSelectId">Extended thinking. Cannot be changed while a process is running.</AppTooltip>
+
                 <!-- Permission mode selector -->
                 <wa-select
                     :id="permissionSelectId"
                     :value.prop="selectedPermissionMode"
                     @change="selectedPermissionMode = $event.target.value"
                     size="small"
-                    class="permission-mode-select"
+                    class="option-select permission-mode-select"
                     :disabled="isDisabled"
                     placement="top"
                 >
@@ -859,7 +1043,7 @@ body.sidebar-closed .message-input-toolbar {
     }
 }
 
-.model-select, .permission-mode-select {
+.option-select {
     .select-option {
         display: flex;
         align-items: baseline;
@@ -874,6 +1058,15 @@ body.sidebar-closed .message-input-toolbar {
         font-size: var(--wa-font-size-s);
         color: var(--wa-color-text-quiet);
     }
+    &::part(combobox) {
+        padding-inline: var(--wa-space-xs);
+    }
+    &::part(expand-icon) {
+        margin-inline-start: var(--wa-space-2xs);;
+    }
+    &:deep(> wa-icon)  {
+        margin-inline-end: var(--wa-space-2xs);
+    }
 }
 
 .model-select {
@@ -881,12 +1074,28 @@ body.sidebar-closed .message-input-toolbar {
         max-width: 3rem;
     }
     &::part(listbox) {
+        width: 8rem;
+    }
+}
+.effort-select {
+    &::part(display-input) {
+        max-width: 3.5rem;
+    }
+    &::part(listbox) {
+        width: 8.5rem;
+    }
+}
+.thinking-select {
+    &::part(display-input) {
+        max-width: 5rem;
+    }
+    &::part(listbox) {
         width: 10rem;
     }
 }
 .permission-mode-select {
     &::part(display-input) {
-        max-width: 6rem;
+        max-width: 5.5rem;
     }
     &::part(listbox) {
         width: 16rem;
@@ -897,6 +1106,9 @@ body.sidebar-closed .message-input-toolbar {
     display: flex;
     gap: var(--wa-space-s);
     flex-shrink: 0;
+    flex-wrap: wrap;
+    max-width: calc(100% - 7rem);
+    justify-content: flex-end;
 
     .cancel-button, .reset-button, .send-button {
         wa-icon {
@@ -910,7 +1122,7 @@ body.sidebar-closed .message-input-toolbar {
 
 /* On mobile, only show icons */
 @container message-input (width < 35rem) {
-    .model-select, .permission-mode-select {
+    .option-select {
         &::part(display-input) {
             display: none;
         }
@@ -930,6 +1142,9 @@ body.sidebar-closed .message-input-toolbar {
         }
     }
     .message-input-actions {
+        gap: var(--wa-space-2xs);
+        max-width: calc(100% - 6rem);
+
         .cancel-button, .reset-button, .send-button {
             &::part(base) {
                 padding-inline: var(--wa-space-s);
