@@ -14,6 +14,8 @@ Note: The project was almost entirely vibe-coded, with general oversight from th
 
 ## Quick start
 
+> **Note:** TWICC supports **Linux and macOS** only — see [Platform support](#platform-support).
+
 ```bash
 uvx twicc@latest
 ```
@@ -125,6 +127,12 @@ The build automatically runs `npm ci` + `npm run build` in `frontend/` via a hat
 - **Frontend:** Vue.js 3, Vite
 - **Database:** SQLite (with WAL mode)
 - **Process management:** Claude Agent SDK
+
+## Platform support
+
+TWICC runs on **Linux and macOS**. There is no Windows support — the codebase relies on Unix-specific system APIs (PTY, process signals, process groups) that would require significant work to adapt, and the author does not have access to a Windows machine for development and testing.
+
+**WSL (Windows Subsystem for Linux)** is the most realistic path for Windows users. TWICC should work unmodified under WSL2, though this has not been tested. If you are a Windows user and would like to help with testing or contributing WSL compatibility fixes, feel free to open an issue or a pull request.
 
 ## Current limitations
 
