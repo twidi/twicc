@@ -402,6 +402,10 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add("updates", self.channel_name)
         await self.accept()
 
+        # Send server version to the client (used for auto-reload on version change)
+        if self._should_send("server_version"):
+            await self.send_json({"type": "server_version", "version": settings.APP_VERSION})
+
         # Set up broadcast callback on ProcessManager (idempotent, safe to call multiple times)
         manager = get_process_manager()
         manager.set_broadcast_callback(broadcast_process_state)

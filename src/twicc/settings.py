@@ -1,3 +1,4 @@
+import importlib.metadata
 import os
 from pathlib import Path
 
@@ -6,6 +7,8 @@ from dotenv import load_dotenv
 from twicc.paths import ensure_data_dirs, get_backend_log_path, get_db_path, get_env_path
 
 PACKAGE_DIR = Path(__file__).resolve().parent  # src/twicc/
+
+APP_VERSION = importlib.metadata.version("twicc")
 
 # Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env)
 # Idempotent: no-op if already loaded by run.py

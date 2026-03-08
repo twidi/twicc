@@ -1,6 +1,6 @@
 // frontend/src/composables/useWebSocket.js
 
-import { watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useWebSocket as useVueWebSocket, useDebounceFn } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
@@ -28,9 +28,19 @@ if (!('wsSendFn' in __hmrState)) __hmrState.wsSendFn = null
 // When true, auto-reconnect is suppressed until explicitly reset.
 if (!('lastCloseWasAuthFailure' in __hmrState)) __hmrState.lastCloseWasAuthFailure = false
 
+// Server version received on first WebSocket connection.
+// Compared on reconnections to detect backend upgrades.
+if (!('serverVersion' in __hmrState)) __hmrState.serverVersion = null
+
 // Debounced function for user draft notifications (10 seconds)
 // This prevents spamming the server while still keeping the process alive
 if (!('debouncedDraftNotifications' in __hmrState)) __hmrState.debouncedDraftNotifications = new Map() // sessionId -> debouncedFn
+
+/**
+ * Reactive flag: true when a backend version change was detected.
+ * Used by App.vue to show the reload dialog.
+ */
+export const versionMismatchDetected = ref(false)
 
 /**
  * Send a JSON message through the WebSocket connection.
@@ -303,6 +313,16 @@ export function useWebSocket() {
 
     function handleMessage(msg) {
         switch (msg.type) {
+            case 'server_version':
+                console.log(`[TwiCC] Server version: ${msg.version}`)
+                if (__hmrState.serverVersion === null) {
+                    // First connection — store the version
+                    __hmrState.serverVersion = msg.version
+                } else if (msg.version !== __hmrState.serverVersion) {
+                    // Reconnection with different version — trigger reload
+                    versionMismatchDetected.value = true
+                }
+                break
             case 'auth_failure':
                 // Fallback for auth rejection: the backend sends this message
                 // before closing with code 4001. Some proxies (e.g. Vite dev

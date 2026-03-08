@@ -2,7 +2,7 @@
 import { onMounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { Notivue, Notification, lightTheme, slateTheme } from 'notivue'
-import { useWebSocket } from './composables/useWebSocket'
+import { useWebSocket, versionMismatchDetected } from './composables/useWebSocket'
 import { useDataStore } from './stores/data'
 import { useSettingsStore } from './stores/settings'
 import { useAuthStore } from './stores/auth'
@@ -44,6 +44,13 @@ watch(displayMode, (newMode) => {
     document.body.dataset.displayMode = newMode
 })
 
+// Auto-reload when backend version changes
+watch(versionMismatchDetected, (mismatch) => {
+    if (mismatch) {
+        setTimeout(() => window.location.reload(), 3000)
+    }
+})
+
 // Notivue theme - inverted for contrast (dark theme when app is light, and vice-versa)
 const toastTheme = computed(() => {
     const isDark = settingsStore.getEffectiveTheme === THEME_MODE.DARK
@@ -57,6 +64,14 @@ const toastTheme = computed(() => {
 </script>
 
 <template>
+    <!-- Version mismatch: non-dismissible reload dialog -->
+    <wa-dialog :open="versionMismatchDetected || undefined" without-header @wa-hide.prevent>
+        <div class="version-reload-content">
+            <wa-spinner></wa-spinner>
+            <p class="version-reload-text">TwiCC has been updated, reloading…</p>
+        </div>
+    </wa-dialog>
+
     <!-- Connecting overlay: shown while waiting for backend during auth check retry -->
     <div v-if="isConnecting" class="connecting-backdrop">
         <div class="connecting-content">
@@ -78,6 +93,21 @@ const toastTheme = computed(() => {
 </template>
 
 <style>
+.version-reload-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--wa-space-m);
+    padding: var(--wa-space-l);
+    text-align: center;
+}
+
+.version-reload-text {
+    font-size: var(--wa-font-size-l);
+    color: var(--wa-color-text-normal);
+    margin: 0;
+}
+
 .connecting-backdrop {
     position: fixed;
     inset: 0;
