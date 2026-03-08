@@ -402,6 +402,7 @@ export function useWebSocket() {
         switch (msg.type) {
             case 'server_version':
                 console.log(`[TwiCC] Server version: ${msg.version}`)
+                store.setCurrentVersion(msg.version)
                 if (__hmrState.serverVersion === null) {
                     // First connection — store the version
                     __hmrState.serverVersion = msg.version
@@ -540,9 +541,11 @@ export function useWebSocket() {
                 store.setStartupProgress(msg.phase, msg.current, msg.total, msg.completed)
                 break
             case 'update_available':
+                store.setLatestVersion(msg.latest_version, msg.release_url)
                 handleUpdateAvailable(msg)
                 break
             case 'claude_status':
+                store.setClaudeStatus(msg.status)
                 handleClaudeStatus(msg)
                 break
         }

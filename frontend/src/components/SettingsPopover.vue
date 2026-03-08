@@ -68,6 +68,27 @@ const editorWordWrap = computed(() => store.isEditorWordWrap)
 // Check if the current prompt is the default
 const isDefaultPrompt = computed(() => titleSystemPrompt.value === DEFAULT_TITLE_SYSTEM_PROMPT)
 
+// Server info for footer
+const currentVersion = computed(() => dataStore.currentVersion)
+const latestVersion = computed(() => dataStore.latestVersion)
+const claudeStatus = computed(() => dataStore.claudeStatus)
+
+/**
+ * Status display configuration for Claude Code component statuses.
+ * Maps Atlassian Statuspage status values to UI labels and CSS modifier classes.
+ */
+const CLAUDE_STATUS_DISPLAY = {
+    operational: { label: 'Operational', modifier: 'ok' },
+    degraded_performance: { label: 'Degraded', modifier: 'warning' },
+    partial_outage: { label: 'Partial outage', modifier: 'warning' },
+    major_outage: { label: 'Major outage', modifier: 'error' },
+    under_maintenance: { label: 'Maintenance', modifier: 'info' },
+}
+
+const claudeStatusDisplay = computed(() => {
+    return CLAUDE_STATUS_DISPLAY[claudeStatus.value] || { label: claudeStatus.value, modifier: 'ok' }
+})
+
 // Display mode options for the select
 const displayModeOptions = [
     { value: DISPLAY_MODE.CONVERSATION, label: 'Conversation' },
@@ -276,17 +297,6 @@ function onPopoverShow() {
     </wa-button>
     <AppTooltip for="settings-trigger">Toggle settings</AppTooltip>
     <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
-        <wa-button
-            v-if="showLogout"
-            :id="logoutButtonId"
-            class="logout-button"
-            variant="danger"
-            appearance="plain"
-            size="small"
-            @click="handleLogout"
-        >
-            <wa-icon name="right-from-bracket"></wa-icon>
-        </wa-button>
         <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
         <div class="settings-content">
             <div class="settings-sections">
@@ -574,6 +584,45 @@ function onPopoverShow() {
                 </section>
             </div>
         </div>
+        <wa-divider></wa-divider>
+        <footer v-if="currentVersion" class="settings-footer">
+            <span class="settings-footer-version">
+                <a href="https://github.com/twidi/twicc/" target="_blank" rel="noopener">TwiCC v{{ currentVersion }}</a>
+                <template v-if="latestVersion">
+                    &rarr;
+                    <a :href="latestVersion.releaseUrl" target="_blank" rel="noopener">v{{ latestVersion.version }} available</a>
+                </template>
+            </span>
+            ·
+            <a href="https://github.com/sponsors/twidi" target="_blank" rel="noopener" class="settings-footer-sponsor">
+                <span class="settings-footer-sponsor-icon"></span>
+                Sponsor
+            </a>
+            ·
+            <a
+                href="https://status.claude.com/"
+                target="_blank"
+                rel="noopener"
+                class="settings-footer-status"
+                :class="`settings-footer-status--${claudeStatusDisplay.modifier}`"
+                id="claude-status"
+            >
+                <span class="status-dot"></span>
+                CC: {{ claudeStatusDisplay.label }}
+            </a>
+            <AppTooltip for="claude-status">Claude code status on Anthropic's side</AppTooltip>
+            <wa-button
+                v-if="showLogout"
+                :id="logoutButtonId"
+                class="logout-button"
+                variant="danger"
+                appearance="plain"
+                size="small"
+                @click="handleLogout"
+            >
+                <wa-icon name="right-from-bracket"></wa-icon>
+            </wa-button>
+        </footer>
     </wa-popover>
 </template>
 
@@ -589,19 +638,19 @@ function onPopoverShow() {
 }
 
 .settings-popover::part(body) {
-    position: relative;
+    padding: 0;
 }
 
 .settings-content {
+    padding: var(--wa-space-m);
     max-height: calc(90vh - 8rem);
     overflow-y: auto;
 }
 
-.logout-button {
-    position: absolute;
-    top: calc(-1 * var(--wa-space-xs));
-    right: calc(-1 * var(--wa-space-xs));
-    z-index: 1;
+@media (width < 640px) {
+    .settings-content {
+        padding: var(--wa-space-s);
+    }
 }
 
 .settings-sections {
@@ -649,6 +698,79 @@ function onPopoverShow() {
 
 .synced-icon {
     color: var(--wa-color-brand);
+}
+
+wa-popover > wa-divider {
+    --width: 4px;
+    --spacing: 0;
+}
+
+.settings-footer {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    column-gap: var(--wa-space-xs);
+    padding: var(--wa-space-s);
+    margin-right: 2rem;
+    border-top: 1px solid var(--wa-color-border-subtle);
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+}
+
+.settings-footer a {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+}
+
+.settings-footer a:hover {
+    color: var(--wa-color-text);
+}
+
+.logout-button {
+    position: absolute;
+    right: 0;
+}
+
+.settings-footer-version {
+    white-space: nowrap;
+}
+
+.settings-footer-status {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    white-space: nowrap;
+    text-decoration: none !important;
+}
+
+.settings-footer-status:hover {
+    text-decoration: underline !important;
+}
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.settings-footer-status--ok .status-dot {
+    background-color: var(--wa-color-success);
+}
+
+.settings-footer-status--warning .status-dot {
+    background-color: var(--wa-color-warning);
+}
+
+.settings-footer-status--error .status-dot {
+    background-color: var(--wa-color-danger);
+}
+
+.settings-footer-status--info .status-dot {
+    background-color: var(--wa-color-primary);
 }
 
 .settings-notice p {

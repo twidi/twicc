@@ -103,6 +103,11 @@ export const useDataStore = defineStore('data', {
         // { initial_sync?: { current, total, completed }, background_compute?: { current, total, completed } }
         startupProgress: {},
 
+        // Server info (from WebSocket messages)
+        currentVersion: null,           // string, from server_version message
+        latestVersion: null,            // { version, releaseUrl } or null, from update_available message
+        claudeStatus: 'operational',    // string, from claude_status message
+
         // Local UI state (separate from server data to avoid being overwritten)
         localState: {
             projectsList: {
@@ -446,6 +451,17 @@ export const useDataStore = defineStore('data', {
         // Usage
         setUsage(hasOauth, success, reason, rawData, computedData) {
             this.usage = { hasOauth, success, reason, raw: rawData, computed: computedData }
+        },
+
+        // Server info
+        setCurrentVersion(version) {
+            this.currentVersion = version
+        },
+        setLatestVersion(version, releaseUrl) {
+            this.latestVersion = { version, releaseUrl }
+        },
+        setClaudeStatus(status) {
+            this.claudeStatus = status
         },
 
         // Startup progress
