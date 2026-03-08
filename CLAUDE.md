@@ -217,6 +217,53 @@ If a `wa-*` component appears unstyled in production (but works in dev), it's li
 A nearly complete "one file" version of the docs is available at `frontend/node_modules/@awesome.me/webawesome/dist/llms.txt`
 Full documentation is also at `./frontend/node_modules/@awesome.me/webawesome/dist/skills/` (`references/components/`, `references/usage.md` and `references/frameworks/vue.md`)
 
+## Release Process
+
+When the user asks to make a new release, follow these steps in order:
+
+1. **Check branch:** Verify you're on `main`. If not, stop and inform the user.
+
+2. **Update version numbers:**
+   - `pyproject.toml` → `[project]` → `version`
+   - `uv.lock` → `[[package]]` → `version` (for the `twicc` package entry)
+
+3. **Update CHANGELOG.md:** Set the version number on the `[Unreleased]` section (if not already done) and add the release date (`YYYY-MM-DD`).
+
+4. **Build:** Run `uv build` (takes a moment).
+
+5. **User testing (mandatory):** Ask the user to test the build before continuing. Provide the command:
+   ```
+   uvx --from dist/twicc-{version}-py3-none-any.whl twicc
+   ```
+   Remind them to stop any running TwiCC instance first, then visit `http://localhost:3500` to test. **Do not run `uvx` yourself** — this requires user interaction.
+
+6. **Wait for user confirmation.** Only proceed if they say it's OK.
+
+7. **Commit:** Create a commit with message `release: v{version}`.
+
+8. **Create annotated tag** with changelog content extracted from `CHANGELOG.md`:
+   ```bash
+   git tag -a v{version} -m "Release v{version}
+
+   {changelog content for this version}"
+   ```
+
+9. **Push** commit and tag:
+   ```bash
+   git push && git push --tags
+   ```
+
+10. **Create GitHub Release** using the same changelog content:
+    ```bash
+    gh release create v{version} --title "v{version}" --notes "{changelog content}"
+    ```
+
+11. **Publish to PyPI (user action):** Give the user the command to publish:
+    ```
+    uvx uv-publish /home/twidi/dev/twicc-poc/dist/twicc-{version}*
+    ```
+    **Do not run this yourself** unless the user explicitly asks you to.
+
 ## Dialog Forms Pattern
 
 When creating a form inside a `wa-dialog`, refer to `frontend/src/components/ProjectEditDialog.vue` as the reference implementation. Key patterns:
