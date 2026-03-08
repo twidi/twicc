@@ -245,6 +245,14 @@ const displayResult = computed(() => {
     return resultData.value
 })
 
+// --- Tool result JHV overrides ---
+// Force specific valueType for certain tool result keys (prevents markdown auto-detection).
+const RESULT_OVERRIDES = {
+    Bash: { content: { valueType: 'string-multiline' } },
+}
+
+const resultOverrides = computed(() => RESULT_OVERRIDES[props.name] ?? {})
+
 // --- Read tool: syntax-highlighted result ---
 
 // Regex to match a cat -n formatted line: optional spaces, digits, → arrow, then content
@@ -645,6 +653,7 @@ function navigateToSubagent() {
                         <JsonHumanView
                             v-else
                             :value="displayResult"
+                            :overrides="resultOverrides"
                         />
                     </div>
                 </div>
