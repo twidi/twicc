@@ -33,7 +33,7 @@ watch(
     { immediate: true },
 )
 
-defineExpose({ toggleConfig })
+defineExpose({ toggleConfig, showConfig })
 
 // ── Shortcut buttons ─────────────────────────────────────────────────
 

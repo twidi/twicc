@@ -678,7 +678,10 @@ onBeforeUnmount(() => {
                             :variant="activeTabId === 'terminal' ? 'brand' : 'neutral'"
                             size="small"
                             @click="onTerminalTabClickCompact"
-                        >Terminal</wa-button>
+                        >
+                            Terminal
+                            <wa-icon v-if="activeTabId === 'terminal' && !terminalPanelRef?.showConfig" slot="end" name="gear" class="tab-config-icon"></wa-icon>
+                        </wa-button>
                     </div>
 
                     <!-- Scroll right button (faded when at the end) -->
@@ -767,6 +770,7 @@ onBeforeUnmount(() => {
                     @click="onTerminalTabClick"
                 >
                     Terminal
+                    <wa-icon v-if="activeTabId === 'terminal' && !terminalPanelRef?.showConfig" slot="end" name="gear" class="tab-config-icon"></wa-icon>
                 </wa-button>
             </wa-tab>
 
@@ -1025,5 +1029,10 @@ wa-tab::part(base) {
     .compact-tab-scroll-end {
         right: var(--wa-space-xs);
     }
+}
+
+.tab-config-icon {
+    font-size: 0.85em;
+    opacity: 0.5;
 }
 </style>
