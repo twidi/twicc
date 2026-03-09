@@ -13,8 +13,10 @@ Protocol:
     { "type": "input", "data": "ls -la\n" }       — keyboard input
     { "type": "resize", "cols": 120, "rows": 30 }  — terminal resize
 
-  Server → Client (plain text frames):
-    Raw PTY output (no JSON wrapping for performance).
+  Server → Client:
+    Plain text frames — raw PTY output (no JSON wrapping for performance).
+    JSON text frames (when type field present) — control responses:
+      { "type": "pane_state", "alternate_on": true }  — pane screen mode
 """
 
 import asyncio
@@ -291,6 +293,115 @@ def kill_tmux_session(session_id: str) -> bool:
         return False
 
 
+def tmux_set_option(session_id: str, option: str, value: str) -> bool:
+    """Set a tmux session option.
+
+    Returns True on success, False on failure.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "set-option", "-t", name, option, value],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def tmux_pane_is_alternate(session_id: str) -> bool:
+    """Check if the active pane of the active window is in alternate screen mode.
+
+    Alternate screen is used by full-screen apps (less, vim, htop, etc.).
+    This allows the frontend to choose the right scroll strategy:
+    - Alternate on: send arrow keys (the app handles scrolling)
+    - Alternate off: send mouse wheel (tmux copy-mode scrolls the buffer)
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "display-message",
+             "-t", name, "-p", "#{alternate_on}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip() == "1"
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _configure_tmux_scroll_bindings() -> None:
+    """Configure tmux mouse wheel bindings for proper scroll in all contexts.
+
+    Overrides the default WheelUpPane / WheelDownPane bindings so that:
+    - If the pane is already in copy-mode or the app captures the mouse
+      (e.g. vim with mouse): pass the mouse event through (send-keys -M).
+    - If the pane is in alternate screen mode (less, htop, etc.) WITHOUT
+      mouse capture: send arrow keys so the app scrolls natively.
+    - Otherwise (shell prompt): enter copy-mode for tmux scrollback.
+
+    These bindings are server-wide (shared by all twicc tmux sessions on
+    the same socket), so setting them repeatedly is harmless.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return
+
+    condition = "#{||:#{pane_in_mode},#{mouse_any_flag}}"
+
+    for event, arrow_keys, normal_cmd in [
+        ("WheelUpPane", "Up Up Up", "copy-mode -e ; send-keys -M"),
+        ("WheelDownPane", "Down Down Down", "send-keys -M"),
+    ]:
+        alt_branch = (
+            f'if-shell -F "#{{alternate_on}}" '
+            f'"send-keys {arrow_keys}" '
+            f'"{normal_cmd}"'
+        )
+        subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME,
+             "bind-key", "-T", "root", event,
+             "if-shell", "-F", condition, "send-keys -M", alt_branch],
+            capture_output=True, timeout=5,
+        )
+
+
+# ── tmux pane state monitor ──────────────────────────────────────────────
+
+# Polling interval for detecting pane state changes (alternate screen)
+_PANE_POLL_INTERVAL = 2  # seconds
+
+
+async def _tmux_pane_monitor(session_id: str, send) -> None:
+    """Periodically check for tmux pane state changes and push updates.
+
+    Detects when the active pane switches between normal and alternate screen
+    (e.g., entering/exiting less or vim). Sends state to the frontend so
+    scroll behavior stays in sync.
+    """
+    prev_alternate = await asyncio.to_thread(tmux_pane_is_alternate, session_id)
+    try:
+        while True:
+            await asyncio.sleep(_PANE_POLL_INTERVAL)
+            alternate = await asyncio.to_thread(tmux_pane_is_alternate, session_id)
+            if alternate != prev_alternate:
+                prev_alternate = alternate
+                await send({"type": "websocket.send",
+                            "text": json.dumps({"type": "pane_state",
+                                                "alternate_on": alternate})})
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        return
+
+
 # ── Raw ASGI WebSocket application ────────────────────────────────────────
 
 async def terminal_application(scope, receive, send):
@@ -352,6 +463,13 @@ async def terminal_application(scope, receive, send):
 
     # ── Accept connection ─────────────────────────────────────────────
     await send({"type": "websocket.accept"})
+
+    # Configure tmux session for scroll support
+    if use_tmux:
+        # Enable mouse mode so wheel events scroll the buffer (not command history)
+        tmux_set_option(session_id, "mouse", "on")
+        # Override default wheel bindings for proper scroll in less/htop/etc.
+        _configure_tmux_scroll_bindings()
 
     # ── PTY output reader task ────────────────────────────────────────
     # Uses add_reader for event-driven reading, and an asyncio.Queue
@@ -441,10 +559,19 @@ async def terminal_application(scope, receive, send):
 
     recv_task = asyncio.create_task(receive_loop())
 
+    # ── tmux pane monitor (detects alternate screen changes) ─────────
+    monitor_task = None
+    if use_tmux:
+        monitor_task = asyncio.create_task(_tmux_pane_monitor(session_id, send))
+
     try:
         # Wait for either the PTY to die or the client to disconnect
+        tasks = [sender_task, recv_task]
+        if monitor_task:
+            tasks.append(monitor_task)
+
         done, pending = await asyncio.wait(
-            [sender_task, recv_task],
+            tasks,
             return_when=asyncio.FIRST_COMPLETED,
         )
 
@@ -467,4 +594,10 @@ async def terminal_application(scope, receive, send):
         logger.exception("Error in terminal WebSocket for session %s", session_id)
     finally:
         # ── Cleanup ───────────────────────────────────────────────────
+        if monitor_task and not monitor_task.done():
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
         cleanup_pty(master_fd, child_pid)
