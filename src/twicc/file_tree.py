@@ -235,8 +235,11 @@ def search_files(dir_path, query, max_results=50, show_hidden=False, show_ignore
     """Search for files matching a query.
 
     Two search modes:
-    - Subsequence (default): each character of the query must appear in order
-      in the file path. E.g. "vw" matches "views.py".
+    - Segment fuzzy (default): the query is split by '/' into tokens, and
+      each token must fuzzy-match (subsequence) a path segment name.
+      Matched segments must appear in order but can skip intermediate ones.
+      E.g. for "foo/bar/toto": "f/t" matches (f→foo, t→toto),
+      "fo" matches (fo→foo), "fbt" does NOT match (no single segment matches).
     - Exact substring: if the query starts with a quote (' or "), the rest is
       matched as a contiguous substring. A trailing matching quote is stripped.
       E.g. "foo => *foo*, "foo" => *foo*, 'bar => *bar*.
@@ -337,12 +340,32 @@ def search_files(dir_path, query, max_results=50, show_hidden=False, show_ignore
             if lower_query not in lower_fp:
                 continue
         else:
-            # Subsequence match
-            qi = 0
-            for ch in lower_fp:
-                if qi < len(lower_query) and ch == lower_query[qi]:
-                    qi += 1
-            if qi != len(lower_query):
+            # Segment-based fuzzy match: split query and path by '/' separators.
+            # Each query token must fuzzy-match (subsequence) a path segment,
+            # and matched segments must appear in order (but can skip segments).
+            query_tokens = [t for t in lower_query.split("/") if t]
+            if not query_tokens:
+                continue
+            path_segments = lower_fp.split("/")
+            seg_idx = 0
+            matched = True
+            for token in query_tokens:
+                found = False
+                while seg_idx < len(path_segments):
+                    segment = path_segments[seg_idx]
+                    seg_idx += 1
+                    # Check if token is a subsequence of this segment
+                    ti = 0
+                    for ch in segment:
+                        if ti < len(token) and ch == token[ti]:
+                            ti += 1
+                    if ti == len(token):
+                        found = True
+                        break
+                if not found:
+                    matched = False
+                    break
+            if not matched:
                 continue
 
         # Score: prefer filename matches over path matches, shorter paths, consecutive chars
@@ -351,12 +374,15 @@ def search_files(dir_path, query, max_results=50, show_hidden=False, show_ignore
         if exact_mode:
             filename_match = lower_query in filename
         else:
-            # Bonus for matching in filename portion
-            qi_fn = 0
-            for ch in filename:
-                if qi_fn < len(lower_query) and ch == lower_query[qi_fn]:
-                    qi_fn += 1
-            filename_match = qi_fn == len(lower_query)
+            # Bonus for matching in filename portion: check if a single-token query
+            # fuzzy-matches the filename alone (multi-token queries can't match a single segment)
+            filename_match = False
+            if len(query_tokens) == 1:
+                ti = 0
+                for ch in filename:
+                    if ti < len(query_tokens[0]) and ch == query_tokens[0][ti]:
+                        ti += 1
+                filename_match = ti == len(query_tokens[0])
 
         # Bonus for consecutive character matches (contiguous substring)
         contiguous_bonus = 1 if lower_query in lower_fp else 0
