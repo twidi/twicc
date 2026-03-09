@@ -10,6 +10,7 @@ import { THEME_MODE } from './constants'
 import ConnectionIndicator from './components/ConnectionIndicator.vue'
 import CustomNotification from './components/CustomNotification.vue'
 import CommandPalette from './components/CommandPalette.vue'
+import SearchOverlay from './components/SearchOverlay.vue'
 import { initStaticCommands } from './commands/staticCommands'
 
 const route = useRoute()
@@ -55,14 +56,20 @@ watch(versionMismatchDetected, (mismatch) => {
     }
 })
 
-// ─── Command Palette (Ctrl+K / Cmd+K) ───────────────────────────────────
+// ─── Command Palette (Ctrl+K / Cmd+K) & Search (Ctrl+Shift+F) ───────────
 const commandPaletteRef = ref(null)
+const searchOverlayRef = ref(null)
 
 function handleGlobalKeydown(e) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault()
         e.stopPropagation()
         commandPaletteRef.value?.open()
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'F') {
+        e.preventDefault()
+        e.stopPropagation()
+        searchOverlayRef.value?.open()
     }
 }
 
@@ -104,6 +111,7 @@ const toastTheme = computed(() => {
 
     <ConnectionIndicator v-if="!isLoginPage && !isConnecting" :status="wsStatus" />
     <CommandPalette ref="commandPaletteRef" />
+    <SearchOverlay ref="searchOverlayRef" />
     <div class="app-container">
         <router-view />
     </div>

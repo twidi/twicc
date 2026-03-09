@@ -1225,6 +1225,7 @@ def search_sessions(request):
                 "title": s.title or "",
                 "project_id": s.project_id or "",
                 "project_name": s.project.name if s.project else "",
+                "archived": s.archived,
             }
 
     return JsonResponse({
@@ -1236,6 +1237,7 @@ def search_sessions(request):
                 "session_title": sessions_info.get(sr.session_id, {}).get("title", ""),
                 "project_id": sessions_info.get(sr.session_id, {}).get("project_id", ""),
                 "project_name": sessions_info.get(sr.session_id, {}).get("project_name", ""),
+                "archived": sessions_info.get(sr.session_id, {}).get("archived", False),
                 "score": sr.score,
                 "matches": [
                     {

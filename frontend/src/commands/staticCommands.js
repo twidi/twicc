@@ -130,6 +130,13 @@ export function initStaticCommands(router) {
             action: () => router.push({ name: 'projects-all' }),
         },
         {
+            id: 'nav.search',
+            label: 'Search Sessions\u2026',
+            icon: 'magnifying-glass',
+            category: 'navigation',
+            action: () => window.dispatchEvent(new CustomEvent('twicc:open-search')),
+        },
+        {
             id: 'nav.tab.chat',
             label: 'Switch to Chat Tab',
             icon: 'comment',

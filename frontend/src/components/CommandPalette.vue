@@ -415,14 +415,11 @@ defineExpose({ open, close })
 <style scoped>
 wa-dialog {
     background: var(--wa-color-surface-default);
+    --width: min(720px, calc(100vw - 1rem));
 }
-wa-dialog::part(panel) {
-    --width: min(560px, calc(100vw - 2rem));
-    border-radius: var(--wa-border-radius-l);
-    overflow: hidden;
-    margin-top: 15vh;
-}
+
 wa-dialog::part(body) {
+    background: var(--wa-color-surface-default);
     padding: 0;
 }
 wa-dialog::part(overlay) {

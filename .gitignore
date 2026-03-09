@@ -215,8 +215,9 @@ Thumbs.db
 # Project specific
 # =========================
 
-# Data directory (database, SDK logs) — used in worktrees
+# Data directory (database, search index, SDK logs) — used in worktrees
 db/
+search-index/
 
 # SQLite database (legacy location, kept for safety)
 data.sqlite
@@ -241,3 +242,4 @@ logs/
 # Agent local files
 CLAUDE.local.md
 /.claude/
+.superpowers/

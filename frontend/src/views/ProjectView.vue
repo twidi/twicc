@@ -9,7 +9,7 @@ import SessionList from '../components/SessionList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
 import ProjectBadge from '../components/ProjectBadge.vue'
-import ProjectProcessIndicator from '../components/ProjectProcessIndicator.vue'
+import ProjectSelectOptions from '../components/ProjectSelectOptions.vue'
 import ProjectDetailPanel from '../components/ProjectDetailPanel.vue'
 import SessionRenameDialog from '../components/SessionRenameDialog.vue'
 import ProjectEditDialog from '../components/ProjectEditDialog.vue'
@@ -165,14 +165,6 @@ const effectiveProjectId = computed(() =>
 const allProjects = computed(() =>
     store.getProjects.filter(p => showArchivedProjects.value || !p.archived)
 )
-const namedProjects = computed(() =>
-    allProjects.value.filter(p => p.name !== null)
-)
-const flatTree = computed(() => {
-    const unnamed = allProjects.value.filter(p => p.name === null)
-    const roots = buildProjectTree(unnamed)
-    return flattenProjectTree(roots)
-})
 // Non-stale projects only — used in "new session" dropdowns to prevent creating sessions in stale projects
 const nonStaleProjects = computed(() => allProjects.value.filter(p => !p.stale))
 const nonStaleNamedProjects = computed(() =>
@@ -263,6 +255,10 @@ function handleSearchKeydown(event) {
         searchQuery.value = ''
         event.preventDefault()
     }
+}
+
+function openAdvancedSearch() {
+    window.dispatchEvent(new CustomEvent('twicc:open-search'))
 }
 
 // Load sessions when project changes or mode changes
@@ -702,44 +698,8 @@ function updateSidebarClosedClass(closed) {
                         <wa-option :value="ALL_PROJECTS_ID">
                             All Projects
                         </wa-option>
-
-                        <!-- Named projects -->
-                        <wa-divider v-if="namedProjects.length"></wa-divider>
-                        <wa-option
-                            v-for="p in namedProjects"
-                            :key="p.id"
-                            :value="p.id"
-                            :label="store.getProjectDisplayName(p.id)"
-                        >
-                            <span class="project-option">
-                                <ProjectBadge :project-id="p.id" />
-                                <ProjectProcessIndicator :project-id="p.id" size="small" />
-                            </span>
-                        </wa-option>
-
-                        <!-- Unnamed projects (flattened tree) -->
-                        <wa-divider v-if="flatTree.length"></wa-divider>
-                        <template v-for="item in flatTree" :key="item.key">
-                            <wa-option
-                                v-if="item.isFolder"
-                                disabled
-                                class="tree-folder-option"
-                            >
-                                <span class="tree-folder-label" :style="{ paddingLeft: `${item.depth * 12}px` }">
-                                    {{ item.segment }}
-                                </span>
-                            </wa-option>
-                            <wa-option
-                                v-else
-                                :value="item.project.id"
-                                :label="store.getProjectDisplayName(item.project.id)"
-                            >
-                                <span class="project-option" :style="{ paddingLeft: `${item.depth * 12}px` }">
-                                    <ProjectBadge :project-id="item.project.id" />
-                                    <ProjectProcessIndicator :project-id="item.project.id" size="small" />
-                                </span>
-                            </wa-option>
-                        </template>
+                        <wa-divider v-if="allProjects.length"></wa-divider>
+                        <ProjectSelectOptions :projects="allProjects" show-process-indicator />
                     </wa-select>
                 </div>
 
@@ -788,6 +748,17 @@ function updateSidebarClosedClass(closed) {
                     >
                         <wa-icon slot="start" name="magnifying-glass"></wa-icon>
                     </wa-input>
+                    <wa-button
+                        id="search-advanced-button"
+                        variant="neutral"
+                        appearance="filled-outlined"
+                        size="small"
+                        class="search-advanced-button"
+                        @click="openAdvancedSearch"
+                    >
+                        <wa-icon name="plus"></wa-icon>
+                    </wa-button>
+                    <AppTooltip for="search-advanced-button">Full-text search (Ctrl+Shift+F)</AppTooltip>
                 </div>
             </div>
 
@@ -1185,6 +1156,10 @@ wa-split-panel::part(divider) {
     }
 }
 
+.search-advanced-button {
+    flex-shrink: 0;
+}
+
 .session-options-dropdown {
     flex-shrink: 0;
 }
@@ -1234,17 +1209,6 @@ wa-split-panel::part(divider) {
     box-sizing: border-box;
     background-color: var(--dot-color, transparent);
     border-color: var(--dot-color, var(--wa-color-border-quiet));
-}
-
-.project-option {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-xs);
-    width: 100%;
-    justify-content: space-between;
-}
-
-.tree-folder-option {
 }
 
 .tree-folder-dropdown-item {
