@@ -27,6 +27,9 @@ const sessionItemsListRef = ref(null)
 // Reference to FilesPanel for cross-tab file reveal
 const filesPanelRef = ref(null)
 
+// Reference to TerminalPanel for config toggle
+const terminalPanelRef = ref(null)
+
 // ═══════════════════════════════════════════════════════════════════════════
 // KeepAlive lifecycle: active state, listener setup/teardown
 // ═══════════════════════════════════════════════════════════════════════════
@@ -271,6 +274,16 @@ function switchToTabAndCollapse(panel) {
     switchToTab(panel)
     if (sessionHeaderRef.value?.isCompactExpanded) {
         sessionHeaderRef.value.isCompactExpanded = false
+    }
+}
+
+/**
+ * Handle click on the Terminal tab button.
+ * If already on the terminal tab, toggle the config panel.
+ */
+function onTerminalTabClick() {
+    if (activeTabId.value === 'terminal') {
+        terminalPanelRef.value?.toggleConfig()
     }
 }
 
@@ -649,7 +662,7 @@ onBeforeUnmount(() => {
                             :appearance="activeTabId === 'terminal' ? 'outlined' : 'plain'"
                             :variant="activeTabId === 'terminal' ? 'brand' : 'neutral'"
                             size="small"
-                            @click="switchToTabAndCollapse('terminal')"
+                            @click="activeTabId === 'terminal' ? onTerminalTabClick() : switchToTabAndCollapse('terminal')"
                         >Terminal</wa-button>
                     </div>
 
@@ -736,6 +749,7 @@ onBeforeUnmount(() => {
                     :appearance="activeTabId === 'terminal' ? 'outlined' : 'plain'"
                     :variant="activeTabId === 'terminal' ? 'brand' : 'neutral'"
                     size="small"
+                    @click="onTerminalTabClick"
                 >
                     Terminal
                 </wa-button>
@@ -795,6 +809,7 @@ onBeforeUnmount(() => {
             </wa-tab-panel>
             <wa-tab-panel name="terminal">
                 <TerminalPanel
+                    ref="terminalPanelRef"
                     :session-id="session?.id"
                     :active="isActive && activeTabId === 'terminal'"
                 />
