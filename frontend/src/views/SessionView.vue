@@ -279,11 +279,16 @@ function switchToTabAndCollapse(panel) {
 
 /**
  * Handle click on the Terminal tab button.
- * If already on the terminal tab, toggle the config panel.
+ * If already on the terminal tab, toggle the shell navigator.
+ * If the config panel is open, close it first.
  */
 function onTerminalTabClick() {
     if (activeTabId.value === 'terminal') {
-        terminalPanelRef.value?.toggleConfig()
+        if (terminalPanelRef.value?.showConfig) {
+            terminalPanelRef.value.toggleConfig()
+        } else {
+            terminalPanelRef.value?.toggleNavigator()
+        }
     }
 }
 
@@ -680,7 +685,7 @@ onBeforeUnmount(() => {
                             @click="onTerminalTabClickCompact"
                         >
                             Terminal
-                            <wa-icon v-if="activeTabId === 'terminal' && !terminalPanelRef?.showConfig" slot="end" name="gear" class="tab-config-icon"></wa-icon>
+                            <wa-icon v-if="activeTabId === 'terminal' && !terminalPanelRef?.showConfig && !terminalPanelRef?.showNavigator" slot="end" name="gear" class="tab-config-icon"></wa-icon>
                         </wa-button>
                     </div>
 
@@ -770,7 +775,7 @@ onBeforeUnmount(() => {
                     @click="onTerminalTabClick"
                 >
                     Terminal
-                    <wa-icon v-if="activeTabId === 'terminal' && !terminalPanelRef?.showConfig" slot="end" name="gear" class="tab-config-icon"></wa-icon>
+                    <wa-icon v-if="activeTabId === 'terminal' && !terminalPanelRef?.showConfig && !terminalPanelRef?.showNavigator" slot="end" name="gear" class="tab-config-icon"></wa-icon>
                 </wa-button>
             </wa-tab>
 

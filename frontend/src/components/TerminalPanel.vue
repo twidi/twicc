@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useTerminal } from '../composables/useTerminal'
 import { useSettingsStore } from '../stores/settings'
+import TmuxNavigator from './TmuxNavigator.vue'
 import ShortcutConfigDialog from './ShortcutConfigDialog.vue'
 
 const settingsStore = useSettingsStore()
@@ -18,9 +19,23 @@ const props = defineProps({
 })
 
 const {
-    containerRef, isConnected, started, start, reconnect,
-    sendInput, focusTerminal, copyMode, showConfig, toggleConfig,
+    containerRef, isConnected, started, start, reconnect, sendInput, focusTerminal,
+    copyMode, windows, presets, paneAlternate, showNavigator,
+    listWindows, createWindow, selectWindow, toggleNavigator,
+    showConfig, toggleConfig,
 } = useTerminal(props.sessionId)
+
+const activeWindowName = computed(() => windows.value.find(w => w.active)?.name ?? '')
+/** Flatten all preset names across all sources for tab bar icons + mobile dropdown. */
+const presetNames = computed(() => {
+    const names = new Set()
+    for (const source of presets.value) {
+        for (const p of source.presets || []) {
+            names.add(p.name)
+        }
+    }
+    return names
+})
 
 // Lazy init: start the terminal only when the tab becomes active for the first time
 watch(
@@ -33,7 +48,7 @@ watch(
     { immediate: true },
 )
 
-defineExpose({ toggleConfig, showConfig })
+defineExpose({ toggleConfig, toggleNavigator, showConfig, showNavigator })
 
 // ── Shortcut buttons ─────────────────────────────────────────────────
 
@@ -48,6 +63,24 @@ function executeShortcut(shortcut) {
     sendInput(shortcut.sequence)
     focusTerminal()
 }
+
+// ── Navigator ────────────────────────────────────────────────────────
+
+function handleNavigatorSelect(name) {
+    selectWindow(name)
+}
+
+function handleNavigatorCreate(nameOrPreset) {
+    createWindow(nameOrPreset)
+    // Backend responds with updated windows list automatically
+}
+
+// Fetch window list when navigator is shown
+watch(showNavigator, (show) => {
+    if (show) {
+        listWindows()
+    }
+})
 
 // ── Shortcut config dialog ───────────────────────────────────────────
 
@@ -72,8 +105,21 @@ function onConfigClose() {
 
 <template>
     <div class="terminal-panel">
-        <!-- Shortcut buttons toolbar (desktop if showOnDesktop, mobile always) -->
-        <div v-if="started && !showConfig && (settingsStore.isTouchDevice || visibleShortcuts.length > 0)" class="shortcut-toolbar">
+        <!-- Mobile toolbar — dropdown for window switching + shortcut buttons -->
+        <div v-if="settingsStore.isTouchDevice && started && !showNavigator && !showConfig" class="mobile-toolbar">
+            <wa-select
+                v-if="windows.length > 1"
+                :value.prop="activeWindowName"
+                size="small"
+                class="window-select"
+                @change="selectWindow($event.target.value); focusTerminal()"
+            >
+                <wa-option
+                    v-for="win in windows"
+                    :key="win.name"
+                    :value="win.name"
+                ><wa-icon v-if="presetNames.has(win.name)" name="circle-play" class="option-preset-icon"></wa-icon>{{ win.name }}</wa-option>
+            </wa-select>
             <wa-button
                 v-for="shortcut in visibleShortcuts"
                 :key="shortcut.index"
@@ -94,6 +140,35 @@ function onConfigClose() {
                 Copy
             </wa-button>
         </div>
+
+        <!-- Desktop: shortcut buttons toolbar + window tab bar -->
+        <template v-else-if="!settingsStore.isTouchDevice && started && !showNavigator && !showConfig">
+            <!-- Shortcut buttons toolbar (desktop only, when showOnDesktop) -->
+            <div v-if="visibleShortcuts.length > 0" class="shortcut-toolbar">
+                <wa-button
+                    v-for="shortcut in visibleShortcuts"
+                    :key="shortcut.index"
+                    size="small"
+                    appearance="outlined"
+                    variant="neutral"
+                    @click="executeShortcut(shortcut)"
+                >{{ shortcut.label }}</wa-button>
+            </div>
+
+            <!-- Window tab bar — shown when multiple windows exist -->
+            <div v-if="windows.length > 1" class="window-tabs">
+                <button
+                    v-for="win in windows"
+                    :key="win.name"
+                    class="window-tab"
+                    :class="{ active: win.active }"
+                    @click="selectWindow(win.name); focusTerminal()"
+                >
+                    <wa-icon v-if="presetNames.has(win.name)" name="circle-play" class="tab-preset-icon"></wa-icon>
+                    {{ win.name }}
+                </button>
+            </div>
+        </template>
 
         <!-- Config panel (toggled by re-clicking Terminal tab) -->
         <div v-if="showConfig && started" class="config-panel">
@@ -123,10 +198,20 @@ function onConfigClose() {
             </div>
         </div>
 
-        <div ref="containerRef" class="terminal-container" :class="{ hidden: showConfig }"></div>
+        <!-- Terminal xterm.js container — hidden when navigator or config is shown -->
+        <div ref="containerRef" class="terminal-container" :class="{ hidden: showNavigator || showConfig }"></div>
+
+        <!-- Tmux Navigator overlay -->
+        <TmuxNavigator
+            v-if="showNavigator"
+            :windows="windows"
+            :preset-sources="presets"
+            @select="handleNavigatorSelect"
+            @create="handleNavigatorCreate"
+        />
 
         <!-- Disconnect overlay -->
-        <div v-if="started && !isConnected && !showConfig" class="disconnect-overlay">
+        <div v-if="started && !isConnected && !showNavigator && !showConfig" class="disconnect-overlay">
             <wa-callout variant="warning" appearance="outlined">
                 <wa-icon slot="icon" name="plug-circle-xmark"></wa-icon>
                 <div class="disconnect-content">
@@ -180,6 +265,71 @@ function onConfigClose() {
 
 .terminal-container :deep(.xterm-viewport) {
     overflow-y: auto !important;
+}
+
+/* ── Window tab bar (desktop) ─────────────────────────────────────── */
+
+.window-tabs {
+    display: flex;
+    align-items: stretch;
+    gap: var(--wa-space-3xs);
+    flex-shrink: 0;
+    overflow-x: auto;
+    padding: 0 var(--wa-space-xs);
+    border-bottom: 1px solid var(--wa-color-border-default);
+    background: var(--wa-color-surface-alt);
+}
+
+.window-tab {
+    appearance: none;
+    padding: var(--wa-space-xs) var(--wa-space-m);
+    margin: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--wa-color-text-subtle);
+    font-size: var(--wa-font-size-s);
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.window-tab:hover {
+    color: var(--wa-color-text-default);
+}
+
+.window-tab.active {
+    color: var(--wa-color-brand-600);
+    border-bottom-color: var(--wa-color-brand-600);
+}
+
+.tab-preset-icon {
+    font-size: 0.75em;
+    margin-right: 0.25em;
+}
+
+.option-preset-icon {
+    font-size: 0.85em;
+    margin-right: 0.25em;
+    vertical-align: -0.1em;
+}
+
+/* ── Toolbars ─────────────────────────────────────────────────────── */
+
+.mobile-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    padding: var(--wa-space-2xs) var(--wa-space-xs);
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--wa-color-border-default);
+}
+
+.window-select {
+    min-width: 0;
+    max-width: 10rem;
 }
 
 .shortcut-toolbar {

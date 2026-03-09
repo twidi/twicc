@@ -10,12 +10,19 @@ WebSocket endpoint (`/ws/terminal/<session_id>/`).
 
 Protocol:
   Client → Server (JSON text frames):
-    { "type": "input", "data": "ls -la\n" }       — keyboard input
+    { "type": "input", "data": "ls -la\\n" }       — keyboard input
     { "type": "resize", "cols": 120, "rows": 30 }  — terminal resize
+    { "type": "list_windows" }                      — list tmux windows + presets
+    { "type": "create_window", "name": "build" }    — create named window
+    { "type": "create_window", "name": "dev",        — create from preset
+      "preset_cwd": "/path", "command": "npm run dev" }
+    { "type": "select_window", "name": "build" }    — switch to window
 
   Server → Client:
     Plain text frames — raw PTY output (no JSON wrapping for performance).
     JSON text frames (when type field present) — control responses:
+      { "type": "windows", "windows": [...] }       — window list
+      { "type": "window_changed", "name": "..." }   — window switched
       { "type": "pane_state", "alternate_on": true }  — pane screen mode
 """
 
@@ -30,6 +37,7 @@ import signal
 import struct
 import subprocess
 import termios
+from typing import NamedTuple
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
@@ -54,20 +62,24 @@ READ_BUFFER_SIZE = 20480
 TMUX_SOCKET_NAME = "twicc"
 
 
+class SessionContext(NamedTuple):
+    """All directory context needed for terminal startup and preset resolution."""
+    cwd: str                   # Resolved working directory for PTY spawn
+    archived: bool
+    project_dir: str | None    # project.directory (if exists on disk)
+    git_dir: str | None        # session.git_directory or project.git_root (if exists on disk)
+    session_cwd: str | None    # session.cwd (raw from JSONL, if exists on disk)
+
+
 @sync_to_async
-def get_session_info(session_id: str) -> tuple[str, bool]:
-    """Resolve the working directory and archived status for a terminal session.
+def get_session_context(session_id: str) -> SessionContext:
+    """Resolve the full directory context for a terminal session.
 
-    Returns (cwd, archived).
-
-    Working directory priority order (with existence check at each level):
-    - If session has a git_directory (active git context from tool_use):
-        1. Session.git_directory
-        2. Project.directory
-    - Otherwise (no session git context):
-        1. Project.directory
-        2. Project.git_root (project happens to be inside a git repo)
-    - Fallback: ~ (home directory)
+    Returns a SessionContext with:
+    - cwd: the resolved working directory for spawning the PTY (same priority
+      logic as before: git_directory > project.directory > project.git_root > ~)
+    - archived: whether the session is archived
+    - project_dir, git_dir, session_cwd: raw directory fields for preset resolution
     """
     from twicc.core.models import Session
 
@@ -76,26 +88,48 @@ def get_session_info(session_id: str) -> tuple[str, bool]:
     try:
         session = Session.objects.select_related("project").get(id=session_id)
     except Session.DoesNotExist:
-        return home, False
+        return SessionContext(cwd=home, archived=False, project_dir=None, git_dir=None, session_cwd=None)
 
+    project = session.project
+
+    # Resolve project_dir (validated existence)
+    project_dir = project.directory if project and project.directory and os.path.isdir(project.directory) else None
+
+    # Resolve git_dir: prefer session.git_directory, then project.git_root
+    git_dir = None
+    if session.git_directory and os.path.isdir(session.git_directory):
+        git_dir = session.git_directory
+    elif project and project.git_root and os.path.isdir(project.git_root):
+        git_dir = project.git_root
+
+    # Resolve session_cwd (the actual CWD from the JSONL)
+    session_cwd = session.cwd if session.cwd and os.path.isdir(session.cwd) else None
+
+    # Resolve cwd for PTY spawn (same priority logic as before)
     if session.git_directory:
-        # Session has active git context — git directory is preferred
         candidates = [
             session.git_directory,
-            session.project.directory if session.project else None,
+            project.directory if project else None,
         ]
     else:
-        # No session git context — project directory is preferred
         candidates = [
-            session.project.directory if session.project else None,
-            session.project.git_root if session.project else None,
+            project.directory if project else None,
+            project.git_root if project else None,
         ]
 
+    cwd = home
     for candidate in candidates:
         if candidate and os.path.isdir(candidate):
-            return candidate, session.archived
+            cwd = candidate
+            break
 
-    return home, session.archived
+    return SessionContext(
+        cwd=cwd,
+        archived=session.archived,
+        project_dir=project_dir,
+        git_dir=git_dir,
+        session_cwd=session_cwd,
+    )
 
 
 # ── tmux helpers ──────────────────────────────────────────────────────────
@@ -337,6 +371,237 @@ def tmux_pane_is_alternate(session_id: str) -> bool:
         return False
 
 
+
+# ── tmux window management ───────────────────────────────────────────────
+
+
+def tmux_list_windows(session_id: str) -> list[dict[str, object]]:
+    """List all windows in the tmux session for the given twicc session ID.
+
+    Returns a list of dicts: [{"name": "main", "active": True}, ...]
+    Returns an empty list if the session doesn't exist or tmux is not installed.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return []
+
+    name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "list-windows",
+             "-t", name, "-F", "#{window_name}\t#{window_active}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+        windows = []
+        for line in result.stdout.strip().splitlines():
+            parts = line.split("\t")
+            if len(parts) == 2:
+                windows.append({"name": parts[0], "active": parts[1] == "1"})
+        return windows
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+
+
+def tmux_create_window(session_id: str, window_name: str, cwd: str | None = None) -> bool:
+    """Create a new window in the tmux session with the given name.
+
+    Args:
+        session_id: The Claude session ID
+        window_name: Display name for the new tmux window
+        cwd: Working directory for the new window. If None, inherits tmux default.
+
+    Returns True on success, False on failure.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    session_name = tmux_session_name(session_id)
+    cmd = [tmux_path, "-L", TMUX_SOCKET_NAME, "new-window",
+           "-t", session_name, "-n", window_name]
+    if cwd:
+        cmd.extend(["-c", cwd])
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=5)
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def tmux_select_window(session_id: str, window_name: str) -> bool:
+    """Switch the active window in the tmux session.
+
+    Returns True on success, False on failure.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    session_name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "select-window",
+             "-t", f"{session_name}:{window_name}"],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def tmux_rename_window(session_id: str, target: str, new_name: str) -> bool:
+    """Rename a window in the tmux session.
+
+    target can be a window index (e.g., "0") or name.
+    Returns True on success, False on failure.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    session_name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "rename-window",
+             "-t", f"{session_name}:{target}", new_name],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def tmux_send_keys(session_id: str, window_name: str, keys: str) -> bool:
+    """Send keys to a specific tmux window.
+
+    Used to execute a command in a newly created preset window.
+    Appends Enter to simulate pressing the Enter key.
+
+    Returns True on success, False on failure.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    session_name = tmux_session_name(session_id)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "send-keys",
+             "-t", f"{session_name}:{window_name}", keys, "Enter"],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def load_tmux_presets(project_dir: str) -> list[dict]:
+    """Load tmux shell presets from a .twicc-tmux.json file.
+
+    Looks for the file in the given project directory. Each preset
+    has a name (required), optional cwd (relative or absolute), and
+    optional command to run on creation.
+
+    Relative cwd paths are resolved against the project directory.
+
+    Returns a list of preset dicts, or [] on missing file / parse error.
+    """
+    config_path = os.path.join(project_dir, ".twicc-tmux.json")
+    try:
+        with open(config_path, "r") as f:
+            data = json.loads(f.read())
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    presets = []
+    for entry in data:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        preset: dict = {"name": str(entry["name"])}
+        if "command" in entry:
+            preset["command"] = str(entry["command"])
+        # Resolve cwd: explicit relative paths are relative to the config directory,
+        # default (no cwd specified) is the directory containing the .twicc-tmux.json.
+        if "cwd" in entry:
+            entry_cwd = str(entry["cwd"])
+            if not os.path.isabs(entry_cwd):
+                entry_cwd = os.path.normpath(os.path.join(project_dir, entry_cwd))
+            preset["cwd"] = entry_cwd
+        else:
+            preset["cwd"] = project_dir
+        presets.append(preset)
+    return presets
+
+
+def resolve_preset_sources(ctx: SessionContext) -> list[dict]:
+    """Resolve up to 3 preset sources from session context.
+
+    Returns a list of dicts with {label, directory, presets} for each source
+    that has a valid .twicc-tmux.json file. Sources:
+    1. Project dir — always checked.
+    2. Git dir — checked if different from project dir.
+    3. CWD walk — walk parents from session_cwd up to first .twicc-tmux.json,
+       bounded by project_dir / git_dir.
+    """
+    sources: list[dict] = []
+    seen_dirs: set[str] = set()
+    home = os.path.expanduser("~")
+
+    def _norm(path: str) -> str:
+        return os.path.normpath(os.path.realpath(path))
+
+    def _try_add(label: str, directory: str) -> bool:
+        """Load presets from directory. Add to sources if file exists. Returns True if added."""
+        norm = _norm(directory)
+        if norm in seen_dirs:
+            return False
+        seen_dirs.add(norm)
+        presets = load_tmux_presets(directory)
+        if presets:
+            sources.append({"label": label, "directory": directory, "presets": presets})
+            return True
+        return False
+
+    def _shorten(path: str) -> str:
+        """Replace $HOME prefix with ~."""
+        if path.startswith(home):
+            return "~" + path[len(home):]
+        return path
+
+    # Source 1: Project directory
+    if ctx.project_dir:
+        _try_add("Project", ctx.project_dir)
+
+    # Source 2: Git directory (only if different from project dir)
+    if ctx.git_dir:
+        _try_add("Git root", ctx.git_dir)
+
+    # Source 3: Walk up from session CWD
+    if ctx.session_cwd:
+        cwd_norm = _norm(ctx.session_cwd)
+        if cwd_norm not in seen_dirs:
+            current = ctx.session_cwd
+            while True:
+                norm_current = _norm(current)
+                if norm_current in seen_dirs:
+                    break  # Already covered by project or git source
+                presets = load_tmux_presets(current)
+                if presets:
+                    sources.append({"label": _shorten(current), "directory": current, "presets": presets})
+                    break  # Stop at first found
+                parent = os.path.dirname(current)
+                if parent == current:
+                    break  # Reached filesystem root
+                current = parent
+
+    return sources
+
+
 def _configure_tmux_scroll_bindings() -> None:
     """Configure tmux mouse wheel bindings for proper scroll in all contexts.
 
@@ -373,28 +638,37 @@ def _configure_tmux_scroll_bindings() -> None:
         )
 
 
-# ── tmux pane state monitor ──────────────────────────────────────────────
 
-# Polling interval for detecting pane state changes (alternate screen)
-_PANE_POLL_INTERVAL = 2  # seconds
+# ── tmux window monitor ──────────────────────────────────────────────────
+
+# Polling interval for detecting external window changes (close, rename, etc.)
+_WINDOW_POLL_INTERVAL = 2  # seconds
 
 
-async def _tmux_pane_monitor(session_id: str, send) -> None:
-    """Periodically check for tmux pane state changes and push updates.
+async def _tmux_window_monitor(session_id: str, send, ctx: SessionContext) -> None:
+    """Periodically check for tmux window and pane state changes and push updates.
 
-    Detects when the active pane switches between normal and alternate screen
-    (e.g., entering/exiting less or vim). Sends state to the frontend so
-    scroll behavior stays in sync.
+    Detects when windows are created or destroyed externally (e.g., shell
+    exits, user closes a pane) and when the active pane switches between
+    normal and alternate screen (e.g., entering/exiting less or vim).
+    Sends updated state to the frontend so the tab bar / dropdown and
+    scroll behavior stay in sync.
     """
+    # Initialize with current state to avoid a duplicate update on first poll
+    prev_windows = await asyncio.to_thread(tmux_list_windows, session_id)
     prev_alternate = await asyncio.to_thread(tmux_pane_is_alternate, session_id)
     try:
         while True:
-            await asyncio.sleep(_PANE_POLL_INTERVAL)
+            await asyncio.sleep(_WINDOW_POLL_INTERVAL)
+            win_list = await asyncio.to_thread(tmux_list_windows, session_id)
             alternate = await asyncio.to_thread(tmux_pane_is_alternate, session_id)
-            if alternate != prev_alternate:
+            if win_list != prev_windows or alternate != prev_alternate:
+                prev_windows = win_list
                 prev_alternate = alternate
+                presets = await asyncio.to_thread(resolve_preset_sources, ctx)
                 await send({"type": "websocket.send",
-                            "text": json.dumps({"type": "pane_state",
+                            "text": json.dumps({"type": "windows", "windows": win_list,
+                                                "presets": presets,
                                                 "alternate_on": alternate})})
     except asyncio.CancelledError:
         return
@@ -433,7 +707,9 @@ async def terminal_application(scope, receive, send):
 
     # ── Resolve working directory and session state ──────────────────
     session_id = scope["url_route"]["kwargs"]["session_id"]
-    cwd, archived = await get_session_info(session_id)
+    ctx = await get_session_context(session_id)
+    cwd = ctx.cwd
+    archived = ctx.archived
 
     # ── Spawn PTY (tmux or raw shell) ────────────────────────────────
     use_tmux = wants_tmux(scope)
@@ -464,12 +740,16 @@ async def terminal_application(scope, receive, send):
     # ── Accept connection ─────────────────────────────────────────────
     await send({"type": "websocket.accept"})
 
-    # Configure tmux session for scroll support
+    # Configure tmux session
     if use_tmux:
         # Enable mouse mode so wheel events scroll the buffer (not command history)
         tmux_set_option(session_id, "mouse", "on")
         # Override default wheel bindings for proper scroll in less/htop/etc.
         _configure_tmux_scroll_bindings()
+        # Rename the default tmux window to "main" for fresh sessions
+        windows = tmux_list_windows(session_id)
+        if windows and windows[0]["name"] != "main":
+            tmux_rename_window(session_id, "0", "main")
 
     # ── PTY output reader task ────────────────────────────────────────
     # Uses add_reader for event-driven reading, and an asyncio.Queue
@@ -554,15 +834,50 @@ async def terminal_application(scope, receive, send):
                         except OSError:
                             pass
 
+                # ── tmux window control messages ──────────────────
+                elif msg_type == "list_windows" and use_tmux:
+                    ctx = await get_session_context(session_id)
+                    win_list = tmux_list_windows(session_id)
+                    presets = resolve_preset_sources(ctx)
+                    alternate = tmux_pane_is_alternate(session_id)
+                    await send({"type": "websocket.send",
+                                "text": json.dumps({"type": "windows", "windows": win_list,
+                                                    "presets": presets,
+                                                    "alternate_on": alternate})})
+
+                elif msg_type == "create_window" and use_tmux:
+                    ctx = await get_session_context(session_id)
+                    window_name = msg.get("name", "").strip()
+                    if window_name:
+                        window_cwd = msg.get("preset_cwd") or ctx.cwd
+                        tmux_create_window(session_id, window_name, cwd=window_cwd)
+                        # Run optional command in the new window
+                        command = msg.get("command")
+                        if command:
+                            tmux_send_keys(session_id, window_name, command)
+                        win_list = tmux_list_windows(session_id)
+                        presets = resolve_preset_sources(ctx)
+                        alternate = tmux_pane_is_alternate(session_id)
+                        await send({"type": "websocket.send",
+                                    "text": json.dumps({"type": "windows", "windows": win_list,
+                                                        "presets": presets,
+                                                        "alternate_on": alternate})})
+
+                elif msg_type == "select_window" and use_tmux:
+                    window_name = msg.get("name", "")
+                    if window_name and tmux_select_window(session_id, window_name):
+                        await send({"type": "websocket.send",
+                                    "text": json.dumps({"type": "window_changed", "name": window_name})})
+
             elif message["type"] == "websocket.disconnect":
                 return
 
     recv_task = asyncio.create_task(receive_loop())
 
-    # ── tmux pane monitor (detects alternate screen changes) ─────────
+    # ── tmux window monitor (detects external changes like shell exit) ──
     monitor_task = None
     if use_tmux:
-        monitor_task = asyncio.create_task(_tmux_pane_monitor(session_id, send))
+        monitor_task = asyncio.create_task(_tmux_window_monitor(session_id, send, ctx))
 
     try:
         # Wait for either the PTY to die or the client to disconnect
