@@ -4,7 +4,8 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { ClipboardAddon } from '@xterm/addon-clipboard'
+// ClipboardAddon intentionally not loaded — Ctrl+V must reach the shell
+// (e.g. bash quoted-insert). Paste is handled by right-click / middle-click.
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { toast } from '../composables/useToast'
@@ -110,6 +111,19 @@ export function useTerminal(sessionId) {
     let selectStartRow = 0
     /** @type {AbortController | null} */
     let touchAbortController = null
+
+    // ── Mouse interception state (desktop, tmux mode) ─────────────────────
+    /** @type {AbortController | null} */
+    let mouseAbortController = null
+    /** Whether a mouse-drag selection is in progress */
+    let mouseIsSelecting = false
+    /** Start coordinates for mouse selection (terminal cells + screen pixels) */
+    let mouseStartCol = 0
+    let mouseStartRow = 0
+    let mouseStartX = 0
+    let mouseStartY = 0
+    /** Drag threshold in pixels before selection starts */
+    const MOUSE_DRAG_THRESHOLD = 3
 
     /**
      * Check whether tmux should actually be used for this session.
@@ -357,6 +371,170 @@ export function useTerminal(sessionId) {
         }
     }
 
+    // ── Mouse interception (desktop, tmux mode) ─────────────────────────
+    //
+    // When tmux enables SGR mouse tracking, xterm.js converts all mouse
+    // events into escape sequences sent to the PTY instead of doing local
+    // text selection. A single capture-phase mousedown listener blocks all
+    // mouse buttons from reaching xterm.js (no SGR reports to tmux).
+    //
+    // - Left-button: preventDefault + custom selection via terminal.select()
+    // - Middle/right-click: stopPropagation only — browser default actions
+    //   (paste from X11 selection, context menu) flow through normally.
+    //   xterm.js handles the resulting paste event on its internal textarea.
+    // - Mouse wheel: NOT intercepted (tmux scrollback continues to work).
+
+    /**
+     * Select the word at the given terminal buffer coordinates.
+     * Reads the buffer line and expands around the click position
+     * using whitespace as word boundary.
+     */
+    function selectWordAt(col, row) {
+        if (!terminal) return
+        const line = terminal.buffer.active.getLine(row)
+        if (!line) return
+
+        let lineStr = ''
+        for (let i = 0; i < terminal.cols; i++) {
+            const cell = line.getCell(i)
+            lineStr += cell ? cell.getChars() || ' ' : ' '
+        }
+
+        // Expand left
+        let start = col
+        while (start > 0 && !/\s/.test(lineStr[start - 1])) start--
+        // Expand right
+        let end = col
+        while (end < terminal.cols - 1 && !/\s/.test(lineStr[end + 1])) end++
+
+        const length = end - start + 1
+        if (length > 0) {
+            terminal.select(start, row, length)
+        }
+    }
+
+    /**
+     * Select the entire line at the given terminal buffer row.
+     */
+    function selectLineAt(row) {
+        if (!terminal) return
+        terminal.select(0, row, terminal.cols)
+    }
+
+    /**
+     * Handle mousedown in capture phase on the terminal container.
+     * Intercepts left-button clicks to implement local text selection
+     * instead of letting xterm.js send SGR mouse reports to tmux.
+     */
+    function onMouseDownIntercept(e) {
+        // Let Shift+click pass through — xterm.js handles it as forced selection
+        if (e.shiftKey) return
+
+        // Block all mouse buttons from reaching xterm.js (prevents SGR mouse
+        // reports to tmux). Only preventDefault for left button — middle/right-click
+        // default actions (paste / context menu) must flow through normally.
+        e.stopPropagation()
+        if (e.button !== 0) return
+        e.preventDefault()
+
+        // Focus the terminal (xterm.js normally does this in its own mousedown)
+        terminal?.focus()
+
+        const coords = screenToTerminalCoords(e.clientX, e.clientY)
+
+        if (e.detail === 2) {
+            // Double-click: select word
+            selectWordAt(coords.col, coords.row)
+            return
+        }
+        if (e.detail >= 3) {
+            // Triple-click: select line
+            selectLineAt(coords.row)
+            return
+        }
+
+        // Single click: prepare for potential drag selection
+        mouseIsSelecting = false
+        mouseStartCol = coords.col
+        mouseStartRow = coords.row
+        mouseStartX = e.clientX
+        mouseStartY = e.clientY
+
+        terminal?.clearSelection()
+
+        // Track drag on document so we capture moves outside the terminal area
+        document.addEventListener('mousemove', onMouseMoveIntercept)
+        document.addEventListener('mouseup', onMouseUpIntercept)
+    }
+
+    /**
+     * Handle mousemove during a potential drag selection.
+     * Added on document, active only between mousedown and mouseup.
+     */
+    function onMouseMoveIntercept(e) {
+        if (!terminal) return
+
+        // Apply drag threshold before starting selection
+        if (!mouseIsSelecting) {
+            const dx = e.clientX - mouseStartX
+            const dy = e.clientY - mouseStartY
+            if (Math.abs(dx) < MOUSE_DRAG_THRESHOLD && Math.abs(dy) < MOUSE_DRAG_THRESHOLD) {
+                return
+            }
+            mouseIsSelecting = true
+        }
+
+        const coords = screenToTerminalCoords(e.clientX, e.clientY)
+        const startOffset = mouseStartRow * terminal.cols + mouseStartCol
+        const currentOffset = coords.row * terminal.cols + coords.col
+        const length = currentOffset - startOffset
+
+        if (length > 0) {
+            terminal.select(mouseStartCol, mouseStartRow, length)
+        } else if (length < 0) {
+            terminal.select(coords.col, coords.row, -length)
+        }
+    }
+
+    /**
+     * Handle mouseup — finalize selection and clean up document listeners.
+     * The existing onSelectionChange handler auto-copies to clipboard.
+     */
+    function onMouseUpIntercept() {
+        document.removeEventListener('mousemove', onMouseMoveIntercept)
+        document.removeEventListener('mouseup', onMouseUpIntercept)
+        mouseIsSelecting = false
+    }
+
+    /**
+     * Attach capture-phase mouse event listeners that intercept left-button
+     * click/drag and right/middle-click when in tmux mode on desktop.
+     * Mouse wheel events are NOT intercepted — they continue to flow to
+     * xterm.js for tmux scrolling.
+     */
+    function attachMouseInterceptListeners() {
+        if (!containerRef.value || settingsStore.isTouchDevice) return
+        if (!shouldUseTmux()) return
+
+        mouseAbortController = new AbortController()
+        const signal = mouseAbortController.signal
+
+        containerRef.value.addEventListener('mousedown', onMouseDownIntercept, { capture: true, signal })
+    }
+
+    /**
+     * Detach mouse interception listeners.
+     */
+    function detachMouseInterceptListeners() {
+        if (mouseAbortController) {
+            mouseAbortController.abort()
+            mouseAbortController = null
+        }
+        // Also clean up any lingering document-level drag listeners
+        document.removeEventListener('mousemove', onMouseMoveIntercept)
+        document.removeEventListener('mouseup', onMouseUpIntercept)
+    }
+
     /**
      * Initialize the xterm.js Terminal and attach it to the container,
      * then connect the WebSocket.
@@ -380,7 +558,7 @@ export function useTerminal(sessionId) {
         fitAddon = new FitAddon()
         terminal.loadAddon(fitAddon)
         terminal.loadAddon(new WebLinksAddon())
-        terminal.loadAddon(new ClipboardAddon())
+        // No ClipboardAddon — Ctrl+V goes to the shell, paste via right/middle-click
 
         terminal.open(containerRef.value)
 
@@ -447,6 +625,10 @@ export function useTerminal(sessionId) {
         // Attach touch listeners for mobile text selection
         attachTouchListeners()
 
+        // Attach mouse interception for tmux mode on desktop
+        // (intercepts left-drag for selection, right/middle-click for paste)
+        attachMouseInterceptListeners()
+
         // Connect to the backend
         connectWs()
     }
@@ -496,6 +678,7 @@ export function useTerminal(sessionId) {
         intentionalClose = true
 
         detachTouchListeners()
+        detachMouseInterceptListeners()
 
         if (resizeObserver) {
             resizeObserver.disconnect()
