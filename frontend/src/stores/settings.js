@@ -49,6 +49,8 @@ const SETTINGS_SCHEMA = {
     _effectiveTheme: null,
     // Not persisted - detected once at startup, true when primary input is touch
     _isTouchDevice: false,
+    // Not persisted - detected once at startup, true when running on macOS
+    _isMac: false,
     // Not persisted - guard flag to prevent re-broadcasting when applying remote settings
     _isApplyingRemoteSettings: false,
 }
@@ -191,6 +193,11 @@ export const useSettingsStore = defineStore('settings', {
          * Detected once at startup. Used to disable tooltips on touch devices.
          */
         isTouchDevice: (state) => state._isTouchDevice,
+        /**
+         * Whether the user is on macOS.
+         * Detected once at startup. Used to display platform-appropriate key names.
+         */
+        isMac: (state) => state._isMac,
     },
 
     actions: {
@@ -594,6 +601,8 @@ export function initSettings() {
 
     // Detect touch device once at startup (primary input has no hover support)
     store._isTouchDevice = window.matchMedia('(hover: none)').matches
+    // Detect macOS once at startup (for platform-appropriate key names)
+    store._isMac = navigator.platform?.startsWith('Mac') || navigator.userAgent?.includes('Macintosh')
 
     // Initialize effective theme and listen for system preference changes
     store._updateEffectiveTheme()

@@ -181,7 +181,12 @@ const placeholderText = computed(() => {
         return 'You can send a message now. Claude will receive it as soon as possible (while working or after). Note: it will not appear in the conversation history.'
     }
     // user_turn, dead, or no process
-    return 'Type your message...'
+    let text = 'Type your message... Use / for commands, @ for file paths'
+    if (!settingsStore.isTouchDevice) {
+        const keys = settingsStore.isMac ? '⌘↵ or Ctrl↵' : 'Ctrl↵ or Meta↵'
+        text += `, ${keys} to send`
+    }
+    return text
 })
 
 // Whether a process is actively running (not starting, not dead)
