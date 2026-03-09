@@ -296,6 +296,23 @@ export const CLAUDE_IN_CHROME_DISPLAY_LABELS = {
 }
 
 /**
+ * Maximum number of configurable terminal shortcut buttons.
+ */
+export const MAX_TERMINAL_SHORTCUTS = 3
+
+/**
+ * Default terminal shortcut buttons.
+ * Each slot has: label (display text), sequence (escape sequence to send),
+ * and showOnDesktop (whether to show on non-touch devices).
+ * Empty label+sequence means the slot is unused and hidden in the toolbar.
+ */
+export const DEFAULT_TERMINAL_SHORTCUTS = [
+    { label: 'Ctrl+C', sequence: '\x03', showOnDesktop: false },
+    { label: 'Ctrl+Z', sequence: '\x1a', showOnDesktop: false },
+    { label: '', sequence: '', showOnDesktop: false },
+]
+
+/**
  * Settings keys that are synced across devices via backend settings.json.
  * All other settings remain local to the browser (localStorage only).
  */
@@ -314,4 +331,5 @@ export const SYNCED_SETTINGS_KEYS = new Set([
     'alwaysApplyDefaultClaudeInChrome',
     'autoUnpinOnArchive',
     'terminalUseTmux',
+    'terminalShortcuts',
 ])

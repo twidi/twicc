@@ -99,6 +99,9 @@ export function useTerminal(sessionId) {
     /** @type {boolean} */
     let intentionalClose = false
 
+    // ── Config panel visibility (toggled by re-clicking Terminal tab) ────
+    const showConfig = ref(false)
+
     // ── Touch selection state (mobile) ─────────────────────────────────────
     let selectStartCol = 0
     let selectStartRow = 0
@@ -404,6 +407,28 @@ export function useTerminal(sessionId) {
     }
 
     /**
+     * Send raw input data to the PTY (e.g. control characters).
+     * @param {string} data
+     */
+    function sendInput(data) {
+        wsSend({ type: 'input', data })
+    }
+
+    /**
+     * Focus the xterm.js terminal (e.g. after selecting from a dropdown).
+     */
+    function focusTerminal() {
+        terminal?.focus()
+    }
+
+    /**
+     * Toggle the config panel visibility.
+     */
+    function toggleConfig() {
+        showConfig.value = !showConfig.value
+    }
+
+    /**
      * Clean up everything: terminal, WebSocket, observers.
      */
     function cleanup() {
@@ -471,5 +496,5 @@ export function useTerminal(sessionId) {
         cleanup()
     })
 
-    return { containerRef, isConnected, started, start, reconnect }
+    return { containerRef, isConnected, started, start, reconnect, sendInput, focusTerminal, showConfig, toggleConfig }
 }
