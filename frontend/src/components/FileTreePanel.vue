@@ -97,6 +97,14 @@ const props = defineProps({
         default: true,
     },
     /**
+     * Whether to show the shared options (Auto-open, Scroll to selected file).
+     * Set to false for popup contexts where these don't apply.
+     */
+    showSharedOptions: {
+        type: Boolean,
+        default: true,
+    },
+    /**
      * Whether the panel is in mobile layout mode.
      * When true, the file tree is hidden behind a header that shows the
      * selected file path. Clicking the header opens the tree as an overlay.
@@ -827,23 +835,25 @@ defineExpose({
                     <!-- Parent-specific options (injected via slot) -->
                     <slot name="options-before" />
 
-                    <!-- Shared options -->
-                    <wa-dropdown-item
-                        type="checkbox"
-                        value="auto-open"
-                        :checked="autoOpen"
-                    >
-                        Auto-open
-                    </wa-dropdown-item>
-                    <wa-divider></wa-divider>
-                    <wa-dropdown-item
-                        v-if="selectedFile"
-                        value="reveal-in-tree"
-                    >
-                        <wa-icon slot="icon" name="crosshairs"></wa-icon>
-                        <div>Scroll to selected file</div>
-                        <div class="reveal-path">{{ selectedFile }}</div>
-                    </wa-dropdown-item>
+                    <!-- Shared options (hidden in popup contexts) -->
+                    <template v-if="showSharedOptions">
+                        <wa-dropdown-item
+                            type="checkbox"
+                            value="auto-open"
+                            :checked="autoOpen"
+                        >
+                            Auto-open
+                        </wa-dropdown-item>
+                        <wa-divider></wa-divider>
+                        <wa-dropdown-item
+                            v-if="selectedFile"
+                            value="reveal-in-tree"
+                        >
+                            <wa-icon slot="icon" name="crosshairs"></wa-icon>
+                            <div>Scroll to selected file</div>
+                            <div class="reveal-path">{{ selectedFile }}</div>
+                        </wa-dropdown-item>
+                    </template>
                     <wa-dropdown-item
                         v-if="showRefresh"
                         value="refresh"

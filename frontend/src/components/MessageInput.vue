@@ -11,6 +11,7 @@ import { toast } from '../composables/useToast'
 import { PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, MODEL, MODEL_LABELS, EFFORT, EFFORT_LABELS, EFFORT_DISPLAY_LABELS, THINKING_LABELS, THINKING_DISPLAY_LABELS } from '../constants'
 import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
 import AppTooltip from './AppTooltip.vue'
+import FilePickerPopup from './FilePickerPopup.vue'
 
 // Track visual viewport height for mobile keyboard handling
 useVisualViewport()
@@ -46,6 +47,11 @@ const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const attachButtonId = useId()
 const settingsButtonId = useId()
+const textareaAnchorId = useId()
+
+// File picker popup state (@ mention)
+const filePickerRef = ref(null)
+const atCursorPosition = ref(null)  // cursor position right after the '@' character
 
 // Attachments for this session
 const attachments = computed(() => store.getAttachments(props.sessionId))
@@ -459,14 +465,69 @@ function adjustTextareaHeight() {
 
 /**
  * Handle textarea input event.
+ * Detects '@' insertion to trigger the file picker popup.
  * Also notifies the server that the user is actively drafting (debounced).
  */
 function onInput(event) {
-    messageText.value = event.target.value
+    const newText = event.target.value
+    const oldText = messageText.value
+
+    // Detect single '@' character insertion to trigger file picker
+    if (!filePickerRef.value?.isOpen && newText.length === oldText.length + 1) {
+        const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
+        const cursorPos = inner?.selectionStart
+        if (cursorPos > 0 && newText[cursorPos - 1] === '@') {
+            atCursorPosition.value = cursorPos  // right after the '@'
+            nextTick(() => filePickerRef.value?.open())
+        }
+    }
+
+    messageText.value = newText
     adjustTextareaHeight()
     // Notify server that user is actively preparing a message (debounced)
     // This prevents auto-stop of the process due to inactivity timeout
     notifyUserDraftUpdated(props.sessionId)
+}
+
+/**
+ * Handle file selection from the file picker popup.
+ * Inserts the relative path right after the '@' character at the recorded position.
+ */
+async function onFilePickerSelect(relativePath) {
+    const pos = atCursorPosition.value
+    if (pos != null && pos <= messageText.value.length) {
+        const before = messageText.value.slice(0, pos)
+        const after = messageText.value.slice(pos)
+        // Add a trailing space unless the text after already starts with one
+        const space = after.startsWith(' ') ? '' : ' '
+        const newText = before + relativePath + space + after
+        messageText.value = newText
+
+        // Force update the web component and inner textarea
+        if (textareaRef.value) {
+            textareaRef.value.value = newText
+            const inner = textareaRef.value.shadowRoot?.querySelector('textarea')
+            if (inner) {
+                inner.value = newText
+                const newPos = pos + relativePath.length + space.length
+                inner.setSelectionRange(newPos, newPos)
+            }
+        }
+    }
+
+    atCursorPosition.value = null
+    await nextTick()
+    textareaRef.value?.focus()
+    adjustTextareaHeight()
+}
+
+/**
+ * Handle file picker popup close (without selection).
+ * Returns focus to the textarea.
+ */
+function onFilePickerClose() {
+    atCursorPosition.value = null
+    textareaRef.value?.focus()
 }
 
 /**
@@ -748,6 +809,7 @@ async function handleReset() {
     <div class="message-input">
         <wa-textarea
             ref="textareaRef"
+            :id="textareaAnchorId"
             :value.prop="messageText"
             :placeholder="placeholderText"
             rows="3"
@@ -757,6 +819,16 @@ async function handleReset() {
             @paste="onPaste"
             @focus="adjustTextareaHeight"
         ></wa-textarea>
+
+        <!-- File picker popup triggered by @ -->
+        <FilePickerPopup
+            ref="filePickerRef"
+            :session-id="sessionId"
+            :project-id="projectId"
+            :anchor-id="textareaAnchorId"
+            @select="onFilePickerSelect"
+            @close="onFilePickerClose"
+        />
 
         <div class="message-input-toolbar">
             <!-- Attachments row: button on left, thumbnails on right -->
