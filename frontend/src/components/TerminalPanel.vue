@@ -22,7 +22,6 @@ const {
     containerRef, isConnected, started, start, reconnect, sendInput, focusTerminal,
     copyMode, windows, presets, paneAlternate, showNavigator,
     listWindows, createWindow, selectWindow, toggleNavigator,
-    showConfig, toggleConfig,
 } = useTerminal(props.sessionId)
 
 const activeWindowName = computed(() => windows.value.find(w => w.active)?.name ?? '')
@@ -48,7 +47,7 @@ watch(
     { immediate: true },
 )
 
-defineExpose({ toggleConfig, toggleNavigator, showConfig, showNavigator })
+defineExpose({ toggleNavigator, showNavigator })
 
 // ── Shortcut buttons ─────────────────────────────────────────────────
 
@@ -86,7 +85,6 @@ watch(showNavigator, (show) => {
 
 const configDialogRef = ref(null)
 const editingSlotIndex = ref(0)
-const editingShortcut = computed(() => settingsStore.getTerminalShortcuts[editingSlotIndex.value] || { label: '', sequence: '', showOnDesktop: false })
 
 function openConfigDialog(index) {
     editingSlotIndex.value = index
@@ -97,16 +95,12 @@ function openConfigDialog(index) {
 function onConfigSave(shortcut) {
     settingsStore.setTerminalShortcut(editingSlotIndex.value, shortcut)
 }
-
-function onConfigClose() {
-    // Dialog closed — nothing to do
-}
 </script>
 
 <template>
     <div class="terminal-panel">
         <!-- Mobile toolbar — dropdown for window switching + shortcut buttons -->
-        <div v-if="settingsStore.isTouchDevice && started && !showNavigator && !showConfig" class="mobile-toolbar">
+        <div v-if="settingsStore.isTouchDevice && started && !showNavigator" class="mobile-toolbar">
             <wa-select
                 v-if="windows.length > 1"
                 :value.prop="activeWindowName"
@@ -142,7 +136,7 @@ function onConfigClose() {
         </div>
 
         <!-- Desktop: shortcut buttons toolbar + window tab bar -->
-        <template v-else-if="!settingsStore.isTouchDevice && started && !showNavigator && !showConfig">
+        <template v-else-if="!settingsStore.isTouchDevice && started && !showNavigator">
             <!-- Shortcut buttons toolbar (desktop only, when showOnDesktop) -->
             <div v-if="visibleShortcuts.length > 0" class="shortcut-toolbar">
                 <wa-button
@@ -170,36 +164,8 @@ function onConfigClose() {
             </div>
         </template>
 
-        <!-- Config panel (toggled by re-clicking Terminal tab) -->
-        <div v-if="showConfig && started" class="config-panel">
-            <div class="config-header">
-                <span class="config-title">Shortcut buttons</span>
-            </div>
-            <div class="config-slots">
-                <button
-                    v-for="(shortcut, index) in settingsStore.getTerminalShortcuts"
-                    :key="index"
-                    class="config-slot"
-                    :class="{ empty: !shortcut.label }"
-                    @click="openConfigDialog(index)"
-                >
-                    <template v-if="shortcut.label">
-                        <span class="slot-label">{{ shortcut.label }}</span>
-                        <wa-icon
-                            v-if="shortcut.showOnDesktop"
-                            name="display"
-                            class="slot-desktop-icon"
-                        ></wa-icon>
-                    </template>
-                    <template v-else>
-                        <wa-icon name="circle-plus" class="slot-add-icon"></wa-icon>
-                    </template>
-                </button>
-            </div>
-        </div>
-
-        <!-- Terminal xterm.js container — hidden when navigator or config is shown -->
-        <div ref="containerRef" class="terminal-container" :class="{ hidden: showNavigator || showConfig }"></div>
+        <!-- Terminal xterm.js container — hidden when navigator is shown -->
+        <div ref="containerRef" class="terminal-container" :class="{ hidden: showNavigator }"></div>
 
         <!-- Tmux Navigator overlay -->
         <TmuxNavigator
@@ -208,10 +174,11 @@ function onConfigClose() {
             :preset-sources="presets"
             @select="handleNavigatorSelect"
             @create="handleNavigatorCreate"
+            @edit-shortcut="openConfigDialog"
         />
 
         <!-- Disconnect overlay -->
-        <div v-if="started && !isConnected && !showNavigator && !showConfig" class="disconnect-overlay">
+        <div v-if="started && !isConnected && !showNavigator" class="disconnect-overlay">
             <wa-callout variant="warning" appearance="outlined">
                 <wa-icon slot="icon" name="plug-circle-xmark"></wa-icon>
                 <div class="disconnect-content">
@@ -232,9 +199,7 @@ function onConfigClose() {
         <!-- Config dialog -->
         <ShortcutConfigDialog
             ref="configDialogRef"
-            :shortcut="editingShortcut"
             @save="onConfigSave"
-            @close="onConfigClose"
         />
     </div>
 </template>
@@ -343,77 +308,6 @@ function onConfigClose() {
 
 .toolbar-spacer {
     flex: 1;
-}
-
-/* ── Config panel ──────────────────────────────────────────────────── */
-
-.config-panel {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    padding: var(--wa-space-m);
-    gap: var(--wa-space-m);
-    overflow-y: auto;
-}
-
-.config-header {
-    display: flex;
-    align-items: center;
-}
-
-.config-title {
-    font-size: var(--wa-font-size-m);
-    font-weight: var(--wa-font-weight-semibold);
-    color: var(--wa-color-text-default);
-}
-
-.config-slots {
-    display: flex;
-    gap: var(--wa-space-s);
-    flex-wrap: wrap;
-}
-
-.config-slot {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--wa-space-2xs);
-    min-width: 5rem;
-    padding: var(--wa-space-s) var(--wa-space-m);
-    border: 2px solid var(--wa-color-border-default);
-    border-radius: var(--wa-border-radius-m);
-    background: var(--wa-color-surface-default);
-    color: var(--wa-color-text-default);
-    font-size: var(--wa-font-size-s);
-    font-weight: var(--wa-font-weight-semibold);
-    cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
-}
-
-.config-slot:hover {
-    border-color: var(--wa-color-border-hover);
-    background: var(--wa-color-surface-alt);
-}
-
-.config-slot.empty {
-    border-style: dashed;
-    color: var(--wa-color-text-subtle);
-    font-weight: normal;
-}
-
-.slot-label {
-    white-space: nowrap;
-}
-
-.slot-desktop-icon {
-    font-size: 0.85em;
-    opacity: 0.5;
-}
-
-.slot-add-icon {
-    font-size: 1.2em;
-    opacity: 0.5;
 }
 
 /* ── Disconnect overlay ──────────────────────────────────────────── */

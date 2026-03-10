@@ -1,5 +1,8 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { useSettingsStore } from '../stores/settings'
+
+const settingsStore = useSettingsStore()
 
 const props = defineProps({
     windows: {
@@ -13,7 +16,7 @@ const props = defineProps({
     },
 })
 
-const emit = defineEmits(['select', 'create'])
+const emit = defineEmits(['select', 'create', 'edit-shortcut'])
 
 const newName = ref('')
 
@@ -59,53 +62,32 @@ function handlePresetClick(preset) {
 <template>
     <div class="tmux-navigator">
         <div class="navigator-content">
-            <h3 class="navigator-title">Shells</h3>
-
-            <!-- Ad-hoc shells (not from presets) -->
-            <div v-if="adHocWindows.length" class="shell-list">
-                <wa-button
-                    v-for="win in adHocWindows"
-                    :key="win.name"
-                    class="shell-button"
-                    :variant="win.active ? 'brand' : 'neutral'"
-                    :appearance="win.active ? 'outlined' : 'plain'"
-                    size="medium"
-                    @click="handleSelect(win.name)"
+            <!-- Shortcut buttons config -->
+            <h3 class="section-title">Shortcuts</h3>
+            <div class="shortcut-slots">
+                <button
+                    v-for="(shortcut, index) in settingsStore.getTerminalShortcuts"
+                    :key="index"
+                    class="shortcut-slot"
+                    :class="{ empty: !shortcut.label }"
+                    @click="emit('edit-shortcut', index)"
                 >
-                    <span v-if="win.active" class="active-indicator">●</span>
-                    <span v-else class="active-indicator-placeholder"></span>
-                    {{ win.name }}
-                </wa-button>
+                    <template v-if="shortcut.label">
+                        <span class="slot-label">{{ shortcut.label }}</span>
+                        <wa-icon
+                            v-if="shortcut.showOnDesktop"
+                            name="display"
+                            class="slot-desktop-icon"
+                        ></wa-icon>
+                    </template>
+                    <template v-else>
+                        <wa-icon name="circle-plus" class="slot-add-icon"></wa-icon>
+                    </template>
+                </button>
             </div>
 
-            <!-- Preset sources (one section per source) -->
-            <template v-for="source in presetSources" :key="source.directory">
-                <h4 v-if="source.presets.length" class="presets-title">{{ source.label }}</h4>
-                <div v-if="source.presets.length" class="shell-list">
-                    <wa-button
-                        v-for="preset in source.presets"
-                        :key="preset.name"
-                        class="shell-button preset-button"
-                        :class="{ 'preset-running': runningNames.has(preset.name) }"
-                        variant="neutral"
-                        appearance="plain"
-                        size="medium"
-                        @click="handlePresetClick(preset)"
-                    >
-                        <span class="preset-row">
-                            <wa-icon
-                                name="circle-play"
-                                class="preset-icon"
-                                :class="{ 'preset-icon--running': runningNames.has(preset.name) }"
-                            ></wa-icon>
-                            <span class="preset-label">
-                                <span>{{ preset.name }}</span>
-                                <span v-if="preset.command" class="preset-command">{{ preset.command }}</span>
-                            </span>
-                        </span>
-                    </wa-button>
-                </div>
-            </template>
+            <!-- Shells section -->
+            <h3 class="section-title shells-title">Shells</h3>
 
             <form class="create-form" @submit.prevent="handleCreate">
                 <wa-input
@@ -125,6 +107,49 @@ function handlePresetClick(preset) {
                     Create
                 </wa-button>
             </form>
+
+            <!-- Ad-hoc windows (not from any preset) -->
+            <div v-if="adHocWindows.length" class="shell-list">
+                <wa-button
+                    v-for="win in adHocWindows"
+                    :key="win.name"
+                    class="shell-button"
+                    variant="neutral"
+                    appearance="plain"
+                    size="medium"
+                    @click="handleSelect(win.name)"
+                >
+                    <span class="shell-row">
+                        <wa-icon name="circle-play" class="shell-icon shell-icon--running"></wa-icon>
+                        <span class="shell-label">{{ win.name }}</span>
+                    </span>
+                </wa-button>
+            </div>
+
+            <!-- Preset sources (one section per source, original order) -->
+            <template v-for="source in presetSources" :key="source.directory">
+                <h4 v-if="source.presets.length" class="presets-title">{{ source.label }}</h4>
+                <div v-if="source.presets.length" class="shell-list">
+                    <wa-button
+                        v-for="preset in source.presets"
+                        :key="preset.name"
+                        class="shell-button"
+                        variant="neutral"
+                        appearance="plain"
+                        size="medium"
+                        @click="handlePresetClick(preset)"
+                    >
+                        <span class="shell-row">
+                            <wa-icon name="circle-play" class="shell-icon" :class="{ 'shell-icon--running': runningNames.has(preset.name) }"></wa-icon>
+                            <span class="shell-label">
+                                <span>{{ preset.name }}</span>
+                                <span v-if="preset.command" class="preset-command">{{ preset.command }}</span>
+                            </span>
+                        </span>
+                    </wa-button>
+                </div>
+            </template>
+
         </div>
     </div>
 </template>
@@ -136,6 +161,7 @@ function handlePresetClick(preset) {
     align-items: center;
     justify-content: center;
     background: var(--wa-color-surface-default);
+    overflow-y: auto;
 }
 
 .navigator-content {
@@ -143,13 +169,70 @@ function handlePresetClick(preset) {
     flex-direction: column;
     gap: var(--wa-space-m);
     width: min(400px, calc(100% - 2rem));
+    padding: var(--wa-space-m) 0;
 }
 
-.navigator-title {
+/* ── Shortcut slots ───────────────────────────────────────────────── */
+
+.shortcut-slots {
+    display: flex;
+    gap: var(--wa-space-s);
+    flex-wrap: wrap;
+}
+
+.shortcut-slot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--wa-space-2xs);
+    min-width: 5rem;
+    padding: var(--wa-space-s) var(--wa-space-m);
+    border: 2px solid var(--wa-color-border-default);
+    border-radius: var(--wa-border-radius-m);
+    background: var(--wa-color-surface-default);
+    color: var(--wa-color-text-default);
+    font-size: var(--wa-font-size-s);
+    font-weight: var(--wa-font-weight-semibold);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.shortcut-slot:hover {
+    border-color: var(--wa-color-border-hover);
+    background: var(--wa-color-surface-alt);
+}
+
+.shortcut-slot.empty {
+    border-style: dashed;
+    color: var(--wa-color-text-subtle);
+    font-weight: normal;
+}
+
+.slot-label {
+    white-space: nowrap;
+}
+
+.slot-desktop-icon {
+    font-size: 0.85em;
+    opacity: 0.5;
+}
+
+.slot-add-icon {
+    font-size: 1.2em;
+    opacity: 0.5;
+}
+
+/* ── Shells ────────────────────────────────────────────────────────── */
+
+.section-title {
     margin: 0;
     font-size: var(--wa-font-size-l);
     font-weight: 600;
     color: var(--wa-color-text-default);
+}
+
+.shells-title {
+    margin-top: var(--wa-space-l);
 }
 
 .presets-title {
@@ -176,45 +259,27 @@ function handlePresetClick(preset) {
     width: 100%;
 }
 
-.active-indicator {
-    color: var(--wa-color-brand-600);
-    margin-right: var(--wa-space-xs);
-    font-size: 0.8em;
-}
-
-.active-indicator-placeholder {
-    display: inline-block;
-    width: 0.8em;
-    margin-right: var(--wa-space-xs);
-}
-
-.preset-button:not(.preset-running) {
-    opacity: 0.7;
-}
-
-.preset-button:not(.preset-running):hover {
-    opacity: 1;
-}
-
-.preset-row {
+.shell-row {
     display: flex;
     flex-direction: row;
     align-items: flex-start;
     width: 100%;
 }
 
-.preset-icon {
+.shell-icon {
     margin-right: var(--wa-space-xs);
     margin-top: 0.15em;
     font-size: 0.9em;
     flex-shrink: 0;
+    opacity: 0.4;
 }
 
-.preset-icon--running {
+.shell-icon--running {
     color: #4ade80;
+    opacity: 1;
 }
 
-.preset-label {
+.shell-label {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
