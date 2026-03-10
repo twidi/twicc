@@ -186,16 +186,19 @@ async function handleRemovePreset(filePath) {
                         v-for="preset in source.presets"
                         :key="preset.name"
                         class="shell-button"
+                        :class="{ unavailable: preset.unavailable }"
                         variant="neutral"
                         appearance="plain"
                         size="medium"
+                        :disabled="preset.unavailable"
                         @click="handlePresetClick(preset)"
                     >
                         <span class="shell-row">
-                            <wa-icon name="circle-play" class="shell-icon" :class="{ 'shell-icon--running': runningNames.has(preset.name) }"></wa-icon>
+                            <wa-icon name="circle-play" class="shell-icon" :class="{ 'shell-icon--running': !preset.unavailable && runningNames.has(preset.name) }"></wa-icon>
                             <span class="shell-label">
                                 <span>{{ preset.name }}</span>
                                 <span v-if="preset.command" class="preset-command">{{ preset.command }}</span>
+                                <span v-if="preset.unavailable" class="preset-unavailable">{{ preset.relative_to }} not available</span>
                             </span>
                         </span>
                     </wa-button>
@@ -383,6 +386,16 @@ async function handleRemovePreset(filePath) {
     font-size: 0.8em;
     color: var(--wa-color-text-subtle);
     font-family: var(--wa-font-family-mono, monospace);
+}
+
+.preset-unavailable {
+    font-size: 0.75em;
+    color: var(--wa-color-danger-500);
+    font-style: italic;
+}
+
+.shell-button.unavailable {
+    opacity: 0.45;
 }
 
 .create-form {
