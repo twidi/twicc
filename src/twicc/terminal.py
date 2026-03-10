@@ -68,6 +68,7 @@ class SessionContext(NamedTuple):
     project_dir: str | None    # project.directory (if exists on disk)
     git_dir: str | None        # session.git_directory or project.git_root (if exists on disk)
     session_cwd: str | None    # session.cwd (raw from JSONL, if exists on disk)
+    project_id: str | None     # project.id (for custom preset file resolution)
 
 
 @sync_to_async
@@ -87,7 +88,7 @@ def get_session_context(session_id: str) -> SessionContext:
     try:
         session = Session.objects.select_related("project").get(id=session_id)
     except Session.DoesNotExist:
-        return SessionContext(cwd=home, archived=False, project_dir=None, git_dir=None, session_cwd=None)
+        return SessionContext(cwd=home, archived=False, project_dir=None, git_dir=None, session_cwd=None, project_id=None)
 
     project = session.project
 
@@ -128,6 +129,7 @@ def get_session_context(session_id: str) -> SessionContext:
         project_dir=project_dir,
         git_dir=git_dir,
         session_cwd=session_cwd,
+        project_id=project.id if project else None,
     )
 
 
@@ -496,19 +498,27 @@ def tmux_send_keys(session_id: str, window_name: str, keys: str) -> bool:
 
 
 def load_tmux_presets(project_dir: str) -> list[dict]:
-    """Load tmux shell presets from a .twicc-tmux.json file.
+    """Load tmux shell presets from a .twicc-tmux.json file in the given directory.
 
-    Looks for the file in the given project directory. Each preset
+    Convenience wrapper around load_tmux_presets_from_file() for the standard
+    `.twicc-tmux.json` filename.
+    """
+    return load_tmux_presets_from_file(os.path.join(project_dir, ".twicc-tmux.json"))
+
+
+def load_tmux_presets_from_file(file_path: str) -> list[dict]:
+    """Load tmux shell presets from any JSON file.
+
+    The file must contain an array of preset objects. Each preset
     has a name (required), optional cwd (relative or absolute), and
     optional command to run on creation.
 
-    Relative cwd paths are resolved against the project directory.
+    Relative cwd paths are resolved against the directory containing the file.
 
     Returns a list of preset dicts, or [] on missing file / parse error.
     """
-    config_path = os.path.join(project_dir, ".twicc-tmux.json")
     try:
-        with open(config_path, "r") as f:
+        with open(file_path, "r") as f:
             data = json.loads(f.read())
     except (OSError, json.JSONDecodeError):
         return []
@@ -516,6 +526,7 @@ def load_tmux_presets(project_dir: str) -> list[dict]:
     if not isinstance(data, list):
         return []
 
+    base_dir = os.path.dirname(os.path.abspath(file_path))
     presets = []
     for entry in data:
         if not isinstance(entry, dict) or not entry.get("name"):
@@ -523,20 +534,74 @@ def load_tmux_presets(project_dir: str) -> list[dict]:
         preset: dict = {"name": str(entry["name"])}
         if "command" in entry:
             preset["command"] = str(entry["command"])
-        # Resolve cwd: explicit relative paths are relative to the config directory,
-        # default (no cwd specified) is the directory containing the .twicc-tmux.json.
+        # Resolve cwd: explicit relative paths are relative to the file's directory,
+        # default (no cwd specified) is the directory containing the preset file.
         if "cwd" in entry:
             entry_cwd = str(entry["cwd"])
             if not os.path.isabs(entry_cwd):
-                entry_cwd = os.path.normpath(os.path.join(project_dir, entry_cwd))
+                entry_cwd = os.path.normpath(os.path.join(base_dir, entry_cwd))
             preset["cwd"] = entry_cwd
         else:
-            preset["cwd"] = project_dir
+            preset["cwd"] = base_dir
         presets.append(preset)
     return presets
 
 
-def resolve_preset_sources(ctx: SessionContext) -> list[dict]:
+def get_custom_preset_files(project_id: str) -> list[dict]:
+    """Read the list of custom preset file references for a project.
+
+    Returns a list of dicts: [{"name": "My tools", "path": "/path/to/presets.json"}, ...]
+    Returns [] if no file exists or on parse error.
+    """
+    from twicc.paths import get_project_presets_path
+
+    presets_path = get_project_presets_path(project_id)
+    try:
+        with open(presets_path, "r") as f:
+            data = json.loads(f.read())
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    result = []
+    for entry in data:
+        if isinstance(entry, dict) and entry.get("name") and entry.get("path"):
+            result.append({"name": str(entry["name"]), "path": str(entry["path"])})
+    return result
+
+
+def save_custom_preset_files(project_id: str, entries: list[dict]) -> None:
+    """Write the list of custom preset file references for a project."""
+    from twicc.paths import get_project_presets_path
+
+    presets_path = get_project_presets_path(project_id)
+    presets_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(presets_path, "w") as f:
+        f.write(json.dumps(entries, indent=2))
+
+
+def add_custom_preset_file(project_id: str, name: str, path: str) -> list[dict]:
+    """Add a custom preset file reference for a project. Returns the updated list."""
+    entries = get_custom_preset_files(project_id)
+    # Avoid duplicates by path
+    if any(e["path"] == path for e in entries):
+        return entries
+    entries.append({"name": name, "path": path})
+    save_custom_preset_files(project_id, entries)
+    return entries
+
+
+def remove_custom_preset_file(project_id: str, path: str) -> list[dict]:
+    """Remove a custom preset file reference by path. Returns the updated list."""
+    entries = get_custom_preset_files(project_id)
+    entries = [e for e in entries if e["path"] != path]
+    save_custom_preset_files(project_id, entries)
+    return entries
+
+
+def resolve_preset_sources(ctx: SessionContext, project_id: str | None = None) -> list[dict]:
     """Resolve up to 3 preset sources from session context.
 
     Returns a list of dicts with {label, directory, presets} for each source
@@ -548,6 +613,7 @@ def resolve_preset_sources(ctx: SessionContext) -> list[dict]:
     """
     sources: list[dict] = []
     seen_dirs: set[str] = set()
+    seen_files: set[str] = set()  # Track loaded file paths for dedup with custom sources
     home = os.path.expanduser("~")
 
     def _norm(path: str) -> str:
@@ -561,6 +627,7 @@ def resolve_preset_sources(ctx: SessionContext) -> list[dict]:
         seen_dirs.add(norm)
         presets = load_tmux_presets(directory)
         if presets:
+            seen_files.add(_norm(os.path.join(directory, ".twicc-tmux.json")))
             sources.append({"label": label, "directory": directory, "presets": presets})
             return True
         return False
@@ -590,12 +657,30 @@ def resolve_preset_sources(ctx: SessionContext) -> list[dict]:
                     break  # Already covered by project or git source
                 presets = load_tmux_presets(current)
                 if presets:
+                    seen_files.add(_norm(os.path.join(current, ".twicc-tmux.json")))
                     sources.append({"label": _shorten(current), "directory": current, "presets": presets})
                     break  # Stop at first found
                 parent = os.path.dirname(current)
                 if parent == current:
                     break  # Reached filesystem root
                 current = parent
+
+    # Source 4: Custom preset files (user-added per project)
+    if project_id:
+        for entry in get_custom_preset_files(project_id):
+            file_path = entry["path"]
+            if not os.path.isfile(file_path):
+                continue
+            if _norm(file_path) in seen_files:
+                continue
+            file_presets = load_tmux_presets_from_file(file_path)
+            if file_presets:
+                sources.append({
+                    "label": entry["name"],
+                    "directory": os.path.dirname(file_path),
+                    "presets": file_presets,
+                    "custom_file": file_path,
+                })
 
     return sources
 
@@ -662,7 +747,7 @@ async def _tmux_window_monitor(session_id: str, send, ctx: SessionContext) -> No
             if win_list != prev_windows or alternate != prev_alternate:
                 prev_windows = win_list
                 prev_alternate = alternate
-                presets = await asyncio.to_thread(resolve_preset_sources, ctx)
+                presets = await asyncio.to_thread(resolve_preset_sources, ctx, ctx.project_id)
                 await send({"type": "websocket.send",
                             "text": json.dumps({"type": "windows", "windows": win_list,
                                                 "presets": presets,
@@ -835,7 +920,7 @@ async def terminal_application(scope, receive, send):
                 elif msg_type == "list_windows" and use_tmux:
                     ctx = await get_session_context(session_id)
                     win_list = tmux_list_windows(session_id)
-                    presets = resolve_preset_sources(ctx)
+                    presets = resolve_preset_sources(ctx, ctx.project_id)
                     alternate = tmux_pane_is_alternate(session_id)
                     await send({"type": "websocket.send",
                                 "text": json.dumps({"type": "windows", "windows": win_list,
@@ -853,7 +938,7 @@ async def terminal_application(scope, receive, send):
                         if command:
                             tmux_send_keys(session_id, window_name, command)
                         win_list = tmux_list_windows(session_id)
-                        presets = resolve_preset_sources(ctx)
+                        presets = resolve_preset_sources(ctx, ctx.project_id)
                         alternate = tmux_pane_is_alternate(session_id)
                         await send({"type": "websocket.send",
                                     "text": json.dumps({"type": "windows", "windows": win_list,
