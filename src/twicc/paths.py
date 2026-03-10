@@ -84,6 +84,16 @@ def get_synced_settings_path() -> Path:
     return get_data_dir() / "settings.json"
 
 
+def get_presets_dir() -> Path:
+    """Return the presets directory (<data_dir>/presets/)."""
+    return get_data_dir() / "presets"
+
+
+def get_project_presets_path(project_id: str) -> Path:
+    """Return the custom preset file list for a project (<data_dir>/presets/<project_id>.json)."""
+    return get_presets_dir() / f"{project_id}.json"
+
+
 def ensure_data_dirs() -> None:
     """Create the data directory structure if it doesn't exist."""
     get_db_dir().mkdir(parents=True, exist_ok=True)

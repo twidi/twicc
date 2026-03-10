@@ -99,6 +99,18 @@ export function useTerminal(sessionId) {
     /** @type {boolean} */
     let intentionalClose = false
 
+    // ── tmux window management state ────────────────────────────────────
+    const windows = ref([])
+    const presets = ref([])
+    /** Whether the active tmux pane is in alternate screen (less, vim, etc.) */
+    const paneAlternate = ref(false)
+    const showNavigator = ref(false)
+    /** @type {((wins: Array) => void) | null} — resolver for pending listWindows() call */
+    let windowsResolver = null
+
+    // ── Config panel visibility (toggled by re-clicking Terminal tab) ────
+    const showConfig = ref(false)
+
     // ── Touch selection state (mobile) ─────────────────────────────────────
     let selectStartCol = 0
     let selectStartRow = 0
@@ -154,11 +166,42 @@ export function useTerminal(sessionId) {
             if (terminal) {
                 wsSend({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
             }
+            // Fetch the window list so the tab bar / dropdown appears immediately
+            if (shouldUseTmux()) {
+                wsSend({ type: 'list_windows' })
+            }
         }
 
         ws.onmessage = (event) => {
-            // Server sends raw PTY output as text
-            terminal?.write(event.data)
+            const data = event.data
+            // Check for JSON control messages (type field present)
+            if (data.charAt(0) === '{') {
+                try {
+                    const msg = JSON.parse(data)
+                    if (msg.type === 'windows') {
+                        windows.value = msg.windows
+                        if (msg.presets) presets.value = msg.presets
+                        if ('alternate_on' in msg) paneAlternate.value = msg.alternate_on
+                        if (windowsResolver) {
+                            windowsResolver(msg.windows)
+                            windowsResolver = null
+                        }
+                        return
+                    }
+                    if (msg.type === 'window_changed') {
+                        // Update active flag in local list
+                        for (const w of windows.value) {
+                            w.active = (w.name === msg.name)
+                        }
+                        showNavigator.value = false
+                        return
+                    }
+                } catch {
+                    // Not JSON — fall through to terminal write
+                }
+            }
+            // Raw PTY output
+            terminal?.write(data)
         }
 
         ws.onclose = (event) => {
@@ -404,6 +447,80 @@ export function useTerminal(sessionId) {
     }
 
     /**
+     * Send raw input data to the PTY (e.g. control characters).
+     * @param {string} data
+     */
+    function sendInput(data) {
+        wsSend({ type: 'input', data })
+    }
+
+    /**
+     * Focus the xterm.js terminal (e.g. after selecting a window from a dropdown).
+     */
+    function focusTerminal() {
+        terminal?.focus()
+    }
+
+    // ── tmux window control ─────────────────────────────────────────────
+
+    /**
+     * Request the list of tmux windows from the backend.
+     * Returns a Promise that resolves with the window list.
+     */
+    function listWindows() {
+        return new Promise((resolve) => {
+            windowsResolver = resolve
+            wsSend({ type: 'list_windows' })
+            // Timeout fallback — resolve with current state after 3s
+            setTimeout(() => {
+                if (windowsResolver === resolve) {
+                    windowsResolver = null
+                    resolve(windows.value)
+                }
+            }, 3000)
+        })
+    }
+
+    /**
+     * Create a new tmux window.
+     *
+     * Accepts either a plain string (manual create) or a preset object
+     * with {name, cwd?, command?} from .twicc-tmux.json presets.
+     */
+    function createWindow(nameOrPreset) {
+        if (typeof nameOrPreset === 'string') {
+            wsSend({ type: 'create_window', name: nameOrPreset })
+        } else {
+            const msg = { type: 'create_window', name: nameOrPreset.name }
+            if (nameOrPreset.cwd) msg.preset_cwd = nameOrPreset.cwd
+            if (nameOrPreset.command) msg.command = nameOrPreset.command
+            wsSend(msg)
+        }
+    }
+
+    /**
+     * Switch to a tmux window by name.
+     * The backend responds with window_changed, which hides the navigator.
+     */
+    function selectWindow(name) {
+        wsSend({ type: 'select_window', name })
+    }
+
+    /**
+     * Toggle the shell navigator visibility.
+     */
+    function toggleNavigator() {
+        showNavigator.value = !showNavigator.value
+    }
+
+    /**
+     * Toggle the config panel visibility.
+     */
+    function toggleConfig() {
+        showConfig.value = !showConfig.value
+    }
+
+    /**
      * Clean up everything: terminal, WebSocket, observers.
      */
     function cleanup() {
@@ -471,5 +588,9 @@ export function useTerminal(sessionId) {
         cleanup()
     })
 
-    return { containerRef, isConnected, started, start, reconnect }
+    return {
+        containerRef, isConnected, started, start, reconnect, sendInput, focusTerminal,
+        windows, presets, paneAlternate, showNavigator, listWindows, createWindow, selectWindow, toggleNavigator,
+        showConfig, toggleConfig,
+    }
 }

@@ -27,6 +27,9 @@ const sessionItemsListRef = ref(null)
 // Reference to FilesPanel for cross-tab file reveal
 const filesPanelRef = ref(null)
 
+// Reference to TerminalPanel for config toggle
+const terminalPanelRef = ref(null)
+
 // ═══════════════════════════════════════════════════════════════════════════
 // KeepAlive lifecycle: active state, listener setup/teardown
 // ═══════════════════════════════════════════════════════════════════════════
@@ -271,6 +274,31 @@ function switchToTabAndCollapse(panel) {
     switchToTab(panel)
     if (sessionHeaderRef.value?.isCompactExpanded) {
         sessionHeaderRef.value.isCompactExpanded = false
+    }
+}
+
+/**
+ * Handle click on the Terminal tab button.
+ * If already on the terminal tab, toggle the shell navigator.
+ */
+function onTerminalTabClick() {
+    if (activeTabId.value === 'terminal') {
+        terminalPanelRef.value?.toggleNavigator()
+    }
+}
+
+/**
+ * Handle click on the Terminal tab button in compact mode (mobile header).
+ * Toggles config if already on terminal, otherwise switches tab + collapses header.
+ */
+function onTerminalTabClickCompact() {
+    if (activeTabId.value === 'terminal') {
+        onTerminalTabClick()
+        if (sessionHeaderRef.value?.isCompactExpanded) {
+            sessionHeaderRef.value.isCompactExpanded = false
+        }
+    } else {
+        switchToTabAndCollapse('terminal')
     }
 }
 
@@ -649,8 +677,11 @@ onBeforeUnmount(() => {
                             :appearance="activeTabId === 'terminal' ? 'outlined' : 'plain'"
                             :variant="activeTabId === 'terminal' ? 'brand' : 'neutral'"
                             size="small"
-                            @click="switchToTabAndCollapse('terminal')"
-                        >Terminal</wa-button>
+                            @click="onTerminalTabClickCompact"
+                        >
+                            Terminal
+                            <wa-icon v-if="activeTabId === 'terminal' && !terminalPanelRef?.showNavigator" slot="end" name="gear" class="tab-config-icon"></wa-icon>
+                        </wa-button>
                     </div>
 
                     <!-- Scroll right button (faded when at the end) -->
@@ -736,8 +767,10 @@ onBeforeUnmount(() => {
                     :appearance="activeTabId === 'terminal' ? 'outlined' : 'plain'"
                     :variant="activeTabId === 'terminal' ? 'brand' : 'neutral'"
                     size="small"
+                    @click="onTerminalTabClick"
                 >
                     Terminal
+                    <wa-icon v-if="activeTabId === 'terminal' && !terminalPanelRef?.showNavigator" slot="end" name="gear" class="tab-config-icon"></wa-icon>
                 </wa-button>
             </wa-tab>
 
@@ -795,6 +828,7 @@ onBeforeUnmount(() => {
             </wa-tab-panel>
             <wa-tab-panel name="terminal">
                 <TerminalPanel
+                    ref="terminalPanelRef"
                     :session-id="session?.id"
                     :active="isActive && activeTabId === 'terminal'"
                 />
@@ -995,5 +1029,10 @@ wa-tab::part(base) {
     .compact-tab-scroll-end {
         right: var(--wa-space-xs);
     }
+}
+
+.tab-config-icon {
+    font-size: 0.85em;
+    opacity: 0.5;
 }
 </style>

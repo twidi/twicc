@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Restart Twicc",
+    "command": "exec uv run ./devctl.py restart"
+  },
+  {
+    "name": "Restart Twicc Backend",
+    "command": "exec uv run ./devctl.py restart back"
+  },
+  {
+    "name": "Restart Twicc Frontend",
+    "command": "exec uv run ./devctl.py restart front"
+  },
+  {
+    "name": "Backend Logs",
+    "command": "tail -f ~/.twicc/logs/backend.log"
+  },
+  {
+    "name": "Frontend Logs",
+    "command": "tail -f ~/.twicc/logs/frontend.log"
+  }
+]

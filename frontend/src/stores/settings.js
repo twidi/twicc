@@ -2,8 +2,8 @@
 // Persistent settings store with localStorage + backend sync for global settings
 
 import { defineStore, acceptHMRUpdate } from 'pinia'
-import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_MODEL, DEFAULT_EFFORT, DEFAULT_THINKING, DEFAULT_CLAUDE_IN_CHROME, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, MODEL, EFFORT, SYNCED_SETTINGS_KEYS } from '../constants'
+import { watch, nextTick } from 'vue'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_MODEL, DEFAULT_EFFORT, DEFAULT_THINKING, DEFAULT_CLAUDE_IN_CHROME, DEFAULT_TERMINAL_SHORTCUTS, MAX_TERMINAL_SHORTCUTS, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, MODEL, EFFORT, SYNCED_SETTINGS_KEYS } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
 import { setThemeMode } from '../utils/theme'
@@ -42,6 +42,8 @@ const SETTINGS_SCHEMA = {
     alwaysApplyDefaultThinking: false,
     defaultClaudeInChrome: DEFAULT_CLAUDE_IN_CHROME,
     alwaysApplyDefaultClaudeInChrome: false,
+    // Terminal shortcut buttons (per-device, not synced)
+    terminalShortcuts: structuredClone(DEFAULT_TERMINAL_SHORTCUTS),
     // Notification settings: sound + browser notification for each event type
     notifUserTurnSound: NOTIFICATION_SOUNDS.NONE,
     notifUserTurnBrowser: false,
@@ -89,6 +91,9 @@ const SETTINGS_VALIDATORS = {
     alwaysApplyDefaultThinking: (v) => typeof v === 'boolean',
     defaultClaudeInChrome: (v) => typeof v === 'boolean',
     alwaysApplyDefaultClaudeInChrome: (v) => typeof v === 'boolean',
+    terminalShortcuts: (v) => Array.isArray(v) && v.length <= MAX_TERMINAL_SHORTCUTS && v.every(
+        s => s && typeof s === 'object' && typeof s.label === 'string' && typeof s.sequence === 'string' && typeof s.showOnDesktop === 'boolean',
+    ),
     notifUserTurnSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
     notifUserTurnBrowser: (v) => typeof v === 'boolean',
     notifPendingRequestSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
@@ -170,6 +175,7 @@ export const useSettingsStore = defineStore('settings', {
         getMaxCachedSessions: (state) => state.maxCachedSessions,
         isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
         isTerminalUseTmux: (state) => state.terminalUseTmux,
+        getTerminalShortcuts: (state) => state.terminalShortcuts,
         isDiffSideBySide: (state) => state.diffSideBySide,
         isEditorWordWrap: (state) => state.editorWordWrap,
         isCompactSessionList: (state) => state.compactSessionList,
@@ -323,6 +329,19 @@ export const useSettingsStore = defineStore('settings', {
         setTerminalUseTmux(enabled) {
             if (SETTINGS_VALIDATORS.terminalUseTmux(enabled)) {
                 this.terminalUseTmux = enabled
+            }
+        },
+
+        /**
+         * Update a terminal shortcut button at the given index.
+         * @param {number} index - Slot index (0-based)
+         * @param {{ label: string, sequence: string, showOnDesktop: boolean }} shortcut
+         */
+        setTerminalShortcut(index, shortcut) {
+            if (index >= 0 && index < MAX_TERMINAL_SHORTCUTS && shortcut
+                && typeof shortcut.label === 'string' && typeof shortcut.sequence === 'string'
+                && typeof shortcut.showOnDesktop === 'boolean') {
+                this.terminalShortcuts[index] = { ...shortcut }
             }
         },
 
@@ -544,7 +563,12 @@ export const useSettingsStore = defineStore('settings', {
                     }
                 }
             }
-            this._isApplyingRemoteSettings = false
+            // Reset guard on next tick so the async synced-settings watcher
+            // still sees it as true and skips re-sending to the backend.
+            // Without this, assigning array/object values (e.g. terminalShortcuts)
+            // creates new references that trigger the deep watcher, causing a
+            // ping-pong loop: client → backend → broadcast → client → ...
+            nextTick(() => { this._isApplyingRemoteSettings = false })
         },
 
         /**
@@ -596,6 +620,7 @@ export function initSettings() {
             maxCachedSessions: store.maxCachedSessions,
             autoUnpinOnArchive: store.autoUnpinOnArchive,
             terminalUseTmux: store.terminalUseTmux,
+            terminalShortcuts: store.terminalShortcuts,
             diffSideBySide: store.diffSideBySide,
             editorWordWrap: store.editorWordWrap,
             compactSessionList: store.compactSessionList,
