@@ -508,16 +508,20 @@ def load_tmux_presets(project_dir: str) -> list[dict]:
     return load_tmux_presets_from_file(os.path.join(project_dir, ".twicc-tmux.json"))
 
 
+VALID_RELATIVE_TO = {"preset_dir", "project_dir", "git_dir", "session_cwd"}
+
+
 def load_tmux_presets_from_file(file_path: str) -> list[dict]:
     """Load tmux shell presets from any JSON file.
 
     The file must contain an array of preset objects. Each preset
-    has a name (required), optional cwd (relative or absolute), and
-    optional command to run on creation.
+    has a name (required), optional cwd (relative or absolute), optional
+    command, and optional relative_to (preset_dir|project_dir|git_dir|session_cwd).
 
-    Relative cwd paths are resolved against the directory containing the file.
+    Returns raw preset dicts without resolving cwd — resolution happens in
+    resolve_preset_sources() where the session context is available.
 
-    Returns a list of preset dicts, or [] on missing file / parse error.
+    Returns [] on missing file / parse error.
     """
     try:
         with open(file_path, "r") as f:
@@ -528,25 +532,63 @@ def load_tmux_presets_from_file(file_path: str) -> list[dict]:
     if not isinstance(data, list):
         return []
 
-    base_dir = os.path.dirname(os.path.abspath(file_path))
+    preset_dir = os.path.dirname(os.path.abspath(file_path))
     presets = []
     for entry in data:
         if not isinstance(entry, dict) or not entry.get("name"):
             continue
-        preset: dict = {"name": str(entry["name"])}
+        preset: dict = {"name": str(entry["name"]), "preset_dir": preset_dir}
         if "command" in entry:
             preset["command"] = str(entry["command"])
-        # Resolve cwd: explicit relative paths are relative to the file's directory,
-        # default (no cwd specified) is the directory containing the preset file.
         if "cwd" in entry:
-            entry_cwd = str(entry["cwd"])
-            if not os.path.isabs(entry_cwd):
-                entry_cwd = os.path.normpath(os.path.join(base_dir, entry_cwd))
-            preset["cwd"] = entry_cwd
-        else:
-            preset["cwd"] = base_dir
+            preset["raw_cwd"] = str(entry["cwd"])
+        relative_to = str(entry.get("relative_to", "preset_dir"))
+        if relative_to not in VALID_RELATIVE_TO:
+            relative_to = "preset_dir"
+        preset["relative_to"] = relative_to
         presets.append(preset)
     return presets
+
+
+def _resolve_preset_cwd(preset: dict, ctx: SessionContext) -> dict:
+    """Resolve a preset's cwd using session context and relative_to field.
+
+    Mutates and returns the preset dict, adding 'cwd' (resolved path) and
+    optionally 'unavailable' (True if the base directory is not available).
+    """
+    relative_to = preset.get("relative_to", "preset_dir")
+    preset_dir = preset.get("preset_dir", "")
+
+    # Map relative_to to actual base directory
+    base_map: dict[str, str | None] = {
+        "preset_dir": preset_dir,
+        "project_dir": ctx.project_dir,
+        "git_dir": ctx.git_dir,
+        "session_cwd": ctx.session_cwd,
+    }
+    base_dir = base_map.get(relative_to)
+
+    if not base_dir or not os.path.isdir(base_dir):
+        # Base not available — mark preset as unavailable
+        preset["unavailable"] = True
+        preset["cwd"] = None
+        preset.pop("raw_cwd", None)
+        preset.pop("preset_dir", None)
+        return preset
+
+    raw_cwd = preset.pop("raw_cwd", None)
+    if raw_cwd:
+        if os.path.isabs(raw_cwd):
+            preset["cwd"] = raw_cwd
+        else:
+            preset["cwd"] = os.path.normpath(os.path.join(base_dir, raw_cwd))
+    else:
+        preset["cwd"] = base_dir
+
+    # Clean up internal fields not needed by the frontend
+    preset.pop("preset_dir", None)
+
+    return preset
 
 
 def get_custom_preset_files(project_id: str) -> list[dict]:
@@ -621,6 +663,10 @@ def resolve_preset_sources(ctx: SessionContext, project_id: str | None = None) -
     def _norm(path: str) -> str:
         return os.path.normpath(os.path.realpath(path))
 
+    def _resolve_all(presets: list[dict]) -> list[dict]:
+        """Resolve cwd for all presets using the session context."""
+        return [_resolve_preset_cwd(p, ctx) for p in presets]
+
     def _try_add(label: str, directory: str) -> bool:
         """Load presets from directory. Add to sources if file exists. Returns True if added."""
         norm = _norm(directory)
@@ -630,7 +676,7 @@ def resolve_preset_sources(ctx: SessionContext, project_id: str | None = None) -
         presets = load_tmux_presets(directory)
         if presets:
             seen_files.add(_norm(os.path.join(directory, ".twicc-tmux.json")))
-            sources.append({"label": label, "directory": directory, "presets": presets})
+            sources.append({"label": label, "directory": directory, "presets": _resolve_all(presets)})
             return True
         return False
 
@@ -660,7 +706,7 @@ def resolve_preset_sources(ctx: SessionContext, project_id: str | None = None) -
                 presets = load_tmux_presets(current)
                 if presets:
                     seen_files.add(_norm(os.path.join(current, ".twicc-tmux.json")))
-                    sources.append({"label": _shorten(current), "directory": current, "presets": presets})
+                    sources.append({"label": _shorten(current), "directory": current, "presets": _resolve_all(presets)})
                     break  # Stop at first found
                 parent = os.path.dirname(current)
                 if parent == current:
@@ -680,7 +726,7 @@ def resolve_preset_sources(ctx: SessionContext, project_id: str | None = None) -
                 sources.append({
                     "label": entry["name"],
                     "directory": os.path.dirname(file_path),
-                    "presets": file_presets,
+                    "presets": _resolve_all(file_presets),
                     "custom_file": file_path,
                 })
 
