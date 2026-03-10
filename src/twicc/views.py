@@ -701,6 +701,65 @@ def home_directory(request):
     return JsonResponse({"path": os.path.expanduser("~")})
 
 
+def custom_preset_files(request, project_id):
+    """GET/POST/DELETE custom preset file references for a project.
+
+    GET: returns the list of custom preset files.
+    POST: adds a new preset file reference (body: {"name": "...", "path": "..."}).
+    DELETE: removes a preset file reference (body: {"path": "..."}).
+    """
+    from twicc.terminal import add_custom_preset_file, get_custom_preset_files, remove_custom_preset_file
+
+    # Validate project exists
+    try:
+        Project.objects.get(id=project_id)
+    except Project.DoesNotExist:
+        raise Http404("Project not found")
+
+    if request.method == "GET":
+        return JsonResponse({"files": get_custom_preset_files(project_id)})
+
+    if request.method == "POST":
+        try:
+            data = orjson.loads(request.body)
+        except orjson.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        name = data.get("name", "").strip()
+        path = data.get("path", "").strip()
+
+        if not name or not path:
+            return JsonResponse({"error": "Both 'name' and 'path' are required"}, status=400)
+        if not os.path.isabs(path):
+            return JsonResponse({"error": "Path must be absolute"}, status=400)
+        if not os.path.isfile(path):
+            return JsonResponse({"error": "File not found"}, status=404)
+
+        # Validate the file contains valid preset data
+        from twicc.terminal import load_tmux_presets_from_file
+        presets = load_tmux_presets_from_file(path)
+        if not presets:
+            return JsonResponse({"error": "File does not contain valid presets"}, status=400)
+
+        entries = add_custom_preset_file(project_id, name, path)
+        return JsonResponse({"files": entries})
+
+    if request.method == "DELETE":
+        try:
+            data = orjson.loads(request.body)
+        except orjson.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        path = data.get("path", "").strip()
+        if not path:
+            return JsonResponse({"error": "'path' is required"}, status=400)
+
+        entries = remove_custom_preset_file(project_id, path)
+        return JsonResponse({"files": entries})
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
 def file_content(request, project_id, session_id=None):
     """GET/PUT file content.
 

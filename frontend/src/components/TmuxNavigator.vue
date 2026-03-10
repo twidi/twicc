@@ -1,6 +1,8 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useSettingsStore } from '../stores/settings'
+import { apiFetch } from '../utils/api'
+import AddPresetDialog from './AddPresetDialog.vue'
 
 const settingsStore = useSettingsStore()
 
@@ -9,16 +11,22 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
-    /** Array of { label, directory, presets: [...] } source groups. */
+    /** Array of { label, directory, presets: [...], custom_file? } source groups. */
     presetSources: {
         type: Array,
         default: () => [],
     },
+    /** Project ID for custom preset file management. */
+    projectId: {
+        type: String,
+        default: null,
+    },
 })
 
-const emit = defineEmits(['select', 'create', 'edit-shortcut'])
+const emit = defineEmits(['select', 'create', 'edit-shortcut', 'refresh-presets'])
 
 const newName = ref('')
+const addPresetDialogRef = ref(null)
 
 /** Set of running window names for quick lookup. */
 const runningNames = computed(() => new Set(props.windows.map(w => w.name)))
@@ -55,6 +63,38 @@ function handlePresetClick(preset) {
         emit('select', preset.name)
     } else {
         emit('create', preset)
+    }
+}
+
+// ── Custom preset file management ─────────────────────────────────────────
+
+function openAddPresetDialog() {
+    // Start browsing from the project directory if available
+    const firstSource = props.presetSources[0]
+    const startDir = firstSource?.directory || null
+    addPresetDialogRef.value?.open(startDir)
+}
+
+function onPresetAdded() {
+    emit('refresh-presets')
+}
+
+async function handleRemovePreset(filePath) {
+    if (!props.projectId) return
+    try {
+        const res = await apiFetch(`/api/projects/${props.projectId}/custom-presets/`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: filePath }),
+        })
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            console.error('Failed to remove preset file:', data.error)
+            return
+        }
+        emit('refresh-presets')
+    } catch (e) {
+        console.error('Failed to remove preset file:', e)
     }
 }
 </script>
@@ -128,7 +168,19 @@ function handlePresetClick(preset) {
 
             <!-- Preset sources (one section per source, original order) -->
             <template v-for="source in presetSources" :key="source.directory">
-                <h4 v-if="source.presets.length" class="presets-title">{{ source.label }}</h4>
+                <div v-if="source.presets.length" class="presets-header">
+                    <h4 class="presets-title">{{ source.label }}</h4>
+                    <wa-button
+                        v-if="source.custom_file"
+                        variant="neutral"
+                        appearance="plain"
+                        size="small"
+                        class="remove-preset-btn"
+                        @click="handleRemovePreset(source.custom_file)"
+                    >
+                        <wa-icon name="xmark" label="Remove preset file"></wa-icon>
+                    </wa-button>
+                </div>
                 <div v-if="source.presets.length" class="shell-list">
                     <wa-button
                         v-for="preset in source.presets"
@@ -150,7 +202,27 @@ function handlePresetClick(preset) {
                 </div>
             </template>
 
+            <!-- Add custom preset file button -->
+            <wa-button
+                v-if="projectId"
+                variant="neutral"
+                appearance="outlined"
+                size="small"
+                class="add-preset-btn"
+                @click="openAddPresetDialog"
+            >
+                <wa-icon slot="start" name="circle-plus"></wa-icon>
+                Add preset file
+            </wa-button>
+
         </div>
+
+        <!-- Add preset dialog -->
+        <AddPresetDialog
+            ref="addPresetDialogRef"
+            :project-id="projectId"
+            @added="onPresetAdded"
+        />
     </div>
 </template>
 
@@ -235,6 +307,12 @@ function handlePresetClick(preset) {
     margin-top: var(--wa-space-l);
 }
 
+.presets-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
 .presets-title {
     margin: 0;
     font-size: var(--wa-font-size-s);
@@ -242,6 +320,21 @@ function handlePresetClick(preset) {
     color: var(--wa-color-text-subtle);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+}
+
+.remove-preset-btn {
+    font-size: var(--wa-font-size-xs);
+    opacity: 0.5;
+}
+
+.remove-preset-btn:hover {
+    opacity: 1;
+    color: var(--wa-color-danger-600);
+}
+
+.add-preset-btn {
+    align-self: flex-start;
+    margin-top: var(--wa-space-xs);
 }
 
 .shell-list {

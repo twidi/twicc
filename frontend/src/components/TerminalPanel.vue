@@ -2,10 +2,12 @@
 import { ref, computed, watch } from 'vue'
 import { useTerminal } from '../composables/useTerminal'
 import { useSettingsStore } from '../stores/settings'
+import { useDataStore } from '../stores/data'
 import TmuxNavigator from './TmuxNavigator.vue'
 import ShortcutConfigDialog from './ShortcutConfigDialog.vue'
 
 const settingsStore = useSettingsStore()
+const dataStore = useDataStore()
 
 const props = defineProps({
     sessionId: {
@@ -25,6 +27,7 @@ const {
 } = useTerminal(props.sessionId)
 
 const activeWindowName = computed(() => windows.value.find(w => w.active)?.name ?? '')
+const projectId = computed(() => dataStore.getSession(props.sessionId)?.project_id)
 /** Flatten all preset names across all sources for tab bar icons + mobile dropdown. */
 const presetNames = computed(() => {
     const names = new Set()
@@ -172,9 +175,11 @@ function onConfigSave(shortcut) {
             v-if="showNavigator"
             :windows="windows"
             :preset-sources="presets"
+            :project-id="projectId"
             @select="handleNavigatorSelect"
             @create="handleNavigatorCreate"
             @edit-shortcut="openConfigDialog"
+            @refresh-presets="listWindows"
         />
 
         <!-- Disconnect overlay -->
