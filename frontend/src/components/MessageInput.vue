@@ -7,13 +7,13 @@ import { useSettingsStore } from '../stores/settings'
 import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSocket'
 import { useVisualViewport } from '../composables/useVisualViewport'
 import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
-import { getParsedContent } from '../utils/parsedContent'
 import { toast } from '../composables/useToast'
 import { PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, MODEL, MODEL_LABELS, EFFORT, EFFORT_LABELS, EFFORT_DISPLAY_LABELS, THINKING_LABELS, THINKING_DISPLAY_LABELS, CLAUDE_IN_CHROME_LABELS, CLAUDE_IN_CHROME_DISPLAY_LABELS } from '../constants'
 import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
 import AppTooltip from './AppTooltip.vue'
 import FilePickerPopup from './FilePickerPopup.vue'
 import SlashCommandPickerPopup from './SlashCommandPickerPopup.vue'
+import PromptHistoryPickerPopup from './PromptHistoryPickerPopup.vue'
 
 // Track visual viewport height for mobile keyboard handling
 useVisualViewport()
@@ -48,60 +48,8 @@ const messageText = ref('')
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
 
-// ── Prompt history navigation (PageUp / PageDown) ────────────────────────
-// Index into past user messages: -1 = not navigating, 0 = most recent, etc.
-const historyIndex = ref(-1)
-// Text saved before entering history navigation, restored when exiting
-let savedDraft = ''
-
-/**
- * Get the list of past user message texts for the current session, most recent first.
- */
-function getHistoryTexts() {
-    const items = store.getSessionItems(props.sessionId)
-    const texts = []
-    for (let i = items.length - 1; i >= 0; i--) {
-        if (items[i].kind !== 'user_message') continue
-        const parsed = getParsedContent(items[i])
-        const content = parsed?.message?.content
-        if (!content) continue
-        // content can be a plain string or an array of blocks
-        if (typeof content === 'string') {
-            if (content) texts.push(content)
-        } else if (Array.isArray(content)) {
-            const textBlock = content.find(b => b.type === 'text')
-            if (textBlock?.text) texts.push(textBlock.text)
-        }
-    }
-    return texts
-}
-
-/**
- * Navigate prompt history. delta: -1 = older (PageUp), +1 = newer (PageDown).
- */
-function navigateHistory(delta) {
-    const history = getHistoryTexts()
-    if (!history.length) return
-
-    const newIndex = historyIndex.value + delta
-
-    if (newIndex < -1) return  // Can't go newer than draft
-    if (newIndex >= history.length) return  // Can't go older than oldest
-
-    if (historyIndex.value === -1) {
-        // Entering history mode: save current text
-        savedDraft = messageText.value
-    }
-
-    historyIndex.value = newIndex
-
-    if (newIndex === -1) {
-        // Back to draft
-        messageText.value = savedDraft
-    } else {
-        messageText.value = history[newIndex]
-    }
-}
+// ── Prompt history picker ─────────────────────────────────────────────────
+const historyPickerRef = ref(null)
 const attachButtonId = useId()
 const settingsButtonId = useId()
 const textareaAnchorId = useId()
@@ -250,7 +198,7 @@ const placeholderText = computed(() => {
     let text = 'Type your message... Use / for commands, @ for file paths'
     if (!settingsStore.isTouchDevice) {
         const keys = settingsStore.isMac ? '⌘↵ or Ctrl↵' : 'Ctrl↵ or Meta↵'
-        text += `, ${keys} to send`
+        text += `, Alt+PgUp for history, ${keys} to send`
     }
     return text
 })
@@ -493,6 +441,7 @@ watch(
 
 // Restore draft message when session changes
 watch(() => props.sessionId, async (newId) => {
+
     const draft = store.getDraftMessage(newId)
     messageText.value = draft?.message || ''
     // Adjust textarea height after the DOM updates with restored content
@@ -604,7 +553,6 @@ function onInput(event) {
     }
 
     messageText.value = newText
-    historyIndex.value = -1  // Exit history navigation on new typing
     adjustTextareaHeight()
     // Notify server that user is actively preparing a message (debounced)
     // This prevents auto-stop of the process due to inactivity timeout
@@ -685,7 +633,7 @@ function onSlashCommandPickerClose() {
 
 /**
  * Handle keyboard shortcuts in textarea.
- * Cmd/Ctrl+Enter submits, PageUp/PageDown navigates prompt history.
+ * Cmd/Ctrl+Enter submits, Alt+PageUp opens prompt history picker.
  */
 function onKeydown(event) {
     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
@@ -694,17 +642,69 @@ function onKeydown(event) {
         return
     }
 
-    // PageUp: older prompt, PageDown: newer prompt
-    if (event.key === 'PageUp') {
+    // Alt+PageUp: open prompt history picker (or toggle to search if already open)
+    if (event.altKey && event.key === 'PageUp') {
         event.preventDefault()
-        navigateHistory(1)  // 1 = older (higher index)
+        historyPickerRef.value?.open()  // open() handles already-open case (focuses search)
         return
     }
-    if (event.key === 'PageDown') {
+
+    // Alt+PageDown: focus list in prompt history picker (if open)
+    if (event.altKey && event.key === 'PageDown') {
         event.preventDefault()
-        navigateHistory(-1)  // -1 = newer (lower index)
+        historyPickerRef.value?.focusList()
         return
     }
+}
+
+/**
+ * Handle prompt history replace: overwrite textarea content with selected message.
+ */
+async function onHistoryReplace(text) {
+    messageText.value = text
+    if (textareaRef.value) {
+        textareaRef.value.value = text
+        const inner = textareaRef.value.shadowRoot?.querySelector('textarea')
+        if (inner) {
+            inner.value = text
+            const pos = text.length
+            inner.setSelectionRange(pos, pos)
+        }
+    }
+    await nextTick()
+    textareaRef.value?.focus()
+    adjustTextareaHeight()
+}
+
+/**
+ * Handle prompt history insert: insert selected message at cursor position.
+ */
+async function onHistoryInsert(text) {
+    const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
+    const pos = inner?.selectionStart ?? messageText.value.length
+    const before = messageText.value.slice(0, pos)
+    const after = messageText.value.slice(pos)
+    const newText = before + text + after
+    const newPos = pos + text.length
+
+    messageText.value = newText
+    if (textareaRef.value) {
+        textareaRef.value.value = newText
+        if (inner) {
+            inner.value = newText
+            inner.setSelectionRange(newPos, newPos)
+        }
+    }
+    await nextTick()
+    textareaRef.value?.focus()
+    adjustTextareaHeight()
+}
+
+/**
+ * Handle prompt history picker close: return focus to textarea.
+ */
+function onHistoryPickerClose() {
+    textareaRef.value?.focus()
 }
 
 /**
@@ -890,6 +890,7 @@ async function handleSend() {
 
         // Clear draft message from store (and IndexedDB)
         store.clearDraftMessage(props.sessionId)
+    
 
         // Clear attachments from store and IndexedDB
         if (attachmentCount.value > 0) {
@@ -943,6 +944,7 @@ function handleCancel() {
  * restore dropdowns to their active (server-side) values.
  */
 async function handleReset() {
+
     // Clear text if any
     if (messageText.value) {
         messageText.value = ''
@@ -1008,6 +1010,16 @@ async function handleReset() {
             :anchor-id="textareaAnchorId"
             @select="onSlashCommandSelect"
             @close="onSlashCommandPickerClose"
+        />
+
+        <!-- Prompt history picker popup triggered by Alt+PageUp -->
+        <PromptHistoryPickerPopup
+            ref="historyPickerRef"
+            :session-id="sessionId"
+            :anchor-id="textareaAnchorId"
+            @replace="onHistoryReplace"
+            @insert="onHistoryInsert"
+            @close="onHistoryPickerClose"
         />
 
         <div class="message-input-toolbar">
