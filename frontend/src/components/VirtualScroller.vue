@@ -265,6 +265,7 @@ const {
     batchUpdateItemHeights,
     handleScroll,
     scrollToIndex: composableScrollToIndex,
+    scrollToKey: composableScrollToKey,
     scrollToTop: composableScrollToTop,
     scrollToBottom: composableScrollToBottom,
     getScrollState: composableGetScrollState,
@@ -462,6 +463,16 @@ function scrollToIndex(index, options = {}) {
 }
 
 /**
+ * Scroll to the item with the given key, waiting for heights to stabilize.
+ * @param {*} key - The item key to scroll to
+ * @param {Object} [options] - See useVirtualScroll.scrollToKey for options
+ * @returns {Promise<boolean>} true if the item is visible after scrolling
+ */
+function scrollToKey(key, options = {}) {
+    return composableScrollToKey(key, options)
+}
+
+/**
  * Scroll to the top of the list.
  *
  * @param {Object} [options] - Scroll options
@@ -559,6 +570,7 @@ function scrollToAnchor(anchor) {
 // Expose methods for parent component access via ref
 defineExpose({
     scrollToIndex,
+    scrollToKey,
     scrollToTop,
     scrollToBottom,
     getScrollState,

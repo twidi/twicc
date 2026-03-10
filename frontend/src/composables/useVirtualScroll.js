@@ -1006,6 +1006,115 @@ export function useVirtualScroll(options) {
     }
 
     /**
+     * Scroll to the item with the given key, waiting for heights to stabilize.
+     *
+     * Algorithm ("jump, settle, correct"):
+     * 1. Find the index of the target item by key
+     * 2. scrollToIndex (positions may be inaccurate for distant items)
+     * 3. Wait for ResizeObserver measurements to settle (no height changes for settleMs)
+     * 4. Check if the target item is actually visible in the viewport
+     * 5. If not, scrollToIndex again (positions are now more accurate) and re-settle
+     * 6. Repeat up to maxAttempts times
+     *
+     * The caller is responsible for ensuring the item's content is loaded and the item
+     * exists in the items array before calling this method.
+     *
+     * @param {*} key - The item key (e.g., lineNum) to scroll to
+     * @param {Object} [options]
+     * @param {'start' | 'center' | 'end'} [options.align='center'] - Where to position the item
+     * @param {number} [options.settleMs=150] - Debounce time to wait for height stability
+     * @param {number} [options.maxAttempts=3] - Max number of jump-settle-correct cycles
+     * @param {Function} [options.onHeightChange] - Callback invoked on each height change (for abort detection)
+     * @returns {Promise<boolean>} true if the item is visible in the viewport after scrolling
+     */
+    async function scrollToKey(key, options = {}) {
+        const {
+            align = 'center',
+            settleMs = 150,
+            maxAttempts = 3,
+            onHeightChange = null,
+        } = options
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            // Find the item index by key
+            const index = items.value.findIndex(item => itemKey(item) === key)
+            if (index === -1) return false
+
+            // Jump to the item
+            scrollToIndex(index, { align, behavior: 'auto' })
+
+            // Wait for heights to settle (no ResizeObserver changes for settleMs)
+            await waitForHeightStability(settleMs, onHeightChange)
+
+            // Check if the target item is now visible in the viewport
+            const posArray = positions.value
+            const targetPos = posArray[index]
+            if (!targetPos) return false
+
+            const vpTop = scrollTop.value
+            const vpBottom = vpTop + viewportHeight.value
+            const itemTop = targetPos.top
+            const itemBottom = itemTop + targetPos.height
+
+            // Item is visible if it overlaps significantly with the viewport
+            const isVisible = itemTop < vpBottom - 10 && itemBottom > vpTop + 10
+            if (isVisible) return true
+
+            // Not visible yet — next iteration will re-scroll with updated positions
+        }
+
+        return false
+    }
+
+    /**
+     * Wait for item height measurements to stabilize.
+     * Resolves when no height changes occur for the given duration.
+     *
+     * Works by temporarily hooking into heightCache changes via a MutationObserver-like
+     * pattern: we poll the heightCache's size and watch for changes. Since heightCache
+     * is a reactive Map modified by batchUpdateItemHeights, we use a watchEffect that
+     * re-triggers on any heightCache change.
+     *
+     * @param {number} ms - Debounce time: resolve after this many ms with no height changes
+     * @param {Function} [onHeightChange] - Optional callback on each height change
+     * @returns {Promise<void>}
+     */
+    function waitForHeightStability(ms, onHeightChange = null) {
+        return new Promise(resolve => {
+            let timeoutId = null
+
+            const startTimer = () => {
+                if (timeoutId) clearTimeout(timeoutId)
+                timeoutId = setTimeout(() => {
+                    stopWatch()
+                    resolve()
+                }, ms)
+            }
+
+            // Watch the heightCache for any change (it's a reactive Map)
+            const stopWatch = watch(
+                () => {
+                    // Access heightCache.size to create a reactive dependency.
+                    // Also access each entry to detect value changes (not just additions/removals).
+                    let hash = heightCache.size
+                    for (const h of heightCache.values()) {
+                        hash += h
+                    }
+                    return hash
+                },
+                () => {
+                    if (onHeightChange) onHeightChange()
+                    startTimer()
+                },
+                { flush: 'post' }
+            )
+
+            // Start the initial timer (if no height changes happen, resolve after ms)
+            startTimer()
+        })
+    }
+
+    /**
      * Sync the scroll position from the container (useful after mount or resize).
      */
     function syncScrollPosition() {
@@ -1081,6 +1190,7 @@ export function useVirtualScroll(options) {
 
         // Navigation
         scrollToIndex,
+        scrollToKey,
         scrollToTop,
         scrollToBottom,
         getScrollState,

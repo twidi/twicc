@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { apiFetch } from '../utils/api'
 
@@ -10,13 +10,27 @@ const props = defineProps({
     },
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'navigate'])
 
 const inputRef = ref(null)
 const query = ref('')
 const isLoading = ref(false)
-const matchCount = ref(null)  // null = no search yet, 0+ = result count
 const error = ref(null)
+
+// Sorted list of distinct line_nums from the last search
+const matchLineNums = ref([])
+
+// Current position in the matchLineNums list (-1 = no position yet)
+const currentMatchIndex = ref(-1)
+
+// Total match count (derived from matchLineNums)
+const matchCount = computed(() => matchLineNums.value.length)
+
+// Whether we have results to display (search was performed)
+const hasSearched = ref(false)
+
+// Whether navigation buttons should be enabled
+const canNavigate = computed(() => matchCount.value > 0)
 
 /**
  * Perform the search API call.
@@ -26,7 +40,9 @@ const error = ref(null)
 async function performSearch() {
     const q = query.value.trim()
     if (q.length < 2) {
-        matchCount.value = null
+        matchLineNums.value = []
+        currentMatchIndex.value = -1
+        hasSearched.value = false
         error.value = null
         return
     }
@@ -50,23 +66,31 @@ async function performSearch() {
             } else {
                 error.value = 'Search failed'
             }
-            matchCount.value = null
+            matchLineNums.value = []
+            currentMatchIndex.value = -1
+            hasSearched.value = false
             return
         }
 
         const data = await response.json()
 
-        // Count distinct line_nums across all matches
+        // Extract distinct line_nums, sorted ascending
         if (data.results && data.results.length > 0) {
             const matches = data.results[0].matches || []
-            const uniqueLineNums = new Set(matches.map(m => m.line_num))
-            matchCount.value = uniqueLineNums.size
+            const uniqueLineNums = [...new Set(matches.map(m => m.line_num))]
+            uniqueLineNums.sort((a, b) => a - b)
+            matchLineNums.value = uniqueLineNums
         } else {
-            matchCount.value = 0
+            matchLineNums.value = []
         }
+
+        hasSearched.value = true
+        currentMatchIndex.value = -1
     } catch (err) {
         error.value = 'Search failed'
-        matchCount.value = null
+        matchLineNums.value = []
+        currentMatchIndex.value = -1
+        hasSearched.value = false
     } finally {
         isLoading.value = false
     }
@@ -78,6 +102,32 @@ const debouncedSearch = useDebounceFn(performSearch, 300)
 watch(query, () => {
     debouncedSearch()
 })
+
+/**
+ * Navigate to the next match.
+ */
+function goToNext() {
+    if (matchCount.value === 0) return
+    if (currentMatchIndex.value < matchCount.value - 1) {
+        currentMatchIndex.value++
+    } else {
+        currentMatchIndex.value = 0  // Wrap around
+    }
+    emit('navigate', matchLineNums.value[currentMatchIndex.value])
+}
+
+/**
+ * Navigate to the previous match.
+ */
+function goToPrevious() {
+    if (matchCount.value === 0) return
+    if (currentMatchIndex.value > 0) {
+        currentMatchIndex.value--
+    } else {
+        currentMatchIndex.value = matchCount.value - 1  // Wrap around
+    }
+    emit('navigate', matchLineNums.value[currentMatchIndex.value])
+}
 
 /**
  * Focus the search input.
@@ -100,9 +150,22 @@ function handleKeydown(e) {
         e.preventDefault()
         e.stopPropagation()
         emit('close')
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        goToNext()
+    } else if (e.key === 'Enter' && e.shiftKey) {
+        e.preventDefault()
+        goToPrevious()
     }
-    // Enter / Shift+Enter for next/previous (future functionality)
 }
+
+// Badge display: "X / Y" when navigating, just count otherwise
+const badgeText = computed(() => {
+    if (currentMatchIndex.value >= 0 && matchCount.value > 0) {
+        return `${currentMatchIndex.value + 1} / ${matchCount.value}`
+    }
+    return String(matchCount.value)
+})
 
 /**
  * Open the search bar and focus input.
@@ -116,7 +179,9 @@ function open() {
  */
 function reset() {
     query.value = ''
-    matchCount.value = null
+    matchLineNums.value = []
+    currentMatchIndex.value = -1
+    hasSearched.value = false
     error.value = null
 }
 
@@ -136,26 +201,30 @@ defineExpose({ open, reset })
             clearable
         >
             <wa-icon slot="start" name="magnifying-glass"></wa-icon>
+            <wa-badge
+                v-if="hasSearched || isLoading"
+                slot="end"
+                :variant="matchCount === 0 && !isLoading ? 'danger' : 'neutral'"
+            >
+                <wa-spinner v-if="isLoading" class="search-spinner"></wa-spinner>
+                <span v-else>{{ badgeText }}</span>
+            </wa-badge>
         </wa-input>
-        <wa-badge
-            :variant="matchCount === 0 ? 'danger' : 'neutral'"
-            :class="{ 'badge-placeholder': matchCount === null }"
-        >
-            {{ matchCount ?? 0 }}
-        </wa-badge>
         <button
             class="nav-button"
-            disabled
-            title="Previous match"
+            :disabled="!canNavigate"
+            title="Previous match (Shift+Enter)"
             aria-label="Previous match"
+            @click="goToPrevious"
         >
             <wa-icon name="chevron-up"></wa-icon>
         </button>
         <button
             class="nav-button"
-            disabled
-            title="Next match"
+            :disabled="!canNavigate"
+            title="Next match (Enter)"
             aria-label="Next match"
+            @click="goToNext"
         >
             <wa-icon name="chevron-down"></wa-icon>
         </button>
@@ -191,15 +260,6 @@ defineExpose({ open, reset })
     flex: 1;
     min-width: 0;
     max-width: 300px;
-}
-
-.search-spinner {
-    font-size: var(--wa-font-size-m);
-    flex-shrink: 0;
-}
-
-.badge-placeholder {
-    visibility: hidden;
 }
 
 .nav-button {

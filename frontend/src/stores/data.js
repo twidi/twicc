@@ -1429,6 +1429,28 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
+         * Ensure a conversation block is in detailed mode (expand without toggling).
+         * No-op if the block is already expanded.
+         * @param {string} sessionId
+         * @param {number} userMessageLineNum - line_num of the last user_message before the block
+         * @returns {boolean} true if the block was expanded (visual items recomputed)
+         */
+        ensureBlockDetailed(sessionId, userMessageLineNum) {
+            if (!this.localState.sessionDetailedBlocks[sessionId]) {
+                this.localState.sessionDetailedBlocks[sessionId] = []
+            }
+
+            const blocks = this.localState.sessionDetailedBlocks[sessionId]
+            if (blocks.includes(userMessageLineNum)) {
+                return false  // Already expanded
+            }
+
+            blocks.push(userMessageLineNum)
+            this.recomputeVisualItems(sessionId)
+            return true
+        },
+
+        /**
          * Toggle expanded state of an internal group within an ALWAYS item's content.
          * @param {string} sessionId
          * @param {number} lineNum - line_num of the ALWAYS item containing the group

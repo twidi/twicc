@@ -2,7 +2,8 @@
 import { computed, watch, ref, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { useDataStore } from '../stores/data'
-import { INITIAL_ITEMS_COUNT } from '../constants'
+import { INITIAL_ITEMS_COUNT, DISPLAY_MODE } from '../constants'
+import { useSettingsStore } from '../stores/settings'
 import { isSupportedMimeType, MAX_FILE_SIZE } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
 import { apiFetch } from '../utils/api'
@@ -912,6 +913,102 @@ onBeforeUnmount(() => {
     window.removeEventListener('twicc:toggle-session-search', handleToggleSessionSearch)
 })
 
+// =============================================================================
+// Scroll to line number (generic, used by search navigation and future features)
+// =============================================================================
+
+// Counter to detect stale scroll operations (when user clicks next/prev rapidly)
+let scrollToLineNumGeneration = 0
+
+/**
+ * Scroll the virtual scroller to make the item at the given lineNum visible.
+ *
+ * Handles:
+ * - Conversation mode: expands the block if the item is hidden (non-last assistant message)
+ * - Content loading: ensures the target item's content is loaded before scrolling
+ * - Pre-loading: fetches a buffer of items around the target to reduce placeholder flicker
+ * - Jump-settle-correct: delegates to VirtualScroller.scrollToKey for stable positioning
+ *
+ * @param {number} lineNum - The line number to scroll to
+ * @returns {Promise<boolean>} true if the item was successfully scrolled into view
+ */
+async function scrollToLineNum(lineNum) {
+    const generation = ++scrollToLineNumGeneration
+    const scroller = scrollerRef.value
+    if (!scroller) return false
+
+    const settingsStore = useSettingsStore()
+    const visItems = visualItems.value
+
+    // Step 1: Check if the item is already in the visual items list
+    let found = visItems.some(vi => vi.lineNum === lineNum)
+
+    // Step 2: If not found and in conversation mode, expand the block
+    if (!found && settingsStore.getDisplayMode === DISPLAY_MODE.CONVERSATION) {
+        const rawItems = items.value
+        const rawItem = rawItems.find(ri => ri.line_num === lineNum)
+
+        if (rawItem) {
+            // Find the blockId: walk backwards from this item to find the last user_message
+            let blockId = null
+            for (let i = rawItems.indexOf(rawItem) - 1; i >= 0; i--) {
+                if (rawItems[i].kind === 'user_message') {
+                    blockId = rawItems[i].line_num
+                    break
+                }
+            }
+
+            if (blockId !== null) {
+                store.ensureBlockDetailed(props.sessionId, blockId)
+                await nextTick()
+                found = visualItems.value.some(vi => vi.lineNum === lineNum)
+            }
+        }
+    }
+
+    if (!found) return false
+    if (generation !== scrollToLineNumGeneration) return false  // Stale
+
+    // Step 3: Ensure the target item's content is loaded (plus a buffer around it)
+    const visItems2 = visualItems.value
+    const targetIndex = visItems2.findIndex(vi => vi.lineNum === lineNum)
+    if (targetIndex === -1) return false
+
+    // Collect lineNums that need loading in a buffer around the target
+    const bufferSize = LOAD_BUFFER
+    const startIdx = Math.max(0, targetIndex - bufferSize)
+    const endIdx = Math.min(visItems2.length - 1, targetIndex + bufferSize)
+    const lineNumsToLoad = []
+
+    for (let i = startIdx; i <= endIdx; i++) {
+        if (!hasContent(visItems2[i])) {
+            lineNumsToLoad.push(visItems2[i].lineNum)
+        }
+    }
+
+    if (lineNumsToLoad.length > 0) {
+        const ranges = lineNumsToRanges(lineNumsToLoad)
+        await store.loadSessionItemsRanges(
+            props.projectId,
+            props.sessionId,
+            ranges,
+            props.parentSessionId
+        )
+        if (generation !== scrollToLineNumGeneration) return false  // Stale
+        await nextTick()
+    }
+
+    // Step 4: Scroll to the item via the virtual scroller's jump-settle-correct
+    return scroller.scrollToKey(lineNum, { align: 'center' })
+}
+
+/**
+ * Handle navigate event from the search bar.
+ */
+function handleSearchNavigate(lineNum) {
+    scrollToLineNum(lineNum)
+}
+
 // Expose methods for parent components
 defineExpose({
     getScrollerElement
@@ -933,6 +1030,7 @@ defineExpose({
             ref="sessionSearchRef"
             :session-id="sessionId"
             @close="closeSessionSearch"
+            @navigate="handleSearchNavigate"
         />
 
         <!-- Compute pending state -->
