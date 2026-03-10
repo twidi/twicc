@@ -2,6 +2,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { apiFetch } from '../utils/api'
+import AppTooltip from './AppTooltip.vue'
 
 const props = defineProps({
     sessionId: {
@@ -219,7 +220,7 @@ defineExpose({ open, reset, openWithQuery, goToNext, goToPrevious })
             :value="query"
             @input="query = $event.target.value"
             @keydown="handleKeydown"
-            placeholder="Find in session..."
+            placeholder="Search in session..."
             size="small"
             class="search-input"
             clearable
@@ -235,31 +236,34 @@ defineExpose({ open, reset, openWithQuery, goToNext, goToPrevious })
             </wa-badge>
         </wa-input>
         <button
+            id="session-search-prev"
             class="nav-button"
             :disabled="!canNavigate"
-            title="Previous match (Shift+Enter / Shift+F3)"
             aria-label="Previous match"
             @click="goToPrevious"
         >
             <wa-icon name="chevron-up"></wa-icon>
         </button>
+        <AppTooltip for="session-search-prev">Previous match (Shift+Enter / Shift+F3)</AppTooltip>
         <button
+            id="session-search-next"
             class="nav-button"
             :disabled="!canNavigate"
-            title="Next match (Enter / F3)"
             aria-label="Next match"
             @click="goToNext"
         >
             <wa-icon name="chevron-down"></wa-icon>
         </button>
+        <AppTooltip for="session-search-next">Next match (Enter / F3)</AppTooltip>
         <button
+            id="session-search-close"
             class="nav-button close-button"
-            title="Close (Escape)"
             aria-label="Close search"
             @click="emit('close')"
         >
             <wa-icon name="x"></wa-icon>
         </button>
+        <AppTooltip for="session-search-close">Close (Escape)</AppTooltip>
     </div>
 </template>
 

@@ -137,6 +137,14 @@ export function initStaticCommands(router) {
             action: () => window.dispatchEvent(new CustomEvent('twicc:open-search')),
         },
         {
+            id: 'nav.find-in-session',
+            label: 'Search in Session\u2026',
+            icon: 'file-magnifying-glass',
+            category: 'navigation',
+            when: () => route.name === 'session' || route.name === 'projects-session',
+            action: () => window.dispatchEvent(new Event('twicc:toggle-session-search')),
+        },
+        {
             id: 'nav.tab.chat',
             label: 'Switch to Chat Tab',
             icon: 'comment',
