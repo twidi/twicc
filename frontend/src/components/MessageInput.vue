@@ -7,6 +7,7 @@ import { useSettingsStore } from '../stores/settings'
 import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSocket'
 import { useVisualViewport } from '../composables/useVisualViewport'
 import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
+import { getParsedContent } from '../utils/parsedContent'
 import { toast } from '../composables/useToast'
 import { PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, MODEL, MODEL_LABELS, EFFORT, EFFORT_LABELS, EFFORT_DISPLAY_LABELS, THINKING_LABELS, THINKING_DISPLAY_LABELS, CLAUDE_IN_CHROME_LABELS, CLAUDE_IN_CHROME_DISPLAY_LABELS } from '../constants'
 import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
@@ -46,6 +47,61 @@ const isDraft = computed(() => session.value?.draft === true)
 const messageText = ref('')
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
+
+// ── Prompt history navigation (PageUp / PageDown) ────────────────────────
+// Index into past user messages: -1 = not navigating, 0 = most recent, etc.
+const historyIndex = ref(-1)
+// Text saved before entering history navigation, restored when exiting
+let savedDraft = ''
+
+/**
+ * Get the list of past user message texts for the current session, most recent first.
+ */
+function getHistoryTexts() {
+    const items = store.getSessionItems(props.sessionId)
+    const texts = []
+    for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].kind !== 'user_message') continue
+        const parsed = getParsedContent(items[i])
+        const content = parsed?.message?.content
+        if (!content) continue
+        // content can be a plain string or an array of blocks
+        if (typeof content === 'string') {
+            if (content) texts.push(content)
+        } else if (Array.isArray(content)) {
+            const textBlock = content.find(b => b.type === 'text')
+            if (textBlock?.text) texts.push(textBlock.text)
+        }
+    }
+    return texts
+}
+
+/**
+ * Navigate prompt history. delta: -1 = older (PageUp), +1 = newer (PageDown).
+ */
+function navigateHistory(delta) {
+    const history = getHistoryTexts()
+    if (!history.length) return
+
+    const newIndex = historyIndex.value + delta
+
+    if (newIndex < -1) return  // Can't go newer than draft
+    if (newIndex >= history.length) return  // Can't go older than oldest
+
+    if (historyIndex.value === -1) {
+        // Entering history mode: save current text
+        savedDraft = messageText.value
+    }
+
+    historyIndex.value = newIndex
+
+    if (newIndex === -1) {
+        // Back to draft
+        messageText.value = savedDraft
+    } else {
+        messageText.value = history[newIndex]
+    }
+}
 const attachButtonId = useId()
 const settingsButtonId = useId()
 const textareaAnchorId = useId()
@@ -548,6 +604,7 @@ function onInput(event) {
     }
 
     messageText.value = newText
+    historyIndex.value = -1  // Exit history navigation on new typing
     adjustTextareaHeight()
     // Notify server that user is actively preparing a message (debounced)
     // This prevents auto-stop of the process due to inactivity timeout
@@ -628,12 +685,25 @@ function onSlashCommandPickerClose() {
 
 /**
  * Handle keyboard shortcuts in textarea.
- * Cmd/Ctrl+Enter submits the message.
+ * Cmd/Ctrl+Enter submits, PageUp/PageDown navigates prompt history.
  */
 function onKeydown(event) {
     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault()
         handleSend()
+        return
+    }
+
+    // PageUp: older prompt, PageDown: newer prompt
+    if (event.key === 'PageUp') {
+        event.preventDefault()
+        navigateHistory(1)  // 1 = older (higher index)
+        return
+    }
+    if (event.key === 'PageDown') {
+        event.preventDefault()
+        navigateHistory(-1)  // -1 = newer (lower index)
+        return
     }
 }
 
