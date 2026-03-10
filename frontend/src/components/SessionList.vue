@@ -52,10 +52,24 @@ const allSessions = computed(() => {
         ? store.getAllSessions
         : store.getProjectSessions(props.projectId)
 
-    return baseSessions.filter(s =>
+    const filtered = baseSessions.filter(s =>
         (props.showArchived || !s.archived || s.id === props.sessionId) &&
         (props.showArchivedProjects || !store.getProject(s.project_id)?.archived)
     )
+
+    // Ensure the currently selected session is always in the list, even if it
+    // falls outside the pagination window. The store getters filter by mtime bound
+    // (only sessions >= oldestSessionMtime are returned while more pages exist).
+    // A session navigated to from global search may be older than this bound but
+    // still present in store.sessions from a previous project-scoped load.
+    if (props.sessionId && !filtered.some(s => s.id === props.sessionId)) {
+        const session = store.sessions[props.sessionId]
+        if (session && !session.parent_session_id) {
+            return [...filtered, session]
+        }
+    }
+
+    return filtered
 })
 
 /**
@@ -165,11 +179,58 @@ watch(() => props.searchQuery, () => {
     highlightedIndex.value = -1
 })
 
-// Reset highlight when selected session changes (e.g., mouse selection)
-// This ensures keyboard navigation restarts from the new selection
-watch(() => props.sessionId, () => {
+// Reset highlight when selected session changes.
+watch(() => props.sessionId, (newSessionId) => {
     highlightedIndex.value = -1
 })
+
+// Scroll to the selected session after DOM update.
+// Uses flush:'post' because the VirtualScroller has :key="projectId" — when both
+// projectId and sessionId change simultaneously (e.g., navigating from search results),
+// the scroller is destroyed and recreated. A pre-flush watcher would scroll the OLD
+// scroller. flush:'post' ensures the new scroller is mounted and has run its
+// onMounted/syncScrollPosition before we attempt to scroll.
+// Uses immediate:true because navigating from single-project (/project/X) to all-projects
+// (/projects/X/session/Y) remounts the entire component tree (different route branches).
+// Without immediate, the watcher wouldn't fire for the initial sessionId value on mount.
+watch(() => props.sessionId, (newSessionId) => {
+    if (newSessionId) {
+        scrollToSession(newSessionId)
+    }
+}, { flush: 'post', immediate: true })
+
+/**
+ * Scroll the session list to make a session visible.
+ * Retries a few times because the VirtualScroller may be recreated (via :key)
+ * when projectId changes simultaneously with sessionId, and the new scroller
+ * needs time to mount and measure items.
+ */
+function scrollToSession(targetSessionId, attempt = 0) {
+    const MAX_ATTEMPTS = 5
+    const RETRY_DELAY = 50
+
+    if (!sessions.value.some(s => s.id === targetSessionId)) {
+        // Session not in list yet (data loading). Retry a few times.
+        if (attempt < MAX_ATTEMPTS) {
+            setTimeout(() => scrollToSession(targetSessionId, attempt + 1), RETRY_DELAY)
+        }
+        return
+    }
+
+    if (!scrollerRef.value) {
+        // Scroller not mounted yet (recreated via :key). Retry.
+        if (attempt < MAX_ATTEMPTS) {
+            setTimeout(() => scrollToSession(targetSessionId, attempt + 1), RETRY_DELAY)
+        }
+        return
+    }
+
+    // Use the VirtualScroller's scrollToKey which has a robust "jump, settle, correct"
+    // loop: it scrolls to the item, waits for ResizeObserver height measurements to
+    // stabilize, then verifies visibility and re-scrolls if needed. This handles all
+    // timing issues when the scroller was just recreated (via :key on projectId change).
+    scrollerRef.value.scrollToKey(targetSessionId, { align: 'center' })
+}
 
 const emit = defineEmits(['select', 'focus-search'])
 
