@@ -27,7 +27,16 @@ export default defineConfig(({ command }) => ({
     server: {
         allowedHosts: devAllowedHost ? [devAllowedHost] : [],
         proxy: {
-            '/api': `http://localhost:${backendPort}`,
+            '/api': {
+                target: `http://localhost:${backendPort}`,
+                changeOrigin: true,
+                configure: (proxy) => {
+                    proxy.on('proxyReq', (proxyReq) => {
+                        // Rewrite Origin to match backend host for CSRF middleware
+                        proxyReq.setHeader('Origin', `http://localhost:${backendPort}`)
+                    })
+                },
+            },
             '/ws': { target: `ws://localhost:${backendPort}`, ws: true }
         }
     }
