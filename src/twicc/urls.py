@@ -27,6 +27,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/<str:session_id>/", views.session_detail),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/", views.session_items),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/metadata/", views.session_items_metadata),
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/user-messages/", views.user_messages),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/<int:line_num>/tool-results/<str:tool_id>/", views.tool_results),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/subagents/", views.subagents_state),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/tool-states/", views.tool_states),
@@ -34,6 +35,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/<str:parent_session_id>/subagent/<str:session_id>/", views.session_detail),
     path("api/projects/<str:project_id>/sessions/<str:parent_session_id>/subagent/<str:session_id>/items/", views.session_items),
     path("api/projects/<str:project_id>/sessions/<str:parent_session_id>/subagent/<str:session_id>/items/metadata/", views.session_items_metadata),
+    path("api/projects/<str:project_id>/sessions/<str:parent_session_id>/subagent/<str:session_id>/user-messages/", views.user_messages),
     path("api/projects/<str:project_id>/sessions/<str:parent_session_id>/subagent/<str:session_id>/items/<int:line_num>/tool-results/<str:tool_id>/", views.tool_results),
     # Project-level git endpoints (for draft sessions)
     path("api/projects/<str:project_id>/git-log/", views.git_log),

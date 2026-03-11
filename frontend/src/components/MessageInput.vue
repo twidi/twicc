@@ -1015,6 +1015,7 @@ async function handleReset() {
         <!-- Prompt history picker popup triggered by Alt+PageUp -->
         <PromptHistoryPickerPopup
             ref="historyPickerRef"
+            :project-id="projectId"
             :session-id="sessionId"
             :anchor-id="textareaAnchorId"
             @replace="onHistoryReplace"

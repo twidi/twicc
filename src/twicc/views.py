@@ -11,7 +11,7 @@ from django.utils import timezone
 
 import orjson
 
-from twicc.compute import get_message_content_list
+from twicc.compute import get_message_content, get_message_content_list
 from twicc.core.models import AgentLink, DailyActivity, Project, Session, SessionItem, SessionType, SlashCommand, ToolResultLink, WeeklyActivity
 from twicc.core.serializers import (
     serialize_project,
@@ -487,6 +487,108 @@ def session_items_metadata(request, project_id, session_id, parent_session_id=No
     items = session.items.all().defer('content')  # Already ordered by line_num (see Meta.ordering)
     data = [serialize_session_item_metadata(item) for item in items]
     return JsonResponse(data, safe=False)
+
+
+def user_messages(request, project_id, session_id, parent_session_id=None):
+    """GET /api/projects/<id>/sessions/<session_id>/user-messages/ - Paginated user message texts.
+
+    Also handles subagent route:
+    GET /api/projects/<id>/sessions/<parent_session_id>/subagent/<session_id>/user-messages/
+
+    Returns user message texts in chronological order (oldest first), with pagination
+    and optional full-text search. Designed for the prompt history picker popup.
+
+    Query params:
+        offset (int): Number of messages to skip (default: 0)
+        limit (int): Maximum messages to return (default: 50, max: 200)
+        q (str): Optional search query (case-insensitive substring match)
+
+    Response:
+        {
+            "total": 312,
+            "total_unfiltered": 500,
+            "messages": [
+                {"index": 0, "original_index": 3, "text": "first matching message..."},
+                {"index": 1, "original_index": 7, "text": "second matching message..."},
+                ...
+            ]
+        }
+
+    Fields:
+        total: number of messages matching the current query (or all if no query)
+        total_unfiltered: total number of user messages (always the full count)
+        index: position within the filtered result set (0-based), for virtual scroll
+        original_index: chronological position among all user messages (for display)
+    """
+    try:
+        session = Session.objects.get(id=session_id, project_id=project_id)
+    except Session.DoesNotExist:
+        raise Http404("Session not found")
+
+    # Validate parent_session_id
+    if parent_session_id is not None:
+        if session.parent_session_id != parent_session_id:
+            raise Http404("Subagent not found for this parent session")
+    else:
+        if session.parent_session_id is not None:
+            raise Http404("Session not found")
+
+    # Parse pagination params
+    try:
+        offset = max(0, int(request.GET.get("offset", 0)))
+    except (ValueError, TypeError):
+        offset = 0
+    try:
+        limit = min(10000, max(1, int(request.GET.get("limit", 50))))
+    except (ValueError, TypeError):
+        limit = 50
+
+    query = request.GET.get("q", "").strip().lower()
+
+    # Fetch all user_message items (only content field needed), ordered by line_num
+    items = session.items.filter(kind="user_message").only("content").order_by("line_num")
+
+    # Extract text from each user message, tracking chronological position
+    # Each entry is (original_index, text) where original_index is the
+    # position among ALL user messages (regardless of filter).
+    filtered: list[tuple[int, str]] = []
+    msg_idx = 0
+    for item in items.iterator(chunk_size=500):
+        try:
+            parsed = orjson.loads(item.content)
+        except (orjson.JSONDecodeError, TypeError):
+            continue
+        content = get_message_content(parsed)
+        if not content:
+            continue
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            # Find the first text block in the content array
+            text = ""
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
+                    text = block["text"]
+                    break
+        else:
+            continue
+        if not text:
+            continue
+        if not query or query in text.lower():
+            filtered.append((msg_idx, text))
+        msg_idx += 1
+
+    total = len(filtered)
+    page = filtered[offset:offset + limit]
+
+    return JsonResponse({
+        "total": total,
+        "total_unfiltered": msg_idx,
+        "messages": [
+            {"index": offset + i, "original_index": orig_idx, "text": text}
+            for i, (orig_idx, text) in enumerate(page)
+        ],
+    })
 
 
 def tool_results(request, project_id, session_id, line_num, tool_id, parent_session_id=None):
