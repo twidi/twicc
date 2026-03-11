@@ -245,6 +245,14 @@ const displayResult = computed(() => {
     return resultData.value
 })
 
+// --- Tool input JHV overrides ---
+// Force specific valueType for certain tool input keys (prevents markdown auto-detection).
+const INPUT_OVERRIDES = {
+    Bash: { command: { valueType: 'string-code', language: 'bash' } },
+}
+
+const inputOverrides = computed(() => INPUT_OVERRIDES[props.name] ?? {})
+
 // --- Tool result JHV overrides ---
 // Force specific valueType for certain tool result keys (prevents markdown auto-detection).
 const RESULT_OVERRIDES = {
@@ -623,6 +631,7 @@ function navigateToSubagent() {
             <div v-else-if="displayInput" class="tool-input">
                 <JsonHumanView
                     :value="displayInput"
+                    :overrides="inputOverrides"
                 />
             </div>
             <div v-else class="tool-no-input">

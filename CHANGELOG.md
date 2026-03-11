@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - CLI subcommands: `projects`, `project`, `sessions`, `session` (with `content` and `agents` subcommands), `usage`, and `search` — all output JSON
 - TwiCC Claude Code plugin with skills for each CLI command (usable only from with TwiCC)
 
+### Fixed
+
+- Bash tool input commands no longer incorrectly rendered as Markdown
+
 ## [1.1.2] - 2026-03-09
 
 ### Added
