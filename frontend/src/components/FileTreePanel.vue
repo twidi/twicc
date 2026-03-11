@@ -115,7 +115,7 @@ const props = defineProps({
     },
 })
 
-const emit = defineEmits(['file-select', 'refresh', 'option-select'])
+const emit = defineEmits(['file-select', 'refresh', 'option-select', 'filter-input'])
 
 // ─── Mobile overlay state ────────────────────────────────────────────────────
 
@@ -154,6 +154,7 @@ let searchDebounceTimer = null
 function onSearchInput(event) {
     const query = event.target.value
     searchQuery.value = query
+    emit('filter-input', query)
 
     clearTimeout(searchDebounceTimer)
 
@@ -216,6 +217,7 @@ function clearSearch(reveal = true) {
     const pathToScroll = (reveal && isSearching.value) ? focusedPath.value : null
 
     searchQuery.value = ''
+    emit('filter-input', '')
     isSearching.value = false
     searchTree.value = null
     searchTotal.value = 0

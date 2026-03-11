@@ -53,9 +53,12 @@ const textareaAnchorId = useId()
 // File picker popup state (@ mention)
 const filePickerRef = ref(null)
 const atCursorPosition = ref(null)  // cursor position right after the '@' character
+const fileMirroredLength = ref(0)   // length of filter text mirrored into textarea after '@'
 
 // Slash command picker popup state (/ at start)
 const slashPickerRef = ref(null)
+const slashCursorPosition = ref(null)  // cursor position right after the '/' character
+const slashMirroredLength = ref(0)     // length of filter text mirrored into textarea after '/'
 
 // Attachments for this session
 const attachments = computed(() => store.getAttachments(props.sessionId))
@@ -535,14 +538,18 @@ function onInput(event) {
         const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
         const cursorPos = inner?.selectionStart
 
-        // Detect '@' to trigger file picker
-        if (!filePickerRef.value?.isOpen && cursorPos > 0 && newText[cursorPos - 1] === '@') {
+        // Detect '@' to trigger file picker (only at start of text or after whitespace)
+        if (!filePickerRef.value?.isOpen && cursorPos > 0 && newText[cursorPos - 1] === '@'
+            && (cursorPos === 1 || /\s/.test(newText[cursorPos - 2]))) {
             atCursorPosition.value = cursorPos  // right after the '@'
+            fileMirroredLength.value = 0
             nextTick(() => filePickerRef.value?.open())
         }
 
         // Detect '/' at position 0 (first character of the message) to trigger slash command picker
         if (!slashPickerRef.value?.isOpen && cursorPos === 1 && newText[0] === '/') {
+            slashCursorPosition.value = cursorPos  // right after the '/'
+            slashMirroredLength.value = 0
             nextTick(() => slashPickerRef.value?.open())
         }
     }
@@ -555,6 +562,56 @@ function onInput(event) {
 }
 
 /**
+ * Update textarea content programmatically (without triggering input events).
+ * Sets the value on the Vue reactive ref, the wa-textarea web component,
+ * and the inner shadow DOM textarea.
+ */
+function updateTextareaContent(newText) {
+    messageText.value = newText
+    if (textareaRef.value) {
+        textareaRef.value.value = newText
+        const inner = textareaRef.value.shadowRoot?.querySelector('textarea')
+        if (inner) {
+            inner.value = newText
+        }
+    }
+    adjustTextareaHeight()
+}
+
+/**
+ * Mirror popup filter text into the textarea at the given cursor position.
+ * Replaces the previously mirrored text (tracked by mirroredLengthRef) with
+ * the new filter text, keeping surrounding content intact.
+ */
+function mirrorFilterToTextarea(pos, mirroredLengthRef, filterText) {
+    if (pos == null) return
+
+    const currentText = messageText.value
+    const before = currentText.slice(0, pos)
+    const after = currentText.slice(pos + mirroredLengthRef.value)
+    const newText = before + filterText + after
+
+    mirroredLengthRef.value = filterText.length
+    updateTextareaContent(newText)
+}
+
+/**
+ * Handle filter text changes from the file picker popup.
+ * Mirrors the typed filter text into the textarea right after the '@'.
+ */
+function onFilePickerFilterChange(filterText) {
+    mirrorFilterToTextarea(atCursorPosition.value, fileMirroredLength, filterText)
+}
+
+/**
+ * Handle filter text changes from the slash command picker popup.
+ * Mirrors the typed filter text into the textarea right after the '/'.
+ */
+function onSlashPickerFilterChange(filterText) {
+    mirrorFilterToTextarea(slashCursorPosition.value, slashMirroredLength, filterText)
+}
+
+/**
  * Handle file selection from the file picker popup.
  * Inserts the relative path right after the '@' character at the recorded position.
  */
@@ -562,7 +619,8 @@ async function onFilePickerSelect(relativePath) {
     const pos = atCursorPosition.value
     if (pos != null && pos <= messageText.value.length) {
         const before = messageText.value.slice(0, pos)
-        const after = messageText.value.slice(pos)
+        // Skip the mirrored filter text that was transparently inserted
+        const after = messageText.value.slice(pos + fileMirroredLength.value)
         // Add a trailing space unless the text after already starts with one
         const space = after.startsWith(' ') ? '' : ' '
         const newText = before + relativePath + space + after
@@ -581,6 +639,7 @@ async function onFilePickerSelect(relativePath) {
     }
 
     atCursorPosition.value = null
+    fileMirroredLength.value = 0
     await nextTick()
     textareaRef.value?.focus()
     adjustTextareaHeight()
@@ -588,11 +647,23 @@ async function onFilePickerSelect(relativePath) {
 
 /**
  * Handle file picker popup close (without selection).
- * Returns focus to the textarea.
+ * Returns focus to the textarea and positions the cursor after the
+ * trigger character + any filter text that was mirrored.
  */
 function onFilePickerClose() {
+    const pos = atCursorPosition.value
+    const mirrorLen = fileMirroredLength.value
     atCursorPosition.value = null
+    fileMirroredLength.value = 0
+
     textareaRef.value?.focus()
+    if (pos != null) {
+        const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
+        if (inner) {
+            const cursorTarget = pos + mirrorLen
+            inner.setSelectionRange(cursorTarget, cursorTarget)
+        }
+    }
 }
 
 /**
@@ -600,6 +671,8 @@ function onFilePickerClose() {
  * Replaces the entire textarea content with the selected command text.
  */
 async function onSlashCommandSelect(commandText) {
+    slashCursorPosition.value = null
+    slashMirroredLength.value = 0
     messageText.value = commandText
 
     // Force update the web component and inner textarea
@@ -620,10 +693,23 @@ async function onSlashCommandSelect(commandText) {
 
 /**
  * Handle slash command picker popup close (without selection).
- * Returns focus to the textarea.
+ * Returns focus to the textarea and positions the cursor after the
+ * trigger character + any filter text that was mirrored.
  */
 function onSlashCommandPickerClose() {
+    const pos = slashCursorPosition.value
+    const mirrorLen = slashMirroredLength.value
+    slashCursorPosition.value = null
+    slashMirroredLength.value = 0
+
     textareaRef.value?.focus()
+    if (pos != null) {
+        const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
+        if (inner) {
+            const cursorTarget = pos + mirrorLen
+            inner.setSelectionRange(cursorTarget, cursorTarget)
+        }
+    }
 }
 
 /**
@@ -929,6 +1015,7 @@ async function handleReset() {
             :anchor-id="textareaAnchorId"
             @select="onFilePickerSelect"
             @close="onFilePickerClose"
+            @filter-change="onFilePickerFilterChange"
         />
 
         <!-- Slash command picker popup triggered by / at start -->
@@ -938,6 +1025,7 @@ async function handleReset() {
             :anchor-id="textareaAnchorId"
             @select="onSlashCommandSelect"
             @close="onSlashCommandPickerClose"
+            @filter-change="onSlashPickerFilterChange"
         />
 
         <div class="message-input-toolbar">

@@ -38,7 +38,7 @@ const props = defineProps({
     },
 })
 
-const emit = defineEmits(['select', 'close'])
+const emit = defineEmits(['select', 'close', 'filter-change'])
 
 const store = useDataStore()
 
@@ -359,7 +359,7 @@ defineExpose({ open, close, isOpen })
         shift
         shift-padding="8"
     >
-        <div class="picker-panel" @keydown="onPickerKeydown">
+        <div class="picker-panel" @keydown.capture="onPickerKeydown">
             <!-- Header: current root path -->
             <div class="picker-header">
                 <span class="picker-path" :title="directory">{{ directory || '...' }}</span>
@@ -383,6 +383,7 @@ defineExpose({ open, close, isOpen })
                 mode="files"
                 @file-select="onFileSelect"
                 @option-select="handleOptionsSelect"
+                @filter-input="(query) => emit('filter-change', query)"
             >
                 <template #options-before>
                     <wa-dropdown-item

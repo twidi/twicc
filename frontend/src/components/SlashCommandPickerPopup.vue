@@ -33,7 +33,7 @@ const props = defineProps({
     },
 })
 
-const emit = defineEmits(['select', 'close'])
+const emit = defineEmits(['select', 'close', 'filter-change'])
 
 // ─── Popup state ──────────────────────────────────────────────────────────
 
@@ -323,8 +323,9 @@ function handleListKeydown(event) {
 
 // ─── Reset active index when search changes ───────────────────────────────
 
-watch(searchQuery, () => {
+watch(searchQuery, (newVal) => {
     activeIndex.value = 0
+    emit('filter-change', newVal)
 })
 
 // ─── Click outside to close ───────────────────────────────────────────────
