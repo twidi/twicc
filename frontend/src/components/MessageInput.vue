@@ -13,6 +13,7 @@ import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
 import AppTooltip from './AppTooltip.vue'
 import FilePickerPopup from './FilePickerPopup.vue'
 import SlashCommandPickerPopup from './SlashCommandPickerPopup.vue'
+import PromptHistoryPickerPopup from './PromptHistoryPickerPopup.vue'
 
 // Track visual viewport height for mobile keyboard handling
 useVisualViewport()
@@ -46,6 +47,9 @@ const isDraft = computed(() => session.value?.draft === true)
 const messageText = ref('')
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
+
+// ── Prompt history picker ─────────────────────────────────────────────────
+const historyPickerRef = ref(null)
 const attachButtonId = useId()
 const settingsButtonId = useId()
 const textareaAnchorId = useId()
@@ -194,7 +198,7 @@ const placeholderText = computed(() => {
     let text = 'Type your message... Use / for commands, @ for file paths'
     if (!settingsStore.isTouchDevice) {
         const keys = settingsStore.isMac ? '⌘↵ or Ctrl↵' : 'Ctrl↵ or Meta↵'
-        text += `, ${keys} to send`
+        text += `, Alt+PgUp for history, ${keys} to send`
     }
     return text
 })
@@ -437,6 +441,7 @@ watch(
 
 // Restore draft message when session changes
 watch(() => props.sessionId, async (newId) => {
+
     const draft = store.getDraftMessage(newId)
     messageText.value = draft?.message || ''
     // Adjust textarea height after the DOM updates with restored content
@@ -628,13 +633,78 @@ function onSlashCommandPickerClose() {
 
 /**
  * Handle keyboard shortcuts in textarea.
- * Cmd/Ctrl+Enter submits the message.
+ * Cmd/Ctrl+Enter submits, Alt+PageUp opens prompt history picker.
  */
 function onKeydown(event) {
     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault()
         handleSend()
+        return
     }
+
+    // Alt+PageUp: open prompt history picker (or toggle to search if already open)
+    if (event.altKey && event.key === 'PageUp') {
+        event.preventDefault()
+        historyPickerRef.value?.open()  // open() handles already-open case (focuses search)
+        return
+    }
+
+    // Alt+PageDown: focus list in prompt history picker (if open)
+    if (event.altKey && event.key === 'PageDown') {
+        event.preventDefault()
+        historyPickerRef.value?.focusList()
+        return
+    }
+}
+
+/**
+ * Handle prompt history replace: overwrite textarea content with selected message.
+ */
+async function onHistoryReplace(text) {
+    messageText.value = text
+    if (textareaRef.value) {
+        textareaRef.value.value = text
+        const inner = textareaRef.value.shadowRoot?.querySelector('textarea')
+        if (inner) {
+            inner.value = text
+            const pos = text.length
+            inner.setSelectionRange(pos, pos)
+        }
+    }
+    await nextTick()
+    textareaRef.value?.focus()
+    adjustTextareaHeight()
+}
+
+/**
+ * Handle prompt history insert: insert selected message at cursor position.
+ */
+async function onHistoryInsert(text) {
+    const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
+    const pos = inner?.selectionStart ?? messageText.value.length
+    const before = messageText.value.slice(0, pos)
+    const after = messageText.value.slice(pos)
+    const newText = before + text + after
+    const newPos = pos + text.length
+
+    messageText.value = newText
+    if (textareaRef.value) {
+        textareaRef.value.value = newText
+        if (inner) {
+            inner.value = newText
+            inner.setSelectionRange(newPos, newPos)
+        }
+    }
+    await nextTick()
+    textareaRef.value?.focus()
+    adjustTextareaHeight()
+}
+
+/**
+ * Handle prompt history picker close: return focus to textarea.
+ */
+function onHistoryPickerClose() {
+    textareaRef.value?.focus()
 }
 
 /**
@@ -820,6 +890,7 @@ async function handleSend() {
 
         // Clear draft message from store (and IndexedDB)
         store.clearDraftMessage(props.sessionId)
+    
 
         // Clear attachments from store and IndexedDB
         if (attachmentCount.value > 0) {
@@ -873,6 +944,7 @@ function handleCancel() {
  * restore dropdowns to their active (server-side) values.
  */
 async function handleReset() {
+
     // Clear text if any
     if (messageText.value) {
         messageText.value = ''
@@ -938,6 +1010,16 @@ async function handleReset() {
             :anchor-id="textareaAnchorId"
             @select="onSlashCommandSelect"
             @close="onSlashCommandPickerClose"
+        />
+
+        <!-- Prompt history picker popup triggered by Alt+PageUp -->
+        <PromptHistoryPickerPopup
+            ref="historyPickerRef"
+            :session-id="sessionId"
+            :anchor-id="textareaAnchorId"
+            @replace="onHistoryReplace"
+            @insert="onHistoryInsert"
+            @close="onHistoryPickerClose"
         />
 
         <div class="message-input-toolbar">
