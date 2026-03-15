@@ -46,6 +46,7 @@ class ToolResultUpdate(NamedTuple):
     result_count: int
     completed_at: datetime | None  # Timestamp of the latest tool_result
     extra: str | None = None  # Optional extra data (e.g. diff stats JSON for Edit tools)
+    is_error: bool = False  # Whether the tool_result is an error
 
 
 class AgentStoppedUpdate(NamedTuple):
@@ -926,6 +927,22 @@ def get_tool_result_id(parsed_json: dict) -> str | None:
     return None
 
 
+def get_tool_result_is_error(parsed_json: dict) -> bool:
+    """
+    Check if a tool_result item has ``is_error`` set to true.
+
+    Looks at the first ``tool_result`` entry in the content array.
+    Returns True only when ``is_error`` is explicitly true, False otherwise.
+    """
+    content = get_message_content_list(parsed_json, "user")
+    if content is None:
+        return False
+    for item in content:
+        if isinstance(item, dict) and item.get('type') == 'tool_result':
+            return bool(item.get('is_error'))
+    return False
+
+
 def is_tool_result_item(parsed_json: dict) -> bool:
     """
     Check if an item contains a tool_result.
@@ -1774,6 +1791,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         if tool_result_ref and tool_result_ref in tool_use_map:
             tu_line_num, tu_name = tool_use_map[tool_result_ref]
             extra = compute_edit_diff_stats(parsed) if tu_name == 'Edit' else None
+            is_error = get_tool_result_is_error(parsed)
             tool_result_links_to_create.append({
                 'session_id': session_id,
                 'tool_use_line_num': tu_line_num,
@@ -1782,6 +1800,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
                 'tool_name': tu_name,
                 'tool_result_at': item.timestamp,
                 'extra': extra,
+                'is_error': is_error,
             })
             # Track result counts for Agent/Task tools to detect natural completion
             if tu_name in AGENT_TOOL_NAMES:
@@ -1992,12 +2011,13 @@ def create_tool_result_link_live(
         if tool_use_id in tool_use_entries:
             tool_name = tool_use_entries[tool_use_id]
             extra = compute_edit_diff_stats(parsed_json) if tool_name == 'Edit' else None
+            is_error = get_tool_result_is_error(parsed_json)
             _, created = ToolResultLink.objects.get_or_create(
                 session_id=session_id,
                 tool_use_line_num=candidate.line_num,
                 tool_result_line_num=item.line_num,
                 tool_use_id=tool_use_id,
-                defaults={'tool_name': tool_name, 'tool_result_at': item.timestamp, 'extra': extra},
+                defaults={'tool_name': tool_name, 'tool_result_at': item.timestamp, 'extra': extra, 'is_error': is_error},
             )
             if not created:
                 return None
@@ -2016,6 +2036,7 @@ def create_tool_result_link_live(
                     result_count=result_count,
                     completed_at=max_timestamp,
                     extra=extra,
+                    is_error=is_error,
                 )
 
             return None

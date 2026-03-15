@@ -157,8 +157,8 @@ export const useDataStore = defineStore('data', {
             // Only caches found agents (not-found triggers polling, not caching)
             agentLinks: {},
 
-            // Tool states - maps tool_use_id to { resultCount, completedAt, extra? }
-            // { sessionId: { toolUseId: { resultCount, completedAt, extra? } } }
+            // Tool states - maps tool_use_id to { resultCount, completedAt, isError, extra? }
+            // { sessionId: { toolUseId: { resultCount, completedAt, isError, extra? } } }
             // Populated by fetchToolStates on session load and WS tool_state
             toolStates: {},
 
@@ -1647,11 +1647,11 @@ export const useDataStore = defineStore('data', {
          * @param {number} resultCount - The number of tool_results received
          * @param {string|null} completedAt - ISO timestamp of the latest tool_result
          */
-        setToolState(sessionId, toolUseId, resultCount, completedAt, extra = null) {
+        setToolState(sessionId, toolUseId, resultCount, completedAt, isError = false, extra = null) {
             if (!this.localState.toolStates[sessionId]) {
                 this.localState.toolStates[sessionId] = {}
             }
-            this.localState.toolStates[sessionId][toolUseId] = { resultCount, completedAt, extra }
+            this.localState.toolStates[sessionId][toolUseId] = { resultCount, completedAt, isError, extra }
         },
 
         /**
@@ -1674,6 +1674,7 @@ export const useDataStore = defineStore('data', {
                         states[toolUseId] = {
                             resultCount: state.result_count,
                             completedAt: state.completed_at,
+                            isError: !!state.is_error,
                             extra: state.extra ?? null,
                         }
                     }
