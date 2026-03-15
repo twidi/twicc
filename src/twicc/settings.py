@@ -131,7 +131,7 @@ LOGGING = {
 }
 
 # Display levels computation
-CURRENT_COMPUTE_VERSION = 61  # Bump when display rules change to trigger recomputation
+CURRENT_COMPUTE_VERSION = 62  # Bump when display rules change to trigger recomputation
 
 # Search index version
 CURRENT_SEARCH_VERSION = 2  # Bump when search indexing logic changes to trigger reindexing

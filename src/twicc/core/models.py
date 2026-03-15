@@ -436,6 +436,7 @@ class ToolResultLink(models.Model):
     tool_use_id = models.CharField(max_length=255)  # The tool_use ID
     tool_name = models.CharField(max_length=255, default="")  # The tool name (e.g. "Bash", "Read")
     tool_result_at = models.DateTimeField(null=True, blank=True)  # Timestamp of the tool_result item
+    extra = models.TextField(null=True, blank=True)  # Optional extra data (e.g. diff stats for Edit tools)
 
     class Meta:
         indexes = [

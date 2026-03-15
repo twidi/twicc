@@ -90,7 +90,7 @@ export const AGENT_TOOL_NAMES = new Set(['Task', 'Agent'])
  * Tool names whose completion state is tracked (spinner + duration).
  * Also includes any tool whose name starts with 'mcp__' (MCP tools).
  */
-export const TRACKED_TOOL_NAMES = new Set(['Bash', 'Task', 'Agent', 'WebFetch', 'WebSearch', 'Computer'])
+export const TRACKED_TOOL_NAMES = new Set(['Bash', 'Task', 'Agent', 'WebFetch', 'WebSearch', 'Computer', 'Edit'])
 
 /**
  * Check if a tool's completion state should be tracked.

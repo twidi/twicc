@@ -591,10 +591,10 @@ def subagents_state(request, project_id, session_id):
 def tool_states(request, project_id, session_id):
     """GET /api/projects/<id>/sessions/<session_id>/tool-states/
 
-    Returns the completion state of each tracked tool_use (Bash, Task, Agent)
-    in the session: result_count and completed_at (max tool_result timestamp).
+    Returns the completion state of each tracked tool_use (Bash, Task, Agent, Edit, etc.)
+    in the session: result_count, completed_at (max tool_result timestamp), and optional extra data.
 
-    Response: {"tools": {"toolu_xxx": {"result_count": 2, "completed_at": "..."}, ...}}
+    Response: {"tools": {"toolu_xxx": {"result_count": 2, "completed_at": "...", "extra": "..."}, ...}}
     """
     try:
         session = Session.objects.get(id=session_id, project_id=project_id)
@@ -610,7 +610,7 @@ def tool_states(request, project_id, session_id):
             session=session,
         )
         .values('tool_use_id')
-        .annotate(result_count=Count('id'), completed_at=Max('tool_result_at'))
+        .annotate(result_count=Count('id'), completed_at=Max('tool_result_at'), extra=Max('extra'))
     )
 
     tools = {}
@@ -618,6 +618,7 @@ def tool_states(request, project_id, session_id):
         tools[entry['tool_use_id']] = {
             'result_count': entry['result_count'],
             'completed_at': entry['completed_at'].isoformat() if entry['completed_at'] else None,
+            'extra': entry['extra'],
         }
 
     return JsonResponse({"tools": tools})

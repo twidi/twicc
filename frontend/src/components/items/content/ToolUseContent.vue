@@ -451,7 +451,18 @@ const displayInput = computed(() => {
 const isTask = computed(() => AGENT_TOOL_NAMES.has(props.name))
 const isTracked = computed(() => isTrackedTool(props.name))
 const isBackground = computed(() => !!props.input?.run_in_background)
+const isEdit = computed(() => props.name === 'Edit')
 const toolState = computed(() => isTracked.value ? dataStore.getToolState(props.sessionId, props.toolId) : null)
+
+// Diff stats for Edit tools (parsed from the extra JSON field)
+const editDiffStats = computed(() => {
+    if (!isEdit.value || !toolState.value?.extra) return null
+    try {
+        return JSON.parse(toolState.value.extra)
+    } catch {
+        return null
+    }
+})
 
 // Whether this tool_use predates the session's last start/stop cycle
 // (session was restarted or stopped since — this tool can't be running)
@@ -535,7 +546,7 @@ function navigateToSubagent() {
 </script>
 
 <template>
-    <wa-details class="item-details tool-use" :class="{'with-right-part' : (isTask && !parentSessionId) || isToolRunning}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
+    <wa-details class="item-details tool-use" :class="{'with-right-part' : (isTask && !parentSessionId) || isToolRunning || editDiffStats}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
         <span slot="summary" class="items-details-summary">
             <span class="items-details-summary-left">
                 <strong v-if="taskDisplayName" class="items-details-summary-name">{{ taskDisplayName.name }}<span v-if="taskDisplayName.namespace" class="items-details-summary-quiet"> ({{ taskDisplayName.namespace }})</span></strong>
@@ -625,6 +636,11 @@ function navigateToSubagent() {
                 </AppTooltip>
                 <wa-spinner :id="toolSpinnerId" class="tool-running-spinner"></wa-spinner>
             </template>
+            <!-- Edit diff stats -->
+            <span v-if="editDiffStats" class="edit-diff-stats">
+                <span class="diff-added">+{{ editDiffStats.lines_added }}</span>
+                <span class="diff-removed">-{{ editDiffStats.lines_removed }}</span>
+            </span>
         </span>
         <template v-if="isOpen">
             <TodoContent v-if="isTodoWrite && todosValid" :todos="input.todos" />
@@ -708,6 +724,21 @@ wa-details.with-right-part {
     .items-details-summary-left {
         flex: 1;
         min-width: 0; /* Allow text wrapping */
+    }
+
+    .edit-diff-stats {
+        display: flex;
+        gap: var(--wa-space-xs);
+        font-family: var(--wa-font-mono);
+        font-weight: bold;
+        white-space: nowrap;
+
+        .diff-added {
+            color: var(--wa-color-success-50);
+        }
+        .diff-removed {
+            color: var(--wa-color-danger-50);
+        }
     }
 }
 

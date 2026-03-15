@@ -45,6 +45,7 @@ class ToolResultUpdate(NamedTuple):
     tool_use_id: str
     result_count: int
     completed_at: datetime | None  # Timestamp of the latest tool_result
+    extra: str | None = None  # Optional extra data (e.g. diff stats JSON for Edit tools)
 
 
 class AgentStoppedUpdate(NamedTuple):
@@ -58,7 +59,7 @@ AGENT_TOOL_NAMES = frozenset({'Task', 'Agent'})
 
 # Tool names whose completion state is tracked via ToolResultUpdate.
 # Also includes any tool whose name starts with 'mcp__' (MCP tools).
-TRACKED_TOOL_NAMES = frozenset({'Bash', 'WebFetch', 'WebSearch', 'Computer'}) | AGENT_TOOL_NAMES
+TRACKED_TOOL_NAMES = frozenset({'Bash', 'WebFetch', 'WebSearch', 'Computer', 'Edit'}) | AGENT_TOOL_NAMES
 
 
 def is_tracked_tool(tool_name: str) -> bool:
@@ -939,6 +940,45 @@ def is_tool_result_item(parsed_json: dict) -> bool:
     return any(isinstance(item, dict) and item.get('type') == 'tool_result' for item in content)
 
 
+def compute_edit_diff_stats(parsed_json: dict) -> str | None:
+    """
+    Compute diff stats from an Edit tool_result's structuredPatch.
+
+    Looks at the root-level ``toolUseResult`` key for a ``structuredPatch``
+    list of unified-diff hunks.  Each hunk has a ``lines`` list where entries
+    prefixed with ``"+"`` are additions and ``"-"`` are removals.
+
+    Returns a JSON string like ``{"lines_added": 5, "lines_removed": 3}``
+    (with an extra ``"hunks"`` key when there are multiple hunks), or *None*
+    when the data is unavailable (error result, old format, non-Edit tool).
+    """
+    tool_use_result = parsed_json.get('toolUseResult')
+    if not isinstance(tool_use_result, dict):
+        return None
+
+    structured_patch = tool_use_result.get('structuredPatch')
+    if not isinstance(structured_patch, list) or not structured_patch:
+        return None
+
+    lines_added = 0
+    lines_removed = 0
+    for hunk in structured_patch:
+        if not isinstance(hunk, dict):
+            continue
+        for line in hunk.get('lines', ()):
+            if isinstance(line, str):
+                if line.startswith('+'):
+                    lines_added += 1
+                elif line.startswith('-'):
+                    lines_removed += 1
+
+    stats: dict = {'lines_added': lines_added, 'lines_removed': lines_removed}
+    if len(structured_patch) > 1:
+        stats['hunks'] = len(structured_patch)
+
+    return orjson.dumps(stats).decode()
+
+
 def get_task_tool_uses(parsed_json: dict) -> list[tuple[str, bool]]:
     """
     Extract tool_use IDs and background flag from agent tool calls in an assistant message.
@@ -1733,6 +1773,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         tool_result_ref = get_tool_result_id(parsed)
         if tool_result_ref and tool_result_ref in tool_use_map:
             tu_line_num, tu_name = tool_use_map[tool_result_ref]
+            extra = compute_edit_diff_stats(parsed) if tu_name == 'Edit' else None
             tool_result_links_to_create.append({
                 'session_id': session_id,
                 'tool_use_line_num': tu_line_num,
@@ -1740,6 +1781,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
                 'tool_use_id': tool_result_ref,
                 'tool_name': tu_name,
                 'tool_result_at': item.timestamp,
+                'extra': extra,
             })
             # Track result counts for Agent/Task tools to detect natural completion
             if tu_name in AGENT_TOOL_NAMES:
@@ -1949,17 +1991,18 @@ def create_tool_result_link_live(
         tool_use_entries = get_tool_use_entries(candidate_parsed)
         if tool_use_id in tool_use_entries:
             tool_name = tool_use_entries[tool_use_id]
+            extra = compute_edit_diff_stats(parsed_json) if tool_name == 'Edit' else None
             _, created = ToolResultLink.objects.get_or_create(
                 session_id=session_id,
                 tool_use_line_num=candidate.line_num,
                 tool_result_line_num=item.line_num,
                 tool_use_id=tool_use_id,
-                defaults={'tool_name': tool_name, 'tool_result_at': item.timestamp},
+                defaults={'tool_name': tool_name, 'tool_result_at': item.timestamp, 'extra': extra},
             )
             if not created:
                 return None
 
-            # Emit ToolResultUpdate for tracked tools (Bash, Agent, WebFetch, MCP, etc.)
+            # Emit ToolResultUpdate for tracked tools (Bash, Agent, WebFetch, Edit, MCP, etc.)
             if is_tracked_tool(tool_name):
                 links = ToolResultLink.objects.filter(
                     session_id=session_id,
@@ -1972,6 +2015,7 @@ def create_tool_result_link_live(
                     tool_use_id=tool_use_id,
                     result_count=result_count,
                     completed_at=max_timestamp,
+                    extra=extra,
                 )
 
             return None
