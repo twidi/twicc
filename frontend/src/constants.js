@@ -87,21 +87,6 @@ export const MAX_CONTEXT_TOKENS = 200_000
 export const AGENT_TOOL_NAMES = new Set(['Task', 'Agent'])
 
 /**
- * Tool names whose completion state is tracked (spinner + duration).
- * Also includes any tool whose name starts with 'mcp__' (MCP tools).
- */
-export const TRACKED_TOOL_NAMES = new Set(['Bash', 'Task', 'Agent', 'WebFetch', 'WebSearch', 'Computer', 'Edit'])
-
-/**
- * Check if a tool's completion state should be tracked.
- * @param {string} name - The tool name
- * @returns {boolean}
- */
-export function isTrackedTool(name) {
-    return TRACKED_TOOL_NAMES.has(name) || name.startsWith('mcp__')
-}
-
-/**
  * Display level values for session items (matches backend ItemDisplayLevel enum).
  * - ALWAYS: Always shown in all modes
  * - COLLAPSIBLE: Shown in Normal, grouped in Simplified

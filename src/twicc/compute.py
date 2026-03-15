@@ -58,15 +58,6 @@ class AgentStoppedUpdate(NamedTuple):
 # Tool names that spawn subagent sessions (Task is the legacy name, Agent is the new one)
 AGENT_TOOL_NAMES = frozenset({'Task', 'Agent'})
 
-# Tool names whose completion state is tracked via ToolResultUpdate.
-# Also includes any tool whose name starts with 'mcp__' (MCP tools).
-TRACKED_TOOL_NAMES = frozenset({'Bash', 'WebFetch', 'WebSearch', 'Computer', 'Edit'}) | AGENT_TOOL_NAMES
-
-
-def is_tracked_tool(tool_name: str) -> bool:
-    """Check if a tool's completion state should be tracked."""
-    return tool_name in TRACKED_TOOL_NAMES or tool_name.startswith('mcp__')
-
 # Content types considered user-visible (for display_level and kind computation)
 VISIBLE_CONTENT_TYPES = ('text', 'document', 'image')
 
@@ -2022,24 +2013,21 @@ def create_tool_result_link_live(
             if not created:
                 return None
 
-            # Emit ToolResultUpdate for tracked tools (Bash, Agent, WebFetch, Edit, MCP, etc.)
-            if is_tracked_tool(tool_name):
-                links = ToolResultLink.objects.filter(
-                    session_id=session_id,
-                    tool_use_id=tool_use_id,
-                )
-                result_count = links.count()
-                max_timestamp = links.order_by('-tool_result_at').values_list('tool_result_at', flat=True).first()
-                return ToolResultUpdate(
-                    session_id=session_id,
-                    tool_use_id=tool_use_id,
-                    result_count=result_count,
-                    completed_at=max_timestamp,
-                    extra=extra,
-                    is_error=is_error,
-                )
-
-            return None
+            # Emit ToolResultUpdate for all tools (spinner + error indicator)
+            links = ToolResultLink.objects.filter(
+                session_id=session_id,
+                tool_use_id=tool_use_id,
+            )
+            result_count = links.count()
+            max_timestamp = links.order_by('-tool_result_at').values_list('tool_result_at', flat=True).first()
+            return ToolResultUpdate(
+                session_id=session_id,
+                tool_use_id=tool_use_id,
+                result_count=result_count,
+                completed_at=max_timestamp,
+                extra=extra,
+                is_error=is_error,
+            )
 
     return None
 

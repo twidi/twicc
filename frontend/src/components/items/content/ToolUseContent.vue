@@ -5,7 +5,7 @@ import { useDataStore } from '../../../stores/data'
 import { apiFetch } from '../../../utils/api'
 import { getIconUrl, getFileIconId } from '../../../utils/fileIcons'
 import { getLanguageFromPath } from '../../../utils/languages'
-import { AGENT_TOOL_NAMES, isTrackedTool } from '../../../constants'
+import { AGENT_TOOL_NAMES } from '../../../constants'
 import { getSessionCutoffMs } from '../../../utils/sessions'
 import { getTodoDescription, isValidTodos } from '../../../utils/todoList'
 import JsonHumanView from '../../JsonHumanView.vue'
@@ -449,16 +449,12 @@ const displayInput = computed(() => {
 // --- Tool running state (unified for all tracked tools) ---
 
 const isTask = computed(() => AGENT_TOOL_NAMES.has(props.name))
-const isTracked = computed(() => isTrackedTool(props.name))
 const isBackground = computed(() => !!props.input?.run_in_background)
 const isEdit = computed(() => props.name === 'Edit')
-const toolState = computed(() => isTracked.value ? dataStore.getToolState(props.sessionId, props.toolId) : null)
+const toolState = computed(() => dataStore.getToolState(props.sessionId, props.toolId))
 
 // Whether the tool_result reported an error
-const isToolError = computed(() => {
-    if (!isTracked.value) return false
-    return !!toolState.value?.isError
-})
+const isToolError = computed(() => !!toolState.value?.isError)
 
 // Diff stats for Edit tools (parsed from the extra JSON field)
 const editDiffStats = computed(() => {
@@ -484,10 +480,10 @@ const toolStartedAt = computed(() => {
     return new Date(props.timestamp).getTime() / 1000
 })
 
-// --- Tool running spinner (for all tracked tools except Agent/Task which have their own UI) ---
+// --- Tool running spinner (for all tools except Agent/Task which have their own UI) ---
 
 const isToolRunning = computed(() => {
-    if (!isTracked.value || isTask.value) return false
+    if (isTask.value) return false
     if (isStaleToolUse.value) return false
     const resultCount = toolState.value?.resultCount || 0
     const requiredCount = isBackground.value ? 2 : 1

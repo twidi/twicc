@@ -591,8 +591,8 @@ def subagents_state(request, project_id, session_id):
 def tool_states(request, project_id, session_id):
     """GET /api/projects/<id>/sessions/<session_id>/tool-states/
 
-    Returns the completion state of each tracked tool_use (Bash, Task, Agent, Edit, etc.)
-    in the session: result_count, completed_at, is_error, and optional extra data.
+    Returns the completion state of all tool_use calls in the session:
+    result_count, completed_at, is_error, and optional extra data.
 
     Response: {"tools": {"toolu_xxx": {"result_count": 2, "completed_at": "...", "is_error": false, "extra": "..."}, ...}}
     """
@@ -601,14 +601,10 @@ def tool_states(request, project_id, session_id):
     except Session.DoesNotExist:
         raise Http404("Session not found")
 
-    from django.db.models import Count, Max, Q
-    from twicc.compute import TRACKED_TOOL_NAMES
+    from django.db.models import Count, Max
 
     links = (
-        ToolResultLink.objects.filter(
-            Q(tool_name__in=TRACKED_TOOL_NAMES) | Q(tool_name__startswith='mcp__'),
-            session=session,
-        )
+        ToolResultLink.objects.filter(session=session)
         .values('tool_use_id')
         .annotate(result_count=Count('id'), completed_at=Max('tool_result_at'), extra=Max('extra'), is_error=Max('is_error'))
     )
