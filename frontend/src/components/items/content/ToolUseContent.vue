@@ -1,7 +1,8 @@
 <script setup>
-import { computed, ref, inject, watch, onUnmounted } from 'vue'
+import { computed, ref, inject, watch, nextTick, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../../stores/data'
+import { useSettingsStore } from '../../../stores/settings'
 import { apiFetch } from '../../../utils/api'
 import { getIconUrl, getFileIconId } from '../../../utils/fileIcons'
 import { getLanguageFromPath } from '../../../utils/languages'
@@ -19,6 +20,7 @@ import TodoContent from './TodoContent.vue'
 const route = useRoute()
 const router = useRouter()
 const dataStore = useDataStore()
+const settingsStore = useSettingsStore()
 
 // Detect "All Projects" mode from route name
 const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
@@ -61,7 +63,8 @@ const props = defineProps({
 // Polling configuration
 const POLLING_DELAY_MS = 3000
 
-// Template ref for the result details element
+// Template refs
+const toolUseDetailsRef = ref(null)
 const resultDetailsRef = ref(null)
 
 // Lazy rendering: content is only mounted when wa-details is open
@@ -485,6 +488,33 @@ const showResultDetails = computed(() => {
     return true
 })
 
+// --- Auto-open Edit/Write details when "Show diffs" setting is enabled ---
+const shouldAutoOpen = computed(() => {
+    if (!settingsStore.showDiffs) return false
+    if (isToolError.value) return false
+    if (!toolState.value?.completedAt) return false
+    return editValid.value || writeValid.value
+})
+
+// Guard: auto-open at most once per component instance
+let hasAutoOpened = false
+
+watch(shouldAutoOpen, (val) => {
+    if (val && !hasAutoOpened && !isOpen.value) {
+        hasAutoOpened = true
+        isOpen.value = true
+        nextTick(() => toolUseDetailsRef.value?.show())
+    }
+}, { immediate: true })
+
+// Close auto-opened details when the setting is turned off
+watch(() => settingsStore.showDiffs, (val) => {
+    if (!val && hasAutoOpened && isOpen.value) {
+        hasAutoOpened = false
+        toolUseDetailsRef.value?.hide()
+    }
+})
+
 // Diff stats for Edit/Write tools (parsed from the extra JSON field)
 const FILE_CHANGE_TOOLS = new Set(['Edit', 'Write'])
 const fileChangeStats = computed(() => {
@@ -578,7 +608,7 @@ function navigateToSubagent() {
 </script>
 
 <template>
-    <wa-details class="item-details tool-use" :class="{'with-right-part' : (isTask && !parentSessionId) || isToolRunning || isToolError || fileChangeStats}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
+    <wa-details ref="toolUseDetailsRef" class="item-details tool-use" :class="{'with-right-part' : (isTask && !parentSessionId) || isToolRunning || isToolError || fileChangeStats}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
         <span slot="summary" class="items-details-summary">
             <span class="items-details-summary-left">
                 <strong v-if="taskDisplayName" class="items-details-summary-name">{{ taskDisplayName.name }}<span v-if="taskDisplayName.namespace" class="items-details-summary-quiet"> ({{ taskDisplayName.namespace }})</span></strong>

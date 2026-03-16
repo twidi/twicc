@@ -64,6 +64,7 @@ const defaultThinking = computed(() => store.getDefaultThinking)
 const alwaysApplyDefaultThinking = computed(() => store.isAlwaysApplyDefaultThinking)
 const defaultClaudeInChrome = computed(() => store.getDefaultClaudeInChrome)
 const alwaysApplyDefaultClaudeInChrome = computed(() => store.isAlwaysApplyDefaultClaudeInChrome)
+const showDiffs = computed(() => store.isShowDiffs)
 const diffSideBySide = computed(() => store.isDiffSideBySide)
 const editorWordWrap = computed(() => store.isEditorWordWrap)
 
@@ -282,6 +283,13 @@ function onAlwaysApplyDefaultClaudeInChromeChange(event) {
  */
 function onCompactSessionListChange(event) {
     store.setCompactSessionList(event.target.checked)
+}
+
+/**
+ * Toggle show diffs (auto-expand Edit/Write details).
+ */
+function onShowDiffsChange(event) {
+    store.setShowDiffs(event.target.checked)
 }
 
 /**
@@ -512,6 +520,14 @@ function onPopoverShow() {
                                 :value="option.value"
                             >{{ option.label }}</wa-option>
                         </wa-select>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Auto open edit diffs</label>
+                        <wa-switch
+                            :checked="showDiffs"
+                            @change="onShowDiffsChange"
+                            size="small"
+                        >Enabled</wa-switch>
                     </div>
                     <div class="setting-group">
                         <label class="setting-group-label">Time display</label>

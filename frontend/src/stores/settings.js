@@ -27,6 +27,7 @@ const SETTINGS_SCHEMA = {
     maxCachedSessions: DEFAULT_MAX_CACHED_SESSIONS,
     autoUnpinOnArchive: true,
     terminalUseTmux: false,
+    showDiffs: false,
     diffSideBySide: true,
     editorWordWrap: true,
     compactSessionList: false,
@@ -74,6 +75,7 @@ const SETTINGS_VALIDATORS = {
     maxCachedSessions: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 50,
     autoUnpinOnArchive: (v) => typeof v === 'boolean',
     terminalUseTmux: (v) => typeof v === 'boolean',
+    showDiffs: (v) => typeof v === 'boolean',
     diffSideBySide: (v) => typeof v === 'boolean',
     editorWordWrap: (v) => typeof v === 'boolean',
     compactSessionList: (v) => typeof v === 'boolean',
@@ -170,6 +172,7 @@ export const useSettingsStore = defineStore('settings', {
         getMaxCachedSessions: (state) => state.maxCachedSessions,
         isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
         isTerminalUseTmux: (state) => state.terminalUseTmux,
+        isShowDiffs: (state) => state.showDiffs,
         isDiffSideBySide: (state) => state.diffSideBySide,
         isEditorWordWrap: (state) => state.editorWordWrap,
         isCompactSessionList: (state) => state.compactSessionList,
@@ -323,6 +326,16 @@ export const useSettingsStore = defineStore('settings', {
         setTerminalUseTmux(enabled) {
             if (SETTINGS_VALIDATORS.terminalUseTmux(enabled)) {
                 this.terminalUseTmux = enabled
+            }
+        },
+
+        /**
+         * Set show diffs (auto-expand Edit/Write tool details).
+         * @param {boolean} enabled
+         */
+        setShowDiffs(enabled) {
+            if (SETTINGS_VALIDATORS.showDiffs(enabled)) {
+                this.showDiffs = enabled
             }
         },
 
@@ -596,6 +609,7 @@ export function initSettings() {
             maxCachedSessions: store.maxCachedSessions,
             autoUnpinOnArchive: store.autoUnpinOnArchive,
             terminalUseTmux: store.terminalUseTmux,
+            showDiffs: store.showDiffs,
             diffSideBySide: store.diffSideBySide,
             editorWordWrap: store.editorWordWrap,
             compactSessionList: store.compactSessionList,
