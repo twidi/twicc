@@ -632,8 +632,8 @@ function navigateToSubagent() {
                     <span class="items-details-summary-separator"> — </span>
                     <span class="items-details-summary-description items-details-summary-grep">
                         <code v-if="grepParts.pattern">{{ grepParts.pattern }}</code>
-                        <span v-if="grepParts.fileType">in <code>{{ grepParts.fileType }}</code> files</span>
-                        <span v-if="grepParts.path">in
+                        <span v-if="grepParts.fileType"><span class="grep-connector">in</span> <code>{{ grepParts.fileType }}</code> <span class="grep-connector">files</span></span>
+                        <span v-if="grepParts.path"><span class="grep-connector">in</span>
                             <span v-if="grepParts.pathIconSrc" class="items-details-summary-file">
                                 <img :src="grepParts.pathIconSrc" class="items-details-summary-file-icon" loading="lazy" width="16" height="16" />
                                 <span>{{ grepParts.path }}</span>
@@ -860,6 +860,10 @@ wa-details {
         display: inline-flex;
         align-items: center;
         gap: var(--wa-space-xs);
+    }
+    .grep-connector {
+        white-space: nowrap;
+        flex-shrink: 0;
     }
 }
 
