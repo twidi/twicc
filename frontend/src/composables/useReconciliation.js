@@ -281,6 +281,8 @@ export function useReconciliation() {
      * Load new items for a session that has changed or had a loading error.
      * Only loads the last INITIAL_ITEMS_COUNT items to avoid fetching too much.
      * The virtual scroller will load more if the user scrolls.
+     * Also re-fetches tool states and agent links that may have been missed
+     * during the disconnect (these are normally delivered via WS messages).
      */
     async function loadNewItems(projectId, sessionId) {
         const session = store.getSession(sessionId)
@@ -301,6 +303,11 @@ export function useReconciliation() {
         const rangeStart = Math.max(localLastLine + 1, serverLastLine - INITIAL_ITEMS_COUNT + 1)
 
         await store.loadSessionItemsRanges(projectId, sessionId, [[rangeStart, null]])
+
+        // Re-fetch tool states and agent links that may have arrived while disconnected.
+        // Order matters: fetchSubagentsState reads toolStates to determine if agents are done.
+        await store.fetchToolStates(projectId, sessionId)
+        await store.fetchSubagentsState(projectId, sessionId)
     }
 
     return {
