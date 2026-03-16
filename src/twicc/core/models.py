@@ -299,6 +299,8 @@ class Session(models.Model):
     thinking_enabled = models.BooleanField(null=True, default=None)
     # Whether the built-in Chrome MCP (Claude in Chrome) is activated for this session
     claude_in_chrome = models.BooleanField(default=False)
+    # Maximum context window size in tokens (200_000 = default 200K, 1_000_000 = extended 1M)
+    context_max = models.PositiveIntegerField(default=200_000)
 
     class Meta:
         ordering = ["-mtime"]

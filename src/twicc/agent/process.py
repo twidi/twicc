@@ -74,6 +74,7 @@ class ClaudeProcess:
         thinking_enabled: bool | None,
         get_last_session_slug: Callable[[str], Coroutine[Any, Any, str | None]],
         claude_in_chrome: bool = False,
+        context_max: int = 200_000,
     ) -> None:
         """Initialize a Claude process wrapper.
 
@@ -89,6 +90,7 @@ class ClaudeProcess:
                 slug from a session's JSONL items. Takes a session_id and returns the slug
                 string or None if not found.
             claude_in_chrome: Whether the built-in Chrome MCP is activated (default False)
+            context_max: Maximum context window size in tokens (200_000 or 1_000_000)
         """
         self.session_id = session_id
         self.project_id = project_id
@@ -98,6 +100,7 @@ class ClaudeProcess:
         self.effort = effort
         self.thinking_enabled = thinking_enabled
         self.claude_in_chrome = claude_in_chrome
+        self.context_max = context_max
         self.state = ProcessState.STARTING
         self.previous_state: ProcessState | None = None
         self.started_at = time.time()
@@ -115,7 +118,7 @@ class ClaudeProcess:
         self._active_crons: dict[str, ActiveCronInfo] = {}
 
         logger.debug(
-            "ClaudeProcess created for session %s, project %s, cwd=%s, permission_mode=%s, model=%s, effort=%s, thinking=%s, chrome=%s",
+            "ClaudeProcess created for session %s, project %s, cwd=%s, permission_mode=%s, model=%s, effort=%s, thinking=%s, chrome=%s, context_max=%s",
             session_id,
             project_id,
             cwd,
@@ -124,6 +127,7 @@ class ClaudeProcess:
             effort,
             thinking_enabled,
             claude_in_chrome,
+            context_max,
         )
 
     def _log_stderr(self, line: str) -> None:
@@ -701,10 +705,15 @@ class ClaudeProcess:
                 self._handle_cron_tool_event(input_data)
                 return {"continue_": True}
 
+            # Build SDK model string: append [1m] suffix for extended 1M context
+            sdk_model = self.selected_model
+            if sdk_model and self.context_max == 1_000_000:
+                sdk_model = f"{sdk_model}[1m]"
+
             options = ClaudeAgentOptions(
                 cwd=self.cwd,
                 permission_mode=self.permission_mode,
-                model=self.selected_model,
+                model=sdk_model,
                 effort=self.effort,
                 thinking=thinking_config,
                 setting_sources=["user", "project", "local"],

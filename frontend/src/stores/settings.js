@@ -3,7 +3,7 @@
 
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_MODEL, DEFAULT_EFFORT, DEFAULT_THINKING, DEFAULT_CLAUDE_IN_CHROME, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, MODEL, EFFORT, SYNCED_SETTINGS_KEYS } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_MODEL, DEFAULT_EFFORT, DEFAULT_THINKING, DEFAULT_CLAUDE_IN_CHROME, DEFAULT_CONTEXT_MAX, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, MODEL, EFFORT, CONTEXT_MAX, SYNCED_SETTINGS_KEYS } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
 import { setThemeMode } from '../utils/theme'
@@ -43,6 +43,8 @@ const SETTINGS_SCHEMA = {
     alwaysApplyDefaultThinking: false,
     defaultClaudeInChrome: DEFAULT_CLAUDE_IN_CHROME,
     alwaysApplyDefaultClaudeInChrome: false,
+    defaultContextMax: DEFAULT_CONTEXT_MAX,
+    alwaysApplyDefaultContextMax: false,
     // Notification settings: sound + browser notification for each event type
     notifUserTurnSound: NOTIFICATION_SOUNDS.NONE,
     notifUserTurnBrowser: false,
@@ -91,6 +93,8 @@ const SETTINGS_VALIDATORS = {
     alwaysApplyDefaultThinking: (v) => typeof v === 'boolean',
     defaultClaudeInChrome: (v) => typeof v === 'boolean',
     alwaysApplyDefaultClaudeInChrome: (v) => typeof v === 'boolean',
+    defaultContextMax: (v) => Object.values(CONTEXT_MAX).includes(v),
+    alwaysApplyDefaultContextMax: (v) => typeof v === 'boolean',
     notifUserTurnSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
     notifUserTurnBrowser: (v) => typeof v === 'boolean',
     notifPendingRequestSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
@@ -188,6 +192,8 @@ export const useSettingsStore = defineStore('settings', {
         isAlwaysApplyDefaultThinking: (state) => state.alwaysApplyDefaultThinking,
         getDefaultClaudeInChrome: (state) => state.defaultClaudeInChrome,
         isAlwaysApplyDefaultClaudeInChrome: (state) => state.alwaysApplyDefaultClaudeInChrome,
+        getDefaultContextMax: (state) => state.defaultContextMax,
+        isAlwaysApplyDefaultContextMax: (state) => state.alwaysApplyDefaultContextMax,
         getNotifUserTurnSound: (state) => state.notifUserTurnSound,
         isNotifUserTurnBrowser: (state) => state.notifUserTurnBrowser,
         getNotifPendingRequestSound: (state) => state.notifPendingRequestSound,
@@ -499,6 +505,27 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set the default context max for new sessions.
+         * @param {number} contextMax - One of CONTEXT_MAX values (200_000 or 1_000_000)
+         */
+        setDefaultContextMax(contextMax) {
+            if (SETTINGS_VALIDATORS.defaultContextMax(contextMax)) {
+                this.defaultContextMax = contextMax
+            }
+        },
+
+        /**
+         * Set whether the default context max should always be applied,
+         * even for sessions that have an explicit value in the database.
+         * @param {boolean} enabled
+         */
+        setAlwaysApplyDefaultContextMax(enabled) {
+            if (SETTINGS_VALIDATORS.alwaysApplyDefaultContextMax(enabled)) {
+                this.alwaysApplyDefaultContextMax = enabled
+            }
+        },
+
+        /**
          * Set notification sound for user turn events.
          * @param {string} sound - One of NOTIFICATION_SOUNDS values
          */
@@ -625,6 +652,8 @@ export function initSettings() {
             alwaysApplyDefaultThinking: store.alwaysApplyDefaultThinking,
             defaultClaudeInChrome: store.defaultClaudeInChrome,
             alwaysApplyDefaultClaudeInChrome: store.alwaysApplyDefaultClaudeInChrome,
+            defaultContextMax: store.defaultContextMax,
+            alwaysApplyDefaultContextMax: store.alwaysApplyDefaultContextMax,
             notifUserTurnSound: store.notifUserTurnSound,
             notifUserTurnBrowser: store.notifUserTurnBrowser,
             notifPendingRequestSound: store.notifPendingRequestSound,

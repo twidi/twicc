@@ -243,6 +243,35 @@ async def update_session_claude_in_chrome(session_id: str, claude_in_chrome: boo
     logger.info(f"Session {session_id} updated with claude_in_chrome {claude_in_chrome}")
 
 
+async def update_session_context_max(session_id: str, context_max: int) -> None:
+    """Update the context_max for an existing session and broadcast the change.
+
+    Skips the DB update and broadcast if the value is already the same.
+    """
+    from twicc.core.models import Session
+    from twicc.core.serializers import serialize_session
+
+    rows = await sync_to_async(
+        Session.objects.filter(id=session_id).exclude(context_max=context_max).update
+    )(context_max=context_max)
+    if not rows:
+        return
+
+    session = await sync_to_async(Session.objects.filter(id=session_id).first)()
+    channel_layer = get_channel_layer()
+    await channel_layer.group_send(
+        "updates",
+        {
+            "type": "broadcast",
+            "data": {
+                "type": "session_updated",
+                "session": serialize_session(session),
+            },
+        },
+    )
+    logger.info(f"Session {session_id} updated with context_max {context_max}")
+
+
 def _get_project_display_name(project) -> str:
     """Compute a human-readable display name for a project.
 
@@ -571,6 +600,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         effort = content.get("effort")  # Optional: SDK effort level
         thinking_enabled = content.get("thinking_enabled")  # Optional: bool
         claude_in_chrome = content.get("claude_in_chrome", False)  # bool, defaults to False
+        context_max = content.get("context_max", 200_000)  # int: 200_000 (default) or 1_000_000
 
         # Validate required fields (text is allowed to be empty for settings-only updates)
         if not session_id or not project_id:
@@ -638,6 +668,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                 if thinking_enabled is not None:
                     await update_session_thinking_enabled(session_id, thinking_enabled)
                 await update_session_claude_in_chrome(session_id, claude_in_chrome)
+                await update_session_context_max(session_id, context_max)
                 # Session exists: send message to it
                 await manager.send_to_session(
                     session_id, project_id, cwd, text,
@@ -645,6 +676,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                     selected_model=selected_model,
                     effort=effort, thinking_enabled=thinking_enabled,
                     claude_in_chrome=claude_in_chrome,
+                    context_max=context_max,
                     images=images, documents=documents
                 )
             else:
@@ -676,6 +708,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                 if thinking_enabled is not None:
                     pending_kwargs["thinking_enabled"] = thinking_enabled
                 pending_kwargs["claude_in_chrome"] = claude_in_chrome
+                pending_kwargs["context_max"] = context_max
                 set_pending(session_id, **pending_kwargs)
 
                 await manager.create_session(
@@ -684,6 +717,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                     selected_model=selected_model,
                     effort=effort, thinking_enabled=thinking_enabled,
                     claude_in_chrome=claude_in_chrome,
+                    context_max=context_max,
                     images=images, documents=documents
                 )
         except RuntimeError as e:

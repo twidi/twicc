@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
-import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, MODEL, MODEL_LABELS, EFFORT, EFFORT_LABELS, THINKING, THINKING_LABELS, CLAUDE_IN_CHROME, CLAUDE_IN_CHROME_LABELS } from '../constants'
+import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, MODEL, MODEL_LABELS, EFFORT, EFFORT_LABELS, THINKING, THINKING_LABELS, CLAUDE_IN_CHROME, CLAUDE_IN_CHROME_LABELS, CONTEXT_MAX, CONTEXT_MAX_LABELS } from '../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -64,6 +64,8 @@ const defaultThinking = computed(() => store.getDefaultThinking)
 const alwaysApplyDefaultThinking = computed(() => store.isAlwaysApplyDefaultThinking)
 const defaultClaudeInChrome = computed(() => store.getDefaultClaudeInChrome)
 const alwaysApplyDefaultClaudeInChrome = computed(() => store.isAlwaysApplyDefaultClaudeInChrome)
+const defaultContextMax = computed(() => store.getDefaultContextMax)
+const alwaysApplyDefaultContextMax = computed(() => store.isAlwaysApplyDefaultContextMax)
 const showDiffs = computed(() => store.isShowDiffs)
 const diffSideBySide = computed(() => store.isDiffSideBySide)
 const editorWordWrap = computed(() => store.isEditorWordWrap)
@@ -130,6 +132,12 @@ const claudeInChromeOptions = [
     { value: 'true', label: CLAUDE_IN_CHROME_LABELS[true] },
     { value: 'false', label: CLAUDE_IN_CHROME_LABELS[false] },
 ]
+
+// Context max options for the select (use string values for wa-select compatibility)
+const contextMaxOptions = Object.values(CONTEXT_MAX).map(value => ({
+    value: String(value),
+    label: CONTEXT_MAX_LABELS[value],
+}))
 
 /**
  * Handle display mode change.
@@ -276,6 +284,20 @@ function onDefaultClaudeInChromeChange(event) {
  */
 function onAlwaysApplyDefaultClaudeInChromeChange(event) {
     store.setAlwaysApplyDefaultClaudeInChrome(event.target.checked)
+}
+
+/**
+ * Handle default context max change.
+ */
+function onDefaultContextMaxChange(event) {
+    store.setDefaultContextMax(Number(event.target.value))
+}
+
+/**
+ * Toggle "always apply default context max" setting.
+ */
+function onAlwaysApplyDefaultContextMaxChange(event) {
+    store.setAlwaysApplyDefaultContextMax(event.target.checked)
 }
 
 /**
@@ -429,6 +451,27 @@ function onPopoverShow() {
                         <wa-switch
                             :checked="alwaysApplyDefaultModel"
                             @change="onAlwaysApplyDefaultModelChange"
+                            size="small"
+                        >Always apply *</wa-switch>
+                    </div>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Default context size</label>
+                        <wa-select
+                            :value.prop="String(defaultContextMax)"
+                            @change="onDefaultContextMaxChange"
+                            size="small"
+                        >
+                            <wa-option
+                                v-for="option in contextMaxOptions"
+                                :key="option.value"
+                                :value="option.value"
+                            >
+                                {{ option.label }}
+                            </wa-option>
+                        </wa-select>
+                        <wa-switch
+                            :checked="alwaysApplyDefaultContextMax"
+                            @change="onAlwaysApplyDefaultContextMaxChange"
                             size="small"
                         >Always apply *</wa-switch>
                     </div>

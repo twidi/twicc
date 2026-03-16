@@ -3,7 +3,7 @@ import { ref, computed, watch, inject } from 'vue'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { formatDate } from '../utils/date'
-import { MAX_CONTEXT_TOKENS, PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES } from '../constants'
+import { CONTEXT_MAX_LABELS, PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES } from '../constants'
 import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
@@ -75,11 +75,19 @@ const costBreakdown = computed(() => {
     }
 })
 
-// Calculate context usage percentage
+// Calculate context usage percentage based on session's context_max
+const contextMax = computed(() => session.value?.context_max ?? 200_000)
+
 const contextUsagePercentage = computed(() => {
     const usage = session.value?.context_usage
     if (usage == null) return null
-    return Math.round((usage / MAX_CONTEXT_TOKENS) * 100)
+    return Math.round((usage / contextMax.value) * 100)
+})
+
+// Tooltip text for context usage ring
+const contextUsageTooltip = computed(() => {
+    const label = CONTEXT_MAX_LABELS[contextMax.value] || `${Math.round(contextMax.value / 1000)}K`
+    return `Context window usage (${label} max)`
 })
 
 // Get indicator color for context usage based on thresholds
@@ -433,7 +441,7 @@ defineExpose({
                             '--indicator-width': contextUsageIndicatorWidth
                         }"
                     ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
-                    <AppTooltip :for="`session-header-${sessionId}-context`">Context window usage</AppTooltip>
+                    <AppTooltip :for="`session-header-${sessionId}-context`">{{ contextUsageTooltip }}</AppTooltip>
                 </template>
 
                 <template

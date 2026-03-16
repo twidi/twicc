@@ -87,6 +87,8 @@ def serialize_session(session):
         "thinking_enabled": session.thinking_enabled,
         # Claude in Chrome MCP
         "claude_in_chrome": session.claude_in_chrome,
+        # Maximum context window size in tokens (200K or 1M)
+        "context_max": session.context_max,
     }
 
 

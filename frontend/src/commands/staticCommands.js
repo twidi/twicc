@@ -22,6 +22,8 @@ import {
     EFFORT_LABELS,
     THINKING,
     THINKING_LABELS,
+    CONTEXT_MAX,
+    CONTEXT_MAX_LABELS,
 } from '../constants'
 
 /**
@@ -363,6 +365,18 @@ export function initStaticCommands(router) {
                 { id: 'enabled', label: THINKING_LABELS[THINKING.ENABLED], action: () => settings.setDefaultThinking(THINKING.ENABLED), active: settings.defaultThinking === THINKING.ENABLED },
                 { id: 'disabled', label: THINKING_LABELS[THINKING.DISABLED], action: () => settings.setDefaultThinking(THINKING.DISABLED), active: settings.defaultThinking === THINKING.DISABLED },
             ],
+        },
+        {
+            id: 'claude.context',
+            label: 'Change Default Context Size\u2026',
+            icon: 'window-maximize',
+            category: 'claude',
+            items: () => Object.values(CONTEXT_MAX).map(value => ({
+                id: String(value),
+                label: CONTEXT_MAX_LABELS[value],
+                action: () => settings.setDefaultContextMax(value),
+                active: settings.defaultContextMax === value,
+            })),
         },
 
         // ── UI ────────────────────────────────────────────────────────

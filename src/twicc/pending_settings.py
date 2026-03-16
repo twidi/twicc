@@ -2,7 +2,7 @@
 Pending session settings storage for new sessions.
 
 When creating a new session, settings (permission_mode, selected_model, effort,
-thinking_enabled) must be stored before the file watcher creates the Session row
+thinking_enabled, context_max) must be stored before the file watcher creates the Session row
 in the database. This module provides a simple in-memory store that the watcher
 reads when creating the session.
 """

@@ -75,8 +75,26 @@ User message:
 export const DEFAULT_MAX_CACHED_SESSIONS = 20
 
 /**
- * Maximum context tokens for Claude (used for context usage percentage calculation).
- * Value: 200,000 tokens
+ * Context window size values.
+ * Controls the maximum context window size for Claude sessions.
+ */
+export const CONTEXT_MAX = {
+    DEFAULT: 200_000,
+    EXTENDED: 1_000_000,
+}
+
+export const DEFAULT_CONTEXT_MAX = CONTEXT_MAX.DEFAULT
+
+/**
+ * Human-friendly labels for each context max value.
+ */
+export const CONTEXT_MAX_LABELS = {
+    [CONTEXT_MAX.DEFAULT]: '200K',
+    [CONTEXT_MAX.EXTENDED]: '1M',
+}
+
+/**
+ * @deprecated Use session.context_max instead. Kept only for backward compatibility.
  */
 export const MAX_CONTEXT_TOKENS = 200_000
 
@@ -297,6 +315,8 @@ export const SYNCED_SETTINGS_KEYS = new Set([
     'alwaysApplyDefaultThinking',
     'defaultClaudeInChrome',
     'alwaysApplyDefaultClaudeInChrome',
+    'defaultContextMax',
+    'alwaysApplyDefaultContextMax',
     'autoUnpinOnArchive',
     'terminalUseTmux',
 ])
