@@ -452,8 +452,16 @@ const isTask = computed(() => AGENT_TOOL_NAMES.has(props.name))
 const isBackground = computed(() => !!props.input?.run_in_background)
 const toolState = computed(() => dataStore.getToolState(props.sessionId, props.toolId))
 
-// Whether the tool_result reported an error
-const isToolError = computed(() => !!toolState.value?.isError)
+// Tool error: non-null error string means the tool_result reported an error
+const toolErrorText = computed(() => toolState.value?.error || null)
+const isToolError = computed(() => !!toolErrorText.value)
+
+// Whether to still show the Result details when there's an error
+// (Bash errors only show "Exit code N" so the full output is useful; Unknown errors need details too)
+const showResultDetailsOnError = computed(() => {
+    if (!isToolError.value) return false
+    return props.name === 'Bash' || toolErrorText.value === 'Unknown error'
+})
 
 // Diff stats for Edit/Write tools (parsed from the extra JSON field)
 const FILE_CHANGE_TOOLS = new Set(['Edit', 'Write'])
@@ -657,7 +665,12 @@ function navigateToSubagent() {
             <div v-else class="tool-no-input">
                 No input parameters
             </div>
-            <wa-details v-if="!isTodoWrite || !todosValid" ref="resultDetailsRef" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
+            <!-- Tool error message (shown directly, replaces the Result details unless Bash/Unknown) -->
+            <wa-callout v-if="isToolError" variant="danger" appearance="outlined" class="tool-error-message">
+                <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                {{ toolErrorText }}
+            </wa-callout>
+            <wa-details v-if="(!isTodoWrite || !todosValid) && (!isToolError || showResultDetailsOnError)" ref="resultDetailsRef" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
                 <span slot="summary">Result</span>
                 <div class="tool-result-content">
                     <div v-if="resultState === 'loading'" class="tool-result-loading">
@@ -841,6 +854,10 @@ wa-details {
     align-items: center;
     gap: var(--wa-space-s);
     color: var(--wa-color-text-quiet);
+}
+
+.tool-error-message {
+    margin-top: var(--wa-space-xs);
 }
 
 .tool-result-error {

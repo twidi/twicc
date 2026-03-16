@@ -592,9 +592,9 @@ def tool_states(request, project_id, session_id):
     """GET /api/projects/<id>/sessions/<session_id>/tool-states/
 
     Returns the completion state of all tool_use calls in the session:
-    result_count, completed_at, is_error, and optional extra data.
+    result_count, completed_at, error, and optional extra data.
 
-    Response: {"tools": {"toolu_xxx": {"result_count": 2, "completed_at": "...", "is_error": false, "extra": "..."}, ...}}
+    Response: {"tools": {"toolu_xxx": {"result_count": 2, "completed_at": "...", "error": null, "extra": "..."}, ...}}
     """
     try:
         session = Session.objects.get(id=session_id, project_id=project_id)
@@ -606,7 +606,7 @@ def tool_states(request, project_id, session_id):
     links = (
         ToolResultLink.objects.filter(session=session)
         .values('tool_use_id')
-        .annotate(result_count=Count('id'), completed_at=Max('tool_result_at'), extra=Max('extra'), is_error=Max('is_error'))
+        .annotate(result_count=Count('id'), completed_at=Max('tool_result_at'), extra=Max('extra'), error=Max('error'))
     )
 
     tools = {}
@@ -614,7 +614,7 @@ def tool_states(request, project_id, session_id):
         tools[entry['tool_use_id']] = {
             'result_count': entry['result_count'],
             'completed_at': entry['completed_at'].isoformat() if entry['completed_at'] else None,
-            'is_error': entry['is_error'],
+            'error': entry['error'],
             'extra': entry['extra'],
         }
 

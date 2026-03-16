@@ -477,7 +477,7 @@ async def sync_and_broadcast(
                     "result_count": update.result_count,
                     "completed_at": update.completed_at.isoformat() if update.completed_at else None,
                     "extra": update.extra,
-                    "is_error": update.is_error,
+                    "error": update.error,
                 })
 
             # Broadcast session_updated for subagents that naturally finished

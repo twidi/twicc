@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Display diff stats (+N -N) on Edit and Write tool uses
 - Show error indicator and running spinner on all tool uses
+- Display tool error messages directly in the tool use body
 - Full-text search across all sessions (Ctrl+Shift+F) with in-session search bar (Ctrl+F), powered by Tantivy
 - CLI subcommands: `projects`, `project`, `sessions`, `session` (with `content` and `agents` subcommands), `usage`, and `search` — all output JSON
 - TwiCC Claude Code plugin with skills for each CLI command (usable only from with TwiCC)

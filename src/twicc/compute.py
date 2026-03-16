@@ -46,7 +46,7 @@ class ToolResultUpdate(NamedTuple):
     result_count: int
     completed_at: datetime | None  # Timestamp of the latest tool_result
     extra: str | None = None  # Optional extra data (e.g. diff stats JSON for Edit tools)
-    is_error: bool = False  # Whether the tool_result is an error
+    error: str | None = None  # Error message from tool_result (None = no error)
 
 
 class AgentStoppedUpdate(NamedTuple):
@@ -918,20 +918,39 @@ def get_tool_result_id(parsed_json: dict) -> str | None:
     return None
 
 
-def get_tool_result_is_error(parsed_json: dict) -> bool:
+def get_tool_result_error(parsed_json: dict) -> str | None:
     """
-    Check if a tool_result item has ``is_error`` set to true.
+    Extract the error message from a tool_result item.
 
     Looks at the first ``tool_result`` entry in the content array.
-    Returns True only when ``is_error`` is explicitly true, False otherwise.
+    When ``is_error`` is true, returns the error text from the ``content``
+    field, handling three formats:
+
+    - ``<tool_use_error>message</tool_use_error>`` — SDK validation errors,
+      the XML wrapper is stripped.
+    - ``Exit code N\\n...`` — Bash errors, only the first line is kept
+      (stdout/stderr output is already visible in the session item).
+    - Plain text — returned as-is.
+
+    Returns None when there is no error.
     """
     content = get_message_content_list(parsed_json, "user")
     if content is None:
-        return False
+        return None
     for item in content:
         if isinstance(item, dict) and item.get('type') == 'tool_result':
-            return bool(item.get('is_error'))
-    return False
+            if not item.get('is_error'):
+                return None
+            error_content = item.get('content', '')
+            if isinstance(error_content, str):
+                stripped = error_content.strip()
+                if stripped.startswith('<tool_use_error>') and stripped.endswith('</tool_use_error>'):
+                    return stripped[len('<tool_use_error>'):-len('</tool_use_error>')].strip() or 'Unknown error'
+                if stripped.startswith('Exit code '):
+                    return stripped.split('\n', 1)[0]
+                return stripped or 'Unknown error'
+            return 'Unknown error'
+    return None
 
 
 def is_tool_result_item(parsed_json: dict) -> bool:
@@ -1796,7 +1815,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         if tool_result_ref and tool_result_ref in tool_use_map:
             tu_line_num, tu_name = tool_use_map[tool_result_ref]
             extra = compute_file_change_stats(parsed) if tu_name in ('Edit', 'Write') else None
-            is_error = get_tool_result_is_error(parsed)
+            error = get_tool_result_error(parsed)
             tool_result_links_to_create.append({
                 'session_id': session_id,
                 'tool_use_line_num': tu_line_num,
@@ -1805,7 +1824,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
                 'tool_name': tu_name,
                 'tool_result_at': item.timestamp,
                 'extra': extra,
-                'is_error': is_error,
+                'error': error,
             })
             # Track result counts for Agent/Task tools to detect natural completion
             if tu_name in AGENT_TOOL_NAMES:
@@ -2016,13 +2035,13 @@ def create_tool_result_link_live(
         if tool_use_id in tool_use_entries:
             tool_name = tool_use_entries[tool_use_id]
             extra = compute_file_change_stats(parsed_json) if tool_name in ('Edit', 'Write') else None
-            is_error = get_tool_result_is_error(parsed_json)
+            error = get_tool_result_error(parsed_json)
             _, created = ToolResultLink.objects.get_or_create(
                 session_id=session_id,
                 tool_use_line_num=candidate.line_num,
                 tool_result_line_num=item.line_num,
                 tool_use_id=tool_use_id,
-                defaults={'tool_name': tool_name, 'tool_result_at': item.timestamp, 'extra': extra, 'is_error': is_error},
+                defaults={'tool_name': tool_name, 'tool_result_at': item.timestamp, 'extra': extra, 'error': error},
             )
             if not created:
                 return None
@@ -2040,7 +2059,7 @@ def create_tool_result_link_live(
                 result_count=result_count,
                 completed_at=max_timestamp,
                 extra=extra,
-                is_error=is_error,
+                error=error,
             )
 
     return None

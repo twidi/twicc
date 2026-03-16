@@ -437,7 +437,7 @@ class ToolResultLink(models.Model):
     tool_name = models.CharField(max_length=255, default="")  # The tool name (e.g. "Bash", "Read")
     tool_result_at = models.DateTimeField(null=True, blank=True)  # Timestamp of the tool_result item
     extra = models.TextField(null=True, blank=True)  # Optional extra data (e.g. diff stats for Edit tools)
-    is_error = models.BooleanField(default=False)  # Whether the tool_result is an error
+    error = models.TextField(null=True, blank=True)  # Error message from tool_result (None = no error)
 
     class Meta:
         indexes = [

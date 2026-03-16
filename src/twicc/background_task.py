@@ -150,15 +150,23 @@ def compute_worker_main(command_queue: Queue, result_queue: Queue, stop_event: M
                     # This function reads DB and sends batches via result_queue
                     compute_session_metadata(session_id, result_queue)
                 except Exception as e:
-                    worker_logger.error(f"Error computing session {session_id}: {e}")
-                    result_queue.put({
+                    worker_logger.error(f"Error computing session {session_id}: {e}", exc_info=True)
+                    # Flush the file handler so the error survives process termination
+                    with suppress(Exception):
+                        for handler in logging.getLogger('twicc').handlers:
+                            handler.flush()
+                    import orjson as _orjson
+                    result_queue.put(_orjson.dumps({
                         'type': 'error',
                         'session_id': session_id,
                         'error': str(e),
-                    })
+                    }))
 
         except Exception as e:
-            worker_logger.error(f"Unexpected error in compute worker: {e}")
+            worker_logger.error(f"Unexpected error in compute worker: {e}", exc_info=True)
+            with suppress(Exception):
+                for handler in logging.getLogger('twicc').handlers:
+                    handler.flush()
 
     # Signal the consumer that the worker is done
     import orjson
@@ -285,10 +293,14 @@ async def consume_compute_results(
         # Collect available messages (non-blocking)
         try:
             raw_msg = ctx.result_queue.get_nowait()
-            # Deserialize from orjson bytes
-            msg = orjson.loads(raw_msg)
         except queue.Empty:
             await asyncio.sleep(0.05)
+            continue
+
+        try:
+            msg = orjson.loads(raw_msg)
+        except Exception:
+            logger.error(f"Failed to deserialize result message: {raw_msg!r:.500}")
             continue
 
         # Process collected message
