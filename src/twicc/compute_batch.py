@@ -437,15 +437,14 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         new_content = transform_task_notification(parsed)
         if new_content is None:
             new_content = transform_local_command_output(parsed)
-
         if new_content is not None:
             item.content = new_content
             content_overrides.append({'id': item.id, 'content': new_content})
 
-        # === Single-pass content analysis (replaces multiple individual traversals) ===
+        # Single-pass content analysis (replaces multiple individual content traversals)
         analysis = analyze_content(parsed)
 
-        # Compute display_level and kind (kept as-is: classification logic beyond content traversal)
+        # Compute display_level and kind
         metadata = compute_item_metadata(parsed)
         item.display_level = metadata['display_level']
         item.kind = metadata['kind']
@@ -456,7 +455,6 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             first_timestamp = item.timestamp
             last_started_at = first_timestamp
             affected_days.add(first_timestamp.date().isoformat())
-
         if item.timestamp is not None:
             last_updated_at = item.timestamp
         if (
@@ -488,43 +486,33 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             last_resolved_git_directory = item.git_directory
             last_resolved_git_branch = item.git_branch
         else:
-            # resolve_git_for_item kept as-is (filesystem I/O dominates, not content traversal)
             git_resolution = resolve_git_for_item(parsed)
             if git_resolution is not None:
                 item.git_directory, item.git_branch = git_resolution
                 last_resolved_git_directory = item.git_directory
                 last_resolved_git_branch = item.git_branch
 
-        # Handle title extraction (kept as-is: markdown stripping logic)
+        # Handle title extraction
         if item.kind == ItemKind.USER_MESSAGE and not initial_title_set:
             title = extract_title_from_user_message(parsed)
             if title:
                 session_titles[session_id] = title
                 initial_title_set = True
-
         if item.kind == ItemKind.CUSTOM_TITLE:
             custom_title = parsed.get('customTitle')
             target_session_id = parsed.get('sessionId', session_id)
             if custom_title and isinstance(custom_title, str):
                 session_titles[target_session_id] = custom_title
-
         if item.kind == ItemKind.USER_MESSAGE:
             user_message_count += 1
-
         if item.timestamp and (item.kind == ItemKind.USER_MESSAGE or item.cost):
             affected_days.add(item.timestamp.date().isoformat())
 
-        # === Use analysis fields instead of individual function calls ===
-
-        # Track tool_use IDs (was: get_tool_use_entries(parsed))
+        # Use analysis fields instead of individual function calls
         for tu_id, tu_name in analysis.tool_use_entries.items():
             tool_use_map[tu_id] = (item.line_num, tu_name)
-
-        # Track Task tool_use IDs (was: get_task_tool_uses(parsed))
         for tu_id, is_background in analysis.task_tool_uses:
             task_tool_use_map[tu_id] = (item.line_num, is_background, item.timestamp)
-
-        # Check tool_result and create link (was: get_tool_result_id + get_tool_result_error)
         tool_result_ref = analysis.tool_result_id
         if tool_result_ref and tool_result_ref in tool_use_map:
             tu_line_num, tu_name = tool_use_map[tool_result_ref]
@@ -543,8 +531,6 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             if tu_name in AGENT_TOOL_NAMES:
                 prev_count, _ = agent_tool_result_counts.get(tool_result_ref, (0, None))
                 agent_tool_result_counts[tool_result_ref] = (prev_count + 1, item.timestamp)
-
-        # Check Task tool_result with agentId (was: get_tool_result_agent_info(parsed))
         if analysis.tool_result_agent_info:
             tu_id, agent_id = analysis.tool_result_agent_info
             if tu_id in task_tool_use_map:
@@ -559,12 +545,10 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
                 })
                 del task_tool_use_map[tu_id]
 
-        # Prefix/suffix (was: _detect_prefix_suffix(parsed, item.kind))
+        # Prefix/suffix for group state machine
         has_prefix, has_suffix = False, False
         if item.display_level == ItemDisplayLevel.ALWAYS and item.kind in (ItemKind.USER_MESSAGE, ItemKind.ASSISTANT_MESSAGE):
             has_prefix, has_suffix = analysis.has_prefix, analysis.has_suffix
-
-        # Process through group state machine (unchanged)
         info = state.process_item(
             line_num=item.line_num,
             display_level=item.display_level,
@@ -573,18 +557,16 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             item_ref=item,
         )
         item.group_head = info.group_head
-
         items_to_update.extend(info.closed_items)
-
         if item.display_level == ItemDisplayLevel.DEBUG_ONLY:
             items_to_update.append(item)
         elif item.display_level == ItemDisplayLevel.ALWAYS and not has_suffix:
             items_to_update.append(item)
 
+        # Flush batches
         if len(items_to_update) >= batch_size:
             flush_items(items_to_update)
             items_to_update = []
-
         if len(tool_result_links_to_create) >= batch_size:
             flush_tool_result_links(tool_result_links_to_create)
             tool_result_links_to_create = []

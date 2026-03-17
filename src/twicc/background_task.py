@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import queue
-import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from multiprocessing import Event as MPEvent, Process, Queue
@@ -282,86 +281,98 @@ async def consume_compute_results(
     from collections import defaultdict
     from datetime import date as date_cls
 
-    # Accumulate affected days per project across multiple sessions
-    batch_activity_count = 50
-    pending_activity_days: dict[str, set] = defaultdict(set)
-    sessions_since_activities_flush = 0
+    try:
+        # Accumulate affected days per project across multiple sessions
+        batch_activity_count = 50
+        pending_activity_days: dict[str, set] = defaultdict(set)
+        sessions_since_activities_flush = 0
 
-    # Progress broadcasting — only count real sessions (not subagents) for display
-    completed_count = 0
+        # Progress broadcasting — only count real sessions (not subagents) for display
+        completed_count = 0
 
-    while not ctx.stop_event.is_set():
-        # Collect available messages (non-blocking)
-        try:
-            raw_msg = ctx.result_queue.get_nowait()
-        except queue.Empty:
-            await asyncio.sleep(0.05)
-            continue
+        while not ctx.stop_event.is_set():
+            # Collect available messages (non-blocking)
+            try:
+                raw_msg = ctx.result_queue.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.05)
+                continue
 
-        try:
-            msg = orjson.loads(raw_msg)
-        except Exception:
-            logger.error(f"Failed to deserialize result message: {raw_msg!r:.500}")
-            continue
+            try:
+                msg = orjson.loads(raw_msg)
+            except Exception:
+                logger.error(f"Failed to deserialize result message: {raw_msg!r:.500}")
+                continue
 
-        # Process collected message
-        msg_type = msg.get('type')
+            # Process collected message
+            msg_type = msg.get('type')
 
-        try:
-            if msg_type == 'session_complete':
-                # New unified message type - all data in one message
-                await sync_to_async(apply_session_complete)(msg)
-                await _handle_compute_done(msg['session_id'])
+            try:
+                if msg_type == 'session_complete':
+                    # New unified message type - all data in one message
+                    await sync_to_async(apply_session_complete)(msg)
+                    await _handle_compute_done(msg['session_id'])
 
-                # Broadcast progress only for real sessions (not subagents)
-                session_id = msg['session_id']
-                if display_session_ids is None or session_id in display_session_ids:
-                    completed_count += 1
-                    await broadcast_startup_progress(
-                        "background_compute", completed_count, total_display
-                    )
+                    # Broadcast progress only for real sessions (not subagents)
+                    session_id = msg['session_id']
+                    if display_session_ids is None or session_id in display_session_ids:
+                        completed_count += 1
+                        await broadcast_startup_progress(
+                            "background_compute", completed_count, total_display
+                        )
 
-                # Accumulate affected days for batched activity recalculation
-                affected_days = msg.get('affected_days')
-                project_id = msg.get('project_id')
-                if project_id and affected_days:
-                    pending_activity_days[project_id].update(
-                        date_cls.fromisoformat(d) for d in affected_days
-                    )
-                    sessions_since_activities_flush += 1
+                    # Accumulate affected days for batched activity recalculation
+                    affected_days = msg.get('affected_days')
+                    project_id = msg.get('project_id')
+                    if project_id and affected_days:
+                        pending_activity_days[project_id].update(
+                            date_cls.fromisoformat(d) for d in affected_days
+                        )
+                        sessions_since_activities_flush += 1
 
-            elif msg_type == 'done':
-                # Worker has finished processing all sessions
-                logger.info("consume_compute_results: received 'done' from worker")
-                break
+                elif msg_type == 'done':
+                    # Worker has finished processing all sessions
+                    logger.info("consume_compute_results: received 'done' from worker")
+                    break
 
-            elif msg_type == 'error':
-                logger.error(f"Compute error for {msg['session_id']}: {msg['error']}")
+                elif msg_type == 'error':
+                    logger.error(f"Compute error for {msg['session_id']}: {msg['error']}")
 
-            else:
-                logger.error(f"Unexpected result message type: {msg_type} => {msg}")
+                else:
+                    logger.error(f"Unexpected result message type: {msg_type} => {msg}")
 
-        except Exception as e:
-            logger.error(f"Error processing result message {msg_type}: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Error processing result message {msg_type}: {e}", exc_info=True)
 
-        # Flush activity recalculations every batch_activity_count sessions
-        if sessions_since_activities_flush >= batch_activity_count:
-            await _flush_pending_activities(pending_activity_days)
+            # Flush activity recalculations every batch_activity_count sessions
+            try:
+                if sessions_since_activities_flush >= batch_activity_count:
+                    await _flush_pending_activities(pending_activity_days)
+                    pending_activity_days.clear()
+                    sessions_since_activities_flush = 0
+            except Exception as e:
+                logger.error(f"Error flushing activity recalculations: {e}", exc_info=True)
+                pending_activity_days.clear()
+                sessions_since_activities_flush = 0
+
+            # Yield to event loop between batches
+            await asyncio.sleep(0)
+
+        # Flush any remaining pending activity recalculations before shutdown
+        if pending_activity_days:
+            try:
+                await _flush_pending_activities(pending_activity_days)
+            except Exception as e:
+                logger.error(f"Error in final activity flush: {e}", exc_info=True)
             pending_activity_days.clear()
-            sessions_since_activities_flush = 0
 
-        # Yield to event loop between batches
-        await asyncio.sleep(0)
+    except Exception as e:
+        logger.error(f"consume_compute_results crashed: {e}", exc_info=True)
 
-    # Flush any remaining pending activity recalculations before shutdown
-    if pending_activity_days:
-        await _flush_pending_activities(pending_activity_days)
-        pending_activity_days.clear()
-
-    # Signal that all results have been processed and activities flushed
-    worker_done_event.set()
-
-    logger.info("consume_compute_results: stopped")
+    finally:
+        # Always signal done so start_background_compute_task doesn't hang forever
+        worker_done_event.set()
+        logger.info("consume_compute_results: stopped")
 
 
 async def start_background_compute_task(ctx: ComputeContext) -> None:
@@ -381,13 +392,10 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
     Progress logging: Logs progress at 10% intervals during processing.
     """
 
-    # Initialize progress tracking
-    processed_count = 0
-    last_logged_percent = 0
+    # Count sessions needing computation
     total_to_compute = await sync_to_async(Session.objects.exclude(
         compute_version=settings.CURRENT_COMPUTE_VERSION
     ).count)()
-    last_logged_time = time.monotonic()
 
     if total_to_compute == 0:
         logger.info("Background compute: no sessions to process")
@@ -431,54 +439,22 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
 
     logger.info(f"Background compute task started ({total_to_compute} sessions to process)")
 
-    # Track sessions sent to worker to avoid sending duplicates
-    sent_sessions: set[str] = set()
+    # Load all session IDs needing computation in one query, ordered by most recent first
+    session_ids_to_compute = await sync_to_async(
+        lambda: list(
+            Session.objects.exclude(compute_version=settings.CURRENT_COMPUTE_VERSION)
+            .order_by('-mtime')
+            .values_list('id', flat=True)
+        )
+    )()
 
-    while not ctx.stop_event.is_set():
-        try:
-            # Find next session needing computation
-            session = await sync_to_async(Session.objects.exclude(
-                compute_version=settings.CURRENT_COMPUTE_VERSION
-            ).order_by('-mtime').first)()
+    # Send all session IDs to the worker process at once
+    for session_id in session_ids_to_compute:
+        if ctx.stop_event.is_set():
+            break
+        ctx.command_queue.put({'session_id': session_id})
 
-            if session is None:
-                # All sessions processed, we're done
-                break
-
-            # Skip if already sent to worker
-            if session.id in sent_sessions:
-                await asyncio.sleep(0.01)
-                continue
-
-            # Send command to worker process (non-blocking)
-            sent_sessions.add(session.id)
-            ctx.command_queue.put({'session_id': session.id})
-
-            # Progress logging
-            if total_to_compute and total_to_compute > 0:
-                processed_count += 1
-                current_percent = (processed_count * 100) // total_to_compute
-
-                # Log at 10% intervals
-                if current_percent >= last_logged_percent + 10:
-                    last_logged_percent = (current_percent // 10) * 10
-                    now = time.monotonic()
-                    elapsed = now - last_logged_time
-                    last_logged_time = now
-                    logger.info(f"Background compute progress: {last_logged_percent}% ({processed_count}/{total_to_compute}) [{elapsed:.1f}s]")
-
-            # Small yield to allow result consumer to process
-            await asyncio.sleep(0.01)
-
-        except Exception as e:
-            logger.error(f"Error in background compute task: {e}", exc_info=True)
-            # Wait before retrying to avoid tight error loop
-            try:
-                await asyncio.wait_for(ctx.stop_event.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                pass
-
-    logger.info(f"Background compute: all sessions sent to worker ({processed_count}/{total_to_compute})")
+    logger.info(f"Background compute: all {len(session_ids_to_compute)} sessions sent to worker")
 
     # Send stop signal to worker so it finishes and sends 'done'
     ctx.command_queue.put(None)
