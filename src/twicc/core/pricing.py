@@ -289,4 +289,8 @@ def sync_model_prices() -> dict[str, int]:
         )
         stats["created"] += 1
 
+    # Invalidate in-memory price cache if any prices were created
+    if stats["created"] > 0:
+        ModelPrice.invalidate_price_cache()
+
     return stats

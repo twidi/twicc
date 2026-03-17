@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import TypeAlias
+from typing import ClassVar, TypeAlias
 
 from django.db import models
 
@@ -539,10 +539,53 @@ class ModelPrice(models.Model):
 
         return family, version
 
+    # ── In-memory price cache ──────────────────────────────────────────
+
+    # Cache structure: populated lazily on first access, invalidated by invalidate_price_cache()
+    _prices_by_model: ClassVar[dict[str, list["ModelPrice"]] | None] = None
+    _models_by_family: ClassVar[dict[str, list[str]] | None] = None
+
+    @classmethod
+    def _ensure_price_cache(cls) -> None:
+        """Load all ModelPrice rows into memory if cache is not populated."""
+        if cls._prices_by_model is not None:
+            return
+
+        from collections import defaultdict
+
+        prices_by_model: dict[str, list[ModelPrice]] = defaultdict(list)
+        models_by_family: dict[str, list[str]] = defaultdict(list)
+
+        for price in cls.objects.all().order_by("model_id", "-effective_date"):
+            prices_by_model[price.model_id].append(price)
+
+        # Build family index from distinct model_ids
+        seen_model_ids: set[str] = set()
+        for model_id in prices_by_model:
+            if model_id in seen_model_ids:
+                continue
+            seen_model_ids.add(model_id)
+            family, _ = cls._extract_family_and_version(model_id)
+            if family:
+                models_by_family[family].append(model_id)
+
+        cls._prices_by_model = dict(prices_by_model)
+        cls._models_by_family = dict(models_by_family)
+
+    @classmethod
+    def invalidate_price_cache(cls) -> None:
+        """Reset the in-memory price cache. Call after price data is updated."""
+        cls._prices_by_model = None
+        cls._models_by_family = None
+
     @classmethod
     def get_price_for_date(cls, model_id: str, target_date: date) -> "ModelPrice | None":
         """
         Retrieve the applicable price for a model at a given date.
+
+        Uses an in-memory cache (loaded lazily on first call) to avoid
+        SQL queries on every invocation. The cache is invalidated by
+        calling invalidate_price_cache() when price data is updated.
 
         Fallback chain:
         1. Exact model_id with effective_date <= target_date
@@ -551,44 +594,36 @@ class ModelPrice(models.Model):
         4. Same family, higher version (e.g., opus-5.0 if no lower version)
         5. None (caller should use DEFAULT_FAMILY_PRICES)
         """
+        cls._ensure_price_cache()
+        assert cls._prices_by_model is not None
+        assert cls._models_by_family is not None
+
         # 1. Try to find price valid at target_date for exact model
-        price = cls.objects.filter(
-            model_id=model_id,
-            effective_date__lte=target_date,
-        ).order_by("-effective_date").first()
+        model_prices = cls._prices_by_model.get(model_id)
+        if model_prices:
+            # List is sorted by effective_date descending
+            for price in model_prices:
+                if price.effective_date <= target_date:
+                    return price
 
-        if price:
-            return price
-
-        # 2. Fallback: oldest known price for exact model
-        price = cls.objects.filter(
-            model_id=model_id,
-        ).order_by("effective_date").first()
-
-        if price:
-            return price
+            # 2. Fallback: oldest known price for exact model (last in descending list)
+            return model_prices[-1]
 
         # 3 & 4. Try other versions of the same family
         family, version = cls._extract_family_and_version(model_id)
         if not family:
             return None
 
-        # Get all prices for this family, ordered by version descending
-        family_prefix = f"anthropic/claude-{family}-"
-        family_prices = list(
-            cls.objects.filter(
-                model_id__startswith=family_prefix,
-            ).order_by("-effective_date").values_list("model_id", flat=True).distinct()
-        )
-
-        if not family_prices:
+        family_model_ids = cls._models_by_family.get(family)
+        if not family_model_ids:
             return None
 
         # Sort by version to find lower/higher versions
+        family_prefix = f"anthropic/claude-{family}-"
+
         def extract_version(mid: str) -> tuple[int, ...]:
             """Extract version tuple for sorting: '4.5' -> (4, 5)"""
             v = mid.removeprefix(family_prefix)
-            # Handle suffixes like ":thinking"
             v = v.split(":")[0]
             try:
                 return tuple(int(x) for x in v.split("."))
@@ -601,21 +636,17 @@ class ModelPrice(models.Model):
             except ValueError:
                 target_version = (0,)
 
-            # Find lower version first, then higher
-            lower_versions = [m for m in family_prices if extract_version(m) < target_version]
-            higher_versions = [m for m in family_prices if extract_version(m) > target_version]
+            lower_versions = [m for m in family_model_ids if extract_version(m) < target_version]
+            higher_versions = [m for m in family_model_ids if extract_version(m) > target_version]
 
-            # Sort: lower versions descending (closest first), higher ascending (closest first)
             lower_versions.sort(key=extract_version, reverse=True)
             higher_versions.sort(key=extract_version)
 
-            # Try lower version first, then higher
             for fallback_model_id in lower_versions + higher_versions:
-                price = cls.objects.filter(
-                    model_id=fallback_model_id,
-                ).order_by("-effective_date").first()
-                if price:
-                    return price
+                fallback_prices = cls._prices_by_model.get(fallback_model_id)
+                if fallback_prices:
+                    # Return most recent price for the fallback model
+                    return fallback_prices[0]
 
         # 5. No price found at all
         return None
