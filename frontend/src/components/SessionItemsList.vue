@@ -888,6 +888,19 @@ async function processDroppedFile(file) {
 const searchHighlightTerms = ref([])
 provide('searchHighlightTerms', searchHighlightTerms)
 
+// Provide a function for child components (e.g., ToolUseContent) to request
+// scroll-to-bottom when they are about to expand (auto-open diffs, etc.).
+// This enables stickToBottom mode so the expansion animation doesn't break
+// the auto-scroll by drifting away from the bottom frame by frame.
+provide('requestScrollToBottomIfNeeded', () => {
+    if (props.parentSessionId) return // Subagent sessions don't auto-scroll
+    const scroller = scrollerRef.value
+    if (!scroller) return
+    if (isAutoScrollingToBottom.value || scroller.isAtBottom(AUTO_SCROLL_THRESHOLD)) {
+        scrollToBottomUntilStable()
+    }
+})
+
 function handleSearchTerms(terms) {
     searchHighlightTerms.value = terms
 }

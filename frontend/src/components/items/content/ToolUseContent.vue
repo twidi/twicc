@@ -214,6 +214,9 @@ onUnmounted(() => {
 // KeepAlive active state (provided by SessionView)
 const sessionActive = inject('sessionActive', ref(true))
 
+// Request scroll-to-bottom from SessionItemsList (for auto-open expansion)
+const requestScrollToBottomIfNeeded = inject('requestScrollToBottomIfNeeded', null)
+
 // Track whether polling was suspended by deactivation (to resume on reactivation)
 let resultPollingPaused = false
 
@@ -517,6 +520,10 @@ let hasAutoOpened = false
 watch(shouldAutoOpen, (val) => {
     if (val && !hasAutoOpened && !isOpen.value) {
         hasAutoOpened = true
+        // Request scroll-to-bottom BEFORE expanding, so stickToBottom mode
+        // is active during the wa-details animation and keeps the viewport
+        // at the bottom as the item height grows frame by frame.
+        requestScrollToBottomIfNeeded?.()
         isOpen.value = true
         nextTick(() => toolUseDetailsRef.value?.show())
     }
