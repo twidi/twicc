@@ -4,38 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-03-20
 
 ### Added
 
+- Full-text search across all sessions (Ctrl+Shift+F) with in-session search bar (Ctrl+F), powered by Tantivy
+- Support for 1M context window
+- Cron job persistence and automatic renewal: cron jobs survive TwiCC restarts and are transparently recreated before their 3-day CLI expiry
 - Display diff stats (+N -N) on Edit and Write tool uses
+- Setting to auto-open Edit/Write tool details to show diffs
 - Show error indicator and running spinner on all tool uses
 - Display tool error messages directly in the tool use body
-- Full-text search across all sessions (Ctrl+Shift+F) with in-session search bar (Ctrl+F), powered by Tantivy
-- CLI subcommands: `projects`, `project`, `sessions`, `session` (with `content` and `agents` subcommands), `usage`, and `search` — all output JSON
-- TwiCC Claude Code plugin with skills for each CLI command (usable only from with TwiCC)
-- Setting to auto-open Edit/Write tool details to show diffs
-- Support for 1M context window
 - Option to auto-apply title suggestions on new sessions (no rename dialog)
-- Cron job persistence and automatic renewal: cron jobs survive TwiCC restarts and are transparently recreated before their 3-day CLI expiry
+- CLI subcommands: `projects`, `project`, `sessions`, `session` (with `content` and `agents` subcommands), `usage`, and `search` — all output JSON
+- TwiCC Claude Code plugin with skills for each CLI command (usable only from within TwiCC)
 
 ### Changed
 
-- Greatly optimized session recomputation on TwiCC updates requiring it
 - Dedicated display for Edit (inline diff) and Write (syntax-highlighted code) tool uses
 - Popup filter keystrokes (@ file picker, / slash picker) are now mirrored into the textarea transparently (inspired by @dguerizec)
 - File picker (@) only triggers at start of text or after whitespace (inspired by @dguerizec)
+- Greatly optimized session recomputation on TwiCC updates requiring it
 
 ### Fixed
 
-- Bash tool input commands no longer incorrectly rendered as Markdown
-- Stop process button shows a loading state to prevent duplicate clicks
-- Refresh button in Files tab now also reloads the currently open file (unless it has unsaved changes)
-- Quota cutoff time now visible even when cost display is disabled (cutoff is burn-rate-based, not cost-based)
-- Draft session stayed in draft state for seconds or minutes after sending, until the SDK wrote the user message to JSONL
-- WebSocket reconnection now re-fetches tool states and agent links for changed sessions
-- Mobile: layout no longer breaks when the browser chrome (address bar) hides/shows during scrolling
 - Set SDK `max_buffer_size` to 10 MB to prevent crashes on large tool outputs (e.g. screenshots)
+- Draft session stayed in draft state for seconds or minutes after sending, until the SDK wrote the user message to JSONL
+- Mobile: layout no longer breaks when the browser chrome (address bar) hides/shows during scrolling
+- Quota cutoff time now visible even when cost display is disabled (cutoff is burn-rate-based, not cost-based)
+- Bash tool input commands no longer incorrectly rendered as Markdown
+- Refresh button in Files tab now also reloads the currently open file (unless it has unsaved changes)
+- Stop process button shows a loading state to prevent duplicate clicks
 
 ## [1.1.2] - 2026-03-09
 

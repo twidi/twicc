@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "twicc"
-version = "1.1.2"
+version = "1.2.0"
 description = "Claude Code Web UI"
 readme = "README.md"
 license = "MIT"
