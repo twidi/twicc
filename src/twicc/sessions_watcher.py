@@ -659,6 +659,7 @@ def sync_session_items(
     last_cwd: str | None = None
     last_cwd_git_branch: str | None = None
     last_model: str | None = None
+    last_slug: str | None = None
 
     # Track agent link updates to broadcast after processing
     agent_link_updates: list[AgentLinkUpdate] = []
@@ -743,6 +744,8 @@ def sync_session_items(
         if (message := parsed.get('message')) and isinstance(message, dict):
             if model := message.get('model'):
                 last_model = model
+        if item_slug := parsed.get('slug'):
+            last_slug = item_slug
 
         # Handle title extraction
         if item.kind == ItemKind.USER_MESSAGE and initial_title_needs_set:
@@ -885,6 +888,8 @@ def sync_session_items(
         session.cwd_git_branch = last_cwd_git_branch
     if last_model and last_model != session.model:
         session.model = last_model
+    if last_slug and last_slug != session.slug:
+        session.slug = last_slug
 
     # Update resolved git directory/branch from the latest item that has one
     # (items are processed in order, so the last one wins)
@@ -971,7 +976,7 @@ def sync_session_items(
     if is_new_session and session.type == SessionType.SESSION and first_timestamp:
         affected_days.add(first_timestamp.date())
 
-    session.save(update_fields=["last_offset", "last_line", "mtime", "user_message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "git_directory", "git_branch", "model", "created_at", "last_started_at", "last_updated_at"])
+    session.save(update_fields=["last_offset", "last_line", "mtime", "user_message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "git_directory", "git_branch", "model", "slug", "created_at", "last_started_at", "last_updated_at"])
 
     # Recalculate activities after session.save (needs created_at in DB for session_count)
     from twicc.core.models import PeriodicActivity

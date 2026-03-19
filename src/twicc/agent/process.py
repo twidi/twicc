@@ -81,7 +81,7 @@ class ClaudeProcess:
         selected_model: str | None,
         effort: str | None,
         thinking_enabled: bool | None,
-        get_last_session_slug: Callable[[str], Coroutine[Any, Any, str | None]],
+        get_session_slug: Callable[[str], Coroutine[Any, Any, str | None]],
         on_cron_created: CronCreatedCallback,
         on_cron_deleted: CronDeletedCallback,
         claude_in_chrome: bool = False,
@@ -97,9 +97,8 @@ class ClaudeProcess:
             selected_model: SDK model shorthand (e.g., "opus", "sonnet") or None for default
             effort: SDK effort level (e.g., "low", "medium", "high", "max") or None for default
             thinking_enabled: Whether extended thinking is enabled (True=adaptive, False=disabled) or None
-            get_last_session_slug: Async callback that retrieves the most recent
-                slug from a session's JSONL items. Takes a session_id and returns the slug
-                string or None if not found.
+            get_session_slug: Async callback that retrieves the slug stored on the
+                Session model. Takes a session_id and returns the slug string or None.
             claude_in_chrome: Whether the built-in Chrome MCP is activated (default False)
             context_max: Maximum context window size in tokens (200_000 or 1_000_000)
             on_cron_created: Async callback fired when a CronCreate PostToolUse event occurs.
@@ -129,7 +128,7 @@ class ClaudeProcess:
         self._state_change_callback: StateChangeCallback | None = None
         self._pending_request: PendingRequest | None = None
         self._pending_request_future: asyncio.Future[PermissionResultAllow | PermissionResultDeny] | None = None
-        self._get_last_session_slug = get_last_session_slug
+        self._get_session_slug = get_session_slug
         self._on_cron_created = on_cron_created
         self._on_cron_deleted = on_cron_deleted
 
@@ -1142,7 +1141,7 @@ class ClaudeProcess:
         """
         from pathlib import Path
 
-        slug = await self._get_last_session_slug(self.session_id)
+        slug = await self._get_session_slug(self.session_id)
         if slug is None:
             logger.warning(
                 "Cannot update plan for session %s: no slug found in session items",

@@ -230,7 +230,7 @@ def _make_claude_process() -> ClaudeProcess:
         selected_model=None,
         effort=None,
         thinking_enabled=None,
-        get_last_session_slug=_dummy_get_slug,
+        get_session_slug=_dummy_get_slug,
         on_cron_created=_dummy_on_cron_created,
         on_cron_deleted=_dummy_on_cron_deleted,
     )
@@ -760,7 +760,7 @@ def _make_manager_with_process(
     process = ClaudeProcess(
         session_id, "test-project", "/tmp/test",
         permission_mode="default", selected_model=None, effort=None, thinking_enabled=None,
-        get_last_session_slug=_dummy_get_slug,
+        get_session_slug=_dummy_get_slug,
         on_cron_created=_dummy_on_cron_created, on_cron_deleted=_dummy_on_cron_deleted,
     )
     process.state = state
@@ -851,7 +851,7 @@ class TestManagerResolvePendingRequest:
             process1 = ClaudeProcess(
                 "session-1", "project-1", "/tmp/test",
                 permission_mode="default", selected_model=None, effort=None, thinking_enabled=None,
-                get_last_session_slug=_dummy_get_slug,
+                get_session_slug=_dummy_get_slug,
                 on_cron_created=_dummy_on_cron_created, on_cron_deleted=_dummy_on_cron_deleted,
             )
             process1.state = ProcessState.ASSISTANT_TURN
@@ -862,7 +862,7 @@ class TestManagerResolvePendingRequest:
             process2 = ClaudeProcess(
                 "session-2", "project-1", "/tmp/test",
                 permission_mode="default", selected_model=None, effort=None, thinking_enabled=None,
-                get_last_session_slug=_dummy_get_slug,
+                get_session_slug=_dummy_get_slug,
                 on_cron_created=_dummy_on_cron_created, on_cron_deleted=_dummy_on_cron_deleted,
             )
             process2.state = ProcessState.ASSISTANT_TURN
@@ -958,7 +958,7 @@ class TestTimeoutExemptionForPendingRequest:
             process1 = ClaudeProcess(
                 "session-1", "project-1", "/tmp/test",
                 permission_mode="default", selected_model=None, effort=None, thinking_enabled=None,
-                get_last_session_slug=_dummy_get_slug,
+                get_session_slug=_dummy_get_slug,
                 on_cron_created=_dummy_on_cron_created, on_cron_deleted=_dummy_on_cron_deleted,
             )
             process1.state = ProcessState.ASSISTANT_TURN
@@ -972,7 +972,7 @@ class TestTimeoutExemptionForPendingRequest:
             process2 = ClaudeProcess(
                 "session-2", "project-1", "/tmp/test",
                 permission_mode="default", selected_model=None, effort=None, thinking_enabled=None,
-                get_last_session_slug=_dummy_get_slug,
+                get_session_slug=_dummy_get_slug,
                 on_cron_created=_dummy_on_cron_created, on_cron_deleted=_dummy_on_cron_deleted,
             )
             process2.state = ProcessState.ASSISTANT_TURN

@@ -294,6 +294,7 @@ class Session(models.Model):
     cwd = models.CharField(max_length=500, null=True, blank=True)  # Current working directory
     cwd_git_branch = models.CharField(max_length=255, null=True, blank=True)  # Git branch from cwd (unreliable for worktrees)
     model = models.CharField(max_length=100, null=True, blank=True)  # Model name (e.g., "claude-opus-4-5-20251101")
+    slug = models.CharField(max_length=255, null=True, blank=True)  # Last session slug (e.g., "gleaming-marinating-twilight")
 
     # Session creation timestamp (from first JSONL item with a timestamp)
     created_at = models.DateTimeField(null=True, blank=True)

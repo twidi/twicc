@@ -442,6 +442,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     last_cwd: str | None = None
     last_cwd_git_branch: str | None = None
     last_model: str | None = None
+    last_slug: str | None = None
     last_resolved_git_directory: str | None = None
     last_resolved_git_branch: str | None = None
     agent_tool_result_counts: dict[str, tuple[int, datetime | None]] = {}
@@ -520,6 +521,8 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         if (message := parsed.get('message')) and isinstance(message, dict):
             if model := message.get('model'):
                 last_model = model
+        if item_slug := parsed.get('slug'):
+            last_slug = item_slug
 
         # Resolve git directory/branch from tool_use paths
         if item.git_directory is not None:
@@ -686,6 +689,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             'git_directory': last_resolved_git_directory,
             'git_branch': last_resolved_git_branch,
             'model': last_model,
+            'slug': last_slug,
             'created_at': first_timestamp.isoformat() if first_timestamp else None,
             'last_started_at': last_started_at.isoformat() if last_started_at else None,
             'last_updated_at': datetime.fromtimestamp(session.mtime, tz=timezone.utc).isoformat() if session.mtime else (last_updated_at.isoformat() if last_updated_at else None),
