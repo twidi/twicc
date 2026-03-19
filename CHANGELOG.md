@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Setting to auto-open Edit/Write tool details to show diffs
 - Support for 1M context window
 - Option to auto-apply title suggestions on new sessions (no rename dialog)
+- Cron job persistence and automatic renewal: cron jobs survive TwiCC restarts and are transparently recreated before their 3-day CLI expiry
 
 ### Changed
 
