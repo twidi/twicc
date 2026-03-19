@@ -64,7 +64,8 @@ const searchOverlayRef = ref(null)
 const SESSION_CHAT_ROUTES = new Set(['session', 'projects-session'])
 
 function handleGlobalKeydown(e) {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    const modKey = settingsStore.isMac ? e.metaKey : e.ctrlKey
+    if (modKey && e.key === 'k') {
         e.preventDefault()
         e.stopPropagation()
         commandPaletteRef.value?.open()
