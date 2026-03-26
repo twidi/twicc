@@ -15,7 +15,7 @@
 import { computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
-import { clearUserTurnToast } from '../composables/useWebSocket'
+import { clearUserTurnToast, markSessionReadState } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 
 const props = defineProps({
@@ -29,6 +29,11 @@ const props = defineProps({
     },
     /** When true, auto-dismiss when navigating to session or session becomes read */
     autoDismiss: {
+        type: Boolean,
+        default: false,
+    },
+    /** When true, show a "Mark as read" button alongside "Go to session" */
+    showMarkRead: {
         type: Boolean,
         default: false,
     },
@@ -83,6 +88,12 @@ onUnmounted(() => {
     }
 })
 
+/** Mark the session as read and dismiss the toast. */
+function markRead() {
+    markSessionReadState(props.sessionId, false)
+    props.item?.clear?.()
+}
+
 /** Navigate to the session, switching project if needed, then dismiss the toast. */
 function goToSession() {
     if (!projectId.value) return
@@ -119,7 +130,10 @@ function goToSession() {
             <span class="session-toast-title">{{ sessionTitle }}</span>
         </span>
         <span v-if="errorMessage" class="session-toast-error">{{ errorMessage }}</span>
-        <wa-button v-if="!isCurrentSession" size="small" variant="brand" appearance="outlined" @click="goToSession">Go to session</wa-button>
+        <div v-if="!isCurrentSession" class="session-toast-actions">
+            <wa-button v-if="showMarkRead" size="small" variant="brand" appearance="outlined" @click="markRead">Mark as read</wa-button>
+            <wa-button size="small" variant="brand" appearance="outlined" @click="goToSession">Go to session</wa-button>
+        </div>
     </div>
 </template>
 
@@ -168,7 +182,9 @@ function goToSession() {
     font-weight: bold;
 }
 
-.session-toast-content > wa-button {
-    align-self: flex-end;
+.session-toast-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--wa-space-xs);
 }
 </style>
