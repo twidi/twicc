@@ -12,7 +12,7 @@ import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { formatDate } from '../utils/date'
 import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES, SESSION_TIME_FORMAT } from '../constants'
-import { killProcess, markSessionReadState } from '../composables/useWebSocket'
+import { killProcess, markSessionReadState, cancelSessionViewedThrottle } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 import ProcessDuration from './ProcessDuration.vue'
@@ -87,10 +87,11 @@ const hasUnread = computed(() => {
 
 /**
  * Whether the mark as read/unread menu items should be shown.
- * Hidden when: active session, draft, or process running but not in user_turn.
+ * Hidden when: draft, or process running but not in user_turn.
+ * Active session is allowed (mark-unread will deselect it).
  */
 const canToggleReadState = computed(() => {
-    if (props.active || props.session.draft) return false
+    if (props.session.draft) return false
     if (processState.value && processState.value.state !== PROCESS_STATE.USER_TURN) return false
     return true
 })
@@ -226,7 +227,15 @@ function handleMenuSelect(event) {
     } else if (action === 'unpin') {
         store.setSessionPinned(session.project_id, session.id, false)
     } else if (action === 'mark-unread') {
+        // Cancel any pending session_viewed trailing throttle to prevent it
+        // from immediately resetting last_viewed_at after we mark unread
+        cancelSessionViewedThrottle(session.id)
         markSessionReadState(session.id, true)
+        // If viewing this session, deselect it (navigate to project home)
+        // to prevent session_viewed from re-marking it as read
+        if (props.active) {
+            emit('select', session)
+        }
     } else if (action === 'mark-read') {
         markSessionReadState(session.id, false)
     }

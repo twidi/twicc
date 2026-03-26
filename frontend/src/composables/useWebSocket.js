@@ -43,6 +43,9 @@ if (!('debouncedDraftNotifications' in __hmrState)) __hmrState.debouncedDraftNot
 // First call passes immediately, subsequent calls are throttled
 if (!('throttledViewedNotifications' in __hmrState)) __hmrState.throttledViewedNotifications = new Map() // sessionId -> throttledFn
 
+// Cancelled session_viewed throttles — prevents trailing calls from firing after mark-unread
+if (!('cancelledViewedThrottles' in __hmrState)) __hmrState.cancelledViewedThrottles = new Set() // sessionId
+
 // Active user_turn toast tracking — prevents duplicates, allows cleanup from SessionToastContent
 if (!('activeUserTurnToasts' in __hmrState)) __hmrState.activeUserTurnToasts = new Set() // sessionId
 
@@ -167,9 +170,14 @@ function _sendSessionViewed(sessionId) {
 export function notifySessionViewed(sessionId) {
     if (!sessionId) return
 
+    // Clear any cancellation from a previous mark-unread action
+    __hmrState.cancelledViewedThrottles.delete(sessionId)
+
     // Get or create throttled function for this session
     if (!__hmrState.throttledViewedNotifications.has(sessionId)) {
         const throttledFn = useThrottleFn(() => {
+            // Skip if cancelled by mark-unread (trailing call after cancellation)
+            if (__hmrState.cancelledViewedThrottles.has(sessionId)) return
             _sendSessionViewed(sessionId)
         }, 30000, true) // 30s throttle, trailing=true (leading=true by default)
         __hmrState.throttledViewedNotifications.set(sessionId, throttledFn)
@@ -187,6 +195,8 @@ export function notifySessionViewed(sessionId) {
  */
 export function forceNotifySessionViewed(sessionId) {
     if (!sessionId) return
+    // Skip if cancelled by mark-unread (e.g. onDeactivated fires after mark-unread navigates away)
+    if (__hmrState.cancelledViewedThrottles.has(sessionId)) return
     _sendSessionViewed(sessionId)
 }
 
@@ -206,6 +216,17 @@ export function markSessionReadState(sessionId, unread) {
         session_id: sessionId,
         unread,
     })
+}
+
+/**
+ * Cancel any pending session_viewed throttle for a session.
+ * Called when marking a session as unread to prevent a trailing
+ * throttle call from immediately resetting last_viewed_at.
+ * @param {string} sessionId - The session ID
+ */
+export function cancelSessionViewedThrottle(sessionId) {
+    __hmrState.throttledViewedNotifications.delete(sessionId)
+    __hmrState.cancelledViewedThrottles.add(sessionId)
 }
 
 /**
