@@ -805,6 +805,8 @@ function getScrollerElement() {
  * Uses a counter to properly handle nested elements.
  */
 function onDragEnter(event) {
+    // Only show overlay for file drops, not text drags
+    if (!event.dataTransfer?.types?.includes('Files')) return
     event.preventDefault()
     dragCounter++
     if (dragCounter === 1) {
@@ -817,6 +819,7 @@ function onDragEnter(event) {
  * Uses a counter to properly handle nested elements.
  */
 function onDragLeave(event) {
+    if (!event.dataTransfer?.types?.includes('Files')) return
     event.preventDefault()
     dragCounter--
     if (dragCounter === 0) {
@@ -828,6 +831,7 @@ function onDragLeave(event) {
  * Handle dragover event - required to allow drop.
  */
 function onDragOver(event) {
+    if (!event.dataTransfer?.types?.includes('Files')) return
     event.preventDefault()
 }
 
