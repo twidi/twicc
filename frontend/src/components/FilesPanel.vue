@@ -536,10 +536,11 @@ async function revealFile(absolutePath) {
     // scrollToPath handles lazy-loading directories, setting revealedPaths,
     // and scrolling to the target
     const found = await fileTreePanelRef.value?.scrollToPath(absolutePath)
-    if (found) {
-        // Select the file (triggers FilePane content fetch)
-        fileTreePanelRef.value?.onFileSelect(absolutePath)
-    }
+    // Always select the file so FilePane attempts to load it.
+    // If found in the tree, scrollToPath has already revealed the path.
+    // If not found (deleted, moved, etc.), FilePane will fetch the content
+    // and display the backend error (e.g. "File not found").
+    fileTreePanelRef.value?.onFileSelect(absolutePath)
     return !!found
 }
 

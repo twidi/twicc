@@ -22,6 +22,9 @@ const router = useRouter()
 const dataStore = useDataStore()
 const settingsStore = useSettingsStore()
 
+// Cross-tab file reveal (provided by SessionView)
+const viewFileInFilesTab = inject('viewFileInFilesTab', null)
+
 // Detect "All Projects" mode from route name
 const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
 
@@ -380,6 +383,30 @@ const sessionBaseDir = computed(() => {
     return session?.git_directory || session?.cwd || null
 })
 
+// "View in Files tab" button: visible when the file_path falls within a valid root
+// Uses the main session's roots (parent for subagents, self for regular sessions)
+// to match what the Files tab can display.
+const viewInFilesButtonId = computed(() => `view-in-files-${props.toolId}`)
+const canViewInFilesTab = computed(() => {
+    if (!viewFileInFilesTab || !usesFilePath.value) return false
+    const filePath = props.input.file_path
+    // Use the main session (parent for subagents, self for regular sessions)
+    const mainSessionId = props.parentSessionId || props.sessionId
+    const mainSession = dataStore.getSession(mainSessionId)
+    const project = dataStore.getProject(mainSession?.project_id || props.projectId)
+    const roots = [
+        mainSession?.git_directory,
+        mainSession?.cwd,
+        project?.directory,
+        project?.git_root,
+    ].filter(Boolean)
+    return roots.some(root => filePath.startsWith(root + '/'))
+})
+
+function openInFilesTab() {
+    viewFileInFilesTab(props.input.file_path)
+}
+
 // File icon URL for file tools (null if no specific icon found)
 const fileIconSrc = computed(() => {
     if (!usesFilePath.value) return null
@@ -645,7 +672,7 @@ function navigateToSubagent() {
 </script>
 
 <template>
-    <wa-details ref="toolUseDetailsRef" class="item-details tool-use" :class="{'with-right-part' : (isTask && !parentSessionId) || isToolRunning || isToolError || fileChangeStats}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
+    <wa-details ref="toolUseDetailsRef" class="item-details tool-use" :class="{'with-right-part' : (isTask && !parentSessionId) || isToolRunning || isToolError || fileChangeStats || canViewInFilesTab}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
         <span slot="summary" class="items-details-summary">
             <span class="items-details-summary-left">
                 <strong v-if="taskDisplayName" class="items-details-summary-name">{{ taskDisplayName.name }}<span v-if="taskDisplayName.namespace" class="items-details-summary-quiet"> ({{ taskDisplayName.namespace }})</span></strong>
@@ -740,8 +767,22 @@ function navigateToSubagent() {
                 <span class="diff-added">+{{ fileChangeStats.lines_added }}</span>
                 <span v-if="fileChangeStats.lines_removed != null" class="diff-removed">-{{ fileChangeStats.lines_removed }}</span>
             </span>
-            <!-- Tool error indicator (rightmost) -->
+            <!-- Tool error indicator -->
             <wa-icon v-if="isToolError" name="xmark" class="tool-error-icon"></wa-icon>
+            <!-- View in Files tab button (Read / Write / Edit) — last in the row -->
+            <template v-if="canViewInFilesTab">
+                <wa-button
+                    :id="viewInFilesButtonId"
+                    size="small"
+                    variant="neutral"
+                    appearance="outlined"
+                    class="view-in-files-button"
+                    @click.stop="openInFilesTab"
+                >
+                    <wa-icon name="folder-open"></wa-icon>
+                </wa-button>
+                <AppTooltip :for="viewInFilesButtonId">View in Files tab</AppTooltip>
+            </template>
         </span>
         <template v-if="isOpen">
             <TodoContent v-if="isTodoWrite && todosValid" :todos="input.todos" />
@@ -821,6 +862,9 @@ wa-details.with-right-part {
         wa-button {
             margin-block: -1rem;
             margin-left: auto; /* Stay right-aligned when wrapped */
+        }
+        .view-in-files-button {
+            font-size: var(--wa-font-size-s);
         }
         .agent-starting-spinner, .tool-running-spinner {
             font-size: 1.2em;
