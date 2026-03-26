@@ -816,7 +816,22 @@ function onDragEnter(event) {
     if (dragCounter === 1) {
         // Files take precedence (a file drop may also carry text/plain)
         dragOverType.value = hasFiles ? 'files' : 'text'
+        // Listen for drag cancellation (Escape key, drop outside window, etc.)
+        // dragend fires on the source element when the drag ends without a successful drop.
+        document.addEventListener('dragend', onDragEnd, true)
     }
+}
+
+/**
+ * Handle dragend event (fires when drag is cancelled, e.g. by Escape).
+ * This is the only reliable way to detect drag cancellation, since the browser
+ * consumes the first Escape keypress to cancel the native drag before it
+ * reaches keydown listeners.
+ */
+function onDragEnd() {
+    dragCounter = 0
+    dragOverType.value = null
+    document.removeEventListener('dragend', onDragEnd, true)
 }
 
 /**
@@ -830,6 +845,7 @@ function onDragLeave(event) {
     dragCounter--
     if (dragCounter === 0) {
         dragOverType.value = null
+        document.removeEventListener('dragend', onDragEnd, true)
     }
 }
 
@@ -849,6 +865,7 @@ async function onDrop(event) {
     event.preventDefault()
     dragCounter = 0
     dragOverType.value = null
+    document.removeEventListener('dragend', onDragEnd, true)
 
     const dataTransfer = event.dataTransfer
     const hasFiles = dataTransfer?.types?.includes('Files')
