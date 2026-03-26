@@ -852,14 +852,9 @@ class ProcessManager:
             info.state.value,
         )
 
-        # Broadcast state change if callback is set
-        if self._broadcast_callback is not None:
-            try:
-                await self._broadcast_callback(info)
-            except Exception as e:
-                logger.error("Error broadcasting state change: %s", e)
-
         # First USER_TURN: purge old ProcessRuns for this session (cascade deletes their crons).
+        # Done BEFORE broadcasting so that _enrich_with_active_crons sees the correct cron count
+        # (without this, crons from the old run + new run would both appear in the broadcast).
         # Uses _old_runs_purged flag because _first_user_turn_reached is already True at this point
         # (set in _run_message_loop before _notify_state_change is called).
         # Systematic for all processes — no-op if no old process runs exist (DELETE affects 0 rows).
@@ -884,6 +879,13 @@ class ProcessManager:
                     )
             except Exception as e:
                 logger.error("Error purging old process runs for session %s: %s", process.session_id, e)
+
+        # Broadcast state change if callback is set
+        if self._broadcast_callback is not None:
+            try:
+                await self._broadcast_callback(info)
+            except Exception as e:
+                logger.error("Error broadcasting state change: %s", e)
 
         # Flush pending title when process becomes safe to write.
         # We add a small delay to let Claude CLI finish flushing its own I/O
