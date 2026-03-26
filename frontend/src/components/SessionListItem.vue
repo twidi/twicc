@@ -213,6 +213,10 @@ function handleMenuSelect(event) {
         stoppingProcess.value = true
         killProcess(session.id)
     } else if (action === 'delete-draft') {
+        // If viewing this draft, deselect it first (navigate to project home)
+        if (props.active) {
+            emit('select', session)
+        }
         store.deleteDraftSession(session.id)
     } else if (action === 'archive') {
         // Stop the process if running — archived and running are mutually exclusive
