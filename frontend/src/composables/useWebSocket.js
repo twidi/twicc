@@ -243,6 +243,11 @@ function notifyProcessStateChange(msg, previousState, route) {
 
     // --- Transition to user_turn: "Claude finished working" ---
     if (msg.state === 'user_turn' && previousState?.state !== 'user_turn') {
+        // In-app toast when the user is on TwiCC but not viewing this session
+        const isViewingSession = route?.params?.sessionId === sessionId
+        if (!isViewingSession) {
+            toast.session(sessionId, { type: 'info', title: 'Claude finished working' })
+        }
         // Sound notification
         playNotificationSound(settings.notifUserTurnSound)
         // Browser notification
