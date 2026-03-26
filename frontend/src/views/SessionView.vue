@@ -1,10 +1,10 @@
 <script setup>
-import { computed, watch, ref, readonly, provide, onActivated, onDeactivated, onBeforeUnmount, nextTick } from 'vue'
+import { computed, watch, ref, readonly, provide, onActivated, onDeactivated, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { useCommandRegistry } from '../composables/useCommandRegistry'
-import { killProcess, requestTitleSuggestion } from '../composables/useWebSocket'
+import { killProcess, requestTitleSuggestion, notifySessionViewed, forceNotifySessionViewed } from '../composables/useWebSocket'
 import { PROCESS_STATE } from '../constants'
 import SessionHeader from '../components/SessionHeader.vue'
 import SessionItemsList from '../components/SessionItemsList.vue'
@@ -63,6 +63,11 @@ function restoreActiveTab() {
     }
 }
 
+onMounted(() => {
+    // Mark session as viewed on first render
+    notifySessionViewed(sessionId.value)
+})
+
 onActivated(() => {
     isActive.value = true
 
@@ -76,10 +81,18 @@ onActivated(() => {
     // but the route is global — navigating to a session always lands on /session/:id
     // which maps to 'main'. If the user was on a different tab, restore it.)
     restoreActiveTab()
+
+    // Mark session as viewed when re-activated (KeepAlive navigation back)
+    notifySessionViewed(sessionId.value)
 })
 
 onDeactivated(() => {
     isActive.value = false
+
+    // Force-send session_viewed to ensure last_viewed_at is fresh before leaving.
+    // Without this, the throttle can cause last_viewed_at to be stale (set at navigation time)
+    // while last_new_content_at was updated during viewing — making the session appear unread.
+    forceNotifySessionViewed(sessionId.value)
 
     // Stop observing compact tab overflow
     stopCompactTabsObserver()

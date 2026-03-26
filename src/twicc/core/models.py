@@ -308,6 +308,10 @@ class Session(models.Model):
     last_updated_at = models.DateTimeField(null=True, blank=True)  # Last time meaningful content was added
     last_stopped_at = models.DateTimeField(null=True, blank=True)  # Last time the session process stopped (our processes only)
 
+    # Content tracking (for "unread" detection)
+    last_new_content_at = models.DateTimeField(null=True, blank=True)  # Last time an assistant message was synced
+    last_viewed_at = models.DateTimeField(null=True, blank=True)  # Last time the user viewed this session
+
     # User-controlled fields
     archived = models.BooleanField(default=False)  # User can archive sessions to hide them from default list
     pinned = models.BooleanField(default=False)  # User can pin sessions to keep them at the top of the list

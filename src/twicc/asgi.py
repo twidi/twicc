@@ -548,6 +548,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         - pending_request_response: respond to a pending tool approval or clarifying question
         - suggest_title: request a title suggestion for a session
         - update_synced_settings: update synced settings and broadcast to all clients
+        - session_viewed: mark a session as viewed by the user (updates last_viewed_at)
         """
         msg_type = content.get("type")
 
@@ -571,6 +572,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         elif msg_type == "update_synced_settings":
             await self._handle_update_synced_settings(content)
+
+        elif msg_type == "session_viewed":
+            await self._handle_session_viewed(content)
 
     async def send_json(self, content, close=False):
         try:
@@ -994,6 +998,46 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                 "data": {"type": "synced_settings_updated", "settings": synced_settings},
             },
         )
+
+    async def _handle_session_viewed(self, content: dict) -> None:
+        """Handle session_viewed notification from client.
+
+        Expected content format:
+        {
+            "type": "session_viewed",
+            "session_id": "claude-conv-xxx"
+        }
+
+        Updates the session's last_viewed_at timestamp and broadcasts the change
+        to all connected clients (for multi-device sync).
+        """
+        session_id = content.get("session_id")
+        if not session_id:
+            return
+
+        from django.utils import timezone
+
+        from twicc.core.models import Session
+        from twicc.core.serializers import serialize_session
+
+        rows = await sync_to_async(
+            Session.objects.filter(id=session_id).update
+        )(last_viewed_at=timezone.now())
+        if not rows:
+            return
+
+        session = await sync_to_async(Session.objects.filter(id=session_id).first)()
+        if session:
+            await self.channel_layer.group_send(
+                "updates",
+                {
+                    "type": "broadcast",
+                    "data": {
+                        "type": "session_updated",
+                        "session": serialize_session(session),
+                    },
+                },
+            )
 
     def _should_send(self, msg_type: str) -> bool:
         """Check if a message type should be sent to this client.

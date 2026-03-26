@@ -321,6 +321,29 @@ export const useDataStore = defineStore('data', {
             return count
         },
 
+        /**
+         * Count sessions with unread content in a project.
+         * A session is unread when last_new_content_at > last_viewed_at (or last_viewed_at is null).
+         * Only counts non-draft sessions of type 'session' (not subagents).
+         * If a process is running for the session, only counts when in user_turn.
+         * @param {string} projectId - The project ID
+         * @returns {number} The number of unread sessions
+         */
+        getProjectUnreadCount: (state) => (projectId) => {
+            let count = 0
+            for (const session of Object.values(state.sessions)) {
+                if (session.project_id !== projectId) continue
+                if (session.draft || session.archived || session.type === 'subagent') continue
+                if (!session.last_new_content_at) continue
+                if (session.last_viewed_at && session.last_new_content_at <= session.last_viewed_at) continue
+                // If process is running, only count when in user_turn
+                const processState = state.processStates[session.id]
+                if (processState && processState.state !== 'user_turn') continue
+                count++
+            }
+            return count
+        },
+
         // Startup progress getters
         initialSyncProgress: (state) => state.startupProgress.initial_sync || null,
         backgroundComputeProgress: (state) => state.startupProgress.background_compute || null,

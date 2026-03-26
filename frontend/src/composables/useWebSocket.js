@@ -1,7 +1,7 @@
 // frontend/src/composables/useWebSocket.js
 
 import { ref, watch } from 'vue'
-import { useWebSocket as useVueWebSocket, useDebounceFn } from '@vueuse/core'
+import { useWebSocket as useVueWebSocket, useDebounceFn, useThrottleFn } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
@@ -38,6 +38,10 @@ if (!('serverVersion' in __hmrState)) __hmrState.serverVersion = null
 // Debounced function for user draft notifications (10 seconds)
 // This prevents spamming the server while still keeping the process alive
 if (!('debouncedDraftNotifications' in __hmrState)) __hmrState.debouncedDraftNotifications = new Map() // sessionId -> debouncedFn
+
+// Throttled functions for session_viewed notifications (30 seconds per session)
+// First call passes immediately, subsequent calls are throttled
+if (!('throttledViewedNotifications' in __hmrState)) __hmrState.throttledViewedNotifications = new Map() // sessionId -> throttledFn
 
 /**
  * Reactive flag: true when a backend version change was detected.
@@ -129,6 +133,56 @@ export function notifyUserDraftUpdated(sessionId) {
 
     // Call the debounced function
     __hmrState.debouncedDraftNotifications.get(sessionId)()
+}
+
+/**
+ * Send a session_viewed message to the backend and update the store optimistically.
+ * @param {string} sessionId - The session ID
+ */
+function _sendSessionViewed(sessionId) {
+    sendWsMessage({
+        type: 'session_viewed',
+        session_id: sessionId,
+    })
+    // Optimistic update: set last_viewed_at locally immediately
+    const store = useDataStore()
+    const session = store.getSession(sessionId)
+    if (session) {
+        store.updateSession({ ...session, last_viewed_at: new Date().toISOString() })
+    }
+}
+
+/**
+ * Notify the server that the user is viewing a session.
+ * Updates last_viewed_at in the database for "unread" detection.
+ * Throttled to 30 seconds per session: first call fires immediately,
+ * subsequent calls within the window are dropped.
+ * @param {string} sessionId - The session ID
+ */
+export function notifySessionViewed(sessionId) {
+    if (!sessionId) return
+
+    // Get or create throttled function for this session
+    if (!__hmrState.throttledViewedNotifications.has(sessionId)) {
+        const throttledFn = useThrottleFn(() => {
+            _sendSessionViewed(sessionId)
+        }, 30000) // 30s throttle (leading=true, trailing=false by default)
+        __hmrState.throttledViewedNotifications.set(sessionId, throttledFn)
+    }
+
+    // Call the throttled function
+    __hmrState.throttledViewedNotifications.get(sessionId)()
+}
+
+/**
+ * Force-send a session_viewed notification, bypassing the throttle.
+ * Used when leaving a session (onDeactivated) to ensure last_viewed_at
+ * is up to date before the session becomes visible in the sidebar as potentially unread.
+ * @param {string} sessionId - The session ID
+ */
+export function forceNotifySessionViewed(sessionId) {
+    if (!sessionId) return
+    _sendSessionViewed(sessionId)
 }
 
 /**
@@ -464,6 +518,10 @@ export function useWebSocket() {
                 // Only add if we've fetched items for this session
                 if (store.areSessionItemsFetched(msg.session_id)) {
                     store.addSessionItems(msg.session_id, msg.items, msg.updated_metadata)
+                }
+                // If user is currently viewing this session, mark as viewed (throttled)
+                if (route.params.sessionId === msg.session_id) {
+                    notifySessionViewed(msg.session_id)
                 }
                 break
             case 'process_state': {

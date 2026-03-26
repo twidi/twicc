@@ -66,6 +66,25 @@ const activeCronCount = computed(() => processState.value?.active_crons?.length 
 /** Project for this session — single lookup. */
 const project = computed(() => store.getProject(props.session.project_id))
 
+/**
+ * Whether the session has unread content (new assistant messages since last view).
+ * Only shown when:
+ * - Not the currently viewed session (active prop = UI guard against race conditions)
+ * - There IS new content (last_new_content_at is set)
+ * - The user hasn't seen it (last_viewed_at is null or older than last_new_content_at)
+ * - If a process is running: only in user_turn state (no point showing during assistant_turn)
+ * - Not a draft session
+ */
+const hasUnread = computed(() => {
+    if (props.active) return false
+    const session = props.session
+    if (session.draft || !session.last_new_content_at) return false
+    if (session.last_viewed_at && session.last_new_content_at <= session.last_viewed_at) return false
+    // If process is running, only show unread when in user_turn
+    if (processState.value && processState.value.state !== PROCESS_STATE.USER_TURN) return false
+    return true
+})
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Settings
 // ═══════════════════════════════════════════════════════════════════════════
@@ -233,17 +252,25 @@ function handleMenuSelect(event) {
                 <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
                 <wa-tag v-else-if="session.draft" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                 <span class="session-name">{{ getSessionDisplayName(session) }}</span>
+                <!-- Compact mode: unread indicator (highest priority) -->
+                <wa-icon
+                    v-if="compactView && hasUnread"
+                    :id="`compact-unread-${session.id}`"
+                    name="eye"
+                    class="compact-unread-indicator"
+                ></wa-icon>
+                <AppTooltip v-if="compactView && hasUnread" :for="`compact-unread-${session.id}`">New content to read<template v-if="processState"> · Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></template></AppTooltip>
                 <!-- Compact mode: pending request indicator (takes priority over process indicator) -->
                 <wa-icon
-                    v-if="compactView && pendingRequest"
+                    v-if="compactView && !hasUnread && pendingRequest"
                     :id="`compact-pending-request-${session.id}`"
                     name="hand"
                     class="compact-pending-request-indicator"
                 ></wa-icon>
-                <AppTooltip v-if="compactView && pendingRequest" :for="`compact-pending-request-${session.id}`">Waiting for your response</AppTooltip>
-                <!-- Compact mode: process indicator (hidden when pending request is shown) -->
+                <AppTooltip v-if="compactView && !hasUnread && pendingRequest" :for="`compact-pending-request-${session.id}`">Waiting for your response</AppTooltip>
+                <!-- Compact mode: process indicator (hidden when unread or pending request is shown) -->
                 <ProcessIndicator
-                    v-if="compactView && !session.draft && processState && !pendingRequest"
+                    v-if="compactView && !session.draft && processState && !hasUnread && !pendingRequest"
                     :id="`compact-process-indicator-${session.id}`"
                     :state="processState.state"
                     :has-active-crons="hasActiveCrons"
@@ -251,10 +278,20 @@ function handleMenuSelect(event) {
                     :animate-states="animateStates"
                     class="compact-process-indicator"
                 />
-                <AppTooltip v-if="compactView && !session.draft && processState && !pendingRequest" :for="`compact-process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
+                <AppTooltip v-if="compactView && !session.draft && processState && !hasUnread && !pendingRequest" :for="`compact-process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
             </div>
             <!-- Project badge line (hidden in compact mode, dot is shown inline instead) -->
-            <ProjectBadge v-if="!compactView && showProjectName" :project-id="session.project_id" class="session-project" />
+            <!-- When unread + no process: show unread indicator on the project line (right-aligned) -->
+            <div v-if="!compactView && (showProjectName || (hasUnread && !processState))" class="session-project-row">
+                <ProjectBadge v-if="showProjectName" :project-id="session.project_id" class="session-project" />
+                <wa-icon
+                    v-if="hasUnread && !processState"
+                    :id="`standalone-unread-${session.id}`"
+                    name="eye"
+                    class="unread-indicator standalone-unread-indicator"
+                ></wa-icon>
+                <AppTooltip v-if="hasUnread && !processState" :for="`standalone-unread-${session.id}`">New content to read</AppTooltip>
+            </div>
             <!-- Process info row (only shown when process is active and not draft, hidden in compact mode) -->
             <div
                 v-if="!compactView && !session.draft && processState"
@@ -284,14 +321,23 @@ function handleMenuSelect(event) {
                         class="pending-request-indicator"
                     ></wa-icon>
                     <AppTooltip v-if="pendingRequest" :for="`pending-request-${session.id}`">Waiting for your response</AppTooltip>
+                    <!-- Unread indicator replaces process indicator when unread -->
+                    <wa-icon
+                        v-if="hasUnread"
+                        :id="`process-unread-${session.id}`"
+                        name="eye"
+                        class="unread-indicator"
+                    ></wa-icon>
+                    <AppTooltip v-if="hasUnread" :for="`process-unread-${session.id}`">New content to read · Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
                     <ProcessIndicator
+                        v-else
                         :id="`process-indicator-${session.id}`"
                         :state="processState.state"
                         :has-active-crons="hasActiveCrons"
                         size="small"
                         :animate-states="animateStates"
                     />
-                    <AppTooltip :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
+                    <AppTooltip v-if="!hasUnread" :for="`process-indicator-${session.id}`">Claude Code state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
                 </span>
             </div>
             <!-- Meta row (not shown for draft sessions, hidden in compact mode) -->
@@ -454,6 +500,16 @@ function handleMenuSelect(event) {
     left: -1.5rem;
 }
 
+/* Compact mode: inline unread indicator */
+.compact-unread-indicator {
+    margin-left: auto;
+    flex-shrink: 0;
+    color: var(--wa-color-warning-60);
+    font-size: var(--wa-font-size-xs);
+    position: relative;
+    left: -1.5rem;
+}
+
 /* Compact mode: inline process indicator pushed to the right */
 .compact-process-indicator {
     margin-left: auto;
@@ -486,6 +542,29 @@ function handleMenuSelect(event) {
 
 .session-menu-trigger:hover {
     opacity: 1 !important;
+}
+
+/* Unread indicator — orange eye icon (same color as warning/pending) */
+.unread-indicator {
+    color: var(--wa-color-warning-60);
+    font-size: var(--wa-font-size-s);
+    flex-shrink: 0;
+}
+
+/* Project + unread row wrapper (non-compact mode) */
+.session-project-row {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    margin-top: var(--wa-space-3xs);
+}
+
+.session-project-row .session-project {
+    margin-top: 0;
+}
+
+.standalone-unread-indicator {
+    margin-left: auto;
 }
 
 .session-project {

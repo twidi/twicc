@@ -9,6 +9,9 @@
  * - starting: a process is starting up
  * - assistant_turn (lowest): Claude is working
  *
+ * When the aggregated state would show user_turn and there are unread sessions,
+ * an eye icon replaces the process indicator to signal new content to read.
+ *
  * Only assistant_turn has pulse animation (user_turn and dead are static).
  *
  * Used in project list (home page) and project selector to quickly identify
@@ -50,6 +53,18 @@ const hasActiveCrons = computed(() => dataStore.getProjectHasActiveCrons(props.p
 /** Total number of active cron jobs across all sessions in the project (for tooltip). */
 const activeCronCount = computed(() => dataStore.getProjectActiveCronCount(props.projectId))
 
+/** Number of sessions with unread content in this project. */
+const unreadCount = computed(() => dataStore.getProjectUnreadCount(props.projectId))
+
+/**
+ * Show unread indicator instead of process indicator when:
+ * - The aggregated state is user_turn (the state that would show check/clock icon)
+ * - There is at least one unread session
+ */
+const showUnread = computed(() =>
+    projectState.value === 'user_turn' && unreadCount.value > 0
+)
+
 // Tooltip text with count
 const tooltipText = computed(() => {
     const count = processCount.value
@@ -68,9 +83,18 @@ const indicatorId = useId()
 const animateStates = ['assistant_turn']
 </script>
 
-<template>
-    <!-- Only render if there's an active process state for this project -->
-    <template v-if="projectState">
+<!-- Only render if there's an active process state for this project -->
+<template v-if="projectState">
+    <!-- Unread indicator: replaces process indicator when user_turn + unread sessions -->
+    <template v-if="showUnread">
+        <span :id="indicatorId" class="unread-indicator" :class="`unread-indicator--${size}`">
+            <wa-icon name="eye"></wa-icon>
+            <span class="unread-count">{{ unreadCount }}</span>
+        </span>
+        <AppTooltip :for="indicatorId">{{ unreadCount }} unread session{{ unreadCount !== 1 ? 's' : '' }} · {{ tooltipText }}</AppTooltip>
+    </template>
+    <!-- Normal process indicator -->
+    <template v-else>
         <ProcessIndicator
             :id="indicatorId"
             :state="projectState"
@@ -81,3 +105,30 @@ const animateStates = ['assistant_turn']
         <AppTooltip :for="indicatorId">{{ tooltipText }}</AppTooltip>
     </template>
 </template>
+
+<style scoped>
+.unread-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15em;
+    color: var(--wa-color-warning-60);
+}
+
+.unread-indicator--small {
+    font-size: var(--wa-font-size-s);
+}
+
+.unread-indicator--medium {
+    font-size: var(--wa-font-size-l);
+}
+
+.unread-indicator--large {
+    font-size: var(--wa-font-size-2xl);
+}
+
+.unread-count {
+    font-size: 0.7em;
+    font-weight: 700;
+    line-height: 1;
+}
+</style>
