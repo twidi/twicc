@@ -606,7 +606,13 @@ def tool_states(request, project_id, session_id):
     links = (
         ToolResultLink.objects.filter(session=session)
         .values('tool_use_id')
-        .annotate(result_count=Count('id'), completed_at=Max('tool_result_at'), extra=Max('extra'), error=Max('error'))
+        .annotate(
+            result_count=Count('id'),
+            completed_at=Max('tool_result_at'),
+            extra=Max('extra'),
+            error=Max('error'),
+            tool_result_line_num=Max('tool_result_line_num'),
+        )
     )
 
     tools = {}
@@ -616,6 +622,7 @@ def tool_states(request, project_id, session_id):
             'completed_at': entry['completed_at'].isoformat() if entry['completed_at'] else None,
             'error': entry['error'],
             'extra': entry['extra'],
+            'tool_result_line_num': entry['tool_result_line_num'],
         }
 
     return JsonResponse({"tools": tools})

@@ -1714,11 +1714,11 @@ export const useDataStore = defineStore('data', {
          * @param {string|null} completedAt - ISO timestamp of the latest tool_result
          * @param {boolean} live - Whether this state arrived via WebSocket (live) vs API (historical)
          */
-        setToolState(sessionId, toolUseId, resultCount, completedAt, error = null, extra = null, live = false) {
+        setToolState(sessionId, toolUseId, resultCount, completedAt, error = null, extra = null, live = false, toolResultLineNum = null) {
             if (!this.localState.toolStates[sessionId]) {
                 this.localState.toolStates[sessionId] = {}
             }
-            this.localState.toolStates[sessionId][toolUseId] = { resultCount, completedAt, error, extra, live }
+            this.localState.toolStates[sessionId][toolUseId] = { resultCount, completedAt, error, extra, live, toolResultLineNum }
         },
 
         /**
@@ -1743,6 +1743,7 @@ export const useDataStore = defineStore('data', {
                             completedAt: state.completed_at,
                             error: state.error ?? null,
                             extra: state.extra ?? null,
+                            toolResultLineNum: state.tool_result_line_num ?? null,
                         }
                     }
                     this.localState.toolStates[sessionId] = states

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, inject, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, ref, inject, watch, watchEffect, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
@@ -8,6 +8,7 @@ import { getIconUrl, getFileIconId } from '../../../utils/fileIcons'
 import { getLanguageFromPath } from '../../../utils/languages'
 import { AGENT_TOOL_NAMES } from '../../../constants'
 import { getSessionCutoffMs } from '../../../utils/sessions'
+import { getParsedContent, hasContent } from '../../../utils/parsedContent'
 import { getTodoDescription, isValidTodos } from '../../../utils/todoList'
 import JsonHumanView from '../../JsonHumanView.vue'
 import MarkdownContent from '../../MarkdownContent.vue'
@@ -590,6 +591,52 @@ const fileChangeStats = computed(() => {
     }
 })
 
+// --- Edit/Write tools: fetch structuredPatch from the tool_result item ---
+// When fileChangeStats is available, we know the backend has computed hunk data.
+// We fetch the actual tool_result item to get the real structuredPatch with file line numbers.
+const fileChangeBackendPatch = ref(null)
+const fileChangeBackendPatchLoading = ref(false)
+
+watchEffect(async () => {
+    if ((!editValid.value && !writeValid.value) || !fileChangeStats.value) {
+        fileChangeBackendPatch.value = null
+        return
+    }
+    const lineNum = toolState.value?.toolResultLineNum
+    if (!lineNum) return
+    // Already resolved for this line
+    if (fileChangeBackendPatch.value?._lineNum === lineNum) return
+
+    // Check if the item is already in the store
+    const item = dataStore.getSessionItem(props.sessionId, lineNum)
+    if (item && hasContent(item)) {
+        const parsed = getParsedContent(item)
+        const patch = parsed?.toolUseResult?.structuredPatch
+        if (Array.isArray(patch) && patch.length > 0) {
+            fileChangeBackendPatch.value = Object.freeze(Object.assign([...patch], { _lineNum: lineNum }))
+        }
+        return
+    }
+
+    // Fetch the item from the API
+    fileChangeBackendPatchLoading.value = true
+    try {
+        await dataStore.loadSessionItemsRanges(
+            props.projectId, props.sessionId, [`${lineNum}`], props.parentSessionId
+        )
+        const fetched = dataStore.getSessionItem(props.sessionId, lineNum)
+        if (fetched && hasContent(fetched)) {
+            const parsed = getParsedContent(fetched)
+            const patch = parsed?.toolUseResult?.structuredPatch
+            if (Array.isArray(patch) && patch.length > 0) {
+                fileChangeBackendPatch.value = Object.freeze(Object.assign([...patch], { _lineNum: lineNum }))
+            }
+        }
+    } finally {
+        fileChangeBackendPatchLoading.value = false
+    }
+})
+
 // Whether this tool_use predates the session's last start/stop cycle
 // (session was restarted or stopped since — this tool can't be running)
 const isStaleToolUse = computed(() => {
@@ -786,8 +833,8 @@ function navigateToSubagent() {
         </span>
         <template v-if="isOpen">
             <TodoContent v-if="isTodoWrite && todosValid" :todos="input.todos" />
-            <EditContent v-else-if="editValid" :input="input" />
-            <WriteContent v-else-if="writeValid" :input="input" />
+            <EditContent v-else-if="editValid" :input="input" :backend-patch="fileChangeBackendPatch" :backend-patch-loading="fileChangeBackendPatchLoading" />
+            <WriteContent v-else-if="writeValid" :input="input" :backend-patch="fileChangeBackendPatch" :backend-patch-loading="fileChangeBackendPatchLoading" />
             <div v-else-if="displayInput" class="tool-input">
                 <JsonHumanView
                     :value="displayInput"

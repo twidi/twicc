@@ -482,6 +482,7 @@ async def sync_and_broadcast(
                     "completed_at": update.completed_at.isoformat() if update.completed_at else None,
                     "extra": update.extra,
                     "error": update.error,
+                    "tool_result_line_num": update.tool_result_line_num,
                 })
 
             # Broadcast session_updated for subagents that naturally finished

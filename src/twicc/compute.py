@@ -47,6 +47,7 @@ class ToolResultUpdate(NamedTuple):
     completed_at: datetime | None  # Timestamp of the latest tool_result
     extra: str | None = None  # Optional extra data (e.g. diff stats JSON for Edit tools)
     error: str | None = None  # Error message from tool_result (None = no error)
+    tool_result_line_num: int | None = None  # Line number of the tool_result item
 
 
 class AgentStoppedUpdate(NamedTuple):
@@ -1671,6 +1672,7 @@ def create_tool_result_link_live(
                 completed_at=max_timestamp,
                 extra=extra,
                 error=error,
+                tool_result_line_num=item.line_num,
             )
 
     return None
