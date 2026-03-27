@@ -1,18 +1,14 @@
 <script setup>
 /**
- * ProjectProcessIndicator - Shows aggregated process state for a project.
+ * ProjectProcessIndicator - Shows aggregated process state or unread count for a project.
  *
- * Aggregates all active processes across sessions of a project and displays
- * the most important state based on priority:
- * - dead (highest): something needs attention
- * - user_turn: Claude is waiting for user input
- * - starting: a process is starting up
- * - assistant_turn (lowest): Claude is working
+ * Mirrors per-session indicator logic at the project level:
+ * - No active process: shows unread indicator (eye + count) if any, otherwise nothing.
+ * - Active process in user_turn + unread sessions: shows unread indicator instead.
+ * - Active process (any other state, or user_turn without unread): shows process indicator.
  *
- * When the aggregated state would show user_turn and there are unread sessions,
- * an eye icon replaces the process indicator to signal new content to read.
- *
- * Only assistant_turn has pulse animation (user_turn and dead are static).
+ * Process state priority: dead > user_turn > starting > assistant_turn.
+ * Only assistant_turn has pulse animation.
  *
  * Used in project list (home page) and project selector to quickly identify
  * which projects require attention.
@@ -57,12 +53,13 @@ const activeCronCount = computed(() => dataStore.getProjectActiveCronCount(props
 const unreadCount = computed(() => dataStore.getProjectUnreadCount(props.projectId))
 
 /**
- * Show unread indicator instead of process indicator when:
- * - The aggregated state is user_turn (the state that would show check/clock icon)
- * - There is at least one unread session
+ * Show unread indicator instead of process/nothing when:
+ * - No active process and there are unread sessions, OR
+ * - Active process in user_turn and there are unread sessions
+ * (mirrors per-session logic: unread replaces user_turn, but not other states)
  */
 const showUnread = computed(() =>
-    projectState.value === 'user_turn' && unreadCount.value > 0
+    unreadCount.value > 0 && (!projectState.value || projectState.value === 'user_turn')
 )
 
 // Tooltip text with count
@@ -83,18 +80,16 @@ const indicatorId = useId()
 const animateStates = ['assistant_turn']
 </script>
 
-<!-- Only render if there's an active process state for this project -->
-<template v-if="projectState">
-    <!-- Unread indicator: replaces process indicator when user_turn + unread sessions -->
+<template>
+    <!-- Unread indicator: replaces user_turn or stands alone when no process -->
     <template v-if="showUnread">
         <span :id="indicatorId" class="unread-indicator" :class="`unread-indicator--${size}`">
             <wa-icon name="eye"></wa-icon>
-            <span class="unread-count">{{ unreadCount }}</span>
         </span>
-        <AppTooltip :for="indicatorId">{{ unreadCount }} unread session{{ unreadCount !== 1 ? 's' : '' }} · {{ tooltipText }}</AppTooltip>
+        <AppTooltip :for="indicatorId">{{ unreadCount }} unread session{{ unreadCount !== 1 ? 's' : '' }}{{ projectState ? ` · ${tooltipText}` : '' }}</AppTooltip>
     </template>
-    <!-- Normal process indicator -->
-    <template v-else>
+    <!-- Process indicator: active process without unread sessions -->
+    <template v-else-if="projectState">
         <ProcessIndicator
             :id="indicatorId"
             :state="projectState"
@@ -110,7 +105,6 @@ const animateStates = ['assistant_turn']
 .unread-indicator {
     display: inline-flex;
     align-items: center;
-    gap: 0.15em;
     color: var(--wa-color-warning-60);
 }
 
@@ -126,9 +120,4 @@ const animateStates = ['assistant_turn']
     font-size: var(--wa-font-size-2xl);
 }
 
-.unread-count {
-    font-size: 0.7em;
-    font-weight: 700;
-    line-height: 1;
-}
 </style>
