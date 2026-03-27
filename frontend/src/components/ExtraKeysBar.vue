@@ -1,31 +1,27 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { formatCombo } from '../utils/comboNotation'
 
 const props = defineProps({
-    activeModifiers: {
-        type: Object,
-        required: true,
-    },
-    lockedModifiers: {
-        type: Object,
-        required: true,
-    },
-    theme: {
-        type: String,
-        default: 'dark',
-    },
+    activeModifiers: { type: Object, required: true },
+    lockedModifiers: { type: Object, required: true },
+    isTouchDevice: { type: Boolean, default: false },
+    combos: { type: Array, default: () => [] },
+    snippets: { type: Array, default: () => [] },
 })
 
-const emit = defineEmits(['key-input', 'modifier-toggle', 'paste'])
+const emit = defineEmits([
+    'key-input', 'modifier-toggle', 'paste',
+    'combo-press', 'snippet-press',
+    'manage-combos', 'manage-snippets',
+])
 
 // ── Tab state ───────────────────────────────────────────────────────
-const activeTab = ref('essentials')
 
 // ── Key layout definition ───────────────────────────────────────────
 // Each key has: label (display), key (emitted value), and optional flags
-const TABS = {
+const BUILT_IN_TABS = {
     essentials: {
-        label: 'Essentials',
         keys: [
             { label: 'ESC', key: 'Escape' },
             { label: 'TAB', key: 'Tab' },
@@ -42,7 +38,6 @@ const TABS = {
         ],
     },
     more: {
-        label: 'More',
         keys: [
             { label: 'SHIFT', key: 'shift', modifier: true },
             { label: 'HOME', key: 'Home', wide: true },
@@ -60,7 +55,6 @@ const TABS = {
         ],
     },
     fkeys: {
-        label: 'F-keys',
         keys: Array.from({ length: 12 }, (_, i) => ({
             label: `F${i + 1}`,
             key: `F${i + 1}`,
@@ -68,7 +62,27 @@ const TABS = {
     },
 }
 
-const tabIds = Object.keys(TABS)
+const TAB_LABELS = {
+    essentials: 'Essentials',
+    more: 'More',
+    fkeys: 'F-keys',
+    custom: 'Custom',
+    snippets: 'Snippets',
+}
+
+const tabIds = computed(() => {
+    if (props.isTouchDevice) {
+        return ['essentials', 'more', 'fkeys', 'custom', 'snippets']
+    }
+    return ['snippets']
+})
+
+const activeTab = ref(null)
+watch(tabIds, (ids) => {
+    if (!ids.includes(activeTab.value)) {
+        activeTab.value = ids[0]
+    }
+}, { immediate: true })
 
 // ── Double-tap detection for modifiers ──────────────────────────────
 const lastModifierTap = {}
@@ -111,6 +125,17 @@ function handlePasteClick() {
     emit('paste')
 }
 
+// ── Combo and snippet handling ──────────────────────────────────────
+function handleComboPointerDown(event, combo) {
+    event.preventDefault()
+    emit('combo-press', combo)
+}
+
+function handleSnippetPointerDown(event, snippet) {
+    event.preventDefault()
+    emit('snippet-press', snippet)
+}
+
 // ── CSS classes for a key button ────────────────────────────────────
 function keyClasses(keyDef) {
     return {
@@ -125,8 +150,9 @@ function keyClasses(keyDef) {
 </script>
 
 <template>
-    <div class="extra-keys-bar" :class="theme">
-        <div class="extra-keys-tabs">
+    <div class="extra-keys-bar">
+        <!-- Tab bar: hidden when only 1 tab (desktop snippets-only) -->
+        <div v-if="tabIds.length > 1" class="extra-keys-tabs">
             <button
                 v-for="id in tabIds"
                 :key="id"
@@ -134,37 +160,80 @@ function keyClasses(keyDef) {
                 :class="{ active: activeTab === id }"
                 @pointerdown.prevent="activeTab = id"
             >
-                {{ TABS[id].label }}
+                {{ TAB_LABELS[id] }}
             </button>
         </div>
+
         <div class="extra-keys-keys">
-            <template v-for="keyDef in TABS[activeTab].keys" :key="keyDef.key">
-                <!-- Paste button: uses @click only (no @pointerdown.prevent)
-                     to preserve the full user activation chain required
-                     by navigator.clipboard.readText(). Focus is restored
-                     by the handler via terminal.focus() after paste. -->
+            <!-- Built-in tabs (essentials, more, fkeys) -->
+            <template v-if="BUILT_IN_TABS[activeTab]">
+                <template v-for="keyDef in BUILT_IN_TABS[activeTab].keys" :key="keyDef.key">
+                    <!-- Paste button -->
+                    <button
+                        v-if="keyDef.paste"
+                        :class="keyClasses(keyDef)"
+                        @click="handlePasteClick"
+                    >
+                        {{ keyDef.label }}
+                    </button>
+                    <!-- Modifier button -->
+                    <button
+                        v-else-if="keyDef.modifier"
+                        :class="keyClasses(keyDef)"
+                        @pointerdown="handleModifierPointerDown($event, keyDef)"
+                    >
+                        {{ keyDef.label }}
+                    </button>
+                    <!-- Regular key button -->
+                    <button
+                        v-else
+                        :class="keyClasses(keyDef)"
+                        @pointerdown="handleKeyPointerDown($event, keyDef)"
+                    >
+                        {{ keyDef.label }}
+                    </button>
+                </template>
+            </template>
+
+            <!-- Custom tab -->
+            <template v-else-if="activeTab === 'custom'">
+                <template v-if="combos.length > 0">
+                    <button
+                        v-for="(combo, i) in combos"
+                        :key="'combo-' + i"
+                        class="extra-key"
+                        @pointerdown="handleComboPointerDown($event, combo)"
+                    >
+                        {{ formatCombo(combo) }}
+                    </button>
+                </template>
+                <span v-else class="empty-tab-text">No custom combos</span>
                 <button
-                    v-if="keyDef.paste"
-                    :class="keyClasses(keyDef)"
-                    @click="handlePasteClick"
+                    class="extra-key manage-key"
+                    @pointerdown.prevent="emit('manage-combos')"
                 >
-                    {{ keyDef.label }}
+                    ⚙ Manage
                 </button>
-                <!-- Modifier button: has special double-tap logic -->
+            </template>
+
+            <!-- Snippets tab -->
+            <template v-else-if="activeTab === 'snippets'">
+                <template v-if="snippets.length > 0">
+                    <button
+                        v-for="(snippet, i) in snippets"
+                        :key="'snippet-' + i"
+                        class="extra-key"
+                        @pointerdown="handleSnippetPointerDown($event, snippet)"
+                    >
+                        {{ snippet.label }}
+                    </button>
+                </template>
+                <span v-else class="empty-tab-text">No snippets</span>
                 <button
-                    v-else-if="keyDef.modifier"
-                    :class="keyClasses(keyDef)"
-                    @pointerdown="handleModifierPointerDown($event, keyDef)"
+                    class="extra-key manage-key"
+                    @pointerdown.prevent="emit('manage-snippets')"
                 >
-                    {{ keyDef.label }}
-                </button>
-                <!-- Regular key button -->
-                <button
-                    v-else
-                    :class="keyClasses(keyDef)"
-                    @pointerdown="handleKeyPointerDown($event, keyDef)"
-                >
-                    {{ keyDef.label }}
+                    ⚙ Manage
                 </button>
             </template>
         </div>
@@ -172,11 +241,17 @@ function keyClasses(keyDef) {
 </template>
 
 <style scoped>
+/* ── Reset ── */
+button {
+    box-shadow: none !important;
+    margin: 0;
+}
+
 /* ── Bar container ─────────────────────────────────────────────────── */
 .extra-keys-bar {
-    background: #141e28;
-    border-top: 1px solid #2a3a4a;
-    padding: 4px 6px 6px;
+    background: var(--wa-color-surface-lowered);
+    border-top: 1px solid var(--wa-color-surface-border);
+    padding: var(--wa-space-2xs) var(--wa-space-xs) var(--wa-space-xs);
     user-select: none;
     -webkit-user-select: none;
 }
@@ -198,20 +273,19 @@ function keyClasses(keyDef) {
 /* ── Tabs ───────────────────────────────────────────────────────────── */
 .extra-keys-tabs {
     display: flex;
-    gap: 2px;
-    margin-bottom: 5px;
+    gap: var(--wa-space-2xs);
+    margin-bottom: var(--wa-space-2xs);
 }
 
 .extra-keys-tab {
     background: none;
     border: none;
-    color: #5a6a7a;
-    font-size: 10px;
-    font-weight: 600;
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-2xs);
+    font-weight: var(--wa-font-weight-semibold);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 3px 8px;
-    border-radius: 3px;
+    padding: var(--wa-space-3xs) var(--wa-space-xs);
+    border-radius: var(--wa-border-radius-s);
     cursor: pointer;
     font-family: inherit;
     transition: color 0.15s, background-color 0.15s;
@@ -219,34 +293,36 @@ function keyClasses(keyDef) {
 }
 
 .extra-keys-tab:hover {
-    color: #8a9aaa;
+    color: var(--wa-color-text-normal);
+    opacity: 0.7;
 }
 
 .extra-keys-tab.active {
-    color: #c0d0e0;
-    background: rgba(255, 255, 255, 0.08);
+    color: var(--wa-color-text-normal);
+    background: var(--wa-color-surface-raised);
 }
 
 /* ── Key grid ──────────────────────────────────────────────────────── */
 .extra-keys-keys {
     display: flex;
-    gap: 4px;
+    gap: var(--wa-space-2xs);
     flex-wrap: wrap;
+    align-items: center;
 }
 
 /* ── Key buttons ───────────────────────────────────────────────────── */
 .extra-key {
-    background: #1e2d3d;
-    border: 1px solid #2a3a4a;
-    color: #c0d0e0;
-    font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
-    font-size: 12px;
-    height: 28px;
-    min-width: 34px;
+    background: var(--wa-color-surface-raised);
+    border: 1px solid var(--wa-color-surface-border);
+    color: var(--wa-color-text-normal);
+    font-family: var(--wa-font-family-code);
+    font-size: var(--wa-font-size-xs);
+    height: 1.75rem;
+    min-width: 2rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 4px;
+    border-radius: var(--wa-border-radius-s);
     cursor: pointer;
     transition: background-color 0.1s, border-color 0.1s, transform 0.1s;
     touch-action: manipulation;
@@ -256,105 +332,66 @@ function keyClasses(keyDef) {
 }
 
 .extra-key:hover {
-    background: #263a4d;
-    border-color: #3a4a5a;
+    background: color-mix(in srgb, var(--wa-color-surface-raised), var(--wa-color-mix-hover));
 }
 
 .extra-key:active {
-    background: #2a4050;
+    background: color-mix(in srgb, var(--wa-color-surface-raised), var(--wa-color-mix-active));
     transform: scale(0.95);
 }
 
 /* Wide keys */
 .extra-key.wide {
-    min-width: 42px;
+    min-width: 3rem;
 }
 
 /* Arrow keys */
 .extra-key.arrow {
-    font-size: 14px;
-    min-width: 30px;
+    font-size: var(--wa-font-size-s);
+    min-width: 2rem;
     font-family: system-ui, sans-serif;
 }
 
 /* ── Modifier states ───────────────────────────────────────────────── */
 .extra-key.modifier {
-    color: #c084fc;
-    border-color: #3a2d5a;
+    color: var(--wa-color-brand-on-quiet);
+    border-color: var(--wa-color-brand-border-quiet);
 }
 
 .extra-key.modifier:hover {
-    background: #2a2545;
+    background: var(--wa-color-brand-fill-quiet);
 }
 
 .extra-key.modifier.active-mod {
-    background: #3a2560;
-    border-color: #7c5cbf;
-    color: #d8b4fe;
-    box-shadow: 0 0 6px rgba(192, 132, 252, 0.3);
+    background: var(--wa-color-brand-fill-normal);
+    border-color: var(--wa-color-brand-border-normal);
+    color: var(--wa-color-brand-on-normal);
+    box-shadow: 0 0 var(--wa-space-xs) var(--wa-color-brand-fill-quiet);
 }
 
 .extra-key.modifier.locked {
-    background: #3a2560;
-    border-color: #9b7ad8;
-    color: #e0c4ff;
-    box-shadow: 0 0 6px rgba(192, 132, 252, 0.3), inset 0 0 0 1px rgba(192, 132, 252, 0.3);
+    background: var(--wa-color-brand-fill-loud);
+    border-color: var(--wa-color-brand-border-normal);
+    color: var(--wa-color-brand-on-normal);
+    box-shadow: 0 0 var(--wa-space-xs) var(--wa-color-brand-fill-quiet), inset 0 0 0 1px var(--wa-color-brand-border-normal);
 }
 
-/* ── Light theme ───────────────────────────────────────────────────── */
-.extra-keys-bar.light {
-    background: #f0f2f4;
-    border-top-color: #d0d7de;
+/* ── Empty tab text ───────────────────────────────────────────────── */
+.empty-tab-text {
+    font-size: var(--wa-font-size-xs);
+    opacity: 0.4;
+    padding: var(--wa-space-2xs) var(--wa-space-xs);
+    align-self: center;
 }
 
-.light .extra-keys-tab {
-    color: #8b949e;
+/* ── Manage button ────────────────────────────────────────────────── */
+.extra-key.manage-key {
+    border-style: dashed;
+    opacity: 0.6;
+    font-size: var(--wa-font-size-xs);
 }
 
-.light .extra-keys-tab:hover {
-    color: #57606a;
-}
-
-.light .extra-keys-tab.active {
-    color: #24292e;
-    background: rgba(0, 0, 0, 0.06);
-}
-
-.light .extra-key {
-    background: #ffffff;
-    border-color: #d0d7de;
-    color: #24292e;
-}
-
-.light .extra-key:hover {
-    background: #f6f8fa;
-    border-color: #b0b8c0;
-}
-
-.light .extra-key:active {
-    background: #eaeef2;
-}
-
-.light .extra-key.modifier {
-    color: #8250df;
-    border-color: #c8b8e8;
-}
-
-.light .extra-key.modifier:hover {
-    background: #f5f0ff;
-}
-
-.light .extra-key.modifier.active-mod {
-    background: #ede4ff;
-    border-color: #8250df;
-    color: #6e3dc7;
-    box-shadow: 0 0 4px rgba(130, 80, 223, 0.2);
-}
-
-.light .extra-key.modifier.locked {
-    background: #ede4ff;
-    border-color: #6e3dc7;
-    color: #5b21b6;
-    box-shadow: 0 0 4px rgba(130, 80, 223, 0.2), inset 0 0 0 1px rgba(130, 80, 223, 0.2);
+.extra-key.manage-key:hover {
+    opacity: 0.9;
 }
 </style>

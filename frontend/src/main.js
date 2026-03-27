@@ -33,6 +33,7 @@ import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js'
 import '@awesome.me/webawesome/dist/components/input/input.js'
 import '@awesome.me/webawesome/dist/components/color-picker/color-picker.js'
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js'
+import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js'
 import '@awesome.me/webawesome/dist/components/relative-time/relative-time.js'
 import '@awesome.me/webawesome/dist/components/popup/popup.js'
 

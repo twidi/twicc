@@ -647,6 +647,47 @@ export function useTerminal(sessionId) {
     }
 
     /**
+     * Handle a custom combo button press. Sends each step's ANSI sequence
+     * in order. Combos are self-contained — they don't interact with
+     * the one-shot modifier state from the Essentials tab.
+     */
+    function handleComboPress(combo) {
+        for (const step of combo.steps) {
+            const syntheticEvent = {
+                key: step.key,
+                ctrlKey: step.modifiers?.includes('ctrl') ?? false,
+                altKey: step.modifiers?.includes('alt') ?? false,
+                shiftKey: step.modifiers?.includes('shift') ?? false,
+            }
+            const sequence = imeKeyToAnsiSequence(syntheticEvent, { ignoreShift: false })
+            if (sequence) {
+                wsSend({ type: 'input', data: sequence })
+            } else {
+                const char = step.key
+                if (syntheticEvent.altKey) {
+                    wsSend({ type: 'input', data: `\x1b${char}` })
+                } else {
+                    wsSend({ type: 'input', data: char })
+                }
+            }
+        }
+        terminal?.focus()
+    }
+
+    /**
+     * Handle a snippet button press. Sends the text as raw terminal input,
+     * optionally appending a newline.
+     */
+    function handleSnippetPress(snippet) {
+        let text = snippet.text
+        if (snippet.appendEnter) {
+            text += '\n'
+        }
+        wsSend({ type: 'input', data: text })
+        terminal?.focus()
+    }
+
+    /**
      * Clean up everything: terminal, WebSocket, observers.
      */
     function cleanup() {
@@ -719,5 +760,6 @@ export function useTerminal(sessionId) {
         // Extra keys bar
         activeModifiers, lockedModifiers,
         handleExtraKeyInput, handleExtraKeyModifierToggle, handleExtraKeyPaste,
+        handleComboPress, handleSnippetPress,
     }
 }

@@ -249,6 +249,16 @@ export function sendSyncedSettings(settings) {
 }
 
 /**
+ * Send terminal config to the backend for persistence.
+ * The backend will broadcast the updated config to all connected clients.
+ * @param {Object} config - The terminal config key-value pairs
+ * @returns {boolean} - True if message was sent, false if not connected
+ */
+export function sendTerminalConfig(config) {
+    return sendWsMessage({ type: 'update_terminal_config', config })
+}
+
+/**
  * Build a notification body string from the enriched WebSocket message.
  * Format: "Project: <name>\nSession: <title>" (both truncated).
  *
@@ -661,6 +671,13 @@ export function useWebSocket() {
                 // Lazy import to avoid circular dependency (useWebSocket.js → settings.js)
                 import('../stores/settings').then(({ useSettingsStore }) => {
                     useSettingsStore().applySyncedSettings(msg.settings)
+                })
+                break
+            case 'terminal_config_updated':
+                // Apply terminal config from backend (on connect or when another client updates)
+                // Lazy import to avoid circular dependency (useWebSocket.js → terminalConfig.js)
+                import('../stores/terminalConfig').then(({ useTerminalConfigStore }) => {
+                    useTerminalConfigStore().applyConfig(msg.config)
                 })
                 break
             case 'startup_progress':

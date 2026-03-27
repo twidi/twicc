@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Unread sessions: eye icon (orange) marks sessions with new assistant content you haven't seen yet, visible in the session list and aggregated at the project level
 - Add "View in Files tab" button for Read/Write/Edit tools
 - Terminal extra keys bar on mobile: tabbed bar (Essentials / More / F-keys) with modifiers (tap = one-shot, double-tap = lock), arrow keys, special characters, paste, and function keys
+- Custom combos & snippets for terminal: user-defined key combos/sequences (mobile) and text global or project-scoped snippets (mobile & desktop)
 - Hover over a session or the Chat tab while dragging files/text for 1s to auto-switch, then drop to attach
 
 ### Changed
