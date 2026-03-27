@@ -944,19 +944,16 @@ def compute_file_change_stats(parsed_json: dict) -> str | None:
     Compute diff stats from an Edit or Write tool_result's ``toolUseResult``.
 
     For **Edit** and **Write updates** (overwriting an existing file), the
-    ``structuredPatch`` list of unified-diff hunks is used.  Each hunk carries
-    position info (``oldStart``, ``oldLines``, ``newStart``, ``newLines``) and a
+    ``structuredPatch`` list of unified-diff hunks is used.  Each hunk has a
     ``lines`` list where entries prefixed with ``"+"`` are additions and
     ``"-"`` are removals.
 
     For **Write creates** (new file), the ``content`` field is used to count
     the total number of lines added (no removals).
 
-    Returns a JSON string with top-level totals (``lines_added``,
-    ``lines_removed``) and a ``hunks`` array with per-hunk details
-    (``oldStart``, ``oldLines``, ``newStart``, ``newLines``, ``lines_added``,
-    ``lines_removed``), or *None* when the data is unavailable (error result,
-    old format).
+    Returns a JSON string like ``{"lines_added": 5, "lines_removed": 3}``
+    (with an extra ``"hunks"`` key when there are multiple hunks), or *None*
+    when the data is unavailable (error result, old format).
     """
     tool_use_result = parsed_json.get('toolUseResult')
     if not isinstance(tool_use_result, dict):
@@ -976,32 +973,21 @@ def compute_file_change_stats(parsed_json: dict) -> str | None:
     if not isinstance(structured_patch, list) or not structured_patch:
         return None
 
-    total_added = 0
-    total_removed = 0
-    hunks: list[dict] = []
+    lines_added = 0
+    lines_removed = 0
     for hunk in structured_patch:
         if not isinstance(hunk, dict):
             continue
-        hunk_added = 0
-        hunk_removed = 0
         for line in hunk.get('lines', ()):
             if isinstance(line, str):
                 if line.startswith('+'):
-                    hunk_added += 1
+                    lines_added += 1
                 elif line.startswith('-'):
-                    hunk_removed += 1
-        total_added += hunk_added
-        total_removed += hunk_removed
-        hunks.append({
-            'oldStart': hunk.get('oldStart'),
-            'oldLines': hunk.get('oldLines'),
-            'newStart': hunk.get('newStart'),
-            'newLines': hunk.get('newLines'),
-            'lines_added': hunk_added,
-            'lines_removed': hunk_removed,
-        })
+                    lines_removed += 1
 
-    stats: dict = {'lines_added': total_added, 'lines_removed': total_removed, 'hunks': hunks}
+    stats: dict = {'lines_added': lines_added, 'lines_removed': lines_removed}
+    if len(structured_patch) > 1:
+        stats['hunks'] = len(structured_patch)
 
     return orjson.dumps(stats).decode()
 
