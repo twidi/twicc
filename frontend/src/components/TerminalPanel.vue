@@ -1,6 +1,8 @@
 <script setup>
 import { watch } from 'vue'
 import { useTerminal } from '../composables/useTerminal'
+import { useSettingsStore } from '../stores/settings'
+import ExtraKeysBar from './ExtraKeysBar.vue'
 
 const props = defineProps({
     sessionId: {
@@ -13,7 +15,13 @@ const props = defineProps({
     },
 })
 
-const { containerRef, isConnected, started, start, reconnect } = useTerminal(props.sessionId)
+const settingsStore = useSettingsStore()
+
+const {
+    containerRef, isConnected, started, start, reconnect,
+    activeModifiers, lockedModifiers,
+    handleExtraKeyInput, handleExtraKeyModifierToggle, handleExtraKeyPaste,
+} = useTerminal(props.sessionId)
 
 // Lazy init: start the terminal only when the tab becomes active for the first time
 watch(
@@ -30,6 +38,16 @@ watch(
 <template>
     <div class="terminal-panel">
         <div ref="containerRef" class="terminal-container"></div>
+
+        <ExtraKeysBar
+            v-if="settingsStore.isTouchDevice"
+            :active-modifiers="activeModifiers"
+            :locked-modifiers="lockedModifiers"
+            :theme="settingsStore.getEffectiveTheme"
+            @key-input="handleExtraKeyInput"
+            @modifier-toggle="handleExtraKeyModifierToggle"
+            @paste="handleExtraKeyPaste"
+        />
 
         <!-- Disconnect overlay -->
         <div v-if="started && !isConnected" class="disconnect-overlay">

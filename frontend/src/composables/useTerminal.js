@@ -1,6 +1,6 @@
 // frontend/src/composables/useTerminal.js
 
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, watch, onMounted, onUnmounted } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -203,6 +203,10 @@ export function useTerminal(sessionId) {
     let resizeObserver = null
     /** @type {boolean} */
     let intentionalClose = false
+
+    // ── Extra keys bar state ────────────────────────────────────────────
+    const activeModifiers = reactive({ ctrl: false, alt: false, shift: false })
+    const lockedModifiers = reactive({ ctrl: false, alt: false, shift: false })
 
     // ── Touch selection state (mobile) ─────────────────────────────────────
     let selectStartCol = 0
@@ -438,10 +442,32 @@ export function useTerminal(sessionId) {
             // reliable. Regular character input (letters, digits, punctuation)
             // is unaffected — imeKeyToAnsiSequence returns null for those.
             if (settingsStore.isTouchDevice) {
-                const sequence = imeKeyToAnsiSequence(event, { ignoreShift: true })
+                // Merge extra-keys-bar modifiers with the event's own modifiers
+                const mergedEvent = (activeModifiers.ctrl || activeModifiers.alt || activeModifiers.shift)
+                    ? {
+                        key: event.key,
+                        ctrlKey: event.ctrlKey || activeModifiers.ctrl,
+                        altKey: event.altKey || activeModifiers.alt,
+                        shiftKey: event.shiftKey || activeModifiers.shift,
+                    }
+                    : event
+                const sequence = imeKeyToAnsiSequence(mergedEvent, { ignoreShift: !activeModifiers.shift })
                 if (sequence) {
                     event.preventDefault()
                     wsSend({ type: 'input', data: sequence })
+                    if (mergedEvent !== event) resetOneShotModifiers()
+                    return false
+                }
+                // If no sequence but extra modifiers were active and it's a single char,
+                // the modifier was meant for this key
+                if (mergedEvent !== event && event.key.length === 1) {
+                    event.preventDefault()
+                    if (activeModifiers.alt) {
+                        wsSend({ type: 'input', data: `\x1b${event.key}` })
+                    } else {
+                        wsSend({ type: 'input', data: event.key })
+                    }
+                    resetOneShotModifiers()
                     return false
                 }
             }
@@ -531,6 +557,95 @@ export function useTerminal(sessionId) {
         connectWs()
     }
 
+    // ── Extra keys bar handlers ────────────────────────────────────────
+
+    /**
+     * Handle modifier toggle from the extra keys bar.
+     * Called with the modifier name and whether it should be locked.
+     *
+     * Three transitions:
+     * - Inactive → one-shot: active=true, locked=false
+     * - Inactive → locked (double-tap): active=true, locked=true
+     * - Active/locked → inactive: active=false, locked=false
+     */
+    function handleExtraKeyModifierToggle(modifier, locked) {
+        if (activeModifiers[modifier] && !locked) {
+            // Was active (one-shot or locked) → deactivate
+            activeModifiers[modifier] = false
+            lockedModifiers[modifier] = false
+        } else if (locked) {
+            // Double-tap → lock
+            activeModifiers[modifier] = true
+            lockedModifiers[modifier] = true
+        } else {
+            // Single tap → one-shot
+            activeModifiers[modifier] = true
+            lockedModifiers[modifier] = false
+        }
+    }
+
+    /**
+     * Reset all one-shot (non-locked) modifiers after a key has been sent.
+     */
+    function resetOneShotModifiers() {
+        for (const mod of ['ctrl', 'alt', 'shift']) {
+            if (activeModifiers[mod] && !lockedModifiers[mod]) {
+                activeModifiers[mod] = false
+            }
+        }
+    }
+
+    /**
+     * Handle a key press from the extra keys bar.
+     * Constructs a synthetic key descriptor with current modifier state,
+     * converts to ANSI via imeKeyToAnsiSequence, and sends to the PTY.
+     *
+     * @param {string} key - Key identifier (e.g. 'Escape', 'Tab', 'ArrowUp', '/', 'F5')
+     */
+    function handleExtraKeyInput(key) {
+        const syntheticEvent = {
+            key,
+            ctrlKey: activeModifiers.ctrl,
+            altKey: activeModifiers.alt,
+            shiftKey: activeModifiers.shift,
+        }
+
+        // Try ANSI sequence conversion (handles special keys, Ctrl+letter, Alt+letter)
+        const sequence = imeKeyToAnsiSequence(syntheticEvent, { ignoreShift: false })
+
+        if (sequence) {
+            wsSend({ type: 'input', data: sequence })
+        } else {
+            // Simple character — send directly (with Alt prefix if applicable)
+            if (activeModifiers.alt) {
+                wsSend({ type: 'input', data: `\x1b${key}` })
+            } else {
+                wsSend({ type: 'input', data: key })
+            }
+        }
+
+        resetOneShotModifiers()
+        terminal?.focus()
+    }
+
+    /**
+     * Handle paste from the extra keys bar.
+     * Reads clipboard and sends content to the PTY.
+     * Must be called from a click event handler (not pointerdown)
+     * to preserve the user gesture chain for the Clipboard API.
+     */
+    async function handleExtraKeyPaste() {
+        try {
+            const text = await navigator.clipboard.readText()
+            if (text) {
+                wsSend({ type: 'input', data: text })
+            }
+        } catch {
+            toast.error('Clipboard access denied')
+        }
+        terminal?.focus()
+    }
+
     /**
      * Clean up everything: terminal, WebSocket, observers.
      */
@@ -599,5 +714,10 @@ export function useTerminal(sessionId) {
         cleanup()
     })
 
-    return { containerRef, isConnected, started, start, reconnect }
+    return {
+        containerRef, isConnected, started, start, reconnect,
+        // Extra keys bar
+        activeModifiers, lockedModifiers,
+        handleExtraKeyInput, handleExtraKeyModifierToggle, handleExtraKeyPaste,
+    }
 }
