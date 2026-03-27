@@ -352,10 +352,10 @@ export function useCodeMirrorExtensions(options, { initialTheme = false, initial
         languageCompartment.of([]),  // populated async after view creation
         themeCompartment.of(createThemeExtension(initialTheme === 'dark' || initialTheme === true)),
         fontSizeCompartment.of(createFontSizeExtension(initialFontSize)),
-        readOnlyCompartment.of([
-            EditorState.readOnly.of(isReadOnly()),
-            EditorView.editable.of(isEditable()),
-        ]),
+        readOnlyCompartment.of(isReadOnly()
+            ? [EditorState.readOnly.of(true), EditorView.editable.of(false), EditorView.contentAttributes.of({ tabindex: '0' })]
+            : [EditorState.readOnly.of(false), EditorView.editable.of(true)]
+        ),
         lineWrappingCompartment.of(options.wordWrap?.value ? EditorView.lineWrapping : []),
         lineNumbersCompartment.of(options.lineNumbers?.value !== false ? lineNumbers() : []),
         highlightActiveLineCompartment.of(isEditable() ? highlightActiveLine() : []),
@@ -392,10 +392,10 @@ export function useCodeMirrorExtensions(options, { initialTheme = false, initial
                 break
             case 'readOnly': {
                 const ro = !!value
-                dispatch(readOnlyCompartment, [
-                    EditorState.readOnly.of(ro),
-                    EditorView.editable.of(!ro),
-                ])
+                dispatch(readOnlyCompartment, ro
+                    ? [EditorState.readOnly.of(true), EditorView.editable.of(false), EditorView.contentAttributes.of({ tabindex: '0' })]
+                    : [EditorState.readOnly.of(false), EditorView.editable.of(true)]
+                )
                 dispatch(highlightActiveLineCompartment, ro ? [] : highlightActiveLine())
                 break
             }
