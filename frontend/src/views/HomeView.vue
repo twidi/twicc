@@ -70,7 +70,7 @@ onBeforeUnmount(() => {
             </span>
             <AppTooltip for="home-global-sparkline">Overall activity (message turns per week)</AppTooltip>
             <wa-button class="new-project-button" variant="neutral" appearance="outlined" size="small" @click="openCreateDialog">
-                <wa-icon slot="prefix" name="plus-lg"></wa-icon>
+                <wa-icon slot="start" name="plus"></wa-icon>
                 New project
             </wa-button>
             <wa-button v-if="totalSessionsCount > 0" class="view-all-button" variant="brand" appearance="filled-outlined" size="small" @click="router.push({ name: 'projects-all' })">

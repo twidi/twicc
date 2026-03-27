@@ -141,7 +141,7 @@ export function initStaticCommands(router) {
         {
             id: 'nav.find-in-session',
             label: 'Search in Session\u2026',
-            icon: 'file-magnifying-glass',
+            icon: 'magnifying-glass',
             category: 'navigation',
             when: () => route.name === 'session' || route.name === 'projects-session',
             action: () => window.dispatchEvent(new Event('twicc:toggle-session-search')),
