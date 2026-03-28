@@ -299,7 +299,7 @@ def search_files(dir_path, query, max_results=50, show_hidden=False, show_ignore
                 if rel_root == ".":
                     file_paths.append(f)
                 else:
-                    file_paths.append(os.path.join(rel_root, f))
+                    file_paths.append(os.path.join(rel_root, f).replace("\\", "/"))
                 if len(file_paths) >= max_files:
                     break
             if len(file_paths) >= max_files:
@@ -309,7 +309,7 @@ def search_files(dir_path, query, max_results=50, show_hidden=False, show_ignore
     if not show_hidden and file_paths:
         file_paths = [
             fp for fp in file_paths
-            if not any(part.startswith(".") for part in fp.split(os.sep))
+            if not any(part.startswith(".") for part in fp.replace("\\", "/").split("/"))
         ]
 
     # Determine search mode: exact substring vs subsequence.

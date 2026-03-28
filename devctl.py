@@ -17,12 +17,14 @@ import glob
 import os
 import re
 import shutil
-import signal
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# On Windows, npm/uv are .cmd wrappers that require shell=True for subprocess
+_SHELL = sys.platform == "win32"
 
 # Paths
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -306,18 +308,18 @@ def ensure_dirs():
 
 def is_running(proc_key: str, processes: dict) -> tuple[bool, int | None]:
     """Check if a process is running. Returns (is_running, pid)."""
+    import psutil
+
     pid_file = processes[proc_key]["pid"]
     if not pid_file.exists():
         return False, None
 
     pid = int(pid_file.read_text().strip())
-    try:
-        os.kill(pid, 0)  # Signal 0 just checks if process exists
+    if psutil.pid_exists(pid):
         return True, pid
-    except OSError:
-        # Process doesn't exist, clean up stale pid file
-        pid_file.unlink()
-        return False, None
+    # Process doesn't exist, clean up stale pid file
+    pid_file.unlink()
+    return False, None
 
 
 def verify_port(proc_key: str, log_start_pos: int, processes: dict, timeout: float = 5.0) -> bool:
@@ -356,7 +358,10 @@ def verify_port(proc_key: str, log_start_pos: int, processes: dict, timeout: flo
                     actual_port = int(wrong_port_match.group(1))
                     if actual_port != expected_port:
                         print(f"    WARNING: Started on port {actual_port} instead of {expected_port}!")
-                        print(f"    Port {expected_port} may be in use. Check with: lsof -i :{expected_port}")
+                        if sys.platform == "win32":
+                            print(f"    Port {expected_port} may be in use. Check with: netstat -ano | findstr :{expected_port}")
+                        else:
+                            print(f"    Port {expected_port} may be in use. Check with: lsof -i :{expected_port}")
                         return False
         time.sleep(0.3)
 
@@ -378,6 +383,7 @@ def npm_install(processes: dict) -> bool:
         cwd=frontend_dir,
         capture_output=True,
         text=True,
+        shell=_SHELL,
     )
     if result.returncode != 0:
         print("FAILED")
@@ -449,6 +455,7 @@ def start(proc_key: str, processes: dict) -> bool:
         stderr=subprocess.STDOUT,
         env=proc_env,
         start_new_session=True,  # Detach from parent
+        shell=_SHELL,
     )
 
     # Close the log file handle in the parent process (if opened);
@@ -474,8 +481,42 @@ def start(proc_key: str, processes: dict) -> bool:
     return True
 
 
+def _kill_process_tree(pid: int) -> None:
+    """Kill a process and all its children, cross-platform.
+
+    Uses psutil to find and terminate the entire process tree.
+    Silently returns if the process no longer exists.
+    """
+    import psutil
+
+    try:
+        parent = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return
+
+    children = []
+    try:
+        children = parent.children(recursive=True)
+    except psutil.NoSuchProcess:
+        pass
+
+    for proc in children + [parent]:
+        try:
+            proc.terminate()
+        except psutil.NoSuchProcess:
+            pass
+
+    # Wait briefly for graceful termination, then force-kill survivors
+    _, alive = psutil.wait_procs(children + [parent], timeout=3)
+    for proc in alive:
+        try:
+            proc.kill()
+        except psutil.NoSuchProcess:
+            pass
+
+
 def stop(proc_key: str, processes: dict) -> bool:
-    """Stop a process and all its children (process group)."""
+    """Stop a process and all its children (process tree)."""
     config = processes[proc_key]
     running, pid = is_running(proc_key, processes)
 
@@ -484,22 +525,13 @@ def stop(proc_key: str, processes: dict) -> bool:
         return True
 
     try:
-        # Send SIGTERM to the entire process group (negative PID)
-        # This kills npm AND its child processes (node/vite)
-        os.killpg(pid, signal.SIGTERM)
+        _kill_process_tree(pid)
         print(f"  {config['name']}: stopped (was PID {pid})")
         config["pid"].unlink(missing_ok=True)
         return True
-    except OSError as e:
-        # Fallback: try killing just the process if group kill fails
-        try:
-            os.kill(pid, signal.SIGTERM)
-            print(f"  {config['name']}: stopped (was PID {pid})")
-            config["pid"].unlink(missing_ok=True)
-            return True
-        except OSError:
-            print(f"  {config['name']}: failed to stop - {e}")
-            return False
+    except Exception as e:
+        print(f"  {config['name']}: failed to stop - {e}")
+        return False
 
 
 def status(processes: dict):
