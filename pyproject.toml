@@ -40,6 +40,7 @@ dependencies = [
     "watchfiles>=1.1.1",
     "websockets>=16.0",
     "xmltodict>=1.0.2",
+    "pywinpty>=2.0.0; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
