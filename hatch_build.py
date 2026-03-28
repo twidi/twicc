@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import sys
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
@@ -25,16 +26,21 @@ class CustomBuildHook(BuildHookInterface):
             if os.path.isfile(os.path.join(static_dir, "index.html")):
                 return
 
+        # shell=True is required on Windows to resolve npm.cmd wrapper
+        use_shell = sys.platform == "win32"
+
         subprocess.run(
             ["npm", "ci"],
             cwd=frontend_dir,
             check=True,
+            shell=use_shell,
         )
 
         subprocess.run(
             ["npm", "run", "build"],
             cwd=frontend_dir,
             check=True,
+            shell=use_shell,
         )
 
     def clean(self, versions):

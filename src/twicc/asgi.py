@@ -8,6 +8,7 @@ messages for sending messages to Claude sessions.
 
 import asyncio
 import logging
+import sys
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
@@ -26,7 +27,7 @@ from twicc.agent.manager import get_process_manager
 from twicc.agent.states import ProcessInfo, ProcessState, serialize_process_info
 from twicc.synced_settings import read_synced_settings, write_synced_settings
 from twicc.usage_task import get_usage_message_for_connection
-from twicc.terminal import terminal_application
+from twicc.terminal_dispatch import terminal_application
 
 logger = logging.getLogger(__name__)
 
@@ -1039,3 +1040,19 @@ application = ProtocolTypeRouter(
 # Serve static files via BlackNoise at the ASGI level.
 application = BlackNoise(application, immutable_file_test=lambda *_: True)
 application.add(settings.FRONTEND_DIST_DIR, "/static")
+
+# BlackNoise uses os.path.join and os.path.normpath which break on Windows:
+# - os.path.join produces backslash keys ("/static\assets\file.js")
+# - os.path.normpath converts incoming URL paths to backslashes too
+# - Backslash-prefixed relative paths lose the "/static" prefix
+# Fix: normalize all internal keys and prefixes to use Windows-native separators,
+# so they match the os.path.normpath'd request paths in __call__.
+if sys.platform == "win32":
+    fixed = {}
+    for k, v in application._files.items():
+        k = k.replace("/", "\\")
+        if not k.startswith("\\static\\"):
+            k = "\\static" + k if k.startswith("\\") else "\\static\\" + k
+        fixed[k] = v
+    application._files = fixed
+    application._prefixes = tuple(p.replace("/", "\\") for p in application._prefixes)

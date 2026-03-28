@@ -366,7 +366,7 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
                 manager = get_process_manager()
                 async_to_sync(manager.kill_process)(session_id, reason="archived")
 
-                from twicc.terminal import kill_tmux_session
+                from twicc.terminal_dispatch import kill_tmux_session
                 kill_tmux_session(session_id)
 
         # Handle pinned update
