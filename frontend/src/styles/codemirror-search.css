@@ -1,0 +1,245 @@
+/* ============================================================
+   CodeMirror 6 Search Panel — Web Awesome themed overrides
+   ============================================================
+   Overrides CM6's default baseTheme to match the Web Awesome 3
+   design system used throughout the app.
+
+   Applied globally because CM6 injects styles into document.head
+   (via root: document) and the panel can live in external containers
+   (panels({ bottomContainer })) outside .cm-editor.
+
+   Selectors use !important on key properties where CM6's baseTheme
+   (scoped with a generated class) would otherwise win by specificity.
+   ============================================================ */
+
+
+/* ── Panel container ─────────────────────────────────────────── */
+
+.cm-panel.cm-search {
+    padding: var(--wa-space-xs) var(--wa-space-s) !important;
+    padding-right: calc(var(--wa-space-s) + 28px) !important; /* Room for close button */
+    background: var(--wa-color-neutral-fill-quiet);
+    border-top: 1px solid var(--wa-color-surface-border);
+    font-family: var(--wa-font-family-body), ui-sans-serif, system-ui, sans-serif;
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-normal);
+    position: relative !important;
+
+    /* Flexbox layout for clean wrapping */
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wa-space-2xs) var(--wa-space-xs);
+}
+
+
+/* ── Text inputs (.cm-textfield) ─────────────────────────────── */
+
+.cm-panel.cm-search input.cm-textfield {
+    /* Reset CM6 margins */
+    margin: 0 !important;
+    box-sizing: border-box;
+
+    /* Sizing — compact but comfortable */
+    height: 1.95em;
+    min-width: 8em;
+    padding: 0 0.65em;
+    max-width: 20rem;
+
+    /* Visual — matches wa-input appearance="outlined" */
+    background: var(--wa-color-surface-default);
+    border: var(--wa-border-width-s) solid var(--wa-form-control-border-color);
+    border-radius: var(--wa-border-radius-m);
+    color: var(--wa-color-text-normal);
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: var(--wa-font-weight-normal);
+    line-height: var(--wa-line-height-condensed);
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+
+    /* Flex behavior: grow to fill, shrink if needed */
+    flex: 1 1 8em;
+
+    transition:
+        background-color var(--wa-transition-normal) var(--wa-transition-easing),
+        border-color var(--wa-transition-normal) var(--wa-transition-easing),
+        outline var(--wa-transition-fast) var(--wa-transition-easing);
+
+    /* Move replace on its own line */
+    &:not(:first-child) {
+    }
+}
+
+.cm-panel.cm-search input.cm-textfield::placeholder {
+    color: var(--wa-color-gray-50);
+    user-select: none;
+}
+
+.cm-panel.cm-search input.cm-textfield:focus {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
+    border-color: var(--wa-color-brand-border-loud);
+}
+
+
+/* ── Buttons (.cm-button) ──────────────────────────────────── */
+
+.cm-panel.cm-search button.cm-button {
+    /* Reset CM6 margins */
+    margin: 0 !important;
+    box-sizing: border-box;
+
+    /* Sizing — matches input height */
+    height: 1.95em;
+    padding: 0 0.65em;
+
+    /* Visual — matches wa-button variant="neutral" appearance="outlined" */
+    background: transparent;
+    border: var(--wa-border-width-s) solid var(--wa-form-control-border-color);
+    border-radius: var(--wa-border-radius-m);
+    color: var(--wa-color-text-normal);
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: var(--wa-font-weight-semibold);
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    box-shadow: none;
+
+    transition:
+        background-color var(--wa-transition-fast) var(--wa-transition-easing),
+        border-color var(--wa-transition-fast) var(--wa-transition-easing),
+        color var(--wa-transition-fast) var(--wa-transition-easing);
+}
+
+@media (hover: hover) {
+    .cm-panel.cm-search button.cm-button:hover {
+        background-color: var(--wa-color-surface-default);
+    }
+}
+
+.cm-panel.cm-search button.cm-button:active {
+    background-color: var(--wa-color-neutral-fill-normal);
+}
+
+.cm-panel.cm-search button.cm-button:focus-visible {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
+}
+
+
+/* ── Close button ────────────────────────────────────────────── */
+
+.cm-panel.cm-search button[name="close"] {
+    /* Override CM6 positioning and reset styles */
+    all: unset;
+    box-sizing: border-box;
+
+    /* Fixed top-right position */
+    position: absolute !important;
+    top: var(--wa-space-xs);
+    right: var(--wa-space-xs);
+
+    /* Square hit target */
+    width: 24px;
+    height: 24px;
+
+    /* Visual */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--wa-border-radius-s);
+    color: var(--wa-color-text-quiet);
+    font-size: 1.15em;
+    line-height: 1;
+    cursor: pointer;
+
+    transition:
+        background-color var(--wa-transition-fast) var(--wa-transition-easing),
+        color var(--wa-transition-fast) var(--wa-transition-easing);
+}
+
+@media (hover: hover) {
+    .cm-panel.cm-search button[name="close"]:hover {
+        background-color: var(--wa-color-neutral-fill-normal);
+        color: var(--wa-color-text-normal);
+    }
+}
+
+.cm-panel.cm-search button[name="close"]:active {
+    background-color: var(--wa-color-neutral-border-normal);
+}
+
+.cm-panel.cm-search button[name="close"]:focus-visible {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
+}
+
+
+/* ── Checkbox labels ─────────────────────────────────────────── */
+
+.cm-panel.cm-search label {
+    /* Reset CM6 margins and font-size */
+    margin: 0 !important;
+    font-size: inherit !important;
+
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
+    color: var(--wa-color-text-normal);
+    font-weight: var(--wa-font-weight-normal);
+    line-height: var(--wa-line-height-condensed);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap !important;
+}
+
+
+/* ── BR as flex line-break (separates search row from replace row) */
+
+.cm-panel.cm-search br {
+    flex-basis: 100%;
+    height: 0;
+    margin: 0;
+    border: none;
+    width: 100vw; /* Ensure it breaks to a new line */
+}
+
+/* ── Search match highlighting ───────────────────────────────── */
+/* Override CM6's garish defaults with softer, brand-tinted colors */
+
+.cm-editor .cm-searchMatch {
+    background-color: var(--cm-search-match-bg) !important;
+    outline: 2px solid var(--cm-search-match-bg);
+    color: var(--cm-search-match) !important;
+    border-radius: 2px;
+    * {
+        color: inherit;
+    }
+}
+
+.cm-editor .cm-searchMatch-selected {
+    background-color: var(--cm-search-match-selected-bg) !important;
+    outline: 5px solid var(--cm-search-match-selected-bg);
+    border-radius: 2px;
+}
+
+:root {
+    --cm-search-match: oklch(0.25 0 0);
+    --cm-search-match-bg: oklch(0.85 0.2 50);
+    --cm-search-match-selected-bg: oklch(0.9 0.2 100);
+}
+
+.wa-dark {
+    --cm-search-match: oklch(0.95 0 0);
+    --cm-search-match-bg: oklch(0.65 0.15 50);
+    --cm-search-match-selected-bg: oklch(0.7 0.2 100);
+}

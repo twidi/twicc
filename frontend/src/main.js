@@ -49,6 +49,9 @@ import { useDataStore } from './stores/data'
 import 'notivue/notification.css'
 import 'notivue/animations.css'
 
+// CodeMirror search panel overrides (Web Awesome themed)
+import './styles/codemirror-search.css'
+
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
