@@ -162,11 +162,11 @@ export const useDataStore = defineStore('data', {
             // Populated by fetchToolStates on session load and WS tool_state
             toolStates: {},
 
-            // Live tool state flags - tracks which tool_use_ids received state via WebSocket.
-            // { sessionId: Set<toolUseId> }
-            // Stored separately from toolStates so they survive fetchToolStates() replacement
-            // (reconnection, first visit). Used by auto-open live edit diffs feature.
-            liveToolStates: {},
+            // Live items - tracks which session items arrived via WebSocket (real-time).
+            // { sessionId: Set<lineNum> }
+            // Used by auto-open live edit diffs feature: only items received in real-time
+            // should auto-open, not historical items loaded from the API.
+            liveItems: {},
 
             // Open wa-details state - persists open/close across virtual scroller mount/unmount.
             // { sessionId: { key: true, ... } }
@@ -449,9 +449,9 @@ export const useDataStore = defineStore('data', {
             return sessionStates[toolUseId] || null
         },
 
-        // Check if a tool state was received via WebSocket (live)
-        isToolStateLive: (state) => (sessionId, toolUseId) => {
-            return !!state.localState.liveToolStates[sessionId]?.has(toolUseId)
+        // Check if an item arrived via WebSocket (live, real-time)
+        isItemLive: (state) => (sessionId, lineNum) => {
+            return !!state.localState.liveItems[sessionId]?.has(lineNum)
         },
 
         // Check if a wa-details panel is open (persisted across virtual scroller cycles)
@@ -1144,7 +1144,7 @@ export const useDataStore = defineStore('data', {
             delete this.localState.optimisticMessages[sessionId]
             delete this.localState.agentLinks[sessionId]
             delete this.localState.toolStates[sessionId]
-            delete this.localState.liveToolStates[sessionId]
+            delete this.localState.liveItems[sessionId]
             delete this.localState.openDetails[sessionId]
             // Remove synthetic process state if this is a subagent
             if (this.processStates[sessionId]?.synthetic) {
@@ -1726,21 +1726,27 @@ export const useDataStore = defineStore('data', {
          * @param {string|null} completedAt - ISO timestamp of the latest tool_result
          * @param {string|null} error - Error message if the tool errored
          * @param {string|null} extra - Extra JSON data (e.g., file change stats)
-         * @param {boolean} live - Whether this state arrived via WebSocket (live) vs API (historical).
-         *   Tracked separately in liveToolStates so it survives fetchToolStates() replacement.
          * @param {number|null} toolResultLineNum - Line number of the tool_result item
          */
-        setToolState(sessionId, toolUseId, resultCount, completedAt, error = null, extra = null, live = false, toolResultLineNum = null) {
+        setToolState(sessionId, toolUseId, resultCount, completedAt, error = null, extra = null, toolResultLineNum = null) {
             if (!this.localState.toolStates[sessionId]) {
                 this.localState.toolStates[sessionId] = {}
             }
             this.localState.toolStates[sessionId][toolUseId] = { resultCount, completedAt, error, extra, toolResultLineNum }
-            // Track live flag separately so it survives fetchToolStates() replacement
-            if (live) {
-                if (!this.localState.liveToolStates[sessionId]) {
-                    this.localState.liveToolStates[sessionId] = new Set()
-                }
-                this.localState.liveToolStates[sessionId].add(toolUseId)
+        },
+
+        /**
+         * Mark session items as live (arrived via WebSocket in real-time).
+         * @param {string} sessionId - The session ID
+         * @param {number[]} lineNums - Line numbers of items that arrived via WebSocket
+         */
+        markItemsLive(sessionId, lineNums) {
+            if (!lineNums?.length) return
+            if (!this.localState.liveItems[sessionId]) {
+                this.localState.liveItems[sessionId] = new Set()
+            }
+            for (const ln of lineNums) {
+                this.localState.liveItems[sessionId].add(ln)
             }
         },
 

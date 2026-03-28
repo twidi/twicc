@@ -591,6 +591,11 @@ export function useWebSocket() {
                 break
             }
             case 'session_items_added':
+                // Mark items as live (arrived via WebSocket) before adding them,
+                // so the live flag is available when components mount during addSessionItems.
+                if (msg.items?.length) {
+                    store.markItemsLive(msg.session_id, msg.items.map(i => i.line_num))
+                }
                 // Only add if we've fetched items for this session
                 if (store.areSessionItemsFetched(msg.session_id)) {
                     store.addSessionItems(msg.session_id, msg.items, msg.updated_metadata)
@@ -632,7 +637,7 @@ export function useWebSocket() {
             }
             case 'tool_state': {
                 // Update tool state for spinner/running display
-                store.setToolState(msg.session_id, msg.tool_use_id, msg.result_count, msg.completed_at, msg.error || null, msg.extra || null, true, msg.tool_result_line_num ?? null)
+                store.setToolState(msg.session_id, msg.tool_use_id, msg.result_count, msg.completed_at, msg.error || null, msg.extra || null, msg.tool_result_line_num ?? null)
 
                 // For agent tools: remove synthetic process state when done
                 const agentLink = store.getAgentLink(msg.session_id, msg.tool_use_id)

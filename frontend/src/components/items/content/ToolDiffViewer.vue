@@ -156,7 +156,7 @@ function openSearch() {
    scroll synchronization in side-by-side mode, which breaks when each
    editor has its own independent maxHeight scroll container. */
 .tool-diff-body {
-    max-height: 20.25rem;
+    max-height: 20rem;
     overflow: auto;
     border-radius: var(--wa-border-radius-m);
 }

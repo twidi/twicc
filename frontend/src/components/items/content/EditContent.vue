@@ -68,6 +68,9 @@ const showSpinner = computed(() => props.backendPatchLoading && !props.backendPa
 </template>
 
 <style scoped>
+.edit-content {
+    height: 23rem;
+}
 .edit-loading {
     display: flex;
     justify-content: center;

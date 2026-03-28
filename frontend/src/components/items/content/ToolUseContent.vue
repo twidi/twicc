@@ -75,16 +75,30 @@ const resultDetailsRef = ref(null)
 // Initialized from the store to restore state across virtual scroller mount/unmount cycles.
 const isOpen = ref(dataStore.isDetailOpen(props.sessionId, props.toolId))
 
-// Restore wa-details open state on mount (when re-entering virtual scroller viewport)
+// Track whether the current open transition should skip animation.
+// When true, animation duration is set to 0ms via :style binding so wa-details
+// opens instantly without a visible transition. Used for:
+// - Restoration from virtual scroller (isOpen already true from store)
+// - Auto-open of live Edit/Write diffs (shouldAutoOpen fires)
+const instantOpen = ref(isOpen.value)
+
+// Track open state for the nested result details (same declarative approach)
+const isResultOpen = ref(
+    isOpen.value && dataStore.isDetailOpen(props.sessionId, `result:${props.toolId}`)
+)
+
 onMounted(() => {
-    if (isOpen.value) {
-        nextTick(() => {
-            toolUseDetailsRef.value?.show()
-            // Also restore nested result details if it was open
-            if (dataStore.isDetailOpen(props.sessionId, `result:${props.toolId}`)) {
-                nextTick(() => resultDetailsRef.value?.show())
-            }
-        })
+    // After first render, restore normal animation duration for future open/close
+    if (instantOpen.value) {
+        nextTick(() => { instantOpen.value = false })
+    }
+    // When result details starts open (restoration), ensure data is fetched
+    if (isResultOpen.value) {
+        const shouldFetch = resultState.value === 'idle' ||
+            (resultState.value === 'loaded' && (!resultData.value || resultData.value.length === 0))
+        if (shouldFetch) {
+            fetchResult()
+        }
     }
 })
 
@@ -178,6 +192,7 @@ function stopPolling() {
  * Fetches if idle, or if loaded but empty (to retry).
  */
 function onResultOpen() {
+    isResultOpen.value = true
     dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, true)
     // Fetch if idle, or if loaded but no data (retry)
     const shouldFetch = resultState.value === 'idle' ||
@@ -193,6 +208,7 @@ function onResultOpen() {
  * Stops polling to avoid unnecessary requests.
  */
 function onResultClose() {
+    isResultOpen.value = false
     dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, false)
     stopPolling()
 }
@@ -203,6 +219,7 @@ function onResultClose() {
  */
 function onToolUseClose() {
     isOpen.value = false
+    isResultOpen.value = false
     dataStore.setDetailOpen(props.sessionId, props.toolId, false)
     dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, false)
     stopPolling()
@@ -215,11 +232,8 @@ function onToolUseClose() {
 function onToolUseOpen() {
     isOpen.value = true
     dataStore.setDetailOpen(props.sessionId, props.toolId, true)
-    // Check if result details is open (wa-details has an 'open' property)
-    const isResultOpen = resultDetailsRef.value?.open === true
-
-    if (isResultOpen) {
-        // Result is open, check if we need to fetch/poll
+    // Check if result details is open and needs data
+    if (isResultOpen.value) {
         const shouldFetch = resultState.value === 'idle' ||
             (resultState.value === 'loaded' && (!resultData.value || resultData.value.length === 0))
 
@@ -564,16 +578,15 @@ const showResultDetails = computed(() => {
 
 // --- Auto-open Edit/Write details for live diffs when setting is enabled ---
 // Only auto-opens diffs that arrived via WebSocket (live), not historical diffs
-// loaded from the API when opening/scrolling a session. The live flag is stored
-// separately in the store (liveToolStates) so it survives fetchToolStates() calls.
-const isLive = computed(() => dataStore.isToolStateLive(props.sessionId, props.toolId))
+// loaded from the API when opening/scrolling a session. The live flag is tracked
+// per item line_num in the store (liveItems), set when session_items_added arrives.
+const isLive = computed(() => dataStore.isItemLive(props.sessionId, props.lineNum))
 
 const shouldAutoOpen = computed(() => {
     if (!settingsStore.showDiffs) return false
     if (isToolError.value) return false
-    if (!toolState.value?.completedAt) return false
     if (!isLive.value) return false
-    return editValid.value || writeValid.value
+    return props.name === 'Edit' || props.name === 'Write'
 })
 
 // Guard: auto-open at most once per component instance
@@ -585,12 +598,15 @@ watch(shouldAutoOpen, (val) => {
     if (val && !hasAutoOpened && !isOpen.value) {
         hasAutoOpened = true
         // Request scroll-to-bottom BEFORE expanding, so stickToBottom mode
-        // is active during the wa-details animation and keeps the viewport
-        // at the bottom as the item height grows frame by frame.
+        // keeps the viewport at the bottom as the item height grows.
         requestScrollToBottomIfNeeded?.()
         isOpen.value = true
+        // Always skip animation for auto-open (whether during setup or after mount).
+        // The user should see the diff appear instantly, not animate open.
+        instantOpen.value = true
         dataStore.setDetailOpen(props.sessionId, props.toolId, true)
-        nextTick(() => toolUseDetailsRef.value?.show())
+        // Restore normal animation duration after the instant open has been rendered
+        nextTick(() => { instantOpen.value = false })
     }
 }, { immediate: true })
 
@@ -743,7 +759,7 @@ function navigateToSubagent() {
 </script>
 
 <template>
-    <wa-details ref="toolUseDetailsRef" class="item-details tool-use" :class="{'with-right-part' : (isTask && !parentSessionId) || isToolRunning || isToolError || fileChangeStats || canViewInFilesTab}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
+    <wa-details ref="toolUseDetailsRef" :open="isOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="item-details tool-use" :class="{'with-right-part' : (isTask && !parentSessionId) || isToolRunning || isToolError || fileChangeStats || canViewInFilesTab}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
         <span slot="summary" class="items-details-summary">
             <span class="items-details-summary-left">
                 <strong v-if="taskDisplayName" class="items-details-summary-name">{{ taskDisplayName.name }}<span v-if="taskDisplayName.namespace" class="items-details-summary-quiet"> ({{ taskDisplayName.namespace }})</span></strong>
@@ -874,7 +890,7 @@ function navigateToSubagent() {
                 <MarkdownContent v-if="props.name === 'ExitPlanMode'" :source="toolErrorText" />
                 <template v-else>{{ toolErrorText }}</template>
             </wa-callout>
-            <wa-details v-if="showResultDetails" ref="resultDetailsRef" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
+            <wa-details v-if="showResultDetails" ref="resultDetailsRef" :open="isResultOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
                 <span slot="summary">Result</span>
                 <div class="tool-result-content">
                     <div v-if="resultState === 'loading'" class="tool-result-loading">

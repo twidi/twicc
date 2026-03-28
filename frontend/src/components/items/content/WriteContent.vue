@@ -63,6 +63,10 @@ const showSpinner = computed(() => props.backendPatchLoading && !props.backendPa
 </template>
 
 <style scoped>
+.write-content {
+    height: 23rem;
+}
+
 .write-loading {
     display: flex;
     justify-content: center;
