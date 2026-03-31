@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Remove toast notification for 15-minute user inactivity timeout
 - Better rendering of diffs for Edit and Write tools
 - Replace Monaco Editor with CodeMirror 6 for code viewing, editing, and diffs — adds mobile support
-- Bump `claude-agent-sdk` from 0.1.48 to 0.1.52 (bundled Claude Code CLI: 2.1.71 → 2.1.87)
+- Bump `claude-agent-sdk` from 0.1.48 to 0.1.53 (bundled Claude Code CLI: 2.1.71 → 2.1.88)
 
 ### Fixed
 
