@@ -91,7 +91,8 @@ function openAddForm() {
 function openEditForm(index) {
     editIndex.value = index
     formData.value = JSON.parse(JSON.stringify(terminalConfigStore.combos[index]))
-    // Ensure modifiers arrays exist
+    // Ensure label and modifiers arrays exist
+    if (!formData.value.label) formData.value.label = ''
     formData.value.steps.forEach(s => { if (!s.modifiers) s.modifiers = [] })
     errorMessage.value = ''
     warningMessage.value = ''
@@ -102,6 +103,8 @@ function openEditForm(index) {
 function openDuplicateForm(index) {
     editIndex.value = null // null = creates new on save
     formData.value = JSON.parse(JSON.stringify(terminalConfigStore.combos[index]))
+    // Ensure label and modifiers arrays exist
+    if (!formData.value.label) formData.value.label = ''
     formData.value.steps.forEach(s => { if (!s.modifiers) s.modifiers = [] })
     errorMessage.value = ''
     warningMessage.value = ''
