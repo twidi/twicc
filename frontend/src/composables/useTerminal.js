@@ -193,6 +193,11 @@ export function useTerminal(sessionId) {
     const isConnected = ref(false)
     const started = ref(false)
 
+    // ── Touch mode (mobile) ────────────────────────────────────────────
+    // 'scroll' = normal scroll (default), 'select' = touch-drag selects text
+    const touchMode = ref('scroll')
+    const hasSelection = ref(false)
+
     /** @type {Terminal | null} */
     let terminal = null
     /** @type {FitAddon | null} */
@@ -208,9 +213,19 @@ export function useTerminal(sessionId) {
     const activeModifiers = reactive({ ctrl: false, alt: false, shift: false })
     const lockedModifiers = reactive({ ctrl: false, alt: false, shift: false })
 
-    // ── Touch selection state (mobile) ─────────────────────────────────────
+    // ── Touch state (mobile) ─────────────────────────────────────────────
     let selectStartCol = 0
     let selectStartRow = 0
+    // Auto-scroll state for selection mode (edge dragging)
+    let autoScrollId = null
+    let autoScrollLastClientX = 0
+    let autoScrollLastClientY = 0
+    // Scroll physics state
+    let scrollLastY = 0
+    let scrollLastTime = 0
+    let scrollVelocity = 0
+    let scrollAccumulator = 0
+    let scrollInertiaId = null
     /** @type {AbortController | null} */
     let touchAbortController = null
 
@@ -343,6 +358,88 @@ export function useTerminal(sessionId) {
     /** Whether the current touch gesture is a selection (vs scrollbar drag). */
     let touchIsSelecting = false
 
+    /**
+     * Update the terminal selection from the start anchor to the current
+     * screen coordinates (clientX, clientY). Called both from onTouchMove
+     * and from the auto-scroll animation loop.
+     */
+    function updateSelection(clientX, clientY) {
+        if (!terminal) return
+        const coords = screenToTerminalCoords(clientX, clientY)
+        const startOffset = selectStartRow * terminal.cols + selectStartCol
+        const currentOffset = coords.row * terminal.cols + coords.col
+        const length = currentOffset - startOffset
+
+        if (length > 0) {
+            terminal.select(selectStartCol, selectStartRow, length)
+        } else if (length < 0) {
+            terminal.select(coords.col, coords.row, -length)
+        }
+    }
+
+    // ── Selection auto-scroll (edge dragging) ────────────────────────
+    // When the finger goes above or below the terminal viewport during
+    // a selection drag, auto-scroll in that direction and keep extending
+    // the selection. Uses the same cell-height accumulation as scroll mode.
+
+    const AUTO_SCROLL_EDGE_PX = 30  // activation zone from top/bottom edge
+
+    function stopAutoScroll() {
+        if (autoScrollId !== null) {
+            cancelAnimationFrame(autoScrollId)
+            autoScrollId = null
+        }
+    }
+
+    function startAutoScroll(pixelsPerFrame) {
+        if (autoScrollId !== null) return  // already running
+        const cellHeight = getCellHeight()
+        if (cellHeight <= 0) return
+
+        let accumulator = 0
+
+        function step() {
+            if (!terminal) { autoScrollId = null; return }
+            accumulator += pixelsPerFrame
+            const lines = Math.trunc(accumulator / cellHeight)
+            if (lines !== 0) {
+                accumulator -= lines * cellHeight
+                terminal.scrollLines(lines)
+            }
+            // Extend selection to current (clamped) finger position
+            updateSelection(autoScrollLastClientX, autoScrollLastClientY)
+            autoScrollId = requestAnimationFrame(step)
+        }
+
+        autoScrollId = requestAnimationFrame(step)
+    }
+
+    /**
+     * Check whether the touch position is outside the terminal viewport
+     * and start/stop/update auto-scrolling accordingly.
+     */
+    function handleAutoScroll(clientY) {
+        const screenEl = terminal?.element?.querySelector('.xterm-screen')
+        if (!screenEl) return
+        const rect = screenEl.getBoundingClientRect()
+        const overTop = rect.top - clientY     // >0 when above
+        const overBottom = clientY - rect.bottom // >0 when below
+
+        if (overTop > 0) {
+            // Finger above viewport — scroll up (negative)
+            const speed = -(AUTO_SCROLL_EDGE_PX + overTop) / 4
+            stopAutoScroll()
+            startAutoScroll(speed)
+        } else if (overBottom > 0) {
+            // Finger below viewport — scroll down (positive)
+            const speed = (AUTO_SCROLL_EDGE_PX + overBottom) / 4
+            stopAutoScroll()
+            startAutoScroll(speed)
+        } else {
+            stopAutoScroll()
+        }
+    }
+
     function onTouchStart(e) {
         // Ignore touches on the custom scrollbar — let xterm.js handle those via pointer events
         if (e.target?.closest('.scrollbar')) {
@@ -350,6 +447,7 @@ export function useTerminal(sessionId) {
             return
         }
         touchIsSelecting = true
+        stopAutoScroll()
         const touch = e.touches[0]
         const coords = screenToTerminalCoords(touch.clientX, touch.clientY)
         selectStartCol = coords.col
@@ -360,21 +458,111 @@ export function useTerminal(sessionId) {
     function onTouchMove(e) {
         if (!touchIsSelecting || !terminal) return
         const touch = e.touches[0]
-        const coords = screenToTerminalCoords(touch.clientX, touch.clientY)
-        const startOffset = selectStartRow * terminal.cols + selectStartCol
-        const currentOffset = coords.row * terminal.cols + coords.col
-        const length = currentOffset - startOffset
 
-        if (length > 0) {
-            terminal.select(selectStartCol, selectStartRow, length)
-        } else if (length < 0) {
-            terminal.select(coords.col, coords.row, -length)
-        }
+        // Store current finger position for auto-scroll selection updates
+        autoScrollLastClientX = touch.clientX
+        autoScrollLastClientY = touch.clientY
+
+        updateSelection(touch.clientX, touch.clientY)
+        handleAutoScroll(touch.clientY)
         e.preventDefault()
     }
 
+    function onTouchEnd() {
+        stopAutoScroll()
+    }
+
+    // ── Touch scroll handlers (mobile, scroll mode) ────────────────────
+    // Uses terminal.scrollLines() (the only reliable xterm.js scroll API)
+    // with pixel accumulation for 1:1 finger tracking and momentum inertia
+    // on touch release for a native-like feel.
+
+    const SCROLL_DECELERATION = 0.92   // friction per frame (~60fps)
+    const SCROLL_MIN_VELOCITY = 0.3    // px/frame threshold to stop inertia
+
+    function getCellHeight() {
+        const screenEl = terminal?.element?.querySelector('.xterm-screen')
+        if (!screenEl) return 0
+        return screenEl.getBoundingClientRect().height / terminal.rows
+    }
+
+    function stopScrollInertia() {
+        if (scrollInertiaId !== null) {
+            cancelAnimationFrame(scrollInertiaId)
+            scrollInertiaId = null
+        }
+    }
+
+    function onScrollTouchStart(e) {
+        stopScrollInertia()
+        const touch = e.touches[0]
+        scrollLastY = touch.clientY
+        scrollLastTime = e.timeStamp
+        scrollVelocity = 0
+        scrollAccumulator = 0
+    }
+
+    function onScrollTouchMove(e) {
+        if (!terminal) return
+        const touch = e.touches[0]
+        const now = e.timeStamp
+        const deltaY = scrollLastY - touch.clientY  // positive = scroll down
+        const deltaTime = now - scrollLastTime
+
+        // Accumulate pixel delta and convert to whole lines
+        const cellHeight = getCellHeight()
+        if (cellHeight > 0) {
+            scrollAccumulator += deltaY
+            const lines = Math.trunc(scrollAccumulator / cellHeight)
+            if (lines !== 0) {
+                scrollAccumulator -= lines * cellHeight
+                terminal.scrollLines(lines)
+            }
+        }
+
+        // Track velocity (px/ms) with smoothing to avoid jitter
+        if (deltaTime > 0) {
+            const instantVelocity = deltaY / deltaTime
+            scrollVelocity = scrollVelocity * 0.4 + instantVelocity * 0.6
+        }
+
+        scrollLastY = touch.clientY
+        scrollLastTime = now
+        e.preventDefault()
+    }
+
+    function onScrollTouchEnd() {
+        if (!terminal || Math.abs(scrollVelocity) < 0.05) return
+
+        const cellHeight = getCellHeight()
+        if (cellHeight <= 0) return
+
+        // Convert velocity from px/ms to px/frame (~16.67ms at 60fps)
+        let frameVelocity = scrollVelocity * 16.67
+        let accumulator = scrollAccumulator
+
+        function inertiaStep() {
+            frameVelocity *= SCROLL_DECELERATION
+            if (Math.abs(frameVelocity) < SCROLL_MIN_VELOCITY) {
+                scrollInertiaId = null
+                return
+            }
+            accumulator += frameVelocity
+            const lines = Math.trunc(accumulator / cellHeight)
+            if (lines !== 0) {
+                accumulator -= lines * cellHeight
+                terminal.scrollLines(lines)
+            }
+            scrollInertiaId = requestAnimationFrame(inertiaStep)
+        }
+
+        scrollInertiaId = requestAnimationFrame(inertiaStep)
+    }
+
+    // ── Attach / detach touch listeners ──────────────────────────────
+
     /**
-     * Attach touch event listeners for text selection on mobile.
+     * Attach touch event listeners for the current touchMode.
      * Uses an AbortController for clean removal.
      */
     function attachTouchListeners() {
@@ -383,14 +571,23 @@ export function useTerminal(sessionId) {
         touchAbortController = new AbortController()
         const signal = touchAbortController.signal
 
-        containerRef.value.addEventListener('touchstart', onTouchStart, { passive: true, signal })
-        containerRef.value.addEventListener('touchmove', onTouchMove, { passive: false, signal })
+        if (touchMode.value === 'select') {
+            containerRef.value.addEventListener('touchstart', onTouchStart, { passive: true, signal })
+            containerRef.value.addEventListener('touchmove', onTouchMove, { passive: false, signal })
+            containerRef.value.addEventListener('touchend', onTouchEnd, { passive: true, signal })
+        } else {
+            containerRef.value.addEventListener('touchstart', onScrollTouchStart, { passive: true, signal })
+            containerRef.value.addEventListener('touchmove', onScrollTouchMove, { passive: false, signal })
+            containerRef.value.addEventListener('touchend', onScrollTouchEnd, { passive: true, signal })
+        }
     }
 
     /**
-     * Detach touch event listeners.
+     * Detach touch event listeners and cancel any running inertia animation.
      */
     function detachTouchListeners() {
+        stopAutoScroll()
+        stopScrollInertia()
         if (touchAbortController) {
             touchAbortController.abort()
             touchAbortController = null
@@ -423,6 +620,27 @@ export function useTerminal(sessionId) {
         terminal.loadAddon(new ClipboardAddon())
 
         terminal.open(containerRef.value)
+
+        // Tweak the hidden textarea that xterm.js uses for keyboard input.
+        // Disables autocorrect, autocomplete, spell-check, and third-party
+        // extensions (Grammarly, LastPass, etc.) that interfere on mobile.
+        // From: https://github.com/btli/remote-dev/commit/fd17d5b17f87b5c4ff2f6e9d7b8d36cdb9e8cea2
+        const textarea = containerRef.value.querySelector('.xterm-helper-textarea')
+        if (textarea) {
+            const attrs = {
+                autocomplete: 'off',
+                enterkeyhint: 'send',
+                'data-gramm': 'false',
+                'data-gramm_editor': 'false',
+                'data-enable-grammarly': 'false',
+                'data-form-type': 'other',
+                'data-lpignore': 'true',
+                'x-webkit-speech': 'false',
+            }
+            for (const [key, value] of Object.entries(attrs)) {
+                textarea.setAttribute(key, value)
+            }
+        }
 
         // Fit immediately
         fitAddon.fit()
@@ -485,27 +703,19 @@ export function useTerminal(sessionId) {
             return true
         })
 
-        // Copy selection to system clipboard automatically.
-        // On desktop (mouse): copy immediately on selection change.
-        // On mobile (touch): debounce 1s after last selection change, then copy + show toast.
-        let selectionDebounceTimer = null
+        // Copy selection to system clipboard automatically (desktop only).
+        // On mobile, selection tracking is handled via hasSelection ref + explicit copy button.
         terminal.onSelectionChange(() => {
             const selection = terminal.getSelection()
-            if (!selection) return
 
             if (!settingsStore.isTouchDevice) {
-                // Desktop: immediate copy
-                navigator.clipboard.writeText(selection)
+                // Desktop: immediate auto-copy
+                if (selection) {
+                    navigator.clipboard.writeText(selection)
+                }
             } else {
-                // Mobile: debounce — wait 0.5s after user stops adjusting selection
-                clearTimeout(selectionDebounceTimer)
-                selectionDebounceTimer = setTimeout(() => {
-                    const finalSelection = terminal?.getSelection()
-                    if (finalSelection) {
-                        clipboardWrite(finalSelection)
-                        toast.success('Copied to clipboard', { duration: 2000 })
-                    }
-                }, 500)
+                // Mobile: just track whether there is a selection (copy is manual via button)
+                hasSelection.value = !!selection
             }
         })
 
@@ -555,6 +765,34 @@ export function useTerminal(sessionId) {
         if (isConnected.value) return
         terminal?.writeln('\x1b[33mReconnecting...\x1b[0m')
         connectWs()
+    }
+
+    /**
+     * Intentionally disconnect the terminal session.
+     * Closes the WebSocket (which kills the PTY on the backend) and
+     * writes a message to the terminal so the user sees the disconnect.
+     */
+    function disconnect() {
+        if (!ws) return
+        intentionalClose = true
+        ws.close()
+        ws = null
+        isConnected.value = false
+        terminal?.writeln('\x1b[31mTerminal disconnected.\x1b[0m')
+    }
+
+    /**
+     * Copy the current terminal selection to clipboard, clear selection, and show a toast.
+     * Used by the explicit copy button on mobile.
+     */
+    function copySelection() {
+        if (!terminal) return
+        const selection = terminal.getSelection()
+        if (!selection) return
+        clipboardWrite(selection)
+        terminal.clearSelection()
+        hasSelection.value = false
+        toast.success('Copied to clipboard', { duration: 2000 })
     }
 
     // ── Extra keys bar handlers ────────────────────────────────────────
@@ -735,6 +973,18 @@ export function useTerminal(sessionId) {
         },
     )
 
+    // Toggle touch listeners when touchMode changes (mobile only)
+    watch(touchMode, (mode) => {
+        if (!settingsStore.isTouchDevice || !terminal) return
+        detachTouchListeners()
+        attachTouchListeners()
+        if (mode === 'scroll') {
+            // Switching to scroll mode: clear any existing selection
+            terminal.clearSelection()
+            hasSelection.value = false
+        }
+    })
+
     // Switch theme live when the user toggles dark/light mode
     watch(() => settingsStore.getEffectiveTheme, (newTheme) => {
         if (terminal) {
@@ -756,7 +1006,9 @@ export function useTerminal(sessionId) {
     })
 
     return {
-        containerRef, isConnected, started, start, reconnect,
+        containerRef, isConnected, started, start, reconnect, disconnect,
+        // Touch mode (mobile)
+        touchMode, hasSelection, copySelection,
         // Extra keys bar
         activeModifiers, lockedModifiers,
         handleExtraKeyInput, handleExtraKeyModifierToggle, handleExtraKeyPaste,

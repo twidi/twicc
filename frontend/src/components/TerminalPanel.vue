@@ -4,6 +4,7 @@ import { useTerminal } from '../composables/useTerminal'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useTerminalConfigStore } from '../stores/terminalConfig'
+import AppTooltip from './AppTooltip.vue'
 import ExtraKeysBar from './ExtraKeysBar.vue'
 import ManageCombosDialog from './ManageCombosDialog.vue'
 import ManageSnippetsDialog from './ManageSnippetsDialog.vue'
@@ -24,11 +25,16 @@ const dataStore = useDataStore()
 const terminalConfigStore = useTerminalConfigStore()
 
 const {
-    containerRef, isConnected, started, start, reconnect,
+    containerRef, isConnected, started, start, reconnect, disconnect,
+    touchMode, hasSelection, copySelection,
     activeModifiers, lockedModifiers,
     handleExtraKeyInput, handleExtraKeyModifierToggle, handleExtraKeyPaste,
     handleComboPress, handleSnippetPress,
 } = useTerminal(props.sessionId)
+
+function handleTouchModeChange(event) {
+    touchMode.value = event.target.checked ? 'select' : 'scroll'
+}
 
 // Resolve projectId from sessionId
 const session = computed(() => props.sessionId ? dataStore.getSession(props.sessionId) : null)
@@ -57,6 +63,51 @@ watch(
 
 <template>
     <div class="terminal-panel">
+        <div class="terminal-actions-bar">
+            <!-- Right-aligned actions -->
+            <template v-if="settingsStore.isTouchDevice">
+                <div class="touch-mode-group push-right">
+                    <span
+                        class="touch-mode-label"
+                        @click="touchMode = touchMode === 'scroll' ? 'select' : 'scroll'"
+                    >Scroll</span>
+                    <wa-switch
+                        size="small"
+                        class="touch-mode-switch"
+                        :checked="touchMode === 'select'"
+                        @change="handleTouchModeChange"
+                    >Select</wa-switch>
+                </div>
+
+                <Transition name="copy-fade">
+                    <wa-button
+                        v-if="hasSelection"
+                        variant="primary"
+                        appearance="filled"
+                        size="small"
+                        class="copy-button"
+                        @click="copySelection"
+                    >
+                        <wa-icon slot="start" name="copy" variant="regular"></wa-icon>
+                        Copy
+                    </wa-button>
+                </Transition>
+            </template>
+
+            <wa-button
+                id="terminal-disconnect-button"
+                variant="danger"
+                appearance="filled"
+                size="small"
+                class="disconnect-button"
+                :class="{ 'push-right': !settingsStore.isTouchDevice }"
+                :disabled="!isConnected"
+                @click="disconnect"
+            >
+                <wa-icon name="ban" label="Disconnect"></wa-icon>
+            </wa-button>
+            <AppTooltip for="terminal-disconnect-button">Disconnect terminal session</AppTooltip>
+        </div>
         <div class="terminal-area">
             <div ref="containerRef" class="terminal-container"></div>
 
@@ -108,6 +159,71 @@ watch(
     height: 100%;
     display: flex;
     flex-direction: column;
+}
+
+.terminal-actions-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: start;
+    gap: var(--wa-space-m);
+    padding: var(--wa-space-2xs) var(--wa-space-s);
+    border-bottom: 1px solid var(--wa-color-surface-border);
+    flex-shrink: 0;
+    min-height: 2rem;
+}
+
+.push-right {
+    margin-inline-start: auto;
+}
+
+.disconnect-button {
+    opacity: 0.6;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+    font-size: var(--wa-font-size-3xs);
+    &::part(label) {
+        scale: 1.5;
+    }
+}
+
+.disconnect-button:hover:not([disabled]) {
+    opacity: 1;
+}
+
+.touch-mode-group {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    flex-shrink: 0;
+}
+
+.touch-mode-label {
+    cursor: pointer;
+    font-size: var(--wa-font-size-s);
+    user-select: none;
+}
+
+.copy-button {
+    flex-shrink: 0;
+}
+
+.copy-button::part(base) {
+    --wa-form-control-padding-block: .5em;
+    /* Had to force it here, but the same as default one: */
+    --wa-form-control-height: round( calc(2 * var(--wa-form-control-padding-block) + 1em * var(--wa-form-control-value-line-height)), 1px );
+}
+
+/* Copy button enter/leave transition */
+.copy-fade-enter-active,
+.copy-fade-leave-active {
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.copy-fade-enter-from,
+.copy-fade-leave-to {
+    opacity: 0;
+    transform: scale(0.9);
 }
 
 .terminal-area {
