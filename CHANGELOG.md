@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Hover over a session or the Chat tab while dragging files/text for 1s to auto-switch, then drop to attach
 - Inline code comments: click a line number to annotate code, then send formatted comments to Claude via the message input
 - Keyboard shortcuts for tab navigation: Alt+Shift+1-4 (Chat/Files/Git/Terminal), Alt+Shift+←/→ (Left tab/ Right tab), Alt+Shift+↑/↓ (last visited tab)
+- Terminal action bar with disconnect button, scroll-to-top/bottom buttons, and mobile scroll/select mode toggle with copy button
+- Context-aware terminal scroll across all modes (normal, tmux, alternate screen) on both mobile and desktop, including scroll-during-selection with an indexed text buffer for tmux (with some inspiration from a commit by @dguerizec)
+- Terminal Ctrl+C copies selected text to clipboard, ESC cancels selection and returns to bottom
 - Auto-restart sessions with active cron jobs when they die from API errors or crashes (infinite retry with exponential backoff, max 5 min between attempts)
 
 ### Changed
