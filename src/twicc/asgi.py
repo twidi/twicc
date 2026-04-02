@@ -1157,7 +1157,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
 
 websocket_urlpatterns = [
-    path("ws/terminal/<str:session_id>/", terminal_application),
+    path("ws/terminal/<str:project_id>/<str:session_id>/", terminal_application),
     path("ws/", UpdatesConsumer.as_asgi()),
 ]
 

@@ -255,11 +255,15 @@ export function useTerminal(sessionId) {
 
     /**
      * Build the WebSocket URL for the terminal endpoint.
+     * Includes the project ID in the path so the backend can resolve the
+     * working directory even for draft sessions (which don't exist in the DB).
      * Sends ?tmux=1 only when tmux is applicable for the current session.
      */
     function getWsUrl() {
         const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const base = `${wsProtocol}//${location.host}/ws/terminal/${sessionId}/`
+        const session = dataStore.getSession(sessionId)
+        const projectId = session?.project_id || '_'
+        const base = `${wsProtocol}//${location.host}/ws/terminal/${projectId}/${sessionId}/`
         return shouldUseTmux() ? `${base}?tmux=1` : base
     }
 

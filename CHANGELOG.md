@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix terminal special keys sometimes not working on mobile devices
 - Fix "Delete draft" from sidebar menu not navigating back to project home
 - Search overlay now pre-selects the current project filter when not in "All projects" mode
+- Terminal opened on a draft session now starts in the project directory instead of home
 
 ## [1.2.1] - 2026-03-20
 

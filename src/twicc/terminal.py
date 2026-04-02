@@ -6,7 +6,7 @@ the channel layer overhead on every message. The ASGI send/receive
 callables are used directly, giving near-native WebSocket performance.
 
 Provides a PTY-backed terminal per session, communicating over a dedicated
-WebSocket endpoint (`/ws/terminal/<session_id>/`).
+WebSocket endpoint (`/ws/terminal/<project_id>/<session_id>/`).
 
 Protocol:
   Client → Server (JSON text frames):
@@ -55,7 +55,7 @@ TMUX_SOCKET_NAME = "twicc"
 
 
 @sync_to_async
-def get_session_info(session_id: str) -> tuple[str, bool]:
+def get_session_info(session_id: str, project_id: str | None = None) -> tuple[str, bool]:
     """Resolve the working directory and archived status for a terminal session.
 
     Returns (cwd, archived).
@@ -67,15 +67,26 @@ def get_session_info(session_id: str) -> tuple[str, bool]:
     - Otherwise (no session git context):
         1. Project.directory
         2. Project.git_root (project happens to be inside a git repo)
+    - If the session doesn't exist in DB (e.g. draft session) but a project_id
+      is provided, the project's directory is used.
     - Fallback: ~ (home directory)
     """
-    from twicc.core.models import Session
+    from twicc.core.models import Project, Session
 
     home = os.path.expanduser("~")
 
     try:
         session = Session.objects.select_related("project").get(id=session_id)
     except Session.DoesNotExist:
+        # Session not in DB (draft session) — try to resolve from project_id
+        if project_id:
+            try:
+                project = Project.objects.get(id=project_id)
+                for candidate in (project.directory, project.git_root):
+                    if candidate and os.path.isdir(candidate):
+                        return candidate, False
+            except Project.DoesNotExist:
+                pass
         return home, False
 
     if session.git_directory:
@@ -449,7 +460,11 @@ async def terminal_application(scope, receive, send):
 
     # ── Resolve working directory and session state ──────────────────
     session_id = scope["url_route"]["kwargs"]["session_id"]
-    cwd, archived = await get_session_info(session_id)
+    project_id = scope["url_route"]["kwargs"].get("project_id")
+    # A placeholder "_" is sent by the frontend when no project is associated
+    if project_id == "_":
+        project_id = None
+    cwd, archived = await get_session_info(session_id, project_id)
 
     # ── Spawn PTY (tmux or raw shell) ────────────────────────────────
     use_tmux = wants_tmux(scope)
