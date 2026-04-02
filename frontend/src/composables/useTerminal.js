@@ -1074,14 +1074,19 @@ export function useTerminal(sessionId) {
                 }
             }
 
-            // Intercept Ctrl+Shift+C to copy selection instead of opening DevTools
-            if (event.ctrlKey && event.shiftKey && event.code === 'KeyC') {
+            // Intercept Ctrl+C when text is selected: copy to clipboard
+            // instead of sending SIGINT to the terminal process.
+            // Ctrl+Shift+C also copies (standard terminal emulator shortcut).
+            if (event.ctrlKey && (event.code === 'KeyC')) {
                 const selection = terminal.getSelection()
                 if (selection) {
                     navigator.clipboard.writeText(selection)
+                    terminal.clearSelection()
+                    toast.success('Copied to clipboard', { duration: 2000 })
+                    event.preventDefault()
+                    return false
                 }
-                event.preventDefault()
-                return false
+                // No selection: let Ctrl+C through as SIGINT (default xterm.js behavior)
             }
 
             return true
