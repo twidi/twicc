@@ -34,7 +34,7 @@ const view = ref('list') // 'list' or 'form'
 const editScope = ref(null)    // scope being edited (null for new)
 const editIndex = ref(null)    // index within scope (null for new)
 const isDuplicate = ref(false)
-const formData = ref(null)     // { label: '', text: '', appendEnter: true, scope: 'global' }
+const formData = ref(null)     // { label: '', snippet: '', appendEnter: true, scope: 'global' }
 const errorMessage = ref('')
 const warningMessage = ref('')
 
@@ -77,7 +77,7 @@ function openAddForm() {
     isDuplicate.value = false
     formData.value = {
         label: '',
-        text: '',
+        snippet: '',
         appendEnter: true,
         scope: props.currentProjectId ? `project:${props.currentProjectId}` : 'global',
     }
@@ -95,7 +95,7 @@ function openEditForm(scope, index) {
     if (!snippet) return
     formData.value = {
         label: snippet.label,
-        text: snippet.text,
+        snippet: snippet.snippet,
         appendEnter: snippet.appendEnter,
         scope: scope,
     }
@@ -113,7 +113,7 @@ function openDuplicateForm(scope, index) {
     if (!snippet) return
     formData.value = {
         label: snippet.label,
-        text: snippet.text,
+        snippet: snippet.snippet,
         appendEnter: snippet.appendEnter,
         scope: scope,  // defaults to source scope
     }
@@ -140,10 +140,10 @@ function insertChar(char) {
     const insertValue = char === '↵' ? '\n' : char
     const textarea = textareaRef.value?.shadowRoot?.querySelector('textarea')
     // Insert at cursor position (or replace selection), fallback to append
-    const start = textarea?.selectionStart ?? formData.value.text.length
-    const end = textarea?.selectionEnd ?? formData.value.text.length
-    const text = formData.value.text
-    formData.value.text = text.slice(0, start) + insertValue + text.slice(end)
+    const start = textarea?.selectionStart ?? formData.value.snippet.length
+    const end = textarea?.selectionEnd ?? formData.value.snippet.length
+    const current = formData.value.snippet
+    formData.value.snippet = current.slice(0, start) + insertValue + current.slice(end)
     // Refocus the textarea with cursor right after the inserted char
     const newPos = start + insertValue.length
     nextTick(() => {
@@ -158,10 +158,10 @@ function insertChar(char) {
 function insertPlaceholder(id) {
     const insertValue = `{${id}}`
     const textarea = textareaRef.value?.shadowRoot?.querySelector('textarea')
-    const start = textarea?.selectionStart ?? formData.value.text.length
-    const end = textarea?.selectionEnd ?? formData.value.text.length
-    const text = formData.value.text
-    formData.value.text = text.slice(0, start) + insertValue + text.slice(end)
+    const start = textarea?.selectionStart ?? formData.value.snippet.length
+    const end = textarea?.selectionEnd ?? formData.value.snippet.length
+    const current = formData.value.snippet
+    formData.value.snippet = current.slice(0, start) + insertValue + current.slice(end)
     const newPos = start + insertValue.length
     nextTick(() => {
         if (textarea) {
@@ -176,24 +176,24 @@ function handleSave() {
     errorMessage.value = ''
 
     const trimmedLabel = formData.value.label.trim()
-    const trimmedText = formData.value.text.trim()
+    const trimmedSnippet = formData.value.snippet.trim()
 
     if (!trimmedLabel) {
         errorMessage.value = 'Label is required.'
         return
     }
 
-    if (!trimmedText) {
-        errorMessage.value = 'Text to send is required.'
+    if (!trimmedSnippet) {
+        errorMessage.value = 'Snippet text is required.'
         return
     }
 
     const selectedScope = formData.value.scope
     const snippetData = {
         label: trimmedLabel,
-        text: trimmedText,
+        snippet: trimmedSnippet,
         appendEnter: formData.value.appendEnter,
-        placeholders: extractPlaceholders(trimmedText),
+        placeholders: extractPlaceholders(trimmedSnippet),
     }
 
     // Check for duplicate label in same scope (warn but allow save on second submit)
@@ -325,7 +325,7 @@ defineExpose({ open, close })
                         <!-- Display text -->
                         <div class="snippet-display">
                             <span class="snippet-label">{{ snippet.label }}</span>
-                            <span class="snippet-text-preview">{{ snippet.text }}{{ snippet.appendEnter ? '↵' : '' }}</span>
+                            <span class="snippet-text-preview">{{ snippet.snippet }}{{ snippet.appendEnter ? '↵' : '' }}</span>
                         </div>
 
                         <!-- Action buttons -->
@@ -364,13 +364,13 @@ defineExpose({ open, close })
                 />
             </div>
 
-            <!-- Text to send -->
+            <!-- Snippet text -->
             <div class="form-group">
-                <label class="form-label">Text to send</label>
+                <label class="form-label">Snippet</label>
                 <wa-textarea
                     ref="textareaRef"
-                    :value="formData.text"
-                    @input="formData.text = $event.target.value"
+                    :value="formData.snippet"
+                    @input="formData.snippet = $event.target.value"
                     rows="3"
                     placeholder='e.g. "git status --short"'
                     size="small"

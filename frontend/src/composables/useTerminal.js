@@ -1663,7 +1663,7 @@ export function useTerminal(sessionId) {
      */
     function handleSnippetPress(snippet) {
         const placeholders = snippet.placeholders || []
-        let text = snippet.text
+        let text = snippet.snippet
         if (placeholders.length > 0) {
             const session = dataStore.getSession(sessionId)
             const pid = session?.project_id
