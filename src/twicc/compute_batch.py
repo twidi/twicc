@@ -720,11 +720,7 @@ def apply_session_complete(msg: dict) -> None:
     """
     session_id = msg['session_id']
 
-    # 1. Delete existing links
-    ToolResultLink.objects.filter(session_id=session_id).delete()
-    AgentLink.objects.filter(session_id=session_id).delete()
-
-    # 2. Apply item updates
+    # 1. Apply item updates (only items that changed)
     item_updates = msg.get('item_updates', [])
     item_fields = msg.get('item_fields', [])
     if item_updates and item_fields:
@@ -737,7 +733,7 @@ def apply_session_complete(msg: dict) -> None:
         ]
         SessionItem.objects.bulk_update(items, item_fields, 50)
 
-    # 2b. Apply content overrides (rare: only transformed task-notification items)
+    # 2. Apply content overrides (rare: only transformed task-notification items)
     content_overrides = msg.get('content_overrides', [])
     if content_overrides:
         items = [
@@ -746,7 +742,7 @@ def apply_session_complete(msg: dict) -> None:
         ]
         SessionItem.objects.bulk_update(items, ['content'], 50)
 
-    # 3. Sync tool result links
+    # 3. Sync tool result links (diff-based: create/update/delete)
     trl_to_create = msg.get('tool_result_links_to_create', [])
     if trl_to_create:
         links = [
@@ -787,7 +783,7 @@ def apply_session_complete(msg: dict) -> None:
     if trl_to_delete:
         ToolResultLink.objects.filter(id__in=trl_to_delete).delete()
 
-    # 4. Sync agent links
+    # 4. Sync agent links (diff-based: create/update/delete)
     agent_links_to_create = msg.get('agent_links_to_create', [])
     if agent_links_to_create:
         links = [
@@ -824,7 +820,7 @@ def apply_session_complete(msg: dict) -> None:
     if agent_links_to_delete:
         AgentLink.objects.filter(id__in=agent_links_to_delete).delete()
 
-    # 4. Update session fields
+    # 5. Update session fields (always includes compute_version)
     session_fields = msg.get('session_fields', {})
     if session_fields:
         # Handle datetime fields
@@ -833,34 +829,34 @@ def apply_session_complete(msg: dict) -> None:
                 session_fields[dt_field] = datetime.fromisoformat(session_fields[dt_field])
         Session.objects.filter(id=session_id).update(**session_fields)
 
-    # 5. Recalculate session costs from SessionItem data (idempotent, order-independent)
+    # 6. Recalculate session costs from SessionItem data (idempotent, order-independent)
     session = Session.objects.get(id=session_id)
     session.recalculate_costs()
     session.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
 
-    # 6. If this is a subagent, recalculate parent session costs too
+    # 7. Recalculate parent session costs if subagent
     if session.parent_session_id:
         parent = Session.objects.get(id=session.parent_session_id)
         parent.recalculate_costs()
         parent.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
 
-    # 7. Update titles
+    # 8. Update session titles
     titles = msg.get('titles', {})
     for target_id, title in titles.items():
         Session.objects.filter(id=target_id).update(title=title)
 
-    # 8. Update project directory
+    # 9. Update project directory
     project_id = msg.get('project_id')
     project_directory = msg.get('project_directory')
     if project_id and project_directory:
         ensure_project_directory(project_id, project_directory)
 
-    # 9. Resolve project git_root if session has git info but project doesn't
+    # 10. Resolve project git_root if session has git info but project doesn't
     session_git_dir = session_fields.get('git_directory') if session_fields else None
     if session_git_dir and project_id and get_project_git_root(project_id) is None:
         ensure_project_git_root(project_id)
 
-    # 10. Update last_stopped_at for subagents that naturally finished
+    # 11. Update last_stopped_at for subagents that finished naturally
     agent_stopped = msg.get('agent_stopped')
     if agent_stopped:
         for entry in agent_stopped:
@@ -869,6 +865,6 @@ def apply_session_complete(msg: dict) -> None:
                 last_stopped_at=stopped_at, last_updated_at=stopped_at
             )
 
-    # 11. Update project metadata (sessions_count, mtime, total_cost)
+    # 12. Update project metadata (sessions_count, mtime, total_cost)
     if project_id:
         update_project_metadata(project_id)
