@@ -16,6 +16,7 @@ import { MergeView, unifiedMergeView, goToNextChunk, goToPreviousChunk } from '@
 import { openSearchPanel, getSearchQuery, setSearchQuery, searchPanelOpen, SearchQuery } from '@codemirror/search'
 import { resolveLanguage, useCodeMirrorExtensions, useSettingsWatcher, toggleSearchPanel } from '../composables/useCodeMirror'
 import { createCodeCommentsExtension, syncCommentsEffect } from '../extensions/codeComments'
+import { smartCollapseUnchanged } from '../extensions/smartCollapseUnchanged'
 import { useSettingsStore } from '../stores/settings'
 import { useCodeCommentsStore, formatComment, formatAllComments } from '../stores/codeComments'
 
@@ -30,6 +31,7 @@ const props = defineProps({
     wordWrap: { type: Boolean, default: false },
     sideBySide: { type: Boolean, default: true },
     collapseUnchanged: { type: Boolean, default: true },
+    collapseStep: { type: Number, default: 20 },
     extensions: { type: Array, default: () => [] },
     /** Optional external DOM element for search/replace panels (side-by-side mode).
      *  When provided, panels are redirected there instead of the internal container.
@@ -92,6 +94,12 @@ const cmB = useCodeMirrorExtensions({
 // heavily-changed files. The timeout acts as a safety net to avoid blocking the
 // main thread on pathological inputs.
 const diffConfig = { scanLimit: 10000, timeout: 2000 }
+
+/** Build the smart collapse extension array (empty if collapse is disabled). */
+function buildCollapseExtension() {
+    if (!props.collapseUnchanged) return []
+    return [smartCollapseUnchanged({ margin: 3, minSize: 4, step: props.collapseStep })]
+}
 
 function buildCommentExtension() {
     if (!props.commentContext) return []
@@ -220,6 +228,7 @@ async function createSideBySideView() {
         ...cmA.extensions,
         panelsExt,
         ...(langExtension ? [langExtension] : []),
+        ...buildCollapseExtension(),
         ...props.extensions,
     ]
 
@@ -231,6 +240,7 @@ async function createSideBySideView() {
         saveKeymap,
         updateListener,
         ...buildCommentExtension(),
+        ...buildCollapseExtension(),
         ...props.extensions,
     ]
 
@@ -239,7 +249,7 @@ async function createSideBySideView() {
         b: { doc: props.modified, extensions: bExtensions },
         parent: diffEl.value,
         root: document, // Force styles into document head, not WA shadow root
-        collapseUnchanged: props.collapseUnchanged ? {} : undefined,
+        collapseUnchanged: undefined,
         mergeControls: false,
         diffConfig,
     })
@@ -264,9 +274,6 @@ async function createUnifiedView() {
         highlightChanges: true,
         gutter: true,
         mergeControls: false,
-        collapseUnchanged: props.collapseUnchanged
-            ? { margin: 3, minSize: 4 }
-            : undefined,
         diffConfig,
     })
 
@@ -277,6 +284,7 @@ async function createUnifiedView() {
         saveKeymap,
         updateListener,
         ...buildCommentExtension(),
+        ...buildCollapseExtension(),
         ...props.extensions,
     ]
 
@@ -609,5 +617,8 @@ html.wa-dark {
 html.wa-dark .diff-editor .cm-collapsedLines {
     background: var(--wa-color-surface-lowered);
     color: var(--wa-color-text-quiet)
+}
+html.wa-dark .diff-editor .cm-collapsedLines .cm-collapsedLines-action:hover {
+    color: var(--wa-color-text-default);
 }
 </style>
