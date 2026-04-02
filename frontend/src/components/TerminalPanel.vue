@@ -27,6 +27,9 @@ const terminalConfigStore = useTerminalConfigStore()
 const {
     containerRef, isConnected, started, start, reconnect, disconnect,
     touchMode, hasSelection, copySelection,
+    paneAlternate,
+    canScrollUp, canScrollDown,
+    scrollToEdge, scrollingToEdge, cancelScrollToEdge,
     activeModifiers, lockedModifiers,
     handleExtraKeyInput, handleExtraKeyModifierToggle, handleExtraKeyPaste,
     handleComboPress, handleSnippetPress,
@@ -64,49 +67,81 @@ watch(
 <template>
     <div class="terminal-panel">
         <div class="terminal-actions-bar">
-            <!-- Right-aligned actions -->
-            <template v-if="settingsStore.isTouchDevice">
-                <div class="touch-mode-group push-right">
-                    <span
-                        class="touch-mode-label"
-                        @click="touchMode = touchMode === 'scroll' ? 'select' : 'scroll'"
-                    >Scroll</span>
-                    <wa-switch
-                        size="small"
-                        class="touch-mode-switch"
-                        :checked="touchMode === 'select'"
-                        @change="handleTouchModeChange"
-                    >Select</wa-switch>
-                </div>
+            <span class="push-right"></span>
 
-                <Transition name="copy-fade">
-                    <wa-button
-                        v-if="hasSelection"
-                        variant="primary"
-                        appearance="filled"
-                        size="small"
-                        class="copy-button"
-                        @click="copySelection"
-                    >
-                        <wa-icon slot="start" name="copy" variant="regular"></wa-icon>
-                        Copy
-                    </wa-button>
-                </Transition>
+            <template v-if="isConnected">
+                <!-- Scroll to edge buttons (shown only when scrolled away from edge,
+                     or always in alternate screen where position is unknown) -->
+                <wa-button
+                    v-if="canScrollUp || paneAlternate"
+                    id="terminal-scroll-top-button"
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="scroll-edge-button"
+                    :loading="scrollingToEdge"
+                    @click="scrollingToEdge ? cancelScrollToEdge() : scrollToEdge('top')"
+                >
+                    <wa-icon name="angles-up"></wa-icon>
+                </wa-button>
+                <AppTooltip v-if="canScrollUp || paneAlternate" for="terminal-scroll-top-button">Scroll to top</AppTooltip>
+
+                <wa-button
+                    v-if="canScrollDown || paneAlternate"
+                    id="terminal-scroll-bottom-button"
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="scroll-edge-button"
+                    :loading="scrollingToEdge"
+                    @click="scrollingToEdge ? cancelScrollToEdge() : scrollToEdge('bottom')"
+                >
+                    <wa-icon name="angles-down"></wa-icon>
+                </wa-button>
+                <AppTooltip v-if="canScrollDown || paneAlternate" for="terminal-scroll-bottom-button">Scroll to bottom</AppTooltip>
+
+                <!-- Mobile-only controls -->
+                <template v-if="settingsStore.isTouchDevice">
+                    <div class="touch-mode-group">
+                        <span
+                            class="touch-mode-label"
+                            @click="touchMode = touchMode === 'scroll' ? 'select' : 'scroll'"
+                        >Scroll</span>
+                        <wa-switch
+                            size="small"
+                            class="touch-mode-switch"
+                            :checked="touchMode === 'select'"
+                            @change="handleTouchModeChange"
+                        >Select</wa-switch>
+                    </div>
+
+                    <Transition name="copy-fade">
+                        <wa-button
+                            v-if="hasSelection"
+                            variant="primary"
+                            appearance="filled"
+                            size="small"
+                            class="copy-button"
+                            @click="copySelection"
+                        >
+                            <wa-icon slot="start" name="copy" variant="regular"></wa-icon>
+                            Copy
+                        </wa-button>
+                    </Transition>
+                </template>
+
+                <wa-button
+                    id="terminal-disconnect-button"
+                    variant="danger"
+                    appearance="filled"
+                    size="small"
+                    class="disconnect-button"
+                    @click="disconnect"
+                >
+                    <wa-icon name="ban" label="Disconnect"></wa-icon>
+                </wa-button>
+                <AppTooltip for="terminal-disconnect-button">Disconnect terminal session</AppTooltip>
             </template>
-
-            <wa-button
-                id="terminal-disconnect-button"
-                variant="danger"
-                appearance="filled"
-                size="small"
-                class="disconnect-button"
-                :class="{ 'push-right': !settingsStore.isTouchDevice }"
-                :disabled="!isConnected"
-                @click="disconnect"
-            >
-                <wa-icon name="ban" label="Disconnect"></wa-icon>
-            </wa-button>
-            <AppTooltip for="terminal-disconnect-button">Disconnect terminal session</AppTooltip>
         </div>
         <div class="terminal-area">
             <div ref="containerRef" class="terminal-container"></div>
@@ -171,6 +206,20 @@ watch(
     border-bottom: 1px solid var(--wa-color-surface-border);
     flex-shrink: 0;
     min-height: 2rem;
+}
+
+.scroll-edge-button {
+    opacity: 0.5;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+    font-size: var(--wa-font-size-3xs);
+    &::part(label) {
+        scale: 1.5;
+    }
+}
+
+.scroll-edge-button:hover {
+    opacity: 1;
 }
 
 .push-right {

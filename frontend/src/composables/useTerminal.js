@@ -206,6 +206,14 @@ export function useTerminal(sessionId) {
     /** Whether the active tmux pane is in alternate screen (less, vim, etc.) */
     const paneAlternate = ref(false)
 
+    // ── Scroll position tracking ────────────────────────────────────────
+    /** Last known tmux scroll position (for computing actual scroll delta). */
+    let lastTmuxScrollPosition = null
+    /** Whether we can scroll up (not at top). */
+    const canScrollUp = ref(false)
+    /** Whether we can scroll down (not at bottom). */
+    const canScrollDown = ref(false)
+
     /** @type {Terminal | null} */
     let terminal = null
     /** @type {FitAddon | null} */
@@ -305,6 +313,41 @@ export function useTerminal(sessionId) {
                     const msg = JSON.parse(data)
                     if (msg.type === 'pane_state') {
                         paneAlternate.value = msg.alternate_on
+                        // Update scroll position from tmux (non-alternate only)
+                        if (!msg.alternate_on) {
+                            if (msg.in_copy_mode) {
+                                canScrollUp.value = msg.scroll_position < msg.history_size
+                                canScrollDown.value = msg.scroll_position > 0
+                            } else {
+                                // Not in copy-mode → at bottom, can scroll up if there's history
+                                canScrollUp.value = msg.history_size > 0
+                                canScrollDown.value = false
+                            }
+                        }
+                        return
+                    }
+                    if (msg.type === 'scroll_result') {
+                        const pos = msg.scroll_position
+                        const size = msg.history_size
+                        const atTop = pos >= size
+                        const atBottom = pos === 0
+                        const distanceToTop = size - pos
+                        const distanceToBottom = pos
+                        // Compute actual scroll delta from last known position
+                        let actual = msg.requested
+                        if (lastTmuxScrollPosition !== null) {
+                            // scroll_position counts from bottom: up increases, down decreases
+                            actual = -(pos - lastTmuxScrollPosition)
+                        }
+                        lastTmuxScrollPosition = pos
+                        canScrollUp.value = !atTop
+                        canScrollDown.value = !atBottom
+
+                        if (onScrollResult) {
+                            const cb = onScrollResult
+                            onScrollResult = null
+                            cb({ requested: msg.requested, actual, atTop, atBottom })
+                        }
                         return
                     }
                 } catch {
@@ -531,6 +574,97 @@ export function useTerminal(sessionId) {
         return terminal?.buffer?.active?.type === 'alternate'
     }
 
+    // ── Scroll boundary detection ───────────────────────────────────────
+    // Detects whether a scroll request actually moved the viewport and
+    // whether top/bottom boundaries were reached.
+    //
+    // An optional onScrollResult callback can be set before calling
+    // scrollByLines() to receive the result asynchronously. Used by
+    // scrollToEdge() to iterate until a boundary is reached.
+
+    /** @type {((result: {requested: number, actual: number, atTop: boolean, atBottom: boolean}) => void) | null} */
+    let onScrollResult = null
+
+    /**
+     * Capture a fingerprint of the visible screen content.
+     * Uses the first and last 3 lines for lightweight comparison.
+     */
+    function captureScreenFingerprint() {
+        if (!terminal) return null
+        const buf = terminal.buffer.active
+        const base = buf.viewportY
+        const rows = terminal.rows
+        const lines = []
+        // First 3 lines
+        for (let i = 0; i < Math.min(3, rows); i++) {
+            lines.push(buf.getLine(base + i)?.translateToString(true) ?? '')
+        }
+        // Last 3 lines
+        for (let i = Math.max(0, rows - 3); i < rows; i++) {
+            lines.push(buf.getLine(base + i)?.translateToString(true) ?? '')
+        }
+        return lines.join('\n')
+    }
+
+    /** Pending alternate-screen scroll detection (waiting for re-render). */
+    let pendingAlternateScroll = null
+
+    /**
+     * Detect scroll result for alternate screen modes (with or without tmux).
+     * Called before sending arrow keys, sets up a render listener to compare
+     * screen content after the program redraws.
+     */
+    function detectAlternateScrollResult(requested, mode) {
+        const before = captureScreenFingerprint()
+        pendingAlternateScroll = { requested, mode, before }
+
+        // Wait for terminal re-render, then compare
+        const disposable = terminal.onRender(() => {
+            disposable.dispose()
+            if (!pendingAlternateScroll) return
+            const { requested: req, mode: m, before: bfr } = pendingAlternateScroll
+            pendingAlternateScroll = null
+
+            const after = captureScreenFingerprint()
+            const changed = bfr !== after
+            const atTop = req < 0 && !changed
+            const atBottom = req > 0 && !changed
+            // Estimate actual lines: if unchanged → 0, otherwise assume full request
+            // (we can't know exactly how many lines a program scrolled)
+            const actual = changed ? req : 0
+            // Distances are unknown in alternate screen — only 0 at boundaries
+            const distanceToTop = atTop ? 0 : null
+            const distanceToBottom = atBottom ? 0 : null
+
+
+            if (onScrollResult) {
+                const cb = onScrollResult
+                onScrollResult = null
+                cb({ requested: req, actual, atTop, atBottom })
+            }
+        })
+
+        // Safety timeout: if no render happens within 500ms, the screen
+        // didn't change — we're at a boundary.
+        setTimeout(() => {
+            if (pendingAlternateScroll) {
+                const { requested: req, mode: m } = pendingAlternateScroll
+                pendingAlternateScroll = null
+                disposable.dispose()
+                const atTop = req < 0
+                const atBottom = req > 0
+                const distanceToTop = atTop ? 0 : null
+                const distanceToBottom = atBottom ? 0 : null
+
+                if (onScrollResult) {
+                    const cb = onScrollResult
+                    onScrollResult = null
+                    cb({ requested: req, actual: 0, atTop, atBottom })
+                }
+            }
+        }, 500)
+    }
+
     /**
      * Scroll by the given number of lines, using the right strategy
      * for the current screen mode.
@@ -543,6 +677,8 @@ export function useTerminal(sessionId) {
             // Alternate screen app inside tmux (vim, less, htop…):
             // send arrow keys — the app handles scrolling.
             // Use SS3 sequences when application cursor mode is active (DECCKM).
+
+            detectAlternateScrollResult(lines, 'tmux+alternate')
             const appCursor = terminal?.modes?.applicationCursorKeysMode ?? false
             const key = lines > 0
                 ? (appCursor ? '\x1bOB' : '\x1b[B')
@@ -552,10 +688,17 @@ export function useTerminal(sessionId) {
             // Shell prompt inside tmux: use backend tmux command to scroll
             // exactly N lines in copy-mode, bypassing tmux's mouse handling
             // which adds its own scroll on top of our bindings.
+
             wsSend({ type: 'tmux_scroll', lines })
+            // Result comes back via scroll_result WebSocket message
         } else if (isAlternateScreen()) {
             // Alternate screen app without tmux (less, vim run directly):
             // send arrow keys — the app handles scrolling.
+            // Position is unknown, always show both scroll buttons.
+            canScrollUp.value = true
+            canScrollDown.value = true
+
+            detectAlternateScrollResult(lines, 'alternate')
             const appCursor = terminal?.modes?.applicationCursorKeysMode ?? false
             const key = lines > 0
                 ? (appCursor ? '\x1bOB' : '\x1b[B')
@@ -564,8 +707,72 @@ export function useTerminal(sessionId) {
         } else {
             // Normal shell (no tmux, no alternate screen):
             // scroll xterm.js viewport buffer.
+            const before = terminal.buffer.active.viewportY
             terminal.scrollLines(lines)
+            const after = terminal.buffer.active.viewportY
+            const baseY = terminal.buffer.active.baseY
+            const actual = after - before
+            const atTop = after === 0
+            const atBottom = after === baseY
+            const distanceToTop = after
+            const distanceToBottom = baseY - after
+            canScrollUp.value = !atTop
+            canScrollDown.value = !atBottom
+
+            if (onScrollResult) {
+                const cb = onScrollResult
+                onScrollResult = null
+                cb({ requested: lines, actual, atTop, atBottom })
+            }
         }
+    }
+
+    // ── Scroll to edge ────────────────────────────────────────────────
+
+    /** Whether a scroll-to-edge operation is in progress. */
+    const scrollingToEdge = ref(false)
+    let scrollToEdgeCancelled = false
+
+    /**
+     * Scroll to the top or bottom of the terminal content.
+     * In normal mode, uses terminal.scrollToTop/Bottom() directly.
+     * In all other modes, scrolls in chunks of 100 lines until
+     * the boundary is reached (content stops changing).
+     *
+     * @param {'top'|'bottom'} direction
+     */
+    async function scrollToEdge(direction) {
+        if (!terminal || scrollingToEdge.value) return
+
+        const isNormal = !paneAlternate.value && !shouldUseTmux() && !isAlternateScreen()
+
+        if (isNormal) {
+            if (direction === 'top') terminal.scrollToTop()
+            else terminal.scrollToBottom()
+            return
+        }
+
+        // Chunked scroll for tmux / alternate modes
+        scrollingToEdge.value = true
+        scrollToEdgeCancelled = false
+        const chunkSize = direction === 'top' ? -100 : 100
+
+        try {
+            while (!scrollToEdgeCancelled) {
+                const result = await new Promise(resolve => {
+                    onScrollResult = resolve
+                    scrollByLines(chunkSize)
+                })
+                if (result.atTop || result.atBottom || result.actual === 0) break
+            }
+        } finally {
+            scrollingToEdge.value = false
+            scrollToEdgeCancelled = false
+        }
+    }
+
+    function cancelScrollToEdge() {
+        scrollToEdgeCancelled = true
     }
 
     // ── Touch scroll handlers (mobile, scroll mode) ────────────────────
@@ -901,6 +1108,23 @@ export function useTerminal(sessionId) {
             wsSend({ type: 'input', data })
         })
 
+        // Track scroll position for normal mode (non-tmux, non-alternate).
+        // Updates canScrollUp/canScrollDown reactively when the user scrolls
+        // via mouse wheel (handled natively by xterm.js).
+        terminal.onScroll(() => {
+            if (shouldUseTmux()) return  // tmux: handled by pane_state monitor
+            if (isAlternateScreen()) {
+                // Non-tmux alternate: position unknown, always show both buttons
+                canScrollUp.value = true
+                canScrollDown.value = true
+            } else {
+                const y = terminal.buffer.active.viewportY
+                const base = terminal.buffer.active.baseY
+                canScrollUp.value = y > 0
+                canScrollDown.value = y < base
+            }
+        })
+
         // Watch for container resize
         resizeObserver = new ResizeObserver(() => {
             // Debounce slightly to avoid rapid resize events
@@ -1188,6 +1412,9 @@ export function useTerminal(sessionId) {
         containerRef, isConnected, started, start, reconnect, disconnect,
         // Touch mode (mobile)
         touchMode, hasSelection, copySelection,
+        // Scroll state
+        paneAlternate, canScrollUp, canScrollDown,
+        scrollToEdge, scrollingToEdge, cancelScrollToEdge,
         // Extra keys bar
         activeModifiers, lockedModifiers,
         handleExtraKeyInput, handleExtraKeyModifierToggle, handleExtraKeyPaste,

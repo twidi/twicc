@@ -18,6 +18,8 @@ Protocol:
     Plain text frames — raw PTY output (no JSON wrapping for performance).
     JSON text frames (when type field present) — control messages:
       { "type": "pane_state", "alternate_on": true }  — tmux pane screen mode
+      { "type": "scroll_result", "requested": -3,
+        "scroll_position": 42, "history_size": 500 }  — tmux scroll position
 """
 
 import asyncio
@@ -340,16 +342,19 @@ def _tmux_set_global_option(option: str, value: str) -> bool:
         return False
 
 
-def _tmux_scroll(session_id: str, lines: int) -> None:
+def _tmux_scroll(session_id: str, lines: int) -> tuple[int | None, int | None]:
     """Scroll the tmux pane by the given number of lines.
 
     Enters hidden copy-mode (-eH) if not already in copy-mode, then
     scrolls exactly N lines. Positive = down, negative = up.
     The -e flag auto-exits copy-mode when scrolling back to the bottom.
+
+    Returns (scroll_position, history_size) after the scroll, or (None, None)
+    if the position could not be determined.
     """
     tmux_path = get_tmux_path()
     if tmux_path is None:
-        return
+        return None, None
     name = tmux_session_name(session_id)
     cmd = "scroll-up" if lines < 0 else "scroll-down"
     count = abs(lines)
@@ -360,55 +365,88 @@ def _tmux_scroll(session_id: str, lines: int) -> None:
          "send-keys", "-t", name, "-X", "-N", str(count), cmd],
         capture_output=True, timeout=5,
     )
+    # Query scroll position after the scroll.
+    # If copy-mode auto-exited (via -e flag, reached bottom), scroll_position
+    # will be empty — that means we're at the bottom (position 0).
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "display-message",
+             "-t", name, "-p", "#{scroll_position},#{history_size}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            parts = result.stdout.strip().split(",")
+            if len(parts) == 2:
+                # Empty scroll_position means copy-mode exited → at bottom
+                pos = int(parts[0]) if parts[0] else 0
+                size = int(parts[1]) if parts[1] else 0
+                return pos, size
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
+    return None, None
 
 
-def tmux_pane_is_alternate(session_id: str) -> bool:
-    """Check if the active pane of the active window is in alternate screen mode.
+def _tmux_pane_state(session_id: str) -> dict | None:
+    """Query the full pane state in a single tmux call.
 
-    Alternate screen is used by full-screen apps (less, vim, htop, etc.).
-    This allows the frontend to choose the right scroll strategy:
-    - Alternate on: send arrow keys (the app handles scrolling)
-    - Alternate off: send mouse wheel (tmux copy-mode scrolls the buffer)
+    Returns a dict with:
+    - alternate_on (bool): pane is in alternate screen (less, vim, etc.)
+    - in_copy_mode (bool): pane is in copy-mode (scrollback active)
+    - scroll_position (int): lines scrolled from bottom (0 = at bottom)
+    - history_size (int): total scrollback history lines
+
+    Returns None if the query fails.
     """
     tmux_path = get_tmux_path()
     if tmux_path is None:
-        return False
+        return None
 
     name = tmux_session_name(session_id)
     try:
         result = subprocess.run(
             [tmux_path, "-L", TMUX_SOCKET_NAME, "display-message",
-             "-t", name, "-p", "#{alternate_on}"],
+             "-t", name, "-p",
+             "#{alternate_on},#{pane_in_mode},#{scroll_position},#{history_size}"],
             capture_output=True, text=True, timeout=5,
         )
-        return result.stdout.strip() == "1"
-    except (subprocess.TimeoutExpired, OSError):
-        return False
+        if result.returncode != 0:
+            return None
+        parts = result.stdout.strip().split(",")
+        if len(parts) != 4:
+            return None
+        return {
+            "alternate_on": parts[0] == "1",
+            "in_copy_mode": parts[1] == "1",
+            "scroll_position": int(parts[2]) if parts[2] else 0,
+            "history_size": int(parts[3]) if parts[3] else 0,
+        }
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return None
 
 
 # ── tmux pane state monitor ──────────────────────────────────────────────
 
-# Polling interval for detecting pane state changes (alternate screen)
+# Polling interval for detecting pane state changes
 _PANE_POLL_INTERVAL = 2  # seconds
 
 
 async def _tmux_pane_monitor(session_id: str, send) -> None:
-    """Periodically check for tmux pane state changes and push updates.
+    """Periodically poll tmux pane state and push updates to the frontend.
 
-    Detects when the active pane switches between normal and alternate screen
-    (e.g., entering/exiting less or vim). Sends state to the frontend so
-    scroll behavior stays in sync.
+    Tracks: alternate screen mode, copy-mode status, scroll position,
+    and history size. Only sends a message when something changed.
     """
-    prev_alternate = await asyncio.to_thread(tmux_pane_is_alternate, session_id)
+    prev_state = await asyncio.to_thread(_tmux_pane_state, session_id)
     try:
         while True:
             await asyncio.sleep(_PANE_POLL_INTERVAL)
-            alternate = await asyncio.to_thread(tmux_pane_is_alternate, session_id)
-            if alternate != prev_alternate:
-                prev_alternate = alternate
+            state = await asyncio.to_thread(_tmux_pane_state, session_id)
+            if state is None:
+                continue
+            if state != prev_state:
+                prev_state = state
                 await send({"type": "websocket.send",
-                            "text": json.dumps({"type": "pane_state",
-                                                "alternate_on": alternate})})
+                            "text": json.dumps({"type": "pane_state", **state})})
     except asyncio.CancelledError:
         return
     except Exception:
@@ -585,9 +623,16 @@ async def terminal_application(scope, receive, send):
                 elif msg_type == "tmux_scroll" and use_tmux:
                     scroll_lines = msg.get("lines", 0)
                     if scroll_lines:
-                        await asyncio.to_thread(
+                        pos, size = await asyncio.to_thread(
                             _tmux_scroll, session_id, scroll_lines,
                         )
+                        if pos is not None:
+                            await send({"type": "websocket.send", "text": json.dumps({
+                                "type": "scroll_result",
+                                "requested": scroll_lines,
+                                "scroll_position": pos,
+                                "history_size": size,
+                            })})
 
             elif message["type"] == "websocket.disconnect":
                 return
