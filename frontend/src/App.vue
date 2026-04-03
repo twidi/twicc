@@ -69,6 +69,11 @@ const SESSION_ROUTES = new Set([
     'projects-session', 'projects-session-subagent', 'projects-session-files', 'projects-session-git', 'projects-session-terminal',
 ])
 
+// Terminal route names (for terminal tab shortcuts: Alt+Ctrl+Shift+{1-9, ←, →, ↑})
+const TERMINAL_ROUTES = new Set([
+    'session-terminal', 'projects-session-terminal',
+])
+
 function handleGlobalKeydown(e) {
     const modKey = settingsStore.isMac ? e.metaKey : e.ctrlKey
     if (modKey && e.key === 'k') {
@@ -92,6 +97,26 @@ function handleGlobalKeydown(e) {
                 e.preventDefault()
                 e.stopPropagation()
             }
+        }
+    }
+    // Alt+Ctrl+Shift+{1-9, ←, →, ↑, ↓}: terminal tab navigation within the terminal panel.
+    // Dispatches a custom event handled by the active TerminalPanel instance.
+    if (e.altKey && e.shiftKey && e.ctrlKey && !e.metaKey && TERMINAL_ROUTES.has(route.name)) {
+        let tabAction = null
+        const digitMatch = e.code.match(/^(?:Digit|Numpad)([1-9])$/)
+        if (digitMatch) {
+            tabAction = { type: 'direct', index: parseInt(digitMatch[1]) }
+        } else if (e.key === 'ArrowLeft') {
+            tabAction = { type: 'prev' }
+        } else if (e.key === 'ArrowRight') {
+            tabAction = { type: 'next' }
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            tabAction = { type: 'last-visited' }
+        }
+        if (tabAction) {
+            e.preventDefault()
+            e.stopPropagation()
+            window.dispatchEvent(new CustomEvent('twicc:terminal-tab-shortcut', { detail: tabAction }))
         }
     }
     // Alt+Shift+{1-4, ←, →, ↑, ↓}: tab navigation within a session.

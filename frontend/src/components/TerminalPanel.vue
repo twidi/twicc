@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, provide, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useTerminalConfigStore } from '../stores/terminalConfig'
@@ -236,6 +236,62 @@ function syncTerminalsFromBackend(backendIndices, oldIndices) {
         nextIndex.value = maxIndex + 1
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Keyboard shortcuts: terminal tab navigation (Alt+Ctrl+Shift+{1-9, ←/→, ↑})
+// Events dispatched by App.vue, handled here by the active instance only.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Tab visit history for Alt+Ctrl+Shift+↑ (last-visited, Alt+Tab-like behavior).
+const terminalTabHistory = []
+const MAX_TERMINAL_TAB_HISTORY = 50
+
+function pushTerminalTabHistory(termIndex) {
+    if (terminalTabHistory.length > 0 && terminalTabHistory[terminalTabHistory.length - 1] === termIndex) return
+    terminalTabHistory.push(termIndex)
+    if (terminalTabHistory.length > MAX_TERMINAL_TAB_HISTORY) terminalTabHistory.shift()
+}
+
+// Track terminal tab transitions for history
+watch(activeIndex, (newIndex, oldIndex) => {
+    if (!props.active) return
+    if (oldIndex !== undefined && oldIndex !== newIndex) pushTerminalTabHistory(oldIndex)
+})
+
+function handleTerminalTabShortcut(event) {
+    if (!props.active) return
+
+    const { type, index } = event.detail
+
+    if (type === 'direct') {
+        // Direct access: number N → the Nth terminal tab (1-based positional)
+        const term = terminals.value[index - 1]
+        if (term) activeIndex.value = term.index
+    } else if (type === 'prev' || type === 'next') {
+        const currentIdx = terminals.value.findIndex(t => t.index === activeIndex.value)
+        if (currentIdx === -1) return
+        const newIdx = type === 'next'
+            ? (currentIdx + 1) % terminals.value.length
+            : (currentIdx - 1 + terminals.value.length) % terminals.value.length
+        activeIndex.value = terminals.value[newIdx].index
+    } else if (type === 'last-visited') {
+        const validIndices = new Set(terminals.value.map(t => t.index))
+        for (let i = terminalTabHistory.length - 1; i >= 0; i--) {
+            const idx = terminalTabHistory[i]
+            if (idx !== activeIndex.value && validIndices.has(idx)) {
+                activeIndex.value = idx
+                return
+            }
+        }
+    }
+}
+
+onMounted(() => {
+    window.addEventListener('twicc:terminal-tab-shortcut', handleTerminalTabShortcut)
+})
+onBeforeUnmount(() => {
+    window.removeEventListener('twicc:terminal-tab-shortcut', handleTerminalTabShortcut)
+})
 </script>
 
 <template>
