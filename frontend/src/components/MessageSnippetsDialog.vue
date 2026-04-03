@@ -159,9 +159,9 @@ function handleSave() {
     errorMessage.value = ''
 
     const trimmedLabel = formData.value.label.trim()
-    const trimmedText = formData.value.text.trim()
+    const text = formData.value.text
 
-    if (!trimmedText) {
+    if (!text.trim()) {
         errorMessage.value = 'Message text is required.'
         return
     }
@@ -169,8 +169,8 @@ function handleSave() {
     const selectedScope = formData.value.scope
     const snippetData = {
         label: trimmedLabel,
-        text: trimmedText,
-        placeholders: extractPlaceholders(trimmedText),
+        text: text,
+        placeholders: extractPlaceholders(text),
     }
 
     // Check for duplicate label in same scope (warn but allow save on second submit)
