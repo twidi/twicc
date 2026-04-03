@@ -1,6 +1,6 @@
 <script setup>
 // SettingsPopover.vue - Settings button with popover panel
-import { computed, ref, useId } from 'vue'
+import { computed, nextTick, ref, useId } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
@@ -23,6 +23,39 @@ const showExtraUsageSetting = computed(() => dataStore.usage?.hasOauth ?? false)
 
 function handleLogout() {
     router.push({ name: 'logout' })
+}
+
+// -- Section navigation --
+
+const sections = [
+    { id: 'global',        label: 'Global' },
+    { id: 'claude',        label: 'Claude settings', navLabel: 'Claude', synced: true },
+    { id: 'notifications', label: 'Notifications' },
+    { id: 'sessions',      label: 'Sessions' },
+    { id: 'title',         label: 'Title suggestion', navLabel: 'Titles', synced: true },
+    { id: 'editor',        label: 'Editor' },
+    { id: 'terminal',      label: 'Terminal' },
+]
+
+const activeSection = ref('global')
+const mobileShowContent = ref(false)
+
+const activeSectionObj = computed(() =>
+    sections.find(s => s.id === activeSection.value)
+)
+
+const activeSectionLabel = computed(() => activeSectionObj.value?.label ?? '')
+
+function selectSection(id) {
+    activeSection.value = id
+    mobileShowContent.value = true
+    if (id === 'notifications') {
+        nextTick(() => notificationSettingsRef.value?.sync())
+    }
+}
+
+function goBackToNav() {
+    mobileShowContent.value = false
 }
 
 // Theme options for the select
@@ -360,10 +393,13 @@ function resetTitleSystemPrompt() {
 }
 
 /**
- * Called when popover opens - refresh notification permission state.
+ * Called when popover opens - reset mobile view and refresh notification state.
  */
 function onPopoverShow() {
-    notificationSettingsRef.value?.sync()
+    mobileShowContent.value = false
+    if (activeSection.value === 'notifications') {
+        nextTick(() => notificationSettingsRef.value?.sync())
+    }
 }
 </script>
 
@@ -374,19 +410,43 @@ function onPopoverShow() {
     <AppTooltip for="settings-trigger">Toggle settings</AppTooltip>
     <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
         <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
-        <div class="settings-content">
-            <div class="settings-sections">
-                <!-- Synced Settings Notice -->
-                <section class="settings-section settings-notice">
-                    <p>
-                        <wa-icon name="cloud" class="synced-icon"></wa-icon>
-                        Sections and individual settings marked with a cloud icon are synced across all your devices.
-                        Others are specific to this browser.
-                    </p>
-                </section>
+        <div class="settings-layout">
+            <div class="settings-layout-inner" :class="{ 'showing-content': mobileShowContent }">
+                <!-- Nav: section list -->
+                <nav class="settings-nav">
+                    <button
+                        v-for="section in sections"
+                        :key="section.id"
+                        class="settings-nav-item"
+                        :class="{ active: activeSection === section.id }"
+                        @click="selectSection(section.id)"
+                    >
+                        {{ section.navLabel || section.label }}
+                        <wa-icon v-if="section.synced" name="cloud" class="synced-icon"></wa-icon>
+                    </button>
+                </nav>
+
+                <wa-divider class="settings-vertical-divider" orientation="vertical"></wa-divider>
+
+                <!-- Detail: section content -->
+                <div class="settings-detail">
+                    <div class="settings-detail-header" @click="goBackToNav">
+                        <wa-button
+                            variant="neutral"
+                            appearance="plain"
+                            size="small"
+                        >
+                            <wa-icon name="arrow-left"></wa-icon>
+                        </wa-button>
+                        <span class="settings-detail-header-title">
+                            {{ activeSectionLabel }}
+                            <wa-icon v-if="activeSectionObj?.synced" name="cloud" class="synced-icon"></wa-icon>
+                        </span>
+                    </div>
+                    <div class="settings-sections">
 
                 <!-- Global Section -->
-                <section class="settings-section">
+                <section v-if="activeSection === 'global'" class="settings-section">
                     <h3 class="settings-section-title">Global</h3>
                     <div class="setting-group">
                         <label class="setting-group-label">Theme</label>
@@ -432,7 +492,7 @@ function onPopoverShow() {
                 </section>
 
                 <!-- Claude Settings Section -->
-                <section class="settings-section">
+                <section v-if="activeSection === 'claude'" class="settings-section">
                     <h3 class="settings-section-title">Claude settings <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
                     <div class="setting-group">
                         <label class="setting-group-label">Default permission mode</label>
@@ -569,10 +629,10 @@ function onPopoverShow() {
                 </section>
 
                 <!-- Notifications Section -->
-                <NotificationSettings ref="notificationSettingsRef" />
+                <NotificationSettings v-if="activeSection === 'notifications'" ref="notificationSettingsRef" />
 
                 <!-- Sessions Section -->
-                <section class="settings-section">
+                <section v-if="activeSection === 'sessions'" class="settings-section">
                     <h3 class="settings-section-title">Sessions</h3>
                     <div class="setting-group">
                         <label class="setting-group-label">Display mode</label>
@@ -639,7 +699,7 @@ function onPopoverShow() {
                         >Enabled</wa-switch>
                     </div>
                     <div class="setting-group">
-                        <label class="setting-group-label">LRU cached sessions ({{ maxCachedSessions }})</label>
+                        <label class="setting-group-label">Session cache ({{ maxCachedSessions }})</label>
                         <wa-slider
                             :min.prop="1"
                             :max.prop="50"
@@ -648,11 +708,12 @@ function onPopoverShow() {
                             @input="onMaxCachedSessionsChange"
                             size="small"
                         ></wa-slider>
+                        <span class="setting-group-hint">Number of sessions kept in memory for instant switching.</span>
                     </div>
                 </section>
 
                 <!-- Title Suggestion Section -->
-                <section class="settings-section">
+                <section v-if="activeSection === 'title'" class="settings-section">
                     <h3 class="settings-section-title">Title suggestion <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
                     <div class="setting-group">
                         <wa-switch
@@ -691,7 +752,7 @@ function onPopoverShow() {
                 </section>
 
                 <!-- Editor Section -->
-                <section class="settings-section">
+                <section v-if="activeSection === 'editor'" class="settings-section">
                     <h3 class="settings-section-title">Editor</h3>
                     <div class="setting-group">
                         <label class="setting-group-label">Display</label>
@@ -710,7 +771,7 @@ function onPopoverShow() {
                 </section>
 
                 <!-- Terminal Section -->
-                <section class="settings-section">
+                <section v-if="activeSection === 'terminal'" class="settings-section">
                     <h3 class="settings-section-title">Terminal</h3>
                     <div class="setting-group">
                         <label class="setting-group-label">Persistent sessions (tmux) <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
@@ -722,8 +783,16 @@ function onPopoverShow() {
                         <span class="setting-group-hint">Tmux sessions are destroyed when Claude sessions are archived.</span>
                     </div>
                 </section>
+
+                    </div>
+                </div>
             </div>
         </div>
+        <wa-divider></wa-divider>
+        <p class="settings-notice">
+            <wa-icon name="cloud" class="synced-icon"></wa-icon>
+            Sections and settings marked with a cloud icon are synced across all your devices.
+        </p>
         <wa-divider></wa-divider>
         <footer v-if="currentVersion" class="settings-footer">
             <span class="settings-footer-version">
@@ -781,24 +850,164 @@ function onPopoverShow() {
     padding: 0;
 }
 
-.settings-content {
-    padding: var(--wa-space-m);
-    max-height: calc(90dvh - 8rem);
-    overflow-y: auto;
+/* -- Master-detail layout -- */
+
+.settings-layout {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: min(calc(90dvh - 8rem), 50rem);
+    width: min(90vw, 700px);
 }
 
+.settings-layout-inner {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+}
+
+/* Nav panel (section list) */
+
+.settings-nav {
+    width: 200px;
+    min-width: 200px;
+    overflow-y: auto;
+    padding: var(--wa-space-m);
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-2xs);
+}
+
+.settings-nav-item {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    padding: var(--wa-space-xs) var(--wa-space-s);
+    border-radius: var(--wa-border-radius-m);
+    font-size: var(--wa-font-size-m);
+    color: var(--wa-color-text);
+    text-align: left;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+}
+
+.settings-nav-item:hover {
+    background: var(--wa-color-surface);
+}
+
+.settings-nav-item.active {
+    color: var(--wa-color-brand);
+    font-weight: var(--wa-font-weight-semibold);
+}
+
+/* Vertical divider between nav and detail */
+
+.settings-vertical-divider {
+    --width: 4px;
+    --spacing: 0;
+    align-self: stretch;
+    height: auto;
+    min-height: 0;
+}
+
+/* Detail panel (section content) */
+
+.settings-detail {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: var(--wa-space-m);
+}
+
+/* Detail header (back button) - hidden on desktop */
+.settings-detail-header {
+    display: none;
+}
+
+/* -- Mobile: sliding panels -- */
+
 @media (width < 640px) {
-    .settings-content {
+    .settings-layout {
+        width: auto;
+    }
+
+    .settings-layout-inner {
+        width: 200%;
+        transition: transform 0.25s ease;
+    }
+
+    .settings-layout-inner.showing-content {
+        transform: translateX(-50%);
+    }
+
+    .settings-nav {
+        width: 50%;
+        min-width: 50%;
         padding: var(--wa-space-s);
+    }
+
+    .settings-vertical-divider {
+        display: none;
+    }
+
+    .settings-detail {
+        width: 50%;
+        padding: var(--wa-space-s);
+    }
+
+    .settings-detail-header {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-2xs);
+        cursor: pointer;
+        margin-bottom: var(--wa-space-s);
+    }
+
+    .settings-detail-header-title {
+        font-weight: var(--wa-font-weight-bold);
+        font-size: var(--wa-font-size-s);
+        color: var(--wa-color-brand);
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-xs);
+    }
+
+    .settings-nav-item.active {
+        color: var(--wa-color-text);
+        font-weight: inherit;
+    }
+
+    .settings-nav-item::after {
+        content: '›';
+        margin-left: auto;
+        font-size: 1.3em;
+        color: var(--wa-color-text-quiet);
     }
 }
 
-.settings-sections {
-    columns: 15rem;
-    column-gap: var(--wa-space-m);
-    width: 90vw;
-    max-width: 100%;
+/* -- Settings notice (footer bar) -- */
+
+.settings-notice {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: var(--wa-space-xs);
+    padding: var(--wa-space-xs) var(--wa-space-s);
+
+    .synced-icon {
+        font-size: 1em;
+        position: relative;
+        top: 0.1em;
+        flex-shrink: 0;
+    }
 }
+
+/* -- Section content styles -- */
 
 .title-prompt-section {
     display: flex;
@@ -840,6 +1049,8 @@ function onPopoverShow() {
     color: var(--wa-color-brand);
 }
 
+/* -- Footer -- */
+
 wa-popover > wa-divider {
     --width: 4px;
     --spacing: 0;
@@ -852,7 +1063,6 @@ wa-popover > wa-divider {
     column-gap: var(--wa-space-xs);
     padding: var(--wa-space-s);
     margin-right: 2rem;
-    border-top: 1px solid var(--wa-color-border-subtle);
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
 }
@@ -913,22 +1123,6 @@ wa-popover > wa-divider {
     background-color: var(--wa-color-primary);
 }
 
-.settings-notice p {
-    font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-quiet);
-    margin: 0;
-    display: flex;
-    align-items: baseline;
-    gap: var(--wa-space-xs);
-
-    .synced-icon {
-        font-size: 1em;
-        position: relative;
-        top: 0.1em;
-        flex-shrink: 0;
-    }
-}
-
 </style>
 
 <style>
@@ -937,23 +1131,16 @@ wa-popover > wa-divider {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-m);
-    padding: var(--wa-space-s);
-    background: var(--wa-color-surface-alt);
-    border-radius: var(--wa-border-radius-m);
-    border: solid 1px var(--wa-color-border-quiet);
-    break-inside: avoid;
-    margin-bottom: var(--wa-space-m);
 }
 
 .settings-sections .settings-section-title {
     font-size: var(--wa-font-size-s);
     font-weight: var(--wa-font-weight-bold);
     margin: 0;
-    padding-bottom: var(--wa-space-xs);
-    border-bottom: 1px solid var(--wa-color-border-subtle);
+    color: var(--wa-color-brand);
     display: flex;
     align-items: center;
-    gap: var(--wa-space-2xs);
+    gap: var(--wa-space-xs);
 }
 
 .settings-sections .setting-group {
@@ -968,16 +1155,21 @@ wa-popover > wa-divider {
 .settings-sections .setting-group-label {
     font-size: var(--wa-font-size-m);
     font-weight: var(--wa-font-weight-semibold);
-    xcolor: var(--wa-color-text-quiet);
     display: flex;
     align-items: center;
-    gap: var(--wa-space-2xs);
+    gap: var(--wa-space-xs);
 }
 
 .settings-sections .setting-group-hint {
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
     font-style: italic;
+}
+
+@media (width < 640px) {
+    .settings-sections .settings-section-title {
+        display: none;
+    }
 }
 
 @container sidebar (width <= 13rem) {

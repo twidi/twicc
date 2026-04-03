@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Reorganize the settings panel with a section navigation sidebar
 - Remove toast notification for 15-minute user inactivity timeout
 - Better rendering of diffs for Edit and Write tools
 - Replace Monaco Editor with CodeMirror 6 for code viewing, editing, and diffs — adds mobile support
