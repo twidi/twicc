@@ -96,6 +96,7 @@ function openSearch() {
                     size="small"
                     variant="neutral"
                     appearance="outlined"
+                    class="reduced-height"
                     @click="openSearch"
                 >
                     <wa-icon name="magnifying-glass"></wa-icon>

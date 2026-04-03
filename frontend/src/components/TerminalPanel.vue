@@ -492,7 +492,7 @@ onBeforeUnmount(() => {
                     variant="brand"
                     appearance="outlined"
                     size="small"
-                    class="add-terminal-button"
+                    class="add-terminal-button reduced-height"
                     @click="createTerminal"
                 >
                     <wa-icon name="plus"></wa-icon>
@@ -509,7 +509,7 @@ onBeforeUnmount(() => {
                         variant="neutral"
                         appearance="plain"
                         size="small"
-                        class="scroll-edge-button"
+                        class="scroll-edge-button reduced-height"
                         :loading="tb.scrollingToEdge"
                         @click="handleScrollToEdge('top')"
                     >
@@ -526,7 +526,7 @@ onBeforeUnmount(() => {
                         variant="neutral"
                         appearance="plain"
                         size="small"
-                        class="scroll-edge-button"
+                        class="scroll-edge-button reduced-height"
                         :loading="tb.scrollingToEdge"
                         @click="handleScrollToEdge('bottom')"
                     >
@@ -558,7 +558,7 @@ onBeforeUnmount(() => {
                         variant="neutral"
                         appearance="filled"
                         size="small"
-                        class="copy-button"
+                        class="copy-button reduced-height"
                         @click="handleCopy"
                     >
                         <wa-icon name="copy" variant="regular"></wa-icon>
@@ -571,7 +571,7 @@ onBeforeUnmount(() => {
                         variant="neutral"
                         appearance="filled"
                         size="small"
-                        class="paste-button"
+                        class="paste-button reduced-height"
                         @click="handlePaste"
                     >
                         <wa-icon name="paste" variant="regular"></wa-icon>
@@ -587,7 +587,7 @@ onBeforeUnmount(() => {
                     variant="neutral"
                     appearance="filled"
                     size="small"
-                    class="rename-button"
+                    class="rename-button reduced-height"
                     @click="openRenameDialog(activeIndex)"
                 >
                     <wa-icon name="pen-to-square" variant="regular"></wa-icon>
@@ -602,7 +602,7 @@ onBeforeUnmount(() => {
                         variant="danger"
                         appearance="filled"
                         size="small"
-                        class="disconnect-button"
+                        class="disconnect-button reduced-height"
                         @click="handleDisconnect"
                     >
                         <wa-icon name="ban" :label="isActiveMain ? 'Disconnect' : 'Kill terminal'"></wa-icon>
@@ -721,11 +721,7 @@ onBeforeUnmount(() => {
     color: var(--wa-color-brand);
 }
 .add-terminal-button {
-    font-size: var(--wa-font-size-3xs);
     align-self: center;
-    &::part(label) {
-        scale: 1.2;
-    }
 }
 
 .terminal-actions {
@@ -743,10 +739,6 @@ onBeforeUnmount(() => {
     opacity: 0.5;
     transition: opacity 0.15s;
     flex-shrink: 0;
-    font-size: var(--wa-font-size-3xs);
-    &::part(label) {
-        scale: 1.5;
-    }
 }
 
 .scroll-edge-button:hover {
@@ -757,10 +749,6 @@ onBeforeUnmount(() => {
     opacity: 0.6;
     transition: opacity 0.15s;
     flex-shrink: 0;
-    font-size: var(--wa-font-size-3xs);
-    &::part(label) {
-        scale: 1.5;
-    }
 }
 
 .disconnect-button:hover:not([disabled]) {
@@ -785,15 +773,6 @@ onBeforeUnmount(() => {
 .paste-button {
     flex-shrink: 0;
 }
-
-.rename-button::part(base),
-.copy-button::part(base),
-.paste-button::part(base) {
-    --wa-form-control-padding-block: .5em;
-    /* Had to force it here, but the same as default one: */
-    --wa-form-control-height: round( calc(2 * var(--wa-form-control-padding-block) + 1em * var(--wa-form-control-value-line-height)), 1px );
-}
-
 
 /* ── Terminal panels ─────────────────────────────────────── */
 

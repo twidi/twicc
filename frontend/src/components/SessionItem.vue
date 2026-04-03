@@ -233,8 +233,13 @@ function toggleJsonView() {
 }
 
 .detail-toggle {
+    opacity: 0.5;
+    transition: opacity 0.2s;
     &::part(label) {
         scale: 1.3;
+    }
+    &:hover {
+        opacity: 1;
     }
 }
 

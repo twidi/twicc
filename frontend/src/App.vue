@@ -375,4 +375,13 @@ body .Notivue__content-title {
     --indicator-transition-duration: 0s;
 }
 
+/* Style for low-height buttons */
+
+.reduced-height {
+    font-size: var(--wa-font-size-3xs);
+    &::part(label) {
+        scale: 1.3;
+    }
+}
+
 </style>

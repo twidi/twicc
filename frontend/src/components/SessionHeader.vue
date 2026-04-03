@@ -284,7 +284,7 @@ defineExpose({
                     :variant="session.pinned ? 'brand' : 'neutral'"
                     appearance="plain"
                     size="small"
-                    :class="['pin-button', { 'pin-button--active': session.pinned }]"
+                    :class="['pin-button', 'reduced-height', { 'pin-button--active': session.pinned }]"
                     @click="handleTogglePin"
                 >
                     <wa-icon name="thumbtack" :label="session.pinned ? 'Unpin' : 'Pin'"></wa-icon>
@@ -298,7 +298,7 @@ defineExpose({
                     variant="neutral"
                     appearance="plain"
                     size="small"
-                    class="archive-button"
+                    class="archive-button reduced-height"
                     @click="handleArchive"
                 >
                     <wa-icon name="box-archive" label="Archive"></wa-icon>
@@ -312,7 +312,7 @@ defineExpose({
                     variant="neutral"
                     appearance="plain"
                     size="small"
-                    class="rename-button"
+                    class="rename-button reduced-height"
                     @click="openRenameDialog"
                 >
                     <wa-icon name="pencil" label="Rename"></wa-icon>
@@ -486,7 +486,7 @@ defineExpose({
                         variant="danger"
                         appearance="filled"
                         size="small"
-                        class="stop-button"
+                        class="stop-button reduced-height"
                         :loading="stoppingProcess"
                         :disabled="stoppingProcess"
                         @click="handleStopProcess"
@@ -507,7 +507,7 @@ defineExpose({
         <!-- Compact mode toggle for non main session headers (no .session-title row to host it) -->
         <wa-button
             v-if="mode !== 'session'"
-            class="compact-toggle-button compact-toggle-button--non-main-session"
+            class="compact-toggle-button compact-toggle-button--non-main-session reduced-height"
             variant="neutral"
             appearance="plain"
             size="small"
@@ -709,10 +709,6 @@ wa-divider {
     opacity: 0.6;
     transition: opacity 0.15s;
     flex-shrink: 0;
-    font-size: var(--wa-font-size-3xs);
-    &::part(label) {
-        scale: 1.5;
-    }
 }
 
 .stop-button:hover {
@@ -725,10 +721,6 @@ wa-divider {
     opacity: 0.6;
     transition: opacity 0.15s;
     flex-shrink: 0;
-    font-size: var(--wa-font-size-3xs);
-    &::part(label) {
-        scale: 1.5;
-    }
     margin-block: calc(-3 * var(--wa-space-2xs));
     position: relative;
     top: calc(-1 * var(--wa-space-2xs));
@@ -775,10 +767,6 @@ wa-divider {
     flex-shrink: 0;
     opacity: 0.6;
     transition: opacity 0.15s;
-    font-size: var(--wa-font-size-3xs);
-    &::part(label) {
-        scale: 1.5;
-    }
     margin-block: calc(-3 * var(--wa-space-2xs));
     position: relative;
     top: calc(-1 * var(--wa-space-2xs));

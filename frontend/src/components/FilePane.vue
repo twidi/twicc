@@ -469,6 +469,7 @@ function goToNextDiff() {
                     size="small"
                     variant="neutral"
                     appearance="outlined"
+                    class="reduced-height"
                     @click="openSearch"
                 >
                     <wa-icon name="magnifying-glass"></wa-icon>
@@ -481,6 +482,7 @@ function goToNextDiff() {
                     size="small"
                     variant="neutral"
                     appearance="outlined"
+                    class="reduced-height"
                     @click="viewFileInFilesTab(filePath)"
                 >
                     <wa-icon name="folder-open"></wa-icon>
@@ -498,6 +500,7 @@ function goToNextDiff() {
                             size="small"
                             variant="brand"
                             :disabled="saving || !isDirty"
+                            class="reduced-height"
                             @click="save"
                         >
                             <wa-icon v-if="saving" slot="prefix" name="spinner" spin></wa-icon>
@@ -508,6 +511,7 @@ function goToNextDiff() {
                             variant="neutral"
                             appearance="outlined"
                             :disabled="saving"
+                            class="reduced-height"
                             @click="revert"
                         >Revert</wa-button>
                     </template>
@@ -516,7 +520,7 @@ function goToNextDiff() {
                         size="small"
                         variant="neutral"
                         appearance="outlined"
-                        class="header-spacer"
+                        class="header-spacer reduced-height"
                     >Spacer</wa-button>
                 </template>
             </div>
@@ -526,7 +530,7 @@ function goToNextDiff() {
                         size="small"
                         variant="neutral"
                         appearance="outlined"
-                        class="diff-nav-button"
+                        class="diff-nav-button reduced-height"
                         :id="prevChangeButtonId"
                         @click="goToPreviousDiff"
                     >
@@ -537,7 +541,7 @@ function goToNextDiff() {
                         size="small"
                         variant="neutral"
                         appearance="outlined"
-                        class="diff-nav-button"
+                        class="diff-nav-button reduced-height"
                         :id="nextChangeButtonId"
                         @click="goToNextDiff"
                     >
@@ -568,6 +572,7 @@ function goToNextDiff() {
                     variant="neutral"
                     :appearance="showMarkdownPreview ? 'filled' : 'outlined'"
                     :id="markdownPreviewButtonId"
+                    class="reduced-height"
                     @click="toggleMarkdownPreview"
                 >
                     <wa-icon name="eye"></wa-icon>

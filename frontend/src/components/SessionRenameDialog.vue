@@ -242,7 +242,7 @@ defineExpose({
                         variant="neutral"
                         appearance="plain"
                         size="small"
-                        class="regenerate-button"
+                        class="regenerate-button reduced-height"
                         @click="regenerateSuggestion"
                     >
                         <wa-icon name="rotate" label="Regenerate"></wa-icon>
@@ -363,10 +363,6 @@ defineExpose({
     opacity: 0.6;
     transition: opacity 0.15s;
     flex-shrink: 0;
-    font-size: var(--wa-font-size-3xs);
-    &::part(label) {
-        scale: 1.5;
-    }
     margin-block: calc(-3 * var(--wa-space-2xs));
 }
 
