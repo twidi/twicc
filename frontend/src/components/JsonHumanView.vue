@@ -19,14 +19,14 @@
 // with predefined options. Always interactive regardless of the editable prop.
 // Override shape: { valueType: 'select', options: ['opt1', 'opt2', ...] }
 
-import { computed, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { EditorView } from '@codemirror/view'
 import MarkdownContent from './MarkdownContent.vue'
 import CodeEditor from './CodeEditor.vue'
 import DiffEditor from './DiffEditor.vue'
+import JhvEditorToolbar from './JhvEditorToolbar.vue'
 import { getIconUrl, getFileIconId } from '../utils/fileIcons'
 import { getLanguageFromPath } from '../utils/languages'
-import { structuredPatch } from 'diff'
 
 defineOptions({ name: 'JsonHumanView' })
 
@@ -74,23 +74,6 @@ function editorHeight(content) {
     const padding = 32
     const raw = lineCount * lineHeight + padding
     return Math.max(64, Math.min(raw, 800)) + 'px'
-}
-
-/**
- * Compute the diff editor height based on the longer of the two strings.
- * Slightly taller default since diff editors need more vertical space.
- * @param {string} oldStr
- * @param {string} newStr
- * @returns {string} CSS height value
- */
-function diffEditorHeight(oldStr, newStr) {
-    const oldLines = (oldStr || '').split('\n').length
-    const newLines = (newStr || '').split('\n').length
-    const lineCount = Math.max(oldLines, newLines)
-    const lineHeight = 20
-    const padding = 32
-    const raw = lineCount * lineHeight + padding
-    return Math.max(80, Math.min(raw, 500)) + 'px'
 }
 
 /** Compact editor extensions for inline editors (no chrome). */
@@ -548,24 +531,10 @@ function detectContentBlockSource(obj) {
     return { kind: 'binary', mediaType }
 }
 
-/**
- * Generate a unified diff string from two strings, suitable for ```diff rendering.
- * @param {string} oldStr
- * @param {string} newStr
- * @returns {string}
- */
-function generateDiff(oldStr, newStr) {
-    const result = structuredPatch('', '', oldStr, newStr, '', '', { context: 3 })
-    const lines = []
-    for (const hunk of result.hunks) {
-        for (const line of hunk.lines) {
-            // Skip "No newline at end of file" markers
-            if (line.startsWith('\\')) continue
-            lines.push(line)
-        }
-    }
-    return lines.join('\n')
-}
+// Refs for editor instances (used by JhvEditorToolbar to call openSearch)
+const codeEditorRef = ref(null)
+const editDiffEditorRefs = reactive({})
+const readDiffEditorRefs = reactive({})
 </script>
 
 <template>
@@ -638,16 +607,21 @@ function generateDiff(oldStr, newStr) {
         <template v-else-if="effectiveType() === 'string-markdown'">
             <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
             <template v-if="editable">
-                <div class="jhv-edit-editor" :style="{ height: editorHeight(value) }">
-                    <CodeEditor
-                        :model-value="value"
-                        :language="'markdown'"
-                        :line-numbers="false"
-                        :word-wrap="true"
-                        :extensions="compactEditorExtensions"
-                        @update:model-value="emitUpdate($event)"
-                    />
-                </div>
+                <JhvEditorToolbar mode="code" :editor-ref="codeEditorRef">
+                    <template #default="{ wordWrap: ww }">
+                        <div class="jhv-edit-editor" :style="{ height: editorHeight(value) }">
+                            <CodeEditor
+                                ref="codeEditorRef"
+                                :model-value="value"
+                                :language="'markdown'"
+                                :line-numbers="false"
+                                :word-wrap="ww"
+                                :extensions="compactEditorExtensions"
+                                @update:model-value="emitUpdate($event)"
+                            />
+                        </div>
+                    </template>
+                </JhvEditorToolbar>
             </template>
             <div v-else class="jhv-markdown">
                 <MarkdownContent :source="value" />
@@ -660,16 +634,21 @@ function generateDiff(oldStr, newStr) {
                 <!-- Multi-line code: CodeMirror editor -->
                 <template v-if="override?.language || isMultiLine(value)">
                     <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
-                    <div class="jhv-edit-editor" :style="{ height: editorHeight(value) }">
-                        <CodeEditor
-                            :model-value="value"
-                            :language="resolveJhvLanguage(override)"
-                            :line-numbers="false"
-                            :word-wrap="true"
-                            :extensions="compactEditorExtensions"
-                            @update:model-value="emitUpdate($event)"
-                        />
-                    </div>
+                    <JhvEditorToolbar mode="code" :editor-ref="codeEditorRef">
+                        <template #default="{ wordWrap: ww }">
+                            <div class="jhv-edit-editor" :style="{ height: editorHeight(value) }">
+                                <CodeEditor
+                                    ref="codeEditorRef"
+                                    :model-value="value"
+                                    :language="resolveJhvLanguage(override)"
+                                    :line-numbers="false"
+                                    :word-wrap="ww"
+                                    :extensions="compactEditorExtensions"
+                                    @update:model-value="emitUpdate($event)"
+                                />
+                            </div>
+                        </template>
+                    </JhvEditorToolbar>
                 </template>
                 <!-- Single-line code: input -->
                 <template v-else>
@@ -747,16 +726,21 @@ function generateDiff(oldStr, newStr) {
         <template v-else-if="effectiveType() === 'string-multiline'">
             <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
             <template v-if="editable">
-                <div class="jhv-edit-editor" :style="{ height: editorHeight(value) }">
-                    <CodeEditor
-                        :model-value="value"
-                        :language="null"
-                        :line-numbers="false"
-                        :word-wrap="true"
-                        :extensions="compactEditorExtensions"
-                        @update:model-value="emitUpdate($event)"
-                    />
-                </div>
+                <JhvEditorToolbar mode="code" :editor-ref="codeEditorRef">
+                    <template #default="{ wordWrap: ww }">
+                        <div class="jhv-edit-editor" :style="{ height: editorHeight(value) }">
+                            <CodeEditor
+                                ref="codeEditorRef"
+                                :model-value="value"
+                                :language="null"
+                                :line-numbers="false"
+                                :word-wrap="ww"
+                                :extensions="compactEditorExtensions"
+                                @update:model-value="emitUpdate($event)"
+                            />
+                        </div>
+                    </template>
+                </JhvEditorToolbar>
             </template>
             <pre v-else class="jhv-pre">{{ value.trim() }}</pre>
         </template>
@@ -903,16 +887,22 @@ function generateDiff(oldStr, newStr) {
                             </div>
                             <!-- Diff editor mode (default) — v-show keeps the DiffEditor alive
                                  so toggling back from split mode is instant (no grammar reload). -->
-                            <div v-show="!diffSplitMode[pair.baseName]" class="jhv-edit-diff" :style="{ height: diffEditorHeight(value[pair.oldKey], value[pair.newKey]) }">
-                                <DiffEditor
-                                    :original="value[pair.oldKey] ?? ''"
-                                    :modified="value[pair.newKey] ?? ''"
-                                    :language="resolveJhvLanguage(overrides[pair.newKey] ?? siblingOverrides[pair.newKey])"
-                                    :read-only="false"
-                                    :word-wrap="true"
-                                    :side-by-side="true"
-                                    @update:modified="onChildObjectUpdate(pair.newKey, $event)"
-                                />
+                            <div v-show="!diffSplitMode[pair.baseName]" class="jhv-edit-diff">
+                                <JhvEditorToolbar mode="diff" :editor-ref="editDiffEditorRefs[pair.baseName]">
+                                    <template #default="{ wordWrap: ww, sideBySide: sbs, editorReady }">
+                                        <DiffEditor
+                                            v-if="editorReady"
+                                            :ref="el => editDiffEditorRefs[pair.baseName] = el"
+                                            :original="value[pair.oldKey] ?? ''"
+                                            :modified="value[pair.newKey] ?? ''"
+                                            :language="resolveJhvLanguage(overrides[pair.newKey] ?? siblingOverrides[pair.newKey])"
+                                            :read-only="false"
+                                            :word-wrap="ww"
+                                            :side-by-side="sbs"
+                                            @update:modified="onChildObjectUpdate(pair.newKey, $event)"
+                                        />
+                                    </template>
+                                </JhvEditorToolbar>
                             </div>
                             <!-- Split mode: old read-only + new editable -->
                             <div v-if="diffSplitMode[pair.baseName]" class="jhv-diff-split">
@@ -970,8 +960,22 @@ function generateDiff(oldStr, newStr) {
                         <!-- Render auto-generated diffs for old/new pairs -->
                         <template v-for="pair in diffPairs.pairs" :key="'diff_' + pair.baseName">
                             <div class="jhv-key jhv-block-key">{{ formatLabel(pair.baseName) }} diff:</div>
-                            <div class="jhv-markdown jhv-diff">
-                                <MarkdownContent :source="'```diff\n' + generateDiff(value[pair.oldKey], value[pair.newKey]) + '\n```'" />
+                            <div class="jhv-read-diff">
+                                <JhvEditorToolbar mode="diff" :editor-ref="readDiffEditorRefs[pair.baseName]">
+                                    <template #default="{ wordWrap: ww, sideBySide: sbs, editorReady }">
+                                        <DiffEditor
+                                            v-if="editorReady"
+                                            :ref="el => readDiffEditorRefs[pair.baseName] = el"
+                                            :original="value[pair.oldKey] ?? ''"
+                                            :modified="value[pair.newKey] ?? ''"
+                                            :language="resolveJhvLanguage(overrides[pair.newKey] ?? siblingOverrides[pair.newKey])"
+                                            :read-only="true"
+                                            :word-wrap="ww"
+                                            :side-by-side="sbs"
+                                            :collapse-unchanged="true"
+                                        />
+                                    </template>
+                                </JhvEditorToolbar>
                             </div>
                             <details class="jhv-diff-originals">
                                 <summary class="jhv-diff-originals-toggle">Old/new values</summary>
@@ -1126,6 +1130,24 @@ function generateDiff(oldStr, newStr) {
     font-style: italic;
 }
 
+.jhv-read-diff {
+    margin-left: var(--wa-space-m);
+}
+
+/* Height is constrained on the outer container — editors size to content.
+   Same pattern as ToolDiffViewer: max-height + overflow + height:auto overrides. */
+.jhv-read-diff :deep(.jhv-toolbar-body) {
+    max-height: 20rem;
+    overflow: auto;
+    border-radius: var(--wa-border-radius-m);
+}
+
+.jhv-read-diff :deep(.diff-editor),
+.jhv-read-diff :deep(.cm-mergeView),
+.jhv-read-diff :deep(.cm-editor) {
+    height: auto;
+}
+
 .jhv-diff-originals {
     margin-top: var(--wa-space-m);
     margin-left: var(--wa-space-m);
@@ -1167,10 +1189,20 @@ function generateDiff(oldStr, newStr) {
 }
 
 .jhv-edit-diff {
-    border-radius: var(--wa-form-control-border-radius);
-    overflow: hidden;
-    border: var(--wa-form-control-border-width) var(--wa-form-control-border-style) var(--wa-form-control-border-color);
     margin-left: var(--wa-space-m);
+}
+
+.jhv-edit-diff :deep(.jhv-toolbar-body) {
+    max-height: 20rem;
+    overflow: auto;
+    border-radius: var(--wa-form-control-border-radius);
+    border: var(--wa-form-control-border-width) var(--wa-form-control-border-style) var(--wa-form-control-border-color);
+}
+
+.jhv-edit-diff :deep(.diff-editor),
+.jhv-edit-diff :deep(.cm-mergeView),
+.jhv-edit-diff :deep(.cm-editor) {
+    height: auto;
 }
 
 .jhv-diff-header {
