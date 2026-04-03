@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import multiprocessing
 import queue
 from contextlib import suppress
 from dataclasses import dataclass, field
-from multiprocessing import Event as MPEvent, Process, Queue
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
@@ -27,11 +27,18 @@ from twicc.startup_progress import broadcast_startup_progress
 
 # NOTE: Django model imports (twicc.core.models, twicc.compute, twicc.compute_batch,
 # twicc.core.serializers) are intentionally NOT imported at module level.
-# On macOS, multiprocessing uses "spawn" mode, which re-imports this module in
-# the child process before django.setup() runs. Top-level model imports would
-# trigger AppRegistryNotReady. All such imports are done inside functions instead.
+# The "spawn" start method re-imports this module in the child process before
+# django.setup() runs. Top-level model imports would trigger AppRegistryNotReady.
+# All such imports are done inside functions instead.
 
 logger = logging.getLogger(__name__)
+
+# Use "spawn" start method to avoid fork-safety issues.
+# The default "fork" method on Linux can deadlock when the parent process has
+# multiple threads (event loop, sync_to_async thread pool, etc.) because the
+# child inherits all locks in their current state but the threads that held them
+# no longer exist. "spawn" starts a fresh Python interpreter, avoiding this entirely.
+_mp_ctx = multiprocessing.get_context("spawn")
 
 
 @dataclass
@@ -42,11 +49,11 @@ class ComputeContext:
     that need access to the compute infrastructure.
     """
 
-    command_queue: Queue = field(default_factory=Queue)
-    result_queue: Queue = field(default_factory=Queue)
-    worker_stop_event: MPEvent = field(default_factory=MPEvent)
+    command_queue: _mp_ctx.Queue = field(default_factory=_mp_ctx.Queue)
+    result_queue: _mp_ctx.Queue = field(default_factory=_mp_ctx.Queue)
+    worker_stop_event: _mp_ctx.Event = field(default_factory=_mp_ctx.Event)
     stop_event: asyncio.Event = field(default_factory=asyncio.Event)
-    process: Process | None = None
+    process: _mp_ctx.Process | None = None
 
 
 def stop_background_task(ctx: ComputeContext) -> None:
@@ -103,7 +110,7 @@ def stop_background_task(ctx: ComputeContext) -> None:
 # =============================================================================
 
 
-def compute_worker_main(command_queue: Queue, result_queue: Queue, stop_event: MPEvent) -> None:
+def compute_worker_main(command_queue, result_queue, stop_event) -> None:
     """
     Main function running in the compute worker process.
 
@@ -112,6 +119,14 @@ def compute_worker_main(command_queue: Queue, result_queue: Queue, stop_event: M
 
     This function runs in a separate process and must initialize Django itself.
     """
+    import signal
+
+    # Ensure default signal handling — with "fork" mode the child would inherit
+    # the parent's custom SIGTERM/SIGINT handlers that don't actually exit.
+    # With "spawn" this is already the case, but we set it explicitly as a safeguard.
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
     import django
     django.setup()
 
@@ -132,7 +147,7 @@ def compute_worker_main(command_queue: Queue, result_queue: Queue, stop_event: M
             # Blocking get with timeout (allows checking for stop signal)
             try:
                 command = command_queue.get(timeout=0.5)
-            except Exception:
+            except queue.Empty:
                 continue
 
             # Check stop event again after getting command
@@ -181,7 +196,7 @@ def compute_worker_main(command_queue: Queue, result_queue: Queue, stop_event: M
         try:
             command_queue.get_nowait()
             drained += 1
-        except Exception:
+        except queue.Empty:
             break
     if drained:
         worker_logger.info(f"Compute worker drained {drained} commands from queue")
@@ -193,8 +208,8 @@ def start_compute_process(ctx: ComputeContext) -> None:
     """Start the compute worker process if not already running."""
     if ctx.process is None or not ctx.process.is_alive():
         # Reset stop event for new process
-        ctx.worker_stop_event = MPEvent()
-        ctx.process = Process(
+        ctx.worker_stop_event = _mp_ctx.Event()
+        ctx.process = _mp_ctx.Process(
             target=compute_worker_main,
             args=(ctx.command_queue, ctx.result_queue, ctx.worker_stop_event),
             daemon=True,
