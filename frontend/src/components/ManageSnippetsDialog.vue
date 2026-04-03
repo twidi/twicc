@@ -79,6 +79,7 @@ function openAddForm() {
         label: '',
         snippet: '',
         appendEnter: true,
+        openInNewTab: false,
         scope: props.currentProjectId ? `project:${props.currentProjectId}` : 'global',
     }
     errorMessage.value = ''
@@ -97,6 +98,7 @@ function openEditForm(scope, index) {
         label: snippet.label,
         snippet: snippet.snippet,
         appendEnter: snippet.appendEnter,
+        openInNewTab: snippet.openInNewTab || false,
         scope: scope,
     }
     errorMessage.value = ''
@@ -115,6 +117,7 @@ function openDuplicateForm(scope, index) {
         label: snippet.label,
         snippet: snippet.snippet,
         appendEnter: snippet.appendEnter,
+        openInNewTab: snippet.openInNewTab || false,
         scope: scope,  // defaults to source scope
     }
     errorMessage.value = ''
@@ -193,6 +196,7 @@ function handleSave() {
         label: trimmedLabel,
         snippet: trimmedSnippet,
         appendEnter: formData.value.appendEnter,
+        openInNewTab: formData.value.openInNewTab,
         placeholders: extractPlaceholders(trimmedSnippet),
     }
 
@@ -324,7 +328,10 @@ defineExpose({ open, close })
 
                         <!-- Display text -->
                         <div class="snippet-display">
-                            <span class="snippet-label">{{ snippet.label }}</span>
+                            <span class="snippet-label">
+                                {{ snippet.label }}
+                                <wa-icon v-if="snippet.openInNewTab" name="arrow-up-right-from-square" class="new-tab-badge"></wa-icon>
+                            </span>
                             <span class="snippet-text-preview">{{ snippet.snippet }}{{ snippet.appendEnter ? '↵' : '' }}</span>
                         </div>
 
@@ -401,7 +408,7 @@ defineExpose({ open, close })
                 </div>
             </div>
 
-            <!-- Append Enter checkbox + Scope dropdown on same row -->
+            <!-- Options checkboxes + Scope dropdown on same row -->
             <div class="form-options-row">
                 <!-- Append Enter -->
                 <wa-checkbox
@@ -410,6 +417,15 @@ defineExpose({ open, close })
                     size="small"
                 >
                     Append final Enter
+                </wa-checkbox>
+
+                <!-- Open in new tab -->
+                <wa-checkbox
+                    :checked="formData.openInNewTab"
+                    @change="formData.openInNewTab = $event.target.checked"
+                    size="small"
+                >
+                    Open in new tab
                 </wa-checkbox>
 
                 <!-- Scope select -->
@@ -601,6 +617,13 @@ defineExpose({ open, close })
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.new-tab-badge {
+    font-size: 0.75em;
+    opacity: 0.6;
+    vertical-align: middle;
+    margin-left: 0.25em;
 }
 
 .snippet-text-preview {

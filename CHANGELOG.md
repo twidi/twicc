@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Context-aware terminal scroll across all modes (normal, tmux, alternate screen) on both mobile and desktop, including scroll-during-selection with an indexed text buffer for tmux (with some inspiration from a commit by @dguerizec)
 - Terminal Ctrl+C copies selected text to clipboard, ESC cancels selection and returns to bottom
 - Auto-restart sessions with active cron jobs when they die from API errors or crashes (infinite retry with exponential backoff, max 5 min between attempts)
+- Allow opening multiple terminal sessions simultaneously, with better presets handling
 
 ### Changed
 

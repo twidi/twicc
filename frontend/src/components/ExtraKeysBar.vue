@@ -9,11 +9,14 @@ const props = defineProps({
     isTouchDevice: { type: Boolean, default: false },
     combos: { type: Array, default: () => [] },
     snippets: { type: Array, default: () => [] },
+    terminals: { type: Array, default: () => [] },
+    activeTerminalIndex: { type: Number, default: 0 },
 })
 
 const emit = defineEmits([
     'key-input', 'modifier-toggle', 'paste',
     'combo-press', 'snippet-press', 'snippet-disabled-press',
+    'snippet-send-to',
     'manage-combos', 'manage-snippets',
 ])
 
@@ -141,6 +144,12 @@ function handleSnippetPointerDown(event, snippet) {
     emit('snippet-press', snippet)
 }
 
+function handleSnippetSendTo(event, snippet) {
+    const value = event.detail?.item?.value
+    if (!value) return
+    emit('snippet-send-to', snippet, value)
+}
+
 // ── CSS classes for a key button ────────────────────────────────────
 function keyClasses(keyDef) {
     return {
@@ -225,14 +234,42 @@ function keyClasses(keyDef) {
             <template v-else-if="activeTab === 'snippets'">
                 <template v-if="snippets.length > 0">
                     <template v-for="(snippet, i) in snippets" :key="'snippet-' + i">
-                        <button
-                            :id="snippet._disabled ? `disabled-snippet-${i}` : undefined"
-                            class="extra-key"
-                            :class="{ 'snippet-disabled': snippet._disabled }"
-                            @pointerdown="handleSnippetPointerDown($event, snippet)"
-                        >
-                            {{ snippet.label }}
-                        </button>
+                        <div class="snippet-group">
+                            <button
+                                :id="snippet._disabled ? `disabled-snippet-${i}` : undefined"
+                                class="extra-key snippet-main"
+                                :class="{ 'snippet-disabled': snippet._disabled }"
+                                @pointerdown="handleSnippetPointerDown($event, snippet)"
+                            >
+                                {{ snippet.label }}
+                                <wa-icon v-if="snippet.openInNewTab" name="arrow-up-right-from-square" class="snippet-new-tab-icon"></wa-icon>
+                            </button>
+                            <wa-dropdown
+                                v-if="!snippet._disabled"
+                                placement="top-start"
+                                @wa-select="(e) => handleSnippetSendTo(e, snippet)"
+                            >
+                                <button
+                                    slot="trigger"
+                                    class="extra-key snippet-arrow"
+                                    @pointerdown.prevent
+                                >
+                                    <wa-icon name="chevron-up"></wa-icon>
+                                </button>
+                                <wa-dropdown-item
+                                    v-for="term in terminals"
+                                    :key="term.index"
+                                    :value="String(term.index)"
+                                >
+                                    {{ term.label }}<template v-if="term.index === activeTerminalIndex"> (current)</template>
+                                </wa-dropdown-item>
+                                <wa-divider></wa-divider>
+                                <wa-dropdown-item value="new">
+                                    <wa-icon slot="prefix" name="plus"></wa-icon>
+                                    New tab
+                                </wa-dropdown-item>
+                            </wa-dropdown>
+                        </div>
                         <AppTooltip v-if="snippet._disabled" :for="`disabled-snippet-${i}`">
                             {{ snippet._disabledReason }}
                         </AppTooltip>
@@ -332,6 +369,7 @@ button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: calc(var(--wa-form-control-padding-inline) / 2);
     border-radius: var(--wa-border-radius-s);
     cursor: pointer;
     transition: background-color 0.1s, border-color 0.1s, transform 0.1s;
@@ -339,6 +377,10 @@ button {
     -webkit-user-select: none;
     user-select: none;
     line-height: 1;
+}
+
+.extra-key:has(wa-icon) {
+    padding-right: calc(var(--wa-form-control-padding-inline) / 2);
 }
 
 .extra-key:hover {
@@ -384,6 +426,38 @@ button {
     border-color: var(--wa-color-brand-border-normal);
     color: var(--wa-color-brand-on-normal);
     box-shadow: 0 0 var(--wa-space-xs) var(--wa-color-brand-fill-quiet), inset 0 0 0 1px var(--wa-color-brand-border-normal);
+}
+
+/* ── Snippet split-button group ───────────────────────────────────── */
+.snippet-group {
+    display: inline-flex;
+    align-items: stretch;
+}
+
+.snippet-group .snippet-main {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.snippet-group .snippet-arrow {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: none;
+    min-width: unset;
+    padding: 0 0.4rem;
+    font-size: var(--wa-font-size-3xs);
+    color: var(--wa-color-text-quiet);
+    transition: background-color 0.1s, transform 0.1s;
+}
+
+.snippet-new-tab-icon {
+    font-size: 0.85em;
+}
+
+/* When there's no arrow (disabled snippet), keep normal border-radius */
+.snippet-group .snippet-main:last-child {
+    border-top-right-radius: var(--wa-border-radius-s);
+    border-bottom-right-radius: var(--wa-border-radius-s);
 }
 
 /* ── Disabled snippets ────────────────────────────────────────────── */

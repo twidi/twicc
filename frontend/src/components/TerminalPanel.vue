@@ -113,6 +113,9 @@ function removeTerminalTab(index) {
         const prevTerminal = terminals.value[Math.max(0, idx - 1)]
         activeIndex.value = prevTerminal?.index ?? 0
     }
+    // Eagerly remove from store so that syncTerminalsFromBackend doesn't
+    // re-add this tab before the backend's terminal_killed broadcast arrives.
+    terminalTabsStore.removeIndex(props.sessionId, index)
 }
 
 /** Kill a secondary terminal: send WS message to clean up tmux + remove tab. */
@@ -174,6 +177,91 @@ function handleRename(index, label) {
             terminal_index: index,
             label,
         })
+    }
+}
+
+// --- Snippet helpers ---
+
+const SNIPPET_LABEL_MAX_LENGTH = 30
+
+/**
+ * Send a snippet to a terminal API, reconnecting first if the terminal
+ * is disconnected. If already connected, sends immediately.
+ */
+function sendSnippetToApi(api, snippet) {
+    if (api.isConnected) {
+        api.handleSnippetPress(snippet)
+        return
+    }
+    // Terminal is disconnected — reconnect and send once ready
+    api.reconnect()
+    const stopWatch = watch(
+        () => api.isConnected,
+        (connected) => {
+            if (connected) {
+                stopWatch()
+                api.handleSnippetPress(snippet)
+            }
+        },
+    )
+    setTimeout(() => stopWatch(), 10000)
+}
+
+// --- Snippet dispatch (main button click) ---
+
+function handleSnippetPress(snippet) {
+    if (snippet.openInNewTab) {
+        handleSnippetSendTo(snippet, 'new')
+        return
+    }
+    const api = activeApi.value
+    if (!api) return
+    sendSnippetToApi(api, snippet)
+}
+
+// --- Send snippet to a specific terminal target ---
+
+function handleSnippetSendTo(snippet, target) {
+    if (target === 'new') {
+        // Clean the snippet label (same sanitization as TerminalRenameDialog)
+        const label = snippet.label.trim().slice(0, SNIPPET_LABEL_MAX_LENGTH)
+
+        // Create a new terminal tab and name it after the snippet
+        const newIndex = nextIndex.value
+        createTerminal()
+        const term = terminals.value.find(t => t.index === newIndex)
+        if (term && label) {
+            term.label = label
+        }
+
+        // Once connected: send the snippet and persist the label to tmux
+        const stopWatch = watch(
+            () => terminalApis.get(newIndex)?.isConnected,
+            (connected) => {
+                if (connected) {
+                    stopWatch()
+                    terminalApis.get(newIndex)?.handleSnippetPress?.(snippet)
+                    if (usesTmux.value && label) {
+                        sendWsMessage({
+                            type: 'rename_terminal',
+                            session_id: props.sessionId,
+                            terminal_index: newIndex,
+                            label,
+                        })
+                    }
+                }
+            },
+            { immediate: true },
+        )
+        // Safety: stop watching after 10 seconds to avoid leaks
+        setTimeout(() => stopWatch(), 10000)
+    } else {
+        const targetIndex = Number(target)
+        const api = terminalApis.get(targetIndex)
+        if (api) {
+            sendSnippetToApi(api, snippet)
+            activeIndex.value = targetIndex
+        }
     }
 }
 
@@ -531,11 +619,14 @@ onBeforeUnmount(() => {
             :is-touch-device="settingsStore.isTouchDevice"
             :combos="terminalConfigStore.combos"
             :snippets="snippetsForProject"
+            :terminals="terminals"
+            :active-terminal-index="activeIndex"
             @key-input="(...args) => activeApi?.handleExtraKeyInput?.(...args)"
             @modifier-toggle="(...args) => activeApi?.handleExtraKeyModifierToggle?.(...args)"
             @paste="() => activeApi?.handleExtraKeyPaste?.()"
             @combo-press="(...args) => activeApi?.handleComboPress?.(...args)"
-            @snippet-press="(...args) => activeApi?.handleSnippetPress?.(...args)"
+            @snippet-press="handleSnippetPress"
+            @snippet-send-to="handleSnippetSendTo"
             @snippet-disabled-press="(snippet) => toast.warning(snippet._disabledReason)"
             @manage-combos="manageCombosDialogRef?.open()"
             @manage-snippets="manageSnippetsDialogRef?.open()"
@@ -602,6 +693,7 @@ onBeforeUnmount(() => {
 }
 .terminal-tab-nav wa-tab[active] {
     margin-block-end: 0;
+    color: var(--wa-color-brand);
 }
 .add-terminal-button {
     font-size: var(--wa-font-size-3xs);
