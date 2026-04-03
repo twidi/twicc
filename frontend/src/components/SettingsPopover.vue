@@ -44,7 +44,10 @@ const activeSectionObj = computed(() =>
     sections.find(s => s.id === activeSection.value)
 )
 
-const activeSectionLabel = computed(() => activeSectionObj.value?.label ?? '')
+const activeSectionLabel = computed(() => {
+    if (activeSection.value === 'shortcuts') return 'Keyboard shortcuts'
+    return activeSectionObj.value?.label ?? ''
+})
 
 function selectSection(id) {
     activeSection.value = id
@@ -57,6 +60,61 @@ function selectSection(id) {
 function goBackToNav() {
     mobileShowContent.value = false
 }
+
+// -- Keyboard shortcuts data --
+
+const shortcutGroups = computed(() => {
+    const mod = store.isMac ? '⌘' : 'Ctrl'
+    return [
+        {
+            label: 'Global',
+            shortcuts: [
+                { keys: [mod, 'K'], description: 'Open command palette' },
+                { keys: [mod, 'Shift', 'F'], description: 'Open full-text search' },
+            ]
+        },
+        {
+            label: 'Session tabs',
+            shortcuts: [
+                { keys: ['Alt', 'Shift', '1–4'], description: 'Jump to tab (Chat, Files, Git, Terminal)' },
+                { keys: ['Alt', 'Shift', '←/→'], description: 'Previous / next tab' },
+                { keys: ['Alt', 'Shift', '↑/↓'], description: 'Last visited tab' },
+            ]
+        },
+        {
+            label: 'Terminal tabs',
+            shortcuts: [
+                { keys: ['Alt', 'Ctrl', 'Shift', '1–9'], description: 'Jump to terminal tab N' },
+                { keys: ['Alt', 'Ctrl', 'Shift', '←/→'], description: 'Previous / next terminal tab' },
+                { keys: ['Alt', 'Ctrl', 'Shift', '↑/↓'], description: 'Last visited terminal tab' },
+            ]
+        },
+        {
+            label: 'Message input',
+            shortcuts: [
+                { keys: [mod, '↵'], description: 'Send message' },
+                { keys: ['@'], description: 'Insert file path (after a space or at start)' },
+                { keys: ['/'], description: 'Slash commands (as first character)' },
+            ]
+        },
+        {
+            label: 'In-session search',
+            shortcuts: [
+                { keys: [mod, 'F'], description: 'Find in current session' },
+                { keys: ['F3'], description: 'Next match (works without focus)' },
+                { keys: ['Shift', 'F3'], description: 'Previous match (works without focus)' },
+            ]
+        },
+        {
+            label: 'Terminal',
+            shortcuts: [
+                { keys: ['Ctrl', 'C'], description: 'Copy selected text (instead of SIGINT)' },
+                { keys: ['Ctrl', 'Shift', 'C'], description: 'Copy selected text' },
+                { keys: ['Ctrl', 'D'], description: 'Send EOF / disconnect' },
+            ]
+        },
+    ]
+})
 
 // Theme options for the select
 const themeOptions = [
@@ -424,6 +482,14 @@ function onPopoverShow() {
                         {{ section.navLabel || section.label }}
                         <wa-icon v-if="section.synced" name="cloud" class="synced-icon"></wa-icon>
                     </button>
+                    <wa-divider class="settings-nav-divider"></wa-divider>
+                    <button
+                        class="settings-nav-item"
+                        :class="{ active: activeSection === 'shortcuts' }"
+                        @click="selectSection('shortcuts')"
+                    >
+                        Shortcuts
+                    </button>
                 </nav>
 
                 <wa-divider class="settings-vertical-divider" orientation="vertical"></wa-divider>
@@ -784,6 +850,25 @@ function onPopoverShow() {
                     </div>
                 </section>
 
+                <!-- Keyboard Shortcuts Section -->
+                <section v-if="activeSection === 'shortcuts'" class="settings-section shortcuts-section">
+                    <h3 class="settings-section-title">Keyboard shortcuts</h3>
+                    <div v-for="group in shortcutGroups" :key="group.label" class="shortcut-group">
+                        <h4 class="shortcut-group-title">{{ group.label }}</h4>
+                        <div class="shortcut-list">
+                            <div v-for="(shortcut, i) in group.shortcuts" :key="i" class="shortcut-item">
+                                <span class="shortcut-keys">
+                                    <template v-for="(key, j) in shortcut.keys" :key="j">
+                                        <span v-if="j > 0" class="shortcut-plus">+</span>
+                                        <kbd>{{ key }}</kbd>
+                                    </template>
+                                </span>
+                                <span class="shortcut-description">{{ shortcut.description }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
                     </div>
                 </div>
             </div>
@@ -1047,6 +1132,79 @@ function onPopoverShow() {
 
 .synced-icon {
     color: var(--wa-color-brand);
+}
+
+/* -- Nav divider (horizontal, between settings sections and extra items) -- */
+
+.settings-nav-divider {
+    --spacing: var(--wa-space-2xs);
+}
+
+/* -- Keyboard shortcuts section -- */
+
+.shortcuts-section {
+    gap: var(--wa-space-l) !important;
+}
+
+.shortcut-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-xs);
+}
+
+.shortcut-group-title {
+    font-size: var(--wa-font-size-s);
+    font-weight: var(--wa-font-weight-semibold);
+    color: var(--wa-color-brand);
+    margin: 0;
+}
+
+.shortcut-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-3xs);
+}
+
+.shortcut-item {
+    display: flex;
+    align-items: baseline;
+    gap: var(--wa-space-m);
+    font-size: var(--wa-font-size-s);
+    line-height: 1.6;
+}
+
+.shortcut-keys {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
+    flex-shrink: 0;
+    min-width: 8rem;
+}
+
+.shortcut-plus {
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-2xs);
+    padding: 0 1px;
+}
+
+kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.4em;
+    padding: 0.1em var(--wa-space-2xs);
+    font-family: var(--wa-font-family-sans);
+    font-size: var(--wa-font-size-xs);
+    line-height: 1.4;
+    background: var(--wa-color-surface);
+    border: 1px solid var(--wa-color-border);
+    border-radius: var(--wa-border-radius-s);
+    box-shadow: 0 1px 0 var(--wa-color-border);
+    white-space: nowrap;
+}
+
+.shortcut-description {
+    color: var(--wa-color-text);
 }
 
 /* -- Footer -- */
