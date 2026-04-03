@@ -25,6 +25,7 @@ from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny, 
 from twicc.agent.manager import get_process_manager
 from twicc.agent.states import ProcessInfo, ProcessState, serialize_process_info
 from twicc.synced_settings import read_synced_settings, write_synced_settings
+from twicc.message_snippets import read_message_snippets_config, write_message_snippets_config
 from twicc.terminal_config import read_terminal_config, write_terminal_config
 from twicc.usage_task import get_usage_message_for_connection
 from twicc.terminal import terminal_application
@@ -519,6 +520,10 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             terminal_config = await sync_to_async(read_terminal_config)()
             await self.send_json({"type": "terminal_config_updated", "config": terminal_config})
 
+        if self._should_send("message_snippets_updated"):
+            message_snippets = await sync_to_async(read_message_snippets_config)()
+            await self.send_json({"type": "message_snippets_updated", "config": message_snippets})
+
         # Send current startup progress (if any phase is still active)
         if self._should_send("startup_progress"):
             from twicc.startup_progress import get_startup_progress
@@ -587,6 +592,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         elif msg_type == "update_terminal_config":
             await self._handle_update_terminal_config(content)
+
+        elif msg_type == "update_message_snippets":
+            await self._handle_update_message_snippets(content)
 
         elif msg_type == "session_viewed":
             await self._handle_session_viewed(content)
@@ -1042,6 +1050,27 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                 "type": "broadcast",
                 "data": {
                     "type": "terminal_config_updated",
+                    "config": config,
+                },
+            },
+        )
+
+    async def _handle_update_message_snippets(self, content: dict) -> None:
+        """Handle message snippets config update from client."""
+        config = content.get("config")
+        if not isinstance(config, dict):
+            logger.warning("Invalid message snippets update: config is not a dict")
+            return
+
+        await sync_to_async(write_message_snippets_config)(config)
+
+        # Broadcast to all connected clients
+        await self.channel_layer.group_send(
+            "updates",
+            {
+                "type": "broadcast",
+                "data": {
+                    "type": "message_snippets_updated",
                     "config": config,
                 },
             },

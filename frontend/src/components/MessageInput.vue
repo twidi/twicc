@@ -15,6 +15,8 @@ import AppTooltip from './AppTooltip.vue'
 import FilePickerPopup from './FilePickerPopup.vue'
 import SlashCommandPickerPopup from './SlashCommandPickerPopup.vue'
 import MessageHistoryPickerPopup from './MessageHistoryPickerPopup.vue'
+import MessageSnippetsBar from './MessageSnippetsBar.vue'
+import MessageSnippetsDialog from './MessageSnippetsDialog.vue'
 
 const props = defineProps({
     sessionId: {
@@ -49,6 +51,9 @@ const fileInputRef = ref(null)
 const attachButtonId = useId()
 const settingsButtonId = useId()
 const textareaAnchorId = useId()
+
+// Message snippets dialog
+const messageSnippetsDialogRef = ref(null)
 
 // File picker popup state (@ mention)
 const filePickerRef = ref(null)
@@ -1265,6 +1270,15 @@ function addAllCommentsToMessage() {
     codeCommentsStore.removeAllSessionComments(props.projectId, props.sessionId)
 }
 
+// ── Message snippets ────────────────────────────────────────────────
+function handleSnippetPress(snippet) {
+    insertTextAtCursor(snippet.text)
+}
+
+function openMessageSnippetsDialog() {
+    messageSnippetsDialogRef.value?.open()
+}
+
 defineExpose({ insertTextAtCursor })
 </script>
 
@@ -1304,38 +1318,56 @@ defineExpose({ insertTextAtCursor })
             @focus="adjustTextareaHeight"
         ></wa-textarea>
 
-        <!-- File picker popup triggered by @ -->
-        <FilePickerPopup
-            ref="filePickerRef"
-            :session-id="sessionId"
+        <!-- Popups teleported out of the flex container -->
+        <Teleport to="body">
+            <!-- File picker popup triggered by @ -->
+            <FilePickerPopup
+                ref="filePickerRef"
+                :session-id="sessionId"
+                :project-id="projectId"
+                :anchor-id="textareaAnchorId"
+                @select="onFilePickerSelect"
+                @close="onFilePickerClose"
+                @filter-change="onFilePickerFilterChange"
+            />
+
+            <!-- Slash command picker popup triggered by / at start -->
+            <SlashCommandPickerPopup
+                ref="slashPickerRef"
+                :project-id="projectId"
+                :anchor-id="textareaAnchorId"
+                @select="onSlashCommandSelect"
+                @close="onSlashCommandPickerClose"
+                @filter-change="onSlashPickerFilterChange"
+            />
+
+            <!-- Message history picker popup triggered by ! at start -->
+            <MessageHistoryPickerPopup
+                ref="historyPickerRef"
+                :project-id="projectId"
+                :session-id="sessionId"
+                :anchor-id="textareaAnchorId"
+                :synthetic-message-text="optimisticMessageText"
+                @select="onHistoryMessageSelect"
+                @close="onHistoryPickerClose"
+                @filter-change="onHistoryPickerFilterChange"
+            />
+        </Teleport>
+
+        <!-- Message snippets bar -->
+        <MessageSnippetsBar
             :project-id="projectId"
-            :anchor-id="textareaAnchorId"
-            @select="onFilePickerSelect"
-            @close="onFilePickerClose"
-            @filter-change="onFilePickerFilterChange"
+            @snippet-press="handleSnippetPress"
+            @manage-snippets="openMessageSnippetsDialog"
         />
 
-        <!-- Slash command picker popup triggered by / at start -->
-        <SlashCommandPickerPopup
-            ref="slashPickerRef"
-            :project-id="projectId"
-            :anchor-id="textareaAnchorId"
-            @select="onSlashCommandSelect"
-            @close="onSlashCommandPickerClose"
-            @filter-change="onSlashPickerFilterChange"
-        />
-
-        <!-- Message history picker popup triggered by ! at start -->
-        <MessageHistoryPickerPopup
-            ref="historyPickerRef"
-            :project-id="projectId"
-            :session-id="sessionId"
-            :anchor-id="textareaAnchorId"
-            :synthetic-message-text="optimisticMessageText"
-            @select="onHistoryMessageSelect"
-            @close="onHistoryPickerClose"
-            @filter-change="onHistoryPickerFilterChange"
-        />
+        <!-- Message snippets dialog (teleported out of the flex container) -->
+        <Teleport to="body">
+            <MessageSnippetsDialog
+                ref="messageSnippetsDialogRef"
+                :current-project-id="projectId"
+            />
+        </Teleport>
 
         <div class="message-input-toolbar">
             <!-- Attachments row: button on left, thumbnails on right -->
@@ -1552,7 +1584,7 @@ defineExpose({ insertTextAtCursor })
 .message-input {
     display: flex;
     flex-direction: column;
-    gap: var(--wa-space-s);
+    gap: var(--wa-space-2xs);
     padding: var(--wa-space-s);
     background: var(--main-header-footer-bg-color);
     container: message-input / inline-size;

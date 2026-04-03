@@ -260,6 +260,16 @@ export function sendTerminalConfig(config) {
 }
 
 /**
+ * Send message snippets config to the backend for persistence.
+ * The backend will broadcast the updated config to all connected clients.
+ * @param {Object} config - The message snippets config
+ * @returns {boolean} - True if message was sent, false if not connected
+ */
+export function sendMessageSnippetsConfig(config) {
+    return sendWsMessage({ type: 'update_message_snippets', config })
+}
+
+/**
  * Build a notification body string from the enriched WebSocket message.
  * Format: "Project: <name>\nSession: <title>" (both truncated).
  *
@@ -696,6 +706,13 @@ export function useWebSocket() {
                 // Lazy import to avoid circular dependency (useWebSocket.js → terminalConfig.js)
                 import('../stores/terminalConfig').then(({ useTerminalConfigStore }) => {
                     useTerminalConfigStore().applyConfig(msg.config)
+                })
+                break
+            case 'message_snippets_updated':
+                // Apply message snippets config from backend (on connect or when another client updates)
+                // Lazy import to avoid circular dependency (useWebSocket.js → messageSnippets.js)
+                import('../stores/messageSnippets').then(({ useMessageSnippetsStore }) => {
+                    useMessageSnippetsStore().applyConfig(msg.config)
                 })
                 break
             case 'terminal_list':
