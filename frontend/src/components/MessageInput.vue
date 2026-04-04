@@ -223,6 +223,15 @@ const isEffortThinkingDisabled = computed(() => {
     return state === 'starting' || state === 'assistant_turn' || state === 'user_turn'
 })
 
+// Force 1M context when session usage exceeds 85% of the 200K window.
+// Only applies when no process is active — prevents starting with a nearly-full 200K window.
+const isContextMaxForced = computed(() => {
+    if (processIsActive.value) return false
+    const sess = store.getSession(props.sessionId)
+    if (!sess?.context_usage) return false
+    return sess.context_usage > CONTEXT_MAX.DEFAULT * 0.85
+})
+
 // Button label based on process state and whether this is a settings-only update
 const buttonLabel = computed(() => {
     const state = processState.value?.state
@@ -386,6 +395,10 @@ function resolveClaudeInChrome(sess) {
 }
 
 function resolveContextMax(sess) {
+    // Force 1M if context usage exceeds 85% of the 200K window
+    if (sess?.context_usage > CONTEXT_MAX.DEFAULT * 0.85) {
+        return CONTEXT_MAX.EXTENDED
+    }
     if ((processIsActive.value || sess?.keep_settings) && sess?.context_max != null) {
         return sess.context_max
     }
@@ -497,6 +510,7 @@ watch(
     () => [settingsStore.getDefaultContextMax, settingsStore.isAlwaysApplyDefaultContextMax],
     () => {
         if (processIsActive.value) return
+        if (isContextMaxForced.value) return
         const sess = store.getSession(props.sessionId)
         if (sess?.keep_settings) return
         const resolved = resolveContextMax(sess)
@@ -580,12 +594,21 @@ watch(
     (newValue) => {
         if (newValue != null) {
             activeContextMax.value = newValue
-            if (!processIsActive.value) {
+            if (!processIsActive.value && !isContextMaxForced.value) {
                 selectedContextMax.value = newValue
             }
         }
     }
 )
+
+// Force 1M context when context_usage crosses the 85% threshold of 200K.
+// This handles the case where the session's usage grows while viewing it.
+watch(isContextMaxForced, (forced) => {
+    if (forced) {
+        selectedContextMax.value = CONTEXT_MAX.EXTENDED
+        activeContextMax.value = CONTEXT_MAX.EXTENDED
+    }
+})
 
 // React when keep_settings data arrives from backend.
 // When turned off on a stopped session, re-resolve all settings so that
@@ -1300,7 +1323,7 @@ function restoreSessionSettings() {
         selectedClaudeInChrome.value = sess.claude_in_chrome
         activeClaudeInChrome.value = sess.claude_in_chrome
     }
-    if (sess.context_max != null) {
+    if (sess.context_max != null && !isContextMaxForced.value) {
         selectedContextMax.value = sess.context_max
         activeContextMax.value = sess.context_max
     }
@@ -1669,13 +1692,17 @@ defineExpose({ insertTextAtCursor })
                                 :value.prop="String(selectedContextMax)"
                                 @change="selectedContextMax = Number($event.target.value)"
                                 size="small"
-                                :disabled="isEffortThinkingDisabled"
+                                :disabled="isEffortThinkingDisabled || isContextMaxForced"
                             >
                                 <wa-option v-for="option in contextMaxOptions" :key="option.value" :value="option.value">
                                     {{ option.label }}
                                 </wa-option>
                             </wa-select>
-                            <span class="setting-help">Cannot be changed while a process is running.</span>
+                            <span class="setting-help">
+                                {{ isContextMaxForced
+                                    ? 'Forced to 1M: context usage exceeds 85% of 200K.'
+                                    : 'Cannot be changed while a process is running.' }}
+                            </span>
                         </div>
                         <div class="setting-row">
                             <label class="setting-label">Effort</label>
