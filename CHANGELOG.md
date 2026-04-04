@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Replace Monaco Editor with CodeMirror 6 for code viewing, editing, and diffs — adds mobile support
 - Better rendering of diffs for Edit and Write tools
 - Reorganize the settings panel with a section navigation sidebar
+- File tree: typing a letter jumps to the next same-level entry starting with that letter
 - Remove toast notification for 15-minute user inactivity timeout
 - Bump `claude-agent-sdk` from 0.1.48 to 0.1.56 (bundled Claude Code CLI: 2.1.71 → 2.1.92)
 

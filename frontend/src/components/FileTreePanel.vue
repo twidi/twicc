@@ -649,6 +649,57 @@ function handleTreeKeydown(event) {
         }
 
         default:
+            // Letter navigation: jump to next same-level sibling whose display
+            // name starts with the typed letter (case-insensitive, wraps around).
+            if (
+                event.key.length === 1
+                && /[a-z]/i.test(event.key)
+                && !event.ctrlKey && !event.metaKey && !event.altKey
+            ) {
+                if (index < 0) return
+
+                const el = items[index]
+                const letter = event.key.toLowerCase()
+
+                // Find the parent container that holds siblings at this level
+                const treeNode = el.closest('.file-tree-node')
+                if (!treeNode) return
+                const parentContainer = treeNode.parentElement
+                if (!parentContainer) return
+
+                // Collect visible siblings (direct children of the same parent)
+                const siblings = Array.from(
+                    parentContainer.querySelectorAll(
+                        ':scope > .file-tree-node > [role="treeitem"]'
+                    )
+                ).filter(sibling => sibling.offsetHeight > 0)
+
+                const siblingIndex = siblings.indexOf(el)
+                if (siblingIndex === -1) return
+
+                const nameStartsWith = (sibling) => {
+                    const name = sibling.querySelector('.node-name')?.textContent || ''
+                    return name.toLowerCase().startsWith(letter)
+                }
+
+                // Search after current position first
+                for (let i = siblingIndex + 1; i < siblings.length; i++) {
+                    if (nameStartsWith(siblings[i])) {
+                        event.preventDefault()
+                        focusItem(siblings[i])
+                        return
+                    }
+                }
+
+                // Wrap around: search from beginning up to current position
+                for (let i = 0; i < siblingIndex; i++) {
+                    if (nameStartsWith(siblings[i])) {
+                        event.preventDefault()
+                        focusItem(siblings[i])
+                        return
+                    }
+                }
+            }
             return  // Don't prevent default for unhandled keys
     }
 }
