@@ -12,6 +12,7 @@ const settingsStore = useSettingsStore()
 
 // Show archived projects setting
 const showArchivedProjects = computed(() => settingsStore.isShowArchivedProjects)
+const hasArchivedProjects = computed(() => store.getProjects.some(p => p.archived))
 
 // Naming hint: dismissed state persisted in localStorage
 const NAMING_HINT_KEY = 'twicc-naming-hint-dismissed'
@@ -74,6 +75,7 @@ function handleToggleShowArchived(event) {
 <template>
     <div class="project-list">
         <wa-switch
+            v-if="hasArchivedProjects"
             size="small"
             class="show-archived-toggle"
             :checked="showArchivedProjects"
