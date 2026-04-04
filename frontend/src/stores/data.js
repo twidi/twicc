@@ -2392,6 +2392,55 @@ export const useDataStore = defineStore('data', {
             }
         },
 
+        // Draft session cleanup
+
+        /**
+         * Clean up orphan draft sessions from IndexedDB.
+         * Reads all draft sessions from IndexedDB and checks against the backend API.
+         * If a session exists on the backend, the draft entry is removed from IndexedDB
+         * (and from the store if it still has draft: true).
+         * Errors are silently ignored — the next cycle will retry.
+         */
+        async cleanupOrphanDraftSessions() {
+            let draftSessions
+            try {
+                draftSessions = await getAllDraftSessions()
+            } catch {
+                return  // IndexedDB error, retry next cycle
+            }
+
+            const entries = Object.entries(draftSessions)
+            if (entries.length === 0) return
+
+            for (const [sessionId, data] of entries) {
+                const projectId = data?.projectId
+                if (!projectId) {
+                    // Corrupted entry — no project ID means we can't check the API, just remove it
+                    deleteDraftSessionFromDb(sessionId).catch(() => {})
+                    if (this.sessions[sessionId]?.draft) {
+                        delete this.sessions[sessionId]
+                    }
+                    continue
+                }
+                try {
+                    const response = await apiFetch(
+                        `/api/projects/${projectId}/sessions/${sessionId}/`,
+                        { method: 'HEAD' }
+                    )
+                    if (response.ok) {
+                        // Session exists on backend — remove the orphan draft
+                        deleteDraftSessionFromDb(sessionId).catch(() => {})
+                        if (this.sessions[sessionId]?.draft) {
+                            delete this.sessions[sessionId]
+                        }
+                    }
+                    // 404 = genuine draft, keep it. Other errors = skip silently.
+                } catch {
+                    // Network error, skip this session
+                }
+            }
+        },
+
         // Title suggestion actions
 
         /**

@@ -98,6 +98,12 @@ dataStore.hydrateDraftSessions().then(() => {
     dataStore.hydrateAttachments()
 })
 
+// Periodically clean up orphan draft sessions (every 2 hours).
+// A draft becomes orphan when its session was created on the backend but the
+// IndexedDB entry was never removed (e.g. tab closed mid-send, crash).
+const DRAFT_CLEANUP_INTERVAL_MS = 2 * 60 * 60 * 1000
+setInterval(() => dataStore.cleanupOrphanDraftSessions(), DRAFT_CLEANUP_INTERVAL_MS)
+
 // Hydrate code comments from IndexedDB (async, non-blocking)
 const codeCommentsStore = useCodeCommentsStore()
 codeCommentsStore.hydrateComments()
