@@ -757,9 +757,11 @@ class ClaudeProcess:
                 stderr=self._log_stderr,
                 max_buffer_size=10 * 1024 * 1024,  # 10 MB — prevent crashes on large tool outputs
                 extra_args={
-                    "chrome": None
+                    "allow-dangerously-skip-permissions": None,
+                    "chrome": None,
                 } if self.claude_in_chrome else {
-                    "no-chrome": None
+                    "allow-dangerously-skip-permissions": None,
+                    "no-chrome": None,
                 },
             )
 
