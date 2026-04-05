@@ -8,6 +8,7 @@ import { useAuthStore } from '../stores/auth'
 import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, MODEL, MODEL_LABELS, EFFORT, EFFORT_LABELS, THINKING, THINKING_LABELS, CLAUDE_IN_CHROME, CLAUDE_IN_CHROME_LABELS, CONTEXT_MAX, CONTEXT_MAX_LABELS } from '../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import AppTooltip from './AppTooltip.vue'
+import ChangelogDialog from './ChangelogDialog.vue'
 
 const router = useRouter()
 const store = useSettingsStore()
@@ -133,6 +134,7 @@ const sessionTimeFormatOptions = [
 ]
 
 const notificationSettingsRef = ref(null)
+const changelogDialogRef = ref(null)
 
 // Settings from store
 const displayMode = computed(() => store.getDisplayMode)
@@ -460,6 +462,10 @@ function onPopoverShow() {
     if (activeSection.value === 'notifications') {
         nextTick(() => notificationSettingsRef.value?.sync())
     }
+}
+
+function openChangelog() {
+    changelogDialogRef.value?.open()
 }
 </script>
 
@@ -894,6 +900,8 @@ function onPopoverShow() {
                 </template>
             </span>
             ·
+            <a href="#" class="settings-footer-changes" @click.prevent="openChangelog">Changes</a>
+            ·
             <a href="https://github.com/sponsors/twidi" target="_blank" rel="noopener" class="settings-footer-sponsor">
                 <span class="settings-footer-sponsor-icon"></span>
                 Sponsor
@@ -924,6 +932,7 @@ function onPopoverShow() {
             </wa-button>
         </footer>
     </wa-popover>
+    <ChangelogDialog ref="changelogDialogRef" />
 </template>
 
 <style scoped>
