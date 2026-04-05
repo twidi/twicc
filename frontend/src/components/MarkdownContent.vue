@@ -156,8 +156,8 @@ function handleLinkClick(event) {
     overflow-x: auto;
     margin-top: 1em;
 }
-markdown-body .highlight pre, .markdown-body pre, .markdown-body code, .markdown-body tt {
-    font-size: 100%;
+.markdown-body .highlight pre, .markdown-body pre, .markdown-body code, .markdown-body tt {
+    font-size: inherit !important;
 }
 .markdown-body pre.shiki[data-language]:not([data-language="text"]) {
     padding-top: 36px;

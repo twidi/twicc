@@ -444,4 +444,10 @@ body .Notivue__content-title {
     }
 }
 
+/* Keep blockquote normal size */
+blockquote {
+    font-family: inherit !important;
+    font-size: inherit !important;
+}
+
 </style>

@@ -4,6 +4,7 @@
 import { toRaw } from 'vue'
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { getAllCodeComments, saveCodeComment, deleteCodeComment } from '../utils/codeCommentsStorage'
+import { getLanguageFromPath } from '../utils/languages'
 
 // ─── Key helpers ────────────────────────────────────────────────────────────
 
@@ -296,10 +297,27 @@ export const useCodeCommentsStore = defineStore('codeComments', {
 // ─── Formatting helpers ─────────────────────────────────────────────────────
 
 /**
+ * Return a backtick fence long enough to avoid conflicts with the content.
+ * Scans for the longest run of consecutive backticks and uses one more.
+ */
+function makeFence(text) {
+    let max = 0
+    const re = /`+/g
+    let m
+    while ((m = re.exec(text)) !== null) {
+        if (m[0].length > max) max = m[0].length
+    }
+    return '`'.repeat(Math.max(3, max + 1))
+}
+
+/**
  * Format a single comment for insertion into the message textarea.
  */
 export function formatComment(comment) {
-    return `\n---\n\`${comment.filePath}\`\n<line number="${comment.lineNumber}">\n${comment.lineText}\n</line>\n<comment>\n${comment.content}\n</comment>`
+    const lang = getLanguageFromPath(comment.filePath) || ''
+    const fence = makeFence(comment.lineText)
+    const quotedComment = comment.content.split('\n').map(line => `> ${line}`).join('\n')
+    return `\n---\nComment on **\`${comment.filePath}\`** line ${comment.lineNumber}:\n${fence}${lang}\n${comment.lineText}\n${fence}\n\n${quotedComment}`
 }
 
 /**

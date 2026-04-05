@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - ![Inline code comments — step 3](frontend/public/whats-new/v1.3/inline-code-comments-3.webp)
   - ![Inline code comments — step 4](frontend/public/whats-new/v1.3/inline-code-comments-4.webp)
   - ![Inline code comments — step 5](frontend/public/whats-new/v1.3/inline-code-comments-5.webp)
+  - ![Inline code comments — step 5](frontend/public/whats-new/v1.3/inline-code-comments-6.webp)
 - Auto-restart sessions with active cron jobs when they die from API errors or crashes (infinite retry with exponential backoff, max 5 min between attempts)
 - Confirmation dialog when stopping or archiving a session that has active cron jobs, warning that crons will be lost
   - ![Cron jobs confirmation dialog](frontend/public/whats-new/v1.3/cron-stop-dialog.webp)
