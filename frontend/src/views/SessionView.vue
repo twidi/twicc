@@ -14,6 +14,7 @@ import FilesPanel from '../components/FilesPanel.vue'
 import GitPanel from '../components/GitPanel.vue'
 import TerminalPanel from '../components/TerminalPanel.vue'
 import AppTooltip from '../components/AppTooltip.vue'
+import ProcessIndicator from '../components/ProcessIndicator.vue'
 import { useCodeCommentsStore } from '../stores/codeComments'
 
 const route = useRoute()
@@ -256,6 +257,14 @@ const activeTabLabel = computed(() => {
         return 'Agent';
     }
     return null
+})
+
+// Process state for the active subagent tab (used in compact header label)
+const activeTabProcessState = computed(() => {
+    const tabId = activeTabId.value
+    if (!tabId.startsWith('agent-')) return null
+    const agentId = tabId.replace('agent-', '')
+    return store.getProcessState(agentId) || null
 })
 
 // Redirect away from git tab if the session has no git repo
@@ -805,6 +814,7 @@ onBeforeUnmount(() => {
             mode="session"
             :active-tab-label="activeTabLabel"
             :active-tab-has-comments="activeTabHasComments"
+            :active-tab-process-state="activeTabProcessState"
         >
             <!-- Compact mode: tab navigation inside the header overlay -->
             <template #compact-extra>
@@ -855,6 +865,11 @@ onBeforeUnmount(() => {
                         >
                             <span class="subagent-tab-content">
                                 <span>Agent "{{ getAgentShortId(tab.agentId) }}"</span>
+                                <ProcessIndicator
+                                    v-if="store.getProcessState(tab.agentId)"
+                                    :state="store.getProcessState(tab.agentId).state"
+                                    size="small"
+                                />
                                 <wa-icon v-if="hasAgentComments(tab.agentId)" name="comment" variant="regular" class="tab-comments-indicator"></wa-icon>
                                 <span class="tab-close-icon" @click.stop="closeTab(tab.id)">
                                     <wa-icon name="xmark" label="Close tab"></wa-icon>
@@ -949,6 +964,11 @@ onBeforeUnmount(() => {
                     >
                         <span class="subagent-tab-content">
                             <span>Agent "{{ getAgentShortId(tab.agentId) }}"</span>
+                            <ProcessIndicator
+                                v-if="store.getProcessState(tab.agentId)"
+                                :state="store.getProcessState(tab.agentId).state"
+                                size="small"
+                            />
                             <wa-icon v-if="hasAgentComments(tab.agentId)" name="comment" variant="regular" class="tab-comments-indicator"></wa-icon>
                             <span class="tab-close-icon" @click.stop="closeTab(tab.id)">
                                 <wa-icon name="xmark" label="Close tab"></wa-icon>

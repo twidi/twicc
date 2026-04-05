@@ -33,6 +33,14 @@ const props = defineProps({
     activeTabHasComments: {
         type: Boolean,
         default: false
+    },
+    /**
+     * Process state for the currently active subagent tab (if any).
+     * Shown in the compact-active-tab-label when an agent tab is active.
+     */
+    activeTabProcessState: {
+        type: Object,
+        default: null
     }
 })
 
@@ -360,7 +368,15 @@ defineExpose({
             <!-- Clickable zone: title + project + context ring + chevron toggle compact mode -->
             <div class="compact-toggle-zone" @click="isCompactExpanded = !isCompactExpanded">
                 <!-- Active tab label: shown only in compact collapsed mode, replacing action buttons -->
-                <span v-if="activeTabLabel" class="compact-active-tab-label">{{ activeTabLabel }}<wa-icon v-if="activeTabHasComments" name="comment" variant="regular" class="compact-tab-comments-indicator"></wa-icon></span>
+                <span v-if="activeTabLabel" class="compact-active-tab-label">
+                    {{ activeTabLabel }}
+                    <ProcessIndicator
+                        v-if="activeTabProcessState"
+                        :state="activeTabProcessState.state"
+                        size="small"
+                    />
+                    <wa-icon v-if="activeTabHasComments" name="comment" variant="regular" class="compact-tab-comments-indicator"></wa-icon>
+                </span>
 
                 <h2 :id="`session-header-${sessionId}-title`">{{ displayName }}</h2>
                 <AppTooltip :for="`session-header-${sessionId}-title`">{{ displayName }}</AppTooltip>
@@ -861,7 +877,9 @@ wa-divider {
         display: none;
     }
     .session-header.compact-collapsed .compact-active-tab-label {
-        display: inline;
+        display: inline-flex;
+        align-items: center;
+        gap: var(--wa-space-2xs);
     }
 
     /* In compact expanded mode: show action buttons, hide active tab label */
