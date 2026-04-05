@@ -4,6 +4,15 @@
 
 A web UI to browse and interact with your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions. View projects, sessions, conversation history, costs, and run Claude agents — all from your browser.
 
+![TWICC screenshot](https://raw.githubusercontent.com/twidi/twicc/main/frontend/public/screenshots/main-2026-04-05.webp)
+
+[![Crafted with love](https://img.shields.io/badge/crafted_with-love-red?style=social&logo=githubsponsors&logoColor=red)](https://github.com/sponsors/twidi)
+[![PyPI version](https://img.shields.io/pypi/v/twicc?logo=pypi&logoColor=blue&style=social)](https://pypi.org/project/twicc/)
+[![Python versions](https://img.shields.io/pypi/pyversions/twicc?logo=pypi&logoColor=blue&style=social)](https://pypi.org/project/twicc/)
+[![GitHub license](https://img.shields.io/github/license/twidi/twicc?logo=github&style=social)](https://github.com/twidi/twicc/blob/main/LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/twidi/twicc?logo=github&style=social)](https://github.com/twidi/twicc/releases)
+[![Twitter](https://img.shields.io/badge/Twitter-Twidi-blue?style=social&logo=x&logoColor=blue)](https://x.com/twidi)
+
 ## Disclaimer
 
 This is a personal project made by Twidi for his own needs. It is freely available and you are welcome to use it however you see fit.
@@ -30,35 +39,43 @@ Then open http://localhost:3500.
 
 ## Features
 
-- Browse all your Claude Code projects and sessions
-- View full conversation history with tool use details
-- Start and interact with Claude agents from the browser
-- Handle tool approvals and answer Claude's questions interactively
-- Full control of model, context window (200K / 1M), effort, thinking and permissions
-- Command palette (Ctrl+K, or Cmd+K on Mac), slash commands (`/`), and file references (`@`)
-- Track costs and token usage per session
-- Daily activity heatmaps
-- Git integration (log, diffs, file browser)
-- Full-text search across all sessions (Ctrl+Shift+F) with in-session search (Ctrl+F)
-- Self-aware: TwiCC ships a Claude Code plugin (with skills) that lets Claude query your projects, sessions, costs, and search history — Claude knows about itself
-- CLI with JSON-output subcommands for scripting (projects, sessions, search, usage…)
-- Cron job persistence: scheduled tasks survive TwiCC restarts and are automatically renewed before expiry — unlike Claude Code's CLI where they are lost on restart and expire after 3 days
-- Claude Code status monitoring (via status.claude.com)
-- Optional password protection
-- Real-time updates via WebSocket
-- Fully mobile-friendly interface
+- **Projects & sessions:** browse all your Claude Code projects and sessions
+- **Conversation history:** view full history with tool use details
+- **Interactive agents:** start and interact with Claude agents from the browser
+- **Tool approvals:** handle tool approvals and answer Claude's questions interactively
+- **Session control:** full control of model, context window (200K / 1M), effort, thinking and permissions
+- **Command palette:** quick access via Ctrl+K (Cmd+K on Mac), slash commands (`/`), and file references (`@`)
+- **Inline code comments:** click a line number in code blocks to annotate, then send formatted review comments to Claude — human review of AI-generated code, right from the browser
+- **Message snippets:** reusable text snippets with placeholder support, scoped globally or per-project
+- **Multiple terminals:** simultaneous terminal sessions with custom snippets, scoped globally or per-project
+- **Costs & usage:** track costs and token usage per session
+- **Activity & quotas:** daily activity heatmaps and graphs, and usage history graphs (utilization & burn rate for 5h and 7-day quotas)
+- **Git integration:** log, diffs, file browser
+- **Full-text search:** across all sessions (Ctrl+Shift+F) with in-session search (Ctrl+F)
+- **Self-aware:** TwiCC ships a Claude Code plugin (with skills) that lets Claude query your projects, sessions, costs, and search history — Claude knows about itself
+- **CLI:** JSON-output subcommands for scripting (projects, sessions, search, usage…)
+- **Cron job persistence:** scheduled tasks survive TwiCC restarts and are automatically renewed before expiry — unlike Claude Code's CLI where they are lost on restart and expire after 3 days
+- **Status monitoring:** Claude Code status monitoring via status.claude.com
+- **Password protection:** optional password protection
+- **Real-time updates:** via WebSocket
+- **Mobile-friendly:** fully responsive interface
 
 ## Remote access
 
 The interface is fully usable on mobile. Combined with a tunnel service like [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) or [ngrok](https://ngrok.com/), you can access TWICC from anywhere and interact with Claude Code on the go.
 
-> **Important:** If you expose TWICC over the internet, make sure to enable password protection (see [Configuration](#configuration) below).
+> **Important:** If you expose TWICC over the internet, make sure to enable password protection (see [Configuration](#configuration) below) and/or use a tunnel service proposing access control features. TWICC does not have built-in access control beyond optional password protection, so securing it properly is crucial when exposed to the internet.
 
 ## Mobile usage
 
-The interface is designed to work well on mobile devices. The terminal includes touch-based text selection (drag to select, auto-copied to clipboard) and scrollbar support.
+The interface is designed to work well on mobile devices. The terminal includes touch-based text selection (drag to select, auto-copied to clipboard), scrollbar support, and several mobile-specific features:
 
-For a comfortable terminal experience on Android, we recommend [Unexpected Keyboard](https://play.google.com/store/apps/details?id=juloo.keyboard2) — a keyboard that natively supports Ctrl, Esc, Tab, and other keys essential for terminal use.
+- **Extra keys bar:** a tabbed bar (Essentials / More / F-keys) with modifier keys (tap for one-shot, double-tap to lock), arrow keys, special characters, paste, and function keys
+- **Custom combos:** define your own key combinations and sequences for quick access
+- **Custom snippets:** reusable text snippets (with placeholder support) for the terminal, scoped globally or per-project
+- **Context-aware scroll:** smooth scrolling across all modes (normal, tmux, alternate screen)
+
+> **Tip:** The author uses [Unexpected Keyboard](https://play.google.com/store/apps/details?id=juloo.keyboard2) on Android for an even better terminal experience — it natively supports Ctrl, Esc, Tab, and other keys that complement TWICC's built-in keys bar.
 
 ## How it works
 
@@ -155,6 +172,12 @@ In `~/.twicc/logs/backend.log`. This file is useful for troubleshooting startup 
 
 **How do I reset the database?**
 Delete `~/.twicc/db/data.sqlite*` and restart TWICC. It will rebuild from Claude Code's source files.
+
+**Is this allowed by Anthropic?**
+TWICC uses the [Claude Agent SDK](https://github.com/anthropics/claude-code-sdk-python) with the official Claude Code system prompt. As of April 2026, this is permitted by Anthropic's terms of service.
+
+**How can I support this project?**
+If you find TWICC useful, consider [sponsoring me on GitHub](https://github.com/sponsors/twidi) — it means a lot and helps keep the project going!
 
 ## License
 
