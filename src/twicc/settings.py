@@ -8,7 +8,24 @@ from twicc.paths import ensure_data_dirs, get_backend_log_path, get_db_path, get
 
 PACKAGE_DIR = Path(__file__).resolve().parent  # src/twicc/
 
-APP_VERSION = importlib.metadata.version("twicc")
+
+def _get_version() -> str:
+    """Get version from pyproject.toml (dev) or installed metadata (wheel).
+
+    In a dev layout (src/twicc/), read pyproject.toml directly so the version
+    stays in sync without reinstalling. In a wheel install, fall back to
+    installed package metadata.
+    """
+    if PACKAGE_DIR.parent.name == "src":
+        pyproject = PACKAGE_DIR.parent.parent / "pyproject.toml"
+        if pyproject.is_file():
+            for line in pyproject.read_text().splitlines():
+                if line.startswith("version"):
+                    return line.split("=", 1)[1].strip().strip('"')
+    return importlib.metadata.version("twicc")
+
+
+APP_VERSION = _get_version()
 
 # Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env)
 # Idempotent: no-op if already loaded by run.py
