@@ -8,6 +8,9 @@ const emit = defineEmits(['close'])
 
 const store = useDataStore()
 
+// Sentinel key for the combined "previous → current" entry in the version selector
+const COMBINED_VERSION_KEY = '__combined__'
+
 const dialogRef = ref(null)
 const loading = ref(false)
 const error = ref(null)
@@ -47,6 +50,15 @@ const badgeLabel = computed(() => {
 const dialogLabel = computed(() => {
     const v = selectedVersion.value
     if (!v) return "What's New"
+    if (v === COMBINED_VERSION_KEY) {
+        const entry = currentEntry.value
+        const prevV = selectedVersionData.value?._previousVersion
+        const sourceV = entry?._sourceVersion
+        if (prevV && sourceV) {
+            return `What's new since v${prevV}: v${sourceV}`
+        }
+        return "What's New"
+    }
     if (/^\d/.test(v)) return `What's New in v${v}`
     return `What's New (${v})`
 })
@@ -54,6 +66,8 @@ const dialogLabel = computed(() => {
 // Find the initial version to display
 function findInitialVersion(versionsList) {
     if (!versionsList.length) return ''
+    // Prefer combined entry when it exists
+    if (versionsList[0]?.version === COMBINED_VERSION_KEY) return COMBINED_VERSION_KEY
     const current = store.currentVersion
     if (current) {
         const match = versionsList.find(v => v.version === current)
@@ -61,6 +75,46 @@ function findInitialVersion(versionsList) {
     }
     // Fallback: latest (first in list)
     return versionsList[0].version
+}
+
+/**
+ * Build a combined version entry spanning all changelogs from after previousVersion
+ * up to and including currentVersion. Uses file order (no semver comparison).
+ * Returns null if no combined entry should be shown.
+ */
+function buildCombinedVersion(allVersions, previousVersion, currentVersion) {
+    if (!previousVersion || !currentVersion || previousVersion === currentVersion) return null
+
+    const currentIdx = allVersions.findIndex(v => v.version === currentVersion)
+    if (currentIdx === -1) return null
+
+    const previousIdx = allVersions.findIndex(v => v.version === previousVersion)
+    // If previous not found in changelog, take everything from current to end
+    const endIdx = previousIdx === -1 ? allVersions.length : previousIdx
+
+    if (currentIdx >= endIdx) return null
+
+    const versionsInRange = allVersions.slice(currentIdx, endIdx)
+
+    // Reverse to display oldest first (changelog file is newest-first)
+    const reversed = [...versionsInRange].reverse()
+
+    const entries = []
+    for (const v of reversed) {
+        for (const entry of v.entries) {
+            entries.push({ ...entry, _sourceVersion: v.version })
+        }
+    }
+
+    if (!entries.length) return null
+
+    return {
+        version: COMBINED_VERSION_KEY,
+        date: null,
+        entries,
+        _previousVersion: previousVersion,
+        _currentVersion: currentVersion,
+    }
 }
 
 async function renderCurrentEntry() {
@@ -100,6 +154,13 @@ function onImageError(event, img) {
     }
 }
 
+function versionOptionLabel(v) {
+    if (v.version === COMBINED_VERSION_KEY) {
+        return `v${v._previousVersion} → v${v._currentVersion}`
+    }
+    return /^\d/.test(v.version) ? `v${v.version}` : v.version
+}
+
 async function open() {
     loading.value = true
     error.value = null
@@ -112,8 +173,10 @@ async function open() {
 
     try {
         const data = await fetchChangelog()
-        versions.value = data
-        selectedVersion.value = findInitialVersion(data)
+        // Build combined entry if we have a previous version different from current
+        const combined = buildCombinedVersion(data, store.previousChangelogVersion, store.currentVersion)
+        versions.value = combined ? [combined, ...data] : data
+        selectedVersion.value = findInitialVersion(versions.value)
         await nextTick()
         await renderCurrentEntry()
     } catch (e) {
@@ -138,7 +201,10 @@ function onKeydown(event) {
     }
 }
 
-function onDialogHide() {
+function onDialogHide(event) {
+    // Only react to the dialog's own hide event, not bubbled events from
+    // child components (e.g. wa-select dropdown closing triggers wa-after-hide too)
+    if (event.target !== dialogRef.value) return
     emit('close')
 }
 
@@ -202,9 +268,9 @@ defineExpose({ open, close })
                         v-for="v in versions"
                         :key="v.version"
                         :value="v.version"
-                        :label="/^\d/.test(v.version) ? `v${v.version}` : v.version"
+                        :label="versionOptionLabel(v)"
                         class="version-option"
-                    ><span class="version-option-content"><span class="version-option-name">{{ /^\d/.test(v.version) ? `v${v.version}` : v.version }}</span><span v-if="v.date" class="version-option-date">{{ v.date }}</span></span></wa-option>
+                    ><span class="version-option-content"><span class="version-option-name">{{ versionOptionLabel(v) }}</span><span v-if="v.date" class="version-option-date">{{ v.date }}</span></span></wa-option>
                 </wa-select>
             </div>
             <div class="changelog-footer-right">

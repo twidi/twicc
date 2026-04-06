@@ -106,6 +106,7 @@ export const useDataStore = defineStore('data', {
         // Server info (from WebSocket messages)
         currentVersion: null,           // string, from server_version message
         pendingChangelogVersion: null,  // string, version to show in changelog dialog after app is ready
+        previousChangelogVersion: null, // string, previousLastChangelogVersionSeen from backend
         latestVersion: null,            // { version, releaseUrl } or null, from update_available message
         claudeStatus: 'operational',    // string, from claude_status message
 
@@ -575,6 +576,9 @@ export const useDataStore = defineStore('data', {
         // Server info
         setCurrentVersion(version) {
             this.currentVersion = version
+        },
+        setPreviousChangelogVersion(version) {
+            this.previousChangelogVersion = version
         },
         setPendingChangelogVersion(version) {
             this.pendingChangelogVersion = version

@@ -584,6 +584,10 @@ export function useWebSocket() {
             case 'server_version':
                 console.log(`[TwiCC] Server version: ${msg.version}`)
                 store.setCurrentVersion(msg.version)
+                // Store previous changelog version for combined changelog entry
+                if (msg.previous_last_changelog_version_seen) {
+                    store.setPreviousChangelogVersion(msg.previous_last_changelog_version_seen)
+                }
                 // Auto-show changelog on version update (backend decides when)
                 if (msg.show_changelog_for_version) {
                     store.setPendingChangelogVersion(msg.show_changelog_for_version)

@@ -447,42 +447,75 @@ async def broadcast_process_state(info: ProcessInfo) -> None:
     )
 
 
-def _get_changelog_version_to_show() -> str | None:
-    """Determine if the changelog should be shown for the current version.
+# Version constants for changelog migration.
+# These represent the versions before we introduced each tracking field,
+# used to bootstrap the values for users upgrading from older releases.
+VERSION_BEFORE_LAST_CHANGELOG_VERSION_SEEN = "1.2.1"
+VERSION_BEFORE_PREVIOUS_LAST_CHANGELOG_VERSION_SEEN = "1.3.0"
 
-    Returns the version string to show, or None if no changelog should be displayed.
 
-    Rules:
-    - No settings.json or empty file → first install → save current version, don't show
-    - lastChangelogVersionSeen missing → existing user updating → show current version
-    - lastChangelogVersionSeen < APP_VERSION → update → show current version
-    - lastChangelogVersionSeen >= APP_VERSION → already seen or downgrade → don't show
+def _resolve_changelog_versions() -> tuple[str, str, bool]:
+    """Resolve changelog tracking versions and determine if forced changelog should be shown.
+
+    Normalizes ``lastChangelogVersionSeen`` and ``previousLastChangelogVersionSeen`` in
+    settings.json, handles migration from older installs, and detects upgrades.
+
+    Returns:
+        A tuple of (previous_last_changelog_version_seen, last_changelog_version_seen, show_forced).
+        ``show_forced`` is True when the user should be presented with the changelog dialog.
     """
-    from twicc.synced_settings import read_synced_settings, write_synced_settings
-
     all_settings = read_synced_settings()
-    last_seen = all_settings.get("lastChangelogVersionSeen")
+    last = all_settings.get("lastChangelogVersionSeen")
+    previous = all_settings.get("previousLastChangelogVersionSeen")
 
-    if last_seen is None:
-        if not all_settings:
-            # Empty or missing settings.json → first install
-            # Save current version so future updates can detect the upgrade
-            all_settings["lastChangelogVersionSeen"] = settings.APP_VERSION
-            write_synced_settings(all_settings)
-            return None
-        else:
-            # Settings exist but no lastChangelogVersionSeen → existing user, first update
-            # Don't save yet — wait for frontend acknowledgment
-            return settings.APP_VERSION
+    # --- Step 1: Normalize / initialize the two variables ---
 
-    # Compare versions using packaging
+    if not all_settings:
+        # No settings or empty → first install
+        all_settings["lastChangelogVersionSeen"] = settings.APP_VERSION
+        all_settings["previousLastChangelogVersionSeen"] = settings.APP_VERSION
+        write_synced_settings(all_settings)
+        return settings.APP_VERSION, settings.APP_VERSION, False
+
+    if last is None and previous is None:
+        # Settings exist but no changelog tracking → user was on ≤ 1.2.1
+        last = VERSION_BEFORE_LAST_CHANGELOG_VERSION_SEEN
+        previous = VERSION_BEFORE_LAST_CHANGELOG_VERSION_SEEN
+    elif last is not None and previous is None:
+        # last exists but no previous → user was on 1.3.0 (first version with lastChangelogVersionSeen)
+        previous = VERSION_BEFORE_PREVIOUS_LAST_CHANGELOG_VERSION_SEEN
+    elif previous is not None and last is None:
+        # Bad manual edit → force last = previous
+        last = previous
+
+    # --- Step 2: Update previous based on upgrade detection ---
+
+    if last == previous:
+        # Historical / fresh-install case → no change to previous
+        pass
+    elif last == settings.APP_VERSION:
+        # No upgrade → no change to previous
+        pass
+    else:
+        # New upgrade: previous != last AND last != currentVersion
+        previous = last
+
+    # --- Persist ---
+
+    all_settings["lastChangelogVersionSeen"] = last
+    all_settings["previousLastChangelogVersionSeen"] = previous
+    write_synced_settings(all_settings)
+
+    # --- Determine if forced show is needed ---
+
+    show_forced = False
     try:
-        if Version(settings.APP_VERSION) > Version(last_seen):
-            return settings.APP_VERSION
+        if Version(settings.APP_VERSION) > Version(last):
+            show_forced = True
     except InvalidVersion:
         pass
 
-    return None
+    return previous, last, show_forced
 
 
 class UpdatesConsumer(AsyncJsonWebsocketConsumer):
@@ -547,9 +580,11 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         # Send server version to the client (used for auto-reload on version change)
         if self._should_send("server_version"):
             msg = {"type": "server_version", "version": settings.APP_VERSION}
-            changelog_version = await sync_to_async(_get_changelog_version_to_show)()
-            if changelog_version:
-                msg["show_changelog_for_version"] = changelog_version
+            previous, last, show_forced = await sync_to_async(_resolve_changelog_versions)()
+            msg["previous_last_changelog_version_seen"] = previous
+            msg["last_changelog_version_seen"] = last
+            if show_forced:
+                msg["show_changelog_for_version"] = settings.APP_VERSION
             await self.send_json(msg)
 
         # Set up broadcast callback on ProcessManager (idempotent, safe to call multiple times)
