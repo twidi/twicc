@@ -381,6 +381,9 @@ watch(activeTabId, (newTabId, oldTabId) => {
 // Direct tab mapping: Alt+Shift+{1,2,3,4} → fixed tabs (subagents are skipped)
 const DIRECT_TAB_MAP = { 1: 'main', 2: 'files', 3: 'git', 4: 'terminal' }
 
+// Flag set by keyboard tab navigation to auto-focus the relevant element on tab arrival
+let pendingKeyboardFocus = false
+
 /**
  * Handle keyboard tab shortcut events dispatched from App.vue.
  * Only the active SessionView instance processes the event (KeepAlive guard).
@@ -389,12 +392,12 @@ function handleTabShortcut(event) {
     if (!isActive.value) return
 
     const { type, index } = event.detail
+    let targetTab = null
 
     if (type === 'direct') {
-        const targetTab = DIRECT_TAB_MAP[index]
+        targetTab = DIRECT_TAB_MAP[index]
         if (!targetTab) return
         if (targetTab === 'git' && !hasGitRepo.value) return
-        switchToTab(targetTab)
     } else if (type === 'prev' || type === 'next') {
         const tabs = orderedTabs.value
         const currentIndex = tabs.indexOf(activeTabId.value)
@@ -402,7 +405,7 @@ function handleTabShortcut(event) {
         const newIndex = type === 'next'
             ? (currentIndex + 1) % tabs.length
             : (currentIndex - 1 + tabs.length) % tabs.length
-        switchToTab(tabs[newIndex])
+        targetTab = tabs[newIndex]
     } else if (type === 'last-visited') {
         const tabs = orderedTabs.value
         // Walk history backwards to find the most recent tab that still exists
@@ -410,11 +413,15 @@ function handleTabShortcut(event) {
         for (let i = tabHistory.length - 1; i >= 0; i--) {
             const tabId = tabHistory[i]
             if (tabId !== activeTabId.value && tabs.includes(tabId)) {
-                switchToTab(tabId)
-                return
+                targetTab = tabId
+                break
             }
         }
     }
+
+    if (!targetTab) return
+    pendingKeyboardFocus = true
+    switchToTab(targetTab)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -460,6 +467,17 @@ function onTabShow(event) {
     const panel = event.detail?.name
     if (!panel) return
     switchToTab(panel)
+
+    // Auto-focus message input when arriving on chat tab via keyboard navigation
+    if (pendingKeyboardFocus) {
+        pendingKeyboardFocus = false
+        if (panel === 'main') {
+            nextTick(() => {
+                const textarea = document.querySelector('.session-view .message-input wa-textarea')
+                if (textarea) textarea.focus()
+            })
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -611,6 +629,7 @@ watch(activeTabId, (newTabId) => {
     if (!isActive.value) return
     if (route.params.sessionId !== sessionId.value) return
     store.setSessionActiveTab(sessionId.value, newTabId)
+
 }, { immediate: true })
 
 /**

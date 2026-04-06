@@ -282,11 +282,33 @@ function handleSnippetSendTo(snippet, target) {
     }
 }
 
-// Focus the active terminal when switching tabs
+// Focus the active terminal when switching terminal sub-tabs
 watch(activeIndex, () => {
     nextTick(() => {
         activeApi.value?.focus?.()
     })
+})
+
+// Focus the active terminal when the terminal panel becomes active.
+// When switching tabs via keyboard, the route (and thus props.active) changes before
+// the wa-tab-group has actually shown the panel, so a single nextTick isn't enough.
+// We retry with requestAnimationFrame (up to ~500ms) to cover both mouse and keyboard.
+watch(() => props.active, (active) => {
+    if (!active) return
+    let attempts = 0
+    const maxAttempts = 30 // ~500ms at 60fps
+    function tryFocus() {
+        const api = activeApi.value
+        if (api) {
+            api.focus?.()
+            // Check if focus actually landed on the terminal's textarea
+            if (document.activeElement?.closest?.('.terminal-container')) return
+        }
+        if (++attempts < maxAttempts) {
+            requestAnimationFrame(tryFocus)
+        }
+    }
+    requestAnimationFrame(tryFocus)
 })
 
 // --- Toolbar action helpers (delegate to activeApi) ---
