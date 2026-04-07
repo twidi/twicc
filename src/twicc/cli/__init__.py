@@ -5,7 +5,15 @@ Lightweight dispatcher — subcommand modules must be imported lazily inside eac
 command function so that they never pay for Django startup.
 """
 
+import os
+
 import typer
+
+# Ensure Django settings are discoverable for all subcommands that call django.setup().
+# Force to twicc.settings unless already set to a twicc-specific variant (e.g. for tests).
+# This prevents a stray DJANGO_SETTINGS_MODULE from another project from breaking twicc.
+if not os.environ.get("DJANGO_SETTINGS_MODULE", "").startswith("twicc.settings"):
+    os.environ["DJANGO_SETTINGS_MODULE"] = "twicc.settings"
 
 
 def _normalize_project_id(project_id: str) -> str:
