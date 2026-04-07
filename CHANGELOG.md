@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `--version` / `-V` flag to the CLI to display the current version without starting the server
+
 ### Changed
 
 - Add permanent install instructions (`uv tool install twicc`) to the README alongside the existing `uvx` quick start

@@ -9,6 +9,8 @@ import os
 
 import typer
 
+from twicc.version import get_version
+
 # Ensure Django settings are discoverable for all subcommands that call django.setup().
 # Force to twicc.settings unless already set to a twicc-specific variant (e.g. for tests).
 # This prevents a stray DJANGO_SETTINGS_MODULE from another project from breaking twicc.
@@ -31,8 +33,17 @@ app = typer.Typer(
 )
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f"twicc {get_version()}")
+        raise typer.Exit()
+
+
 @app.callback()
-def _default(ctx: typer.Context) -> None:
+def _default(
+    ctx: typer.Context,
+    version: bool = typer.Option(False, "--version", "-V", callback=_version_callback, is_eager=True, help="Show version and exit."),
+) -> None:
     """Launch the TwiCC server (default when no subcommand is given)."""
     if ctx.invoked_subcommand is not None:
         return
