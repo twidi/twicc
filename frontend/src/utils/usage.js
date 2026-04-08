@@ -53,11 +53,7 @@ const FIVE_HOURS_MS = 5 * 60 * 60 * 1000
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
- * Smoothing period durations in milliseconds.
- * Used to compute the smoothed burn rate: time is rounded up to the next
- * period boundary so the rate only changes at discrete steps, not every second.
- *   - 1 hour for the 5-hour window
- *   - 24 hours for the 7-day window
+ * Lookback durations in milliseconds for recent burn rate computation.
  */
 const ONE_HOUR_MS = 60 * 60 * 1000
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
@@ -109,45 +105,12 @@ function computeLevel(utilization, rate) {
 }
 
 /**
- * Compute the smoothed burn rate.
- *
- * Instead of dividing utilization by the exact elapsed time (which changes every
- * second), this rounds elapsed time UP to the next smoothing period boundary.
- * The result changes in discrete "staircase" steps — it only moves when a new
- * period boundary is crossed, making it more stable for planning.
- *
- * Formula: utilization / (((floor(T / P) + 1) × P) / W × 100)
- * where T = elapsed time, P = smoothing period, W = total window.
- *
- * @param {number} utilization - Usage percentage (0–100)
- * @param {string} fetchedAt - ISO datetime of when data was fetched
- * @param {string} resetsAt - ISO datetime of when the window resets
- * @param {number} windowMs - Total window duration in ms
- * @param {number} smoothingPeriodMs - Smoothing period in ms (1h for 5h, 24h for 7d)
- * @returns {number|null} Smoothed burn rate, or null if not computable
- */
-function smoothedBurnRate(utilization, fetchedAt, resetsAt, windowMs, smoothingPeriodMs) {
-    if (utilization == null || !resetsAt || !fetchedAt || smoothingPeriodMs <= 0) return null
-
-    const fetched = new Date(fetchedAt).getTime()
-    const reset = new Date(resetsAt).getTime()
-    const elapsedMs = fetched - (reset - windowMs)
-
-    if (elapsedMs <= 0) return null
-
-    const periods = Math.floor(elapsedMs / smoothingPeriodMs) + 1
-    const smoothedTimePct = Math.min(100, (periods * smoothingPeriodMs) / windowMs * 100)
-
-    return burnRate(utilization, smoothedTimePct)
-}
-
-/**
  * Compute the recent burn rate over the delta between the current snapshot
  * and a historical reference snapshot.
  *
  * Unlike the regular burn rate (which averages from the start of the window),
  * this measures how fast the quota is being consumed *recently* — over roughly
- * the last smoothing period (1h for 5h window, 24h for 7d window).
+ * the last lookback period (1h for 5h window, 24h for 7d window).
  *
  * Formula: (currentUtil - refUtil) / ((currentTime - refTime) / W × 100)
  *
@@ -179,15 +142,14 @@ function recentBurnRate(utilization, fetchedAt, reference, windowMs) {
  * @param {string|null} resetsAt - ISO datetime of reset
  * @param {string} fetchedAt - ISO datetime of fetch
  * @param {number} windowMs - Window duration in ms
- * @param {number} smoothingPeriodMs - Smoothing period for smoothed burn rate (ms)
  * @param {object|null} refLong - Reference snapshot for long recent rate: { fetchedAt, utilization }
  * @param {object|null} refShort - Reference snapshot for short recent rate: { fetchedAt, utilization }
  * @param {number} lookbackLongMs - Lookback duration for the long recent rate (ms)
  * @param {number} lookbackShortMs - Lookback duration for the short recent rate (ms)
  * @returns {object} Computed quota info
  */
-function computeQuota(utilization, resetsAt, fetchedAt, windowMs, smoothingPeriodMs, refLong, refShort, lookbackLongMs, lookbackShortMs) {
-    const emptyRecent = { rate: null, deltaMs: null, lookbackMs: null }
+function computeQuota(utilization, resetsAt, fetchedAt, windowMs, refLong, refShort, lookbackLongMs, lookbackShortMs) {
+    const emptyRecent = { rate: null, deltaMs: null, lookbackMs: null, isFallback: false }
 
     if (utilization == null) {
         return {
@@ -195,7 +157,6 @@ function computeQuota(utilization, resetsAt, fetchedAt, windowMs, smoothingPerio
             resetsAt: null,
             timePct: null,
             burnRate: null,
-            smoothedBurnRate: null,
             recentLong: emptyRecent,
             recentShort: emptyRecent,
             level: USAGE_LEVELS.INACTIVE,
@@ -209,7 +170,6 @@ function computeQuota(utilization, resetsAt, fetchedAt, windowMs, smoothingPerio
             resetsAt: null,
             timePct: null,
             burnRate: null,
-            smoothedBurnRate: null,
             recentLong: emptyRecent,
             recentShort: emptyRecent,
             level: computeLevel(utilization, null),
@@ -219,7 +179,6 @@ function computeQuota(utilization, resetsAt, fetchedAt, windowMs, smoothingPerio
     const timePct = temporalPct(fetchedAt, resetsAt, windowMs)
     const rate = burnRate(utilization, timePct)
     const level = computeLevel(utilization, rate)
-    const smoothedRate = smoothedBurnRate(utilization, fetchedAt, resetsAt, windowMs, smoothingPeriodMs)
 
     // When the window is younger than the lookback interval, the recent rate
     // doesn't have enough data to be meaningful — use the burn rate instead,
@@ -230,13 +189,13 @@ function computeQuota(utilization, resetsAt, fetchedAt, windowMs, smoothingPerio
 
     function _computeRecent(ref, lookbackMs) {
         if (elapsedMs != null && elapsedMs < lookbackMs && rate != null) {
-            return { rate, deltaMs: elapsedMs, lookbackMs }
+            return { rate, deltaMs: elapsedMs, lookbackMs, isFallback: true }
         }
         const r = recentBurnRate(utilization, fetchedAt, ref, windowMs)
         const deltaMs = (r != null && ref)
             ? new Date(fetchedAt).getTime() - new Date(ref.fetchedAt).getTime()
             : null
-        return { rate: r, deltaMs, lookbackMs }
+        return { rate: r, deltaMs, lookbackMs, isFallback: false }
     }
 
     return {
@@ -244,7 +203,6 @@ function computeQuota(utilization, resetsAt, fetchedAt, windowMs, smoothingPerio
         resetsAt,
         timePct,
         burnRate: rate,
-        smoothedBurnRate: smoothedRate,
         recentLong: _computeRecent(refLong, lookbackLongMs),
         recentShort: _computeRecent(refShort, lookbackShortMs),
         level,
@@ -353,7 +311,6 @@ export function computeUsageData(raw) {
             raw.five_hour_resets_at,
             fetchedAt,
             FIVE_HOURS_MS,
-            ONE_HOUR_MS,
             fhRefLong,
             fhRefShort,
             ONE_HOUR_MS,
@@ -365,7 +322,6 @@ export function computeUsageData(raw) {
             raw.seven_day_resets_at,
             fetchedAt,
             SEVEN_DAYS_MS,
-            ONE_DAY_MS,
             _sdRef(refs.one_day, 'seven_day_utilization'),
             _sdRef(refs.twelve_hour, 'seven_day_utilization'),
             ONE_DAY_MS,
@@ -377,7 +333,6 @@ export function computeUsageData(raw) {
             raw.seven_day_opus_resets_at,
             fetchedAt,
             SEVEN_DAYS_MS,
-            ONE_DAY_MS,
             _sdRef(refs.one_day, 'seven_day_opus_utilization'),
             _sdRef(refs.twelve_hour, 'seven_day_opus_utilization'),
             ONE_DAY_MS,
@@ -389,7 +344,6 @@ export function computeUsageData(raw) {
             raw.seven_day_sonnet_resets_at,
             fetchedAt,
             SEVEN_DAYS_MS,
-            ONE_DAY_MS,
             _sdRef(refs.one_day, 'seven_day_sonnet_utilization'),
             _sdRef(refs.twelve_hour, 'seven_day_sonnet_utilization'),
             ONE_DAY_MS,
@@ -401,7 +355,6 @@ export function computeUsageData(raw) {
             raw.seven_day_oauth_apps_resets_at,
             fetchedAt,
             SEVEN_DAYS_MS,
-            ONE_DAY_MS,
             _sdRef(refs.one_day, 'seven_day_oauth_apps_utilization'),
             _sdRef(refs.twelve_hour, 'seven_day_oauth_apps_utilization'),
             ONE_DAY_MS,
@@ -413,7 +366,6 @@ export function computeUsageData(raw) {
             raw.seven_day_cowork_resets_at,
             fetchedAt,
             SEVEN_DAYS_MS,
-            ONE_DAY_MS,
             _sdRef(refs.one_day, 'seven_day_cowork_utilization'),
             _sdRef(refs.twelve_hour, 'seven_day_cowork_utilization'),
             ONE_DAY_MS,

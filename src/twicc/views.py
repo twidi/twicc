@@ -1402,21 +1402,6 @@ def usage_history(request):
 
     snapshots = list(UsageSnapshot.objects.filter(fetched_at__gte=cutoff, fetched_at__lte=end).order_by("fetched_at"))
 
-    # Smoothed burn rate: rounds elapsed time up to the next period boundary
-    # so the rate changes in discrete steps (staircase) instead of every second.
-    # Mirrors the frontend smoothedBurnRate() in utils/usage.js.
-    def _smoothed_burn_rate(utilization, fetched_at, resets_at, window_seconds, smoothing_seconds):
-        if utilization is None or resets_at is None or fetched_at is None:
-            return None
-        elapsed = (fetched_at - resets_at + timedelta(seconds=window_seconds)).total_seconds()
-        if elapsed <= 0:
-            return None
-        periods = int(elapsed // smoothing_seconds) + 1
-        smoothed_time_pct = min(100.0, (periods * smoothing_seconds) / window_seconds * 100)
-        if smoothed_time_pct <= 0:
-            return None
-        return utilization / smoothed_time_pct
-
     FIVE_HOURS_S = 5 * 3600
     ONE_HOUR_S = 3600
     THIRTY_MIN_S = 1800
@@ -1485,8 +1470,6 @@ def usage_history(request):
     for i, s in enumerate(snapshots):
         fh_burn = s.five_hour_burn_rate
         sd_burn = s.seven_day_burn_rate
-        fh_smoothed = _smoothed_burn_rate(s.five_hour_utilization, s.fetched_at, s.five_hour_resets_at, FIVE_HOURS_S, ONE_HOUR_S)
-        sd_smoothed = _smoothed_burn_rate(s.seven_day_utilization, s.fetched_at, s.seven_day_resets_at, SEVEN_DAYS_S, ONE_DAY_S)
         fh_rl = _cap_recent(fh_recent_long_rates[i], fh_burn, s.fetched_at, s.five_hour_resets_at, FIVE_HOURS_S, ONE_HOUR_S)
         fh_rs = _cap_recent(fh_recent_short_rates[i], fh_burn, s.fetched_at, s.five_hour_resets_at, FIVE_HOURS_S, THIRTY_MIN_S)
         sd_rl = _cap_recent(sd_recent_long_rates[i], sd_burn, s.fetched_at, s.seven_day_resets_at, SEVEN_DAYS_S, ONE_DAY_S)
@@ -1495,13 +1478,11 @@ def usage_history(request):
             "fetched_at": s.fetched_at,
             "fh_utilization": s.five_hour_utilization,
             "fh_burn_rate": round(fh_burn * 100, 1) if fh_burn is not None else None,
-            "fh_smoothed_burn_rate": round(fh_smoothed * 100, 1) if fh_smoothed is not None else None,
             "fh_recent_long": round(fh_rl * 100, 1) if fh_rl is not None else None,
             "fh_recent_short": round(fh_rs * 100, 1) if fh_rs is not None else None,
             "fh_temporal_pct": round(s.five_hour_temporal_pct, 1) if s.five_hour_temporal_pct is not None else None,
             "sd_utilization": s.seven_day_utilization,
             "sd_burn_rate": round(sd_burn * 100, 1) if sd_burn is not None else None,
-            "sd_smoothed_burn_rate": round(sd_smoothed * 100, 1) if sd_smoothed is not None else None,
             "sd_recent_long": round(sd_rl * 100, 1) if sd_rl is not None else None,
             "sd_recent_short": round(sd_rs * 100, 1) if sd_rs is not None else None,
             "sd_temporal_pct": round(s.seven_day_temporal_pct, 1) if s.seven_day_temporal_pct is not None else None,
@@ -1509,9 +1490,9 @@ def usage_history(request):
 
     # All metric keys (used for bucket aggregation and serialization)
     _METRIC_KEYS = (
-        "fh_utilization", "fh_burn_rate", "fh_smoothed_burn_rate",
+        "fh_utilization", "fh_burn_rate",
         "fh_recent_long", "fh_recent_short", "fh_temporal_pct",
-        "sd_utilization", "sd_burn_rate", "sd_smoothed_burn_rate",
+        "sd_utilization", "sd_burn_rate",
         "sd_recent_long", "sd_recent_short", "sd_temporal_pct",
     )
 

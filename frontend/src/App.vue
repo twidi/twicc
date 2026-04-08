@@ -302,7 +302,7 @@ body {
     --sparkline-green-gradient-color-4: #116329;
     --sparkline-green-stroke-color: #8cc665;
 
-    /* Sparkline graph colors — orange (smoothed burn rate) */
+    /* Sparkline graph colors — orange */
     --sparkline-orange-gradient-color-1: #ffe6b3;
     --sparkline-orange-gradient-color-2: #f5a623;
     --sparkline-orange-gradient-color-3: #d4760a;
@@ -371,7 +371,7 @@ body {
     --sparkline-green-gradient-color-4: #56d364;
     --sparkline-green-stroke-color: #8cc665;
 
-    /* Sparkline graph colors — orange (smoothed burn rate, dark mode) */
+    /* Sparkline graph colors — orange (dark mode) */
     --sparkline-orange-gradient-color-1: #3d1e00;
     --sparkline-orange-gradient-color-2: #7a3c00;
     --sparkline-orange-gradient-color-3: #d4760a;

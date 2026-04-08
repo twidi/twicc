@@ -53,12 +53,10 @@ watch(rangeIndex, () => {
 
 // ── Curve visibility ───────────────────────────────────────────────
 // Each curve can be toggled on/off by clicking its legend item.
-// Smoothed burn rate is hidden by default; all others visible.
 const curveVisibility = ref({
     temporal_pct: true,
     utilization: true,
     burn_rate: true,
-    smoothed_burn_rate: false,
     recent_long: false,
     recent_short: false,
 })
@@ -251,16 +249,15 @@ const visibleSnapshots = computed(() => {
 
 /**
  * Split visible snapshots into period-specific data arrays.
- * Each period gets utilization, burn rates (regular, smoothed, recent), and temporal_pct.
+ * Each period gets utilization, burn rates (regular, recent), and temporal_pct.
  */
-function extractPeriodData(snapshots, utilKey, burnKey, smoothedBurnKey, recentLongKey, recentShortKey, temporalKey) {
+function extractPeriodData(snapshots, utilKey, burnKey, recentLongKey, recentShortKey, temporalKey) {
     return snapshots
         .filter(s => s[utilKey] != null || s[burnKey] != null || s[temporalKey] != null)
         .map(s => ({
             fetched_at: s.fetched_at,
             utilization: s[utilKey],
             burn_rate: s[burnKey],
-            smoothed_burn_rate: s[smoothedBurnKey],
             recent_long: s[recentLongKey],
             recent_short: s[recentShortKey],
             temporal_pct: s[temporalKey],
@@ -288,7 +285,7 @@ function onYCapChange(event) {
 function computeYMax(data) {
     const maxOf = key => Math.max(0, ...data.map(d => d[key] ?? 0))
     return Math.min(yCap.value, Math.max(105,
-        maxOf('utilization'), maxOf('burn_rate'), maxOf('smoothed_burn_rate'),
+        maxOf('utilization'), maxOf('burn_rate'),
         maxOf('recent_long'), maxOf('recent_short'), maxOf('temporal_pct'),
     )) * 1.08
 }
@@ -513,7 +510,7 @@ async function checkAndPrefetch() {
 // ── Five Hour chart data ────────────────────────────────────────────
 
 const fiveHourData = computed(() => extractPeriodData(
-    visibleSnapshots.value, 'fh_utilization', 'fh_burn_rate', 'fh_smoothed_burn_rate',
+    visibleSnapshots.value, 'fh_utilization', 'fh_burn_rate',
     'fh_recent_long', 'fh_recent_short', 'fh_temporal_pct',
 ))
 const fhTimestamps = computed(() => parseTimestamps(fiveHourData.value))
@@ -525,7 +522,6 @@ function fhPolyline(key) {
 }
 const fhUtilPoints = fhPolyline('utilization')
 const fhBurnPoints = fhPolyline('burn_rate')
-const fhSmoothedBurnPoints = fhPolyline('smoothed_burn_rate')
 const fhRecentLongPoints = fhPolyline('recent_long')
 const fhRecentShortPoints = fhPolyline('recent_short')
 const fhTemporalPoints = fhPolyline('temporal_pct')
@@ -570,18 +566,8 @@ const fhCurves = computed(() => {
             visible: vis.burn_rate,
         },
         {
-            key: 'smoothed_burn_rate',
-            label: 'Smoothed rate',
-            decimals: 0,
-            points: fhSmoothedBurnPoints.value,
-            gradientId: 'usage-smoothed-gradient-fh',
-            maskId: 'usage-smoothed-mask-fh',
-            colorPrefix: 'orange',
-            visible: vis.smoothed_burn_rate,
-        },
-        {
             key: 'recent_long',
-            label: 'Recent rate (1h)',
+            label: 'Burn rate (last 1h)',
             decimals: 0,
             points: fhRecentLongPoints.value,
             gradientId: 'usage-recent-long-gradient-fh',
@@ -591,7 +577,7 @@ const fhCurves = computed(() => {
         },
         {
             key: 'recent_short',
-            label: 'Recent rate (30min)',
+            label: 'Burn rate (last 30min)',
             decimals: 0,
             points: fhRecentShortPoints.value,
             gradientId: 'usage-recent-short-gradient-fh',
@@ -606,7 +592,7 @@ const fhCurves = computed(() => {
 // ── Seven Day chart data ────────────────────────────────────────────
 
 const sevenDayData = computed(() => extractPeriodData(
-    visibleSnapshots.value, 'sd_utilization', 'sd_burn_rate', 'sd_smoothed_burn_rate',
+    visibleSnapshots.value, 'sd_utilization', 'sd_burn_rate',
     'sd_recent_long', 'sd_recent_short', 'sd_temporal_pct',
 ))
 const sdTimestamps = computed(() => parseTimestamps(sevenDayData.value))
@@ -618,7 +604,6 @@ function sdPolyline(key) {
 }
 const sdUtilPoints = sdPolyline('utilization')
 const sdBurnPoints = sdPolyline('burn_rate')
-const sdSmoothedBurnPoints = sdPolyline('smoothed_burn_rate')
 const sdRecentLongPoints = sdPolyline('recent_long')
 const sdRecentShortPoints = sdPolyline('recent_short')
 const sdTemporalPoints = sdPolyline('temporal_pct')
@@ -663,18 +648,8 @@ const sdCurves = computed(() => {
             visible: vis.burn_rate,
         },
         {
-            key: 'smoothed_burn_rate',
-            label: 'Smoothed rate',
-            decimals: 0,
-            points: sdSmoothedBurnPoints.value,
-            gradientId: 'usage-smoothed-gradient-sd',
-            maskId: 'usage-smoothed-mask-sd',
-            colorPrefix: 'orange',
-            visible: vis.smoothed_burn_rate,
-        },
-        {
             key: 'recent_long',
-            label: 'Recent rate (24h)',
+            label: 'Burn rate (last 24h)',
             decimals: 0,
             points: sdRecentLongPoints.value,
             gradientId: 'usage-recent-long-gradient-sd',
@@ -684,7 +659,7 @@ const sdCurves = computed(() => {
         },
         {
             key: 'recent_short',
-            label: 'Recent rate (12h)',
+            label: 'Burn rate (last 12h)',
             decimals: 0,
             points: sdRecentShortPoints.value,
             gradientId: 'usage-recent-short-gradient-sd',
