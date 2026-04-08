@@ -14,7 +14,7 @@ import { aggregateWeeklyActivity } from '../utils/activityAggregation'
 import { formatDate } from '../utils/date'
 import { SESSION_TIME_FORMAT } from '../constants'
 import ProjectBadge from './ProjectBadge.vue'
-import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
+import AggregatedProcessIndicator from './AggregatedProcessIndicator.vue'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import WorkspaceManageDialog from './WorkspaceManageDialog.vue'
 import ActivitySparkline from './ActivitySparkline.vue'
@@ -151,7 +151,7 @@ function handleEditClick() {
                             />
                         </span>
                         <AppTooltip :for="`detail-sparkline-${projectId}`">Project activity (message turns per week)</AppTooltip>
-                        <ProjectProcessIndicator :project-id="projectId" size="small" />
+                        <AggregatedProcessIndicator :project-ids="[projectId]" size="small" />
                     </template>
                     <!-- Workspace or All Projects mode -->
                     <template v-else>
@@ -166,6 +166,7 @@ function handleEditClick() {
                             />
                         </span>
                         <AppTooltip :for="`detail-sparkline-${projectId}`">{{ isWorkspaceMode ? 'Workspace' : 'Overall' }} activity (message turns per week)</AppTooltip>
+                        <AggregatedProcessIndicator v-if="isWorkspaceMode" :project-ids="workspaceProjectIds" size="small" />
                     </template>
                 </div>
                 <wa-button

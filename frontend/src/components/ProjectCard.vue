@@ -16,7 +16,7 @@ import { useSettingsStore } from '../stores/settings'
 import { formatDate } from '../utils/date'
 import { SESSION_TIME_FORMAT } from '../constants'
 import ProjectBadge from './ProjectBadge.vue'
-import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
+import AggregatedProcessIndicator from './AggregatedProcessIndicator.vue'
 import ActivitySparkline from './ActivitySparkline.vue'
 import CostDisplay from './CostDisplay.vue'
 import AppTooltip from './AppTooltip.vue'
@@ -84,7 +84,7 @@ function handleMenuSelect(event) {
                 <ProjectBadge :project-id="project.id" class="project-title" />
                 <wa-icon v-if="codeCommentsCount > 0" :id="`project-comments-${project.id}`" name="comment" variant="regular" class="code-comments-indicator"></wa-icon>
                 <AppTooltip v-if="codeCommentsCount > 0" :for="`project-comments-${project.id}`">{{ codeCommentsTooltip }}</AppTooltip>
-                <ProjectProcessIndicator :project-id="project.id" size="small" />
+                <AggregatedProcessIndicator :project-ids="[project.id]" size="small" />
                 <wa-tag v-if="project.archived" variant="neutral" size="small" class="archived-tag">Archived</wa-tag>
                 <div class="project-menu" @click.stop>
                     <wa-dropdown

@@ -17,7 +17,7 @@ import { useDataStore } from '../stores/data'
 import { splitProjectsByPriority } from '../utils/projectSort'
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree'
 import ProjectBadge from './ProjectBadge.vue'
-import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
+import AggregatedProcessIndicator from './AggregatedProcessIndicator.vue'
 
 const props = defineProps({
     /** Array of project objects to display as options */
@@ -91,7 +91,7 @@ const flatTree = computed(() => {
                 <ProjectBadge :project-id="p.id" />
                 <span class="project-option-indicators">
                     <wa-icon v-if="codeCommentsStore.countByProject(p.id) > 0" name="comment" variant="regular" class="code-comments-indicator"></wa-icon>
-                    <ProjectProcessIndicator v-if="showProcessIndicator" :project-id="p.id" size="small" />
+                    <AggregatedProcessIndicator v-if="showProcessIndicator" :project-ids="[p.id]" size="small" />
                 </span>
             </span>
         </wa-option>
@@ -114,7 +114,7 @@ const flatTree = computed(() => {
             <ProjectBadge :project-id="p.id" />
             <span class="project-option-indicators">
                 <wa-icon v-if="codeCommentsStore.countByProject(p.id) > 0" name="comment" variant="regular" class="code-comments-indicator"></wa-icon>
-                <ProjectProcessIndicator v-if="showProcessIndicator" :project-id="p.id" size="small" />
+                <AggregatedProcessIndicator v-if="showProcessIndicator" :project-ids="[p.id]" size="small" />
             </span>
         </span>
     </wa-option>
@@ -142,7 +142,7 @@ const flatTree = computed(() => {
                 <ProjectBadge :project-id="item.project.id" />
                 <span class="project-option-indicators">
                     <wa-icon v-if="codeCommentsStore.countByProject(item.project.id) > 0" name="comment" variant="regular" class="code-comments-indicator"></wa-icon>
-                    <ProjectProcessIndicator v-if="showProcessIndicator" :project-id="item.project.id" size="small" />
+                    <AggregatedProcessIndicator v-if="showProcessIndicator" :project-ids="[item.project.id]" size="small" />
                 </span>
             </span>
         </wa-option>

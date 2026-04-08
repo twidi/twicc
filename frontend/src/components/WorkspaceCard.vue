@@ -16,6 +16,7 @@ import { formatDate } from '../utils/date'
 import { SESSION_TIME_FORMAT } from '../constants'
 import { aggregateWeeklyActivity } from '../utils/activityAggregation'
 import ProjectBadge from './ProjectBadge.vue'
+import AggregatedProcessIndicator from './AggregatedProcessIndicator.vue'
 import CostDisplay from './CostDisplay.vue'
 import ActivitySparkline from './ActivitySparkline.vue'
 import AppTooltip from './AppTooltip.vue'
@@ -102,6 +103,7 @@ function handleMenuSelect(event) {
         <div class="workspace-info">
             <div class="workspace-title-row">
                 <span class="workspace-name"><wa-icon name="layer-group" auto-width :style="workspace.color ? { color: workspace.color } : null"></wa-icon> {{ workspace.name }}</span>
+                <AggregatedProcessIndicator :project-ids="visibleProjectIds" size="small" />
                 <wa-tag v-if="workspace.archived" variant="neutral" size="small" class="archived-tag">Archived</wa-tag>
                 <div class="workspace-menu" @click.stop>
                     <wa-dropdown
