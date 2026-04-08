@@ -1270,6 +1270,7 @@ def search_sessions(request):
         return JsonResponse({"error": "Missing required parameter: q"}, status=400)
 
     project_id = request.GET.get("project_id")
+    project_ids = request.GET.getlist("project_ids")
     session_id = request.GET.get("session_id")
 
     from_role = request.GET.get("from")
@@ -1304,6 +1305,7 @@ def search_sessions(request):
         results = search.search(
             q,
             project_id=project_id,
+            project_ids=project_ids or None,
             session_id=session_id,
             from_role=from_role,
             after=after,

@@ -353,6 +353,7 @@ def search(
     query_str: str,
     *,
     project_id: str | None = None,
+    project_ids: list[str] | None = None,
     session_id: str | None = None,
     from_role: str | None = None,
     after: datetime | None = None,
@@ -368,7 +369,8 @@ def search(
 
     Args:
         query_str: The user's search query (Tantivy query language).
-        project_id: Filter to a specific project.
+        project_id: Filter to a specific project (mutually exclusive with project_ids).
+        project_ids: Filter to any of these projects (mutually exclusive with project_id).
         session_id: Filter to a specific session.
         from_role: Filter by message author ("user" or "assistant").
         after: Only messages after this timestamp.
@@ -393,6 +395,10 @@ def search(
 
     if project_id is not None:
         clauses.append((Occur.Must, Query.term_query(_schema, "project_id", project_id)))
+    elif project_ids:
+        # OR across multiple project IDs (e.g. all projects in a workspace)
+        project_clauses = [(Occur.Should, Query.term_query(_schema, "project_id", pid)) for pid in project_ids]
+        clauses.append((Occur.Must, Query.boolean_query(project_clauses)))
 
     if session_id is not None:
         clauses.append((Occur.Must, Query.term_query(_schema, "session_id", session_id)))

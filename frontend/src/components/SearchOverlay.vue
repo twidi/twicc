@@ -65,10 +65,15 @@ function open() {
             return
         }
 
-        // Pre-select project filter based on current route context:
-        // single-project mode → current project, all-projects/other → all projects
+        // Pre-select filter based on current route context:
+        // workspace active → workspace filter, single-project → project filter, else → all
+        const wsId = route.query.workspace
         const isAllProjectsMode = route.name?.startsWith('projects-') || !route.params.projectId
-        filters.projectId = isAllProjectsMode ? '' : (route.params.projectId || '')
+        if (wsId) {
+            filters.projectId = 'workspace:' + wsId
+        } else {
+            filters.projectId = isAllProjectsMode ? '' : (route.params.projectId || '')
+        }
 
         dialogRef.value.open = true
         isOpen.value = true
@@ -177,7 +182,7 @@ const searchIndexPercent = computed(() => {
     return Math.round((p.current / p.total) * 100)
 })
 
-// ─── Projects for filter dropdown ──────────────────────────────────────────
+// ─── Projects and workspaces for filter dropdown ─────────────────────────
 const projects = computed(() =>
     store.getProjects.filter(p => !p.archived)
 )
@@ -195,11 +200,33 @@ const activeWsLabel = computed(() => {
     return ws ? `${ws.name} projects` : null
 })
 
-// Selected project color for the dot in the closed select
+/** Selectable workspaces for the filter dropdown */
+const selectableWorkspaces = computed(() => workspacesStore.getSelectableWorkspaces)
+
+/** Whether the current filter is a workspace */
+const isWorkspaceFilter = computed(() => filters.projectId.startsWith('workspace:'))
+
+/** Workspace ID from the filter (if workspace is selected) */
+const filterWorkspaceId = computed(() =>
+    isWorkspaceFilter.value ? filters.projectId.slice('workspace:'.length) : null
+)
+
+/** Project IDs for the currently selected workspace filter */
+const filterWorkspaceProjectIds = computed(() =>
+    filterWorkspaceId.value ? workspacesStore.getVisibleProjectIds(filterWorkspaceId.value) : null
+)
+
+// Selected project/workspace visual indicators for the closed select
 const selectedProjectColor = computed(() => {
-    if (!filters.projectId) return null
+    if (!filters.projectId || isWorkspaceFilter.value) return null
     const project = store.getProject(filters.projectId)
     return project?.color || null
+})
+
+const selectedWorkspaceColor = computed(() => {
+    if (!isWorkspaceFilter.value) return null
+    const ws = workspacesStore.getWorkspaceById(filterWorkspaceId.value)
+    return ws?.color || null
 })
 
 // ─── API call ──────────────────────────────────────────────────────────────
@@ -221,7 +248,13 @@ async function performSearch(resetOffset = true) {
 
     try {
         const params = new URLSearchParams({ q, limit: LIMIT, offset: offset.value })
-        if (filters.projectId) params.set('project_id', filters.projectId)
+        if (isWorkspaceFilter.value && filterWorkspaceProjectIds.value) {
+            for (const pid of filterWorkspaceProjectIds.value) {
+                params.append('project_ids', pid)
+            }
+        } else if (filters.projectId) {
+            params.set('project_id', filters.projectId)
+        }
         if (filters.from) params.set('from', filters.from)
         if (filters.includeArchived) params.set('include_archived', 'true')
         if (dateRange.value.after) params.set('after', dateRange.value.after)
@@ -445,11 +478,35 @@ defineExpose({ open })
                         class="filter-select"
                     >
                         <span
-                            v-if="filters.projectId"
+                            v-if="filters.projectId && !isWorkspaceFilter"
                             slot="start"
                             class="selected-project-dot"
                             :style="selectedProjectColor ? { '--dot-color': selectedProjectColor } : null"
                         ></span>
+                        <wa-icon
+                            v-if="isWorkspaceFilter"
+                            slot="start"
+                            name="layer-group"
+                            :style="selectedWorkspaceColor ? { color: selectedWorkspaceColor } : null"
+                        ></wa-icon>
+                        <!-- Workspaces -->
+                        <template v-if="selectableWorkspaces.length">
+                            <wa-option disabled class="section-header-option">Workspaces</wa-option>
+                            <wa-option
+                                v-for="ws in selectableWorkspaces"
+                                :key="ws.id"
+                                :value="'workspace:' + ws.id"
+                                :label="ws.name"
+                            >
+                                <span class="workspace-option">
+                                    <wa-icon name="layer-group" auto-width :style="ws.color ? { color: ws.color } : null"></wa-icon>
+                                    {{ ws.name }}
+                                </span>
+                            </wa-option>
+                            <wa-divider></wa-divider>
+                            <wa-option v-if="!activeWsProjectIds" disabled class="section-header-option">Projects</wa-option>
+                        </template>
+                        <!-- Projects -->
                         <ProjectSelectOptions :projects="projects" :priority-project-ids="activeWsProjectIds" :priority-label="activeWsLabel" />
                     </wa-select>
 
@@ -514,12 +571,12 @@ defineExpose({ open })
                         <span class="result-title">{{ result.session_title || result.session_id }}</span>
                         <div class="result-meta">
                             <ProjectBadge
-                                v-if="result.project_id && !filters.projectId"
+                                v-if="result.project_id && (!filters.projectId || isWorkspaceFilter)"
                                 :id="`search-project-${result.session_id}`"
                                 :projectId="result.project_id"
                                 class="result-project"
                             />
-                            <AppTooltip v-if="result.project_id && !filters.projectId" :for="`search-project-${result.session_id}`">{{ store.getProject(result.project_id)?.directory || result.project_id }}</AppTooltip>
+                            <AppTooltip v-if="result.project_id && (!filters.projectId || isWorkspaceFilter)" :for="`search-project-${result.session_id}`">{{ store.getProject(result.project_id)?.directory || result.project_id }}</AppTooltip>
                             <span v-if="result.matches?.[0]?.timestamp" :id="`search-date-${result.session_id}`" class="result-date">
                                 <wa-relative-time v-if="useRelativeTime" :date.prop="isoToDate(result.matches[0].timestamp)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
                                 <template v-else>{{ formatDate(isoToUnix(result.matches[0].timestamp), { smart: true }) }}</template>
@@ -646,6 +703,25 @@ defineExpose({ open })
     box-sizing: border-box;
     background-color: var(--dot-color, transparent);
     border-color: var(--dot-color, var(--wa-color-border-quiet));
+}
+
+.workspace-option {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+}
+
+.section-header-option {
+    font-size: var(--wa-font-size-xs);
+    font-weight: var(--wa-font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--wa-color-text-quiet);
+}
+
+.filter-select wa-divider {
+    --width: 4px;
+    --spacing: 4px;
 }
 
 /* ─── Filters ────────────────────────────────────────────────────────────── */
