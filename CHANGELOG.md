@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Sessions with cron jobs no longer silently stop retrying after an API error (e.g. 529 overloaded) — the auto-restart loop now correctly retries until the session recovers
 - "View in Files tab" now always reloads the file from the backend, even if it was already open, to avoid displaying stale content
 - CLI subcommands (`twicc usage`, `twicc projects`, etc.) failing when `DJANGO_SETTINGS_MODULE` was not set or pointed to another project
 

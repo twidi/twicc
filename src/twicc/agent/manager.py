@@ -118,6 +118,7 @@ class ProcessManager:
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
+        cancel_cron_restart: bool = True,
     ) -> None:
         """Send a message to an existing session, optionally updating model/permission settings.
 
@@ -145,8 +146,11 @@ class ProcessManager:
             RuntimeError: If the process cannot be started or message cannot be sent
         """
         async with self._lock:
-            # Cancel any running cron restart task — user is taking over this session
-            self._cancel_cron_restart_task(session_id)
+            # Cancel any running cron restart task — user is taking over this session.
+            # Callers that ARE the cron restart task pass cancel_cron_restart=False
+            # to avoid cancelling themselves.
+            if cancel_cron_restart:
+                self._cancel_cron_restart_task(session_id)
 
             if session_id in self._processes:
                 process = self._processes[session_id]

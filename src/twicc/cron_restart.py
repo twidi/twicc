@@ -227,7 +227,7 @@ async def restart_session_crons(
         message = _build_restart_message(crons_data)
 
         try:
-            await manager.send_to_session(**restart_data, text=message)
+            await manager.send_to_session(**restart_data, text=message, cancel_cron_restart=False)
 
             process = manager._processes.get(session_id)
             if process is None:
