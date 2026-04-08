@@ -20,16 +20,18 @@ const errorMessage = ref('')
 // Shared across both tabs. Each step defines range_days, bucket_minutes, and label.
 
 const RANGE_STEPS = [
-    { days: 1,   bucket: 0,    label: '1 day' },
-    { days: 3,   bucket: 0,    label: '3 days' },
-    { days: 7,   bucket: 0,    label: '1 week' },
-    { days: 14,  bucket: 30,   label: '2 weeks' },
-    { days: 30,  bucket: 60,   label: '1 month' },
-    { days: 90,  bucket: 300,  label: '3 months' },
-    { days: 182, bucket: 720,  label: '6 months' },
-    { days: 365, bucket: 1440, label: '1 year' },
+    { days: 0.25, bucket: 0,    label: '6 hours' },
+    { days: 0.5,  bucket: 0,    label: '12 hours' },
+    { days: 1,    bucket: 0,    label: '1 day' },
+    { days: 3,    bucket: 0,    label: '3 days' },
+    { days: 7,    bucket: 0,    label: '1 week' },
+    { days: 14,   bucket: 30,   label: '2 weeks' },
+    { days: 30,   bucket: 60,   label: '1 month' },
+    { days: 90,   bucket: 300,  label: '3 months' },
+    { days: 182,  bucket: 720,  label: '6 months' },
+    { days: 365,  bucket: 1440, label: '1 year' },
 ]
-const DEFAULT_RANGE_INDEX = 2 // 1 week
+const DEFAULT_RANGE_INDEX = 4 // 1 week
 const rangeIndex = ref(DEFAULT_RANGE_INDEX)
 const currentRange = computed(() => RANGE_STEPS[rangeIndex.value])
 
@@ -527,7 +529,7 @@ const fhRecentShortPoints = fhPolyline('recent_short')
 const fhTemporalPoints = fhPolyline('temporal_pct')
 
 // Show temporal_pct for 5h quota only up to 2 weeks (index 1)
-const fhShowTemporal = computed(() => rangeIndex.value <= 3)
+const fhShowTemporal = computed(() => rangeIndex.value <= 5)
 
 const fhCurves = computed(() => {
     const vis = curveVisibility.value
@@ -609,7 +611,7 @@ const sdRecentShortPoints = sdPolyline('recent_short')
 const sdTemporalPoints = sdPolyline('temporal_pct')
 
 // Show temporal_pct for 7d quota only up to 6 months (index 4)
-const sdShowTemporal = computed(() => rangeIndex.value <= 6)
+const sdShowTemporal = computed(() => rangeIndex.value <= 8)
 
 const sdCurves = computed(() => {
     const vis = curveVisibility.value

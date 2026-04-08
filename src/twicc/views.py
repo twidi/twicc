@@ -1363,7 +1363,7 @@ def usage_history(request):
     Both five_hour and seven_day data are returned in a single response.
 
     Parameters:
-        range_days: Number of days to look back (default 30, 1–1825).
+        range_days: Number of days to look back (default 30, 0.25–1825).
         bucket_minutes: Aggregation bucket size in minutes (default 0 = raw data).
             Allowed: 0, 30, 60, 300, 720, 1440.
             When > 0, snapshots are grouped into time buckets and the max value
@@ -1374,11 +1374,11 @@ def usage_history(request):
     ALLOWED_BUCKETS = {0, 30, 60, 300, 720, 1440}
 
     try:
-        range_days = int(request.GET.get("range_days", "30"))
+        range_days = float(request.GET.get("range_days", "30"))
     except (ValueError, TypeError):
-        return JsonResponse({"error": "range_days must be an integer."}, status=400)
-    if range_days < 1 or range_days > 1825:
-        return JsonResponse({"error": "range_days must be between 1 and 1825."}, status=400)
+        return JsonResponse({"error": "range_days must be a number."}, status=400)
+    if range_days < 0.25 or range_days > 1825:
+        return JsonResponse({"error": "range_days must be between 0.25 and 1825."}, status=400)
 
     try:
         bucket_minutes = int(request.GET.get("bucket_minutes", "0"))
@@ -1413,7 +1413,9 @@ def usage_history(request):
     # from ~lookback_seconds ago, measuring consumption rate over that recent interval.
     # Mirrors the frontend recentBurnRate() in utils/usage.js.
     # Formula: (delta_utilization) / ((delta_time / window) * 100)
-    def _compute_recent_rates(snaps, epochs, lookback_seconds, window_seconds, util_field):
+    # When a reset boundary is crossed (delta_util < 0), computes a cross-period
+    # rate by summing consumption from the old and new periods.
+    def _compute_recent_rates(snaps, epochs, lookback_seconds, window_seconds, util_field, resets_at_field):
         n = len(snaps)
         rates = [None] * n
         for i in range(n):
@@ -1435,45 +1437,55 @@ def usage_history(request):
             if current_util is None or ref_util is None:
                 continue
             delta_util = current_util - ref_util
-            if delta_util < 0:
-                continue  # reset happened between snapshots
             delta_seconds = epochs[i] - epochs[best_idx]
             if delta_seconds <= 0:
                 continue
             delta_time_pct = (delta_seconds / window_seconds) * 100
             if delta_time_pct <= 0:
                 continue
-            rates[i] = delta_util / delta_time_pct
+
+            if delta_util >= 0:
+                # Normal intra-period
+                rates[i] = delta_util / delta_time_pct
+            else:
+                # Cross-period: a reset happened between ref and current.
+                # Find prev_end (last snapshot before the current window started)
+                # and sum old-period + new-period consumption.
+                resets_at = getattr(snaps[i], resets_at_field)
+                if resets_at is None:
+                    continue
+                window_start_epoch = (resets_at - timedelta(seconds=window_seconds)).timestamp()
+                # Last snapshot before the period boundary
+                boundary_pos = bisect_left(epochs, window_start_epoch, best_idx, i)
+                prev_end_idx = boundary_pos - 1
+                if prev_end_idx < best_idx:
+                    continue
+                prev_end_util = getattr(snaps[prev_end_idx], util_field)
+                if prev_end_util is None:
+                    continue
+                old_consumption = prev_end_util - ref_util
+                if old_consumption < 0:
+                    continue  # another reset between ref and prev_end
+                total_consumption = old_consumption + current_util
+                rates[i] = total_consumption / delta_time_pct
         return rates
 
     # Precompute epoch timestamps and recent rates for all 4 intervals
     epochs = [s.fetched_at.timestamp() for s in snapshots]
-    fh_recent_long_rates = _compute_recent_rates(snapshots, epochs, ONE_HOUR_S, FIVE_HOURS_S, "five_hour_utilization")
-    fh_recent_short_rates = _compute_recent_rates(snapshots, epochs, THIRTY_MIN_S, FIVE_HOURS_S, "five_hour_utilization")
-    sd_recent_long_rates = _compute_recent_rates(snapshots, epochs, ONE_DAY_S, SEVEN_DAYS_S, "seven_day_utilization")
-    sd_recent_short_rates = _compute_recent_rates(snapshots, epochs, TWELVE_HOURS_S, SEVEN_DAYS_S, "seven_day_utilization")
-
-    # When the quota window is younger than the lookback interval, the recent rate
-    # either can't be computed (no reference far enough back) or produces an inflated
-    # value. In that case, use the burn rate directly — it already measures consumption
-    # over the full elapsed time, which IS the "recent" period when elapsed < lookback.
-    def _cap_recent(recent_rate, burn_rate, fetched_at, resets_at, window_seconds, lookback_seconds):
-        if burn_rate is None or resets_at is None:
-            return recent_rate
-        elapsed = (fetched_at - resets_at + timedelta(seconds=window_seconds)).total_seconds()
-        if elapsed < lookback_seconds:
-            return burn_rate
-        return recent_rate
+    fh_recent_long_rates = _compute_recent_rates(snapshots, epochs, ONE_HOUR_S, FIVE_HOURS_S, "five_hour_utilization", "five_hour_resets_at")
+    fh_recent_short_rates = _compute_recent_rates(snapshots, epochs, THIRTY_MIN_S, FIVE_HOURS_S, "five_hour_utilization", "five_hour_resets_at")
+    sd_recent_long_rates = _compute_recent_rates(snapshots, epochs, ONE_DAY_S, SEVEN_DAYS_S, "seven_day_utilization", "seven_day_resets_at")
+    sd_recent_short_rates = _compute_recent_rates(snapshots, epochs, TWELVE_HOURS_S, SEVEN_DAYS_S, "seven_day_utilization", "seven_day_resets_at")
 
     # Extract raw data points with both periods
     raw = []
     for i, s in enumerate(snapshots):
         fh_burn = s.five_hour_burn_rate
         sd_burn = s.seven_day_burn_rate
-        fh_rl = _cap_recent(fh_recent_long_rates[i], fh_burn, s.fetched_at, s.five_hour_resets_at, FIVE_HOURS_S, ONE_HOUR_S)
-        fh_rs = _cap_recent(fh_recent_short_rates[i], fh_burn, s.fetched_at, s.five_hour_resets_at, FIVE_HOURS_S, THIRTY_MIN_S)
-        sd_rl = _cap_recent(sd_recent_long_rates[i], sd_burn, s.fetched_at, s.seven_day_resets_at, SEVEN_DAYS_S, ONE_DAY_S)
-        sd_rs = _cap_recent(sd_recent_short_rates[i], sd_burn, s.fetched_at, s.seven_day_resets_at, SEVEN_DAYS_S, TWELVE_HOURS_S)
+        fh_rl = fh_recent_long_rates[i]
+        fh_rs = fh_recent_short_rates[i]
+        sd_rl = sd_recent_long_rates[i]
+        sd_rs = sd_recent_short_rates[i]
         raw.append({
             "fetched_at": s.fetched_at,
             "fh_utilization": s.five_hour_utilization,

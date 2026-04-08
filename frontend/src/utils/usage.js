@@ -146,9 +146,11 @@ function recentBurnRate(utilization, fetchedAt, reference, windowMs) {
  * @param {object|null} refShort - Reference snapshot for short recent rate: { fetchedAt, utilization }
  * @param {number} lookbackLongMs - Lookback duration for the long recent rate (ms)
  * @param {number} lookbackShortMs - Lookback duration for the short recent rate (ms)
+ * @param {object|null} crossRefLong - Cross-period ref for long: { prevRef: {fetchedAt, utilization}, prevEnd: {fetchedAt, utilization} }
+ * @param {object|null} crossRefShort - Cross-period ref for short
  * @returns {object} Computed quota info
  */
-function computeQuota(utilization, resetsAt, fetchedAt, windowMs, refLong, refShort, lookbackLongMs, lookbackShortMs) {
+function computeQuota(utilization, resetsAt, fetchedAt, windowMs, refLong, refShort, lookbackLongMs, lookbackShortMs, crossRefLong = null, crossRefShort = null) {
     const emptyRecent = { rate: null, deltaMs: null, lookbackMs: null, isFallback: false }
 
     if (utilization == null) {
@@ -180,16 +182,33 @@ function computeQuota(utilization, resetsAt, fetchedAt, windowMs, refLong, refSh
     const rate = burnRate(utilization, timePct)
     const level = computeLevel(utilization, rate)
 
-    // When the window is younger than the lookback interval, the recent rate
-    // doesn't have enough data to be meaningful — use the burn rate instead,
-    // since it already measures the full elapsed period.
+    // When the window is younger than the lookback interval, try cross-period
+    // calculation using data from the previous period. If unavailable, return null.
     const elapsedMs = resetsAt
         ? new Date(fetchedAt).getTime() - (new Date(resetsAt).getTime() - windowMs)
         : null
 
-    function _computeRecent(ref, lookbackMs) {
-        if (elapsedMs != null && elapsedMs < lookbackMs && rate != null) {
-            return { rate, deltaMs: elapsedMs, lookbackMs, isFallback: true }
+    function _computeRecent(ref, lookbackMs, crossRef) {
+        if (elapsedMs != null && elapsedMs < lookbackMs) {
+            // Try cross-period calculation using data from the previous period
+            if (crossRef && crossRef.prevRef && crossRef.prevEnd
+                && crossRef.prevRef.utilization != null && crossRef.prevEnd.utilization != null) {
+                const oldConsumption = crossRef.prevEnd.utilization - crossRef.prevRef.utilization
+                if (oldConsumption >= 0) {
+                    const totalConsumption = oldConsumption + utilization
+                    const prevRefMs = new Date(crossRef.prevRef.fetchedAt).getTime()
+                    const deltaMs = new Date(fetchedAt).getTime() - prevRefMs
+                    if (deltaMs > 0) {
+                        const deltaTimePct = (deltaMs / windowMs) * 100
+                        const crossRate = burnRate(totalConsumption, deltaTimePct)
+                        if (crossRate != null) {
+                            return { rate: crossRate, deltaMs, lookbackMs, isFallback: false }
+                        }
+                    }
+                }
+            }
+            // No cross-period data available — no meaningful recent rate
+            return emptyRecent
         }
         const r = recentBurnRate(utilization, fetchedAt, ref, windowMs)
         const deltaMs = (r != null && ref)
@@ -203,8 +222,8 @@ function computeQuota(utilization, resetsAt, fetchedAt, windowMs, refLong, refSh
         resetsAt,
         timePct,
         burnRate: rate,
-        recentLong: _computeRecent(refLong, lookbackLongMs),
-        recentShort: _computeRecent(refShort, lookbackShortMs),
+        recentLong: _computeRecent(refLong, lookbackLongMs, crossRefLong),
+        recentShort: _computeRecent(refShort, lookbackShortMs, crossRefShort),
         level,
     }
 }
@@ -303,6 +322,19 @@ export function computeUsageData(raw) {
         ? { fetchedAt: raw_ref.fetched_at, utilization: raw_ref[field] }
         : null
 
+    // Cross-period references (previous period data for early-window burn rates)
+    const _fhCross = (cross) => cross ? {
+        prevRef: { fetchedAt: cross.prev_ref.fetched_at, utilization: cross.prev_ref.five_hour_utilization },
+        prevEnd: { fetchedAt: cross.prev_end.fetched_at, utilization: cross.prev_end.five_hour_utilization },
+    } : null
+    const _sdCross = (cross, field) => cross ? {
+        prevRef: { fetchedAt: cross.prev_ref.fetched_at, utilization: cross.prev_ref[field] },
+        prevEnd: { fetchedAt: cross.prev_end.fetched_at, utilization: cross.prev_end[field] },
+    } : null
+
+    const crossFhLong = _fhCross(refs.cross_fh_long)
+    const crossFhShort = _fhCross(refs.cross_fh_short)
+
     return {
         fetchedAt,
 
@@ -315,6 +347,8 @@ export function computeUsageData(raw) {
             fhRefShort,
             ONE_HOUR_MS,
             THIRTY_MIN_MS,
+            crossFhLong,
+            crossFhShort,
         ),
 
         sevenDay: computeQuota(
@@ -326,6 +360,8 @@ export function computeUsageData(raw) {
             _sdRef(refs.twelve_hour, 'seven_day_utilization'),
             ONE_DAY_MS,
             TWELVE_HOURS_MS,
+            _sdCross(refs.cross_sd_long, 'seven_day_utilization'),
+            _sdCross(refs.cross_sd_short, 'seven_day_utilization'),
         ),
 
         sevenDayOpus: computeQuota(
@@ -337,6 +373,8 @@ export function computeUsageData(raw) {
             _sdRef(refs.twelve_hour, 'seven_day_opus_utilization'),
             ONE_DAY_MS,
             TWELVE_HOURS_MS,
+            _sdCross(refs.cross_sd_long, 'seven_day_opus_utilization'),
+            _sdCross(refs.cross_sd_short, 'seven_day_opus_utilization'),
         ),
 
         sevenDaySonnet: computeQuota(
@@ -348,6 +386,8 @@ export function computeUsageData(raw) {
             _sdRef(refs.twelve_hour, 'seven_day_sonnet_utilization'),
             ONE_DAY_MS,
             TWELVE_HOURS_MS,
+            _sdCross(refs.cross_sd_long, 'seven_day_sonnet_utilization'),
+            _sdCross(refs.cross_sd_short, 'seven_day_sonnet_utilization'),
         ),
 
         sevenDayOauthApps: computeQuota(
@@ -359,6 +399,8 @@ export function computeUsageData(raw) {
             _sdRef(refs.twelve_hour, 'seven_day_oauth_apps_utilization'),
             ONE_DAY_MS,
             TWELVE_HOURS_MS,
+            _sdCross(refs.cross_sd_long, 'seven_day_oauth_apps_utilization'),
+            _sdCross(refs.cross_sd_short, 'seven_day_oauth_apps_utilization'),
         ),
 
         sevenDayCowork: computeQuota(
@@ -370,6 +412,8 @@ export function computeUsageData(raw) {
             _sdRef(refs.twelve_hour, 'seven_day_cowork_utilization'),
             ONE_DAY_MS,
             TWELVE_HOURS_MS,
+            _sdCross(refs.cross_sd_long, 'seven_day_cowork_utilization'),
+            _sdCross(refs.cross_sd_short, 'seven_day_cowork_utilization'),
         ),
 
         extraUsage: {

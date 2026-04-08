@@ -56,13 +56,16 @@ def _build_reference_snapshots(snapshot: UsageSnapshot) -> dict | None:
     - ~1 hour and ~30 minutes ago (for computing recent rates on the 5-hour window)
     - ~24 hours and ~12 hours ago (for computing recent rates on all 7-day windows)
 
-    References are constrained to the **current quota window** (after its start
-    time) to avoid crossing a reset boundary, which would make the utilization
-    delta meaningless.
+    Intra-period references are constrained to the **current quota window** (after
+    its start time) to avoid crossing a reset boundary.
 
-    Returns a dict with ``one_hour``, ``thirty_min``, ``one_day``, and/or
-    ``twelve_hour`` keys, each containing the reference snapshot's ``fetched_at``
-    and relevant utilization values. Returns None if no references are available.
+    When the current window is younger than a lookback interval, also provides
+    **cross-period** references (``cross_fh_long``, ``cross_fh_short``,
+    ``cross_sd_long``, ``cross_sd_short``), each with ``prev_ref`` and ``prev_end``
+    snapshots from the previous period. The frontend uses these to compute a
+    meaningful recent burn rate even in the early minutes of a new period.
+
+    Returns a dict with reference keys, or None if no references are available.
     """
     if not snapshot or not snapshot.fetched_at:
         return None
@@ -129,6 +132,70 @@ def _build_reference_snapshots(snapshot: UsageSnapshot) -> dict | None:
     # References for 7d windows: 24h and 12h lookbacks
     _serialize_sd_ref("one_day", _find_ref(timedelta(hours=24), sd_window_start))
     _serialize_sd_ref("twelve_hour", _find_ref(timedelta(hours=12), sd_window_start))
+
+    # Cross-period references: when the current window is younger than the lookback,
+    # we look into the previous period to compute a meaningful recent burn rate.
+    # For each lookback, we provide two snapshots from the previous period:
+    #   prev_ref: closest to (now - lookback), to measure old-period consumption
+    #   prev_end: last snapshot before the current window started
+    def _find_cross_period(window_start, lookback):
+        if window_start is None:
+            return None
+        elapsed = (now - window_start).total_seconds()
+        if elapsed >= lookback.total_seconds():
+            return None  # enough intra-period data
+
+        target = now - lookback
+        # Oldest snapshot in [target, window_start)
+        prev_ref = (
+            UsageSnapshot.objects
+            .filter(fetched_at__gte=target, fetched_at__lt=window_start)
+            .order_by("fetched_at")
+            .first()
+        )
+        if not prev_ref:
+            return None
+
+        # Most recent snapshot before window_start
+        prev_end = (
+            UsageSnapshot.objects
+            .filter(fetched_at__lt=window_start)
+            .order_by("-fetched_at")
+            .first()
+        )
+        if not prev_end:
+            return None
+
+        return prev_ref, prev_end
+
+    def _serialize_fh_cross(key, window_start, lookback):
+        result = _find_cross_period(window_start, lookback)
+        if result:
+            prev_ref, prev_end = result
+            refs[key] = {
+                "prev_ref": {"fetched_at": _fmt_dt(prev_ref.fetched_at), "five_hour_utilization": prev_ref.five_hour_utilization},
+                "prev_end": {"fetched_at": _fmt_dt(prev_end.fetched_at), "five_hour_utilization": prev_end.five_hour_utilization},
+            }
+
+    def _serialize_sd_cross(key, window_start, lookback):
+        result = _find_cross_period(window_start, lookback)
+        if result:
+            prev_ref, prev_end = result
+            def _sd_fields(snap):
+                return {
+                    "fetched_at": _fmt_dt(snap.fetched_at),
+                    "seven_day_utilization": snap.seven_day_utilization,
+                    "seven_day_opus_utilization": snap.seven_day_opus_utilization,
+                    "seven_day_sonnet_utilization": snap.seven_day_sonnet_utilization,
+                    "seven_day_oauth_apps_utilization": snap.seven_day_oauth_apps_utilization,
+                    "seven_day_cowork_utilization": snap.seven_day_cowork_utilization,
+                }
+            refs[key] = {"prev_ref": _sd_fields(prev_ref), "prev_end": _sd_fields(prev_end)}
+
+    _serialize_fh_cross("cross_fh_long", fh_window_start, timedelta(hours=1))
+    _serialize_fh_cross("cross_fh_short", fh_window_start, timedelta(minutes=30))
+    _serialize_sd_cross("cross_sd_long", sd_window_start, timedelta(hours=24))
+    _serialize_sd_cross("cross_sd_short", sd_window_start, timedelta(hours=12))
 
     return refs if refs else None
 
