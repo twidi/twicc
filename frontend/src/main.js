@@ -43,7 +43,7 @@ import { createPinia } from 'pinia'
 import { createNotivue } from 'notivue'
 import { router } from './router'
 import App from './App.vue'
-import { initSettings } from './stores/settings'
+import { applyDefaultSettings, initSettings } from './stores/settings'
 import { useDataStore } from './stores/data'
 import { useCodeCommentsStore } from './stores/codeComments'
 
@@ -87,6 +87,37 @@ const notivue = createNotivue({
     }
 })
 app.use(notivue)
+
+// Fetch synced settings defaults from backend before initializing the store.
+// This ensures SETTINGS_SCHEMA has backend-provided defaults before loadSettings()
+// runs, making the backend the single source of truth for synced setting defaults.
+{
+    let settingsFailed = false
+    try {
+        const resp = await fetch('/api/settings/')
+        if (resp.ok) {
+            const { settings, default_settings } = await resp.json()
+            applyDefaultSettings(default_settings, settings)
+        } else {
+            settingsFailed = true
+        }
+    } catch {
+        settingsFailed = true
+    }
+    if (settingsFailed) {
+        document.getElementById('app').innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem;font-family:system-ui,sans-serif">
+                <div style="max-width:480px;padding:2rem;border-radius:12px;background:#451a1a;border:1px solid #7f1d1d;color:#fca5a5">
+                    <h2 style="margin:0 0 .75rem;font-size:1.25rem;color:#fecaca">Backend unreachable</h2>
+                    <p style="margin:0;line-height:1.5">
+                        TwiCC could not connect to the backend server.
+                        Try restarting the backend and refreshing this page.
+                    </p>
+                </div>
+            </div>`
+        throw new Error('Backend unreachable — cannot fetch settings')
+    }
+}
 
 // Initialize settings (localStorage persistence, theme, font size, display mode watchers)
 initSettings()

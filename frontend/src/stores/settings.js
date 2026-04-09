@@ -3,7 +3,7 @@
 
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { watch } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, DEFAULT_PERMISSION_MODE, DEFAULT_MODEL, DEFAULT_EFFORT, DEFAULT_THINKING, DEFAULT_CLAUDE_IN_CHROME, DEFAULT_CONTEXT_MAX, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, MODEL, EFFORT, CONTEXT_MAX, SYNCED_SETTINGS_KEYS } from '../constants'
+import { DEFAULT_DISPLAY_MODE, DEFAULT_THEME_MODE, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_MAX_CACHED_SESSIONS, DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, PERMISSION_MODE, MODEL, EFFORT, CONTEXT_MAX, SYNCED_SETTINGS_KEYS } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
 import { setThemeMode } from '../utils/theme'
@@ -14,20 +14,20 @@ const STORAGE_KEY = 'twicc-settings'
  * Settings schema with default values.
  * When adding new settings: add them here with their default value.
  * When removing settings: just remove them from here (they'll be cleaned from localStorage).
+ *
+ * Synced settings (those in SYNCED_SETTINGS_KEYS) use null as placeholder here.
+ * Their real defaults are provided by the backend via /api/settings/ and injected
+ * into this object by applyDefaultSettings() before the store is initialized.
  */
-const SETTINGS_SCHEMA = {
+export const SETTINGS_SCHEMA = {
+    // --- Local-only settings (defaults defined here) ---
     displayMode: DEFAULT_DISPLAY_MODE,
     fontSize: 16,
     themeMode: DEFAULT_THEME_MODE,
     sessionTimeFormat: DEFAULT_SESSION_TIME_FORMAT,
-    titleGenerationEnabled: true,
-    titleAutoApply: true,
-    titleSystemPrompt: DEFAULT_TITLE_SYSTEM_PROMPT,
     showCosts: false,
     extraUsageOnlyWhenNeeded: true,
     maxCachedSessions: DEFAULT_MAX_CACHED_SESSIONS,
-    autoUnpinOnArchive: true,
-    terminalUseTmux: true,
     showDiffs: true,
     toolDiffWordWrap: true,
     toolDiffSideBySide: false,
@@ -37,30 +37,32 @@ const SETTINGS_SCHEMA = {
     showArchivedSessions: false,
     showArchivedProjects: false,
     showArchivedWorkspaces: false,
-    defaultPermissionMode: DEFAULT_PERMISSION_MODE,
-    alwaysApplyDefaultPermissionMode: false,
-    defaultModel: DEFAULT_MODEL,
-    alwaysApplyDefaultModel: false,
-    defaultEffort: DEFAULT_EFFORT,
-    alwaysApplyDefaultEffort: false,
-    defaultThinking: DEFAULT_THINKING,
-    alwaysApplyDefaultThinking: false,
-    defaultClaudeInChrome: DEFAULT_CLAUDE_IN_CHROME,
-    alwaysApplyDefaultClaudeInChrome: false,
-    defaultContextMax: DEFAULT_CONTEXT_MAX,
-    alwaysApplyDefaultContextMax: false,
-    // Notification settings: sound + browser notification for each event type
     notifUserTurnSound: NOTIFICATION_SOUNDS.NONE,
     notifUserTurnBrowser: false,
     notifPendingRequestSound: NOTIFICATION_SOUNDS.NONE,
     notifPendingRequestBrowser: false,
-    // Not persisted - computed at runtime based on themeMode and system preference
+    // --- Synced settings (defaults from backend, null as placeholder) ---
+    titleGenerationEnabled: null,
+    titleAutoApply: null,
+    titleSystemPrompt: null,
+    autoUnpinOnArchive: null,
+    terminalUseTmux: null,
+    defaultPermissionMode: null,
+    alwaysApplyDefaultPermissionMode: null,
+    defaultModel: null,
+    alwaysApplyDefaultModel: null,
+    defaultEffort: null,
+    alwaysApplyDefaultEffort: null,
+    defaultThinking: null,
+    alwaysApplyDefaultThinking: null,
+    defaultClaudeInChrome: null,
+    alwaysApplyDefaultClaudeInChrome: null,
+    defaultContextMax: null,
+    alwaysApplyDefaultContextMax: null,
+    // --- Not persisted - runtime state ---
     _effectiveTheme: null,
-    // Not persisted - detected once at startup, true when primary input is touch
     _isTouchDevice: false,
-    // Not persisted - detected once at startup, true when running on macOS
     _isMac: false,
-    // Not persisted - guard flag to prevent re-broadcasting when applying remote settings
     _isApplyingRemoteSettings: false,
 }
 
@@ -303,7 +305,7 @@ export const useSettingsStore = defineStore('settings', {
          * Reset the title system prompt to default.
          */
         resetTitleSystemPrompt() {
-            this.titleSystemPrompt = DEFAULT_TITLE_SYSTEM_PROMPT
+            this.titleSystemPrompt = SETTINGS_SCHEMA.titleSystemPrompt
         },
 
         /**
@@ -656,6 +658,25 @@ export const useSettingsStore = defineStore('settings', {
 })
 
 /**
+ * Apply backend-provided default values for synced settings into SETTINGS_SCHEMA.
+ * Must be called BEFORE initSettings() / useSettingsStore() so that loadSettings()
+ * picks up the correct defaults when it runs for the first time.
+ * Also applies the current synced settings values to the store.
+ * @param {Object} defaultSettings - Default values from the backend
+ * @param {Object} currentSettings - Current synced settings from the backend
+ */
+export function applyDefaultSettings(defaultSettings, currentSettings) {
+    if (defaultSettings && typeof defaultSettings === 'object') {
+        Object.assign(SETTINGS_SCHEMA, defaultSettings)
+    }
+    // Store current settings for applySyncedSettings() to use after store init
+    _pendingSyncedSettings = currentSettings
+}
+
+// Pending synced settings to apply once the store is initialized
+let _pendingSyncedSettings = null
+
+/**
  * Initialize settings store: apply initial values and set up watchers.
  * Call this once after Pinia is installed.
  * Handles:
@@ -669,6 +690,12 @@ export const useSettingsStore = defineStore('settings', {
  */
 export function initSettings() {
     const store = useSettingsStore()
+
+    // Apply synced settings fetched from the API before mount
+    if (_pendingSyncedSettings) {
+        store.applySyncedSettings(_pendingSyncedSettings)
+        _pendingSyncedSettings = null
+    }
 
     // Apply initial font size (theme is already applied in main.js)
     document.documentElement.style.fontSize = `${store.fontSize}px`

@@ -2,10 +2,10 @@
 // SettingsPopover.vue - Settings button with popover panel
 import { computed, nextTick, ref, useId, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useSettingsStore } from '../stores/settings'
+import { useSettingsStore, SETTINGS_SCHEMA } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
-import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_TITLE_SYSTEM_PROMPT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, MODEL, MODEL_LABELS, EFFORT, EFFORT_LABELS, THINKING, THINKING_LABELS, CLAUDE_IN_CHROME, CLAUDE_IN_CHROME_LABELS, CONTEXT_MAX, CONTEXT_MAX_LABELS } from '../constants'
+import { DISPLAY_MODE, THEME_MODE, SESSION_TIME_FORMAT, DEFAULT_MAX_CACHED_SESSIONS, PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, MODEL, MODEL_LABELS, EFFORT, EFFORT_LABELS, THINKING, THINKING_LABELS, CLAUDE_IN_CHROME, CLAUDE_IN_CHROME_LABELS, CONTEXT_MAX, CONTEXT_MAX_LABELS } from '../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import AppTooltip from './AppTooltip.vue'
 import ChangelogDialog from './ChangelogDialog.vue'
@@ -171,7 +171,7 @@ const diffSideBySide = computed(() => store.isDiffSideBySide)
 const editorWordWrap = computed(() => store.isEditorWordWrap)
 
 // Check if the current prompt is the default
-const isDefaultPrompt = computed(() => titleSystemPrompt.value === DEFAULT_TITLE_SYSTEM_PROMPT)
+const isDefaultPrompt = computed(() => titleSystemPrompt.value === SETTINGS_SCHEMA.titleSystemPrompt)
 
 // Server info for footer
 const currentVersion = computed(() => dataStore.currentVersion)

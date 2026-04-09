@@ -1545,6 +1545,16 @@ def usage_history(request):
     return JsonResponse({"snapshots": data})
 
 
+def synced_settings(request):
+    """GET /api/settings/ - Current synced settings and their default values."""
+    from twicc.synced_settings import SYNCED_SETTINGS_DEFAULTS, read_synced_settings
+
+    return JsonResponse({
+        "settings": read_synced_settings(),
+        "default_settings": SYNCED_SETTINGS_DEFAULTS,
+    })
+
+
 def spa_index(request):
     """Catch-all for Vue Router - serves index.html."""
     index_path = settings.FRONTEND_DIST_DIR / "index.html"
