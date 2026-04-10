@@ -206,6 +206,8 @@ function toggleJsonView() {
                 v-else
                 :type="entryType"
                 :data="content"
+                :session-id="sessionId"
+                :detail-key="`line:${lineNum}`"
             />
         </template>
     </div>
