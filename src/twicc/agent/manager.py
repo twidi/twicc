@@ -609,7 +609,7 @@ class ProcessManager:
     CRON_EXPIRY_MONITOR_INTERVAL = 60  # Check every 60 seconds
 
     async def _run_cron_expiry_monitor(self) -> None:
-        """Background task that detects recurring crons auto-deleted by the CLI after 3 days.
+        """Background task that detects recurring crons auto-deleted by the CLI after 7 days.
 
         Runs every 60 seconds. For each active process, checks if any recurring crons
         have passed their computed expiry time (last_fire + jitter + margin).

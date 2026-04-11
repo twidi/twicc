@@ -833,7 +833,7 @@ class SessionCron(models.Model):
     new sessions may not exist in the Session table yet when a cron is created.
     """
 
-    CLAUDE_RECURRING_MAX_AGE = timedelta(days=3)
+    CLAUDE_RECURRING_MAX_AGE = timedelta(days=7)
     """Maximum age of a recurring cron before it auto-expires (matches Claude CLI behavior)."""
 
     cron_id = models.CharField(max_length=100, unique=True)
@@ -873,7 +873,7 @@ class SessionCron(models.Model):
         """The timestamp when the CLI will fire this cron for the last time before auto-deleting it.
 
         Only meaningful for recurring crons. Returns the first cron occurrence that falls
-        at or after created_at + 3 days (CLAUDE_RECURRING_MAX_AGE). This is the fire that
+        at or after created_at + 7 days (CLAUDE_RECURRING_MAX_AGE). This is the fire that
         triggers the CLI's age check and causes deletion.
 
         Returns None for non-recurring crons or if the cron expression is unparseable.
@@ -917,14 +917,14 @@ class SessionCron(models.Model):
     def has_active_for_session(cls, session_id: str) -> bool:
         """Check if a session has any non-expired cron jobs.
 
-        Recurring crons expire after CLAUDE_RECURRING_MAX_AGE (3 days, matching CLI behavior).
+        Recurring crons expire after CLAUDE_RECURRING_MAX_AGE (7 days, matching CLI behavior).
         One-shot crons expire after their fire time passes.
         """
         now = datetime.now(tz=timezone.utc)
         return cls.objects.filter(
             session_id=session_id,
         ).filter(
-            # Recurring: created less than 3 days ago
+            # Recurring: created less than 7 days ago
             Q(recurring=True, created_at__gt=now - cls.CLAUDE_RECURRING_MAX_AGE)
             # One-shot: fire time not yet passed
             | Q(recurring=False, next_fire__gt=now)

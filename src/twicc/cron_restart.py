@@ -339,7 +339,7 @@ def _build_restart_message(crons_data: list[dict]) -> str:
 def _build_renewal_message(crons_data: list[dict]) -> str:
     """Build the user message asking Claude to delete and recreate expired cron jobs.
 
-    Used when the process is alive but crons have reached their 3-day expiry.
+    Used when the process is alive but crons have reached their 7-day expiry.
     The CLI may or may not have auto-deleted them yet, so we ask Claude to
     delete them first (if they still exist) before recreating.
 
