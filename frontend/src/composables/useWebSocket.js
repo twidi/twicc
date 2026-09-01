@@ -1245,7 +1245,7 @@ export function useWebSocket() {
                         && msg.peer?.remote_accepted_at && !msg.peer?.code_confirmed_at
                     peersStore.upsertPeer(msg.peer)
                     if (becameHeld) {
-                        const peerName = msg.peer.name || msg.peer.base_url
+                        const peerName = peersStore.peerLabel(msg.peer.id)
                         toast.custom(PeerToastContent, {
                             type: 'warning',
                             title: `"${peerName}" accepted your request — complete the code verification to activate`,
@@ -1276,8 +1276,14 @@ export function useWebSocket() {
             }
             case 'peer_accepted': {
                 import('../stores/peers').then(({ usePeersStore }) => {
-                    usePeersStore().upsertPeer(msg.peer)
-                    toast.info(`"${msg.peer?.name || msg.peer?.base_url}" accepted your peer request`)
+                    const peersStore = usePeersStore()
+                    peersStore.upsertPeer(msg.peer)
+                    // Pairing toasts always carry the address: it is what the
+                    // two users verify, and a name alone can name the wrong
+                    // instance. The body holds it, the title names the peer.
+                    toast.info(msg.peer?.base_url || '', {
+                        title: `"${peersStore.peerLabel(msg.peer?.id)}" accepted your peer request`,
+                    })
                 })
                 break
             }
@@ -1315,11 +1321,16 @@ export function useWebSocket() {
                     peersStore.upsertMessage(msg.message)
                     if (resolvedNow) {
                         const peerName = peersStore.peerLabel(msg.message.peer_id)
+                        // The title says WHICH message: several can await the
+                        // same peer at once. 40 characters keep the sentence on
+                        // one line (a title is capped at 100 server-side).
+                        const excerpt = truncateTitle(msg.message.title, 40, '')
+                        const quoted = excerpt ? ` "${excerpt}"` : ''
                         // "done": their user dealt with it themselves, no agent
                         // received it — "was done" would not read as a sentence.
                         toast.info(msg.message.status === 'done'
-                            ? `"${peerName}" marked your message as done`
-                            : `Your message to "${peerName}" was ${msg.message.status}`)
+                            ? `"${peerName}" marked your message${quoted} as done`
+                            : `Your message${quoted} to "${peerName}" was ${msg.message.status}`)
                     }
                 })
                 break

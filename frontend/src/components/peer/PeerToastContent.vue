@@ -8,6 +8,11 @@
  * Both dialogs are mounted once in App.vue and opened through window
  * CustomEvents, so the toast stays decoupled from them.
  *
+ * mode 'request' names the peer the way the user does — the local name they
+ * chose, and only without one the name the remote instance claims. It always
+ * shows the address too: pairing is the moment identity is verified, and one
+ * name can designate several instances.
+ *
  * mode 'message' reading order (decision of 2026-08-11): WHO speaks is the
  * toast's own title ("Message from <peer>", set by the caller), then the
  * sender-written message title, then the text preview.
@@ -57,7 +62,7 @@ function later() {
         <template v-if="mode === 'request' && peer">
             <span class="peer-toast-line">
                 <wa-icon name="user-plus" class="peer-toast-icon"></wa-icon>
-                <strong>{{ peer.remote_display_name || peer.name || 'An instance' }}</strong>
+                <strong>{{ peer.name || peer.remote_display_name || 'An instance' }}</strong>
                 &nbsp;wants to pair with your instance
             </span>
             <span class="peer-toast-url">{{ peer.base_url }}</span>

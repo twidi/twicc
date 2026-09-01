@@ -18,7 +18,6 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { usePeersStore } from '../../stores/peers'
 import { apiFetch } from '../../utils/api'
 import { PEER_MESSAGE_TITLE_MAX_CHARS, replySubject } from '../../utils/peerReplyTarget'
-import { toast } from '../../composables/useToast'
 
 const props = defineProps({
     open: Boolean,
@@ -118,13 +117,12 @@ async function handleSend() {
             error.value = errorText(payload)
             return
         }
-        const label = peersStore.peerLabel(selectedPeerId.value)
-        toast.success(`Message sent to ${label} — awaiting their approval.`)
-        // The reply left either way; a resolution that could not apply is
-        // reported, not hidden — the message is still in the inbox to fix.
-        if (payload?.resolution && !payload.resolution.ok) {
-            toast.warning(`Sent, but the answered message could not be marked as ${resolution.value}: ${errorText(payload.resolution)}`)
-        }
+        // No confirmation toast: a failed send KEEPS the dialog open on its
+        // error, so the dialog closing already means "it left". The rare
+        // `payload.resolution.ok === false` is silent for the same reason it
+        // is rare — resolving the answered message elsewhere at the same
+        // instant is something the user did on purpose, and the message is
+        // still in the inbox, in its unchanged state, to fix.
         // `proposedTitle` too: `dirty` compares the title against it, and a
         // cleared title next to a surviving proposal reads as "typed content"
         // — the close underneath then gets silently vetoed and the emptied

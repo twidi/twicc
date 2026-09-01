@@ -13,6 +13,8 @@
 import { ref, computed, watch } from 'vue'
 import { usePeersStore } from '../../stores/peers'
 import { useSettingsStore } from '../../stores/settings'
+import { SESSION_TIME_FORMAT } from '../../constants'
+import { formatDate } from '../../utils/date'
 import { apiFetch } from '../../utils/api'
 import { mutatePeer, reloadPeers } from '../../utils/peerManagerRequests'
 import PeerHelpLink from './PeerHelpLink.vue'
@@ -35,6 +37,31 @@ const sentRequests = computed(() => [...pendingSent.value, ...reconnectSent.valu
 const establishedPeers = computed(() => peersStore.peers.filter(p =>
     ['active', 'broken', 'revoked'].includes(p.state) && !p.reconnect_direction
 ))
+
+// Timestamps follow the global time-format setting, like every other list
+// (PeerInboxRow is the reference). One set of computeds for the whole dialog.
+const sessionTimeFormat = computed(() => settingsStore.getSessionTimeFormat)
+const useRelativeTime = computed(() =>
+    sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_SHORT ||
+    sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_NARROW
+)
+const relativeTimeFormat = computed(() =>
+    sessionTimeFormat.value === SESSION_TIME_FORMAT.RELATIVE_SHORT ? 'short' : 'narrow'
+)
+function toDate(iso) {
+    return iso ? new Date(iso) : null
+}
+function absoluteTime(iso) {
+    const date = toDate(iso)
+    return date ? formatDate(Math.floor(date.getTime() / 1000), { smart: true }) : ''
+}
+// An initial request shows when it was made — a request nobody answers stays
+// there forever, and its age is the only thing that says so. Reconnect rows
+// are excluded: they reuse an old row, whose `created_at` predates the
+// reconnect attempt by weeks and would read as a lie.
+function requestDate(peer) {
+    return peer.reconnect_direction ? null : peer.created_at
+}
 
 // Per-peer transient UI state (inputs, errors, busy flags), keyed by peer id.
 const acceptNames = ref({})
@@ -294,6 +321,14 @@ function onHide(event) {
                     <span class="pm-request__name">{{ peer.remote_display_name || 'unnamed instance' }}</span>
                     <span class="pm-request__url">{{ peer.base_url }}</span>
                     <wa-tag v-if="peer.reconnect_direction" size="small">Reconnect</wa-tag>
+                    <span v-if="requestDate(peer)" class="pm-request__time">
+                        <wa-relative-time
+                            v-if="useRelativeTime"
+                            :date.prop="toDate(requestDate(peer))" :format="relativeTimeFormat"
+                            numeric="always" sync
+                        ></wa-relative-time>
+                        <template v-else>{{ absoluteTime(requestDate(peer)) }}</template>
+                    </span>
                 </div>
                 <div class="pm-request__code-block">
                     <span class="pm-request__code">{{ peer.verification_code }}</span>
@@ -358,6 +393,14 @@ function onHide(event) {
                     <span class="pm-request__name">{{ peer.name }}</span>
                     <span class="pm-request__url">{{ peer.base_url }}</span>
                     <wa-tag v-if="peer.reconnect_direction" size="small">Reconnect</wa-tag>
+                    <span v-if="requestDate(peer)" class="pm-request__time">
+                        <wa-relative-time
+                            v-if="useRelativeTime"
+                            :date.prop="toDate(requestDate(peer))" :format="relativeTimeFormat"
+                            numeric="always" sync
+                        ></wa-relative-time>
+                        <template v-else>{{ absoluteTime(requestDate(peer)) }}</template>
+                    </span>
                 </div>
                 <wa-callout
                     v-if="peer.remote_accepted_at && !peer.code_confirmed_at"
@@ -430,11 +473,14 @@ function onHide(event) {
                     <wa-tag :variant="peer.state === 'active' ? 'success' : 'danger'" size="small">
                         {{ peer.state }}
                     </wa-tag>
-                    <wa-relative-time
-                        v-if="peer.last_contact_at"
-                        :date.prop="new Date(peer.last_contact_at)"
-                        class="pm-peer__contact"
-                    ></wa-relative-time>
+                    <span v-if="peer.last_contact_at" class="pm-peer__contact">
+                        <wa-relative-time
+                            v-if="useRelativeTime"
+                            :date.prop="toDate(peer.last_contact_at)" :format="relativeTimeFormat"
+                            numeric="always" sync
+                        ></wa-relative-time>
+                        <template v-else>{{ absoluteTime(peer.last_contact_at) }}</template>
+                    </span>
                 </template>
             </div>
             <div class="pm-peer__url-row">
@@ -552,6 +598,14 @@ wa-dialog > wa-callout { margin-block: var(--wa-space-s); }
     min-width: 0;
 }
 .pm-request__name { font-weight: 600; }
+/* Pushed to the end of the claim row, like an established peer's last
+   contact — metadata, never competing with the name and the address. */
+.pm-request__time {
+    margin-left: auto;
+    flex: none;
+    color: var(--wa-color-text-quiet);
+    font-size: 0.8rem;
+}
 .pm-request__url, .pm-peer__url {
     color: var(--wa-color-text-quiet);
     font-size: 0.85rem;
