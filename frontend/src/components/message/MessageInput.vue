@@ -558,6 +558,24 @@ watch(
     }
 )
 
+// Programmatic appends (Peer delivery) land in the store draft while this
+// composer may already be mounted with text — and the draft watcher above
+// ignores non-empty textareas on purpose. The append signal is the explicit
+// path around that guard: it only ever fires for a deliberate append, so an
+// unconditional resync cannot clobber user typing with stale data.
+watch(
+    () => store.getDraftAppendSignal(props.sessionId),
+    async () => {
+        messageText.value = store.getDraftMessage(props.sessionId)?.message || ''
+        // Adjust textarea height after the DOM updates with the new content
+        await nextTick()
+        if (textareaRef.value?.updateComplete) {
+            await textareaRef.value.updateComplete
+        }
+        adjustTextareaHeight()
+    }
+)
+
 // Save draft message on each keystroke (debounced in store)
 watch(messageText, (newText) => {
     store.setDraftMessage(props.sessionId, newText)

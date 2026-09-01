@@ -864,25 +864,41 @@ function targetAttachmentError(provider) {
     )
 }
 
-/** Prefill a composer (existing session's draft, or a fresh draft session)
- *  with the envelope + the peer attachments. Nothing is
- *  sent — the user reviews and sends through the normal pipeline. */
-async function prefillComposer(sessionId) {
-    const attachmentError = await addPeerAttachmentsToDraft(
+/** Add the peer attachments to a composer's draft, one by one through the
+ *  normal attachment pipeline. Returns the medias actually added so a failed
+ *  delivery can remove exactly those — an existing composer may already hold
+ *  user attachments that must survive a rollback. */
+async function addPeerAttachments(sessionId) {
+    const added = []
+    const error = await addPeerAttachmentsToDraft(
         detail.value?.payload,
         blockToFile,
-        file => dataStore.addAttachment(sessionId, file),
+        async (file) => { added.push(await dataStore.addAttachment(sessionId, file)) },
     )
-    if (attachmentError) {
-        actionError.value = attachmentError
-        return false
-    }
+    return { added, error }
+}
 
-    // Append — the target session may already carry a user-typed draft,
-    // which must never be overwritten.
-    const existing = dataStore.getDraftMessage(sessionId)?.message?.trim() || ''
-    dataStore.setDraftMessage(sessionId, existing ? `${existing}\n\n${envelopeText}` : envelopeText)
-    return true
+/** Put the target composer back exactly as it was before a failed delivery.
+ *  A fresh draft session is entirely ours: drop it whole. An existing
+ *  session only loses the attachments this delivery added. */
+async function rollbackDelivery(sessionId, addedMedias, { dropDraft }) {
+    if (dropDraft) {
+        await dataStore.clearAttachmentsForSession(sessionId).catch(() => {})
+        dataStore.deleteDraftSession(sessionId)
+        return
+    }
+    for (const media of addedMedias) {
+        await dataStore.removeAttachment(sessionId, media.id).catch(() => {})
+    }
+}
+
+/** One message for every delivery failure (attachments, server, network):
+ *  what failed, that the status did not move, and the way out. */
+function setDeliveryFailure() {
+    actionError.value = 'TwiCC could not prepare the composer. Nothing was delivered '
+        + 'and the message status did not change — you can try again, on this session '
+        + `or another one. If it keeps failing, use “Reply manually” to ask ${peerName.value} `
+        + 'to send it again.'
 }
 
 function navigateToComposer(sessionId, projectId) {
@@ -891,8 +907,6 @@ function navigateToComposer(sessionId, projectId) {
     emit('close', 'navigating')
     router.push(sessionRouteLocation({ id: sessionId, project_id: projectId }, route))
 }
-
-let envelopeText = null
 
 async function deliverToSession(session) {
     actionError.value = ''
@@ -903,18 +917,35 @@ async function deliverToSession(session) {
         return
     }
     busy.value = true
-    let shouldNavigate = false
+    let envelope = null
+    let added = []
     try {
-        envelopeText = await markDelivered(session.id)
-        if (envelopeText == null) return
-        if (!await prefillComposer(session.id)) return
-        shouldNavigate = true
-    } catch (error) {
-        setActionFailure(error)
+        // Fallible work first, resolution second: "delivered" is only ever
+        // recorded once nothing can fail anymore (the text append below is a
+        // plain store write). A failure rolls the composer back to exactly
+        // its previous state and leaves the message pending for another try.
+        const attachments = await addPeerAttachments(session.id)
+        added = attachments.added
+        if (attachments.error) {
+            await rollbackDelivery(session.id, added, { dropDraft: false })
+            setDeliveryFailure()
+            return
+        }
+        envelope = await markDelivered(session.id)
+        if (envelope == null) {
+            await rollbackDelivery(session.id, added, { dropDraft: false })
+            setDeliveryFailure()
+            return
+        }
+    } catch {
+        await rollbackDelivery(session.id, added, { dropDraft: false })
+        setDeliveryFailure()
+        return
     } finally {
         busy.value = false
     }
-    if (shouldNavigate) navigateToComposer(session.id, session.project_id)
+    await dataStore.appendDraftMessage(session.id, envelope)
+    navigateToComposer(session.id, session.project_id)
 }
 
 async function deliverToNewSession(projectId) {
@@ -930,14 +961,22 @@ async function deliverToNewSession(projectId) {
     confirmingRefuse.value = false
     busy.value = true
     let draftId = null
+    let envelope = null
     try {
-        envelopeText = await markDelivered(null)
-        if (envelopeText == null) return
+        // Same order as deliverToSession, with one more fallible step up
+        // front: the draft session. It is entirely ours, so any failure
+        // (including a thrown one) drops it whole.
         draftId = dataStore.createDraftSession(projectId, gate.state, provider)
-        if (!await prefillComposer(draftId)) {
-            await dataStore.clearAttachmentsForSession(draftId).catch(() => {})
-            dataStore.deleteDraftSession(draftId)
-            draftId = null
+        const attachments = await addPeerAttachments(draftId)
+        if (attachments.error) {
+            await rollbackDelivery(draftId, attachments.added, { dropDraft: true })
+            setDeliveryFailure()
+            return
+        }
+        envelope = await markDelivered(null)
+        if (envelope == null) {
+            await rollbackDelivery(draftId, attachments.added, { dropDraft: true })
+            setDeliveryFailure()
             return
         }
         // The delivery was just recorded with NO target: the session does not
@@ -945,13 +984,15 @@ async function deliverToNewSession(projectId) {
         // link once the provider creates the real session — that is what makes
         // the inbox row point at it later.
         dataStore.setDraftPeerMessage(draftId, props.messageId)
-    } catch (error) {
-        setActionFailure(error)
-        draftId = null
+    } catch {
+        if (draftId != null) await rollbackDelivery(draftId, [], { dropDraft: true })
+        setDeliveryFailure()
+        return
     } finally {
         busy.value = false
     }
-    if (draftId != null) navigateToComposer(draftId, projectId)
+    await dataStore.appendDraftMessage(draftId, envelope)
+    navigateToComposer(draftId, projectId)
 }
 
 async function refuse() {

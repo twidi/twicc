@@ -591,6 +591,13 @@ export const useDataStore = defineStore('data', {
             // Persisted to IndexedDB with debounce
             draftMessages: {},
 
+            // Monotonic per-session counters bumped by appendDraftMessage.
+            // A mounted composer watches its counter to resync its textarea:
+            // its draft watcher deliberately ignores non-empty textareas, so
+            // a programmatic append needs this explicit side channel.
+            // { sessionId: number }. Ephemeral: not persisted.
+            draftAppendSignals: {},
+
             // Title suggestions by session ID
             // Format: { sessionId: { suggestion: string, sourcePrompt?: string } }
             titleSuggestions: {},
@@ -1284,6 +1291,10 @@ export const useDataStore = defineStore('data', {
         // Get draft message for a session
         getDraftMessage: (state) => (sessionId) =>
             state.localState.draftMessages[sessionId] || null,
+
+        // Get the append signal for a session (see draftAppendSignals)
+        getDraftAppendSignal: (state) => (sessionId) =>
+            state.localState.draftAppendSignals[sessionId] || 0,
 
         // Get stored title suggestion for a session
         getTitleSuggestion: (state) => (sessionId) =>
@@ -5625,6 +5636,36 @@ export const useDataStore = defineStore('data', {
             // Persist to IndexedDB with debounce
             const debouncedSave = this._getDebouncedSave(sessionId)
             debouncedSave({ message })
+        },
+
+        /**
+         * Append text to a session's draft on behalf of a programmatic flow
+         * (Peer delivery): existing draft + blank line + text, or just the
+         * text. Also bumps the session's append signal so an already-mounted
+         * composer re-reads the draft — its own draft watcher deliberately
+         * ignores non-empty textareas, so a plain draft update would stay
+         * invisible there (and be lost on the next keystroke).
+         * @param {string} sessionId
+         * @param {string} text
+         */
+        async appendDraftMessage(sessionId, text) {
+            const existing = this.getDraftMessage(sessionId)?.message?.trim() || ''
+            this.setDraftMessage(sessionId, existing ? `${existing}\n\n${text}` : text)
+            const signals = this.localState.draftAppendSignals
+            signals[sessionId] = (signals[sessionId] || 0) + 1
+            // Flush instead of waiting out the 500 ms debounce: the caller
+            // navigates right after, and an embedding host may turn that
+            // navigation into a page unload that would drop the pending
+            // write. Best effort — the store copy is what the composer
+            // shows and sends either way.
+            const debouncedSave = debouncedSaves.get(sessionId)
+            if (debouncedSave) {
+                debouncedSave.cancel()
+                debouncedSaves.delete(sessionId)
+            }
+            await saveDraftMessage(sessionId, this.localState.draftMessages[sessionId]).catch(err =>
+                console.warn('Failed to flush draft message to IndexedDB:', err)
+            )
         },
 
         /**
