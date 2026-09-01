@@ -27,7 +27,7 @@ dependencies = [
     "apprise~=1.11",
     "blacknoise~=1.2.0",
     "channels~=4.3.2",
-    "claude-agent-sdk==0.2.149",
+    "claude-agent-sdk==0.2.151",
     "cronsim~=2.7",
     "daphne~=4.2.1",
     "django~=6.0.4",

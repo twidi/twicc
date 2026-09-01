@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **The keyboard on touch devices** — Opening a session's Files, Git, Artifacts or Browser tab no longer pops the on-screen keyboard; tap a filter field yourself to type. The Terminal tab still opens it.
 - **Include files in a prompt** — Inside an included file, an `@@./path` or `@@../path` marker now points next to that file, so only the first file of a set of prepared prompts needs an absolute path (CLI/skill/API only, not the UI).
+- **Claude Agent SDK** — Upgrade from 0.2.149 to 0.2.151 (bundled Claude Code CLI: 2.1.252 → 2.1.258)
 
 ### Fixed
 
