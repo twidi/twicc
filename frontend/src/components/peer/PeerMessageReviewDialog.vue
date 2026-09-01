@@ -1270,6 +1270,14 @@ function onHide(event) {
                 <wa-callout v-if="confirmingRefuse" variant="warning" size="small">
                     <div class="pr-confirm-body">
                         <span>Refuse this message? The sender will see it as refused.</span>
+                        <!-- A refusal carries no words. Rather than a reason
+                             field nobody can answer, point at the reply that
+                             already does it — and resolves the message in the
+                             same gesture (its "Refuse it" choice). -->
+                        <span v-if="canReply" class="pr-confirm__hint">
+                            To explain why, use <strong>Reply manually</strong> at the bottom
+                            of this dialog and pick <strong>Refuse it</strong> there.
+                        </span>
                         <span class="pr-confirm__actions">
                             <wa-button
                                 size="small" variant="danger" :disabled="busy"
@@ -1661,6 +1669,11 @@ function onHide(event) {
 .pr-confirm__actions {
     display: flex;
     gap: var(--wa-space-s);
+}
+/* Secondary to the question above it: the way out, not the decision. */
+.pr-confirm__hint {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
 }
 .pr-footer { display: flex; justify-content: flex-end; gap: var(--wa-space-s); width: 100%; }
 

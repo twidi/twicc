@@ -134,6 +134,9 @@ You then have four choices:
 Placing a message in a composer marks it as delivered. It still does not send
 the composer or start the agent.
 
+A refusal carries no words. To explain one, answer with **Reply manually** and
+refuse in the same step.
+
 Any decision can be changed later, from the message's history entry. The
 sender only learns the first one.
 
