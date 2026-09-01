@@ -13,6 +13,7 @@ succeeds.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import NamedTuple
 
 import orjson
@@ -78,6 +79,19 @@ def _alias_for(mv) -> str:
     return mv.model if mv.latest else f"{mv.model}-{mv.version}"
 
 
+def _is_offered(mv) -> bool:
+    """Whether ``mv`` may be passed to ``--model``: enabled and not retired.
+
+    Inlined rather than imported: this module is deliberately Django-free (see
+    the module docstring), so it cannot reach ``BaseProviderHelpers``. The
+    retirement comparison is strict, exactly like ``is_model_version_retired``
+    — a model stays offered through the whole of its retirement day.
+    """
+    if not mv.enabled:
+        return False
+    return mv.retirement_date is None or date.today() <= mv.retirement_date
+
+
 def load_help_context() -> HelpContext:
     """Read settings + presets files; no Django setup involved."""
     data_dir = get_data_dir()
@@ -124,7 +138,7 @@ def load_help_context() -> HelpContext:
         model_aliases[provider_name] = [
             ModelAlias(alias=_alias_for(mv), is_latest=mv.latest, version=mv.version)
             for mv in model_versions
-            if mv.enabled
+            if _is_offered(mv)
         ]
 
     return HelpContext(

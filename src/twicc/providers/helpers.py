@@ -993,18 +993,26 @@ class BaseProviderHelpers:
                 return mv
         return None
 
+    def is_model_version_retired(self, mv: ModelVersion) -> bool:
+        """Return ``True`` when ``mv`` is past its retirement date.
+
+        The comparison is strict: a model stays usable *through* the whole
+        retirement day and only dies the day after. Every surface that hides
+        retired models — the pickers, ``info models``, ``info agent-settings``,
+        the ``--model`` help and its validation — must agree on that boundary.
+        """
+        return mv.retirement_date is not None and date.today() > mv.retirement_date
+
     def is_model_retired(self, identifier: str) -> bool:
         """Return ``True`` when the model identified by ``identifier`` is past its retirement date."""
         mv = self.find_model(identifier)
-        if mv is None or mv.retirement_date is None:
-            return False
-        return date.today() > mv.retirement_date
+        return mv is not None and self.is_model_version_retired(mv)
 
     def _model_available(self, mv: ModelVersion) -> bool:
         """Return ``True`` when ``mv`` is usable: enabled and not retired."""
         if not mv.enabled:
             return False
-        return mv.retirement_date is None or date.today() <= mv.retirement_date
+        return not self.is_model_version_retired(mv)
 
     def resolve_to_available_model(self, identifier: str) -> str:
         """Resolve ``identifier`` to the closest available model by weight.

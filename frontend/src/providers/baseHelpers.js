@@ -12,6 +12,18 @@ export function formatRetirementDate(isoDate) {
 }
 
 /**
+ * Today in the local timezone as an ISO day string. Registry retirement dates
+ * are ISO days too, so comparing the two is a plain lexicographic compare —
+ * no ``Date`` arithmetic, hence no timezone drift around midnight.
+ */
+function todayIsoDay() {
+    const now = new Date()
+    const month = String(now.getMonth() + 1).padStart(2, '0')
+    const day = String(now.getDate()).padStart(2, '0')
+    return `${now.getFullYear()}-${month}-${day}`
+}
+
+/**
  * Base class for per-provider frontend helpers.
  *
  * Mirrors the backend `BaseProviderHelpers` pattern: each provider ships a
@@ -470,14 +482,27 @@ export class BaseProviderHelpers {
     }
 
     /**
+     * Whether a model registry entry is past its retirement date. Mirrors the
+     * backend ``is_model_retired``: the model stays usable *through* the whole
+     * retirement day, so the comparison is strict.
+     *
+     * Distinct from ``enabled === false`` on purpose. A disabled model is
+     * unavailable for now and may come back (Fable 5 was), so the pickers keep
+     * it listed and greyed out. A retired one never returns, so they drop it.
+     */
+    isModelRetired(entry) {
+        if (!entry?.retirement_date) return false
+        return todayIsoDay() > entry.retirement_date
+    }
+
+    /**
      * Whether a model registry entry is usable: enabled and not past its
      * retirement date. Mirrors the backend ``_model_available``.
      */
     isModelAvailable(entry) {
         if (!entry) return false
         if (entry.enabled === false) return false
-        if (entry.retirement_date && new Date(entry.retirement_date + 'T00:00:00') < new Date()) return false
-        return true
+        return !this.isModelRetired(entry)
     }
 
     /**
@@ -1016,13 +1041,28 @@ export class BaseProviderHelpers {
     }
 
     /**
-     * Resolve the model registry into the option groups rendered by the
-     * model wa-select. Each group is ``{ entries: [{ value, label }] }`` —
-     * adjacent groups are separated by a wa-divider. Default: a single
-     * group flattening the registry. Claude overrides to split latest vs
-     * older with a divider in between.
+     * Option groups rendered by the model wa-select, retired models removed.
+     *
+     * The "latest / older" split every provider builds is about *families* —
+     * older means "still valid, but no longer its family's latest". A retired
+     * model belongs to neither group: it cannot be selected at all, so it is
+     * dropped here rather than in each provider's grouping.
+     *
+     * Do NOT override this — override ``buildModelSelectGroups``, which
+     * receives the already-filtered registry.
      */
     getModelSelectGroups(registry) {
+        return this.buildModelSelectGroups((registry ?? []).filter(e => !this.isModelRetired(e)))
+    }
+
+    /**
+     * Shape the (already filtered) model registry into the option groups
+     * rendered by the model wa-select. Each group is ``{ entries: [{ value,
+     * label }] }`` — adjacent groups are separated by a wa-divider. Default:
+     * a single group flattening the registry. Claude and Codex override to
+     * split latest vs older with a divider in between.
+     */
+    buildModelSelectGroups(registry) {
         return [{
             entries: (registry ?? []).map(e => this.buildModelOption(e, this.getModelLabel(e.selected_model))),
         }]

@@ -6,6 +6,7 @@ Aggregates errors so the user sees every problem at once, lint-style.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import NamedTuple
 
 
@@ -62,6 +63,24 @@ def validate_provider(provider: str, bootstrap) -> list[ValidationError]:
     return errors
 
 
+def _model_offered(entry: dict) -> bool:
+    """Whether a serialised model-registry entry is a valid ``--model`` value.
+
+    Both a disabled and a retired model resolve away to a fallback, so accepting
+    either would silently run something other than what the caller asked for.
+    ``info agent-settings`` and the ``--model`` help list exactly this set.
+
+    ``retirement_date`` rides the wire as an ISO day, so the comparison against
+    today is a plain string compare — and it is strict, like
+    ``BaseProviderHelpers.is_model_version_retired``: a model stays valid
+    through the whole of its retirement day.
+    """
+    if not entry.get("enabled", True):
+        return False
+    retirement_date = entry.get("retirement_date")
+    return not retirement_date or date.today().isoformat() <= retirement_date
+
+
 def validate_settings(provider: str, settings, bootstrap) -> list[ValidationError]:
     """Check each non-None field against the provider's choices."""
     errors: list[ValidationError] = []
@@ -71,7 +90,9 @@ def validate_settings(provider: str, settings, bootstrap) -> list[ValidationErro
     for fields in categories.values():
         all_supported.update(fields)
     choices = pb.agent_settings_choices or {}
-    model_ids = {m.get("selected_model") for m in pb.model_registry or []}
+    model_ids = {
+        m.get("selected_model") for m in pb.model_registry or [] if _model_offered(m)
+    }
     aliases = pb.agent_settings_aliases or {}
 
     def _alias_hint(field_name: str) -> str:

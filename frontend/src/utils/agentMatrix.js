@@ -67,7 +67,11 @@ export function buildMatrixBlocks({
     const nProviders = providers.length
     return providers.map(provider => {
         const helpers = getProviderHelpers(provider)
-        const registry = helpers?.getModelRegistry() ?? []
+        // Retired models are dropped, not greyed out: the "show older models"
+        // toggle covers models that are still valid but no longer their
+        // family's latest, which a retired one is not. A merely disabled model
+        // stays listed (greyed) — it can come back, a retired one cannot.
+        const registry = (helpers?.getModelRegistry() ?? []).filter(e => !helpers.isModelRetired(e))
         const supported = new Set((helpers?.getFieldChoices('effort') ?? []).map(c => c.value))
         const isCurrent = provider === currentProvider
         // This provider's own default (hollow dot when it isn't the main one).

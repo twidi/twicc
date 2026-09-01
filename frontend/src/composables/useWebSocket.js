@@ -10,7 +10,7 @@ import { useReconciliation } from './useReconciliation'
 import { toast } from './useToast'
 import { computeUsageData, formatExtraUsageAmount } from '../utils/usage'
 import { useSettingsStore } from '../stores/settings'
-import { getProviderHelpers, getProviderLabel, getProviderIcon, getProviderIconColor, getProviderWsHandler, getProviderStore } from '../providers'
+import { getProviderLabel, getProviderIcon, getProviderIconColor, getProviderWsHandler, getProviderStore } from '../providers'
 import { playNotificationSound, sendBrowserNotification, isPageActive } from '../utils/notificationSounds'
 import { installPresenceHeartbeat, isLocallyPresent } from '../utils/presence'
 import { handleResyncRequired } from '../utils/resync'
@@ -1706,25 +1706,6 @@ export function useWebSocket() {
                 store.setLatestVersion(msg.latest_version, msg.release_url)
                 handleUpdateAvailable(msg)
                 break
-            case 'model_retirement': {
-                const { provider, retired_models } = msg
-                const helpers = getProviderHelpers(provider)
-                if (!helpers) {
-                    console.warn('[ws] model_retirement for unknown provider:', provider)
-                    break
-                }
-
-                // Show persistent warning toast
-                const retiredList = Object.entries(retired_models)
-                    .map(([old, newM]) => `${helpers.getModelLabel(old)} → ${helpers.getModelLabel(newM)}`)
-                    .join(', ')
-
-                toast.warning(
-                    `Model version retired: ${retiredList}. Settings updated automatically.`,
-                    { duration: Infinity }
-                )
-                break
-            }
             case 'send_ack': {
                 // Positive delivery acknowledgement for a send: the message
                 // reached the agent. Drop its in-flight snapshot (and heal any

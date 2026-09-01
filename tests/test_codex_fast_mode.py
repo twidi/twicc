@@ -58,9 +58,20 @@ def test_fast_constraint_lists_only_supported_models(helpers) -> None:
     }
 
 
-def test_consistency_disables_fast_mode_for_mini(helpers) -> None:
-    settings = AgentSettings(selected_model="gpt-mini", fast_mode=True)
-    assert helpers.enforce_agent_settings_consistency(settings).fast_mode is False
+# Commented out on 2026-09-01, not deleted. Both tests below need a Codex model
+# that does NOT support fast mode, and ``gpt-mini`` was the only one. It retired
+# on 2026-08-31, so ``enforce_agent_settings_consistency`` now upgrades it to
+# ``gpt-luna`` first — which does support fast mode — and the clamp never fires.
+# Every remaining Codex model supports it, so there is no replacement to swap in.
+#
+# Kept as-is so the coverage comes back for free the day a Codex model ships
+# without fast mode. That looks unlikely (OpenAI has enabled it on every new
+# model), which is exactly why this is worth leaving in sight rather than
+# deleting: if it ever happens, uncomment and swap ``gpt-mini`` for the new one.
+#
+# def test_consistency_disables_fast_mode_for_mini(helpers) -> None:
+#     settings = AgentSettings(selected_model="gpt-mini", fast_mode=True)
+#     assert helpers.enforce_agent_settings_consistency(settings).fast_mode is False
 
 
 def test_consistency_keeps_fast_mode_for_supported_model(helpers) -> None:
@@ -68,10 +79,13 @@ def test_consistency_keeps_fast_mode_for_supported_model(helpers) -> None:
     assert helpers.enforce_agent_settings_consistency(settings) is settings
 
 
-def test_synced_fast_mode_is_reclamped_when_written(helpers, temp_settings) -> None:
-    synced = {"codexDefaultModel": "gpt-mini", "codexDefaultFastMode": True}
-    helpers.enforce_synced_settings_consistency(synced, dict(synced))
-    assert synced["codexDefaultFastMode"] is False
+# Commented out with the test above, same cause: no Codex model without fast
+# mode is left to clamp against since ``gpt-mini`` retired on 2026-08-31.
+#
+# def test_synced_fast_mode_is_reclamped_when_written(helpers, temp_settings) -> None:
+#     synced = {"codexDefaultModel": "gpt-mini", "codexDefaultFastMode": True}
+#     helpers.enforce_synced_settings_consistency(synced, dict(synced))
+#     assert synced["codexDefaultFastMode"] is False
 
 
 class _SettingsThread:

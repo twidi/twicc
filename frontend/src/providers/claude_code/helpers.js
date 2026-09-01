@@ -683,7 +683,7 @@ export class ClaudeCodeHelpers extends BaseProviderHelpers {
         return sel.context_max !== null && sel.context_max !== undefined && sel.context_max !== def.context_max
     }
 
-    getModelSelectGroups(registry) {
+    buildModelSelectGroups(registry) {
         const list = registry ?? []
         return [
             {

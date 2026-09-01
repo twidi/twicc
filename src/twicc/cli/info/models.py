@@ -14,6 +14,13 @@ def build(provider: str | None, include_disabled: bool = False) -> dict[str, lis
     former is provider-internal SDK plumbing the agent does not need,
     and the latter has its own concerns.
 
+    Models past their retirement date are omitted entirely. They cannot be
+    selected anywhere, they only ever grow in number, and a session still
+    carrying one is displayed and resumed on its replacement — so nothing
+    downstream needs to know they ever existed. A merely *disabled* model
+    stays listed, flagged ``enabled: false`` with its ``disable_reason``:
+    that state is temporary and reversible.
+
     Caller must have already initialised Django.
     """
     from twicc.cli.info._common import resolve_providers
@@ -22,6 +29,8 @@ def build(provider: str | None, include_disabled: bool = False) -> dict[str, lis
     for prov, helpers in resolve_providers(provider, include_disabled=include_disabled):
         entries: list[dict] = []
         for mv in helpers.MODEL_VERSIONS:
+            if helpers.is_model_version_retired(mv):
+                continue
             entry = {
                 "identifier": f"{mv.model}-{mv.version}",
                 "alias": mv.model if mv.latest else None,

@@ -8,9 +8,14 @@ provider that ships no ``retirement_date`` simply never finds anything.
 When a retirement is detected:
 1. Global default is updated in synced settings (if affected)
 2. Active processes are updated via the existing apply_live_settings machinery
-3. A ``model_retirement`` broadcast notifies all frontends (retired model mapping)
-   → Frontends handle display correction for non-running sessions on their own
-   → No database mass-update of sessions (corrected at render/send time)
+   → No database mass-update of the other sessions (corrected at render/send time)
+
+Nothing is pushed to the frontends. Every registry entry ships its
+``retirement_date`` in the bootstrap payload, so a frontend decides on its own
+that a model is retired: it drops it from the pickers and resolves any stored
+value to the replacement. A notification would carry no information the
+frontend does not already hold. The global-default change of step 1 travels
+through its own ``synced_settings_updated`` broadcast.
 """
 
 import asyncio
@@ -215,24 +220,9 @@ async def _check_and_retire(provider: Provider) -> None:
                 "Failed to apply retirement upgrade to process %s", process.session_id
             )
 
-    # 3. Broadcast model_retirement to frontends
-    # Frontends use this to correct display/settings of non-running sessions
-    # at render time (no DB update needed for those). The ``provider`` field
-    # tells the generic dispatcher which model registry / label formatter to
-    # consult — model retirement is a concept all providers can opt into.
-    channel_layer = get_channel_layer()
-    await channel_layer.group_send(
-        "updates",
-        {
-            "type": "broadcast",
-            "data": {
-                "type": "model_retirement",
-                "provider": provider.value,
-                "retired_models": retired_models,
-                "default_changed": settings_changed,
-            },
-        },
-    )
+    # Deliberately no frontend broadcast — see the module docstring. The
+    # frontends already carry every entry's ``retirement_date`` and derive the
+    # retirement (and its replacement) themselves.
 
 
 def _log_upcoming_retirements(provider: Provider) -> None:

@@ -354,6 +354,7 @@ export class CodexHelpers extends BaseProviderHelpers {
         if (field === 'context_max') {
             const supported = new Set(
                 this.getModelRegistry()
+                    .filter(e => !this.isModelRetired(e))
                     .map(e => e?.provider_extra?.context_window)
                     .filter(Boolean),
             )
@@ -647,7 +648,7 @@ export class CodexHelpers extends BaseProviderHelpers {
         return super.getDefaultValueLabel(field, value)
     }
 
-    getModelSelectGroups(registry) {
+    buildModelSelectGroups(registry) {
         const list = registry ?? []
         const option = e => this.buildModelOption(
             e, `${this.getModelLabel(e.selected_model)}${this._modelLabelSuffix(e)}`,
