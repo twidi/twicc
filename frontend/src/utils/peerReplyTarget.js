@@ -95,20 +95,43 @@ export function deliveryPickerTransition(
     }
 }
 
-/** Choose which resolution actions the review dialog can expose. */
-export function peerDeliveryActionVisibility(deliveryBlocked, isPending) {
+/**
+ * Choose which resolution actions the review dialog can expose.
+ *
+ * Every resolution is reversible (design of 2026-09-01): the two delivery
+ * actions are always offered (a delivered message can be retargeted), while
+ * "done" and "refuse" hide only in their own state — a resolution into the
+ * current state is a no-op the backend rejects anyway.
+ */
+export function peerDeliveryActionVisibility(deliveryBlocked, status) {
     return {
         delivery: !deliveryBlocked,
-        refusal: isPending,
+        done: status !== 'done',
+        refusal: status !== 'refused',
     }
 }
 
 /** Identify the one resolution button that owns progress while an action runs. */
-export function activePeerResolutionAction(busy, confirmingRefuse, mode) {
+export function activePeerResolutionAction(busy, confirmingRefuse, mode, markingDone = false) {
     if (!busy) return null
+    if (markingDone) return 'done'
     if (confirmingRefuse) return 'refuse'
     if (mode === 'existing' || mode === 'new') return mode
     return null
+}
+
+/**
+ * The "answered by" line of a message that received replies — `null` without
+ * any. A reply always sits on the other side of its parent: replies to an
+ * outbound message are the peer's, replies to an inbound one are the owner's.
+ */
+export function answeredByLabel(direction, latestReplyAuthor, peerLabel) {
+    if (!latestReplyAuthor) return null
+    const human = latestReplyAuthor === 'human'
+    if (direction === 'out') {
+        return human ? `Answered by ${peerLabel}` : `Answered by ${peerLabel}'s agent`
+    }
+    return human ? 'Answered by you' : 'Answered by your agent'
 }
 
 /** Label the existing-session action from its selection and progress state. */

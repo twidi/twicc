@@ -1,12 +1,12 @@
 ---
 name: twicc-peer-message
-description: Re-check the status of a message sent to a peer TwiCC instance with peer-send — still pending the remote user's approval, delivered, refused, or failed.
+description: Re-check the status of a message sent to a peer TwiCC instance with peer-send — still pending the remote user's approval, delivered, done, refused, or failed.
 argument-hint: <message_id>
 ---
 
 # TwiCC Peer Message
 
-Check the current status of one outbound peer message. Delivery always goes through the remote user's approval: a message stays `pending` until they deliver it to one of their sessions (`delivered`) or turn it down (`refused`).
+Check the current status of one outbound peer message. Delivery always goes through the remote user's approval: a message stays `pending` until they deliver it to one of their sessions (`delivered`), deal with it themselves without any agent (`done`), or turn it down (`refused`).
 
 ## When to use
 
@@ -52,10 +52,11 @@ $TWICC peer-message <MESSAGE_ID>
  "created_at": "...", "resolved_at": null, "purged": false}
 ```
 
-- `status` — `pending` (awaiting the remote user), `delivered`, `refused`, or `failed`. For `failed`, the sender received no confirmed acceptance; the peer may still have stored the message. See `error` for the local failure detail.
+- `status` — `pending` (awaiting the remote user), `delivered` (handed to one of their agents), `done` (the remote USER dealt with it themselves — no agent received it), `refused`, or `failed`. For `failed`, the sender received no confirmed acceptance; the peer may still have stored the message. See `error` for the local failure detail. The status records the remote user's FIRST decision; they may change it later without this side being told.
 - `thread_id` — the local thread root id. Its complete local key includes `peer_id`; it never crosses the wire.
 - `reply_to` — the answered message id, or `""` for a root message.
-- `reply_to_ref` — summary of the resolved parent (`message_id`, `title`, `direction`, `status`), or `null`.
+- `reply_to_ref` — summary of the resolved parent (`id`, `message_id`, `title`, `direction`, `status`, `author`), or `null`.
+- `latest_reply_author` — `human` or `agent` when the message received replies (the most recent one decides), else `null`. For your outbound message, that is who answered on the peer's side.
 - `reply_target` — id of the parent's local-end session, or `null`; it is not a delivery action or eligibility promise.
 - `title` — the required subject the send carried.
 - `origin_session` / `delivered_to_session` — the local session at each end (`null` when there is none), with its title read live. The peer receives neither.
@@ -81,5 +82,5 @@ $TWICC peer-message pm_1a2b3c4d5e6f7a8b
 
 ## How to present results
 
-1. Translate the status for the user: `pending` = "their user hasn't reviewed it yet"; `delivered`/`refused` = their decision; `failed` = "this sender received no confirmed acceptance, but the peer may still have stored it".
+1. Translate the status for the user: `pending` = "their user hasn't reviewed it yet"; `delivered` = "handed to one of their agents — something may follow"; `done` = "their user dealt with it themselves, no agent received it — nothing more will come through this status; if they answered, the answer arrived as a peer message in your user's inbox"; `refused` = their decision; `failed` = "this sender received no confirmed acceptance, but the peer may still have stored it".
 2. There is no push on resolution — re-run this command when the user asks again.

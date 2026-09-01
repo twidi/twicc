@@ -543,6 +543,14 @@ def serialize_peer_message(message, *, include_payload=False, include_attachment
             else reply_to_message.delivered_to_session_id
         )
     text = (message.payload or {}).get("text", "") or ""
+    # Who answered this message, if anyone: the authorship of its most recent
+    # reply. Read from the prefetched reverse relation — `.all()` iterated in
+    # Python, never `.filter()`/`.latest()`, which would query per row.
+    # An absent author is the historical reading: agent.
+    latest_reply_author = None
+    latest_reply = max(message.replies.all(), key=lambda reply: reply.created_at, default=None)
+    if latest_reply is not None:
+        latest_reply_author = (latest_reply.origin or {}).get("author") or "agent"
     data = {
         "id": message.pk,
         "message_id": message.message_id,
@@ -550,6 +558,10 @@ def serialize_peer_message(message, *, include_payload=False, include_attachment
         "reply_to": message.reply_to,
         "reply_to_ref": reply_to_ref,
         "reply_target": reply_target,
+        # "agent" | "human" | null — which side wrote the reply is the row's
+        # own direction: replies to an outbound message are the peer's, to an
+        # inbound one the owner's.
+        "latest_reply_author": latest_reply_author,
         "peer_id": message.peer_id,
         "direction": message.direction,
         # Required on every send since 2026-08-11; "" on older rows — the UI

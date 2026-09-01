@@ -50,6 +50,13 @@ const confirmingDiscard = ref(false)
 
 const activePeers = computed(() => peersStore.peers.filter(p => p.state === 'active'))
 const isReply = computed(() => !!props.replyTo)
+// What becomes of the answered message once the reply is out (design of
+// 2026-09-01): kept open (default), marked done, or refused. Only meaningful
+// while it still awaits a decision — a delivered message being answered from
+// history must not be flipped. Applied server-side, after the peer accepted
+// the reply, so a reply that never left resolves nothing.
+const canResolveAnswered = computed(() => isReply.value && props.replyPending)
+const resolution = ref('open')   // 'open' | 'done' | 'refused'
 // The proposed subject is not something the user typed: closing right after
 // opening a reply must not ask them to discard a message they never wrote.
 const dirty = computed(() =>
@@ -65,6 +72,7 @@ watch(() => props.open, (open) => {
     // exists to remove. It stays editable, and required if the parent had none.
     proposedTitle.value = props.replyTo ? replySubject(props.replyToTitle) : ''
     title.value = proposedTitle.value
+    resolution.value = 'open'
     text.value = ''
     error.value = ''
     confirmingDiscard.value = false
@@ -100,6 +108,9 @@ async function handleSend() {
                 title: cleanTitle,
                 text: cleanText,
                 reply_to: props.replyTo || undefined,
+                resolve_reply_to: canResolveAnswered.value && resolution.value !== 'open'
+                    ? resolution.value
+                    : undefined,
             }),
         })
         const payload = await response.json().catch(() => null)
@@ -109,8 +120,18 @@ async function handleSend() {
         }
         const label = peersStore.peerLabel(selectedPeerId.value)
         toast.success(`Message sent to ${label} — awaiting their approval.`)
+        // The reply left either way; a resolution that could not apply is
+        // reported, not hidden — the message is still in the inbox to fix.
+        if (payload?.resolution && !payload.resolution.ok) {
+            toast.warning(`Sent, but the answered message could not be marked as ${resolution.value}: ${errorText(payload.resolution)}`)
+        }
+        // `proposedTitle` too: `dirty` compares the title against it, and a
+        // cleared title next to a surviving proposal reads as "typed content"
+        // — the close underneath then gets silently vetoed and the emptied
+        // dialog lurks under the next modals until it resurfaces.
         title.value = ''
         text.value = ''
+        proposedTitle.value = ''
         emit('close')
     } catch {
         error.value = 'Request failed.'
@@ -134,6 +155,7 @@ function attemptClose() {
 function discard() {
     title.value = ''
     text.value = ''
+    proposedTitle.value = ''
     confirmingDiscard.value = false
     emit('close')
 }
@@ -185,10 +207,19 @@ function onAfterShow(event) {
                 <span class="pc-reply__label">In reply to their</span>
                 <span v-if="replyToTitle" class="pc-reply__title">“{{ replyToTitle }}”</span>
             </p>
-            <p v-if="isReply && replyPending" class="pc-hint">
-                Replying does not deliver or refuse the received message — it stays
-                pending your decision.
-            </p>
+            <!-- The answered message's fate rides with the reply. Radios: three
+                 exclusive choices, all visible — the default is the one that
+                 changes nothing. -->
+            <wa-radio-group
+                v-if="canResolveAnswered"
+                size="small" label="The message you are answering"
+                :value="resolution" :disabled="busy"
+                @change="resolution = $event.target.value"
+            >
+                <wa-radio value="open">Keep it open — it still awaits your decision</wa-radio>
+                <wa-radio value="done">Mark it done — you dealt with it yourself, no agent needed</wa-radio>
+                <wa-radio value="refused">Refuse it</wa-radio>
+            </wa-radio-group>
 
             <wa-select
                 v-model="selectedPeerId" size="small" label="Peer"

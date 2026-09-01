@@ -32,6 +32,7 @@ import { usePeersStore } from '../../stores/peers'
 import { useSettingsStore } from '../../stores/settings'
 import { SESSION_TIME_FORMAT } from '../../constants'
 import { formatDate } from '../../utils/date'
+import { answeredByLabel } from '../../utils/peerReplyTarget'
 import ProjectBadge from '../project/ProjectBadge.vue'
 
 const props = defineProps({
@@ -107,6 +108,12 @@ const routes = computed(() => {
             projectId: null,
         })
     }
+    // Who answered this message, if anyone — read from its replies, never
+    // from its status. Label-only line, like the authorship one.
+    const answered = answeredByLabel(message.direction, message.latest_reply_author, peerLabel.value)
+    if (answered) {
+        lines.push({ key: 'answered', label: answered, title: '', display: '', projectId: null })
+    }
     // The title and project come with the message, read live from the session
     // row server-side: they must not depend on what the front happens to have
     // loaded, and an id is never something a human can place. A row whose
@@ -132,7 +139,7 @@ const attachments = computed(() => {
 })
 
 const statusVariant = computed(() => {
-    if (props.message.status === 'delivered') return 'success'
+    if (props.message.status === 'delivered' || props.message.status === 'done') return 'success'
     if (props.message.status === 'pending') return 'neutral'
     return 'danger'
 })

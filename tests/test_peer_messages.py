@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+from datetime import timedelta
 
 import orjson
 import pytest
@@ -684,6 +685,89 @@ def test_owner_send_endpoint_validation_errors(client, transactional_db, peer_ho
     assert res.status_code == 400
     assert orjson.loads(res.content)["errors"][0]["code"] == "empty_title"
     assert PeerMessage.objects.count() == 0
+
+
+@pytest.mark.parametrize(
+    ("resolve", "expected"),
+    [("done", PeerMessageStatus.DONE), ("refused", PeerMessageStatus.REFUSED)],
+)
+def test_owner_send_resolves_the_answered_message_after_the_send(
+        client, transactional_db, peer_host, broadcasts, status_callbacks, monkeypatch, resolve, expected):
+    """The manual-reply form's "Mark it done" / "Refuse it": the answered
+    inbound message is resolved in the same request, once the peer accepted
+    the reply, and the peer is told."""
+    peer = _active_peer()
+    parent = _in_message(peer)
+    _patch_post_message(monkeypatch)
+    res = _post(client, "/api/peer-messages/send/", {
+        "peer_id": peer.id, "title": "Re: The subject", "text": "8443",
+        "reply_to": parent.message_id, "resolve_reply_to": resolve,
+    })
+    assert res.status_code == 200
+    payload = orjson.loads(res.content)
+    assert payload["peer_status"] == "pending"
+    assert payload["resolution"] == {"ok": True, "errors": []}
+    parent.refresh_from_db()
+    assert parent.status == expected
+    assert parent.resolved_at is not None
+    assert status_callbacks == [{"message_id": parent.message_id, "status": resolve}]
+
+
+@pytest.mark.parametrize("failure", ["rejected", "network"])
+def test_owner_send_resolves_nothing_when_the_reply_did_not_leave(
+        client, transactional_db, peer_host, status_callbacks, monkeypatch, failure):
+    peer = _active_peer()
+    parent = _in_message(peer)
+    if failure == "rejected":
+        _patch_post_message(monkeypatch, status=403)
+    else:
+        _patch_post_message(monkeypatch, network_error=True)
+    res = _post(client, "/api/peer-messages/send/", {
+        "peer_id": peer.id, "title": "Re: The subject", "text": "8443",
+        "reply_to": parent.message_id, "resolve_reply_to": "done",
+    })
+    assert res.status_code == 400
+    parent.refresh_from_db()
+    assert parent.status == PeerMessageStatus.PENDING
+    assert parent.resolved_at is None
+    assert status_callbacks == []
+
+
+def test_owner_send_resolve_reply_to_validation(client, transactional_db, peer_host, monkeypatch):
+    peer = _active_peer()
+    parent = _in_message(peer)
+    _patch_post_message(monkeypatch)
+    # Unknown value → rejected before any send.
+    res = _post(client, "/api/peer-messages/send/", {
+        "peer_id": peer.id, "title": "T", "text": "x",
+        "reply_to": parent.message_id, "resolve_reply_to": "delivered",
+    })
+    assert res.status_code == 400
+    # A resolution needs a message to resolve.
+    res = _post(client, "/api/peer-messages/send/", {
+        "peer_id": peer.id, "title": "T", "text": "x", "resolve_reply_to": "done",
+    })
+    assert res.status_code == 400
+    assert PeerMessage.objects.filter(direction=PeerMessageDirection.OUT).count() == 0
+
+
+def test_owner_send_reports_a_failed_resolution_without_undoing_the_send(
+        client, transactional_db, peer_host, status_callbacks, monkeypatch):
+    """The reply already left: a resolution that cannot apply (here, the
+    answered message is already done) is reported, not rolled back."""
+    peer = _active_peer()
+    parent = _in_message(peer, status=PeerMessageStatus.DONE, resolved_at=djtz.now())
+    _patch_post_message(monkeypatch)
+    res = _post(client, "/api/peer-messages/send/", {
+        "peer_id": peer.id, "title": "Re: The subject", "text": "again",
+        "reply_to": parent.message_id, "resolve_reply_to": "done",
+    })
+    assert res.status_code == 200
+    payload = orjson.loads(res.content)
+    assert payload["resolution"]["ok"] is False
+    assert payload["resolution"]["errors"][0]["code"] == "bad_state"
+    assert PeerMessage.objects.filter(direction=PeerMessageDirection.OUT).count() == 1
+    assert status_callbacks == []
 
 
 def test_send_title_validation(transactional_db, peer_host, monkeypatch):
@@ -1533,6 +1617,62 @@ def test_owner_reply_ref_reports_direct_parent_without_session(client, transacti
     assert row["reply_target"] is None
 
 
+def test_latest_reply_author_reads_the_most_recent_reply(client, transactional_db):
+    """"Answered by": the authorship of the latest reply, `null` without
+    replies, `agent` when the reply predates the authorship field."""
+    peer = _active_peer()
+    _, origin_session = _make_target_session()
+    asked = _out_message(
+        peer, message_id="asked", thread_id="asked", origin_session=origin_session,
+        status=PeerMessageStatus.PENDING,
+    )
+    _out_message(peer, message_id="unanswered", thread_id="unanswered")
+    older = _in_message(
+        peer, message_id="older-reply", reply_to="asked", reply_to_message=asked, thread_id="asked",
+        origin={"sent_at": "2026-07-24T12:00:00+00:00", "author": "agent"},
+    )
+    newer = _in_message(
+        peer, message_id="newer-reply", reply_to="asked", reply_to_message=asked, thread_id="asked",
+        origin={"sent_at": "2026-07-24T13:00:00+00:00", "author": "human"},
+    )
+    assert newer.created_at > older.created_at
+    legacy = _out_message(peer, message_id="legacy", thread_id="legacy")
+    _in_message(
+        peer, message_id="legacy-reply", reply_to="legacy", reply_to_message=legacy, thread_id="legacy",
+        origin={"sent_at": None},
+    )
+
+    response = _run(client.get("/api/peer-messages/", {"limit": 200}))
+
+    assert response.status_code == 200
+    rows = {row["message_id"]: row for row in orjson.loads(response.content)["messages"]}
+    assert rows["asked"]["latest_reply_author"] == "human"
+    assert rows["unanswered"]["latest_reply_author"] is None
+    assert rows["legacy"]["latest_reply_author"] == "agent"
+    # A reply carries no "answered by" of its own.
+    assert rows["newer-reply"]["latest_reply_author"] is None
+
+
+def test_owner_list_and_snapshot_read_replies_without_a_query_per_row(
+        client, transactional_db, django_assert_max_num_queries):
+    """`replies` rides a prefetch: one query for the whole list, not one per
+    message — the guard against N+1 for "answered by"."""
+    peer = _active_peer()
+    for index in range(12):
+        parent = _out_message(peer, message_id=f"p{index}", thread_id=f"p{index}")
+        _in_message(
+            peer, message_id=f"r{index}", reply_to=parent.message_id,
+            reply_to_message=parent, thread_id=parent.thread_id,
+        )
+    # Peers, messages (pending + history), replies prefetch, plus a small
+    # fixed overhead: well under one query per row.
+    with django_assert_max_num_queries(8):
+        response = _run(client.get("/api/peer-messages/", {"limit": 200}))
+    assert response.status_code == 200
+    rows = orjson.loads(response.content)["messages"]
+    assert sum(row["latest_reply_author"] == "agent" for row in rows) == 12
+
+
 def _assert_owner_reply_contract(row, parent, child, origin_session):
     assert row["thread_id"] == parent.thread_id
     assert row["reply_to"] == parent.message_id
@@ -1820,8 +1960,8 @@ def test_link_delivered_session_guards(transactional_db, status_callbacks):
 
 def test_redeliver_reroutes_to_another_session(transactional_db, broadcasts, status_callbacks):
     """The owner picked the wrong session: the delivery is redone, the status
-    does not move, and the original resolution timestamp is kept (the purge
-    window must not slide on every retry)."""
+    does not move, and the resolution timestamp restarts — every resolution
+    restarts the purge window (decision of 2026-09-01)."""
     peer = _active_peer()
     message = _in_message(peer)
     _, first = _make_target_session()
@@ -1839,7 +1979,7 @@ def test_redeliver_reroutes_to_another_session(transactional_db, broadcasts, sta
     assert message.status == PeerMessageStatus.DELIVERED
     assert message.delivered_to_session_id == second.id
     assert message.recipient_note == "second note"
-    assert message.resolved_at == original_resolved_at
+    assert message.resolved_at > original_resolved_at
     # The peer already knows "delivered"; re-sending doubles as a retry.
     assert status_callbacks[-1] == {"message_id": message.message_id, "status": "delivered"}
     assert broadcasts[-1]["type"] == "peer_message_updated"
@@ -1870,14 +2010,21 @@ def test_redeliver_allowed_after_attachment_purge(transactional_db, status_callb
     assert success and errors == []
 
 
-def test_redeliver_never_reopens_a_refused_message(transactional_db, status_callbacks):
+def test_deliver_reopens_a_refused_or_done_message(transactional_db, status_callbacks):
+    """Every resolution is reversible (2026-09-01): a refused or done message
+    can be delivered, without the redeliver flag — that one is reserved for
+    retargeting a DELIVERED row. The peer is told again; it keeps whatever it
+    heard first."""
     peer = _active_peer()
-    message = _in_message(peer, status=PeerMessageStatus.REFUSED, resolved_at=djtz.now())
-    success, _envelope, errors = _run(peer_messages.mark_delivered(
-        message, session_id="s", redeliver=True,
-    ))
-    assert not success and errors[0].code == "bad_state"
-    assert status_callbacks == []
+    _, session = _make_target_session()
+    for status in (PeerMessageStatus.REFUSED, PeerMessageStatus.DONE):
+        message = _in_message(peer, message_id=f"pm_{status}", status=status, resolved_at=djtz.now())
+        success, envelope, errors = _run(peer_messages.mark_delivered(message, session_id=session.id))
+        assert success and errors == [], (status, errors)
+        assert "the message body" in envelope
+        message.refresh_from_db()
+        assert message.status == PeerMessageStatus.DELIVERED
+        assert status_callbacks[-1] == {"message_id": message.message_id, "status": "delivered"}
 
 
 def test_link_delivered_session_rejects_internal_target(transactional_db, status_callbacks):
@@ -1899,13 +2046,110 @@ def test_link_delivered_session_rejects_internal_target(transactional_db, status
     assert status_callbacks == []
 
 
-def test_redeliver_does_not_reopen_refusal(transactional_db, status_callbacks):
-    """A delivered message stays re-routable but can never be refused after
-    the fact — the peer was already told "delivered"."""
+def test_refuse_after_delivery_is_allowed_and_told(transactional_db, broadcasts, status_callbacks):
+    """A delivered message can be refused after the fact (2026-09-01): the
+    local answer changes, the peer is told, and keeps the first one it heard."""
     peer = _active_peer()
     message = _in_message(peer, status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now())
     success, errors = _run(peer_messages.refuse_peer_message(message))
+    assert success and errors == []
+    message.refresh_from_db()
+    assert message.status == PeerMessageStatus.REFUSED
+    assert status_callbacks == [{"message_id": message.message_id, "status": "refused"}]
+
+
+# ── Done (dealt with by the owner, no agent) ────────────────────────────────
+
+def test_mark_done(transactional_db, broadcasts, status_callbacks):
+    peer = _active_peer()
+    message = _in_message(peer)
+    success, errors = _run(peer_messages.mark_done(message))
+    assert success and errors == []
+    message.refresh_from_db()
+    assert message.status == PeerMessageStatus.DONE
+    assert message.resolved_at is not None
+    assert status_callbacks == [{"message_id": message.message_id, "status": "done"}]
+    assert broadcasts[-1]["type"] == "peer_message_updated"
+    assert broadcasts[-1]["message"]["status"] == "done"
+
+
+def test_done_and_refuse_ignore_the_purge_state(transactional_db, status_callbacks):
+    """Neither hands bytes to an agent: a purged PENDING row, which delivery
+    rejects, can still be resolved as done or refused."""
+    peer = _active_peer()
+    done = _in_message(peer, message_id="pm_purged_done", purged_at=djtz.now())
+    assert _run(peer_messages.mark_done(done)) == (True, [])
+    refused = _in_message(peer, message_id="pm_purged_refused", purged_at=djtz.now())
+    assert _run(peer_messages.refuse_peer_message(refused)) == (True, [])
+
+
+@pytest.mark.parametrize(
+    ("start", "resolve", "target"),
+    [
+        (PeerMessageStatus.PENDING, "done", PeerMessageStatus.DONE),
+        (PeerMessageStatus.DELIVERED, "done", PeerMessageStatus.DONE),
+        (PeerMessageStatus.REFUSED, "done", PeerMessageStatus.DONE),
+        (PeerMessageStatus.PENDING, "refuse", PeerMessageStatus.REFUSED),
+        (PeerMessageStatus.DELIVERED, "refuse", PeerMessageStatus.REFUSED),
+        (PeerMessageStatus.DONE, "refuse", PeerMessageStatus.REFUSED),
+    ],
+)
+def test_every_resolution_is_reversible(transactional_db, status_callbacks, start, resolve, target):
+    peer = _active_peer()
+    resolved_at = djtz.now() - timedelta(days=1) if start != PeerMessageStatus.PENDING else None
+    message = _in_message(peer, status=start, resolved_at=resolved_at)
+    action = peer_messages.mark_done if resolve == "done" else peer_messages.refuse_peer_message
+    success, errors = _run(action(message))
+    assert success and errors == []
+    message.refresh_from_db()
+    assert message.status == target
+    # A fresh timestamp on every transition: the purge window restarts.
+    assert resolved_at is None or message.resolved_at > resolved_at
+
+
+@pytest.mark.parametrize(
+    ("status", "resolve"),
+    [(PeerMessageStatus.DONE, "done"), (PeerMessageStatus.REFUSED, "refuse")],
+)
+def test_resolving_into_the_current_state_is_rejected(transactional_db, status_callbacks, status, resolve):
+    peer = _active_peer()
+    message = _in_message(peer, status=status, resolved_at=djtz.now())
+    action = peer_messages.mark_done if resolve == "done" else peer_messages.refuse_peer_message
+    success, errors = _run(action(message))
     assert not success and errors[0].code == "bad_state"
+    assert status_callbacks == []
+
+
+def test_done_rejects_outbound_rows(transactional_db, status_callbacks):
+    peer = _active_peer()
+    outbound_row = _out_message(peer)
+    success, errors = _run(peer_messages.mark_done(outbound_row))
+    assert not success and errors[0].code == "bad_state"
+
+
+def test_status_callback_accepts_done(client, transactional_db, peer_host, broadcasts):
+    peer = _active_peer()
+    message = _out_message(peer)
+    res = _post(client, f"/peer/messages/{message.message_id}/status/",
+                {"status": "done"}, bearer=peer.token_ours)
+    assert res.status_code == 200
+    message.refresh_from_db()
+    assert message.status == PeerMessageStatus.DONE
+    assert message.resolved_at is not None
+    assert broadcasts[-1]["type"] == "peer_message_updated"
+
+
+def test_owner_done_endpoint(client, transactional_db, status_callbacks):
+    peer = _active_peer()
+    message = _in_message(peer)
+    res = _post(client, f"/api/peer-messages/{message.pk}/done/", {})
+    assert res.status_code == 200
+    message.refresh_from_db()
+    assert message.status == PeerMessageStatus.DONE
+    # Already done: a no-op is a 400, not a silent second callback.
+    res = _post(client, f"/api/peer-messages/{message.pk}/done/", {})
+    assert res.status_code == 400
+    assert status_callbacks == [{"message_id": message.message_id, "status": "done"}]
 
 
 def test_refuse_message(transactional_db, broadcasts, status_callbacks):

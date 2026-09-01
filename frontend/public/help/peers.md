@@ -118,23 +118,32 @@ TwiCC renders or downloads them.
 You can add an optional note for your agent. TwiCC keeps that note separate
 from the peer's message and identifies it as your own text.
 
-You then have three choices:
+You then have four choices:
 
 - place the message in an existing session's composer;
 - create a new draft session with the message in its composer;
+- mark the message done, when you dealt with it yourself or there is nothing
+  to do — no agent receives it;
 - refuse the message.
 
 Placing a message in a composer marks it as delivered. It still does not send
 the composer or start the agent.
 
+Any decision can be changed later, from the message's history entry. The
+sender only learns the first one.
+
 ### Replies and session suggestions
 
 A peer message can answer an earlier message. The inbox and review show which
-message it answers, and the review can open that message.
+message it answers, and the review can open that message. A message that
+received replies shows who answered it: the peer, their agent, you, or your
+agent.
 
 You can answer a message yourself, with **Reply manually** in the review. TwiCC
-proposes the answered title, prefixed with `Re:`. Replying writes a message and
-nothing else: the message you are reading keeps waiting for your decision.
+proposes the answered title, prefixed with `Re:`. While the answered message
+still awaits your decision, the reply form lets you keep it open, mark it done,
+or refuse it in the same step. The choice applies only once the reply reached
+the peer.
 
 When possible, TwiCC suggests the local session used for the earlier message.
 This is only a suggestion. The receiving user can choose another session or a
@@ -145,13 +154,20 @@ receiving user's approval.
 
 ### Message status
 
-Sent messages use four states:
+Sent messages use five states:
 
 - **pending** — the receiving user has not decided yet;
-- **delivered** — the user placed the message in a session composer;
+- **delivered** — the user placed the message in a session composer. Something
+  may follow, from their agent;
+- **done** — the user dealt with the message themselves. No agent received it,
+  and nothing more will come from one. If they had something to tell you, it
+  arrived as a reply;
 - **refused** — the user declined the message;
 - **failed** — the sender did not receive confirmed acceptance from the other
   instance.
+
+The status records the receiving user's first decision. They can change it
+later; the sender is not told.
 
 An agent can check the current status of a message it sent. A failed status can
 be uncertain: the other instance might have stored the message before the
@@ -159,15 +175,16 @@ connection failed.
 
 ### Redelivery and history
 
-A delivered message stays available in the inbox history. The receiving user
-can place it in a composer again. This helps after choosing the wrong session
-or clearing a draft.
+A resolved message stays available in the inbox history. The receiving user
+can place it in a composer again, mark it done, or refuse it, whatever the
+earlier decision. This helps after choosing the wrong session or clearing a
+draft.
 
-A refused message stays refused. It cannot be delivered later.
-
-TwiCC removes attachment bytes seven days after delivery or refusal. The text,
-title, attachment details, and reply relationship remain in history. A later
-redelivery can therefore become text-only.
+TwiCC removes attachment bytes seven days after the latest decision. A new
+decision restarts that delay, until the bytes are removed. A pending message
+keeps its attachments. The text, title, attachment details, and reply
+relationship always remain in history. A later redelivery can therefore become
+text-only.
 
 ### Revocation and reconnection
 

@@ -165,13 +165,31 @@ test('does not prepare the existing-session picker when delivery is globally blo
     )
 })
 
-test('a global delivery block exposes only the refusal action', async () => {
+test('a global delivery block leaves the agent-free resolutions available', async () => {
     const { peerDeliveryActionVisibility } = await import('./peerReplyTarget.js')
     assert.equal(typeof peerDeliveryActionVisibility, 'function')
     assert.deepEqual(
-        peerDeliveryActionVisibility(true, true),
-        { delivery: false, refusal: true },
+        peerDeliveryActionVisibility(true, 'pending'),
+        { delivery: false, done: true, refusal: true },
     )
+})
+
+test('every resolution stays reachable except the current one', async () => {
+    const { peerDeliveryActionVisibility } = await import('./peerReplyTarget.js')
+    assert.deepEqual(peerDeliveryActionVisibility(false, 'pending'), { delivery: true, done: true, refusal: true })
+    assert.deepEqual(peerDeliveryActionVisibility(false, 'delivered'), { delivery: true, done: true, refusal: true })
+    assert.deepEqual(peerDeliveryActionVisibility(false, 'done'), { delivery: true, done: false, refusal: true })
+    assert.deepEqual(peerDeliveryActionVisibility(false, 'refused'), { delivery: true, done: true, refusal: false })
+})
+
+test('labels who answered a message from its latest reply, by side', async () => {
+    const { answeredByLabel } = await import('./peerReplyTarget.js')
+    assert.equal(answeredByLabel('out', null, 'David'), null)
+    assert.equal(answeredByLabel('out', 'human', 'David'), 'Answered by David')
+    assert.equal(answeredByLabel('out', 'agent', 'David'), "Answered by David's agent")
+    // Replies to an inbound message are the owner's own.
+    assert.equal(answeredByLabel('in', 'human', 'David'), 'Answered by you')
+    assert.equal(answeredByLabel('in', 'agent', 'David'), 'Answered by your agent')
 })
 
 test('keeps a mounted existing-session picker warm across mode switches', () => {
@@ -220,6 +238,7 @@ test('identifies the one resolution button that owns busy progress', () => {
     assert.equal(activePeerResolutionAction(true, false, 'new'), 'new')
     assert.equal(activePeerResolutionAction(true, true, 'new'), 'refuse')
     assert.equal(activePeerResolutionAction(true, false, null), null)
+    assert.equal(activePeerResolutionAction(true, false, null, true), 'done')
 })
 
 test('labels the existing-session action before selection and while prefilling', () => {

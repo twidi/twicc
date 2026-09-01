@@ -43,6 +43,7 @@ async def _load_message(pk):
     message = await sync_to_async(
         lambda: PeerMessage.objects
         .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
+        .prefetch_related("replies")
         .filter(pk=pk).first()
     )()
     if message is None:
@@ -166,31 +167,79 @@ async def peer_reconnect_cancel(request, peer_id):
 
 
 async def peer_message_send(request):
-    """POST /api/peer-messages/send/ — {peer_id, title, text, reply_to?}.
+    """POST /api/peer-messages/send/ — {peer_id, title, text, reply_to?,
+    resolve_reply_to?}.
 
     The owner composes a message directly (peer compose dialog). Text-only by
     design: attachments, drafts and long-form writing stay on the agent path
     (``peer-send``). This endpoint is the ONLY caller allowed to claim human
     authorship — the CLI/RPC/MCP surface always sends ``author="agent"`` — so
     an agent can never pass itself off as its user.
+
+    ``resolve_reply_to`` (``"done"`` | ``"refused"``, needs ``reply_to``)
+    resolves the LOCAL inbound message being answered, in the same request
+    and only once the peer accepted the reply: a reply that never left
+    resolves nothing. The send is not rolled back when the resolution fails
+    (it already left); the outcome is reported alongside.
     """
+    from twicc.core.models import PeerMessage, PeerMessageDirection, PeerMessageStatus
+
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
     data = _parse_body(request)
     if data is None:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
+    reply_to = data.get("reply_to") or None
+    resolve_reply_to = data.get("resolve_reply_to") or None
+    if resolve_reply_to is not None:
+        if resolve_reply_to not in (PeerMessageStatus.DONE, PeerMessageStatus.REFUSED):
+            return JsonResponse({"error": "resolve_reply_to must be \"done\" or \"refused\""}, status=400)
+        if not reply_to:
+            return JsonResponse({"error": "resolve_reply_to requires reply_to"}, status=400)
     result = await peer_messages.send_peer_message_from_payload(
         {
             "peer": data.get("peer_id") or "",
             "title": data.get("title"),
-            "reply_to": data.get("reply_to") or None,
+            "reply_to": reply_to,
             "text": data.get("text"),
         },
         author=peer_messages.PEER_MESSAGE_AUTHOR_HUMAN,
     )
     if not result.success:
         return _err_response(result.errors)
-    return JsonResponse({"message_id": result.message_id, **result.status_extra})
+    response = {"message_id": result.message_id, **result.status_extra}
+    if resolve_reply_to is not None:
+        # The reply is out. Resolve the inbound message it answers — the same
+        # row `send` threaded on, re-read here scoped to the peer the reply
+        # went to.
+        parent = await sync_to_async(
+            lambda: PeerMessage.objects
+            .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
+            .prefetch_related("replies")
+            .filter(peer_id=result.peer_id, direction=PeerMessageDirection.IN, message_id=reply_to)
+            .first()
+        )()
+        if parent is None:
+            response["resolution"] = {"ok": False, "errors": [
+                {"field": "reply_to", "code": "not_inbound", "message": "The answered message is not an inbound message."},
+            ]}
+        else:
+            resolve = peer_messages.mark_done if resolve_reply_to == PeerMessageStatus.DONE else peer_messages.refuse_peer_message
+            ok, errors = await resolve(parent)
+            response["resolution"] = {"ok": ok, "errors": [e._asdict() for e in (errors or [])]}
+    return JsonResponse(response)
+
+
+async def peer_message_done(request, pk):
+    """POST /api/peer-messages/<pk>/done/ — read and dealt with by the owner
+    themselves; no agent receives it. Reversible like every resolution."""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    message = await _load_message(pk)
+    success, errors = await peer_messages.mark_done(message)
+    if not success:
+        return _err_response(errors)
+    return JsonResponse({"ok": True})
 
 
 async def peer_messages_list(request):
@@ -238,13 +287,15 @@ async def peer_messages_list(request):
             ordered_ids = pending_ids + history_ids
             selected = PeerMessage.objects.select_related(
                 "origin_session", "delivered_to_session", "reply_to_message",
-            ).filter(pk__in=ordered_ids)
+            ).prefetch_related("replies").filter(pk__in=ordered_ids)
             by_id = {message.pk: message for message in selected}
             return [by_id[pk] for pk in ordered_ids], history_has_more
 
+        # `replies` feeds the "answered by" line: one extra query for the
+        # whole list, never one per row.
         rows = rows.select_related(
             "origin_session", "delivered_to_session", "reply_to_message",
-        )
+        ).prefetch_related("replies")
         pending = list(rows.filter(
             direction=PeerMessageDirection.IN, status=PeerMessageStatus.PENDING,
         ))

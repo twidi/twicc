@@ -54,4 +54,4 @@ def test_twicc_share_skill_contract():
     assert "draft to adapt" not in text
 
     plugin = orjson.loads(PLUGIN.read_bytes())
-    assert plugin["version"] == "0.72.0"
+    assert plugin["version"] == "0.72.1"

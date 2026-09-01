@@ -202,6 +202,7 @@ urlpatterns = [
     path("api/peer-messages/<int:pk>/deliver/", peer_owner_views.peer_message_deliver),
     path("api/peer-messages/<int:pk>/link-session/", peer_owner_views.peer_message_link_session),
     path("api/peer-messages/<int:pk>/refuse/", peer_owner_views.peer_message_refuse),
+    path("api/peer-messages/<int:pk>/done/", peer_owner_views.peer_message_done),
     # RPC API: every CLI command auto-exposed as ``POST /rpc/<command>``.
     # Gated by Bearer API tokens via ``RpcTokenAuthMiddleware`` (open only when
     # neither a password nor any token is configured). Must precede the SPA

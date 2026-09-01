@@ -45,6 +45,7 @@ import { sessionRouteLocation } from '../../utils/sessionRoute'
 import { computeSidebarSessionBlocks } from '../../utils/sidebarSessions'
 import {
     activePeerResolutionAction,
+    answeredByLabel,
     chooseReplyTargetSource,
     deliveryPickerTransition,
     existingSessionActionLabel,
@@ -116,8 +117,9 @@ const scopeId = ref(ALL_PROJECTS_ID)
 // 'existing' mode: a click only SELECTS (highlight); the explicit Deliver
 // button sends — no accidental one-click delivery.
 const selectedSessionId = ref(null)
+const markingDone = ref(false)
 const activeResolutionAction = computed(() =>
-    activePeerResolutionAction(busy.value, confirmingRefuse.value, mode.value),
+    activePeerResolutionAction(busy.value, confirmingRefuse.value, mode.value, markingDone.value),
 )
 const NO_COMPATIBLE_PROVIDER_ERROR = 'No active provider can receive all attachments in this message. '
     + 'Activate a compatible provider to continue.'
@@ -137,8 +139,13 @@ const isPending = computed(() => isInbound.value && detail.value?.status === 'pe
 // the wrong session, or cleared the prefilled draft. A delivered message stays
 // re-routable — the peer already got its "delivered" answer, so nothing changes
 // for them. A REFUSED one never reopens: that answer stands.
+// Every resolution is reversible (design of 2026-09-01): any inbound message
+// can be (re)delivered, marked done or refused. "Redeliverable" keeps its
+// narrow meaning — a DELIVERED row being retargeted — for the wording and
+// the backend's explicit `redeliver` opt-in.
 const isRedeliverable = computed(() => isInbound.value && detail.value?.status === 'delivered')
-const canDeliver = computed(() => isPending.value || isRedeliverable.value)
+const isResolved = computed(() => isInbound.value && !!detail.value && detail.value.status !== 'pending')
+const canDeliver = computed(() => isInbound.value && !!detail.value)
 const contentAllowsDelivery = computed(() => peerContentAllowsDelivery(
     detailReady.value,
     markdownState.value,
@@ -155,7 +162,7 @@ const attachmentPrompt = computed(() => attachmentCount.value === 1
 // Attachment bytes are dropped 7 days after resolution — a late redelivery
 // carries the text only.
 const attachmentsLost = computed(() =>
-    isRedeliverable.value && detail.value?.purged && (detail.value?.attachments_meta?.length || 0) > 0
+    isResolved.value && detail.value?.purged && (detail.value?.attachments_meta?.length || 0) > 0
 )
 // Header and routing read exactly like an inbox row (PeerInboxRow.vue): same
 // arrow, same colours, same labelled "<verb> session “…” in <project>" line.
@@ -169,7 +176,7 @@ const directionLabel = computed(() =>
     isInbound.value ? `Received from ${peerName.value}` : `Sent to ${peerName.value}`
 )
 const statusVariant = computed(() => {
-    if (detail.value?.status === 'delivered') return 'success'
+    if (detail.value?.status === 'delivered' || detail.value?.status === 'done') return 'success'
     if (detail.value?.status === 'pending') return 'neutral'
     return 'danger'
 })
@@ -193,6 +200,12 @@ const localRoute = computed(() => {
         sessionId: local.id,
     }
 })
+
+/** Who answered this message, from its replies' authorship — never from its
+ *  status (see `answeredByLabel`). */
+const answeredLine = computed(() => answeredByLabel(
+    detail.value?.direction, detail.value?.latest_reply_author, peerName.value,
+))
 
 const replyRoute = computed(() => {
     const reply = detail.value?.reply_to_ref
@@ -479,7 +492,7 @@ const deliveryGloballyBlocked = computed(() =>
 )
 const deliveryActionVisibility = computed(() => peerDeliveryActionVisibility(
     deliveryGloballyBlocked.value,
-    isPending.value,
+    detail.value?.status,
 ))
 function compatibleProviderForProject(projectId) {
     if (!projectId) return null
@@ -964,6 +977,33 @@ async function refuse() {
     if (shouldClose) emit('close')
 }
 
+/** Done — read and dealt with by the owner, no agent. One click, no
+ *  confirmation and no note: unlike refusing, nothing is being turned down,
+ *  and unlike delivering, nothing reaches an agent. Reversible anyway. */
+async function markDone() {
+    actionError.value = ''
+    busy.value = true
+    markingDone.value = true
+    let shouldClose = false
+    try {
+        const { response, payload } = await requestPeerResolution(
+            `/api/peer-messages/${props.messageId}/done/`,
+            { method: 'POST' },
+        )
+        if (!response.ok) {
+            actionError.value = errorText(payload)
+            return
+        }
+        shouldClose = true
+    } catch (error) {
+        setActionFailure(error)
+    } finally {
+        busy.value = false
+        markingDone.value = false
+    }
+    if (shouldClose) emit('close')
+}
+
 function onHide(event) {
     if (event.target !== dialogRef.value) return
     if (busy.value) {
@@ -1096,6 +1136,9 @@ function onHide(event) {
             <p v-if="authorLine" class="pr-route">
                 <span class="pr-route__label">{{ authorLine }}</span>
             </p>
+            <p v-if="answeredLine" class="pr-route">
+                <span class="pr-route__label">{{ answeredLine }}</span>
+            </p>
             <p v-if="replyRoute" class="pr-route">
                 <span class="pr-route__label">{{ replyRoute.label }}</span>
                 <!-- Clickable when the answered row is known: shows it here,
@@ -1159,18 +1202,22 @@ function onHide(event) {
 
                     <p class="pr-explainer">
                         <template v-if="isRedeliverable">This message was already delivered; delivering it
-                        again is allowed. </template>Delivering does not send anything: the message is
-                        placed in the chosen session's input (an existing one, or a new draft) — you
-                        review it, adjust it if needed, and send it yourself.
+                        again is allowed. </template><template v-else-if="isResolved">This message was
+                        already {{ detail.status }}; any decision can be changed later — the sender
+                        keeps the first one it was told. </template>Delivering does not send anything:
+                        the message is placed in the chosen session's input (an existing one, or a new
+                        draft) — you review it, adjust it if needed, and send it yourself.
                     </p>
                 </template>
 
                 <!-- The whole point of the dialog: filled brand, never a quiet
                      outline. The picked one stays filled, the other steps back
-                     to an outline so the choice is readable. -->
+                     to an outline so the choice is readable. Done and Refuse
+                     are the two answers that reach no agent; each hides in its
+                     own state only — every resolution is reversible. -->
                 <div
                     class="pr-actions"
-                    :class="{ 'pr-actions--refuse-only': !deliveryActionVisibility.delivery }"
+                    :class="{ 'pr-actions--no-delivery': !deliveryActionVisibility.delivery }"
                 >
                     <wa-button
                         v-if="deliveryActionVisibility.delivery"
@@ -1190,8 +1237,19 @@ function onHide(event) {
                         <wa-icon name="plus" slot="start"></wa-icon>
                         Deliver to new session
                     </wa-button>
-                    <!-- No refusal once delivered: the peer was already told
-                         "delivered", and that answer is final. -->
+                    <!-- Not gated on attachment loading: that gate exists for
+                         bytes reaching an agent, and Done reaches none. -->
+                    <wa-button
+                        v-if="deliveryActionVisibility.done"
+                        variant="neutral" appearance="outlined"
+                        :disabled="busy"
+                        :aria-busy="activeResolutionAction === 'done' ? 'true' : 'false'"
+                        @click="markDone"
+                    >
+                        <wa-spinner v-if="activeResolutionAction === 'done'" slot="start"></wa-spinner>
+                        <wa-icon v-else name="check" slot="start"></wa-icon>
+                        {{ activeResolutionAction === 'done' ? 'Marking…' : 'Done' }}
+                    </wa-button>
                     <wa-button
                         v-if="deliveryActionVisibility.refusal"
                         size="small" variant="danger" appearance="outlined"
@@ -1525,7 +1583,7 @@ function onHide(event) {
 /* Refusing is a rare, destructive answer: kept away from the two delivery
    buttons so it is never the one clicked by reflex. */
 .pr-actions__refuse { margin-inline-start: auto; }
-.pr-actions--refuse-only .pr-actions__refuse { margin-inline-start: 0; }
+.pr-actions--no-delivery .pr-actions__refuse { margin-inline-start: 0; }
 .pr-preparing {
     display: flex;
     align-items: center;

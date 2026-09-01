@@ -1311,11 +1311,15 @@ export function useWebSocket() {
                     const stored = peersStore.messages.find(m => m.id === msg.message?.id)
                     const resolvedNow = stored
                         && stored.direction === 'out' && stored.status === 'pending'
-                        && ['delivered', 'refused'].includes(msg.message?.status)
+                        && ['delivered', 'done', 'refused'].includes(msg.message?.status)
                     peersStore.upsertMessage(msg.message)
                     if (resolvedNow) {
                         const peerName = peersStore.peerLabel(msg.message.peer_id)
-                        toast.info(`Your message to "${peerName}" was ${msg.message.status}`)
+                        // "done": their user dealt with it themselves, no agent
+                        // received it — "was done" would not read as a sentence.
+                        toast.info(msg.message.status === 'done'
+                            ? `"${peerName}" marked your message as done`
+                            : `Your message to "${peerName}" was ${msg.message.status}`)
                     }
                 })
                 break

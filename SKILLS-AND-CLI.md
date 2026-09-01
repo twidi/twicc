@@ -336,7 +336,7 @@ Send a titled message to a peer (id or exact local name). `TITLE` is the require
 - Skill: [`twicc-peer-send`](src/twicc/agent/plugin/twicc/skills/twicc-peer-send/SKILL.md).
 
 ### `twicc peer-message <MESSAGE_ID>`
-Re-check one outbound message's status (read-only): `pending` / `delivered` / `refused` / `failed` plus the summary metadata. There is no push on resolution — poll this when asked.
+Re-check one outbound message's status (read-only): `pending` / `delivered` / `done` (the remote user dealt with it themselves, no agent) / `refused` / `failed` plus the summary metadata, including who answered it (`latest_reply_author`). There is no push on resolution — poll this when asked.
 - Skill: [`twicc-peer-message`](src/twicc/agent/plugin/twicc/skills/twicc-peer-message/SKILL.md).
 
 ## Live processes

@@ -1772,9 +1772,17 @@ class PeerMessageDirection(models.TextChoices):
 
 
 class PeerMessageStatus(models.TextChoices):
-    """Delivery status of a peer message."""
+    """Delivery status of a peer message.
+
+    For an inbound message the three resolutions are the receiving user's
+    answer to the sender: DELIVERED (handed to one of their agents), DONE
+    (read and dealt with by the user themselves — no agent received it),
+    REFUSED. Every resolution can be changed later; the sender only learns
+    the first one. FAILED is outbound-only.
+    """
     PENDING = "pending", "Pending"
     DELIVERED = "delivered", "Delivered"
+    DONE = "done", "Done"
     REFUSED = "refused", "Refused"
     FAILED = "failed", "Failed"
 

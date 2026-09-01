@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Peer messages, by hand** — You can now write to a peer yourself, including replying to a received message, without going through an agent. And when a message needs nothing more, mark it **done**.
+
 ### Changed
 
 - **The keyboard on touch devices** — Opening a session's Files, Git, Artifacts or Browser tab no longer pops the on-screen keyboard; tap a filter field yourself to type. The Terminal tab still opens it.

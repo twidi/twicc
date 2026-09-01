@@ -172,6 +172,7 @@ async def _serialize_for_broadcast(message) -> dict:
     fresh = await sync_to_async(
         lambda: PeerMessage.objects
         .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
+        .prefetch_related("replies")
         .filter(pk=message.pk).first()
     )()
     return serialize_peer_message(fresh or message)
@@ -576,7 +577,7 @@ async def apply_status_callback(peer, message_id: str, status) -> tuple[int, dic
 
     if not peer_credentials_are_active(peer):
         return 403, {"error": "unknown_token"}
-    if status not in (PeerMessageStatus.DELIVERED, PeerMessageStatus.REFUSED):
+    if status not in (PeerMessageStatus.DELIVERED, PeerMessageStatus.DONE, PeerMessageStatus.REFUSED):
         return 400, {"error": "invalid_payload"}
     now = _now()
 
@@ -715,27 +716,44 @@ def build_delivery_envelope(peer, message, note: str) -> str:
 
 
 def _delivery_guards(message, *, allow_redeliver: bool = False) -> list[PeerError]:
-    """Guards for resolving an inbound message.
+    """Guards for DELIVERING an inbound message to an agent.
 
-    ``allow_redeliver`` also accepts an already-DELIVERED row: the owner may
-    have routed the message into the wrong session and wants to redo the
-    delivery. A REFUSED row is never re-openable — the sender was already told
-    "refused", and that answer stands.
+    Every resolution is reversible (design of 2026-09-01): a delivered, done
+    or refused message can be (re)delivered. ``allow_redeliver`` is the
+    explicit opt-in for a row that already is DELIVERED — retargeting is never
+    implicit. The purge check applies to a PENDING row only: that is the one
+    case where attachment bytes were promised to the agent and are gone. A
+    resolved row may well be purged (purge runs 7 days after resolution): the
+    text survives, the attachment bytes do not. Deliberately allowed — the UI
+    warns; a text-only redelivery beats no redelivery at all.
     """
     from twicc.core.models import PeerMessageDirection, PeerMessageStatus
 
     errors: list[PeerError] = []
     if message.direction != PeerMessageDirection.IN:
-        errors.append(PeerError("message", "bad_state", "This message is not pending delivery."))
+        errors.append(PeerError("message", "bad_state", "This message is not an inbound message."))
     elif message.status == PeerMessageStatus.PENDING:
         if message.purged_at is not None:
             errors.append(PeerError("message", "purged", "This message's attachments were purged."))
-    elif not (allow_redeliver and message.status == PeerMessageStatus.DELIVERED):
-        errors.append(PeerError("message", "bad_state", "This message is not pending delivery."))
-    # A redelivered row may well be purged (purge runs 7 days after resolution):
-    # the text survives, the attachment bytes do not. Deliberately allowed —
-    # the UI warns; a text-only redelivery beats no redelivery at all.
+    elif message.status == PeerMessageStatus.DELIVERED and not allow_redeliver:
+        errors.append(PeerError("message", "bad_state", "This message was already delivered."))
     return errors
+
+
+def _resolution_guards(message, target) -> list[PeerError]:
+    """Guards for resolving an inbound message as DONE or REFUSED.
+
+    Neither hands anything to an agent, so the purge state is irrelevant —
+    unlike delivery. The only rejected move is a no-op: the message is
+    already in the requested state.
+    """
+    from twicc.core.models import PeerMessageDirection
+
+    if message.direction != PeerMessageDirection.IN:
+        return [PeerError("message", "bad_state", "This message is not an inbound message.")]
+    if message.status == target:
+        return [PeerError("message", "bad_state", f"This message is already {target}.")]
+    return []
 
 
 # Per-message serialization of resolution (deliver / refuse). The guard check,
@@ -762,6 +780,7 @@ async def _fresh_message(pk: int):
     return await sync_to_async(
         lambda: PeerMessage.objects
         .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
+        .prefetch_related("replies")
         .filter(pk=pk).first()
     )()
 
@@ -783,14 +802,11 @@ async def _mark_delivered(message, *, session_id: str, note: str) -> None:
         linkable = bool(session_id) and Session.objects.filter(id=session_id).exists()
         message.delivered_to_session_id = session_id if linkable else None
         message.recipient_note = (note or "").strip()
-        fields = ["status", "delivered_to_session", "recipient_note"]
-        # A redelivery keeps the ORIGINAL resolution timestamp: the attachment
-        # purge window stays anchored to the first delivery instead of being
-        # pushed back 7 days on every retry.
-        if message.resolved_at is None:
-            message.resolved_at = now
-            fields.append("resolved_at")
-        message.save(update_fields=fields)
+        # Every resolution — a redelivery included — restarts the attachment
+        # purge window (decision of 2026-09-01): the latest decision is the
+        # one the owner may still need the bytes for.
+        message.resolved_at = now
+        message.save(update_fields=["status", "delivered_to_session", "recipient_note", "resolved_at"])
 
     await run_under_db_write_lock(lambda: sync_to_async(_apply)())
     await broadcast_peer_message_updated(message)
@@ -835,7 +851,10 @@ async def mark_delivered(
     target picked, draft cleared by mistake): the new target and note replace
     the recorded ones. The status does not move (delivered → delivered), so
     the sender sees nothing change; the callback is re-sent anyway, which
-    doubles as a free retry when the first one never reached the peer."""
+    doubles as a free retry when the first one never reached the peer.
+    A DONE or REFUSED message can be delivered without the flag: every
+    resolution is reversible, and that one is a real status change (the
+    sender, though, keeps the first resolution it heard of)."""
     from twicc.core.models import Session
 
     async with _resolution_lock(message.pk):
@@ -907,25 +926,44 @@ async def link_delivered_session(message, session_id: str) -> tuple[bool, list[P
     return True, []
 
 
-async def refuse_peer_message(message) -> tuple[bool, list[PeerError]]:
-    from twicc.core.models import PeerMessageStatus
-
+async def _resolve_without_agent(message, target) -> tuple[bool, list[PeerError]]:
+    """Resolve an inbound message as DONE or REFUSED — the two answers that
+    hand nothing to an agent. Same lock/refetch discipline as delivery; the
+    status callback runs after the lock, best-effort. A previous delivery's
+    ``delivered_to_session`` and ``recipient_note`` are left as they are:
+    they are that delivery's history, still worth reading."""
     async with _resolution_lock(message.pk):
         message = await _fresh_message(message.pk)
         if message is None:
             return False, [PeerError("message", "not_found", "Message no longer exists.")]
-        guards = _delivery_guards(message)
+        guards = _resolution_guards(message, target)
         if guards:
             return False, guards
         peer = message.peer  # select_related — no query
         now = _now()
 
         def _apply():
-            message.status = PeerMessageStatus.REFUSED
+            message.status = target
+            # Restarts the purge window, like every resolution (2026-09-01).
             message.resolved_at = now
             message.save(update_fields=["status", "resolved_at"])
 
         await run_under_db_write_lock(lambda: sync_to_async(_apply)())
         await broadcast_peer_message_updated(message)
-    await _notify_status(peer, message.message_id, "refused")
+    await _notify_status(peer, message.message_id, target.value)
     return True, []
+
+
+async def refuse_peer_message(message) -> tuple[bool, list[PeerError]]:
+    from twicc.core.models import PeerMessageStatus
+
+    return await _resolve_without_agent(message, PeerMessageStatus.REFUSED)
+
+
+async def mark_done(message) -> tuple[bool, list[PeerError]]:
+    """The receiving user read the message and dealt with it themselves — no
+    agent receives it (design of 2026-09-01). Reachable from the review
+    dialog and, through ``resolve_reply_to``, from the manual-reply form."""
+    from twicc.core.models import PeerMessageStatus
+
+    return await _resolve_without_agent(message, PeerMessageStatus.DONE)

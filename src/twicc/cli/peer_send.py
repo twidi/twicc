@@ -58,8 +58,9 @@ def peer_send_cmd(
 
     Every send carries a required TITLE — the subject the remote user triages
     on. No confirmation on this side — but delivery requires the REMOTE user's
-    approval: the returned peer_status stays "pending" until they deliver or
-    refuse it. Re-check later with "twicc peer-message <MESSAGE_ID>".
+    approval: the returned peer_status stays "pending" until they deliver it
+    to an agent, mark it done (dealt with themselves), or refuse it. Re-check
+    later with "twicc peer-message <MESSAGE_ID>".
     """
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import os

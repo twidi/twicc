@@ -6,7 +6,7 @@ argument-hint: <peer> <title> <prompt>
 
 # TwiCC Peer Send
 
-Send a message to a peer instance — another user's TwiCC installation, paired by the two humans beforehand. No confirmation is needed on this side, but nothing reaches the remote agent directly: the REMOTE user reads the message first and delivers or refuses it. The receiving side shares **no memory or context** with you — write the message fully self-contained (who you are, what project, what you need).
+Send a message to a peer instance — another user's TwiCC installation, paired by the two humans beforehand. No confirmation is needed on this side, but nothing reaches the remote agent directly: the REMOTE user reads the message first and delivers it to an agent, deals with it themselves, or refuses it. The receiving side shares **no memory or context** with you — write the message fully self-contained (who you are, what project, what you need).
 
 ## When to use
 
@@ -72,7 +72,7 @@ Every server-side failure surfaces as `rejected` (exit 3); the distinction is in
 {"status": "rejected", "errors": [{"field": "peer", "code": "peer_broken", "message": "..."}], "request_uuid": "..."}
 ```
 
-`peer_status` is the remote delivery state: it stays `pending` until the remote user delivers or refuses the message.
+`peer_status` is the remote delivery state: it stays `pending` until the remote user delivers the message to an agent (`delivered`), deals with it themselves (`done`), or refuses it (`refused`).
 
 ### Exit codes
 

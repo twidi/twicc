@@ -100,7 +100,9 @@ def test_peer_message_resolved_reply_uses_one_query(django_assert_num_queries):
         status=PeerMessageStatus.PENDING,
     )
 
-    with django_assert_num_queries(1):
+    # One SELECT with its JOINs, plus the `replies` prefetch that feeds
+    # `latest_reply_author` — never a query per relation.
+    with django_assert_num_queries(2):
         response = invoke(["peer-message", child.message_id])
 
     assert response.exit_code == 0
