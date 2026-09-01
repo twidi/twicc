@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **The keyboard on touch devices** — Opening a session's Files, Git, Artifacts or Browser tab no longer pops the on-screen keyboard; tap a filter field yourself to type. The Terminal tab still opens it.
 - **Include files in a prompt** — Inside an included file, an `@@./path` or `@@../path` marker now points next to that file, so only the first file of a set of prepared prompts needs an absolute path (CLI/skill/API only, not the UI).
 
 ## [1.93.0] - 2026-08-31

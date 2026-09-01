@@ -1024,9 +1024,17 @@ function onLayoutTabDrop(tabId, { activate = true } = {}) {
 // Deliberately NOT driven by onTabShow/onLayoutSelectTab (wa-tab-group emits wa-tab-show on initial
 // render too) nor by watching activeTabId (route claims from clicking inside a shown panel change it).
 // Distinct from requestPaneFocus, which only claims the URL for a pane. Orchestration has no focus target.
+// On a touch device every one of these targets is a text field (filter input, editor, address bar), so
+// focusing it pops the on-screen keyboard over the panel the user just opened — the focus itself buys
+// nothing there (it exists for tab/arrow navigation). Only the terminal keeps it: typing IS the point.
+// A manual tap into a filter still focuses and opens the keyboard, as the platform does natively.
+// The one touch exception is a request coming FROM a keyboard shortcut (`fromKeyboard`): the gesture
+// proves a physical keyboard, so tab/arrow navigation is exactly what the user is doing.
 const ACTIVATION_FOCUS_TABS = ['files', 'git', 'artifacts', 'terminal', 'browser']
+const TOUCH_ACTIVATION_FOCUS_TABS = ['terminal']
 const panelFocusRequests = reactive({ files: 0, git: 0, artifacts: 0, terminal: 0, browser: 0 })
-function requestPanelFocus(tabId) {
+function requestPanelFocus(tabId, { fromKeyboard = false } = {}) {
+    if (settingsStore.isTouchDevice && !fromKeyboard && !TOUCH_ACTIVATION_FOCUS_TABS.includes(tabId)) return
     if (tabId in panelFocusRequests) panelFocusRequests[tabId]++
 }
 // Arriving on / returning to a session whose URL targets such a tab is an explicit navigation toward
@@ -1470,8 +1478,9 @@ function handleTabShortcut(event) {
     if (!targetTab) return
     switchToTab(targetTab)
     // Keyboard navigation toward an activation-focus tool tab focuses its content — whether the tab
-    // was hidden (a switch) or already visible (explicit keyboard intent on a shown panel).
-    if (ACTIVATION_FOCUS_TABS.includes(targetTab)) requestPanelFocus(targetTab)
+    // was hidden (a switch) or already visible (explicit keyboard intent on a shown panel). fromKeyboard
+    // lifts the touch-device gate: this event only exists because a physical keyboard produced it.
+    if (ACTIVATION_FOCUS_TABS.includes(targetTab)) requestPanelFocus(targetTab, { fromKeyboard: true })
     // Same intent for the Chat tab: keyboard arrival focuses its primary control — the pending-request
     // form when one is shown, else the message input — exactly like Alt+Shift+M. Chat isn't an
     // ACTIVATION_FOCUS_TAB (its target lives in the footer accordion, reached via focusChatPrimary's own
