@@ -78,12 +78,14 @@ Update with:
 uv tool upgrade twicc
 ```
 
+See the [`CHANGELOG.md`](CHANGELOG.md) for the full release history.
+
 ## Features
 
 ### Claude Code and Codex, side by side
 
 - **Both providers in one UI**, using your existing credentials — nothing extra to set up, and TwiCC walks you through logging in if you haven't
-- **Per-session agent control**: model (Fable 5, Opus 4.8, Sonnet 5, …), context window (200K / 1M), effort, thinking, fast mode, permissions (including Claude Code's "auto" mode), with reusable presets and per-project defaults; stop a run at any time
+- **Per-session agent control**: choose the model, reasoning effort, permissions, fast mode, and provider-specific options for every Claude Code or Codex session; reuse configurations with presets and per-project defaults, and stop a run at any time
 - **Interactive tool approvals and provider questions**, answered directly from the browser
 - **Persistent Claude Code cron jobs**: scheduled tasks survive restarts and auto-renew before their 7-day expiry
 - **Provider status monitoring** (Anthropic and OpenAI) with in-app outage notifications
@@ -189,6 +191,10 @@ A session can spawn other sessions, which can spawn their own, forming a tree of
 
 See [`ORCHESTRATION.md`](ORCHESTRATION.md).
 
+### Peer messaging
+
+Pair your TwiCC instance with another person's instance so your agents can exchange titled messages and attachments. Every incoming message requires human review: the recipient can refuse it, or place it in a session's composer for review and editing before sending. Pairing never shares projects, sessions, files, settings, or agent control.
+
 ### Sharing
 
 Publish a **read-only** public link to a session transcript or a bookmarked artifact. Each link is an opaque capability URL (the token *is* the credential); you can optionally add a per-link password and an expiry, choose how much detail viewers see (conversation / simplified / normal / debug, with or without subagents, costs, timestamps), share a live-following view or a frozen snapshot, and revoke at any time. Viewers get a clean, dependency-free reader — no TwiCC account, no access to your app.
@@ -243,6 +249,10 @@ Restart TwiCC after setting or clearing the password for the change to take effe
 TwiCC runs on **Linux** and **macOS**. There is no native Windows support — the codebase relies on Unix-specific APIs (PTY, process signals, process groups) that would require significant work to adapt, and the author does not have access to a Windows machine for development and testing.
 
 **WSL (Windows Subsystem for Linux)** is the recommended path for Windows users. TwiCC has been reported to work correctly under WSL2. If you hit issues, please open an issue or a pull request.
+
+## Anonymous telemetry
+
+TwiCC sends anonymous usage statistics by default: counters, booleans, enums, and buckets, never content, titles, or paths. You can inspect the exact payload, disable telemetry, or reset its anonymous instance identifier in **Settings → General**. See the [telemetry transparency page](https://twicc-telemetry.twidi.com/) for the complete schema.
 
 ## FAQ
 
