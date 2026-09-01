@@ -228,6 +228,13 @@ function openInbox() {
     window.dispatchEvent(new CustomEvent('twicc:open-peer-inbox'))
 }
 
+function composeTo(peer) {
+    emit('close')
+    window.dispatchEvent(new CustomEvent('twicc:open-peer-compose', {
+        detail: { peerId: peer.id, returnTo: 'manager' },
+    }))
+}
+
 function brokenReasonText(reason) {
     return {
         remote_credential_rejected: 'Remote credentials rejected',
@@ -432,6 +439,14 @@ function onHide(event) {
                 </span>
             </div>
             <div class="pm-peer__actions">
+                <wa-button
+                    v-if="peer.state === 'active'"
+                    size="small" variant="brand" appearance="plain"
+                    @click="composeTo(peer)"
+                >
+                    <wa-icon name="paper-plane" slot="start"></wa-icon>
+                    Send message
+                </wa-button>
                 <wa-button size="small" appearance="plain" @click="startRename(peer)">Rename</wa-button>
                 <wa-button
                     v-if="peer.state !== 'active'"

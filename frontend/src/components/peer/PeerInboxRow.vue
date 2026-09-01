@@ -83,6 +83,20 @@ function shortTitle(title) {
 const routes = computed(() => {
     const message = props.message
     const lines = []
+    // Direct human authorship (`origin.author`, sender-declared — absent
+    // means agent). A label-only line: an outbound direct message has no
+    // origin session, so this is its whole provenance.
+    if (message.origin?.author === 'human') {
+        lines.push({
+            key: 'author',
+            label: isInbound.value
+                ? `Written directly by ${peerLabel.value}'s user`
+                : 'Written directly by you',
+            title: '',
+            display: '',
+            projectId: null,
+        })
+    }
     const reply = message.reply_to_ref
     if (reply?.title) {
         lines.push({
@@ -177,7 +191,7 @@ const timestampSeconds = computed(() =>
         <!-- Routing — one labelled line per fact. -->
         <span v-for="route in routes" :key="route.key" class="pir__route">
             <span class="pir__route-label">{{ route.label }}</span>
-            <span class="pir__route-title" :title="route.title">“{{ route.display }}”</span>
+            <span v-if="route.display" class="pir__route-title" :title="route.title">“{{ route.display }}”</span>
             <template v-if="route.projectId">
                 <span class="pir__route-label">in</span>
                 <ProjectBadge :project-id="route.projectId" class="pir__route-project" />

@@ -203,6 +203,44 @@ const replyRoute = computed(() => {
     }
 })
 
+/** Authorship line, only when the message was written directly by a human
+ *  (`origin.author`, sender-declared — absent means agent, the historical
+ *  meaning). An outbound direct message has no origin session, so this line
+ *  is its whole provenance. */
+const authorLine = computed(() => {
+    if (origin.value.author !== 'human') return null
+    return isInbound.value
+        ? `Written directly by ${peerName.value}'s user`
+        : 'Written directly by you'
+})
+
+/** Reply — the direct human answer to a received message. It opens the
+ *  compose dialog threaded on this message and resolves NOTHING: the delivery
+ *  decision (deliver / refuse) stays whole. Only for inbound messages whose
+ *  peer can still be written to. */
+const canReply = computed(() =>
+    isInbound.value
+    && !!detail.value?.message_id
+    && peersStore.getPeerById(detail.value?.peer_id)?.state === 'active'
+)
+
+function openReplyComposer() {
+    const current = detail.value
+    if (!current) return
+    // 'compose': the composer replaces this dialog and reopens it on close
+    // (App.vue records the return BEFORE the event below is dispatched).
+    emit('close', 'compose')
+    window.dispatchEvent(new CustomEvent('twicc:open-peer-compose', {
+        detail: {
+            peerId: current.peer_id,
+            replyTo: current.message_id,
+            replyToTitle: current.title || '',
+            replyPending: isPending.value,
+            returnTo: 'review',
+        },
+    }))
+}
+
 /** Open the session this message belongs to, exactly like clicking it in the
  *  sidebar: `sessionRouteLocation` keeps the current frame — the project
  *  filter and the active workspace — and changes only the session. */
@@ -349,12 +387,25 @@ const replyTargetSession = computed(() =>
 const replyTargetPickerEligible = computed(() =>
     isReplyTargetPickerEligible(replyTargetSession.value, archivedProjectIds.value),
 )
-const showReplyTargetWarning = computed(() =>
+// A reply to a message the owner wrote directly (compose dialog): the parent
+// never had a session, so there is nothing to propose — and nothing missing.
+const replyToDirectParent = computed(() =>
+    detail.value?.reply_to_ref?.direction === 'out'
+    && detail.value?.reply_to_ref?.author === 'human',
+)
+const replyTargetSettled = computed(() =>
     isPending.value
     && !deliveryGloballyBlocked.value
     && targetHydrationSettled.value
-    && detail.value?.reply_to !== ''
+    && detail.value?.reply_to !== '',
+)
+const showReplyTargetWarning = computed(() =>
+    replyTargetSettled.value
+    && !replyToDirectParent.value
     && !replyTargetPickerEligible.value,
+)
+const showDirectParentHint = computed(() =>
+    replyTargetSettled.value && replyToDirectParent.value,
 )
 const showReplyTargetPreparation = computed(() =>
     !deliveryGloballyBlocked.value
@@ -1025,6 +1076,9 @@ function onHide(event) {
 
             <!-- Which message this one answers, then where it went / came
                  from. Both use the inbox row's label-then-value vocabulary. -->
+            <p v-if="authorLine" class="pr-route">
+                <span class="pr-route__label">{{ authorLine }}</span>
+            </p>
             <p v-if="replyRoute" class="pr-route">
                 <span class="pr-route__label">{{ replyRoute.label }}</span>
                 <span class="pr-route__title" :title="replyRoute.title">“{{ replyRoute.title }}”</span>
@@ -1064,6 +1118,10 @@ function onHide(event) {
                         This message is part of a thread, but its session is not available for selection.
                         Choose another session, or deliver to a new one.
                     </wa-callout>
+                    <p v-else-if="showDirectParentHint" class="pr-explainer">
+                        In reply to a message you wrote directly — no session to propose.
+                        Choose any session, or deliver to a new one.
+                    </p>
                     <div class="pr-note">
                         <label class="pr-note__label" for="pr-note-input">Add a message for your agent (optional)</label>
                         <wa-textarea
@@ -1290,6 +1348,14 @@ function onHide(event) {
         </div>
 
         <div slot="footer" class="pr-footer">
+            <!-- Reply opens the direct composer, threaded on this message; it
+                 never delivers or refuses — the trust-gate actions above stay
+                 the only resolutions. -->
+            <wa-button
+                v-if="canReply"
+                appearance="outlined" :disabled="busy"
+                @click="openReplyComposer"
+            >Reply manually</wa-button>
             <wa-button :disabled="busy" @click="emit('close')">Close</wa-button>
         </div>
     </wa-dialog>
@@ -1518,5 +1584,5 @@ function onHide(event) {
     gap: var(--wa-space-s);
 }
 .pr-action-error--after-mode { margin-top: var(--wa-space-s); }
-.pr-footer { display: flex; justify-content: flex-end; width: 100%; }
+.pr-footer { display: flex; justify-content: flex-end; gap: var(--wa-space-s); width: 100%; }
 </style>

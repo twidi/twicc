@@ -131,6 +131,16 @@ function openManager() {
     window.dispatchEvent(new CustomEvent('twicc:open-peers-manager'))
 }
 
+const hasActivePeer = computed(() => peersStore.peers.some(p => p.state === 'active'))
+
+function composeNew() {
+    emit('close')
+    window.dispatchEvent(new CustomEvent('twicc:open-peer-compose', {
+        // The peer filter, when set, is the obvious default recipient.
+        detail: { peerId: selectedPeerId.value || null, returnTo: 'inbox' },
+    }))
+}
+
 function review(message) {
     emit('review', message.id)
 }
@@ -218,6 +228,10 @@ function onHide(event) {
         </template>
 
         <div slot="footer" class="pi-footer">
+            <wa-button v-if="hasActivePeer" appearance="outlined" @click="composeNew">
+                <wa-icon name="paper-plane" slot="start"></wa-icon>
+                New message
+            </wa-button>
             <wa-button appearance="outlined" @click="openManager">
                 <wa-icon name="user-group" slot="start"></wa-icon>
                 Manage peers

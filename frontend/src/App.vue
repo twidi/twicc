@@ -30,6 +30,7 @@ import ShareManagerDialog from './components/share/ShareManagerDialog.vue'
 import PeersManagerDialog from './components/peer/PeersManagerDialog.vue'
 import PeerInboxDialog from './components/peer/PeerInboxDialog.vue'
 import PeerMessageReviewDialog from './components/peer/PeerMessageReviewDialog.vue'
+import PeerComposeDialog from './components/peer/PeerComposeDialog.vue'
 import TerminalPool from './components/terminal/TerminalPool.vue'
 import { registerTrustDialog, ensureProjectTrust } from './composables/useTrustGate'
 import { initStaticCommands } from './commands/staticCommands'
@@ -621,10 +622,49 @@ function onPeerReviewClose(reason) {
     // The dialog closes twice: once on the action (button, refusal, delivery),
     // once on the wa-hide that follows. Only the first one decides.
     if (peerReviewMessageId.value == null) return
-    const backToInbox = peerReviewFromInbox.value && reason !== 'navigating'
+    const fromInbox = peerReviewFromInbox.value
+    const messageId = peerReviewMessageId.value
     peerReviewFromInbox.value = false
     peerReviewMessageId.value = null
-    showPeerInbox.value = backToInbox
+    if (reason === 'compose') {
+        // "Reply manually": the composer takes over and comes back to this
+        // very message on close — with the inbox chain intact behind it.
+        peerComposeReturn = { kind: 'review', messageId, fromInbox }
+        return
+    }
+    showPeerInbox.value = fromInbox && reason !== 'navigating'
+}
+// Direct owner-written message (manager row, inbox footer, review's "Reply
+// manually"). The composer is a detour: whatever closes it — send, cancel,
+// discard, Esc — reopens the dialog it was opened from.
+const peerCompose = ref(null)
+let peerComposeReturn = null   // { kind: 'manager' | 'inbox' | 'review', messageId?, fromInbox? }
+function openPeerCompose(e) {
+    const detail = e?.detail || {}
+    // The review dialog registers its own return (with the inbox chain) in
+    // onPeerReviewClose('compose'), before dispatching this event.
+    if (detail.returnTo !== 'review') {
+        peerComposeReturn = detail.returnTo ? { kind: detail.returnTo } : null
+    }
+    peerCompose.value = {
+        peerId: detail.peerId || null,
+        replyTo: detail.replyTo || null,
+        replyToTitle: detail.replyToTitle || '',
+        replyPending: !!detail.replyPending,
+    }
+}
+function onPeerComposeClose() {
+    // Same double close as the review dialog (action, then wa-hide).
+    if (peerCompose.value == null) return
+    peerCompose.value = null
+    const back = peerComposeReturn
+    peerComposeReturn = null
+    if (back?.kind === 'manager') showPeersManager.value = true
+    else if (back?.kind === 'inbox') showPeerInbox.value = true
+    else if (back?.kind === 'review') {
+        peerReviewFromInbox.value = back.fromInbox
+        peerReviewMessageId.value = back.messageId
+    }
 }
 
 // Edit any project (current project, or one picked from a palette list).
@@ -668,6 +708,7 @@ onMounted(() => {
     window.addEventListener('twicc:open-share-manager', openShareManager)
     window.addEventListener('twicc:open-peers-manager', openPeersManager)
     window.addEventListener('twicc:open-peer-inbox', openPeerInbox)
+    window.addEventListener('twicc:open-peer-compose', openPeerCompose)
 })
 onBeforeUnmount(() => {
     document.removeEventListener('keydown', handleGlobalKeydown, { capture: true })
@@ -678,6 +719,7 @@ onBeforeUnmount(() => {
     window.removeEventListener('twicc:open-share-manager', openShareManager)
     window.removeEventListener('twicc:open-peers-manager', openPeersManager)
     window.removeEventListener('twicc:open-peer-inbox', openPeerInbox)
+    window.removeEventListener('twicc:open-peer-compose', openPeerCompose)
 })
 
 // Notivue theme - inverted for contrast (dark theme when app is light, and vice-versa)
@@ -745,13 +787,19 @@ const toastTheme = computed(() => {
     <WorktreeDialog ref="worktreeDialogRef" @resolved="handleWorktreeResolved" />
     <!-- Shared-links manager (command palette: "Manage shared links"). -->
     <ShareManagerDialog :open="showShareManager" @close="showShareManager = false" />
-    <!-- Peer messaging: manager, inbox and read-and-route dialog. -->
+    <!-- Peer messaging: manager, inbox, read-and-route dialog and the
+         owner-written composer. -->
     <PeersManagerDialog :open="showPeersManager" @close="showPeersManager = false" />
     <PeerInboxDialog :open="showPeerInbox" @close="showPeerInbox = false" @review="onPeerInboxReview" />
     <PeerMessageReviewDialog
         :open="peerReviewMessageId != null"
         :message-id="peerReviewMessageId"
         @close="onPeerReviewClose"
+    />
+    <PeerComposeDialog
+        :open="peerCompose != null"
+        v-bind="peerCompose || {}"
+        @close="onPeerComposeClose"
     />
     <!-- Prevent browser default drop behavior (e.g. navigating to a dropped image).
          Our specific drop handlers in SessionItemsList call preventDefault themselves;

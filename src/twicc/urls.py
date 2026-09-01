@@ -196,6 +196,7 @@ urlpatterns = [
     path("api/peers/<str:peer_id>/reconnect/", peer_owner_views.peer_reconnect),
     path("api/peers/<str:peer_id>/reconnect/cancel/", peer_owner_views.peer_reconnect_cancel),
     path("api/peer-messages/", peer_owner_views.peer_messages_list),
+    path("api/peer-messages/send/", peer_owner_views.peer_message_send),
     path("api/peer-messages/<int:pk>/", peer_owner_views.peer_message_detail),
     path("api/peer-messages/<int:pk>/attachments/", peer_owner_views.peer_message_attachments),
     path("api/peer-messages/<int:pk>/deliver/", peer_owner_views.peer_message_deliver),

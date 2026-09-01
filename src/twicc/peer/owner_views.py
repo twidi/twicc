@@ -165,6 +165,34 @@ async def peer_reconnect_cancel(request, peer_id):
     return JsonResponse(serialize_peer(await _load_peer(peer_id)))
 
 
+async def peer_message_send(request):
+    """POST /api/peer-messages/send/ — {peer_id, title, text, reply_to?}.
+
+    The owner composes a message directly (peer compose dialog). Text-only by
+    design: attachments, drafts and long-form writing stay on the agent path
+    (``peer-send``). This endpoint is the ONLY caller allowed to claim human
+    authorship — the CLI/RPC/MCP surface always sends ``author="agent"`` — so
+    an agent can never pass itself off as its user.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    data = _parse_body(request)
+    if data is None:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    result = await peer_messages.send_peer_message_from_payload(
+        {
+            "peer": data.get("peer_id") or "",
+            "title": data.get("title"),
+            "reply_to": data.get("reply_to") or None,
+            "text": data.get("text"),
+        },
+        author=peer_messages.PEER_MESSAGE_AUTHOR_HUMAN,
+    )
+    if not result.success:
+        return _err_response(result.errors)
+    return JsonResponse({"message_id": result.message_id, **result.status_extra})
+
+
 async def peer_messages_list(request):
     """GET peer-message summaries, optionally filtered by peer and full text."""
     from twicc.core.models import PeerMessage, PeerMessageDirection, PeerMessageStatus, PeerState

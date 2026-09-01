@@ -527,6 +527,11 @@ def serialize_peer_message(message, *, include_payload=False, include_attachment
             "title": reply_to_message.title,
             "direction": reply_to_message.direction,
             "status": reply_to_message.status,
+            # The parent's authorship (`origin.author`, absent = agent): an
+            # outbound parent written directly by the owner has no origin
+            # session by construction, which the review dialog must not
+            # report as a session that went missing.
+            "author": (reply_to_message.origin or {}).get("author") or "agent",
         }
         reply_target = (
             reply_to_message.origin_session_id
