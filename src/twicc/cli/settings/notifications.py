@@ -17,6 +17,7 @@ let ``add_target``'s defaults apply):
   - ``--user-turn / --no-user-turn``  → ``notifyUserTurn``
   - ``--pending / --no-pending``      → ``notifyPendingRequest``
   - ``--extra-usage / --no-extra-usage`` → ``notifyExtraUsageStart``
+  - ``--peer / --no-peer``            → ``notifyPeer``
   - ``--away-only / --no-away-only``  → ``awayOnly``
   - ``--name TEXT``                   → ``name``
 
@@ -41,7 +42,7 @@ notifications_app = typer.Typer(
         "Manage external Apprise notification targets — list them (bare form), or "
         "add / update / remove / test a target (sub-commands). Each target is an "
         "Apprise URL TwiCC pushes alerts to (agent waiting, pending request, extra "
-        "usage)."
+        "usage, peer message or request)."
     ),
     invoke_without_command=True,
 )
@@ -83,6 +84,7 @@ def _build_flags_dict(
     user_turn: bool | None,
     pending: bool | None,
     extra_usage: bool | None,
+    peer: bool | None,
     away_only: bool | None,
 ) -> dict:
     """Build the flags dict from explicitly-set toggles only (skip None values).
@@ -99,6 +101,8 @@ def _build_flags_dict(
         flags["notifyPendingRequest"] = pending
     if extra_usage is not None:
         flags["notifyExtraUsageStart"] = extra_usage
+    if peer is not None:
+        flags["notifyPeer"] = peer
     if away_only is not None:
         flags["awayOnly"] = away_only
     return flags
@@ -161,6 +165,10 @@ def notifications_add(
         None, "--extra-usage/--no-extra-usage",
         help="Send a notification when extra usage starts. Default: on.",
     ),
+    peer: bool | None = typer.Option(
+        None, "--peer/--no-peer",
+        help="Send a notification when a peer message or pairing request arrives. Default: on.",
+    ),
     away_only: bool | None = typer.Option(
         None, "--away-only/--no-away-only",
         help="Hold notifications while the user is present; send when they go away. Default: on.",
@@ -190,7 +198,7 @@ def notifications_add(
     from twicc.cli.settings._output import emit_settings_final
     from twicc.synced_settings import read_synced_settings
 
-    flags = _build_flags_dict(enabled, user_turn, pending, extra_usage, away_only)
+    flags = _build_flags_dict(enabled, user_turn, pending, extra_usage, peer, away_only)
     settings = read_synced_settings()
     current = settings.get("externalNotificationTargets") or []
     new_list = add_target(current, url=url, name=name, flags=flags)
@@ -251,6 +259,10 @@ def notifications_update(
         None, "--extra-usage/--no-extra-usage",
         help="Send a notification when extra usage starts.",
     ),
+    peer: bool | None = typer.Option(
+        None, "--peer/--no-peer",
+        help="Send a notification when a peer message or pairing request arrives.",
+    ),
     away_only: bool | None = typer.Option(
         None, "--away-only/--no-away-only",
         help="Hold notifications while the user is present; send when they go away.",
@@ -286,7 +298,7 @@ def notifications_update(
         )])
         raise typer.Exit(1)
 
-    patch: dict = _build_flags_dict(enabled, user_turn, pending, extra_usage, away_only)
+    patch: dict = _build_flags_dict(enabled, user_turn, pending, extra_usage, peer, away_only)
     if url is not None:
         patch["url"] = url
     if name is not None:

@@ -61,6 +61,13 @@ export const SETTINGS_SCHEMA = {
     notifPendingRequestBrowser: false,
     notifExtraUsageStartSound: NOTIFICATION_SOUNDS.NONE,
     notifExtraUsageStartBrowser: false,
+    // One event for the whole peer system: a message arrived, or an instance
+    // asks to pair. Both say the same thing — someone else waits on you — and
+    // nobody would want one without the other, so they share a setting rather
+    // than growing this list. Every other peer event is informational: it can
+    // wait for your next visit, and the inbox badge is there when you come.
+    notifPeerSound: NOTIFICATION_SOUNDS.NONE,
+    notifPeerBrowser: false,
     // --- Synced settings (defaults from backend, null as placeholder) ---
     defaultProvider: null,
     defaultLayoutId: null,
@@ -164,6 +171,8 @@ const SETTINGS_VALIDATORS = {
     notifPendingRequestBrowser: (v) => typeof v === 'boolean',
     notifExtraUsageStartSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
     notifExtraUsageStartBrowser: (v) => typeof v === 'boolean',
+    notifPeerSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
+    notifPeerBrowser: (v) => typeof v === 'boolean',
     waTheme: (v) => Object.values(WA_THEME).includes(v),
     waBrand: (v) => Object.values(WA_BRAND).includes(v),
     externalNotificationTargets: (v) =>
@@ -176,6 +185,7 @@ const SETTINGS_VALIDATORS = {
             && (item.tested === null || item.tested === undefined || typeof item.tested === 'boolean')
             && (item.notifyUserTurn === undefined || typeof item.notifyUserTurn === 'boolean')
             && (item.notifyPendingRequest === undefined || typeof item.notifyPendingRequest === 'boolean')
+            && (item.notifyPeer === undefined || typeof item.notifyPeer === 'boolean')
             && (item.awayOnly === undefined || typeof item.awayOnly === 'boolean')),
     publicBaseUrl: (v) => typeof v === 'string',
     shareBaseUrl: (v) => typeof v === 'string',
@@ -361,6 +371,8 @@ export const useSettingsStore = defineStore('settings', {
         isNotifPendingRequestBrowser: (state) => state.notifPendingRequestBrowser,
         getNotifExtraUsageStartSound: (state) => state.notifExtraUsageStartSound,
         isNotifExtraUsageStartBrowser: (state) => state.notifExtraUsageStartBrowser,
+        getNotifPeerSound: (state) => state.notifPeerSound,
+        isNotifPeerBrowser: (state) => state.notifPeerBrowser,
         getWaTheme: (state) => state.waTheme,
         getWaBrand: (state) => state.waBrand,
         getExternalNotificationTargets: (state) => state.externalNotificationTargets,
@@ -913,6 +925,27 @@ export const useSettingsStore = defineStore('settings', {
             if (SETTINGS_VALIDATORS.notifExtraUsageStartBrowser(enabled)) {
                 this.notifExtraUsageStartBrowser = enabled
                 if (enabled) this.notifyOnExtraUsageStart = true
+            }
+        },
+
+        /**
+         * Set the sound played when a peer message or pairing request arrives
+         * (this device only).
+         * @param {string} sound
+         */
+        setNotifPeerSound(sound) {
+            if (SETTINGS_VALIDATORS.notifPeerSound(sound)) {
+                this.notifPeerSound = sound
+            }
+        },
+
+        /**
+         * Set the browser notification for incoming peer events (this device only).
+         * @param {boolean} enabled
+         */
+        setNotifPeerBrowser(enabled) {
+            if (SETTINGS_VALIDATORS.notifPeerBrowser(enabled)) {
+                this.notifPeerBrowser = enabled
             }
         },
 

@@ -88,7 +88,7 @@ _GENERIC_SYNCED_SETTINGS_DEFAULTS: dict = {
     # Targets are objects: {"id": "<uuid hex>", "name": "<label>",
     # "url": "<apprise url>", "enabled": bool, "tested": bool|None,
     # "notifyUserTurn": bool, "notifyPendingRequest": bool,
-    # "notifyExtraUsageStart": bool, "awayOnly": bool}
+    # "notifyExtraUsageStart": bool, "notifyPeer": bool, "awayOnly": bool}
     # ("id" is a uuid4().hex assigned at creation and used as a stable handle
     # by the CLI; "name" is an optional human-readable label; "tested" reflects
     # the last per-target test from the settings UI or CLI,

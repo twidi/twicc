@@ -1,6 +1,6 @@
 <script setup>
 // NotificationSettings.vue - Notification settings section for the settings popover
-// Two notification types: User Turn and Pending Request
+// Four notification types: User Turn, Pending Request, Extra Usage and Peer.
 // Each has a sound selector (with test button) and a browser notification toggle;
 // User Turn also has its own in-app toast toggle.
 // Plus the external notification targets (Apprise URLs, pushed by the backend).
@@ -32,6 +32,10 @@ const pendingRequestBrowser = computed(() => store.isNotifPendingRequestBrowser)
 const notifyOnExtraUsageStart = computed(() => store.shouldNotifyOnExtraUsageStart)
 const extraUsageStartSound = computed(() => store.getNotifExtraUsageStartSound)
 const extraUsageStartBrowser = computed(() => store.isNotifExtraUsageStartBrowser)
+// One event for the whole peer system: an incoming message and an incoming
+// pairing request both mean someone else waits on you.
+const peerSound = computed(() => store.getNotifPeerSound)
+const peerBrowser = computed(() => store.isNotifPeerBrowser)
 
 // External notification targets (synced settings, consumed by the backend).
 // Each target carries a required ``id`` (a stable handle for a future
@@ -73,7 +77,7 @@ function effectiveTargetUrl(index) {
 
 function addExternalTarget() {
     // Local draft row only — persisted once it gets a non-empty URL.
-    externalRows.value.push({ id: generateUUID(), name: '', url: '', enabled: true, tested: null, notifyUserTurn: true, notifyPendingRequest: true, notifyExtraUsageStart: true, awayOnly: true })
+    externalRows.value.push({ id: generateUUID(), name: '', url: '', enabled: true, tested: null, notifyUserTurn: true, notifyPendingRequest: true, notifyExtraUsageStart: true, notifyPeer: true, awayOnly: true })
 }
 
 function removeExternalTarget(index) {
@@ -210,6 +214,14 @@ function onExtraUsageStartBrowserChange(event) {
     store.setNotifExtraUsageStartBrowser(event.target.checked)
 }
 
+function onPeerSoundChange(event) {
+    store.setNotifPeerSound(event.target.value)
+}
+
+function onPeerBrowserChange(event) {
+    store.setNotifPeerBrowser(event.target.checked)
+}
+
 function testUserTurnSound() {
     playNotificationSound(userTurnSound.value)
 }
@@ -220,6 +232,10 @@ function testPendingRequestSound() {
 
 function testExtraUsageStartSound() {
     playNotificationSound(extraUsageStartSound.value)
+}
+
+function testPeerSound() {
+    playNotificationSound(peerSound.value)
 }
 
 /**
@@ -362,6 +378,37 @@ defineExpose({ sync })
             </p>
         </div>
 
+        <!-- A peer needs you -->
+        <div class="setting-group">
+            <label class="setting-group-label">A peer needs you</label>
+            <wa-select
+                :value.prop="peerSound"
+                @change="onPeerSoundChange"
+                size="small"
+            >
+                <wa-option
+                    v-for="opt in soundOptions"
+                    :key="opt.value"
+                    :value="opt.value"
+                >{{ opt.label }}</wa-option>
+            </wa-select>
+            <a v-if="peerSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPeerSound">
+                <wa-icon name="volume-up"></wa-icon> Test sound
+            </a>
+            <div v-if="browserNotifPermission === 'granted'" class="notif-browser-row">
+                <wa-switch
+                    :checked="peerBrowser"
+                    @change="onPeerBrowserChange"
+                    size="small"
+                >Browser notification</wa-switch>
+            </div>
+            <p class="setting-group-hint">
+                A peer sent you a message, or an instance asks to pair with
+                yours. Both wait for you to act; every other peer event can
+                wait for your next visit.
+            </p>
+        </div>
+
         <!-- External notifications (Apprise) -->
         <wa-divider></wa-divider>
         <div class="setting-group">
@@ -449,6 +496,11 @@ defineExpose({ sync })
                             :checked="target.notifyExtraUsageStart !== false"
                             @change="onExternalTargetEventChange(index, 'notifyExtraUsageStart', $event)"
                         >Extra usage</wa-switch>
+                        <wa-switch
+                            size="small"
+                            :checked="target.notifyPeer !== false"
+                            @change="onExternalTargetEventChange(index, 'notifyPeer', $event)"
+                        >Peer</wa-switch>
                         <wa-switch
                             size="small"
                             :checked="target.awayOnly === true"

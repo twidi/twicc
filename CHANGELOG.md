@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **Peer messages, by hand** — You can now write to a peer yourself, including replying to a received message, without going through an agent. And when a message needs nothing more, mark it **done**.
+- **Peer notifications** — A message or a pairing request from a peer can now reach you outside the app: a sound, a browser notification, or a push to your devices. The in-app notices were reviewed at the same time.
 
 ### Changed
 
@@ -19,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Retired models** — GPT-5.4 and GPT-5.4 mini retired on August 31 but were still offered in the model pickers, where choosing one silently ran a different model. They no longer appear anywhere.
 - **Provider status alerts** — One notice per provider, following the incident step by step; dismiss it once and it is gone everywhere.
-- **Peer message notification** — The "Message from…" notification no longer stays on screen forever, and the inbox count badge stays visible whatever the state of the sidebar.
+- **Peer inbox badge** — The count of what awaits you stays visible whatever the state of the sidebar.
 
 ## [1.93.0] - 2026-08-31
 

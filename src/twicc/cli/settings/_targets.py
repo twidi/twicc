@@ -23,7 +23,8 @@ def add_target(targets: list, *, url: str, name: str = "", flags: dict) -> list:
     """Return a new list with a new target appended.
 
     Defaults: enabled=True, tested=None, notifyUserTurn=True,
-    notifyPendingRequest=True, notifyExtraUsageStart=True, awayOnly=True.
+    notifyPendingRequest=True, notifyExtraUsageStart=True, notifyPeer=True,
+    awayOnly=True.
     Any key present in *flags* overrides the corresponding default.
     """
     new_target = {
@@ -35,6 +36,7 @@ def add_target(targets: list, *, url: str, name: str = "", flags: dict) -> list:
         "notifyUserTurn": True,
         "notifyPendingRequest": True,
         "notifyExtraUsageStart": True,
+        "notifyPeer": True,
         "awayOnly": True,
         **flags,
     }

@@ -148,7 +148,7 @@ Manage external **Apprise** notification targets (each target is an Apprise URL 
 
 **Bare form:** offline read — prints `externalNotificationTargets` (the full list), `publicBaseUrl`, and `notifyOnExtraUsageStart`.
 
-Each target in the list carries: `id` (stable handle for CLI operations), `name`, `url`, `enabled`, `tested` (`true`/`false`/`null`), `notifyUserTurn`, `notifyPendingRequest`, `notifyExtraUsageStart`, `awayOnly`.
+Each target in the list carries: `id` (stable handle for CLI operations), `name`, `url`, `enabled`, `tested` (`true`/`false`/`null`), `notifyUserTurn`, `notifyPendingRequest`, `notifyExtraUsageStart`, `notifyPeer`, `awayOnly`.
 
 **Sub-commands:**
 
@@ -158,6 +158,7 @@ Each target in the list carries: `id` (stable handle for CLI operations), `name`
   - `--user-turn / --no-user-turn` — notify when agent awaits user input (default: on).
   - `--pending / --no-pending` — notify on pending permission request (default: on).
   - `--extra-usage / --no-extra-usage` — notify when extra usage starts (default: on).
+  - `--peer / --no-peer` — notify when a peer message or pairing request arrives (default: on).
   - `--away-only / --no-away-only` — hold notification while user is present (default: on).
   - `--test` — after a successful add, immediately send a test notification to the new target and emit the test result.
   - `--timeout INTEGER` (default 30).

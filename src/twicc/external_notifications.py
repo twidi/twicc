@@ -4,7 +4,9 @@ Send notifications to external services (via Apprise) on agent events.
 Mirrors the browser notifications fired by the frontend
 (``notifyProcessStateChange()`` in ``frontend/src/composables/useWebSocket.js``):
 "agent finished working" (transition to USER_TURN) and "agent needs your
-attention" (a new pending request appeared). Targets are user-configured
+attention" (a new pending request appeared). It also carries the single peer
+event — an incoming message or an incoming pairing request, both meaning
+another human waits on you. Targets are user-configured
 Apprise URLs (https://appriseit.com) stored in the synced settings
 (``externalNotificationTargets``); the whole pipeline is outbound-only and
 fire-and-forget — a notification failure must never affect the broadcast path.
@@ -263,6 +265,80 @@ def _send_extra_usage_started(provider, snapshot, settings: dict) -> None:
     # matching the same publicBaseUrl handling as the process-state push.
     base_url = usable_public_origin(settings.get("publicBaseUrl")) or None
     body = _build_extra_usage_body(snapshot, label, base_url)
+
+    present = presence.is_user_present()
+    baseline = presence.latest_activity()
+    always_urls = [t["url"] for t in eligible if not t.get("awayOnly")]
+    away_urls = [t["url"] for t in eligible if t.get("awayOnly")]
+    if always_urls:
+        _spawn(_send(always_urls, title, body))
+    if away_urls:
+        if present:
+            _spawn(_deferred_send(away_urls, title, body, baseline))
+        else:
+            _spawn(_send(away_urls, title, body))
+
+
+def notify_peer_message(message) -> None:
+    """Push an incoming peer message to opted-in external targets.
+
+    Called from ``broadcast_peer_message_received``, so it fires exactly when
+    the in-app toast does — and only for a genuinely new message (a replayed
+    ``message_id`` returns before the broadcast). Never raises.
+    """
+    try:
+        title = f"{'Reply' if message.reply_to_message_id else 'Message'} from {_peer_label(message.peer)}"
+        preview = _truncate((message.payload or {}).get("text"), 120, fallback="")
+        body = "\n".join(part for part in (f'"{message.title}"', preview) if part)
+        _send_peer_event(title, body)
+    except Exception:
+        logger.exception("Peer-message external notification dispatch failed")
+
+
+def notify_peer_request(peer) -> None:
+    """Push an incoming pairing request to opted-in external targets.
+
+    The same event as an incoming message, by decision: both mean another
+    human waits on you, and a pairing cannot advance until you read your
+    verification code to them. Never raises.
+    """
+    try:
+        claimed = peer.name or peer.remote_display_name or "An instance"
+        _send_peer_event(
+            f"Peer request from {claimed}",
+            f"{claimed} wants to pair with your instance.\nAddress: {peer.base_url}",
+        )
+    except Exception:
+        logger.exception("Peer-request external notification dispatch failed")
+
+
+def _peer_label(peer) -> str:
+    """Name the peer the way the owner does — their local name first."""
+    return peer.name or peer.remote_display_name or peer.base_url
+
+
+def _send_peer_event(title: str, body: str) -> None:
+    """Deliver one peer event, mirroring the process-state push.
+
+    Enabled + tested targets that opted into ``notifyPeer`` (absent = opted
+    in, like every other event flag), split by ``awayOnly`` with the same
+    presence-aware deferral. Unlike a session event there is nothing to
+    deep-link to — the inbox is a dialog, not a route — so the body ends with
+    the bare app URL when one is configured.
+    """
+    settings = read_synced_settings()
+    targets = [
+        target
+        for target in settings.get("externalNotificationTargets") or []
+        if isinstance(target, dict) and target.get("enabled") and target.get("url") and target.get("tested") is True
+    ]
+    eligible = [target for target in targets if target.get("notifyPeer", True)]
+    if not eligible:
+        return
+
+    base_url = usable_public_origin(settings.get("publicBaseUrl")) or None
+    if base_url:
+        body = f"{body}\n\n{base_url}"
 
     present = presence.is_user_present()
     baseline = presence.latest_activity()

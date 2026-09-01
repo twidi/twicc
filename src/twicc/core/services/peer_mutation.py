@@ -150,8 +150,12 @@ async def broadcast_peer_removed(peer_id: str) -> None:
 
 async def broadcast_peer_request_received(peer) -> None:
     from twicc.core.serializers import serialize_peer
+    from twicc.external_notifications import notify_peer_request
 
     await _broadcast({"type": "peer_request_received", "peer": serialize_peer(peer)})
+    # Fire-and-forget, after the broadcast — same event as an incoming message
+    # (see `notify_peer_request`), and never allowed to affect the handshake.
+    notify_peer_request(peer)
 
 
 async def broadcast_peer_accepted(peer) -> None:

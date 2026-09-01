@@ -442,6 +442,7 @@ def test_add_target_defaults_all_notify_flags():
     assert t["notifyUserTurn"] is True
     assert t["notifyPendingRequest"] is True
     assert t["notifyExtraUsageStart"] is True
+    assert t["notifyPeer"] is True
     assert t["awayOnly"] is True
 
 
@@ -541,6 +542,7 @@ def _build_add_patch(current_targets, url, name="", **toggles):
         toggles.get("user_turn"),
         toggles.get("pending"),
         toggles.get("extra_usage"),
+        toggles.get("peer"),
         toggles.get("away_only"),
     )
     new_list = add_target(current_targets, url=url, name=name, flags=flags)
@@ -560,6 +562,7 @@ def _build_update_patch(current_targets, target_id, **kwargs):
         kwargs.get("user_turn"),
         kwargs.get("pending"),
         kwargs.get("extra_usage"),
+        kwargs.get("peer"),
         kwargs.get("away_only"),
     )
     if "url" in kwargs:
@@ -616,6 +619,7 @@ def test_add_with_no_explicit_toggles_uses_all_defaults():
     assert t["notifyUserTurn"] is True
     assert t["notifyPendingRequest"] is True
     assert t["notifyExtraUsageStart"] is True
+    assert t["notifyPeer"] is True
     assert t["awayOnly"] is True
     assert t["tested"] is None
 

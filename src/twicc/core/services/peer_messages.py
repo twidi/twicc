@@ -179,7 +179,12 @@ async def _serialize_for_broadcast(message) -> dict:
 
 
 async def broadcast_peer_message_received(message) -> None:
+    from twicc.external_notifications import notify_peer_message
+
     await _broadcast({"type": "peer_message_received", "message": await _serialize_for_broadcast(message)})
+    # Fire-and-forget, after the broadcast: the in-app surfaces must never wait
+    # on an outbound push, and a push failure must never affect delivery.
+    notify_peer_message(message)
 
 
 async def broadcast_peer_message_updated(message) -> None:

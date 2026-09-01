@@ -728,6 +728,26 @@ function buildNotificationBody(msg) {
 }
 
 /**
+ * Sound + browser notification for the single peer event (a message arrived,
+ * or an instance asks to pair). The toast is fired by the caller: it is the
+ * in-app surface and has no setting, while these two leave the app and do.
+ *
+ * `onClick` runs after the browser refocuses the tab — no URL is involved, so
+ * it can open the inbox or the peers manager directly.
+ *
+ * @param {string} title
+ * @param {string} body
+ * @param {Function} onClick
+ */
+function notifyPeerEvent(title, body, onClick) {
+    const settings = useSettingsStore()
+    playNotificationSound(settings.notifPeerSound)
+    if (settings.notifPeerBrowser) {
+        sendBrowserNotification(title, body, onClick)
+    }
+}
+
+/**
  * Show toast notification and trigger external notifications (sound + browser)
  * for process state changes.
  * @param {Object} msg - The WebSocket process_state message (enriched with session_title / project_name)
@@ -1271,6 +1291,14 @@ export function useWebSocket() {
                         duration: 15000,
                         props: { mode: 'request', peer: msg.peer },
                     })
+                    // Same notification event as an incoming message: another
+                    // human waits on you, and the pairing cannot advance until
+                    // you read your code to them.
+                    notifyPeerEvent(
+                        `Peer request from ${msg.peer?.name || msg.peer?.remote_display_name || 'an instance'}`,
+                        msg.peer?.base_url || '',
+                        () => window.dispatchEvent(new CustomEvent('twicc:open-peers-manager')),
+                    )
                 })
                 break
             }
@@ -1302,12 +1330,25 @@ export function useWebSocket() {
                     // the toast's buttons are local-only anyway (open the
                     // review dialog, or just close), so a stale copy elsewhere
                     // costs nothing.
+                    const heading = `${msg.message?.reply_to_ref ? 'Reply' : 'Message'} from ${peerName}`
                     toast.custom(PeerToastContent, {
                         type: 'info',
-                        title: `${msg.message?.reply_to_ref ? 'Reply' : 'Message'} from ${peerName}`,
+                        title: heading,
                         duration: 30000,
                         props: { mode: 'message', message: msg.message },
                     })
+                    // The one peer event worth leaving the app for: their agent
+                    // — and their user — stay blocked until you deliver it.
+                    notifyPeerEvent(
+                        heading,
+                        [
+                            msg.message?.title ? `"${msg.message.title}"` : '',
+                            msg.message?.text_preview || '',
+                        ].filter(Boolean).join('\n'),
+                        () => window.dispatchEvent(new CustomEvent('twicc:open-peer-inbox', {
+                            detail: { messageId: msg.message?.id },
+                        })),
+                    )
                 })
                 break
             }

@@ -108,6 +108,11 @@ history. You can filter messages by peer or by their title and full text.
 An incoming-message notification can open the inbox. It cannot deliver the
 message or start an agent.
 
+TwiCC can also alert you outside the app when a message or a pairing request
+arrives — a sound, a browser notification, or a push to your devices. Turn it
+on under **Settings → Notifications → A peer needs you**. No other peer event
+sends an alert: they wait for your next visit.
+
 ### Reviewing an incoming message
 
 The review shows the sender, title, message, attachments, and any reply
