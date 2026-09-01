@@ -1,9 +1,10 @@
 """
 Codex provider WebSocket handler.
 
-Handles auth + usage + statuspage traffic:
-- emits ``codex:auth_updated``, the latest usage snapshot, and (when
-  not operational) ``codex:openai_status`` on each new connection;
+Handles auth + usage traffic:
+- emits ``codex:auth_updated`` and the latest usage snapshot on each new
+  connection (the upstream status travels in the cross-provider
+  ``providers_status_updated`` frame, sent by the main consumer);
 - routes the inbound ``codex:check_auth`` action (manual "Check again"
   from the UI) to a forced re-check + broadcast.
 """
@@ -14,7 +15,6 @@ import logging
 from collections.abc import AsyncIterator
 
 from twicc.core.enums import Provider
-from twicc.providers.codex.statuspage_task import get_statuspage_message_for_connection
 from twicc.providers.state import ProviderDisabledError, ensure_provider_running
 from twicc.usage_task import broadcast_usage_updated, get_usage_message_for_connection
 
@@ -42,11 +42,6 @@ class CodexWSHandler:
         yield await get_auth_message_for_connection()
         # Latest Codex usage snapshot (wire type: ``usage_updated``)
         yield await get_usage_message_for_connection(Provider.CODEX)
-
-        # OpenAI statuspage status (only when not operational)
-        status_msg = get_statuspage_message_for_connection()
-        if status_msg is not None:
-            yield status_msg
 
     async def dispatch(self, action: str, content: dict) -> bool:
         """Dispatch a Codex-prefixed message."""

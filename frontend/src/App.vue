@@ -12,6 +12,8 @@ import { useTipScheduler } from './composables/useTipScheduler'
 import { toast } from './composables/useToast'
 import ProviderAuthToastContent from './components/app/ProviderAuthToastContent.vue'
 import { getRegisteredProviders, getProviderHelpers } from './providers'
+import { reconcileProviderStatusToasts } from './providers/serviceStatusToast'
+import { useProvidersStatusStore } from './stores/providersStatus'
 import ConnectionIndicator from './components/app/ConnectionIndicator.vue'
 import CustomNotification from './components/app/CustomNotification.vue'
 import CommandPalette from './components/app/CommandPalette.vue'
@@ -152,6 +154,26 @@ for (const provider of getRegisteredProviders()) {
         }
     })
 }
+
+// Persistent toast(s) for a provider's upstream service status (outage, or
+// recovery with its time window). Driven entirely by providers-status.json as
+// pushed by the backend: the reconciler makes the screen match the records —
+// one toast per enabled provider at most, none once the user acknowledged the
+// episode from any tab or device. Re-run whenever the records or the enabled
+// set change; a disabled provider resolves to no identity and loses its toast.
+const providersStatusStore = useProvidersStatusStore()
+function providerStatusIdentity(provider) {
+    if (!settingsStore.enabledProviders.includes(provider)) return null
+    const helpers = getProviderHelpers(provider)
+    const { serviceProductLabel, serviceVendorLabel, serviceStatusUrl } = helpers?.constructor ?? {}
+    if (!serviceProductLabel || !serviceVendorLabel || !serviceStatusUrl) return null
+    return { productLabel: serviceProductLabel, vendorLabel: serviceVendorLabel, statusUrl: serviceStatusUrl }
+}
+watch(
+    () => [providersStatusStore.records, settingsStore.enabledProviders],
+    ([records]) => reconcileProviderStatusToasts(records, { identity: providerStatusIdentity }),
+    { immediate: true },
+)
 
 // ─── Command Palette (Ctrl+K / Cmd+K) & Search (Ctrl+Shift+F / Ctrl+F) ──
 const commandPaletteRef = ref(null)

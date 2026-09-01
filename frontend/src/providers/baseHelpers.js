@@ -43,6 +43,14 @@ export class BaseProviderHelpers {
     // next to the provider's other model knowledge so the settings panel
     // names it without hardcoding a provider list. null → not named in the UI.
     static titleSuggestionModelLabel = null
+    // Upstream service status, for the "<vendor> status update" toast and the
+    // Settings footer. ``serviceProductLabel`` names what is down from the
+    // user's side ("Claude Code" — ``label`` alone may be shorter),
+    // ``serviceVendorLabel`` who runs it ("Anthropic"), ``serviceStatusUrl``
+    // the public status page. All null → the provider publishes no status.
+    static serviceProductLabel = null
+    static serviceVendorLabel = null
+    static serviceStatusUrl = null
 
     /**
      * Whether the current frontend state allows sending a message to a
@@ -348,6 +356,13 @@ export class BaseProviderHelpers {
     getServiceStatusDisplay(/* status */) {
         return null
     }
+
+    /**
+     * Store the bare upstream status value pushed by the backend's
+     * ``providers_status_updated`` frame, for ``getServiceStatus`` to expose.
+     * Default: no-op — provider has no service status surface.
+     */
+    applyServiceStatus(/* status */) {}
 
     // ─── Per-provider default values for agent settings ──────────────────
     //

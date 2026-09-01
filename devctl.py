@@ -188,6 +188,7 @@ SYNCED_CONFIG_FILENAMES = (
     "message-snippets.json",
     "seen-tips.json",
     "seen-help.json",
+    "providers-status.json",
 )
 SYNCED_CONFIG_GLOBS = ("*-settings-presets.json",)
 
@@ -898,7 +899,7 @@ DATABASE, SEARCH INDEX & CONFIG (WORKTREE MODE):
     On start/restart in a worktree, devctl automatically copies the
     database, search index, project icons, and user config (settings.json, workspaces.json,
     layouts.json, terminal-config.json, message-snippets.json, seen-tips.json,
-    seen-help.json, and the *-settings-presets.json bundles) from ~/.twicc/ if no local data exists
+    seen-help.json, providers-status.json, and the *-settings-presets.json bundles) from ~/.twicc/ if no local data exists
     yet. It also symlinks artifacts/ and scratch/ to ~/.twicc/ so the worktree
     shares the same per-session artifact and scratch files as the main instance
     (the Artifacts tab then works for sessions copied into the worktree).

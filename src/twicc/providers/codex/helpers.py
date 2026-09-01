@@ -24,6 +24,7 @@ from twicc.providers.helpers import (
     BaseProviderHelpers,
     IndexableMessage,
     ModelVersion,
+    StatuspageConfig,
     UserMessage,
 )
 
@@ -144,6 +145,14 @@ class CodexHelpers(BaseProviderHelpers):
     # ``/backend-api/wham/usage`` endpoint (the same one the Codex CLI's
     # /status command hits) to refresh the 5-hour and weekly quotas.
     USAGE_SYNC_INTERVAL: ClassVar[int | None] = 5 * 60
+
+    # OpenAI's status page (incident.io, Statuspage-v2-compatible endpoint).
+    # Codex CLI traffic goes through the "Codex API" component, the most
+    # direct signal for this provider's runtime.
+    STATUSPAGE: ClassVar[StatuspageConfig | None] = StatuspageConfig(
+        components_url="https://status.openai.com/api/v2/components.json",
+        component_name="Codex API",
+    )
 
     # Daily quota warm-up time lives in the synced settings under this key
     # ("HH:MM", empty = off). See :meth:`warm_up_quota`.

@@ -56,6 +56,7 @@ from twicc.message_snippets import read_message_snippets_config, write_message_s
 from twicc.help_manifest import manifest_to_dict as help_manifest_to_dict
 from twicc.seen_help import read_seen_help, write_seen_help
 from twicc.seen_tips import read_seen_tips, write_seen_tips
+from twicc.providers_status import acknowledge_incident, broadcast_providers_status, build_providers_status_message
 from twicc.tips_manifest import manifest_to_dict
 from twicc.terminal_config import read_terminal_config, write_terminal_config
 from twicc.terminal import terminal_application
@@ -663,6 +664,13 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             seen_tips = await sync_to_async(read_seen_tips)()
             await self.send_json({"type": "seen_tips_updated", "seen_tips": seen_tips})
 
+        # Upstream status of every provider (current status, incident,
+        # acknowledgment) — the whole file, every connect and reconnect. The
+        # client derives the status toasts from it alone; disabled providers
+        # are filtered on the client side, which knows the enabled set.
+        if self._should_send("providers_status_updated"):
+            await self.send_json(await sync_to_async(build_providers_status_message)())
+
         if self._should_send("help_manifest_pushed"):
             await self.send_json({
                 "type": "help_manifest_pushed",
@@ -687,7 +695,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 await self.send_json(update_msg)
 
         # Provider-specific on-connect messages (e.g. claude_code:auth_updated,
-        # claude_code:settings_presets_updated, claude_code:anthropic_status).
+        # claude_code:settings_presets_updated).
         # Each handler yields fully-formed messages with their type already prefixed.
         # Disabled providers are skipped: their orchestrator isn't running, so any
         # state we'd push (auth, usage, statuspage) is either stale or about to
@@ -789,6 +797,9 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
         elif msg_type == "update_seen_tips":
             await self._handle_update_seen_tips(content)
+
+        elif msg_type == "acknowledge_provider_status":
+            await self._handle_acknowledge_provider_status(content)
 
         elif msg_type == "update_seen_help":
             await self._handle_update_seen_help(content)
@@ -1833,6 +1844,26 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 },
             },
         )
+
+    async def _handle_acknowledge_provider_status(self, content: dict) -> None:
+        """Record the user's dismissal of a provider-status toast and broadcast it.
+
+        Expected payload::
+
+            {"type": "acknowledge_provider_status",
+             "provider": "<key>",
+             "episode": {"started_at": "<iso>", "status": "<level> | operational"}}
+
+        The write is refused silently — like the file module does — for an
+        unknown provider, a malformed episode, or one that belongs to another
+        incident than the current one; nothing is broadcast then. One
+        acknowledgment settles the toast on every tab and device: they all
+        receive the updated file and clear their copy.
+        """
+        state = await sync_to_async(acknowledge_incident)(content.get("provider"), content.get("episode"))
+        if state is None:
+            return
+        await broadcast_providers_status(state)
 
     async def _handle_update_seen_help(self, content: dict) -> None:
         """Persist the seen-help state and broadcast the change.

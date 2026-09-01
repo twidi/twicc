@@ -191,6 +191,9 @@ export class ClaudeCodeHelpers extends BaseProviderHelpers {
     static iconColor = 'var(--wa-color-orange-70)'
     // Mirrors ``model="haiku"`` in the backend ``claude_code/title_suggest.py``.
     static titleSuggestionModelLabel = 'Haiku'
+    static serviceProductLabel = 'Claude Code'
+    static serviceVendorLabel = 'Anthropic'
+    static serviceStatusUrl = 'https://status.claude.com/'
 
     canSendMessage() {
         return useClaudeCodeStore().authenticated !== false
@@ -322,9 +325,13 @@ export class ClaudeCodeHelpers extends BaseProviderHelpers {
         const entry = ANTHROPIC_STATUS_DISPLAY[status] ?? { label: status, modifier: 'ok' }
         return {
             ...entry,
-            url: 'https://status.claude.com/',
+            url: this.constructor.serviceStatusUrl,
             tooltip: "Claude Code status on Anthropic's side",
         }
+    }
+
+    applyServiceStatus(status) {
+        if (typeof status === 'string' && status) useClaudeCodeStore().setAnthropicStatus(status)
     }
 
     getUntrustedPermissionModes() {

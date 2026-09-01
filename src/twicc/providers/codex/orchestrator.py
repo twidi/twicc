@@ -36,7 +36,7 @@ from twicc.providers.codex.commands_task import start_commands_task, stop_comman
 from twicc.providers.codex.initial_sync import scan_session_files, sync_all
 from twicc.providers.codex.plugin_install import ensure_twicc_plugin_installed
 from twicc.providers.codex.sessions_watcher import get_watcher
-from twicc.providers.codex.statuspage_task import start_statuspage_task, stop_statuspage_task
+from twicc.providers.statuspage_task import start_statuspage_task, stop_statuspage_task
 from twicc.providers.codex.usage_task import start_usage_sync_task, stop_usage_sync_task
 from twicc.providers.model_retirement_task import (
     start_model_retirement_task,
@@ -167,7 +167,7 @@ class CodexOrchestrator(BaseOrchestrator):
         self._sync_task = self._create_task(self._initial_sync_task())
         self._orch_task = self._create_task(self._dependency_orchestrator())
         self._usage_sync_task = self._create_task(start_usage_sync_task())
-        self._statuspage_task = self._create_task(start_statuspage_task())
+        self._statuspage_task = self._create_task(start_statuspage_task(self.provider))
         self._commands_task = self._create_task(start_commands_task())
         self._original_files_cache_task = self._create_task(
             start_original_files_cache_cleanup()
@@ -263,7 +263,7 @@ class CodexOrchestrator(BaseOrchestrator):
 
         if self._statuspage_task is not None:
             logger.info("Stopping Codex statuspage task...")
-            stop_statuspage_task()
+            stop_statuspage_task(self.provider)
             await _cancel_task(self._statuspage_task, "Codex statuspage task")
 
         if self._commands_task is not None:

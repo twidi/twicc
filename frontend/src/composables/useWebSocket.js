@@ -10,7 +10,7 @@ import { useReconciliation } from './useReconciliation'
 import { toast } from './useToast'
 import { computeUsageData, formatExtraUsageAmount } from '../utils/usage'
 import { useSettingsStore } from '../stores/settings'
-import { getProviderLabel, getProviderIcon, getProviderIconColor, getProviderWsHandler, getProviderStore } from '../providers'
+import { getProviderHelpers, getProviderLabel, getProviderIcon, getProviderIconColor, getProviderWsHandler, getProviderStore } from '../providers'
 import { playNotificationSound, sendBrowserNotification, isPageActive } from '../utils/notificationSounds'
 import { installPresenceHeartbeat, isLocallyPresent } from '../utils/presence'
 import { handleResyncRequired } from '../utils/resync'
@@ -570,6 +570,18 @@ export function sendUpdateAgentSettingsPresets(provider, config) {
  */
 export function sendUpdateSeenTips(seenTips) {
     return sendWsMessage({ type: 'update_seen_tips', seen_tips: seenTips })
+}
+
+/**
+ * Record the user's dismissal of a provider-status toast: the backend
+ * persists it in providers-status.json and broadcasts the file, which clears
+ * that toast on every tab and device.
+ * @param {string} provider - Provider wire key.
+ * @param {{ started_at: string, status: string }} episode - The dismissed episode.
+ * @returns {boolean} True if the message was sent, false if not connected.
+ */
+export function sendAcknowledgeProviderStatus(provider, episode) {
+    return sendWsMessage({ type: 'acknowledge_provider_status', provider, episode })
 }
 
 /**
@@ -1655,6 +1667,21 @@ export function useWebSocket() {
                     useTipsStore().applySeenTips(msg.seen_tips)
                 })
                 break
+            case 'providers_status_updated': {
+                // The whole providers-status file (current status, incident and
+                // acknowledgment per provider), on connect and after every write.
+                // The store keeps it — App.vue derives the status toasts from it —
+                // and each provider's own store gets the bare status value for the
+                // Settings footer.
+                const providersStatus = msg.providers_status ?? {}
+                import('../stores/providersStatus').then(({ useProvidersStatusStore }) => {
+                    useProvidersStatusStore().applyProvidersStatus(providersStatus)
+                })
+                for (const [provider, record] of Object.entries(providersStatus)) {
+                    getProviderHelpers(provider)?.applyServiceStatus(record?.status)
+                }
+                break
+            }
             case 'help_manifest_pushed':
                 // Read-only help manifest pushed by the backend on connect.
                 import('../stores/help').then(({ useHelpStore }) => {

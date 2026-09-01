@@ -72,7 +72,7 @@ All persistent data (db, logs, config) lives in one data dir, resolved (centrali
 
 1. git worktree → worktree root (forced); 2. `$TWICC_DATA_DIR` if set; 3. default `~/.twicc/`.
 
-Contents: `.env` (infra config: ports, password hash), synced user config (`settings.json`, `workspaces.json`, `layouts.json` (named-layouts catalog), `terminal-config.json`, `message-snippets.json`, `seen-tips.json`, `seen-help.json`, `{provider}-settings-presets.json`), `db/data.sqlite(+shm/+wal)`, `search-index/` (Tantivy), `drop-requests/` (CLI drop-files picked up by a watcher), `logs/` (`backend.log`, `frontend.log`, and in dev mode, `sdk/{provider}/{session_id}.jsonl`).
+Contents: `.env` (infra config: ports, password hash), synced user config (`settings.json`, `workspaces.json`, `layouts.json` (named-layouts catalog), `terminal-config.json`, `message-snippets.json`, `seen-tips.json`, `seen-help.json`, `providers-status.json` (per-provider upstream status: current value, last incident, user acknowledgment), `{provider}-settings-presets.json`), `db/data.sqlite(+shm/+wal)`, `search-index/` (Tantivy), `drop-requests/` (CLI drop-files picked up by a watcher), `logs/` (`backend.log`, `frontend.log`, and in dev mode, `sdk/{provider}/{session_id}.jsonl`).
 
 ## devctl.py — Dev Servers
 

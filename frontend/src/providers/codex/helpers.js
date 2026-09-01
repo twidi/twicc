@@ -182,6 +182,9 @@ export class CodexHelpers extends BaseProviderHelpers {
     static iconColor = 'var(--wa-color-green-70)'
     // Mirrors ``TITLE_MODEL`` in the backend ``codex/title_suggest.py``.
     static titleSuggestionModelLabel = 'GPT-5.6 Luna'
+    static serviceProductLabel = 'Codex'
+    static serviceVendorLabel = 'OpenAI'
+    static serviceStatusUrl = 'https://status.openai.com/'
 
     canSendMessage() {
         return true
@@ -634,9 +637,13 @@ export class CodexHelpers extends BaseProviderHelpers {
         const entry = OPENAI_STATUS_DISPLAY[status] ?? { label: status, modifier: 'ok' }
         return {
             ...entry,
-            url: 'https://status.openai.com/',
+            url: this.constructor.serviceStatusUrl,
             tooltip: "Codex status on OpenAI's side",
         }
+    }
+
+    applyServiceStatus(status) {
+        if (typeof status === 'string' && status) useCodexStore().setOpenaiStatus(status)
     }
 
     getDefaultValueLabel(field, value) {

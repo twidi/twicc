@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - **Retired models** — GPT-5.4 and GPT-5.4 mini retired on August 31 but were still offered in the model pickers, where choosing one silently ran a different model. They no longer appear anywhere.
+- **Provider status alerts** — One notice per provider, following the incident step by step; dismiss it once and it is gone everywhere.
 - **Peer message notification** — The "Message from…" notification no longer stays on screen forever, and the inbox count badge stays visible whatever the state of the sidebar.
 
 ## [1.93.0] - 2026-08-31

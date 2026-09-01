@@ -242,6 +242,11 @@ def get_seen_tips_path() -> Path:
     return get_data_dir() / "seen-tips.json"
 
 
+def get_providers_status_path() -> Path:
+    """Path to the persisted per-provider upstream status file (incidents + acknowledgments)."""
+    return get_data_dir() / "providers-status.json"
+
+
 def get_tips_assets_dir() -> Path:
     """Directory holding tip .md files and their image assets.
 

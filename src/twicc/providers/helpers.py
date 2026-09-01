@@ -234,6 +234,20 @@ def assert_unique_weights(model_versions: list[ModelVersion]) -> None:
         seen[key] = mv.full_name
 
 
+class StatuspageConfig(NamedTuple):
+    """Where a provider's upstream service status is polled from.
+
+    Both providers publish an Atlassian-Statuspage-compatible
+    ``/api/v2/components.json`` (OpenAI's incident.io page exposes the same
+    shape); ``component_name`` is the component whose ``status`` field is
+    the provider's signal. Consumed by the shared ``providers/statuspage_task``
+    loop; ``None`` on a provider means "no status page, no loop".
+    """
+
+    components_url: str
+    component_name: str
+
+
 class BaseProviderHelpers:
     """Abstract per-provider helpers."""
 
@@ -309,6 +323,10 @@ class BaseProviderHelpers:
     # the declarative source of truth read by the loop and by tools that
     # iterate the registry (e.g. the ``twicc usage`` CLI).
     USAGE_SYNC_INTERVAL: ClassVar[int | None] = None
+
+    # Upstream status page polled by the shared ``providers/statuspage_task``
+    # loop (one loop per provider that declares one). ``None`` → no loop.
+    STATUSPAGE: ClassVar[StatuspageConfig | None] = None
 
     # Synced-settings key holding this provider's daily "quota warm-up"
     # wall-clock time (``"HH:MM"``, empty = disabled), or ``None`` when the

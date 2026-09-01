@@ -50,7 +50,7 @@ from twicc.providers.claude_code.commands_task import (
     start_commands_task,
     stop_commands_task,
 )
-from twicc.providers.claude_code.statuspage_task import start_statuspage_task, stop_statuspage_task
+from twicc.providers.statuspage_task import start_statuspage_task, stop_statuspage_task
 from twicc.providers.claude_code.usage_task import start_usage_sync_task, stop_usage_sync_task
 from twicc.startup_progress import broadcast_startup_progress
 
@@ -186,7 +186,7 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
         self._sync_task = self._create_task(self._initial_sync_task())
         self._orch_task = self._create_task(self._dependency_orchestrator())
         self._usage_sync_task = self._create_task(start_usage_sync_task())
-        self._statuspage_task = self._create_task(start_statuspage_task())
+        self._statuspage_task = self._create_task(start_statuspage_task(self.provider))
         self._commands_task = self._create_task(start_commands_task())
         self._original_file_cache_task = self._create_task(start_original_file_cache_cleanup())
         self._retirement_task = self._create_task(start_model_retirement_task(self.provider))
@@ -293,7 +293,7 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
         # Statuspage
         if self._statuspage_task is not None:
             logger.info("Stopping statuspage task...")
-            stop_statuspage_task()
+            stop_statuspage_task(self.provider)
             await _cancel_task(self._statuspage_task, "Statuspage task")
 
         # Commands

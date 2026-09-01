@@ -34,7 +34,6 @@ from twicc.providers.claude_code.auth import (
     check_and_broadcast as check_auth_and_broadcast,
     get_auth_message_for_connection,
 )
-from twicc.providers.claude_code.statuspage_task import get_statuspage_message_for_connection
 from twicc.providers.claude_code.usage import fetch_and_save_usage
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.state import ProviderDisabledError, ensure_provider_running
@@ -219,11 +218,6 @@ class ClaudeCodeWSHandler:
         """
         # Claude Code CLI authentication state
         yield await get_auth_message_for_connection()
-
-        # Anthropic statuspage status (only when not operational)
-        status_msg = get_statuspage_message_for_connection()
-        if status_msg is not None:
-            yield status_msg
 
         # Latest Claude Code usage snapshot (wire type: ``usage_updated``)
         yield await get_usage_message_for_connection(Provider.CLAUDE_CODE)

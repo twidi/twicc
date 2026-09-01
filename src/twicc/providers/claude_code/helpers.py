@@ -27,6 +27,7 @@ from twicc.providers.helpers import (
     BaseProviderHelpers,
     IndexableMessage,
     ModelVersion,
+    StatuspageConfig,
     UserMessage,
 )
 
@@ -202,6 +203,12 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
     }
 
     USAGE_SYNC_INTERVAL: ClassVar[int | None] = 5 * 60
+
+    # Anthropic's status page; the "Claude Code" component is the signal.
+    STATUSPAGE: ClassVar[StatuspageConfig | None] = StatuspageConfig(
+        components_url="https://status.claude.com/api/v2/components.json",
+        component_name="Claude Code",
+    )
 
     # Daily quota warm-up time lives in the synced settings under this key
     # ("HH:MM", empty = off). See :meth:`warm_up_quota`.
