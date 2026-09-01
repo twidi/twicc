@@ -91,10 +91,13 @@ def test_initial_peer_message_snapshot_serializes_resolved_reply_without_async_l
         assert row["thread_id"] == "parent"
         assert row["reply_to"] == "parent"
         assert row["reply_to_ref"] == {
+            "id": parent.pk,
             "message_id": "parent",
             "title": "Parent",
             "direction": "out",
             "status": "delivered",
+            # No `author` on the parent's origin: the historical reading.
+            "author": "agent",
         }
         assert row["reply_target"] == session.id
         assert revoked_message.pk not in {item["id"] for item in message["messages"]}
