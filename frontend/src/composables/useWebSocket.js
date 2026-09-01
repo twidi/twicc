@@ -1274,10 +1274,20 @@ export function useWebSocket() {
                     const peersStore = usePeersStore()
                     peersStore.upsertMessage(msg.message)
                     const peerName = peersStore.peerLabel(msg.message?.peer_id)
+                    // Auto-dismissing, like the extra-usage alert above: the
+                    // persistent surface is the sidebar inbox badge, which
+                    // counts this message for as long as it awaits review.
+                    // A toast cannot hold that role — it is per-tab, so an
+                    // infinite one survives on every other device long after
+                    // the message was answered somewhere else. 30s is short
+                    // enough that no cross-tab dismissal is needed: both of
+                    // the toast's buttons are local-only anyway (open the
+                    // review dialog, or just close), so a stale copy elsewhere
+                    // costs nothing.
                     toast.custom(PeerToastContent, {
                         type: 'info',
                         title: `${msg.message?.reply_to_ref ? 'Reply' : 'Message'} from ${peerName}`,
-                        duration: Infinity,
+                        duration: 30000,
                         props: { mode: 'message', message: msg.message },
                     })
                 })
