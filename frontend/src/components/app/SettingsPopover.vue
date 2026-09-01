@@ -663,6 +663,18 @@ const {
 const publicBaseUrlInputRef = ref(null)
 const shareBaseUrlInputRef = ref(null)
 const peerBaseUrlInputRef = ref(null)
+
+// Whether the peer actions are worth showing. The address is what makes the
+// feature usable — `PeersManagerDialog` gates its own "Add a peer" form on the
+// same getter — but peers and messages outlive it: an address can be removed
+// while a relationship and its history remain, and those stay worth reaching.
+// Nothing at all means the section is still a setup form, and both buttons
+// would lead nowhere.
+const hasPeerActions = computed(() =>
+    !!store.getUsablePeerBaseUrl
+    || peersStore.peers.length > 0
+    || peersStore.messages.length > 0,
+)
 const showShareManager = ref(false)
 
 // Display name advertised to peers in handshakes; empty falls back to the
@@ -1582,6 +1594,30 @@ function onChangelogClose() {
                         <h3 class="settings-section-title">Peers</h3>
                         <PeerHelpLink />
                     </div>
+                    <!-- Once the feature is usable, these are the daily
+                         actions and the fields below become set-once
+                         configuration — so they lead. Before that the section
+                         is a setup form and they lead nowhere: the manager
+                         cannot even add a peer without an address. -->
+                    <div v-if="hasPeerActions" class="setting-group peer-actions">
+                        <wa-button size="small" variant="neutral" appearance="accent" @click="openPeersManager">
+                            <wa-icon name="user-group" slot="start"></wa-icon>
+                            <span class="peer-action-label">
+                                Manage peers
+                                <PeerInboxBadge :count="peersStore.pendingRequests.length" inline />
+                            </span>
+                        </wa-button>
+                        <wa-button size="small" variant="neutral" appearance="accent" @click="openPeerInbox">
+                            <wa-icon name="envelope" slot="start"></wa-icon>
+                            <span class="peer-action-label">
+                                Open inbox
+                                <PeerInboxBadge :count="peersStore.pendingInboundMessages.length" inline />
+                            </span>
+                        </wa-button>
+                    </div>
+                    <!-- Separates the actions from the configuration below;
+                         only meaningful when the actions are there. -->
+                    <wa-divider v-if="hasPeerActions"></wa-divider>
                     <div class="setting-group">
                         <label class="setting-group-label">Your name <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                         <div class="setting-input-apply-row">
@@ -1645,13 +1681,16 @@ function onChangelogClose() {
                                 </div>
                             </div>
                         </wa-callout>
-                        <wa-button
+                        <!-- An action, so a <button> — styled as a link, since
+                             that is what reads as clickable in a hint-sized
+                             line under a field. -->
+                        <button
                             v-if="canPrefillPeerBaseUrl"
-                            size="small" appearance="plain"
+                            type="button" class="settings-link-button"
                             @click="prefillPeerBaseUrlFromPublic"
                         >
                             Use the External address from General settings
-                        </wa-button>
+                        </button>
                         <span class="setting-group-hint">
                             Your address, advertised to peers. Empty disables peer messaging.
                             A different address from External serves peer traffic only; the same
@@ -1660,28 +1699,6 @@ function onChangelogClose() {
                             machine-to-machine: a tunnel-level access gate (e.g. Cloudflare
                             Access asking for an email or Google account) blocks peer calls —
                             use a truly public hostname.
-                        </span>
-                    </div>
-                    <div class="setting-group">
-                        <wa-button size="small" variant="neutral" appearance="accent" @click="openPeersManager">
-                            <wa-icon name="user-group" slot="start"></wa-icon>
-                            <span class="peer-action-label">
-                                Manage peers
-                                <PeerInboxBadge :count="peersStore.pendingRequests.length" inline />
-                            </span>
-                        </wa-button>
-                    </div>
-                    <div class="setting-group">
-                        <wa-button size="small" variant="neutral" appearance="accent" @click="openPeerInbox">
-                            <wa-icon name="envelope" slot="start"></wa-icon>
-                            <span class="peer-action-label">
-                                Open inbox
-                                <PeerInboxBadge :count="peersStore.pendingInboundMessages.length" inline />
-                            </span>
-                        </wa-button>
-                        <span class="setting-group-hint">
-                            Pending peer messages and history. The sidebar badge only appears
-                            when something awaits your review.
                         </span>
                     </div>
                 </section>
@@ -2779,6 +2796,45 @@ wa-popover > wa-divider {
    the left edge of the section. */
 .settings-sections .sharing-help-link {
     align-self: flex-start;
+}
+
+/* A native <button> that reads as a link, for an ACTION offered in a hint-sized
+   line under a field — a wa-button of any appearance reads as a form control
+   there, and stretches to the group's full width. Colours and decoration are
+   Web Awesome's own link tokens (native.css `a`), so it matches the real links
+   in these sections; the rest resets what native.css gives every <button>
+   (form-control height, centring, background).
+   Same idea as PeerMessageReviewDialog's `.pr-route__title--link`. */
+.settings-sections .settings-link-button {
+    align-self: flex-start;
+    height: auto;
+    min-height: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    color: var(--wa-color-text-link);
+    text-decoration: var(--wa-link-decoration-default);
+    text-decoration-thickness: 0.09375em;
+    text-underline-offset: 0.125em;
+    /* Cancels the bottom margin the group hands every post-label sibling, so
+       the link sits just under the field it acts on instead of a gap away. */
+    margin-top: calc(-1 * var(--wa-space-s));
+}
+.settings-sections .settings-link-button:hover {
+    color: color-mix(in oklab, var(--wa-color-text-link), var(--wa-color-mix-hover));
+    text-decoration: var(--wa-link-decoration-hover);
+}
+
+/* The two peer actions read as one row: side by side while they fit, stacked
+   when they do not. One `gap` covers both axes, so the wrapped state keeps the
+   same spacing as the inline one. Overrides .setting-group's column flow. */
+.settings-sections .peer-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--wa-space-s);
 }
 
 .settings-sections .peer-help-heading {
