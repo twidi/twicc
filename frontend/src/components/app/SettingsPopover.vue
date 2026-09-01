@@ -8,6 +8,7 @@ import { useLayoutsStore } from '../../stores/layouts'
 import { useAuthStore } from '../../stores/auth'
 import { useTipsStore } from '../../stores/tips'
 import { useHelpStore } from '../../stores/help'
+import { usePeersStore } from '../../stores/peers'
 import { getProviderHelpers, getProviderLabel, getProviderOptions, getRegisteredProviders, getProviderIcon } from '../../providers'
 import ProviderIcon from '../ui/ProviderIcon.vue'
 import { getActivationCharMetadata } from '../../utils/commandActivation'
@@ -19,6 +20,7 @@ import TipsSettings from '../settings/TipsSettings.vue'
 import HelpSettings from '../settings/HelpSettings.vue'
 import HelpIconButton from '../help/HelpIconButton.vue'
 import PeerHelpLink from '../peer/PeerHelpLink.vue'
+import PeerInboxBadge from '../peer/PeerInboxBadge.vue'
 import { showHelp } from '../help/showHelp'
 import AppTooltip from '../ui/AppTooltip.vue'
 import ChangelogDialog from './ChangelogDialog.vue'
@@ -38,6 +40,7 @@ const layoutsStore = useLayoutsStore()
 const authStore = useAuthStore()
 const tipsStore = useTipsStore()
 const helpStore = useHelpStore()
+const peersStore = usePeersStore()
 
 // Tips section is hidden from the nav (and the active-section watcher
 // below redirects away from it) when no tip matches the current
@@ -107,7 +110,7 @@ const sections = computed(() => [
     { id: 'terminal',      label: 'Terminal' },
     { id: 'sharing',       label: 'Sharing', synced: true },
     { id: 'usage',         label: 'Providers quotas/usage', navLabel: 'Usage' },
-    { id: 'peers',         label: 'Peers', synced: true },
+    { id: 'peers',         label: 'Peers', synced: true, badge: peersStore.inboxCount },
 ])
 
 const activeSection = ref('general')
@@ -1192,6 +1195,8 @@ function onChangelogClose() {
 <template>
     <wa-button id="settings-trigger" variant="neutral" appearance="filled-outlined" size="small">
         <wa-icon name="gear"></wa-icon><span>Settings</span>
+        <!-- Last stop for the peer count: see the container query below. -->
+        <PeerInboxBadge :count="peersStore.inboxCount" class="settings-trigger-badge" />
     </wa-button>
     <AppTooltip for="settings-trigger">Toggle settings</AppTooltip>
     <wa-popover ref="popoverRef" v-popover-focus-fix for="settings-trigger" placement="top" class="settings-popover" @wa-show.self="onPopoverShow">
@@ -1213,6 +1218,7 @@ function onChangelogClose() {
                             class="settings-nav-provider-icon"
                         />
                         {{ section.navLabel || section.label }}
+                        <PeerInboxBadge v-if="section.badge" :count="section.badge" inline />
                         <wa-icon v-if="section.synced" name="cloud" class="synced-icon"></wa-icon>
                     </button>
                     <wa-divider v-if="hasUtilitySections" class="settings-nav-divider"></wa-divider>
@@ -1659,13 +1665,19 @@ function onChangelogClose() {
                     <div class="setting-group">
                         <wa-button size="small" variant="neutral" appearance="accent" @click="openPeersManager">
                             <wa-icon name="user-group" slot="start"></wa-icon>
-                            Manage peers
+                            <span class="peer-action-label">
+                                Manage peers
+                                <PeerInboxBadge :count="peersStore.pendingRequests.length" inline />
+                            </span>
                         </wa-button>
                     </div>
                     <div class="setting-group">
                         <wa-button size="small" variant="neutral" appearance="accent" @click="openPeerInbox">
                             <wa-icon name="envelope" slot="start"></wa-icon>
-                            Open inbox
+                            <span class="peer-action-label">
+                                Open inbox
+                                <PeerInboxBadge :count="peersStore.pendingInboundMessages.length" inline />
+                            </span>
                         </wa-button>
                         <span class="setting-group-hint">
                             Pending peer messages and history. The sidebar badge only appears
@@ -2494,6 +2506,16 @@ function onChangelogClose() {
     color: var(--wa-color-brand);
 }
 
+/* The two peer actions carry their count right after their label. wa-button
+   pins any wa-badge slotted STRAIGHT into it to the top corner
+   (`.button ::slotted(wa-badge)`), so label and count share one wrapper: the
+   badge is then not a slotted child, and the rule no longer matches it. */
+.peer-action-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+}
+
 /* -- Nav divider (horizontal, between settings sections and extra items) -- */
 
 .settings-nav-divider {
@@ -2911,6 +2933,24 @@ wa-popover > wa-divider {
         & > span {
             display: none;
         }
+    }
+}
+
+/* Last stop for the peer count. Step 3 of the ladder above leaves Settings as
+   the only footer action, so it inherits the badge the Inbox button took with
+   it — one click away from the Peers section that details it. The threshold
+   MIRRORS PeerInboxButton's own hide threshold: tune the two together, or the
+   count is either shown twice or not at all.
+   A fully collapsed sidebar is a different case, already covered: the whole
+   footer is clipped to a zero-width column and only the toggle survives, so
+   ProjectView puts the badge there instead — the two never overlap.
+   Inert outside the sidebar (home screen): the container never matches. */
+.settings-trigger-badge {
+    display: none;
+}
+@container sidebar (width <= 9rem) {
+    .settings-trigger-badge {
+        display: inline-flex;
     }
 }
 </style>

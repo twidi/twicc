@@ -33,6 +33,7 @@ import FetchErrorPanel from '../components/ui/FetchErrorPanel.vue'
 import SettingsPopover from '../components/app/SettingsPopover.vue'
 import CommandPaletteButton from '../components/app/CommandPaletteButton.vue'
 import PeerInboxButton from '../components/peer/PeerInboxButton.vue'
+import PeerInboxBadge from '../components/peer/PeerInboxBadge.vue'
 import ProjectBadge from '../components/project/ProjectBadge.vue'
 import ProjectMark from '../components/project/ProjectMark.vue'
 import ProjectSelectorRow from '../components/project/ProjectSelectorRow.vue'
@@ -1428,6 +1429,11 @@ const initialSidebarChecked = computed(() => {
     return !sidebarState.open
 })
 
+// Collapsed sidebar, as a reactive fact (the `body.sidebar-closed` class is
+// the CSS-side twin). The footer folds its buttons away at that width, so the
+// peer inbox badge moves onto the toggle — the only control left on screen.
+const sidebarClosed = ref(false)
+
 // Track all route changes for MRU (Most Recently Used) navigation.
 // Stores the full path (including sub-routes like /files, /git, /terminal)
 // so we can restore the exact view when navigating back after archiving.
@@ -1749,8 +1755,11 @@ function handleSidebarToggle(event) {
 // Toggle body class to indicate sidebar is closed.
 // Used by child components (e.g. MessageInput) to adjust layout
 // when the sidebar toggle button overlaps their content.
+// The mirrored ref is the same fact for this template: every collapse path
+// (desktop toggle, mobile route change, drag to zero) funnels through here.
 function updateSidebarClosedClass(closed) {
     document.body.classList.toggle('sidebar-closed', closed)
+    sidebarClosed.value = closed
 }
 </script>
 
@@ -2601,6 +2610,10 @@ function updateSidebarClosedClass(closed) {
                             <wa-icon class="icon-collapse" name="angles-left"></wa-icon>
                             <wa-icon class="icon-expand" name="angles-right"></wa-icon>
                         </wa-button>
+                        <!-- Collapsed only: PeerInboxButton is folded away at
+                             this width, so the count would disappear with it.
+                             Indicative — the click still opens the sidebar. -->
+                        <PeerInboxBadge v-if="sidebarClosed" :count="peersStore.inboxCount" />
                     </label>
                     <AppTooltip for="sidebar-toggle-label">Toggle sidebar (Alt+Shift+B)</AppTooltip>
 

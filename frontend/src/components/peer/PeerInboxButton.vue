@@ -11,6 +11,7 @@
 import { useId, computed } from 'vue'
 import { usePeersStore } from '../../stores/peers'
 import AppTooltip from '../ui/AppTooltip.vue'
+import PeerInboxBadge from './PeerInboxBadge.vue'
 
 const peersStore = usePeersStore()
 const buttonId = useId()
@@ -34,7 +35,7 @@ function openInbox() {
             @click="openInbox"
         >
             <wa-icon name="envelope"></wa-icon>
-            <wa-badge v-if="count > 0" variant="brand" class="peer-inbox-badge">{{ count }}</wa-badge>
+            <PeerInboxBadge :count="count" />
         </wa-button>
         <AppTooltip :for="buttonId">Peer inbox</AppTooltip>
     </template>
@@ -48,23 +49,11 @@ function openInbox() {
     inline-size: var(--wa-form-control-height);
     padding-inline: 0;
 }
-.peer-inbox-badge {
-    position: absolute;
-    inset-block-start: 0;
-    inset-inline-end: 0;
-    translate: 30% -30%;
-    box-sizing: border-box;
-    inline-size: 1.4rem;
-    block-size: 1.4rem;
-    padding: 0;
-    border-radius: 50%;
-    font-variant-numeric: tabular-nums;
-    pointer-events: none;
-}
-
 /* Same footer degradation as CommandPaletteButton: drop out when the sidebar
    gets too narrow, below SettingsPopover's compact threshold. */
 @container sidebar (width <= 9rem) {
     .peer-inbox-button { display: none; }
 }
+/* SettingsPopover MIRRORS this threshold to reveal the count on the Settings
+   button, the only footer action left at that width. Move one, move both. */
 </style>
