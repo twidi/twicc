@@ -1,7 +1,7 @@
 {
   "name": "twicc",
   "description": "Provides skills to query TwiCC's session, project, search, and usage data and to spawn new sessions, across every backend provider it tracks (Claude Code, Codex, ...).",
-  "version": "0.71.0",
+  "version": "0.72.0",
   "homepage": "https://github.com/twidi/twicc",
   "repository": "https://github.com/twidi/twicc",
   "skills": "./skills"

@@ -134,6 +134,83 @@ def test_remote_marker_is_an_error_in_local_mode():
 
 
 # ---------------------------------------------------------------------------
+# Relative markers — resolved against the file that carries them
+# ---------------------------------------------------------------------------
+
+
+def test_relative_marker_resolves_against_the_including_file(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "inner.md").write_text("inner")
+    outer = tmp_path / "sub" / "outer.md"
+    outer.write_text("outer(@@{./inner.md})")
+    assert expand_prompt_includes(f"@@{outer}") == "outer(inner)"
+
+
+def test_each_level_resolves_against_its_own_file(tmp_path):
+    # a.md (root) → ./sub/b.md → ./c.md, which is sub/c.md, not root/c.md.
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "c.md").write_text("WRONG")
+    (tmp_path / "sub" / "c.md").write_text("right")
+    (tmp_path / "sub" / "b.md").write_text("b(@@{./c.md})")
+    a = tmp_path / "a.md"
+    a.write_text("a(@@{./sub/b.md})")
+    assert expand_prompt_includes(f"@@{a}") == "a(b(right))"
+
+
+def test_parent_relative_marker_climbs_out_of_the_file_directory(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "top.md").write_text("top")
+    inner = tmp_path / "sub" / "inner.md"
+    inner.write_text("@@{../top.md}")
+    assert expand_prompt_includes(f"@@{inner}") == "top"
+
+
+def test_bare_relative_marker_is_replaced(tmp_path):
+    (tmp_path / "inner.md").write_text("inner")
+    outer = tmp_path / "outer.md"
+    outer.write_text("before @@./inner.md after")
+    assert expand_prompt_includes(f"@@{outer}") == "before inner after"
+
+
+def test_relative_marker_ignores_the_process_cwd(tmp_path, monkeypatch):
+    (tmp_path / "decoy").mkdir()
+    (tmp_path / "decoy" / "inner.md").write_text("WRONG")
+    (tmp_path / "inner.md").write_text("right")
+    outer = tmp_path / "outer.md"
+    outer.write_text("@@./inner.md")
+    monkeypatch.chdir(tmp_path / "decoy")
+    assert expand_prompt_includes(f"@@{outer}") == "right"
+
+
+def test_missing_relative_include_stays_optional(tmp_path):
+    outer = tmp_path / "outer.md"
+    outer.write_text("a\n@@./missing.md\nb")
+    assert expand_prompt_includes(f"@@{outer}") == "a\nb"
+
+
+def test_relative_marker_without_a_base_is_an_error():
+    with pytest.raises(PromptError, match="relative"):
+        expand_prompt_includes("inline @@./nope.md text")
+
+
+def test_relative_marker_without_dot_prefix_stays_literal(tmp_path):
+    # Only `./` and `../` open a relative marker; a bare word never does.
+    (tmp_path / "inner.md").write_text("inner")
+    outer = tmp_path / "outer.md"
+    outer.write_text("@@inner.md")
+    assert expand_prompt_includes(f"@@{outer}") == "@@inner.md"
+
+
+def test_relative_depth_error_names_resolved_paths(tmp_path):
+    # A cycle written with relative markers must be readable in the error.
+    (tmp_path / "a.md").write_text("@@./b.md")
+    (tmp_path / "b.md").write_text("@@./a.md")
+    with pytest.raises(PromptError) as excinfo:
+        expand_prompt_includes(f"@@{tmp_path / 'a.md'}")
+    assert str(tmp_path / "b.md") in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
 # Recursion
 # ---------------------------------------------------------------------------
 
@@ -226,6 +303,19 @@ def test_forward_mode_relative_remote_marker_is_an_error():
         expand_prompt_includes("@@remote:rel/path", forward=True)
 
 
+def test_forward_mode_dot_relative_remote_marker_is_an_error():
+    # The base lives on the server; the client cannot resolve it.
+    with pytest.raises(PromptError, match="absolute"):
+        expand_prompt_includes("@@remote:./rel/path", forward=True)
+
+
+def test_forward_mode_expands_relative_markers_client_side(tmp_path):
+    (tmp_path / "inner.md").write_text("inner")
+    outer = tmp_path / "outer.md"
+    outer.write_text("outer(@@{./inner.md})")
+    assert expand_prompt_includes(f"@@{outer}", forward=True) == "outer(inner)"
+
+
 def test_forward_mode_escapes_user_escapes_for_the_server_pass():
     # `@@@@/x` (literal `@@/x`) must survive the server's own pass.
     assert expand_prompt_includes("@@@@/x", forward=True) == "@@@@/x"
@@ -263,6 +353,28 @@ def test_resolve_prompt_expands_markers_inside_prompt_file(tmp_path):
     prompt_file = tmp_path / "prompt.md"
     prompt_file.write_text(f"start @@{inc} end")
     assert resolve_prompt(str(prompt_file)) == "start from include end"
+
+
+def test_resolve_prompt_expands_relative_markers_inside_prompt_file(tmp_path):
+    (tmp_path / "inc.md").write_text("from include")
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("start @@{./inc.md} end")
+    assert resolve_prompt(str(prompt_file)) == "start from include end"
+
+
+def test_resolve_prompt_relative_base_is_the_file_not_the_cwd(tmp_path, monkeypatch):
+    (tmp_path / "decoy").mkdir()
+    (tmp_path / "decoy" / "inc.md").write_text("WRONG")
+    (tmp_path / "inc.md").write_text("right")
+    (tmp_path / "prompt.md").write_text("@@./inc.md")
+    monkeypatch.chdir(tmp_path / "decoy")
+    # The prompt argument itself is cwd-relative; its markers are not.
+    assert resolve_prompt("../prompt.md") == "right"
+
+
+def test_resolve_prompt_relative_marker_in_inline_text_is_an_error():
+    with pytest.raises(PromptError, match="relative"):
+        resolve_prompt("do @@./inc.md now")
 
 
 def test_resolve_prompt_expand_false_leaves_markers(tmp_path):
@@ -337,6 +449,14 @@ def test_forwarder_expands_file_borne_prompt_markers(tmp_path):
     inc.write_text("from include")
     prompt_file = tmp_path / "p.md"
     prompt_file.write_text(f"start @@{inc} end")
+    out = _forward_argv(["create-session", str(prompt_file)])
+    assert out[-1] == "start from include end"
+
+
+def test_forwarder_expands_relative_markers_from_prompt_file(tmp_path):
+    (tmp_path / "inc.md").write_text("from include")
+    prompt_file = tmp_path / "p.md"
+    prompt_file.write_text("start @@{./inc.md} end")
     out = _forward_argv(["create-session", str(prompt_file)])
     assert out[-1] == "start from include end"
 

@@ -460,11 +460,15 @@ def _inline_prompt_value(value: str, *, expand: bool) -> str | None:
     remote_path = _resolve_remote_path(value)
     if remote_path is not None:
         return remote_path
+    base: str | None = None
     if os.path.isfile(value):
         try:
             text = resolve_prompt(value, expand=False)
         except PromptError as exc:
             raise RemoteUsageError(str(exc))
+        # Same base as a local run: the prompt file's own directory anchors
+        # its ``./``/``../`` markers, resolved here on the client.
+        base = os.path.dirname(os.path.abspath(value))
     elif expand and "@@" in value:
         text = value
     else:
@@ -472,7 +476,7 @@ def _inline_prompt_value(value: str, *, expand: bool) -> str | None:
     if not expand:
         return text
     try:
-        return expand_prompt_includes(text, forward=True)
+        return expand_prompt_includes(text, forward=True, base=base)
     except PromptError as exc:
         raise RemoteUsageError(str(exc))
 

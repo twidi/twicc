@@ -28,4 +28,4 @@ def test_twicc_peer_message_skill_contract():
     ) in wire_line
 
     plugin = orjson.loads(PLUGIN.read_bytes())
-    assert plugin["version"] == "0.71.0"
+    assert plugin["version"] == "0.72.0"
