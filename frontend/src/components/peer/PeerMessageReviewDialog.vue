@@ -1109,7 +1109,6 @@ function onHide(event) {
                 <wa-callout
                     v-if="deliveryGloballyBlocked"
                     variant="warning" size="small"
-                    class="pr-target-warning"
                 >
                     {{ NO_COMPATIBLE_PROVIDER_ERROR }}
                 </wa-callout>
@@ -1236,7 +1235,6 @@ function onHide(event) {
                     <wa-callout
                         v-if="newSessionDeliveryState.error"
                         variant="warning" size="small"
-                        class="pr-target-warning"
                     >{{ newSessionDeliveryState.error }}</wa-callout>
                 </template>
 
@@ -1337,7 +1335,6 @@ function onHide(event) {
                     v-if="actionError && (mode !== 'existing' || !existingPickerMounted)"
                     variant="danger" size="small"
                     class="pr-action-error"
-                    :class="{ 'pr-action-error--after-mode': mode !== null }"
                 >{{ actionError }}</wa-callout>
             </template>
         </template>
@@ -1519,11 +1516,8 @@ function onHide(event) {
     gap: var(--wa-space-xs);
     margin-bottom: var(--wa-space-s);
 }
-.pr-existing-action .pr-action-error { align-self: stretch; }
-.pr-existing-action .pr-target-warning {
-    align-self: stretch;
-    margin-bottom: 0;
-}
+.pr-existing-action .pr-action-error,
+.pr-existing-action .pr-target-warning { align-self: stretch; }
 .pr-picker-filters {
     display: flex;
     gap: var(--wa-space-xs);
@@ -1561,13 +1555,15 @@ function onHide(event) {
     margin-bottom: var(--wa-space-2xs);
 }
 .pr-explainer {
-    margin: 0 0 var(--wa-space-s);
+    /* Stands in for a callout in the same slot (the direct-parent hint), so it
+       carries the same separation. Adjacent margins collapse: where it already
+       follows a block with its own bottom margin, nothing grows. */
+    margin: var(--wa-space-s) 0;
     color: var(--wa-color-text-quiet);
     font-style: italic;
     font-size: var(--wa-font-size-s);
 }
 .pr-new-session wa-select { flex: 1; min-width: 0; }
-.pr-target-warning { margin-bottom: var(--wa-space-s); }
 .pr-confirm-body {
     display: flex;
     flex-direction: column;
@@ -1583,6 +1579,13 @@ function onHide(event) {
     display: flex;
     gap: var(--wa-space-s);
 }
-.pr-action-error--after-mode { margin-top: var(--wa-space-s); }
 .pr-footer { display: flex; justify-content: flex-end; gap: var(--wa-space-s); width: 100%; }
+
+/* Callouts sitting directly in the dialog body are block-flow siblings, and
+   which one renders depends on state (load error, purged attachments, thread
+   warning, refusal confirmation, delivery error…) — so the separation belongs
+   to the callout, never to the block that happens to precede it. Adjacent
+   margins collapse, so two stacked callouts still keep a single gap. Callouts
+   nested in a flex row (.pr-existing-action) keep that row's gap instead. */
+wa-dialog > wa-callout { margin-block: var(--wa-space-s); }
 </style>

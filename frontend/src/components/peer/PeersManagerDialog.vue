@@ -510,6 +510,13 @@ function onHide(event) {
     align-items: flex-start;
     gap: var(--wa-space-3xs);
 }
+/* Callouts sitting directly in the dialog body are block-flow siblings, and
+   which one renders depends on state — so the separation belongs to the
+   callout, never to the block that happens to precede it. Adjacent margins
+   collapse, so two stacked callouts still keep a single gap. Row-level
+   callouts are nested in a flex row and keep that row's gap instead. */
+wa-dialog > wa-callout { margin-block: var(--wa-space-s); }
+
 .pm-block { margin-bottom: var(--wa-space-m); }
 .pm-own-address {
     margin: 0 0 var(--wa-space-m);

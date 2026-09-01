@@ -182,7 +182,7 @@ function onHide(event) {
             <wa-spinner></wa-spinner>
             <span>Searching…</span>
         </div>
-        <wa-callout v-else-if="searchError" variant="danger" size="small" class="pi-search-error">
+        <wa-callout v-else-if="searchError" variant="danger" size="small">
             {{ searchError }}
         </wa-callout>
 
@@ -219,7 +219,7 @@ function onHide(event) {
                     :message="message"
                     @click="review(message)"
                 />
-                <wa-callout v-if="historyHasMore" variant="neutral" size="small" class="pi-limit">
+                <wa-callout v-if="historyHasMore" variant="neutral" size="small">
                     Showing the first 200 results. Refine your filters to narrow the search.
                 </wa-callout>
             </template>
@@ -264,7 +264,9 @@ function onHide(event) {
     color: var(--wa-color-text-quiet);
 }
 .pi-searching wa-spinner { font-size: 1rem; }
-.pi-search-error { margin-bottom: var(--wa-space-s); }
+/* Callouts sitting directly in the dialog body own their separation from the
+   blocks around them, whatever renders next to them (see PeersManagerDialog). */
+wa-dialog > wa-callout { margin-block: var(--wa-space-s); }
 .pi-section-title {
     margin: var(--wa-space-l) 0 var(--wa-space-s);
     border-bottom: 2px solid var(--wa-color-surface-border);
@@ -272,7 +274,6 @@ function onHide(event) {
 }
 .pi-section-title:first-of-type { margin-top: 0; }
 .pi-empty { color: var(--wa-color-text-quiet); }
-.pi-limit { margin-top: var(--wa-space-s); }
 
 .pi-row {
     display: flex;

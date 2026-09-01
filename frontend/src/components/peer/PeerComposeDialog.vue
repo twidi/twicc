@@ -256,14 +256,16 @@ function onAfterShow(event) {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
 }
+/* Confirmation callouts: breathing room between the text and the buttons,
+   and between the buttons themselves (PeersManagerDialog's recipe). */
 .pc-confirm-body {
     display: flex;
     flex-direction: column;
-    gap: var(--wa-space-2xs);
+    gap: var(--wa-space-s);
 }
 .pc-confirm__actions {
     display: flex;
-    gap: var(--wa-space-2xs);
+    gap: var(--wa-space-s);
 }
 .pc-footer {
     display: flex;
