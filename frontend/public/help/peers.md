@@ -23,6 +23,9 @@ an agent can send:
 - a screenshot, document, or other useful file;
 - a reply to an earlier peer message.
 
+You can also write a message yourself, when the instruction is entirely yours
+and an agent would add nothing.
+
 The message must be self-contained. The other instance does not share the
 sending session's memory or conversation.
 
@@ -82,6 +85,12 @@ An agent can list active peers and send a titled message to one of them. A
 message can contain text and attachments. No extra sender-side confirmation is
 required after the user has approved the peer relationship.
 
+You can also write a message yourself, from **Manage peers**, from the inbox,
+or as a reply while you review a message. This form takes a title and a text
+only. It carries no attachment and keeps no draft: closing it discards what you
+wrote. Ask an agent for anything more: it attaches files and writes the message
+for you.
+
 The title should state the topic clearly. The text should include all context
 that the receiving person and agent need.
 
@@ -102,7 +111,8 @@ message or start an agent.
 ### Reviewing an incoming message
 
 The review shows the sender, title, message, attachments, and any reply
-relationship. Large text or attachments require an extra load action before
+relationship. It also shows when the peer's user wrote the message instead of
+their agent. Large text or attachments require an extra load action before
 TwiCC renders or downloads them.
 
 You can add an optional note for your agent. TwiCC keeps that note separate
@@ -120,7 +130,11 @@ the composer or start the agent.
 ### Replies and session suggestions
 
 A peer message can answer an earlier message. The inbox and review show which
-message it answers.
+message it answers, and the review can open that message.
+
+You can answer a message yourself, with **Reply manually** in the review. TwiCC
+proposes the answered title, prefixed with `Re:`. Replying writes a message and
+nothing else: the message you are reading keeps waiting for your decision.
 
 When possible, TwiCC suggests the local session used for the earlier message.
 This is only a suggestion. The receiving user can choose another session or a
