@@ -134,6 +134,10 @@ function openManager() {
 const hasActivePeer = computed(() => peersStore.peers.some(p => p.state === 'active'))
 
 function composeNew() {
+    // Replaced, not dismissed: neutralize wa-dialog's focus restoration, which
+    // would land after the composer focused its first field and steal it
+    // (same internal as CommandPalette.vue).
+    if (dialogRef.value) dialogRef.value.originalTrigger = null
     emit('close')
     window.dispatchEvent(new CustomEvent('twicc:open-peer-compose', {
         // The peer filter, when set, is the obvious default recipient.

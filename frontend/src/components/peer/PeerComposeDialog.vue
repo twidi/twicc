@@ -17,6 +17,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { usePeersStore } from '../../stores/peers'
 import { apiFetch } from '../../utils/api'
+import { PEER_MESSAGE_TITLE_MAX_CHARS, replySubject } from '../../utils/peerReplyTarget'
 import { toast } from '../../composables/useToast'
 
 const props = defineProps({
@@ -35,11 +36,13 @@ const emit = defineEmits(['close'])
 const peersStore = usePeersStore()
 const dialogRef = ref(null)
 const titleInputRef = ref(null)
+const textInputRef = ref(null)
 const sendButtonRef = ref(null)
 const formId = 'peer-compose-form'
 
 const selectedPeerId = ref('')
 const title = ref('')
+const proposedTitle = ref('')   // what the dialog filled in, to tell it from typing
 const text = ref('')
 const busy = ref(false)
 const error = ref('')
@@ -47,13 +50,21 @@ const confirmingDiscard = ref(false)
 
 const activePeers = computed(() => peersStore.peers.filter(p => p.state === 'active'))
 const isReply = computed(() => !!props.replyTo)
-const dirty = computed(() => !!(title.value.trim() || text.value.trim()))
+// The proposed subject is not something the user typed: closing right after
+// opening a reply must not ask them to discard a message they never wrote.
+const dirty = computed(() =>
+    !!text.value.trim() || title.value.trim() !== proposedTitle.value,
+)
 
 // Fresh form on every open — nothing survives a close, by design.
 watch(() => props.open, (open) => {
     if (!open) return
     selectedPeerId.value = props.peerId || (activePeers.value.length === 1 ? activePeers.value[0].id : '')
-    title.value = ''
+    // A reply proposes the parent's subject: a thread rarely needs a new one,
+    // and typing one by hand for "ok, noted" is the friction this composer
+    // exists to remove. It stays editable, and required if the parent had none.
+    proposedTitle.value = props.replyTo ? replySubject(props.replyToTitle) : ''
+    title.value = proposedTitle.value
     text.value = ''
     error.value = ''
     confirmingDiscard.value = false
@@ -154,7 +165,9 @@ function onShow(event) {
 
 function onAfterShow(event) {
     if (event.target !== dialogRef.value) return
-    titleInputRef.value?.focus()
+    // With a subject already proposed, the message is what is left to write.
+    if (title.value) textInputRef.value?.focus()
+    else titleInputRef.value?.focus()
 }
 </script>
 
@@ -190,13 +203,14 @@ function onAfterShow(event) {
 
             <wa-input
                 ref="titleInputRef"
-                size="small" label="Title" maxlength="100"
+                size="small" label="Title" :maxlength="PEER_MESSAGE_TITLE_MAX_CHARS"
                 placeholder="One line, like an email subject"
                 :value="title" :disabled="busy"
                 @input="title = $event.target.value"
             ></wa-input>
 
             <wa-textarea
+                ref="textInputRef"
                 size="small" label="Message" rows="6"
                 placeholder="Sent exactly as written — the receiving side sees it comes directly from you"
                 :value="text" :disabled="busy"

@@ -229,6 +229,11 @@ function openInbox() {
 }
 
 function composeTo(peer) {
+    // This dialog is being REPLACED, not dismissed: wa-dialog would restore
+    // focus to its own trigger on a `setTimeout`, landing after the composer
+    // has focused its first field and stealing it (CommandPalette.vue hits the
+    // same internal). Clearing the trigger makes that restoration a no-op.
+    if (dialogRef.value) dialogRef.value.originalTrigger = null
     emit('close')
     window.dispatchEvent(new CustomEvent('twicc:open-peer-compose', {
         detail: { peerId: peer.id, returnTo: 'manager' },

@@ -1446,6 +1446,7 @@ def test_serializer_carries_threading_contract_and_live_parent_local_end(transac
     assert inbound_data["thread_id"] == "thread-root"
     assert inbound_data["reply_to"] == "parent-out"
     assert inbound_data["reply_to_ref"] == {
+        "id": outbound_parent.pk,
         "message_id": "parent-out",
         "title": "Our parent",
         "direction": PeerMessageDirection.OUT,
@@ -1536,6 +1537,7 @@ def _assert_owner_reply_contract(row, parent, child, origin_session):
     assert row["thread_id"] == parent.thread_id
     assert row["reply_to"] == parent.message_id
     assert row["reply_to_ref"] == {
+        "id": parent.pk,
         "message_id": parent.message_id,
         "title": parent.title,
         "direction": PeerMessageDirection.OUT,

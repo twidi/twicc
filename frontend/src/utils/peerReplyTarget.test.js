@@ -7,7 +7,9 @@ import {
     deliveryPickerTransition,
     existingSessionActionLabel,
     isReplyTargetPickerEligible,
+    PEER_MESSAGE_TITLE_MAX_CHARS,
     recoverReplyTargetPagination,
+    replySubject,
     shouldShowReplyTargetPreparation,
     waitForNextPaint,
 } from './peerReplyTarget.js'
@@ -224,4 +226,31 @@ test('labels the existing-session action before selection and while prefilling',
     assert.equal(existingSessionActionLabel(false, false), 'Select a session below')
     assert.equal(existingSessionActionLabel(true, false), 'Prefill session composer')
     assert.equal(existingSessionActionLabel(true, true), 'Prefilling…')
+})
+
+test('proposes the parent subject with a single Re: prefix', () => {
+    assert.equal(replySubject('Front revamp'), 'Re: Front revamp')
+    // One prefix per thread, whatever the depth (email convention).
+    assert.equal(replySubject('Re: Front revamp'), 'Re: Front revamp')
+    assert.equal(replySubject('RE: Front revamp'), 'RE: Front revamp')
+    // "Reorg" is not a prefix: the marker needs its colon AND its space.
+    assert.equal(replySubject('Reorg'), 'Re: Reorg')
+    assert.equal(replySubject('Re:Front'), 'Re: Re:Front')
+    // Flattened to one line, like the backend's own title validation.
+    assert.equal(replySubject('Front\n  revamp'), 'Re: Front revamp')
+    // Nothing to propose: the composer keeps an empty, required field.
+    assert.equal(replySubject(''), '')
+    assert.equal(replySubject(null), '')
+    assert.equal(replySubject('   '), '')
+})
+
+test('truncates a proposed subject to the backend cap', () => {
+    const long = 'x'.repeat(PEER_MESSAGE_TITLE_MAX_CHARS)
+    const subject = replySubject(long)
+    assert.equal(subject.length, PEER_MESSAGE_TITLE_MAX_CHARS)
+    assert.ok(subject.startsWith('Re: '))
+    assert.ok(subject.endsWith('\u2026'))
+    // A subject that exactly fits is left alone.
+    const exact = 'y'.repeat(PEER_MESSAGE_TITLE_MAX_CHARS - 4)
+    assert.equal(replySubject(exact), `Re: ${exact}`)
 })

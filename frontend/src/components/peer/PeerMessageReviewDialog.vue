@@ -200,8 +200,21 @@ const replyRoute = computed(() => {
     return {
         label: reply.direction === 'out' ? 'In reply to your' : 'In reply to their',
         title: reply.title,
+        // The answered message is a local row: the dialog can show it. Absent
+        // on rows serialized before the id joined the ref.
+        messageId: reply.id ?? null,
     }
 })
+
+/** Show the message this one answers, in place, without leaving the dialog.
+ *  `keepChain`: an in-dialog jump must not lose how the current message was
+ *  reached, so closing still walks back to the inbox when it came from there. */
+function openRepliedMessage() {
+    if (replyRoute.value?.messageId == null) return
+    window.dispatchEvent(new CustomEvent('twicc:open-peer-inbox', {
+        detail: { messageId: replyRoute.value.messageId, keepChain: true },
+    }))
+}
 
 /** Authorship line, only when the message was written directly by a human
  *  (`origin.author`, sender-declared — absent means agent, the historical
@@ -227,6 +240,10 @@ const canReply = computed(() =>
 function openReplyComposer() {
     const current = detail.value
     if (!current) return
+    // Replaced, not dismissed: neutralize wa-dialog's focus restoration, which
+    // would land after the composer focused its first field and steal it
+    // (same internal as CommandPalette.vue).
+    if (dialogRef.value) dialogRef.value.originalTrigger = null
     // 'compose': the composer replaces this dialog and reopens it on close
     // (App.vue records the return BEFORE the event below is dispatched).
     emit('close', 'compose')
@@ -1081,7 +1098,15 @@ function onHide(event) {
             </p>
             <p v-if="replyRoute" class="pr-route">
                 <span class="pr-route__label">{{ replyRoute.label }}</span>
-                <span class="pr-route__title" :title="replyRoute.title">“{{ replyRoute.title }}”</span>
+                <!-- Clickable when the answered row is known: shows it here,
+                     like the local-session link below. -->
+                <button
+                    v-if="replyRoute.messageId != null"
+                    type="button" class="pr-route__title pr-route__title--link"
+                    :title="`Show “${replyRoute.title}”`"
+                    @click="openRepliedMessage"
+                >“{{ replyRoute.title }}”</button>
+                <span v-else class="pr-route__title" :title="replyRoute.title">“{{ replyRoute.title }}”</span>
             </p>
             <p v-if="localRoute" class="pr-route">
                 <span class="pr-route__label">{{ localRoute.label }}</span>

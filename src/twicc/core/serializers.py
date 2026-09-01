@@ -523,6 +523,10 @@ def serialize_peer_message(message, *, include_payload=False, include_attachment
     reply_target = None
     if reply_to_message is not None:
         reply_to_ref = {
+            # The local row id, so the UI can open the answered message: the
+            # `message_id` is the peer-facing handle, not what the review
+            # dialog and the REST detail endpoint are keyed on.
+            "id": reply_to_message.pk,
             "message_id": reply_to_message.message_id,
             "title": reply_to_message.title,
             "direction": reply_to_message.direction,

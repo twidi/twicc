@@ -1,4 +1,27 @@
 /**
+ * The hard cap the backend enforces on a peer message title
+ * (`peer_messages.PEER_MESSAGE_TITLE_MAX_CHARS`): an over-long title is
+ * REJECTED, never truncated server-side, so the composer must not exceed it.
+ */
+export const PEER_MESSAGE_TITLE_MAX_CHARS = 100
+
+/**
+ * The subject proposed when replying: the parent's, prefixed once.
+ *
+ * Email's convention — a thread carries one "Re:" whatever its depth, so a
+ * reply to a reply does not grow a prefix chain. The result is flattened to a
+ * single line and truncated to the backend's cap (an ellipsis, since a
+ * proposal the user can still edit beats a rejected send).
+ */
+export function replySubject(parentTitle, maxChars = PEER_MESSAGE_TITLE_MAX_CHARS) {
+    const flat = String(parentTitle || '').replace(/\s+/g, ' ').trim()
+    if (!flat) return ''
+    const subject = /^re:\s/i.test(flat) ? flat : `Re: ${flat}`
+    if (subject.length <= maxChars) return subject
+    return `${subject.slice(0, maxChars - 1)}…`
+}
+
+/**
  * Choose whether reply-target initialization can use a normal picker candidate
  * or must ask the store's by-id loader for the session.
  */

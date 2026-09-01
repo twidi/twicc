@@ -607,7 +607,9 @@ function openPeerInbox(e) {
     const messageId = e?.detail?.messageId
     if (messageId != null) {
         // A toast's Read button targets one message: open the review directly.
-        peerReviewFromInbox.value = false
+        // `keepChain` marks an in-dialog jump instead (the "in reply to" link),
+        // which must not lose how the current message was reached.
+        if (!e?.detail?.keepChain) peerReviewFromInbox.value = false
         peerReviewMessageId.value = messageId
     } else {
         showPeerInbox.value = true
