@@ -107,7 +107,7 @@ function showResyncToast() {
                 <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem;">
                     <span>This tab is out of sync with the server and stopped receiving updates.</span>
                     <a href="#" onclick="window.location.reload(); return false;"
-                       style="color: var(--wa-color-primary-600); text-decoration: underline;">Reload now</a>
+                       style="color: var(--wa-color-text-link); text-decoration: underline;">Reload now</a>
                 </div>
             `,
         })

@@ -119,7 +119,8 @@ function copyLoginCommand() {
     font-family: var(--wa-font-family-code);
     font-size: 0.95em;
     padding: 0 var(--wa-space-3xs);
-    background: var(--nv-accent, var(--nv-global-accent));
+    background: var(--wa-color-warning-fill-normal);
+    color: var(--wa-color-warning-on-normal);
     border-radius: var(--wa-border-radius-s);
 }
 

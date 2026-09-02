@@ -201,7 +201,7 @@ function goToSession() {
 }
 
 .session-toast-error {
-    color: var(--wa-color-danger);
+    color: var(--wa-color-danger-on-quiet);
     font-weight: bold;
 }
 

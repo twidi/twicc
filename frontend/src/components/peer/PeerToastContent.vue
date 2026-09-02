@@ -74,7 +74,7 @@ function later() {
                 {{ message.text_preview }}
             </span>
         </template>
-        <div class="peer-toast-actions wa-light">
+        <div class="peer-toast-actions">
             <template v-if="mode === 'request'">
                 <wa-button
                     size="small" variant="brand" appearance="outlined"
@@ -126,7 +126,7 @@ function later() {
 
 .peer-toast-icon {
     margin-right: var(--wa-space-xs);
-    color: var(--wa-color-brand-fill-loud, var(--wa-color-brand-60));
+    color: var(--wa-color-brand-on-quiet);
 }
 
 .peer-toast-url {

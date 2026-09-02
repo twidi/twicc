@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Peer inbox** — The inbox button stays next to Settings even when nothing is waiting, so you can open the inbox and its history whenever you want. It still stays hidden until peers are set up.
 
+### Fixed
+
+- **Toast notifications** — Fixed some visibility and contrast issues.
+
 ## [1.93.1] - 2026-09-02
 
 ### Summary

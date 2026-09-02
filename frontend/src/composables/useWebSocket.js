@@ -889,8 +889,8 @@ function handleUpdateAvailable(msg) {
     // Show persistent toast with upgrade instructions
     const settings = useSettingsStore()
     const upgradeHint = settings.isUvxMode
-        ? 'Stop and re-run: <code style="background: var(--wa-color-neutral-80); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em;">uvx twicc@latest</code>'
-        : 'Update TwiCC (with <code style="background: var(--wa-color-neutral-80); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em;">uv tool upgrade twicc</code> if installed with uv) and restart'
+        ? 'Stop and re-run: <code style="background: var(--wa-color-neutral-fill-normal); color: var(--wa-color-neutral-on-normal); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em;">uvx twicc@latest</code>'
+        : 'Update TwiCC (with <code style="background: var(--wa-color-neutral-fill-normal); color: var(--wa-color-neutral-on-normal); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em;">uv tool upgrade twicc</code> if installed with uv) and restart'
     toast.custom({
         type: 'info',
         title: `TwiCC v${latest_version} is available`,
@@ -898,7 +898,7 @@ function handleUpdateAvailable(msg) {
         html: `
             <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.25rem;">
                 <span>${upgradeHint}</span>
-                <a href="#" onclick="window.dispatchEvent(new CustomEvent('open-changelog')); return false;" style="color: var(--wa-color-primary-600); text-decoration: underline;">View changes</a>
+                <a href="#" onclick="window.dispatchEvent(new CustomEvent('open-changelog')); return false;" style="color: var(--wa-color-text-link); text-decoration: underline;">View changes</a>
             </div>
         `,
     })
