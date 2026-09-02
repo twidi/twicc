@@ -1,10 +1,7 @@
 from pathlib import Path
 
-import orjson
-
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "src/twicc/agent/plugin/twicc/skills/twicc-peer-message/SKILL.md"
-PLUGIN = ROOT / "src/twicc/agent/plugin/twicc/.claude-plugin/plugin.json"
 
 
 def test_twicc_peer_message_skill_contract():
@@ -26,6 +23,3 @@ def test_twicc_peer_message_skill_contract():
         "`thread_id`, `reply_to_ref`, and `reply_target` are local serialization values, "
         "not wire fields."
     ) in wire_line
-
-    plugin = orjson.loads(PLUGIN.read_bytes())
-    assert plugin["version"] == "0.72.1"

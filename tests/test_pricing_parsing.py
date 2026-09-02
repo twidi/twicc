@@ -91,6 +91,8 @@ class ProviderSpec(NamedTuple):
 
 CLAUDE_MODEL_CASES: list[ModelCase] = [
     # New layout: family-then-version
+    ModelCase("fable", "5.1", ("anthropic/claude-fable-5.1",), ("claude-fable-5-1",)),
+    ModelCase("fable", "5", ("anthropic/claude-fable-5",), ("claude-fable-5",)),
     ModelCase("opus", "5", ("anthropic/claude-opus-5",), ("claude-opus-5",)),
     ModelCase("opus", "4.8", ("anthropic/claude-opus-4.8",), ("claude-opus-4-8",)),
     ModelCase("opus", "4.7", ("anthropic/claude-opus-4.7",), ("claude-opus-4-7",)),

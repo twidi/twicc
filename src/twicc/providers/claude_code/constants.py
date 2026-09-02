@@ -231,9 +231,21 @@ AGENT_SETTINGS_ALIASES: dict[str, dict[str, str]] = {
 MODEL_VERSIONS: list[ModelVersion] = [
     ModelVersion(
         provider=Provider.CLAUDE_CODE,
-        model="fable", version="5", full_name="claude-fable-5",
+        model="fable", version="5.1", full_name="claude-fable-5-1",
         retirement_date=None,
         latest=True,
+        weight=210,
+        provider_extra=ClaudeCodeModelExtra(
+            supports_1m=True, supports_effort_xhigh=True, supports_effort_max=True,
+            supports_fast=False, supports_permission_auto=True,
+            supports_highres_images=True, supports_thinking_disabled=False,
+        ),
+    ),
+    ModelVersion(
+        provider=Provider.CLAUDE_CODE,
+        model="fable", version="5", full_name="claude-fable-5",
+        retirement_date=None,
+        latest=False,
         weight=200,
         provider_extra=ClaudeCodeModelExtra(
             supports_1m=True, supports_effort_xhigh=True, supports_effort_max=True,

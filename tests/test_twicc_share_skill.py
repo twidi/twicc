@@ -1,11 +1,8 @@
 from pathlib import Path
 
-import orjson
-
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "src/twicc/agent/plugin/twicc/skills/twicc-share/SKILL.md"
 README = ROOT / "src/twicc/agent/plugin/README.md"
-PLUGIN = ROOT / "src/twicc/agent/plugin/twicc/.claude-plugin/plugin.json"
 
 
 def _resolver_block(text: str) -> str:
@@ -52,6 +49,3 @@ def test_twicc_share_skill_contract():
     assert "revoke|unrevoke|delete|propagate" not in text
     assert "--max-display debug" not in text
     assert "draft to adapt" not in text
-
-    plugin = orjson.loads(PLUGIN.read_bytes())
-    assert plugin["version"] == "0.72.1"

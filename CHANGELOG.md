@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Claude Fable 5.1** — support for Anthropic's new Fable model, now the latest Fable (Fable 5 remains selectable).
 - **Peer messages, by hand** — You can now write to a peer yourself, including replying to a received message, without going through an agent. And when a message needs nothing more, mark it **done**.
 - **Peer notifications** — A message or a pairing request from a peer can now reach you outside the app: a sound, a browser notification, or a push to your devices. The in-app notices were reviewed at the same time.
 

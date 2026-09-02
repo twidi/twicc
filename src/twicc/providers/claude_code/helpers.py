@@ -226,10 +226,10 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
     # ``ModelPrice`` row matches and no other version of the same family is
     # in the DB. Based on Anthropic's published pricing as of June 2026.
     DEFAULT_FAMILY_PRICES: ClassVar[dict[str, FamilyPrices]] = {
-        "fable": FamilyPrices(
+        "fable": FamilyPrices(  # Fable 5.1 pricing (the family's latest; Fable 5 reads cache at 1.00)
             input_price=Decimal("10.00"),
             output_price=Decimal("50.00"),
-            cache_read_price=Decimal("1.00"),
+            cache_read_price=Decimal("0.25"),
             cache_write_5m_price=Decimal("12.50"),
             cache_write_1h_price=Decimal("20.00"),
         ),
