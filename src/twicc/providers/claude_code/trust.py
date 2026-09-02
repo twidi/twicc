@@ -1,4 +1,7 @@
-"""Read/write the Claude Code per-project trust flag in ``~/.claude.json``.
+"""Read/write the Claude Code per-project trust flag in the CLI's global config file.
+
+``~/.claude.json`` by default, ``$CLAUDE_CONFIG_DIR/.claude.json`` when the home
+is relocated (``twicc.provider_homes.claude_global_config_path``).
 
 Read = the project's **exact** entry only (no walk-up): seeding adopts a genuine
 own decision, never an inherited one. Write = atomic read-modify-write that
@@ -20,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 def _config_path() -> Path:
-    return Path.home() / ".claude.json"
+    from twicc.provider_homes import claude_global_config_path
+
+    return claude_global_config_path()
 
 
 def read_trust(directory: str) -> bool | None:

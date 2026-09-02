@@ -15,18 +15,10 @@ patterns.
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 from typing import NamedTuple
 
 from twicc.core.enums import Provider
 from twicc.providers.helpers import AgentSettingCategory, ModelVersion, assert_unique_weights
-
-
-# Filesystem source for Claude Code plan files. The CLI writes one markdown
-# plan per session here, named after the session slug (``<slug>.md``). Watched
-# by the plans watcher; its presence drives the session view's *Plan* tab.
-# Single source of truth shared by the helper (path resolution) and the watcher.
-PLANS_DIR = Path.home() / ".claude" / "plans"
 
 
 class ClaudeCodeModelExtra(NamedTuple):

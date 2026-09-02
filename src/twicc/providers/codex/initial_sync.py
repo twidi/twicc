@@ -1,7 +1,8 @@
 """
 Synchronization logic for JSONL files from Codex sessions.
 
-Walks :attr:`CodexHelpers.SESSIONS_DIR` (~/.codex/sessions/YYYY/MM/DD/),
+Walks the Codex sessions dir (``twicc.provider_homes.codex_sessions_dir()``,
+``<codex home>/sessions/YYYY/MM/DD/``),
 groups files by project (resolved from the first JSONL line's
 ``payload.cwd``), and pushes initial-sync payloads onto the DB writer's
 thread queue. Producer-side reads only — every DB write is delegated to
@@ -25,6 +26,7 @@ from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionType
 from twicc.paths import path_to_project_id
 from twicc.projects import compute_project_stale
+from twicc.provider_homes import codex_sessions_dir
 from twicc.providers.db_writer import (
     CreateSessionPayload,
     DeleteSessionsPayload,
@@ -33,7 +35,6 @@ from twicc.providers.db_writer import (
     UpdateSessionPayload,
 )
 from twicc.sync_helpers import BackpressureSyncQueue, check_file_has_content, read_session_items_from_file
-from .helpers import CodexHelpers
 
 logger = logging.getLogger(__name__)
 
@@ -153,12 +154,12 @@ def _is_ignored_existing_session(session: Session, file_path: Path) -> bool:
 
 def scan_session_files() -> list[Path]:
     """
-    Walk ``SESSIONS_DIR`` recursively and return every Codex session file.
+    Walk the Codex sessions dir recursively and return every Codex session file.
 
     Codex stores files under ``YYYY/MM/DD/rollout-*.jsonl``. Returns an
     empty list if the directory doesn't exist yet (fresh install).
     """
-    sessions_dir = CodexHelpers.SESSIONS_DIR
+    sessions_dir = codex_sessions_dir()
     if not sessions_dir.exists():
         return []
 
@@ -205,7 +206,7 @@ def _build_create_payload(
     subagent may be the first session the DB writer ever sees for its own
     project.
     """
-    relative_path = entry.file_path.relative_to(CodexHelpers.SESSIONS_DIR)
+    relative_path = entry.file_path.relative_to(codex_sessions_dir())
     if is_subagent:
         session = Session(
             id=entry.session_id,
@@ -499,7 +500,7 @@ def sync_all(
     stop_event: threading.Event | None = None,
 ) -> dict[str, int]:
     """
-    Synchronize all Codex sessions from :attr:`CodexHelpers.SESSIONS_DIR`.
+    Synchronize all Codex sessions from the Codex sessions dir (``codex_sessions_dir()``).
 
     Pushes payloads onto ``sync_queue`` (the DB writer drains them).
     Every project's top-level sessions are pushed first; subagents are then
@@ -519,7 +520,7 @@ def sync_all(
         "items_added": 0,
     }
 
-    sessions_dir = CodexHelpers.SESSIONS_DIR
+    sessions_dir = codex_sessions_dir()
     if not sessions_dir.exists():
         logger.info(f"Codex sessions dir not found: {sessions_dir}")
         return stats

@@ -212,7 +212,7 @@ async def session_plan_content(request, session_id):
 
     The plan file lives outside the project / artifacts roots that the generic
     ``file-content`` endpoint confines reads to (Claude Code stores it under
-    ``~/.claude/plans/<slug>.md``), so the path is resolved server-side from the
+    ``<claude home>/plans/<slug>.md``), so the path is resolved server-side from the
     session's provider — the client passes only a session id, never a filesystem
     path. The provider helper returns ``None`` for providers with no plan concept
     (or a session with no slug), and a missing file 404s, so the frontend only

@@ -1256,14 +1256,22 @@ class ProviderHelpersRegistry:
     def purge_env_vars(self, env: dict) -> None:
         """Strip every provider's provider-specific env vars from ``env`` in place.
 
-        Called by the CLI before its own ``django.setup()`` and by the
-        terminal spawner before exec-ing a shell or tmux: the goal is
-        that no subprocess inherits provider markers from the parent
-        TwiCC process, so a newly launched provider CLI starts clean.
-        Each provider's helper decides what its markers are.
+        Called by the server at boot (``cli/run.py``, after its
+        ``django.setup()``) and by the terminal spawners before exec-ing a
+        shell or tmux: the goal is that no subprocess inherits provider
+        markers from the parent TwiCC process, so a newly launched provider
+        CLI starts clean. Each provider's helper decides what its markers are.
+
+        Ends by re-applying the configured provider homes
+        (``twicc.provider_homes.provider_env_overlay``): no purge, however it
+        is widened later, may strip the values that keep a launched process
+        on this instance's homes.
         """
+        from twicc.provider_homes import provider_env_overlay
+
         for helpers in self._helpers.values():
             helpers.purge_env_vars(env)
+        env.update(provider_env_overlay())
 
 
 _registry: ProviderHelpersRegistry | None = None

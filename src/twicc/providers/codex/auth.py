@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from channels.layers import get_channel_layer
 
@@ -55,11 +56,17 @@ async def check_auth_status() -> bool:
         logger.warning("Cannot check Codex auth status: %s", e)
         return False
 
+    from twicc.provider_homes import ensure_codex_home, provider_env_overlay
+
+    # Codex refuses to start on a missing CODEX_HOME (exit 1, nothing created).
+    ensure_codex_home()
     try:
         proc = await asyncio.create_subprocess_exec(
             binary, "login", "status",
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
+            # Configured provider homes, explicit on top of the inherited env.
+            env={**os.environ, **provider_env_overlay()},
         )
     except Exception as e:
         logger.warning("Cannot launch Codex auth status check: %s", e)

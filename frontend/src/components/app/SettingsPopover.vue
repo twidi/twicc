@@ -1921,7 +1921,7 @@ function onChangelogClose() {
                             </wa-button>
                         </div>
                         <span class="setting-group-hint">
-                            TwiCC always runs tmux on a dedicated socket (<code>-L twicc</code>) and forces
+                            TwiCC always runs tmux on a dedicated socket per instance and forces
                             <code>mouse off</code> after session creation — these invariants are required for
                             frontend selection and scroll to work. Your config is loaded first (so status bar,
                             colors, bindings apply), then the mouse option is overridden at the session level.

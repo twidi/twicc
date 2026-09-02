@@ -2,8 +2,10 @@
 Claude Code CLI authentication state and credentials access.
 
 Reads OAuth credentials from the system Keychain (macOS) or
-~/.claude/.credentials.json (Linux), exposes the auth state, and
-broadcasts changes to connected WebSocket clients.
+``<credentials dir>/.credentials.json`` (Linux) — ``~/.claude`` by default,
+relocated with ``CLAUDE_CONFIG_DIR`` / ``CLAUDE_SECURESTORAGE_CONFIG_DIR``
+(``twicc.provider_homes``) — exposes the auth state, and broadcasts changes
+to connected WebSocket clients.
 
 This module owns all credential reading. Other modules (usage.py,
 ASGI consumer) consume from here.
@@ -23,10 +25,16 @@ from channels.layers import get_channel_layer
 
 logger = logging.getLogger(__name__)
 
-# Credentials file path (cross-platform)
-CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 
-KEYCHAIN_SERVICE = "Claude Code-credentials"
+def credentials_path() -> Path:
+    """``<credentials dir>/.credentials.json`` (cross-platform file storage).
+
+    Resolved at call time from ``twicc.provider_homes`` — never an import-time
+    constant, the home is configurable per instance.
+    """
+    from twicc.provider_homes import claude_secure_storage_dir
+
+    return claude_secure_storage_dir().path / ".credentials.json"
 
 # Track expiresAt values for which a token refresh has already been attempted
 # (and failed), to avoid re-spawning the costly SDK throwaway call for the same
@@ -74,8 +82,13 @@ def _read_credentials_from_keychain() -> dict | None:
         logger.debug("Cannot determine user account for Keychain lookup")
         return None
 
+    # The service name carries a hash suffix when the credentials dir is
+    # relocated (``CLAUDE_CONFIG_DIR`` without an empty
+    # ``CLAUDE_SECURESTORAGE_CONFIG_DIR``); resolved per call like the path.
+    from twicc.provider_homes import claude_keychain_service
+
     try:
-        raw = keyring.get_password(KEYCHAIN_SERVICE, account)
+        raw = keyring.get_password(claude_keychain_service(), account)
     except Exception as e:
         logger.debug("Keychain read failed: %s", e)
         return None
@@ -93,12 +106,13 @@ def _read_credentials_from_keychain() -> dict | None:
 
 
 def _read_credentials_from_file() -> dict | None:
-    """Read credentials from ~/.claude/.credentials.json."""
-    if not CREDENTIALS_PATH.is_file():
+    """Read credentials from ``<credentials dir>/.credentials.json``."""
+    path = credentials_path()
+    if not path.is_file():
         return None
 
     try:
-        data = orjson.loads(CREDENTIALS_PATH.read_bytes())
+        data = orjson.loads(path.read_bytes())
     except (orjson.JSONDecodeError, OSError):
         return None
 
@@ -228,12 +242,16 @@ async def _sdk_throwaway_call() -> None:
     """Make a minimal SDK call to trigger token refresh."""
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
 
+    from twicc.provider_homes import provider_env_overlay
+
     options = ClaudeAgentOptions(
         model="haiku",
         permission_mode="default",
         extra_args={"no-session-persistence": None},
         allowed_tools=[],
         effort='low',
+        # Configured provider homes, explicit (see the SDK agent's env_option).
+        env=provider_env_overlay(),
     )
     client = ClaudeSDKClient(options=options)
 
@@ -277,12 +295,16 @@ async def probe_auth_via_sdk() -> bool | None:
         ResultMessage,
     )
 
+    from twicc.provider_homes import provider_env_overlay
+
     options = ClaudeAgentOptions(
         model="haiku",
         permission_mode="default",
         extra_args={"no-session-persistence": None},
         allowed_tools=[],
         effort="low",
+        # Configured provider homes, explicit (see the SDK agent's env_option).
+        env=provider_env_overlay(),
     )
     client = ClaudeSDKClient(options=options)
 
@@ -348,11 +370,15 @@ async def check_auth_status() -> bool:
         logger.warning("Cannot check Claude Code auth status: bundled CLI not found")
         return False
 
+    from twicc.provider_homes import provider_env_overlay
+
     try:
         proc = await asyncio.create_subprocess_exec(
             str(binary), "auth", "status", "--json",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # Configured provider homes, explicit on top of the inherited env.
+            env={**os.environ, **provider_env_overlay()},
         )
     except Exception as e:
         logger.warning("Cannot launch Claude Code auth status check: %s", e)

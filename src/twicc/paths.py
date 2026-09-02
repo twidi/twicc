@@ -24,8 +24,16 @@ Structure:
 
 In development with worktrees, devctl.py sets TWICC_DATA_DIR to the
 worktree root so each worktree gets its own DB, logs, and .env.
+
+The ``.env`` of the data dir is the instance configuration: it is loaded into
+``os.environ`` once per process by :func:`ensure_env_loaded` (a key defined
+there wins over the inherited environment). The provider home keys
+(:data:`PROVIDER_HOME_KEYS`) are read ONLY from that file; ``TWICC_DATA_DIR``
+is read ONLY from the environment because it locates the file. Design:
+docs/plans/2026-09-02-provider-home-dirs-design.md.
 """
 
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -33,8 +41,22 @@ from pathlib import Path
 # Environment variable name to override the data directory
 TWICC_DATA_DIR_ENV = "TWICC_DATA_DIR"
 
-# Default data directory (same pattern as ~/.claude/)
+# Default data directory (same pattern as the providers' ``~/.claude/`` / ``~/.codex/``)
 DEFAULT_DATA_DIR = Path.home() / ".twicc"
+
+# The provider home variables TwiCC honours — the providers' OFFICIAL names, no
+# ``TWICC_`` alias, so the very same variable reaches the CLI, the SDK, a
+# terminal user and any script unchanged. ``.env``-exclusive: an inherited value
+# for a key the file does not define is dropped by :func:`ensure_env_loaded`.
+# Resolution lives in :mod:`twicc.provider_homes`.
+PROVIDER_HOME_KEYS: tuple[str, ...] = (
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    "CODEX_HOME",
+)
+
+_ENV_LOADED = False
+_ENV_WARNINGS: list[str] = []
 
 
 def get_data_dir() -> Path:
@@ -48,6 +70,80 @@ def get_data_dir() -> Path:
     if env_value:
         return Path(env_value).resolve()
     return DEFAULT_DATA_DIR
+
+
+def ensure_env_loaded() -> None:
+    """Load ``<data_dir>/.env`` into ``os.environ`` once per process.
+
+    Keys defined in the file win (the equivalent of ``load_dotenv(override=True)``),
+    except ``TWICC_DATA_DIR``, which is environment-only (it locates the file:
+    honouring it from the file would move every later :func:`get_data_dir` away
+    from the directory the configuration came from) and is skipped with a warning.
+
+    The provider home keys (:data:`PROVIDER_HOME_KEYS`) are ``.env``-exclusive:
+    an inherited value for a key the file does not define — or defines without
+    a value, a bare ``KEY`` line — is dropped, with a warning. Every process TwiCC
+    launches inherits the backend's whole environment, so without this rule a
+    worktree started from an agent session of another instance would silently
+    write into that instance's provider homes. ``KEY=`` (empty) counts as defined.
+
+    Idempotent: only the first call loads; later calls are no-ops, so values a
+    test harness sets afterwards are neither overridden nor dropped. Warnings
+    are kept for :func:`get_env_load_warnings`.
+    """
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+    from dotenv import dotenv_values
+
+    env_path = get_env_path()
+    values = dict(dotenv_values(env_path)) if env_path.is_file() else {}
+    if TWICC_DATA_DIR_ENV in values:
+        _ENV_WARNINGS.append(f"Ignoring {TWICC_DATA_DIR_ENV} in {env_path}: environment-only")
+        del values[TWICC_DATA_DIR_ENV]
+    for key, value in values.items():
+        if value is not None:  # bare ``KEY`` lines carry None
+            os.environ[key] = value
+    for key in PROVIDER_HOME_KEYS:
+        if values.get(key) is None and key in os.environ:
+            _ENV_WARNINGS.append(
+                f"Ignoring inherited {key}={os.environ[key]!r}: not set in {env_path}"
+            )
+            del os.environ[key]
+    _ENV_LOADED = True
+
+
+def get_env_load_warnings() -> list[str]:
+    """Warnings produced by the first :func:`ensure_env_loaded`; callers print or log them."""
+    return list(_ENV_WARNINGS)
+
+
+def _reset_env_loader() -> None:
+    """Tests only: forget the load so :func:`ensure_env_loaded` runs again."""
+    global _ENV_LOADED
+    _ENV_LOADED = False
+    _ENV_WARNINGS.clear()
+
+
+def tmux_socket_suffix() -> str:
+    """Per-data-dir suffix for the tmux socket names (``""`` on the default data dir).
+
+    tmux sockets are per user, so without this every instance (main + each
+    worktree) would share the same ``twicc`` / ``twicc-hybrid`` servers and the
+    same session names — a worktree's global terminal would attach to main's
+    shell, and boot adoption would kill the other instance's hybrid CLIs. A
+    non-default data dir gets ``-<sha256(str(data_dir))[:8]>``; ``~/.twicc`` keeps
+    the bare names so the production instance keeps its existing sessions.
+
+    Both sides are resolved: :func:`get_data_dir` returns :data:`DEFAULT_DATA_DIR`
+    unresolved when ``TWICC_DATA_DIR`` is unset, and a symlinked home would
+    otherwise make the production instance lose its socket name. ``devctl.py``
+    mirrors this function standalone (same hash input, same comparison).
+    """
+    data_dir = get_data_dir().resolve()
+    if data_dir == DEFAULT_DATA_DIR.resolve():
+        return ""
+    return "-" + hashlib.sha256(str(data_dir).encode()).hexdigest()[:8]
 
 
 def get_db_dir() -> Path:
@@ -288,7 +384,7 @@ def path_to_project_id(path: str) -> str:
     A project in TwiCC is a working directory; its ID is derived from the
     directory path by replacing every non-alphanumeric character with a
     dash. The convention is inherited from Claude Code (which names its
-    own subfolders of ``~/.claude/projects/`` the same way), but TwiCC
+    own subfolders of ``<claude home>/projects/`` the same way), but TwiCC
     reuses it as the cross-provider project key — multiple providers can
     run inside the same project, sharing the same ID.
 

@@ -42,7 +42,7 @@ Classification rules (any change MUST bump CODEX_COMPUTE_VERSION):
   the ``revised_prompt`` (the actual prompt the image generator received
   after the model rewrote the user's request), the base64-encoded PNG
   ``result``, and the on-disk ``saved_path`` (typically under
-  ``~/.codex/generated_images/<session>/<call_id>.png``). The matching
+  ``<codex home>/generated_images/<session>/<call_id>.png``). The matching
   ``response_item.image_generation_call`` duplicates ``revised_prompt``
   and ``result`` (no ``saved_path``), so we ignore it — it falls through
   to ``SYSTEM`` / ``DEBUG_ONLY`` like any other unhandled response_item.

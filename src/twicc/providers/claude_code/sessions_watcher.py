@@ -13,7 +13,6 @@ import hashlib
 import logging
 import re
 from pathlib import Path
-from typing import ClassVar
 
 import orjson
 from asgiref.sync import sync_to_async
@@ -28,7 +27,7 @@ from .compute import (
     WORKFLOW_FILE_SUFFIX,
     get_compute as _get_compute,
 )
-from .helpers import ClaudeCodeHelpers
+from twicc.provider_homes import claude_projects_dir
 from .workflow_synthesis import (
     agent_first_message,
     enrich_previews,
@@ -69,7 +68,7 @@ def _state0_raw_json(run_id: str, script_text: str) -> str:
 
 
 class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
-    """File watcher for Claude Code's ``~/.claude/projects/`` layout.
+    """File watcher for Claude Code's ``<claude home>/projects/`` layout.
 
     Layouts handled:
 
@@ -87,10 +86,11 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
     directory referenced by the project disappears.
     """
 
-    projects_dir: ClassVar[Path] = ClaudeCodeHelpers.PROJECTS_DIR
-
     def __init__(self) -> None:
         super().__init__()
+        # Resolved at instantiation (``get_watcher()`` creates the singleton
+        # lazily), never at import: the home is configurable per instance.
+        self.projects_dir = claude_projects_dir()
         # Agents currently surfaced in each live run's STATE 1 envelope, keyed
         # run_id → set of agent_id. Populated by every rebuild
         # (:meth:`_rebuild_workflow_state1`); read by the agent-sync trigger

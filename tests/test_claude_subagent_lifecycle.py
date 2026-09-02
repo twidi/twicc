@@ -27,7 +27,6 @@ import pytest
 from twicc.core.enums import ItemKind, Provider
 from twicc.core.models import AgentLink, Project, Session
 from twicc.providers.claude_code.compute import get_compute
-from twicc.providers.claude_code.helpers import ClaudeCodeHelpers
 from twicc.providers.compute_base import ToolResultUpdate
 
 _T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -117,11 +116,11 @@ def parent_session(db):
 
 
 @pytest.fixture
-def sidecar_dir(parent_session, tmp_path, monkeypatch):
-    """Point PROJECTS_DIR at tmp and return the parent's subagents/ dir."""
-    monkeypatch.setattr(ClaudeCodeHelpers, 'PROJECTS_DIR', tmp_path)
+def sidecar_dir(parent_session, provider_home):
+    """Point the Claude home at tmp and return the parent's subagents/ dir."""
     subagents = (
-        tmp_path / 'test-project-subagent-lifecycle' / 'parent-session-lifecycle' / 'subagents'
+        provider_home.claude / 'projects'
+        / 'test-project-subagent-lifecycle' / 'parent-session-lifecycle' / 'subagents'
     )
     subagents.mkdir(parents=True)
     return subagents

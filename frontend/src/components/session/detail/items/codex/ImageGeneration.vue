@@ -8,7 +8,7 @@
  *     (the user's request after the LLM rewrote it).
  *   - ``result``: the generated image as a base64-encoded PNG string.
  *   - ``saved_path``: where Codex saved the file on disk, typically
- *     ``~/.codex/generated_images/<session>/<call_id>.png``.
+ *     ``<codex home>/generated_images/<session>/<call_id>.png``.
  *
  * Codex also emits a ``response_item.image_generation_call`` with the
  * same ``revised_prompt`` and ``result`` (minus the saved_path); the

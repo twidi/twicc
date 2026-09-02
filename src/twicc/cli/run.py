@@ -26,12 +26,12 @@ import logging
 import os
 import sys
 
-from dotenv import load_dotenv
+from twicc.paths import ensure_env_loaded, get_env_load_warnings
 
-from twicc.paths import get_env_path
-
-# Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env)
-load_dotenv(get_env_path())
+# Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env).
+# Already done by the ``twicc.cli`` package import; idempotent, kept so the boot
+# order of this module stays explicit.
+ensure_env_loaded()
 
 # Configure Django before any Django imports
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "twicc.settings")
@@ -493,6 +493,17 @@ def main():
     try:
         logger.info("TWICC starting...")
         logger.info("Environment loaded")
+        # Provider homes: what the .env dropped (already printed to stderr by
+        # ``cli.main()``; repeated here so it lands in backend.log), then one
+        # line per resolved location. Validation already passed in ``cli.main()``.
+        from twicc.provider_homes import describe_provider_homes, ensure_codex_home
+
+        for warning in get_env_load_warnings():
+            logger.warning("%s", warning)
+        for line in describe_provider_homes():
+            logger.info("%s", line)
+        # Codex refuses to start on a missing CODEX_HOME; create a configured one.
+        ensure_codex_home()
 
         from django.conf import settings
         logger.info("TwiCC launch prefix: %s", settings.TWICC_LAUNCH_PREFIX)

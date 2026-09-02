@@ -14,6 +14,7 @@ The .env file (ports, password hash, etc.) is read from the data directory.
 The backend process receives TWICC_DATA_DIR so it uses the same paths.
 """
 import glob
+import hashlib
 import os
 import re
 import shutil
@@ -51,6 +52,153 @@ def purge_claude_code_vars(env: dict) -> None:
     for key in list(env):
         if key.startswith(("CLAUDE_CODE", "CLAUDECODE")):
             del env[key]
+
+
+# Provider home variables honoured from the .env — the providers' official
+# names, mirroring ``twicc.paths.PROVIDER_HOME_KEYS``. They are .env-exclusive:
+# an inherited value is purged from the child environment and only the values
+# the .env defines are re-added (``provider_home_env``), one layer before the
+# backend applies the same rule, so it never even sees an inherited one.
+# Design: docs/plans/2026-09-02-provider-home-dirs-design.md.
+PROVIDER_HOME_KEYS = ("CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "CODEX_HOME")
+
+
+def purge_provider_home_vars(env: dict) -> None:
+    """Remove the provider home variables (PROVIDER_HOME_KEYS) from *env* in-place."""
+    for key in PROVIDER_HOME_KEYS:
+        env.pop(key, None)
+
+
+def provider_home_env(env_vars: dict[str, str]) -> dict[str, str]:
+    """The provider home keys the .env defines (``env_vars`` from ``load_env_file``)."""
+    return {key: env_vars[key] for key in PROVIDER_HOME_KEYS if key in env_vars}
+
+
+def describe_provider_homes(env_vars: dict[str, str]) -> list[str]:
+    """One human line per provider home, mirroring ``twicc.provider_homes.describe_provider_homes``."""
+    home = Path.home()
+    claude = env_vars.get("CLAUDE_CONFIG_DIR")
+    lines = [
+        f"Claude Code home: {claude} (CLAUDE_CONFIG_DIR from .env)" if claude
+        else f"Claude Code home: {home / '.claude'} (default)"
+    ]
+    secure = env_vars.get("CLAUDE_SECURESTORAGE_CONFIG_DIR")
+    if secure == "":
+        lines.append(f"Claude Code credentials: {home / '.claude'} (CLAUDE_SECURESTORAGE_CONFIG_DIR empty)")
+    elif secure:
+        lines.append(f"Claude Code credentials: {secure} (CLAUDE_SECURESTORAGE_CONFIG_DIR from .env)")
+    codex = env_vars.get("CODEX_HOME")
+    lines.append(
+        f"Codex home: {codex} (CODEX_HOME from .env)" if codex
+        else f"Codex home: {home / '.codex'} (default)"
+    )
+    return lines
+
+
+def provider_home_line_warnings() -> list[str]:
+    """Warn about .env lines for a provider home key that ``load_env_file`` (a plain
+    ``KEY=VALUE`` parser) and the backend's python-dotenv would read differently:
+    an ``export`` prefix, ``${VAR}`` interpolation, an inline ``#`` comment."""
+    warnings: list[str] = []
+    if not ENV_FILE.exists():
+        return warnings
+    for raw in ENV_FILE.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        is_export = line.startswith("export ")
+        body = line[len("export "):] if is_export else line
+        key, _, value = body.partition("=")
+        key = key.strip()
+        if key not in PROVIDER_HOME_KEYS:
+            continue
+        problems = []
+        if is_export:
+            problems.append("'export ' prefix")
+        if "${" in value:
+            problems.append("'${...}' interpolation")
+        if "#" in value:
+            problems.append("inline '#' comment")
+        if problems:
+            warnings.append(
+                f"{key} in {ENV_FILE}: write it as a plain KEY=VALUE line "
+                f"({', '.join(problems)}: devctl and the backend would read different values)"
+            )
+    return warnings
+
+
+def provider_home_hints(env_vars: dict[str, str]) -> list[str]:
+    """Hint when a configured provider home looks unused (nothing logged in there yet).
+
+    Never an error, printed at every start until one of the files appears.
+    Codex: none of ``auth.json`` / ``config.toml`` / ``sessions/`` (Codex fills
+    ``tmp/`` on its very first run, so "directory empty" is no signal; a
+    keyring-mode login implies a ``config.toml``). Claude: none of
+    ``.credentials.json`` / ``settings.json`` / ``projects/``, skipped when the
+    credentials live elsewhere (``CLAUDE_SECURESTORAGE_CONFIG_DIR`` set).
+    """
+    hints: list[str] = []
+    codex = env_vars.get("CODEX_HOME")
+    if codex and not any((Path(codex) / name).exists() for name in ("auth.json", "config.toml", "sessions")):
+        hints.append(f'CODEX_HOME={codex} looks unused: run "twicc codex login" from this instance\'s terminal')
+    claude = env_vars.get("CLAUDE_CONFIG_DIR")
+    if (
+        claude
+        and "CLAUDE_SECURESTORAGE_CONFIG_DIR" not in env_vars
+        and not any((Path(claude) / name).exists() for name in (".credentials.json", "settings.json", "projects"))
+    ):
+        hints.append(f"CLAUDE_CONFIG_DIR={claude} looks unused: log in from a Claude session of this instance")
+    return hints
+
+
+def print_provider_homes() -> None:
+    """Print the provider homes + .env-line warnings + unused-home hints (start/status)."""
+    env_vars = load_env_file()
+    print("Provider homes:")
+    for line in describe_provider_homes(env_vars):
+        print(f"  {line}")
+    for warning in provider_home_line_warnings():
+        print(f"  Warning: {warning}")
+    for hint in provider_home_hints(env_vars):
+        print(f"  Hint: {hint}")
+
+
+def tmux_socket_suffix() -> str:
+    """Per-data-dir tmux socket suffix — mirrors ``twicc.paths.tmux_socket_suffix``
+    standalone (same hash input ``str(data_dir.resolve())``, same default-dir
+    comparison; a test pins both to the same value)."""
+    data_dir = DATA_DIR.resolve()
+    if data_dir == DEFAULT_DATA_DIR.resolve():
+        return ""
+    return "-" + hashlib.sha256(str(data_dir).encode()).hexdigest()[:8]
+
+
+def tmux_socket_names() -> tuple[str, str]:
+    """``(terminal socket, hybrid socket)`` of this instance (``terminal.py`` constants)."""
+    suffix = tmux_socket_suffix()
+    return "twicc" + suffix, "twicc-hybrid" + suffix
+
+
+def kill_tmux() -> None:
+    """``tmux -L <name> kill-server`` on both of this instance's sockets.
+
+    A suffixed tmux server outlives a deleted worktree (its terminals, any
+    surviving hybrid CLI): this is the cleanup. Refuses on the default data
+    dir, and is deliberately NOT part of ``stop`` — hybrid CLIs must survive a
+    backend restart by design.
+    """
+    if tmux_socket_suffix() == "":
+        print("Error: kill-tmux refuses to run on the default data dir (~/.twicc): "
+              "it would kill the main instance's terminals and hybrid CLIs")
+        sys.exit(1)
+    tmux = shutil.which("tmux")
+    if tmux is None:
+        print("tmux is not installed, nothing to kill")
+        return
+    for socket_name in tmux_socket_names():
+        result = subprocess.run([tmux, "-L", socket_name, "kill-server"], capture_output=True)
+        outcome = "killed" if result.returncode == 0 else "no server running"
+        print(f"  tmux -L {socket_name} kill-server: {outcome}")
 
 
 def purge_foreign_venvs(env: dict) -> None:
@@ -481,14 +629,15 @@ def get_process_config(backend_port: int, frontend_port: int) -> dict:
                 #   no ``disabledProviders`` key yet, seed it with an empty list so the activation
                 #   dialog never opens and the orchestrators start immediately. After that one-shot
                 #   seed, toggles from Settings keep working normally.
-                # - Skip the Codex marketplace + plugin install (~/.codex/config.toml is global
-                #   and already managed by the main install — worktrees must not race on it).
+                # - Skip the Codex marketplace + plugin install when the worktree shares the
+                #   default ~/.codex (its config.toml is already managed by the main install —
+                #   worktrees must not race on it). A worktree whose .env sets its own
+                #   CODEX_HOME installs its own copy of the plugin there; that is the point.
                 # - Disable the empty-session-dirs janitor: artifacts/ and scratch/ are symlinks
                 #   shared with the main instance, which owns the cleanup (a worktree would
                 #   otherwise prune the shared dirs based on its own, partial DB).
-                # - Disable the tmux reaper: the ``twicc`` tmux socket is shared per-user with the
-                #   main instance, which owns the reaping (a worktree would otherwise kill the
-                #   main instance's terminal sessions).
+                # - The tmux reaper stays ON: the tmux sockets are per data dir (see
+                #   tmux_socket_suffix), so a worktree only ever sees its own sessions.
                 # - Disable telemetry: dev worktrees are throwaway instances that would each
                 #   register as a distinct install and pollute the collected stats.
                 # - Never prune old Codex runtimes: ~/.cache/twicc/codex-runtime/ is shared
@@ -498,15 +647,46 @@ def get_process_config(backend_port: int, frontend_port: int) -> dict:
                     "TWICC_SESSION_COOKIE": f"sessionid_{backend_port}",
                     "TWICC_NO_CRON_RESTART": "1",
                     "TWICC_AUTO_ENABLE_PROVIDERS": "1",
-                    "TWICC_NO_CODEX_PLUGIN": "1",
+                    **({"TWICC_NO_CODEX_PLUGIN": "1"} if "CODEX_HOME" not in load_env_file() else {}),
                     "TWICC_NO_SESSION_DIRS_CLEANUP": "1",
-                    "TWICC_NO_TMUX_CLEANUP": "1",
                     "TWICC_NO_TELEMETRY": "1",
                     "TWICC_NO_CODEX_RUNTIME_CLEANUP": "1",
                 } if is_git_worktree() else {}),
             },
         },
     }
+
+
+def build_process_env(config: dict) -> dict[str, str]:
+    """The environment handed to a child process: the inherited one, purged, plus the config's."""
+    proc_env = os.environ.copy()
+    # Purge Claude Code environment variables so the backend/frontend processes
+    # don't inherit them (e.g., when devctl is launched from within Claude Code).
+    # CLAUDE_CODE_ENTRYPOINT in particular causes Claude Code to think it's
+    # already running inside an SDK session, preventing interactive use.
+    purge_claude_code_vars(proc_env)
+    # Provider homes are .env-exclusive (all modes): drop any inherited
+    # CLAUDE_CONFIG_DIR / CLAUDE_SECURESTORAGE_CONFIG_DIR / CODEX_HOME, then
+    # re-add below only what this data dir's .env defines. A worktree started
+    # from an agent session of another instance must never inherit that
+    # instance's homes.
+    purge_provider_home_vars(proc_env)
+    # Drop any other project's virtualenv from the inherited environment, so a
+    # command missing from this project's venv can never resolve to another
+    # checkout's (see purge_foreign_venvs).
+    purge_foreign_venvs(proc_env)
+    # In worktree mode, purge inherited TWICC_* variables so the child
+    # process only sees values from the worktree's .env (loaded by run.py).
+    # Without this, variables like TWICC_PASSWORD_HASH from the parent
+    # shell would leak into the backend and override the worktree config.
+    if is_git_worktree():
+        for key in list(proc_env):
+            if key.startswith("TWICC_"):
+                del proc_env[key]
+    if "env" in config:
+        proc_env.update(config["env"])
+    proc_env.update(provider_home_env(load_env_file()))
+    return proc_env
 
 
 def ensure_dirs():
@@ -643,27 +823,7 @@ def start(proc_key: str, processes: dict) -> bool:
     if config["log"].exists():
         log_start_pos = config["log"].stat().st_size
 
-    # Prepare environment with custom variables
-    proc_env = os.environ.copy()
-    # Purge Claude Code environment variables so the backend/frontend processes
-    # don't inherit them (e.g., when devctl is launched from within Claude Code).
-    # CLAUDE_CODE_ENTRYPOINT in particular causes Claude Code to think it's
-    # already running inside an SDK session, preventing interactive use.
-    purge_claude_code_vars(proc_env)
-    # Drop any other project's virtualenv from the inherited environment, so a
-    # command missing from this project's venv can never resolve to another
-    # checkout's (see purge_foreign_venvs).
-    purge_foreign_venvs(proc_env)
-    # In worktree mode, purge inherited TWICC_* variables so the child
-    # process only sees values from the worktree's .env (loaded by run.py).
-    # Without this, variables like TWICC_PASSWORD_HASH from the parent
-    # shell would leak into the backend and override the worktree config.
-    if is_git_worktree():
-        for key in list(proc_env):
-            if key.startswith("TWICC_"):
-                del proc_env[key]
-    if "env" in config:
-        proc_env.update(config["env"])
+    proc_env = build_process_env(config)
 
     # Backend: stdout/stderr → DEVNULL (logs go via Python logging FileHandler)
     # Frontend: stdout/stderr → log file (Vite has no Python logger)
@@ -789,6 +949,11 @@ def status(processes: dict):
     else:
         print("  (defaults, no .env file)")
     print()
+    print_provider_homes()
+    print()
+    terminal_socket, hybrid_socket = tmux_socket_names()
+    print(f"tmux sockets: terminals -L {terminal_socket}, hybrid CLIs -L {hybrid_socket}")
+    print()
     print("Process status:")
     for key, config in processes.items():
         running, pid = is_running(key, processes)
@@ -849,8 +1014,12 @@ COMMANDS:
     start [target]     Start process(es) in background
     stop [target]      Stop running process(es)
     restart [target]   Stop then start process(es)
-    status             Show running status and port configuration
+    status             Show running status, port configuration, provider homes, tmux sockets
     logs <target>      Show recent log output
+    kill-tmux          Kill this instance's two tmux servers (terminals + hybrid CLIs);
+                       worktrees only, refuses on ~/.twicc. Not part of stop: hybrid
+                       CLIs survive a backend restart by design. Run it before
+                       deleting a worktree.
     help, --help, -h   Show this help message
 
 TARGETS:
@@ -872,6 +1041,30 @@ DATA DIRECTORY:
 
     The .env file is read from the data directory.
     The backend process receives TWICC_DATA_DIR automatically.
+
+PROVIDER HOMES:
+    The .env may relocate the provider homes (the providers' own variables,
+    absolute paths, plain KEY=VALUE lines — no `export`, no ${VAR}, no
+    inline # comment):
+
+        CLAUDE_CONFIG_DIR=/abs/path/claude-home
+        CLAUDE_SECURESTORAGE_CONFIG_DIR=   # empty: keep the default credentials
+        CODEX_HOME=/abs/path/codex-home
+
+    These keys are .env-exclusive: an inherited value from the launching
+    shell is dropped, only the .env's values reach the backend (which
+    applies the same rule again). `start` and `status` print the resolved
+    homes, a warning for a non-plain line, and a hint when a configured
+    home looks unused (log in once from a terminal of this instance).
+    A worktree with its own CODEX_HOME installs its own copy of the TwiCC
+    plugin there (TWICC_NO_CODEX_PLUGIN is only set without one).
+
+TMUX SOCKETS:
+    Each instance runs its terminals and hybrid CLIs on its own tmux
+    sockets: `twicc` / `twicc-hybrid` on ~/.twicc, `twicc-<sha8>` /
+    `twicc-hybrid-<sha8>` (sha256 of the data dir) elsewhere. `status`
+    prints them. `kill-tmux` kills both servers of a worktree instance
+    (refused on ~/.twicc); run it before deleting a worktree.
 
 PORT CONFIGURATION:
     Ports are configured via .env file in the data directory.
@@ -916,6 +1109,7 @@ EXAMPLES:
     uv run ./devctl.py logs back       # Show last 50 lines of backend logs
     uv run ./devctl.py logs front --lines=100
     uv run ./devctl.py start --empty-db    # Worktree: start with fresh database
+    uv run ./devctl.py kill-tmux       # Worktree: kill its tmux servers before deleting it
 
 FILES:
     <data_dir>/.env               Configuration (ports, password hash)
@@ -981,6 +1175,7 @@ def main():
             else:
                 copy_data_from_main()
                 link_shared_dirs_from_main()
+        print_provider_homes()
         print(f"Starting processes (frontend:{frontend_port}, backend:{backend_port})...")
         for key in targets:
             start(key, processes)
@@ -1002,6 +1197,7 @@ def main():
             else:
                 copy_data_from_main()
                 link_shared_dirs_from_main()
+        print_provider_homes()
         print(f"Restarting processes (frontend:{frontend_port}, backend:{backend_port})...")
         for key in targets:
             stop(key, processes)
@@ -1010,6 +1206,9 @@ def main():
 
     elif command == "status":
         status(processes)
+
+    elif command == "kill-tmux":
+        kill_tmux()
 
     elif command == "logs":
         if target is None:
@@ -1033,7 +1232,7 @@ def main():
 
     else:
         print(f"Error: Unknown command '{command}'")
-        print("Commands: start, stop, restart, status, logs")
+        print("Commands: start, stop, restart, status, logs, kill-tmux")
         sys.exit(1)
 
 

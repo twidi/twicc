@@ -441,7 +441,9 @@ def read_plugin_entries() -> list[PluginEntry]:
     """Read and resolve plugin entries from installed_plugins.json."""
     import json
 
-    plugins_file = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
+    from twicc.provider_homes import claude_config_dir
+
+    plugins_file = claude_config_dir().path / "plugins" / "installed_plugins.json"
     if not plugins_file.exists():
         return []
 
@@ -510,16 +512,22 @@ def discover_global_commands(plugin_entries: list[PluginEntry] | None = None) ->
     """Discover all global (user-level) commands.
 
     Includes:
-    - User commands from ~/.claude/commands/
-    - User skills from ~/.claude/skills/
+    - User commands from ``<claude home>/commands/``
+    - User skills from ``<claude home>/skills/``
+    - User workflows from ``<claude home>/workflows/``
     - Plugin commands/skills from user/managed-scoped plugins
+
+    ``<claude home>`` is ``~/.claude`` or the configured ``CLAUDE_CONFIG_DIR``
+    (``twicc.provider_homes``); project-level ``<repo>/.claude/`` is unrelated.
     """
-    home = Path.home()
+    from twicc.provider_homes import claude_config_dir
+
+    home = claude_config_dir().path
     commands: list[DiscoveredCommand] = []
 
-    commands.extend(_scan_commands_dir(home / ".claude" / "commands"))
-    commands.extend(_scan_skills_dir(home / ".claude" / "skills"))
-    commands.extend(_scan_workflows_dir(home / ".claude" / "workflows"))
+    commands.extend(_scan_commands_dir(home / "commands"))
+    commands.extend(_scan_skills_dir(home / "skills"))
+    commands.extend(_scan_workflows_dir(home / "workflows"))
 
     if plugin_entries is None:
         plugin_entries = read_plugin_entries()

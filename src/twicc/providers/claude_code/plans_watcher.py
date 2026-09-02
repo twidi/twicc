@@ -1,7 +1,8 @@
 """Watcher for Claude Code plan files.
 
 Claude Code writes one markdown plan per session under
-``~/.claude/plans/<slug>.md`` (the slug is :attr:`Session.slug`). ``has_plan``
+``<claude home>/plans/<slug>.md`` (``~/.claude`` or the configured
+``CLAUDE_CONFIG_DIR``; the slug is :attr:`Session.slug`). ``has_plan``
 presence is **not** monotonic: deleting the plan file flips it back — by
 design. The watcher additionally mirrors every transition into
 :attr:`Session.plan_paths` (the ``claude_plan``-sourced entry consumed by the
@@ -39,7 +40,7 @@ from pathlib import Path
 from channels.layers import get_channel_layer
 from watchfiles import awatch
 
-from twicc.providers.claude_code.constants import PLANS_DIR
+from twicc.provider_homes import claude_plans_dir
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,9 @@ _PLAN_SUFFIX = ".md"
 
 class ClaudeCodePlansWatcher:
     def __init__(self) -> None:
-        self.directory = Path(PLANS_DIR)
+        # Resolved at instantiation (the watcher is created lazily by
+        # ``get_watcher()``), never at import: the home is per instance.
+        self.directory: Path = claude_plans_dir()
         self._slugs: set[str] = set()
         self._stop = asyncio.Event()
         # True only while the watch loop is live and ``_slugs`` is an accurate

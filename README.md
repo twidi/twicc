@@ -203,7 +203,7 @@ Sharing is served on a **dedicated share host**, separate from the app you log i
 
 ## How it works
 
-TwiCC reads the JSONL data files written by each provider and indexes them into a local SQLite database (`~/.twicc/db/data.sqlite`). Claude Code sessions are read from `~/.claude/projects/`; Codex sessions are read from `~/.codex/sessions/`. **Provider data files remain the source of truth** — TwiCC never modifies them. Whether you use Claude Code or Codex directly from the terminal or through TwiCC, everything shows up in the same place. On each startup it re-syncs any changes, and while running it keeps watching for new and updated sessions.
+TwiCC reads the JSONL data files written by each provider and indexes them into a local SQLite database (`~/.twicc/db/data.sqlite`). By default, Claude Code sessions are read from `~/.claude/projects/` and Codex sessions from `~/.codex/sessions/` (see [Configuration](#configuration) to point TwiCC at other provider homes). **Provider data files remain the source of truth** — TwiCC never modifies them. Whether you use Claude Code or Codex directly from the terminal or through TwiCC, everything shows up in the same place. On each startup it re-syncs any changes, and while running it keeps watching for new and updated sessions.
 
 When you start a session or send messages through TwiCC, it uses the provider SDK under the hood: the [Claude Agent SDK](https://github.com/anthropics/claude-code-sdk-python) for Claude Code and OpenAI's vendored Codex SDK for Codex. This means it uses your existing provider credentials and configuration — there is nothing extra to set up. The conversation data written by the provider is then picked up by TwiCC's file watcher and broadcast to the UI in real time over WebSocket.
 
@@ -218,7 +218,7 @@ The interface is fully usable from a mobile browser. Combined with a tunnel serv
 ## Requirements
 
 - Claude Code and/or Codex already configured locally
-- For existing history: a `~/.claude/projects/` directory created by Claude Code and/or a `~/.codex/sessions/` directory created by Codex
+- For existing history: a `~/.claude/projects/` directory created by Claude Code and/or a `~/.codex/sessions/` directory created by Codex (by default — see [Configuration](#configuration) for relocated provider homes)
 
 TwiCC needs Python 3.13+. If you install through `uvx` or `uv tool install` (recommended, see [Quick start](#quick-start)), `uv` will download and manage the right Python version for you — nothing to install by hand. If you go the `pip install` route, install Python 3.13 yourself first.
 
@@ -230,7 +230,11 @@ All configuration goes through environment variables, set in `~/.twicc/.env`:
 |-----------------------|-------------|--------------------------------------------|
 | `TWICC_PORT`          | `3500`      | Server port                                |
 | `TWICC_PASSWORD_HASH` | *(empty)*   | Password hash to enable password protection (managed by `twicc password set`) |
-| `TWICC_DATA_DIR`      | `~/.twicc/` | Data directory (database, logs, settings)  |
+| `CLAUDE_CONFIG_DIR`   | `~/.claude` | Claude Code home (sessions, settings, plugins…) — the CLI's own variable, absolute path |
+| `CLAUDE_SECURESTORAGE_CONFIG_DIR` | *(follows `CLAUDE_CONFIG_DIR`)* | Where Claude Code keeps its credentials; leave it **empty** (`CLAUDE_SECURESTORAGE_CONFIG_DIR=`) to keep the default credentials next to a relocated home |
+| `CODEX_HOME`          | `~/.codex`  | Codex home (sessions, `auth.json`, `config.toml`…) — the CLI's own variable, absolute path |
+
+A key defined in the `.env` wins over the process environment. The three provider home keys are read **only** from the `.env`: an inherited `CLAUDE_CONFIG_DIR` / `CODEX_HOME` exported in your shell is ignored (with a warning at startup) — write it in the `.env` as a plain `KEY=VALUE` line. `TWICC_DATA_DIR` is the one variable read **only** from the environment, because it locates the `.env`: `TWICC_DATA_DIR=<dir>` (default `~/.twicc/`) moves the data directory (database, logs, settings).
 
 ### Password protection
 
@@ -263,6 +267,10 @@ Yes. TwiCC only reads provider data files and never modifies them.
 ### Where is my data stored?
 
 By default in `~/.twicc/`. This includes the SQLite database, logs, and user settings. Set `TWICC_DATA_DIR` to change the location.
+
+### Can I point TwiCC at another Claude Code / Codex home?
+
+Yes. Set `CLAUDE_CONFIG_DIR` and/or `CODEX_HOME` in the `.env` (absolute paths, see [Configuration](#configuration)). TwiCC then reads sessions from those homes and hands the same variables to every process it launches — agents, the embedded terminals, `twicc claude` / `twicc codex` — so nothing touches the default homes. A new home starts empty: Claude Code creates its directory on first use and TwiCC creates the Codex one; log in once from a terminal of that instance (`twicc codex login`, or a Claude session). To keep your existing Claude credentials with a relocated `CLAUDE_CONFIG_DIR`, add `CLAUDE_SECURESTORAGE_CONFIG_DIR=` (empty).
 
 ### Where are the logs?
 

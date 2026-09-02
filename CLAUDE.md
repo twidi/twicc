@@ -71,7 +71,9 @@ All persistent data (db, logs, config) lives in one data dir, resolved (centrali
 
 1. git worktree → worktree root (forced); 2. `$TWICC_DATA_DIR` if set; 3. default `~/.twicc/`.
 
-Contents: `.env` (infra config: ports, password hash), synced user config (`settings.json`, `workspaces.json`, `layouts.json` (named-layouts catalog), `terminal-config.json`, `message-snippets.json`, `seen-tips.json`, `seen-help.json`, `providers-status.json` (per-provider upstream status: current value, last incident, user acknowledgment), `{provider}-settings-presets.json`), `db/data.sqlite(+shm/+wal)`, `search-index/` (Tantivy), `drop-requests/` (CLI drop-files picked up by a watcher), `logs/` (`backend.log`, `frontend.log`, and in dev mode, `sdk/{provider}/{session_id}.jsonl`).
+**The `.env` wins over the environment** — loaded once per process by `paths.ensure_env_loaded()` (on any `import twicc`), a key defined there replaces an inherited value. The provider home keys `CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `CODEX_HOME` (official names, absolute paths, plain `KEY=VALUE` lines) are read **only** from the `.env` (an inherited value is dropped with a warning); `TWICC_DATA_DIR` is read **only** from the environment (it locates the `.env`). Every read of a provider path goes through `twicc/provider_homes.py` at call time (never an import-time constant), and every launched process gets `provider_env_overlay()` explicitly (purges re-apply it). Design: `docs/plans/2026-09-02-provider-home-dirs-design.md`.
+
+Contents: `.env` (infra config: ports, password hash, provider homes), synced user config (`settings.json`, `workspaces.json`, `layouts.json` (named-layouts catalog), `terminal-config.json`, `message-snippets.json`, `seen-tips.json`, `seen-help.json`, `providers-status.json` (per-provider upstream status: current value, last incident, user acknowledgment), `{provider}-settings-presets.json`), `db/data.sqlite(+shm/+wal)`, `search-index/` (Tantivy), `drop-requests/` (CLI drop-files picked up by a watcher), `logs/` (`backend.log`, `frontend.log`, and in dev mode, `sdk/{provider}/{session_id}.jsonl`).
 
 ## devctl.py — Dev Servers
 
@@ -81,6 +83,7 @@ Use when the user asks to start/stop/restart dev servers.
 uv run ./devctl.py start|stop|restart [front|back|all]
 uv run ./devctl.py status
 uv run ./devctl.py logs [front|back] [--lines=N]
+uv run ./devctl.py kill-tmux   # worktrees only: kill the instance's two tmux servers (terminals + hybrid CLIs)
 ```
 
 Default ports: frontend 5173, backend 3500 (verified after start). `start --empty-db` for a fresh DB in worktrees on user request. Debug via `<data_dir>/logs/{backend,frontend}.log`. PIDs in `.devctl/pids/` (always local to project/worktree root).
@@ -89,11 +92,11 @@ Default ports: frontend 5173, backend 3500 (verified after start). `start --empt
 
 **Never run `npm install`/`npm ci`, `migrate`, or touch `node_modules` yourself when starting servers** — wasted and harmful: a parallel `npm install` corrupts devctl's `npm ci` (`ENOTEMPTY`). The post-start port check can time out during initial sync — not a failure; confirm via `backend.log`.
 
-When starting in a worktree, give the user the localhost URLs from devctl's output. When asked to exit/kill/delete a worktree, you MUST run `stop all` even if you didn't start the processes.
+When starting in a worktree, give the user the localhost URLs from devctl's output. When asked to exit/kill/delete a worktree, you MUST run `stop all` and then `kill-tmux` even if you didn't start the processes (the worktree's tmux servers would otherwise outlive the checkout; `kill-tmux` is not part of `stop` because hybrid CLIs must survive a backend restart).
 
 ### Worktrees
 
-devctl auto-detects worktrees and sets `TWICC_DATA_DIR=<worktree root>`, so each worktree has its own backend/frontend, `.env` (ports), `.devctl/`, `db/`, `logs/`, and json data files. Always check your cwd before starting so you know whether you're in a worktree.
+devctl auto-detects worktrees and sets `TWICC_DATA_DIR=<worktree root>`, so each worktree has its own backend/frontend, `.env` (ports), `.devctl/`, `db/`, `logs/`, and json data files. Always check your cwd before starting so you know whether you're in a worktree. A worktree `.env` may also define its own provider homes (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, see Data Directory) so a risky change never touches the real `~/.claude` / `~/.codex`; devctl prints the resolved homes at `start`/`status`. tmux sockets are per data dir (`twicc-<sha8>` / `twicc-hybrid-<sha8>`, `paths.tmux_socket_suffix`), so a worktree's terminals, hybrid CLIs, boot adoption and reaper never see the main instance's.
 
 **Prefix every Bash command with `cd <worktree> && `** — never trust the persistent cwd. A wrong cwd on a destructive command (`devctl restart/stop`, manual `migrate`) hits the main project's servers/data dir and kills real work.
 

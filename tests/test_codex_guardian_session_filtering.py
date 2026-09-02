@@ -8,7 +8,6 @@ import pytest
 
 from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionType
-from twicc.providers.codex.helpers import CodexHelpers
 from twicc.providers.codex.initial_sync import extract_session_meta, sync_all
 from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
 from twicc.providers.db_writer import DeleteSessionsPayload, _apply_delete_sessions_payload
@@ -82,14 +81,13 @@ def test_watcher_rejects_guardian_before_session_creation(tmp_path: Path) -> Non
     assert asyncio.run(watcher.parse_session_file(path)) is None
 
 
-def test_initial_sync_does_not_enqueue_new_guardian(tmp_path: Path, monkeypatch) -> None:
+def test_initial_sync_does_not_enqueue_new_guardian(provider_home) -> None:
     _write_session_meta(
-        tmp_path,
+        provider_home.codex / "sessions",
         "019f6a8f-c563-7800-b6d8-e2cc96ebe777",
         source={"subagent": {"other": "guardian"}},
         parent_thread_id="019f6a8f-c435-7d02-8e3a-eddc35fae37b",
     )
-    monkeypatch.setattr(CodexHelpers, "SESSIONS_DIR", tmp_path)
     sync_queue = queue.Queue()
 
     stats = sync_all(sync_queue)
@@ -98,10 +96,11 @@ def test_initial_sync_does_not_enqueue_new_guardian(tmp_path: Path, monkeypatch)
     assert sync_queue.empty()
 
 
-def test_initial_sync_enqueues_legacy_guardian_deletion(tmp_path: Path, monkeypatch) -> None:
+def test_initial_sync_enqueues_legacy_guardian_deletion(provider_home) -> None:
+    sessions_dir = provider_home.codex / "sessions"
     session_id = "019f6a8f-c563-7800-b6d8-e2cc96ebe777"
     path = _write_session_meta(
-        tmp_path,
+        sessions_dir,
         session_id,
         source={"subagent": {"other": "guardian"}},
         parent_thread_id="019f6a8f-c435-7d02-8e3a-eddc35fae37b",
@@ -111,10 +110,9 @@ def test_initial_sync_enqueues_legacy_guardian_deletion(tmp_path: Path, monkeypa
         id=session_id,
         project=project,
         provider=Provider.CODEX,
-        file_path=str(path.relative_to(tmp_path)),
+        file_path=str(path.relative_to(sessions_dir)),
         model="codex-auto-review",
     )
-    monkeypatch.setattr(CodexHelpers, "SESSIONS_DIR", tmp_path)
     sync_queue = queue.Queue()
 
     sync_all(sync_queue)
@@ -125,10 +123,11 @@ def test_initial_sync_enqueues_legacy_guardian_deletion(tmp_path: Path, monkeypa
     assert sync_queue.empty()
 
 
-def test_initial_sync_enqueues_uncomputed_legacy_guardian_deletion(tmp_path: Path, monkeypatch) -> None:
+def test_initial_sync_enqueues_uncomputed_legacy_guardian_deletion(provider_home) -> None:
+    sessions_dir = provider_home.codex / "sessions"
     session_id = "019f6a8f-c563-7800-b6d8-e2cc96ebe779"
     path = _write_session_meta(
-        tmp_path,
+        sessions_dir,
         session_id,
         source={"subagent": {"other": "guardian"}},
         parent_thread_id="019f6a8f-c435-7d02-8e3a-eddc35fae37b",
@@ -138,11 +137,10 @@ def test_initial_sync_enqueues_uncomputed_legacy_guardian_deletion(tmp_path: Pat
         id=session_id,
         project=project,
         provider=Provider.CODEX,
-        file_path=str(path.relative_to(tmp_path)),
+        file_path=str(path.relative_to(sessions_dir)),
         model=None,
         compute_version=None,
     )
-    monkeypatch.setattr(CodexHelpers, "SESSIONS_DIR", tmp_path)
     sync_queue = queue.Queue()
 
     sync_all(sync_queue)

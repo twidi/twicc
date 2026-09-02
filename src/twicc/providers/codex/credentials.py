@@ -8,14 +8,17 @@ credential storage so the usage fetcher can call ChatGPT's
 The Codex CLI stores credentials in one of two places, controlled by
 its ``cli_auth_credentials_store`` config (default ``file``):
 
-- **File** (``~/.codex/auth.json``): plain JSON with the shape
+- **File** (``<codex home>/auth.json``): plain JSON with the shape
   ``{"auth_mode": "chatgpt", "tokens": {"access_token": ..., "account_id": ..., "refresh_token": ...}, "last_refresh": "..."}``.
 - **Keyring** (any OS): a single ``"Codex Auth"`` service entry whose
-  account name is ``"cli|" + sha256(canonical(~/.codex))[:16]`` and
+  account name is ``"cli|" + sha256(canonical(<codex home>))[:16]`` and
   whose value is the **same JSON blob** that would otherwise live in
   ``auth.json``. In keyring mode the file is removed by the CLI after
   every successful save, so a third-party reader must check the
   keyring when the file is absent.
+
+``<codex home>`` is ``~/.codex`` or the configured ``CODEX_HOME``
+(``twicc.provider_homes.codex_home``), resolved at call time.
 
 Mirrors the surface of :mod:`twicc.providers.claude_code.auth` for the
 credential half — auth-state tracking (``codex login status`` polling)
@@ -34,18 +37,18 @@ import orjson
 from openai_codex import TextInput
 from openai_codex.generated.v2_all import AskForApproval, ReasoningEffort, SandboxMode
 
+from twicc.provider_homes import codex_home
+
 from .bin import make_codex_config
 from .sdk_wrappers import TwiccAsyncCodex
 
 logger = logging.getLogger(__name__)
 
-# Default Codex home — credentials live under here whichever storage
-# backend is in use.
-CODEX_HOME = Path.home() / ".codex"
 
-# File path used when ``cli_auth_credentials_store = "file"`` (default)
-# or as a fallback in ``"auto"`` mode.
-CREDENTIALS_PATH = CODEX_HOME / "auth.json"
+def credentials_path() -> Path:
+    """``<codex home>/auth.json`` — the file backend (``cli_auth_credentials_store = "file"``,
+    the default) or the fallback in ``"auto"`` mode. Resolved per call."""
+    return codex_home().path / "auth.json"
 
 # Keyring service name shared across OSes (constant ``KEYRING_SERVICE`` in
 # ``codex-rs/login/src/auth/storage.rs``). The account name is computed
@@ -122,7 +125,7 @@ def _read_credentials_from_keyring() -> dict | None:
         logger.debug("keyring library not available, skipping Codex keyring lookup")
         return None
 
-    account = _compute_keyring_account(CODEX_HOME)
+    account = _compute_keyring_account(codex_home().path)
 
     try:
         raw = keyring.get_password(KEYRING_SERVICE, account)
@@ -143,12 +146,13 @@ def _read_credentials_from_keyring() -> dict | None:
 
 
 def _read_credentials_from_file() -> dict | None:
-    """Read ``~/.codex/auth.json`` and return the parsed dict, or ``None``."""
-    if not CREDENTIALS_PATH.is_file():
+    """Read ``<codex home>/auth.json`` and return the parsed dict, or ``None``."""
+    path = credentials_path()
+    if not path.is_file():
         return None
 
     try:
-        data = orjson.loads(CREDENTIALS_PATH.read_bytes())
+        data = orjson.loads(path.read_bytes())
     except (orjson.JSONDecodeError, OSError):
         return None
 

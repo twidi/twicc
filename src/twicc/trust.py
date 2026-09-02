@@ -1,7 +1,8 @@
 """Cross-provider project trust: resolution (provider-agnostic).
 
 The DB (``Project.trust`` + ``Project.trust_propagation``) is the single source
-of truth. The provider configs (``~/.claude.json``, ``~/.codex/config.toml``)
+of truth. The provider configs (``~/.claude.json``, ``~/.codex/config.toml`` —
+or their equivalents under the configured homes, ``twicc.provider_homes``)
 are a write-mostly projection handled in the provider-specific ``trust`` modules
 and orchestrated by :mod:`twicc.core.services.trust`.
 

@@ -48,6 +48,8 @@ from twicc.auth.session_auth import (
     SESSION_FINGERPRINT_KEY,
     is_session_authenticated,
 )
+from twicc.paths import tmux_socket_suffix
+from twicc.provider_homes import provider_env_overlay
 from twicc.providers.helpers import get_provider_helpers_registry
 
 logger = logging.getLogger(__name__)
@@ -63,16 +65,21 @@ DEFAULT_ROWS = 24
 # small enough to keep latency low)
 READ_BUFFER_SIZE = 20480
 
-# tmux socket name — isolates twicc sessions from user's own tmux
-TMUX_SOCKET_NAME = "twicc"
+# tmux socket name — isolates twicc sessions from the user's own tmux AND from
+# the other TwiCC instances of the same user: ``twicc`` on the default data dir
+# (``~/.twicc``), ``twicc-<sha8 of the data dir>`` elsewhere (worktrees), see
+# ``paths.tmux_socket_suffix``. tmux sockets are per user, so a shared name
+# would make a worktree's terminals attach to main's shells (and carry main's
+# provider homes). Computed once at import: the data dir is fixed per process.
+TMUX_SOCKET_NAME = "twicc" + tmux_socket_suffix()
 
-# Hybrid CLI sessions live on a SEPARATE tmux socket. The user's custom tmux
-# config (``terminalTmuxConfigPath``) is loaded server-wide on the main socket,
-# so a dedicated socket is the only way to guarantee it never reaches the
-# embedded Claude TUI (and vice-versa). Every tmux call bound to a terminal
-# context routes through ``tmux_socket_for``; the hybrid agent's own primitives
-# (hybrid/tmux.py) import this name directly.
-HYBRID_TMUX_SOCKET_NAME = "twicc-hybrid"
+# Hybrid CLI sessions live on a SEPARATE tmux socket (same per-instance suffix).
+# The user's custom tmux config (``terminalTmuxConfigPath``) is loaded
+# server-wide on the main socket, so a dedicated socket is the only way to
+# guarantee it never reaches the embedded Claude TUI (and vice-versa). Every
+# tmux call bound to a terminal context routes through ``tmux_socket_for``; the
+# hybrid agent's own primitives (hybrid/tmux.py) import this name directly.
+HYBRID_TMUX_SOCKET_NAME = "twicc-hybrid" + tmux_socket_suffix()
 
 # Maximum length for terminal tab labels (stored in tmux user options)
 TERMINAL_LABEL_MAX_LENGTH = 30
@@ -411,6 +418,10 @@ def spawn_pty(cwd: str, cols: int = DEFAULT_COLS, rows: int = DEFAULT_ROWS) -> t
         # so the terminal behaves like a normal human login shell.
         sanitize_terminal_env(os.environ)
 
+        # Configured provider homes, explicit after the purges: a ``twicc codex
+        # login`` typed in this terminal must land in THIS instance's home.
+        os.environ.update(provider_env_overlay())
+
         # Exec the shell as a login shell (prefix argv[0] with -)
         os.execvp(shell, [f"-{os.path.basename(shell)}"])
         # execvp does not return; if it fails, child exits
@@ -427,6 +438,32 @@ def spawn_pty(cwd: str, cols: int = DEFAULT_COLS, rows: int = DEFAULT_ROWS) -> t
     return child_pid, master_fd
 
 
+def _tmux_client_argv(
+    *,
+    socket: str,
+    config_arg: str,
+    name: str,
+    attach_only: bool,
+    env_overlay: dict[str, str],
+) -> list[str]:
+    """argv of the tmux client exec'd by :func:`spawn_tmux_pty` (pure, testable).
+
+    ``attach_only`` → ``attach-session -t =<name>`` (never creates anything).
+    Otherwise ``new-session -A -s <name>`` plus one ``-e NAME=VALUE`` per
+    ``env_overlay`` entry (tmux ≥ 3.2): a freshly created session carries the
+    configured provider homes even when the tmux server predates a ``.env``
+    change and froze another environment. ``-e`` is ignored by ``-A`` when the
+    session already exists (that session keeps its own environment).
+    """
+    argv = ["tmux", "-L", socket, "-f", config_arg]
+    if attach_only:
+        return [*argv, "attach-session", "-t", "=" + name]
+    argv += ["new-session", "-A", "-s", name]
+    for key, value in env_overlay.items():
+        argv += ["-e", f"{key}={value}"]
+    return argv
+
+
 def spawn_tmux_pty(
     cwd: str,
     terminal_context: str,
@@ -438,13 +475,18 @@ def spawn_tmux_pty(
 ) -> tuple[int, int]:
     """Fork a PTY running tmux, attaching to or creating a named terminal.
 
-    Uses ``tmux -L <socket> -f <cfg> new-session -A -s <name>`` which:
-    - ``-L <socket>``: a dedicated socket (isolation from user's tmux),
-      ``tmux_socket_for(terminal_context)`` — hybrid contexts get their own
-      socket so the user's tmux config can't leak into the embedded Claude TUI
+    Uses ``tmux -L <socket> -f <cfg> new-session -A -s <name> [-e NAME=VALUE…]``
+    which:
+    - ``-L <socket>``: a dedicated socket (isolation from the user's tmux and
+      from other TwiCC instances), ``tmux_socket_for(terminal_context)`` —
+      hybrid contexts get their own socket so the user's tmux config can't
+      leak into the embedded Claude TUI
     - ``-f <cfg>``: config file — ``/dev/null`` unless a valid user path is passed
     - ``new-session -A``: attach if session exists, create if not
     - ``-s <name>``: deterministic session name
+    - ``-e NAME=VALUE``: one per configured provider home, so a NEW session
+      gets this instance's values even on a server whose global environment
+      was frozen by an older backend (see ``_tmux_client_argv``)
 
     With ``attach_only=True`` the client runs ``attach-session -t =<name>``
     instead: it never creates anything, and exits immediately when the target
@@ -483,23 +525,18 @@ def spawn_tmux_pty(
         # env instead — handled by purge_tmux_global_env before the spawn.
         get_provider_helpers_registry().purge_env_vars(os.environ)
         sanitize_terminal_env(os.environ)
+        # Configured provider homes, explicit after the purges (same reason as
+        # in spawn_pty); also passed as ``-e`` below for the new-session case.
+        overlay = provider_env_overlay()
+        os.environ.update(overlay)
 
-        if attach_only:
-            os.execvp(tmux_path, [
-                "tmux",
-                "-L", tmux_socket_for(terminal_context),
-                "-f", config_arg,
-                "attach-session",
-                "-t", "=" + name,
-            ])
-        else:
-            os.execvp(tmux_path, [
-                "tmux",
-                "-L", tmux_socket_for(terminal_context),
-                "-f", config_arg,
-                "new-session", "-A",
-                "-s", name,
-            ])
+        os.execvp(tmux_path, _tmux_client_argv(
+            socket=tmux_socket_for(terminal_context),
+            config_arg=config_arg,
+            name=name,
+            attach_only=attach_only,
+            env_overlay=overlay,
+        ))
         os._exit(1)
 
     # ── Parent process ──

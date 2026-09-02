@@ -384,7 +384,7 @@ Process-control and batch-mutation subcommands are narrower on purpose: `process
 
 ## Run the provider CLIs directly
 
-`twicc claude [...]` and `twicc codex [...]` run the Claude Code or Codex CLI bundled with TwiCC, using your existing credentials. These are passthrough utilities (no dedicated skill).
+`twicc claude [...]` and `twicc codex [...]` run the Claude Code or Codex CLI bundled with TwiCC, using your existing credentials. They honour the instance's `.env`, provider homes included (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`), so they run against the same homes as the backend. These are passthrough utilities (no dedicated skill).
 
 ---
 

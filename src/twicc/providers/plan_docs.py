@@ -11,7 +11,7 @@ Path convention (mirrors the ``Session.plan_paths`` model comment): entries
 store a POSIX path relative to the session's project directory when the file
 lives under it (portable across worktree removal — the frontend falls back to
 the ``worktree_of`` parent project), and an absolute path otherwise (e.g. the
-native Claude plan under ``~/.claude/plans/``).
+native Claude plan under ``<claude home>/plans/``).
 """
 
 from __future__ import annotations

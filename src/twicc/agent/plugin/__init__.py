@@ -16,7 +16,7 @@ Claude Code consumes the plugin root directly via ``get_plugin_dir()``,
 passed to ``ClaudeAgentOptions(plugins=[...])`` per session.
 
 Codex requires marketplaces and plugin enable-state to be persisted in
-``~/.codex/config.toml`` (CLI overrides are ignored for those two sections
+``<codex home>/config.toml`` (CLI overrides are ignored for those two sections
 by design). TwiCC's Codex orchestrator therefore drives the official
 ``marketplace/add`` + ``plugin/install`` JSON-RPC at startup — see
 ``twicc.providers.codex.plugin_install``.

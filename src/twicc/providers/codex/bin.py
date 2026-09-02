@@ -58,13 +58,22 @@ def _codex_env() -> dict[str, str]:
     the app-server's tracing output via ``RUST_LOG`` — persisted per session
     by ``sdk_logger.attach_stderr_logging`` — unless the operator already
     exported their own ``RUST_LOG``.
+
+    Also carries the configured provider homes (``CODEX_HOME`` & co,
+    ``twicc.provider_homes.provider_env_overlay``): this one function covers
+    every app-server TwiCC spawns (agent manager, titles, credentials, trust,
+    plugin install, skill catalogue), so the invariant that a launched process
+    never touches another home holds here explicitly.
     """
+    from twicc.provider_homes import provider_env_overlay
+
     path_dir = str(codex_path_dir())
     existing = os.environ.get("PATH", "")
     env = {"PATH": f"{path_dir}{os.pathsep}{existing}" if existing else path_dir}
     debug = os.environ.get("TWICC_DEBUG", "").strip().lower() in ("1", "true", "yes")
     if debug and "RUST_LOG" not in os.environ:
         env["RUST_LOG"] = "codex_core=debug,codex_app_server=debug"
+    env.update(provider_env_overlay())
     return env
 
 
@@ -73,9 +82,13 @@ async def make_codex_config(*, cwd: str | None = None, **extra) -> CodexConfig:
 
     Async because the first call may trigger the one-time runtime download
     (run off the event loop). Every backend Codex entry point that builds a
-    ``CodexConfig`` uses this.
+    ``CodexConfig`` uses this. Also creates a configured ``CODEX_HOME`` when
+    missing: Codex refuses to start otherwise (nothing created, exit 1).
     """
+    from twicc.provider_homes import ensure_codex_home
+
     await ensure_codex_runtime()
+    ensure_codex_home()
     return CodexConfig(
         codex_bin=str(codex_binary_path()),
         env=_codex_env(),

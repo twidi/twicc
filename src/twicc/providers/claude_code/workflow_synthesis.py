@@ -27,8 +27,8 @@ import re
 import orjson
 
 from twicc.core.enums import Provider
+from twicc.provider_homes import claude_projects_dir
 
-from .helpers import ClaudeCodeHelpers
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ def detect_phase(prompt: str, templates: list[dict]) -> str | None:
 def _journal_path(project_id: str, session_id: str, run_id: str):
     """Path of a run's live resume journal (read-only; the watcher owns writes)."""
     return (
-        ClaudeCodeHelpers.PROJECTS_DIR
+        claude_projects_dir()
         / project_id
         / session_id
         / "subagents"
@@ -83,7 +83,7 @@ def _journal_path(project_id: str, session_id: str, run_id: str):
 def _wf_json_path(project_id: str, session_id: str, run_id: str):
     """Path of a run's completion envelope (``wf_<runId>.json``)."""
     return (
-        ClaudeCodeHelpers.PROJECTS_DIR / project_id / session_id / "workflows" / f"{run_id}.json"
+        claude_projects_dir() / project_id / session_id / "workflows" / f"{run_id}.json"
     )
 
 
@@ -105,7 +105,7 @@ def _script_start_time_ms(project_id: str, session_id: str, run_id: str) -> int 
     finished run reads ``startTime``/``durationMs`` straight from its wf_*.json.
     """
     scripts_dir = (
-        ClaudeCodeHelpers.PROJECTS_DIR / project_id / session_id / "workflows" / "scripts"
+        claude_projects_dir() / project_id / session_id / "workflows" / "scripts"
     )
     try:
         matches = sorted(scripts_dir.glob(f"*-{run_id}.js"))

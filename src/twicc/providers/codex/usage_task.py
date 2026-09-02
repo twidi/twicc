@@ -22,7 +22,7 @@ from twicc.usage_task import (
     wait_for_usage_resume,
 )
 
-from .credentials import CREDENTIALS_PATH
+from .credentials import credentials_path
 from .helpers import CodexHelpers
 from .usage import fetch_and_save_usage
 
@@ -88,7 +88,7 @@ async def start_usage_sync_task() -> None:
                 # keyring storage mode — there, refreshing makes the bundled codex
                 # binary rewrite the "Codex Auth" Keychain item, resetting its ACL
                 # and popping an unprompted authorization dialog (same issue as
-                # Claude Code). The CLI deletes ~/.codex/auth.json whenever it
+                # Claude Code). The CLI deletes <codex home>/auth.json whenever it
                 # switches to keyring, so the file's presence is a reliable, always-
                 # current signal of where the binary writes: file present → refresh
                 # rewrites the file (no prompt) → allow; file absent (keyring) →
@@ -96,7 +96,7 @@ async def start_usage_sync_task() -> None:
                 # because the mode can change at runtime (unlike Claude Code, which
                 # is always Keychain on macOS). The token is then refreshed by real
                 # sessions or on demand via the sidebar "Refresh now" button.
-                allow_refresh = sys.platform != "darwin" or CREDENTIALS_PATH.is_file()
+                allow_refresh = sys.platform != "darwin" or credentials_path().is_file()
                 snapshot = await fetch_and_save_usage(allow_refresh=allow_refresh)
                 if snapshot:
                     success = True

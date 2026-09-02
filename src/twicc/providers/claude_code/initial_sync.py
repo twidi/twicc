@@ -1,7 +1,8 @@
 """
 Synchronization logic for JSONL files from Claude Code projects.
 
-Scans :attr:`ClaudeCodeHelpers.PROJECTS_DIR` for projects and sessions and
+Scans the Claude Code projects dir (``<claude home>/projects/``, resolved by
+``twicc.provider_homes.claude_projects_dir()``) for projects and sessions and
 pushes initial-sync payloads onto the DB writer queue (which performs
 every DB write inside a single serialised coroutine). Producers in this
 module are strictly read-only on the DB side: they parse JSONL files, run
@@ -34,8 +35,8 @@ from twicc.providers.db_writer import (
     UpdateSessionPayload,
     UpsertWorkflowPayload,
 )
+from twicc.provider_homes import claude_projects_dir
 from twicc.sync_helpers import BackpressureSyncQueue, check_file_has_content, read_session_items_from_file
-from .helpers import ClaudeCodeHelpers
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def is_subagent_file(path: Path) -> bool:
 
 def scan_projects() -> set[str]:
     """Scan the projects directory and return the set of project folder names."""
-    projects_dir = ClaudeCodeHelpers.PROJECTS_DIR
+    projects_dir = claude_projects_dir()
     if not projects_dir.exists():
         return set()
     return {d.name for d in projects_dir.iterdir() if d.is_dir()}
@@ -82,7 +83,7 @@ def scan_sessions(project_id: str) -> dict[str, Path]:
 
     Returns a dict mapping session id (filename without extension) to Path.
     """
-    project_dir = ClaudeCodeHelpers.PROJECTS_DIR / project_id
+    project_dir = claude_projects_dir() / project_id
     if not project_dir.exists():
         return {}
     return {
@@ -103,7 +104,7 @@ def scan_subagents(project_id: str, session_id: str) -> dict[str, Path]:
     Keying by the eventual ``Session.id`` lets the caller diff against the DB
     rows uniformly, whatever their kind.
     """
-    subagents_dir = ClaudeCodeHelpers.PROJECTS_DIR / project_id / session_id / "subagents"
+    subagents_dir = claude_projects_dir() / project_id / session_id / "subagents"
     if not subagents_dir.exists():
         return {}
     result = {
@@ -133,7 +134,7 @@ def scan_workflow_files(project_id: str, session_id: str) -> dict[str, Path]:
     ``"wf_cd590ff1-f54"``) to the ``wf_*.json`` Path. The ``workflows/scripts/``
     subdirectory is skipped (only files at the root, ``is_file()``).
     """
-    workflows_dir = ClaudeCodeHelpers.PROJECTS_DIR / project_id / session_id / "workflows"
+    workflows_dir = claude_projects_dir() / project_id / session_id / "workflows"
     if not workflows_dir.is_dir():
         return {}
     return {
@@ -203,7 +204,7 @@ def _sync_session_subagents(
                 id=agent_id,
                 project_id=project.id,  # FK by id — DB writer ensures project exists first
                 provider=Provider.CLAUDE_CODE,
-                file_path=str(file_path.relative_to(ClaudeCodeHelpers.PROJECTS_DIR)),
+                file_path=str(file_path.relative_to(claude_projects_dir())),
                 type=SessionType.SUBAGENT,
                 parent_session_id=session.id,
             )
@@ -390,7 +391,7 @@ def sync_project(
             id=session_id,
             project_id=project_id,
             provider=Provider.CLAUDE_CODE,
-            file_path=str(file_path.relative_to(ClaudeCodeHelpers.PROJECTS_DIR)),
+            file_path=str(file_path.relative_to(claude_projects_dir())),
             type=SessionType.SESSION,
         )
         to_insert = read_session_items_from_file(session, file_path)
@@ -492,7 +493,7 @@ def sync_all(
     stop_event: threading.Event | None = None,
 ) -> dict[str, int]:
     """
-    Synchronize all projects from :attr:`ClaudeCodeHelpers.PROJECTS_DIR`.
+    Synchronize all projects from the Claude Code projects dir (``claude_projects_dir()``).
 
     Pushes payloads onto ``sync_queue`` (the DB writer drains them).
     Producer-side reads are safe under WAL even while the DB writer is

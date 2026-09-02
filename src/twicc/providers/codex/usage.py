@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 USAGE_API_URL = "https://chatgpt.com/backend-api/wham/usage"
 
 # Headers the endpoint expects. The OAuth bearer is the ChatGPT
-# ``access_token`` from ``~/.codex/auth.json``; ``ChatGPT-Account-Id``
+# ``access_token`` from ``<codex home>/auth.json``; ``ChatGPT-Account-Id``
 # is the matching ``account_id``. Origin/Referer/User-Agent mimic a
 # browser context — the endpoint rejects bare requests without them.
 USAGE_API_BASE_HEADERS = {

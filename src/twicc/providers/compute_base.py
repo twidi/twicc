@@ -978,7 +978,7 @@ class BaseSessionCompute:
 
         Runs in the background-compute worker only (it may stat the disk),
         right before the authoritative ``plan_paths`` rebuild — Claude Code
-        probes the native plan file (``~/.claude/plans/<slug>.md``) here,
+        probes the native plan file (``<claude home>/plans/<slug>.md``) here,
         using ``last_slug`` accumulated from the replay (the row's ``slug``
         may be stale at this point). Returns ``(event, timestamp)`` pairs.
         Default: none.

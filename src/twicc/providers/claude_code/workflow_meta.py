@@ -1,7 +1,7 @@
 """Extract the ``export const meta = {...}`` block from a saved Claude Code
 workflow ``.js`` file, in pure Python.
 
-Saved workflows live as ``.js`` files — globally in ``~/.claude/workflows/``
+Saved workflows live as ``.js`` files — globally in ``<claude home>/workflows/``
 and per-project in ``<project>/.claude/workflows/`` — and are invocable like
 slash commands. Each script starts with an ``export const meta = {...}``
 object literal carrying (at least) ``name`` and ``description``. Command

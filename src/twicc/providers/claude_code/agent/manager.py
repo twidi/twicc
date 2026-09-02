@@ -372,8 +372,10 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         A clean shutdown now kills each hybrid tmux (best-effort, see
         ``HybridClaudeAgent.kill``), so a survivor here means the kill didn't
         land or TwiCC was hard-killed (SIGKILL/OOM) before reaching it. The
-        dedicated ``-L twicc-hybrid`` socket keeps such a claude running across
-        the restart; we re-bind to it instead of losing the session. Called
+        dedicated hybrid socket (``HYBRID_TMUX_SOCKET_NAME``, per data dir —
+        so this scan never sees, nor kills, another instance's hybrid CLIs)
+        keeps such a claude running across the restart; we re-bind to it
+        instead of losing the session. Called
         once at boot, after the stale-ProcessRun cleanup and BEFORE the
         hybrid-hooks watcher's boot scan, so a leftover PermissionRequest event
         of a still-pending prompt reaches its adopted agent.

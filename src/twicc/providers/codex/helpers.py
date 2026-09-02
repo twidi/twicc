@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from decimal import Decimal
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import orjson
@@ -158,12 +157,11 @@ class CodexHelpers(BaseProviderHelpers):
     # ("HH:MM", empty = off). See :meth:`warm_up_quota`.
     QUOTA_WAKEUP_SETTING_KEY: ClassVar[str | None] = "codexQuotaWakeupTime"
 
-    # Filesystem source for Codex session JSONL files. The Codex CLI
-    # writes one folder per ``YYYY/MM/DD`` (not per-project, unlike
-    # Claude Code), with one ``rollout-*.jsonl`` per session. Read by
-    # the initial sync; not exposed through the registry because it has
-    # no cross-provider meaning.
-    SESSIONS_DIR: ClassVar[Path] = Path.home() / ".codex" / "sessions"
+    # The session JSONL files live under ``<codex home>/sessions/`` (one
+    # folder per ``YYYY/MM/DD`` — not per project, unlike Claude Code — with
+    # one ``rollout-*.jsonl`` per session): read via
+    # ``twicc.provider_homes.codex_sessions_dir()`` at call time, never an
+    # import-time constant (the home is configurable per instance).
 
     OPENROUTER_MODEL_PREFIX: ClassVar[str | None] = "openai/"
 

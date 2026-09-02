@@ -1,7 +1,8 @@
 """Register the TwiCC marketplace and (re)install the TwiCC plugin in Codex.
 
 Codex requires marketplaces and plugin enable-state to live in the user
-config (``~/.codex/config.toml``): CLI overrides are explicitly ignored for
+config (``<codex home>/config.toml``, the app-server receives this instance's
+``CODEX_HOME``): CLI overrides are explicitly ignored for
 these two sections (see ``core-plugins/src/manager.rs:1979`` and
 ``installed_marketplaces.rs:21-23``). We therefore drive the official
 JSON-RPC ``marketplace/add`` + ``plugin/install`` methods at TwiCC startup,
@@ -85,7 +86,7 @@ async def ensure_twicc_plugin_installed() -> None:
         async with AsyncCodexClient(config=config) as client:
             await client.initialize()
 
-            # 1. Register the marketplace in ``~/.codex/config.toml``.
+            # 1. Register the marketplace in ``<codex home>/config.toml``.
             #
             # ``marketplace/add`` only stays idempotent while the registered
             # ``source`` path is unchanged. TwiCC's plugin lives under a

@@ -2,10 +2,11 @@
 Provider-agnostic file watcher for JSONL session files.
 
 Each provider stores session files under a native directory layout below its
-own ``projects_dir`` (e.g. Claude Code uses ``~/.claude/projects/``). A
-provider-specific subclass of :class:`BaseSessionsWatcher` plugs that layout
-in by overriding :meth:`BaseSessionsWatcher.parse_session_file` and the
-``projects_dir`` class attribute. The base class owns the watchfiles loop,
+own ``projects_dir`` (e.g. Claude Code uses ``<claude home>/projects/``, resolved
+from ``twicc.provider_homes``). A provider-specific subclass of
+:class:`BaseSessionsWatcher` plugs that layout in by overriding
+:meth:`BaseSessionsWatcher.parse_session_file` and setting the ``projects_dir``
+instance attribute in its ``__init__``. The base class owns the watchfiles loop,
 ORM updates, WebSocket broadcasts, full-text search indexing, and the
 projects-dir polling phase — all generic across providers.
 
@@ -22,7 +23,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
@@ -234,7 +235,10 @@ class BaseSessionsWatcher:
     stepping on each other.
     """
 
-    projects_dir: ClassVar[Path]
+    # Set by each subclass's ``__init__`` from ``twicc.provider_homes`` — an
+    # instance attribute resolved at instantiation, never a class-level constant
+    # evaluated at import (the provider home is configurable per instance).
+    projects_dir: Path
 
     def __init__(self) -> None:
         self._stop_event: asyncio.Event | None = None

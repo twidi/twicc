@@ -56,12 +56,16 @@ async def _call_haiku(
 
     full_prompt = system_prompt.replace("{text}", user_message)
 
+    from twicc.provider_homes import provider_env_overlay
+
     options = ClaudeAgentOptions(
         model="haiku",
         permission_mode="default",
         extra_args={"no-session-persistence": None},
         allowed_tools=[],
         effort='low',
+        # Configured provider homes, explicit (see the SDK agent's env_option).
+        env=provider_env_overlay(),
     )
 
     client = ClaudeSDKClient(options=options)

@@ -25,6 +25,7 @@ from twicc.core.enums import ItemKind, Provider
 from twicc.core.models import Session, SessionItem, SessionType
 from twicc.paths import get_artifacts_dir
 from twicc.pricing import calculate_line_context_usage
+from twicc.provider_homes import claude_plans_dir, claude_projects_dir
 from twicc.providers.compute_base import (
     _EMPTY_ANALYSIS,
     _EMPTY_FILE_PATHS,
@@ -400,11 +401,7 @@ def _agent_launch_tool_use_id_from_sidecar(session_id: str, task_id: str) -> str
     )
     if not file_path:
         return None
-    # Local import dodges the compute↔helpers cycle (``helpers`` imports
-    # this module at top level) — same pattern as extra_session_fields.
-    from .helpers import ClaudeCodeHelpers
-
-    session_file = ClaudeCodeHelpers.PROJECTS_DIR / file_path
+    session_file = claude_projects_dir() / file_path
     if session_file.parent.name == 'subagents':
         # Nested case: the notification sits in a subagent's own file; its
         # children's sidecars live in the same flat subagents/ directory.
@@ -774,13 +771,10 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         # the same flag live when a ``wf_*.json`` first appears.
         if session.type != SessionType.SESSION or not session.file_path:
             return {}
-        # ``file_path`` is ``<project_id>/<session_id>.jsonl`` relative to
-        # PROJECTS_DIR; dropping the ``.jsonl`` suffix yields the session's
-        # sibling folder. Local import dodges the compute↔helpers cycle
-        # (``helpers`` imports this module at top level).
-        from .helpers import ClaudeCodeHelpers
-
-        session_folder = ClaudeCodeHelpers.PROJECTS_DIR / Path(session.file_path).with_suffix("")
+        # ``file_path`` is ``<project_id>/<session_id>.jsonl`` relative to the
+        # projects dir; dropping the ``.jsonl`` suffix yields the session's
+        # sibling folder.
+        session_folder = claude_projects_dir() / Path(session.file_path).with_suffix("")
         if session_folder_has_workflow_json(session_folder):
             return {"has_workflows": True}
         return {}
@@ -823,15 +817,13 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         self, session: Session, *, last_slug: str | None,
     ) -> list[tuple[DocEditEvent, datetime | str | None]]:
         # The native plan-mode file is written by the Claude CLI itself (no
-        # tool call in the JSONL): probe ``~/.claude/plans/<slug>.md`` so the
-        # authoritative rebuild seeds/keeps its entry. The plans watcher
+        # tool call in the JSONL): probe ``<claude home>/plans/<slug>.md`` so
+        # the authoritative rebuild seeds/keeps its entry. The plans watcher
         # latches the same entry live.
-        from .constants import PLANS_DIR
-
         slug = last_slug or session.slug
         if not slug:
             return []
-        plan_path = PLANS_DIR / f"{slug}.md"
+        plan_path = claude_plans_dir() / f"{slug}.md"
         try:
             mtime = plan_path.stat().st_mtime
         except OSError:

@@ -6,7 +6,7 @@ that plugs in Codex's directory layout and compute object. Everything else
 (watchfiles loop, ORM updates, broadcasts, search indexing, polling) lives
 in the base.
 
-Codex uses a date-based layout — ``~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl``
+Codex uses a date-based layout — ``<codex home>/sessions/YYYY/MM/DD/rollout-*.jsonl``
 — with no per-project subfolder, so we cannot derive ``project_id`` from
 the path itself. :meth:`CodexSessionsWatcher.parse_session_file` instead
 reads the first JSONL line (the ``session_meta`` event) to recover the
@@ -25,13 +25,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import ClassVar
 
 import orjson
 from asgiref.sync import sync_to_async
 
 from twicc.core.models import SessionItem, SessionType
 from twicc.paths import path_to_project_id
+from twicc.provider_homes import codex_sessions_dir
 from twicc.providers.compute_base import BaseSessionCompute
 from twicc.providers.sessions_watcher import (
     BaseSessionsWatcher,
@@ -39,14 +39,13 @@ from twicc.providers.sessions_watcher import (
 )
 
 from .compute import get_compute as _get_compute
-from .helpers import CodexHelpers
 from .initial_sync import extract_session_meta, is_session_file
 
 logger = logging.getLogger(__name__)
 
 
 class CodexSessionsWatcher(BaseSessionsWatcher):
-    """File watcher for Codex's ``~/.codex/sessions/`` layout.
+    """File watcher for Codex's ``<codex home>/sessions/`` layout.
 
     Recognized layout: ``YYYY/MM/DD/rollout-<uuid>.jsonl`` →
     :class:`SessionType.SESSION` or :class:`SessionType.SUBAGENT` when the
@@ -56,7 +55,11 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
     discriminated solely by that field.
     """
 
-    projects_dir: ClassVar[Path] = CodexHelpers.SESSIONS_DIR
+    def __init__(self) -> None:
+        super().__init__()
+        # Resolved at instantiation (``get_watcher()`` creates the singleton
+        # lazily), never at import: the home is configurable per instance.
+        self.projects_dir = codex_sessions_dir()
 
     async def parse_session_file(self, path: Path) -> ParsedSessionFile | None:
         if not is_session_file(path):
@@ -67,8 +70,8 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         except ValueError:
             return None
 
-        # Codex stores files under YYYY/MM/DD/, never directly under
-        # SESSIONS_DIR. Anything shallower is unrecognized.
+        # Codex stores files under YYYY/MM/DD/, never directly under the
+        # sessions dir. Anything shallower is unrecognized.
         if len(relative.parts) < 2:
             return None
 

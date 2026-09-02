@@ -94,7 +94,8 @@ class Project(models.Model):
     )
     # ---- Cross-provider trust ---------------------------------------
     # The DB is the source of truth; the provider configs (~/.claude.json,
-    # ~/.codex/config.toml) are a write-mostly projection. The effective trust
+    # ~/.codex/config.toml, or their equivalents under the configured provider
+    # homes) are a write-mostly projection. The effective trust
     # of a NULL (inherited) project is always computed live, never stored.
     # See docs/plans/2026-06-09-project-trust-design.md.
     #
@@ -382,7 +383,8 @@ class Session(models.Model):
     )
     provider = models.CharField(max_length=50, db_index=True)  # Backend provider (see Provider enum)
     # Provider-relative path to the JSONL file (relative to the provider's data root,
-    # e.g. ~/.claude/projects/ for claude_code, ~/.codex/sessions/ for codex). The file
+    # e.g. ~/.claude/projects/ for claude_code, ~/.codex/sessions/ for codex — or the
+    # same subfolder of a configured provider home, see twicc.provider_homes). The file
     # path is stored explicitly because it cannot always be derived from the session id
     # alone (e.g. codex files are organised by date, not by project). Unique because
     # one JSONL file maps to exactly one session — the unique constraint also covers
@@ -525,7 +527,7 @@ class Session(models.Model):
     # is POSIX-relative to the session's project directory when the file lives
     # under it (portable across worktree removal — resolution falls back to
     # the ``worktree_of`` parent project), absolute otherwise (e.g. the native
-    # Claude plan under ~/.claude/plans/). ``exists`` is the last probed
+    # Claude plan under ~/.claude/plans/ or the configured home). ``exists`` is the last probed
     # existence (refreshed by both compute paths and the plans watcher);
     # ``created_at``/``updated_at`` are ISO timestamps of the first/last JSONL
     # line that touched the file. ``source`` is ``"claude_plan"`` for the

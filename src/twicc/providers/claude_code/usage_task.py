@@ -65,7 +65,8 @@ async def start_usage_sync_task() -> None:
 
     # On macOS, never auto-refresh the OAuth token from this background loop.
     # Refreshing makes the bundled ``claude`` CLI rewrite the
-    # "Claude Code-credentials" Keychain item, which resets its ACL and pops a
+    # "Claude Code-credentials" Keychain item (hash-suffixed under a relocated
+    # home, see provider_homes.claude_keychain_service), which resets its ACL and pops a
     # macOS authorization prompt at an unpredictable time (no active session) —
     # the exact symptom users complain about. The token is instead refreshed by
     # real agent sessions, or on demand via the sidebar "Refresh now" button

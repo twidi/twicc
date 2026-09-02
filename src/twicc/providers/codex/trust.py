@@ -1,4 +1,8 @@
-"""Read/write the Codex per-project ``trust_level`` in ``~/.codex/config.toml``.
+"""Read/write the Codex per-project ``trust_level`` in ``<codex home>/config.toml``.
+
+``<codex home>`` is ``~/.codex`` or the configured ``CODEX_HOME``
+(``twicc.provider_homes.codex_home``); the write goes through the app-server,
+which receives the same ``CODEX_HOME``.
 
 Read = the project's own ``[projects."<root>"].trust_level`` via ``tomllib``.
 Write = the app-server RPC ``config/batchWrite`` (so the Codex binary owns the
@@ -25,7 +29,9 @@ _write_lock = asyncio.Lock()
 
 
 def _config_path() -> Path:
-    return Path.home() / ".codex" / "config.toml"
+    from twicc.provider_homes import codex_home
+
+    return codex_home().path / "config.toml"
 
 
 def read_trust(root: str) -> bool | None:

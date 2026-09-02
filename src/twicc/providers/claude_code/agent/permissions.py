@@ -137,7 +137,7 @@ async def maybe_update_plan_file(
     into the ExitPlanMode tool input itself (verified in transcripts since
     ~2.1.91), present in both the SDK ``can_use_tool`` input and the hybrid
     hook payload. The slug lookup (``slug_getter(session_id)`` →
-    ``~/.claude/plans/{slug}.md``) is a legacy fallback for older payloads;
+    ``<claude home>/plans/{slug}.md``) is a legacy fallback for older payloads;
     only the SDK caller provides it.
     """
     tool_input = tool_input or {}
@@ -159,7 +159,9 @@ async def maybe_update_plan_file(
                 session_id,
             )
             return
-        plan_file = Path.home() / ".claude" / "plans" / f"{slug}.md"
+        from twicc.provider_homes import claude_plans_dir
+
+        plan_file = claude_plans_dir() / f"{slug}.md"
 
     if not plan_file.exists():
         logger.warning("Plan file does not exist: %s", plan_file)

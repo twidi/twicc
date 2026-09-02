@@ -2,7 +2,8 @@
 
 A user-facing terminal (the Files/Git/Terminal layout tabs, or a project /
 workspace / global terminal) spins up a persistent ``twicc-*`` tmux session on
-the shared ``twicc`` socket. tmux sessions survive the WebSocket close (a close
+this instance's terminal socket (``terminal.TMUX_SOCKET_NAME``: ``twicc`` on the
+default data dir, suffixed per data dir otherwise). tmux sessions survive the WebSocket close (a close
 only *detaches*), with no idle reaper — so merely *viewing* a session's terminal
 without ever running anything in it leaks a tmux session that lives until the
 process or machine restarts. This task reaps those.
@@ -18,8 +19,8 @@ A session is reaped only when it is genuinely waste, i.e. **all** of:
 - **Stale** — created more than :data:`UNUSED_TMUX_MAX_AGE_SECONDS` ago.
 
 **Hybrid Claude CLI sessions are out of scope by construction**: they live on a
-*separate* tmux socket (``twicc-hybrid``); this task only ever talks to the
-``twicc`` socket, so it never even sees them.
+*separate* tmux socket (``HYBRID_TMUX_SOCKET_NAME``); this task only ever talks
+to the terminal socket, so it never even sees them.
 
 **Grandfathering** — ``@twicc_used`` is only set going forward (from the first
 input after this feature shipped). Sessions that already existed when it shipped
@@ -32,9 +33,9 @@ under the new code are unaffected.
 All tmux calls + the sentinel I/O are blocking, so each cycle runs on a worker
 thread via :func:`asyncio.to_thread`. No DB access.
 
-Gated by ``settings.TMUX_CLEANUP_ENABLED`` (env ``TWICC_NO_TMUX_CLEANUP``):
-devctl sets the flag in worktree mode, where the ``twicc`` tmux socket is shared
-per-user with the main instance — only the main instance owns the reaping.
+Gated by ``settings.TMUX_CLEANUP_ENABLED`` (env ``TWICC_NO_TMUX_CLEANUP``). The
+socket is per data dir, so a worktree instance only ever sees — and reaps — its
+own sessions; the flag is a manual opt-out, not something devctl sets.
 """
 
 from __future__ import annotations
@@ -60,10 +61,10 @@ _GRANDFATHER_MARKER = ".tmux-reaper-grandfathered"
 
 
 def _tmux_base() -> list[str] | None:
-    """``[tmux, -L, twicc]`` argv prefix, or ``None`` when tmux is unavailable.
+    """``[tmux, -L, <terminal socket>]`` argv prefix, or ``None`` when tmux is unavailable.
 
-    Always the *main* ``twicc`` socket — never ``twicc-hybrid`` — so hybrid
-    Claude CLI sessions are out of scope by construction.
+    Always the *terminal* socket (``TMUX_SOCKET_NAME``) — never the hybrid one
+    — so hybrid Claude CLI sessions are out of scope by construction.
     """
     from twicc.terminal import TMUX_SOCKET_NAME, get_tmux_path
 
@@ -74,7 +75,7 @@ def _tmux_base() -> list[str] | None:
 
 
 def _run_tmux(args: list[str]) -> subprocess.CompletedProcess | None:
-    """Run one ``tmux -L twicc <args>``; ``None`` on missing tmux / timeout / OS error."""
+    """Run one ``tmux -L <terminal socket> <args>``; ``None`` on missing tmux / timeout / OS error."""
     base = _tmux_base()
     if base is None:
         return None

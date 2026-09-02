@@ -1,11 +1,12 @@
 """Tmux primitives for hybrid CLI sessions.
 
 A hybrid session owns exactly one tmux session named ``twicc-hybrid-<id>``
-(sanitized), on the dedicated ``-L twicc-hybrid`` socket (separate from the
-Terminal panel's ``-L twicc`` so the user's custom tmux config never reaches
-the Claude TUI), whose single pane runs the Claude CLI directly (via ``exec``)
-so the pane PID *is* the claude PID and ``pane_dead`` flips when claude exits
-(``remain-on-exit on``).
+(sanitized), on the dedicated hybrid socket (``HYBRID_TMUX_SOCKET_NAME``:
+``twicc-hybrid`` on the default data dir, suffixed per instance otherwise —
+separate from the Terminal panel's socket so the user's custom tmux config
+never reaches the Claude TUI), whose single pane runs the Claude CLI directly
+(via ``exec``) so the pane PID *is* the claude PID and ``pane_dead`` flips when
+claude exits (``remain-on-exit on``).
 
 All functions are sync — callers wrap them with ``asyncio.to_thread``.
 """
@@ -17,6 +18,7 @@ import shlex
 import subprocess
 import time
 
+from twicc.provider_homes import provider_env_overlay
 from twicc.terminal import HYBRID_TMUX_SOCKET_NAME, get_tmux_path
 
 logger = logging.getLogger(__name__)
@@ -51,16 +53,46 @@ _PURGED_ENV_NAMES = (
 # above. Names listed here are excluded from the prefix purge so our value stays
 # authoritative even when the same name is inherited (these start with the
 # purged ``CLAUDE_CODE`` prefix, so the assignment must win over the ``-u``).
-_HYBRID_LAUNCH_ENV: dict[str, str] = {
+_HYBRID_STATIC_LAUNCH_ENV: dict[str, str] = {
     # Suppress the CLI's full-screen repaint flicker in the embedded xterm.
     "CLAUDE_CODE_NO_FLICKER": "1",
 }
+
+
+def _hybrid_launch_env() -> dict[str, str]:
+    """The forced launch vars: the static ones plus the configured provider homes.
+
+    The ``NAME=VALUE`` assignments win over the tmux server's frozen
+    environment (the server keeps the env of whoever first started it), so a
+    hybrid CLI always runs against this instance's ``CLAUDE_CONFIG_DIR`` & co.
+    """
+    return {**_HYBRID_STATIC_LAUNCH_ENV, **provider_env_overlay()}
 
 
 def _purged_env_names() -> list[str]:
     names = {name for name in os.environ if name.startswith(_PURGED_ENV_PREFIXES)}
     names.update(_PURGED_ENV_NAMES)
     return sorted(names)
+
+
+def launch_command(argv: list[str]) -> str:
+    """The pane command: ``exec env -u VAR… NAME=VALUE… <argv>`` (pure, testable).
+
+    ``exec env`` ensures the ``sh -c`` wrapper is replaced, the purged
+    variables never reach claude (regardless of the tmux server env), and the
+    forced launch vars are set authoritatively.
+    """
+    forced = _hybrid_launch_env()
+    unsets: list[str] = []
+    for var in _purged_env_names():
+        # A forced var is set below; never also unset it (it would be ambiguous
+        # whether the ``-u`` or the assignment wins across env implementations).
+        if var in forced:
+            continue
+        unsets += ["-u", var]
+    assignments = [f"{key}={value}" for key, value in forced.items()]
+    env_args = unsets + assignments
+    return "exec env " + shlex.join(env_args + argv) if env_args else "exec " + shlex.join(argv)
 
 
 def hybrid_tmux_session_name(session_id: str) -> str:
@@ -94,21 +126,10 @@ def session_exists(session_id: str) -> bool:
 def create_session(session_id: str, cwd: str, argv: list[str]) -> None:
     """Create the tmux session running ``argv`` directly as the pane command.
 
-    ``exec env -u VAR… NAME=VALUE…`` ensures the ``sh -c`` wrapper is replaced,
-    the purged variables never reach claude (regardless of the tmux server env),
-    and the forced launch vars are set authoritatively.
+    See :func:`launch_command` for the ``exec env`` wrapper.
     """
     name = hybrid_tmux_session_name(session_id)
-    unsets: list[str] = []
-    for var in _purged_env_names():
-        # A forced var is set below; never also unset it (it would be ambiguous
-        # whether the ``-u`` or the assignment wins across env implementations).
-        if var in _HYBRID_LAUNCH_ENV:
-            continue
-        unsets += ["-u", var]
-    assignments = [f"{key}={value}" for key, value in _HYBRID_LAUNCH_ENV.items()]
-    env_args = unsets + assignments
-    command = "exec env " + shlex.join(env_args + argv) if env_args else "exec " + shlex.join(argv)
+    command = launch_command(argv)
     base = _tmux_base()
     # NEVER load the user's custom tmux config (``terminalTmuxConfigPath``) for
     # the hybrid CLI pane. That setting is meant for the user's own Terminal
@@ -135,6 +156,42 @@ def create_session(session_id: str, cwd: str, argv: list[str]) -> None:
     # The embedded composer terminal shows ONLY the claude TUI — the tmux
     # status bar would waste a line and wrap noisily at narrow widths.
     _run(["set-option", "-t", target, "status", "off"])
+
+
+def read_process_environ(pid: int) -> dict[str, str] | None:
+    """Best-effort environment of a live process, or ``None`` when unreadable.
+
+    Linux: ``/proc/<pid>/environ``. macOS: ``ps -Eww`` (the environment is
+    appended to the command line as ``NAME=VALUE`` words; only unambiguous
+    words are kept). Used at boot adoption to warn when a surviving hybrid CLI
+    runs against provider homes that differ from this instance's.
+    """
+    try:
+        raw = open(f"/proc/{pid}/environ", "rb").read()
+    except OSError:
+        raw = None
+    if raw is not None:
+        env: dict[str, str] = {}
+        for chunk in raw.split(b"\0"):
+            if b"=" in chunk:
+                key, _, value = chunk.decode("utf-8", errors="replace").partition("=")
+                env[key] = value
+        return env
+    try:
+        result = subprocess.run(
+            ["ps", "-Eww", "-o", "command=", "-p", str(pid)],
+            capture_output=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    env = {}
+    for word in result.stdout.decode("utf-8", errors="replace").split():
+        if "=" in word and not word.startswith("="):
+            key, _, value = word.partition("=")
+            env[key] = value
+    return env
 
 
 def pane_status(session_id: str) -> tuple[int | None, bool]:

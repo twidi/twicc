@@ -9,9 +9,20 @@ import os
 
 import typer
 
-from twicc.cli._drop_request.project import derive_project_id
-from twicc.cli._output import emit_error
-from twicc.version import get_version
+from twicc.paths import ensure_env_loaded, get_env_load_warnings
+
+# Load the instance ``.env`` into the environment BEFORE any command module is
+# imported: ``twicc/__init__.py`` imports this package, so this runs on any
+# ``import twicc``, and the command modules below pull the provider modules
+# (``create_session.command`` → ``_drop_request/help_context`` →
+# ``providers.*.constants``). Only the load happens at import; validation,
+# warning output and any exit happen in ``main()`` (a module-level exit would
+# kill every Django-only entry point during package import).
+ensure_env_loaded()
+
+from twicc.cli._drop_request.project import derive_project_id  # noqa: E402
+from twicc.cli._output import emit_error  # noqa: E402
+from twicc.version import get_version  # noqa: E402
 
 # Ensure Django settings are discoverable for all subcommands that call django.setup().
 # Force to twicc.settings unless already set to a twicc-specific variant (e.g. for tests).
@@ -1603,4 +1614,20 @@ def main() -> None:
         code = maybe_forward(argv)
         if code is not None:
             raise SystemExit(code)
+
+    # The ``.env`` was loaded at package import; surface what it dropped, then
+    # fail fast on an unusable provider home — for EVERY local invocation
+    # (server, ``twicc claude`` / ``twicc codex``, drop-request commands,
+    # ``--version`` / ``--help`` included), before any Django setup or
+    # traceback. A remote-forwarded command (above) must not be blocked by a
+    # broken local ``.env``.
+    for warning in get_env_load_warnings():
+        print(f"Warning: {warning}", file=sys.stderr)
+    from twicc.provider_homes import ProviderHomeConfigError, validate
+
+    try:
+        validate()
+    except ProviderHomeConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     app()

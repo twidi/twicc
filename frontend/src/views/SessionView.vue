@@ -465,7 +465,7 @@ const hasGitRepo = computed(() =>
 const hasSpawnRoot = computed(() => !!session.value?.spawn_root)
 
 // Whether the session has a provider plan file on disk (Claude Code:
-// ~/.claude/plans/<slug>.md). Drives the read-only Plan tab's visibility.
+// <claude home>/plans/<slug>.md). Drives the read-only Plan tab's visibility.
 // Unlike artifacts, this is NOT monotonic — it flips back to false (and the tab
 // disappears) when the plan file is deleted, via the plan_gone WS message.
 // Plan tab presence: any tracked plan-like document (Session.plan_paths —

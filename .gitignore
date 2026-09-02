@@ -221,6 +221,8 @@ Thumbs.db
 
 # Data directory (database, search index, SDK logs) — used in worktrees
 db/
+# tmux reaper sentinel, written at the data dir root (the worktree root in worktree mode)
+.tmux-reaper-grandfathered
 search-index/
 
 # Session artifacts, scratch space and artifact-share snapshots — data-dir

@@ -867,7 +867,7 @@ class ClaudeCodeAgent(BaseAgent):
             "Starting process for session %s (resume=%s)", self.session_id, resume
         )
 
-        # If ~/.claude/projects/ doesn't exist yet, the watcher is currently
+        # If <claude home>/projects/ doesn't exist yet, the watcher is currently
         # in slow-poll mode (30s). The SDK is about to create that directory
         # for this session — boost the watcher to 5s so we pick up the new
         # JSONL file quickly.
@@ -973,7 +973,7 @@ class ClaudeCodeAgent(BaseAgent):
 
             # Always pass ``fastMode`` explicitly (true or false) via the
             # flag-settings layer so the per-session choice overrides any
-            # ``/fast`` toggle persisted in the user's ``~/.claude/settings.json``.
+            # ``/fast`` toggle persisted in the user's ``<claude home>/settings.json``.
             # Inline JSON is accepted by the SDK transport when the string
             # starts with ``{`` (see ``_build_settings_value`` in the SDK's
             # ``subprocess_cli``).
@@ -1059,6 +1059,13 @@ class ClaudeCodeAgent(BaseAgent):
             env_option = {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
             if _mcp_on:
                 env_option["MCP_TOOL_TIMEOUT"] = "600000"
+            # Configured provider homes (CLAUDE_CONFIG_DIR & co): explicit even
+            # though os.environ inheritance would carry them — the invariant
+            # that a launched process never touches another home must not
+            # depend on what a purge leaves behind.
+            from twicc.provider_homes import provider_env_overlay
+
+            env_option.update(provider_env_overlay())
 
             options = ClaudeAgentOptions(
                 system_prompt=system_prompt_option,

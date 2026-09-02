@@ -7,6 +7,16 @@ the single injected ``PermissionRequest`` hook, forced file checkpointing,
 the temp title and the attachments directory.
 
 All flags verified empirically on the bundled CLI 2.1.170 (design doc §3.2).
+
+**Fresh provider home caveat** (verified on CLI 2.1.258, 2026-09-02): in a
+Claude home that has never run the CLI — a relocated ``CLAUDE_CONFIG_DIR``
+(``twicc.provider_homes``), or a first install — the pane opens on the CLI's
+own onboarding wizard (theme, then login method) instead of the composer, so
+the first message is never submitted and no JSONL is written. That state lives
+in the home's ``.claude.json`` and is the CLI's to own: TwiCC deliberately
+seeds nothing (writing a partial ``.claude.json`` risks a CLI that disagrees
+with its own schema). The user answers the wizard once, in the embedded
+terminal. SDK sessions are unaffected — only the interactive CLI onboards.
 """
 
 import shlex

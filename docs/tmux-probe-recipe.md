@@ -8,9 +8,10 @@ future investigation of CLI behavior.
 
 ## Principles
 
-- **Isolation:** dedicated tmux socket (`-L twicc-probe` — never the real
-  `-L twicc`), throwaway cwd (e.g. `/tmp/twicc-cwd-test`), `kill-server`
-  before and after each run.
+- **Isolation:** dedicated tmux socket (`-L twicc-probe` — never a real
+  instance socket: `-L twicc` for `~/.twicc`, `-L twicc-<sha8>` for a worktree,
+  see `paths.tmux_socket_suffix`), throwaway cwd (e.g. `/tmp/twicc-cwd-test`),
+  `kill-server` before and after each run.
 - **One probe = one script**, run in the background (it is full of `sleep`s);
   read its output when it completes. Print everything you will want to assert
   on — pane captures, file listings, JSONL extracts — as you go.

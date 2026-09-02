@@ -94,13 +94,10 @@ class TestClaudeCodeDocEdits:
     def test_non_assistant_line(self, claude):
         assert claude.extract_doc_edit_events({'type': 'user', 'message': {'content': 'hi'}}, cwd='/repo') == []
 
-    def test_extra_events_native_plan(self, claude, tmp_path, monkeypatch):
-        from twicc.providers.claude_code import constants
-
-        plans_dir = tmp_path / 'plans'
+    def test_extra_events_native_plan(self, claude, provider_home):
+        plans_dir = provider_home.claude / 'plans'
         plans_dir.mkdir()
         (plans_dir / 'my-slug.md').write_text('# plan')
-        monkeypatch.setattr(constants, 'PLANS_DIR', plans_dir)
 
         from twicc.core.models import Session
         session = Session(slug=None)
@@ -112,10 +109,7 @@ class TestClaudeCodeDocEdits:
         assert event.source == 'claude_plan'
         assert timestamp is not None
 
-    def test_extra_events_no_slug_or_missing_file(self, claude, tmp_path, monkeypatch):
-        from twicc.providers.claude_code import constants
-        monkeypatch.setattr(constants, 'PLANS_DIR', tmp_path)
-
+    def test_extra_events_no_slug_or_missing_file(self, claude, provider_home):
         from twicc.core.models import Session
         assert claude.extra_doc_edit_events(Session(slug=None), last_slug=None) == []
         assert claude.extra_doc_edit_events(Session(slug='gone'), last_slug=None) == []

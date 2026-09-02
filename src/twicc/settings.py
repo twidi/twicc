@@ -4,9 +4,10 @@ import shutil
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
-from twicc.paths import ensure_data_dirs, get_backend_log_path, get_db_path, get_env_path
+from twicc import provider_homes
+from twicc.paths import ensure_data_dirs, ensure_env_loaded, get_backend_log_path, get_db_path
 from twicc.secret_key import load_or_create_secret_key
 from twicc.version import get_version
 
@@ -131,9 +132,25 @@ TWICC_LAUNCH_PREFIX = _resolve_twicc_launch_prefix()
 # SKILL.md files all read TWICC_BIN with a ``command -v twicc`` fallback.
 os.environ.setdefault("TWICC_BIN", TWICC_LAUNCH_PREFIX)
 
-# Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env)
-# Idempotent: no-op if already loaded by run.py
-load_dotenv(get_env_path())
+# Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env).
+# Idempotent: no-op when already loaded by the CLI package import / run.py.
+# Only Django-only entry points (``python -m django``, one-liners, pytest, the
+# compute worker) reach here without it.
+ensure_env_loaded()
+
+# Provider home directories (``CLAUDE_CONFIG_DIR`` / ``CLAUDE_SECURESTORAGE_CONFIG_DIR``
+# / ``CODEX_HOME`` from the .env). Informational copies: code reads the paths
+# from ``twicc.provider_homes`` at call time, so Django-free processes and tests
+# share one source of truth. Unusable values fail fast here for Django-only entry
+# points; the ``twicc`` CLI validates earlier in ``cli.main()``. This module must
+# import no ``twicc.providers.*`` module (a test pins it).
+try:
+    CLAUDE_CONFIG_DIR = provider_homes.claude_config_dir().path
+    CLAUDE_SECURE_STORAGE_DIR = provider_homes.claude_secure_storage_dir().path
+    CODEX_HOME = provider_homes.codex_home().path
+    PROVIDER_HOMES_DESCRIPTION = provider_homes.describe_provider_homes()
+except provider_homes.ProviderHomeConfigError as exc:
+    raise ImproperlyConfigured(str(exc)) from exc
 
 # Ensure data directories exist (db/, logs/)
 ensure_data_dirs()
@@ -391,8 +408,10 @@ CRON_AUTO_RESTART = os.environ.get("TWICC_NO_CRON_RESTART", "").strip().lower() 
 
 # Codex plugin install
 # Set TWICC_NO_CODEX_PLUGIN=1 to skip ``ensure_twicc_plugin_installed`` at Codex
-# orchestrator start. ``~/.codex/config.toml`` is global and already managed by
-# the main install — worktrees set this flag so they don't race on it.
+# orchestrator start. ``<codex home>/config.toml`` is global to a home and already
+# managed by the main install — devctl sets this flag for a worktree that shares
+# the default ``~/.codex`` so it doesn't race on it (a worktree with its own
+# ``CODEX_HOME`` installs its own copy of the plugin there).
 CODEX_PLUGIN_INSTALL_ENABLED = os.environ.get("TWICC_NO_CODEX_PLUGIN", "").strip().lower() not in ("1", "true", "yes")
 
 # Daily cleanup of empty per-session artifacts/scratch directories
@@ -405,9 +424,10 @@ SESSION_DIRS_CLEANUP_ENABLED = os.environ.get("TWICC_NO_SESSION_DIRS_CLEANUP", "
 
 # Daily reaper of never-used, orphaned twicc terminal tmux sessions
 # Set TWICC_NO_TMUX_CLEANUP=1 to disable the reaper that kills ``twicc-*`` tmux
-# sessions on the shared ``twicc`` socket which were opened but never received any
-# input (cf. twicc.tmux_cleanup_task). Worktrees set this: the tmux socket is
-# shared per-user with the main instance, which owns the reaping.
+# sessions on this instance's terminal socket which were opened but never
+# received any input (cf. twicc.tmux_cleanup_task). The socket is per data dir
+# (``paths.tmux_socket_suffix``), so a worktree only ever reaps its own sessions;
+# a manual opt-out, devctl no longer sets it.
 TMUX_CLEANUP_ENABLED = os.environ.get("TWICC_NO_TMUX_CLEANUP", "").strip().lower() not in ("1", "true", "yes")
 
 # Anonymous telemetry (design docs/plans/2026-07-18-telemetry-design.md).

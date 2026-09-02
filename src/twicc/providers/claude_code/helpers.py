@@ -31,9 +31,9 @@ from twicc.providers.helpers import (
     UserMessage,
 )
 
+from twicc.provider_homes import claude_plans_dir
 from .compute import extract_command, get_message_content, get_message_content_list, strip_markdown
 from .constants import (
-    PLANS_DIR,
     AGENT_SETTINGS_ALIASES as _AGENT_SETTINGS_ALIASES,
     AGENT_SETTINGS_CATEGORIES as _AGENT_SETTINGS_CATEGORIES,
     AGENT_SETTINGS_DESCRIPTIONS as _AGENT_SETTINGS_DESCRIPTIONS,
@@ -214,11 +214,10 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
     # ("HH:MM", empty = off). See :meth:`warm_up_quota`.
     QUOTA_WAKEUP_SETTING_KEY: ClassVar[str | None] = "claudeCodeQuotaWakeupTime"
 
-    # Filesystem source for Claude Code session JSONL files. The CLI
-    # writes one folder per project under here, with one JSONL per
-    # session. Read by the initial sync and the watcher; not exposed
-    # through the registry because it has no cross-provider meaning.
-    PROJECTS_DIR: ClassVar[Path] = Path.home() / ".claude" / "projects"
+    # The session JSONL files live under ``<claude home>/projects/`` (one
+    # folder per project, one JSONL per session): read via
+    # ``twicc.provider_homes.claude_projects_dir()`` at call time, never an
+    # import-time constant (the home is configurable per instance).
 
     OPENROUTER_MODEL_PREFIX: ClassVar[str | None] = "anthropic/"
 
@@ -269,7 +268,7 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
     # Plans — detection for the session view's *Plan* tab.
     # ------------------------------------------------------------------
     def resolve_plan_path(self, session: Session) -> Path | None:
-        """``~/.claude/plans/<slug>.md``, or ``None`` when the session has no slug.
+        """``<claude home>/plans/<slug>.md``, or ``None`` when the session has no slug.
 
         The slug (``Session.slug``) is the plan filename; a session without one
         simply has no plan. Pure path resolution — existence is not checked here
@@ -277,10 +276,10 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
         """
         if not session.slug:
             return None
-        return PLANS_DIR / f"{session.slug}.md"
+        return claude_plans_dir() / f"{session.slug}.md"
 
     def session_has_plan(self, session: Session) -> bool:
-        """True when ``~/.claude/plans/<slug>.md`` currently exists.
+        """True when ``<claude home>/plans/<slug>.md`` currently exists.
 
         In the live server this is O(1): it reads the plans watcher's in-memory
         slug set, kept accurate by the watch loop (which also powers the live

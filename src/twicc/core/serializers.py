@@ -206,7 +206,7 @@ def serialize_session(session):
         # ``artifacts_dir`` is only sent when present so list payloads stay lean.
         "has_artifacts": has_artifacts,
         "artifacts_dir": str(get_session_artifacts_dir(session.id)) if has_artifacts else None,
-        # Provider plan file (Claude Code: ``~/.claude/plans/<slug>.md``). The
+        # Provider plan file (Claude Code: ``<claude home>/plans/<slug>.md``). The
         # frontend shows a read-only Plan tab when ``has_plan`` is true and
         # fetches the markdown from ``/api/sessions/<id>/plan/``. Provider-
         # agnostic: ``session_has_plan`` reads each provider's live plans-watcher

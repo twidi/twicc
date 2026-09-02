@@ -67,7 +67,8 @@ class HybridClaudeAgent(BaseAgent):
     # First-paste readiness: poll until the TUI shows its empty composer
     # (tmux.composer_ready). Covers the warm-up (nothing drawn yet) and the
     # trust dialog (which swallows pastes — verified; it should not appear
-    # in real TwiCC flows, where project trust is settled in ~/.claude.json
+    # in real TwiCC flows, where project trust is settled in the CLI's global
+    # config file (~/.claude.json or its configured-home equivalent)
     # before launch). The bounded wait can be long: the user answers the
     # dialog inside the embedded terminal.
     READY_POLL_INTERVAL = 1.0
@@ -181,6 +182,21 @@ class HybridClaudeAgent(BaseAgent):
                 "Adopted surviving hybrid CLI for session %s (pid=%s)",
                 self.session_id, self.agent_pid,
             )
+            # The CLI keeps its launch-time provider homes until it exits; a
+            # .env change since then would make it write elsewhere. Warn.
+            if self.agent_pid is not None:
+                from twicc.provider_homes import provider_env_overlay, provider_home_mismatches
+
+                env = await asyncio.to_thread(hybrid_tmux.read_process_environ, self.agent_pid)
+                if env is not None:
+                    overlay = provider_env_overlay()
+                    for key in provider_home_mismatches(env):
+                        logger.warning(
+                            "Adopted hybrid CLI for session %s (pid=%s) runs with %s=%r, "
+                            "this instance is configured with %r — it keeps its launch-time "
+                            "home until it exits",
+                            self.session_id, self.agent_pid, key, env.get(key), overlay.get(key),
+                        )
             self._set_state(AgentState.USER_TURN)
             await self._notify_state_change()
             self._start_liveness_monitor()
