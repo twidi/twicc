@@ -933,6 +933,7 @@ class BaseSessionsWatcher:
         # ``stop_watcher()`` call and exit on the first ``is_set()`` check.
         stop_event.clear()
 
+        catch_up = False
         if not projects_dir.exists():
             logger.info(
                 "Projects directory does not exist yet: %s — waiting for it to appear",
@@ -943,6 +944,7 @@ class BaseSessionsWatcher:
                 logger.info("Watcher stopped while waiting for projects directory")
                 return
             logger.info("Projects directory appeared: %s", projects_dir)
+            catch_up = True
 
         # Load project caches at startup
         await sync_to_async(load_project_directories)()
@@ -950,122 +952,151 @@ class BaseSessionsWatcher:
 
         logger.info(f"Starting file watcher on: {projects_dir}")
 
+        if catch_up:
+            await self._catch_up_existing_files(channel_layer)
+
         async for changes in awatch(projects_dir, stop_event=stop_event):
             for change_type, path_str in changes:
+                await self._process_change(change_type, path_str, channel_layer)
+
+    async def _catch_up_existing_files(self, channel_layer) -> None:
+        """Process every session file already present under :attr:`projects_dir`.
+
+        Only when the directory appeared *after* the watcher started waiting
+        for it (a brand-new provider home — e.g. a relocated ``CLAUDE_CONFIG_DIR``
+        / ``CODEX_HOME`` — or a first install): the provider creates the
+        directory and writes the first session in one go, so by the time
+        ``awatch`` is armed that file already exists and would only be seen at
+        the next boot's initial sync (or at its next append: ``sync_and_broadcast``
+        reads from ``last_offset``, so a later ``modified`` heals a missed
+        ``added``). Each file goes through the regular ``added`` path.
+        """
+        projects_dir = self.projects_dir
+        existing = await asyncio.to_thread(
+            lambda: sorted(path for path in projects_dir.rglob("*.jsonl") if path.is_file())
+        )
+        if not existing:
+            return
+        logger.info("Catching up %d existing session file(s) under %s", len(existing), projects_dir)
+        for path in existing:
+            await self._process_change(Change.added, str(path), channel_layer)
+
+    async def _process_change(self, change_type: Change, path_str: str, channel_layer) -> None:
+        """Handle one filesystem change (the body of the watch loop; errors are logged, never raised)."""
+        try:
+            path = Path(path_str)
+
+            # Provider-specific path patterns (e.g. project directory
+            # creation/deletion for Claude Code). No-op for providers
+            # that only care about jsonl files (e.g. Codex). Wrapped
+            # under the DB write lock unconditionally — cheap when
+            # the handler is a no-op, and a safety net so any future
+            # override that writes is automatically serialised with
+            # every other DB writer.
+            handled = await run_under_db_write_lock(
+                lambda p=path, ct=change_type, cl=channel_layer:
+                    self.maybe_handle_special_change(p, ct, cl)
+            )
+            if handled:
+                return
+
+            # Skip non-jsonl files
+            if not path_str.endswith(".jsonl"):
+                return
+
+            # Parse path to determine type (session or subagent).
+            # Read-only (FS only, no DB) — runs outside the lock.
+            parsed = await self.parse_session_file(path)
+            if parsed is None:
+                # Invalid path — silently skip
+                return
+
+            # Out-of-band initial-title fetch (e.g. Codex's state
+            # DB read in ``CodexSessionsWatcher._fetch_initial_title``)
+            # runs OUTSIDE the lock — it's a non-TwiCC-DB I/O call
+            # and holding the write lock across it would block every
+            # other DB writer for nothing. Only meaningful for
+            # brand-new top-level sessions with content; the
+            # precondition gates match the early-returns inside
+            # ``sync_and_broadcast`` so a failure in the hook for a
+            # deleted-file event, an orphan subagent, or an empty
+            # file doesn't turn a previously-silent no-op into a
+            # logged watcher error. The empty-file check duplicates
+            # the read that ``sync_and_broadcast`` will do anyway,
+            # but it's a single FS open + stat — far cheaper than
+            # an SDK call to a state DB on the wrong event type.
+            if (
+                change_type != Change.deleted
+                and parsed.type == SessionType.SESSION
+                and parsed.title is None
+                and await get_session_by_id(parsed.session_id) is None
+                and await check_file_has_content_async(path)
+            ):
+                parsed.title = await self._fetch_initial_title(parsed)
+
+            # Sync and broadcast (works for both sessions and
+            # subagents). The handler issues the bulk of the watcher's
+            # DB writes (sync_session_items_from_file in particular,
+            # which runs in a thread executor): the runner protects
+            # the lock against cancellation racing the executor.
+            # The handler returns an ``IndexingRequest`` when this
+            # event needs a Tantivy indexing pass — dispatched
+            # below, outside the lock.
+            indexing = await run_under_db_write_lock(
+                lambda p=path, par=parsed, ct=change_type, cl=channel_layer:
+                    self.sync_and_broadcast(p, par, ct, cl)
+            )
+
+            # Full-text search indexing runs OUTSIDE the DB write
+            # lock — Tantivy I/O touches the search-index directory,
+            # not the SQLite DB the lock protects. Failures here
+            # are logged but never crash the watcher (matches the
+            # previous semantics where ``_index_new_items_for_search``
+            # had its own try/except and ``reindex_session`` was
+            # wrapped in one).
+            if indexing is not None:
                 try:
-                    path = Path(path_str)
-
-                    # Provider-specific path patterns (e.g. project directory
-                    # creation/deletion for Claude Code). No-op for providers
-                    # that only care about jsonl files (e.g. Codex). Wrapped
-                    # under the DB write lock unconditionally — cheap when
-                    # the handler is a no-op, and a safety net so any future
-                    # override that writes is automatically serialised with
-                    # every other DB writer.
-                    handled = await run_under_db_write_lock(
-                        lambda p=path, ct=change_type, cl=channel_layer:
-                            self.maybe_handle_special_change(p, ct, cl)
-                    )
-                    if handled:
-                        continue
-
-                    # Skip non-jsonl files
-                    if not path_str.endswith(".jsonl"):
-                        continue
-
-                    # Parse path to determine type (session or subagent).
-                    # Read-only (FS only, no DB) — runs outside the lock.
-                    parsed = await self.parse_session_file(path)
-                    if parsed is None:
-                        # Invalid path — silently skip
-                        continue
-
-                    # Out-of-band initial-title fetch (e.g. Codex's state
-                    # DB read in ``CodexSessionsWatcher._fetch_initial_title``)
-                    # runs OUTSIDE the lock — it's a non-TwiCC-DB I/O call
-                    # and holding the write lock across it would block every
-                    # other DB writer for nothing. Only meaningful for
-                    # brand-new top-level sessions with content; the
-                    # precondition gates match the early-returns inside
-                    # ``sync_and_broadcast`` so a failure in the hook for a
-                    # deleted-file event, an orphan subagent, or an empty
-                    # file doesn't turn a previously-silent no-op into a
-                    # logged watcher error. The empty-file check duplicates
-                    # the read that ``sync_and_broadcast`` will do anyway,
-                    # but it's a single FS open + stat — far cheaper than
-                    # an SDK call to a state DB on the wrong event type.
-                    if (
-                        change_type != Change.deleted
-                        and parsed.type == SessionType.SESSION
-                        and parsed.title is None
-                        and await get_session_by_id(parsed.session_id) is None
-                        and await check_file_has_content_async(path)
-                    ):
-                        parsed.title = await self._fetch_initial_title(parsed)
-
-                    # Sync and broadcast (works for both sessions and
-                    # subagents). The handler issues the bulk of the watcher's
-                    # DB writes (sync_session_items_from_file in particular,
-                    # which runs in a thread executor): the runner protects
-                    # the lock against cancellation racing the executor.
-                    # The handler returns an ``IndexingRequest`` when this
-                    # event needs a Tantivy indexing pass — dispatched
-                    # below, outside the lock.
-                    indexing = await run_under_db_write_lock(
-                        lambda p=path, par=parsed, ct=change_type, cl=channel_layer:
-                            self.sync_and_broadcast(p, par, ct, cl)
-                    )
-
-                    # Full-text search indexing runs OUTSIDE the DB write
-                    # lock — Tantivy I/O touches the search-index directory,
-                    # not the SQLite DB the lock protects. Failures here
-                    # are logged but never crash the watcher (matches the
-                    # previous semantics where ``_index_new_items_for_search``
-                    # had its own try/except and ``reindex_session`` was
-                    # wrapped in one).
-                    if indexing is not None:
-                        try:
-                            if indexing.title_changed:
-                                # Title changed — full session re-index
-                                # (Tantivy can only delete by session_id,
-                                # not session_id + from_role, so we must
-                                # re-index everything).
-                                await asyncio.to_thread(
-                                    search.reindex_session, indexing.session_id,
-                                )
-                            else:
-                                indexed_session = await get_session_by_id(indexing.session_id)
-                                if indexed_session is not None:
-                                    await self._index_new_items_for_search(
-                                        indexed_session, indexing.new_line_nums,
-                                    )
-                        except Exception:
-                            logger.exception(
-                                "Error indexing session for search "
-                                "(session=%s, title_changed=%s)",
-                                indexing.session_id, indexing.title_changed,
-                            )
-
-                        # Mark ``search_version`` current AFTER the Tantivy
-                        # attempt, via a separate short DB write lock
-                        # acquire. Cancellation between the indexing call
-                        # and this mark (or during this acquire) skips
-                        # the mark, so the next-boot search-indexing
-                        # sweep can retry the session. Non-cancellation
-                        # Tantivy failures (already logged above) still
-                        # mark — matches the previous in-lock semantics
-                        # where the mark sat outside the try/except.
-                        try:
-                            await run_under_db_write_lock(
-                                lambda sid=indexing.session_id:
-                                    mark_session_search_version_current(sid)
-                            )
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception:
-                            logger.exception(
-                                "Error marking session %s as search-indexed",
-                                indexing.session_id,
+                    if indexing.title_changed:
+                        # Title changed — full session re-index
+                        # (Tantivy can only delete by session_id,
+                        # not session_id + from_role, so we must
+                        # re-index everything).
+                        await asyncio.to_thread(
+                            search.reindex_session, indexing.session_id,
+                        )
+                    else:
+                        indexed_session = await get_session_by_id(indexing.session_id)
+                        if indexed_session is not None:
+                            await self._index_new_items_for_search(
+                                indexed_session, indexing.new_line_nums,
                             )
                 except Exception:
-                    logger.exception("Error processing watcher change %s on %s", change_type, path_str)
+                    logger.exception(
+                        "Error indexing session for search "
+                        "(session=%s, title_changed=%s)",
+                        indexing.session_id, indexing.title_changed,
+                    )
+
+                # Mark ``search_version`` current AFTER the Tantivy
+                # attempt, via a separate short DB write lock
+                # acquire. Cancellation between the indexing call
+                # and this mark (or during this acquire) skips
+                # the mark, so the next-boot search-indexing
+                # sweep can retry the session. Non-cancellation
+                # Tantivy failures (already logged above) still
+                # mark — matches the previous in-lock semantics
+                # where the mark sat outside the try/except.
+                try:
+                    await run_under_db_write_lock(
+                        lambda sid=indexing.session_id:
+                            mark_session_search_version_current(sid)
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Error marking session %s as search-indexed",
+                        indexing.session_id,
+                    )
+        except Exception:
+            logger.exception("Error processing watcher change %s on %s", change_type, path_str)
