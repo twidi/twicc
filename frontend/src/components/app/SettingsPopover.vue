@@ -14,6 +14,7 @@ import ProviderIcon from '../ui/ProviderIcon.vue'
 import { getActivationCharMetadata } from '../../utils/commandActivation'
 import { validateWorktreeTemplate } from '../../utils/worktreePath'
 import { useOriginSettingsForm } from '../../composables/useOriginSettingsForm'
+import { usePeerSystemConfigured } from '../../composables/usePeerSystemConfigured'
 import { DISPLAY_MODE, COLOR_SCHEME, SESSION_TIME_FORMAT, DEFAULT_MAX_CACHED_SESSIONS, WA_THEME, WA_THEME_LABELS, WA_BRAND, WA_BRAND_LABELS, SPONSOR_URL } from '../../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import TipsSettings from '../settings/TipsSettings.vue'
@@ -664,17 +665,9 @@ const publicBaseUrlInputRef = ref(null)
 const shareBaseUrlInputRef = ref(null)
 const peerBaseUrlInputRef = ref(null)
 
-// Whether the peer actions are worth showing. The address is what makes the
-// feature usable — `PeersManagerDialog` gates its own "Add a peer" form on the
-// same getter — but peers and messages outlive it: an address can be removed
-// while a relationship and its history remain, and those stay worth reaching.
-// Nothing at all means the section is still a setup form, and both buttons
-// would lead nowhere.
-const hasPeerActions = computed(() =>
-    !!store.getUsablePeerBaseUrl
-    || peersStore.peers.length > 0
-    || peersStore.messages.length > 0,
-)
+// Whether the peer actions are worth showing — the same condition that decides
+// whether the sidebar inbox button exists. See `usePeerSystemConfigured`.
+const hasPeerActions = usePeerSystemConfigured()
 const showShareManager = ref(false)
 
 // Display name advertised to peers in handshakes; empty falls back to the

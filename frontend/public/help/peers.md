@@ -99,8 +99,10 @@ mean that the receiving user delivered it to a session.
 
 ### The peer inbox
 
-Open the inbox from **Settings → Peers**. When a request or message needs your
-attention, TwiCC also shows a peer inbox badge.
+Open the inbox from **Settings → Peers**, or from the inbox button next to
+**Settings**. That button appears as soon as the peer system is set up, even
+with an empty inbox. When a request or message needs your attention, TwiCC
+also shows a peer inbox badge.
 
 The inbox contains pairing requests, messages awaiting review, and message
 history. You can filter messages by peer or by their title and full text.

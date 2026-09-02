@@ -3,13 +3,15 @@
  * PeerInboxButton — badge entry point to the peer inbox.
  *
  * Sits next to the Settings button (ProjectView sidebar footer, HomeView).
- * Rendered ONLY while something actionable is pending (incoming requests or
- * inbound messages awaiting review) — so the badge is never zero and idle
- * instances don't grow chrome. History stays reachable through the peers
- * manager (Settings › Peers → Inbox).
+ * Rendered as soon as the peer system is configured, pending work or not: the
+ * inbox is a surface the user reaches on their own terms, and an empty one
+ * still shows the history. An instance without peers grows no chrome at all.
+ *
+ * The badge is the pending-work signal — it renders nothing at zero.
  */
 import { useId, computed } from 'vue'
 import { usePeersStore } from '../../stores/peers'
+import { usePeerSystemConfigured } from '../../composables/usePeerSystemConfigured'
 import AppTooltip from '../ui/AppTooltip.vue'
 import PeerInboxBadge from './PeerInboxBadge.vue'
 
@@ -17,7 +19,7 @@ const peersStore = usePeersStore()
 const buttonId = useId()
 
 const count = computed(() => peersStore.inboxCount)
-const visible = computed(() => count.value > 0)
+const visible = usePeerSystemConfigured()
 
 function openInbox() {
     window.dispatchEvent(new CustomEvent('twicc:open-peer-inbox'))

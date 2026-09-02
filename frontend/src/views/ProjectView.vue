@@ -64,6 +64,7 @@ import CodeCommentsIndicator from '../components/ui/CodeCommentsIndicator.vue'
 import FrameHost from '../components/frames/FrameHost.vue'
 import { useFramePoolStore } from '../stores/framePool'
 import { useSplitDividerDragFlag } from '../composables/useSplitDividerDragFlag'
+import { usePeerSystemConfigured } from '../composables/usePeerSystemConfigured'
 
 const route = useRoute()
 const router = useRouter()
@@ -71,6 +72,7 @@ const store = useDataStore()
 const settingsStore = useSettingsStore()
 const sharesStore = useSharesStore()
 const peersStore = usePeersStore()
+const peerSystemConfigured = usePeerSystemConfigured()
 const helpStore = useHelpStore()
 const { registerCommands, unregisterCommands } = useCommandRegistry()
 
@@ -2601,7 +2603,7 @@ function updateSidebarClosedClass(closed) {
 
                 <div
                     class="sidebar-footer-buttons"
-                    :class="{ 'sidebar-footer-buttons--with-inbox': peersStore.inboxCount >= 1 }"
+                    :class="{ 'sidebar-footer-buttons--with-inbox': peerSystemConfigured }"
                 >
                     <!-- Sidebar Toggle button (label for hidden checkbox, wa-button inside for styling) -->
                     <label for="sidebar-toggle-state" class="sidebar-toggle" id="sidebar-toggle-label">
@@ -2624,7 +2626,7 @@ function updateSidebarClosedClass(closed) {
                          shortcut); folds away on its own when the sidebar is too narrow. -->
                     <CommandPaletteButton />
 
-                    <!-- Peer inbox badge (renders nothing while the feature is dormant). -->
+                    <!-- Peer inbox (renders nothing while the peer system is unconfigured). -->
                     <PeerInboxButton />
 
                     <SettingsPopover />
@@ -3576,8 +3578,9 @@ html.wa-dark .usage-lane-time {
     background: var(--main-header-footer-bg-color);
 }
 
-/* Inbox adds a fourth footer action. These reductions only apply while that
-   conditional action exists; the historical three-action footer is unchanged. */
+/* Inbox adds a fourth footer action, present as soon as the peer system is
+   configured. These reductions only apply while that conditional action
+   exists; the historical three-action footer is unchanged. */
 @container sidebar (width <= 19rem) {
     .sidebar-footer-buttons--with-inbox {
         gap: var(--wa-space-xs);
