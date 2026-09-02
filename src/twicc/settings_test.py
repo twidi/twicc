@@ -1,6 +1,8 @@
 """Test settings for pytest-django."""
 
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -19,6 +21,9 @@ from twicc import provider_homes
 # ``ensure_env_loaded()`` is a no-op by now (once per process), so it neither
 # overrides nor drops these values.
 _PROVIDER_HOMES_ROOT = Path(tempfile.mkdtemp(prefix="twicc-test-provider-homes-"))
+# Removed when the test process exits — otherwise every pytest run would leave
+# one more directory behind in the system temp dir.
+atexit.register(shutil.rmtree, _PROVIDER_HOMES_ROOT, True)
 os.environ["CLAUDE_CONFIG_DIR"] = str(_PROVIDER_HOMES_ROOT / "claude")
 os.environ["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = str(_PROVIDER_HOMES_ROOT / "claude-credentials")
 os.environ["CODEX_HOME"] = str(_PROVIDER_HOMES_ROOT / "codex")
