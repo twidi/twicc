@@ -295,6 +295,7 @@ workspaces.json
 layouts.json
 seen-tips.json
 seen-help.json
+providers-status.json
 # RPC API token store (SHA-256 digests; lives in the data dir, appears in worktrees).
 api-tokens.json
 # Per-install SECRET_KEY (twicc.secret_key) + per-session Claude MCP config
