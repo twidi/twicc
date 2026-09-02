@@ -19,6 +19,16 @@ def temp_settings(tmp_path, monkeypatch):
     ss._cache.clear()
 
 
+def test_existing_settings_without_title_model_use_provider_without_rewrite(temp_settings):
+    """An existing settings file keeps legacy routing without a migration write."""
+    temp_settings.write_text('{"titleGenerationEnabled":true}')
+
+    settings = ss.read_synced_settings()
+
+    assert settings["titleSuggestionModel"] == "provider"
+    assert temp_settings.read_text() == '{"titleGenerationEnabled":true}'
+
+
 def test_generic_allowlist_excludes_visual_and_special():
     from twicc.cli.settings._keys import classify_key
     assert classify_key("autoUnpinOnArchive") == "generic"

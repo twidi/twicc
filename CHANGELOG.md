@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Title suggestions** — You can now use Claude Haiku or GPT-5.6 Luna for every session, or keep matching each session's provider.
+
 ### Changed
 
 - **Peer inbox** — The inbox button stays next to Settings even when nothing is waiting, so you can open the inbox and its history whenever you want. It still stays hidden until peers are set up.

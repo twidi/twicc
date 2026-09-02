@@ -180,8 +180,6 @@ export class CodexHelpers extends BaseProviderHelpers {
     static label = 'Codex'
     static icon = 'openai'
     static iconColor = 'var(--wa-color-green-70)'
-    // Mirrors ``TITLE_MODEL`` in the backend ``codex/title_suggest.py``.
-    static titleSuggestionModelLabel = 'GPT-5.6 Luna'
     static serviceProductLabel = 'Codex'
     static serviceVendorLabel = 'OpenAI'
     static serviceStatusUrl = 'https://status.openai.com/'

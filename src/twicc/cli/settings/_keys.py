@@ -22,6 +22,7 @@ NOTIFICATION_KEYS = frozenset({"externalNotificationTargets"})
 GENERIC_KEY_DESCRIPTIONS: dict[str, str] = {
     "titleGenerationEnabled": "Generate a session title from the first user message.",
     "titleAutoApply": "Apply generated titles automatically (vs. only suggesting them).",
+    "titleSuggestionModel": "Model used for title suggestions: provider, haiku, or luna.",
     "titleSystemPrompt": "System prompt used to generate titles ('{text}' = the message); unset restores the default.",
     "autoUnpinOnArchive": "Unpin a session automatically when it is archived.",
     "worktreeDirectoryTemplate": "Template for the base dir of new git worktrees; placeholders {git_root} {project_name} {project_basedir} (empty = none).",

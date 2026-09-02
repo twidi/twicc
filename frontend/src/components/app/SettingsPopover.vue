@@ -15,7 +15,18 @@ import { getActivationCharMetadata } from '../../utils/commandActivation'
 import { validateWorktreeTemplate } from '../../utils/worktreePath'
 import { useOriginSettingsForm } from '../../composables/useOriginSettingsForm'
 import { usePeerSystemConfigured } from '../../composables/usePeerSystemConfigured'
-import { DISPLAY_MODE, COLOR_SCHEME, SESSION_TIME_FORMAT, DEFAULT_MAX_CACHED_SESSIONS, WA_THEME, WA_THEME_LABELS, WA_BRAND, WA_BRAND_LABELS, SPONSOR_URL } from '../../constants'
+import {
+    DISPLAY_MODE,
+    COLOR_SCHEME,
+    SESSION_TIME_FORMAT,
+    DEFAULT_MAX_CACHED_SESSIONS,
+    WA_THEME,
+    WA_THEME_LABELS,
+    WA_BRAND,
+    WA_BRAND_LABELS,
+    SPONSOR_URL,
+    TITLE_SUGGESTION_MODEL,
+} from '../../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import TipsSettings from '../settings/TipsSettings.vue'
 import HelpSettings from '../settings/HelpSettings.vue'
@@ -469,24 +480,9 @@ const allowAgentSessionShares = computed(() => store.isAllowAgentSessionShares)
 const allowAgentArtifactShares = computed(() => store.isAllowAgentArtifactShares)
 const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
 const titleAutoApply = computed(() => store.isTitleAutoApply)
+const titleSuggestionModel = computed(() => store.getTitleSuggestionModel)
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 const titleSystemPromptInput = ref('')
-
-// "Haiku for Claude, GPT-5.6 Luna for Codex" — built from the enabled
-// providers that name their pinned title model, so the sentence follows a
-// model change (or a provider being turned off) instead of going stale.
-const titleSuggestionModels = computed(() => {
-    const parts = getRegisteredProviders()
-        .filter(provider => enabledProviders.value.has(provider))
-        .map(provider => {
-            const helpers = getProviderHelpers(provider).constructor
-            return helpers.titleSuggestionModelLabel
-                ? `${helpers.titleSuggestionModelLabel} for ${helpers.label ?? provider}`
-                : null
-        })
-        .filter(Boolean)
-    return parts.length ? `Using ${parts.join(', ')}` : ''
-})
 const terminalUseTmux = computed(() => store.isTerminalUseTmux)
 const terminalTmuxConfigPath = computed(() => store.getTerminalTmuxConfigPath)
 const terminalMacOptionIsMeta = computed(() => store.isTerminalMacOptionIsMeta)
@@ -1005,6 +1001,13 @@ function onTitleGenerationChange(event) {
  */
 function onTitleAutoApplyChange(event) {
     store.setTitleAutoApply(event.target.checked)
+}
+
+/**
+ * Select the model used for title suggestions.
+ */
+function onTitleSuggestionModelChange(event) {
+    store.setTitleSuggestionModel(event.target.value)
 }
 
 /**
@@ -1809,13 +1812,27 @@ function onChangelogClose() {
                             :checked="titleGenerationEnabled"
                             @change="onTitleGenerationChange"
                             size="small"
-                        >Enabled<template v-if="titleSuggestionModels"> ({{ titleSuggestionModels }})</template></wa-switch>
+                        >Enabled</wa-switch>
                         <wa-switch
                             v-if="titleGenerationEnabled"
                             :checked="titleAutoApply"
                             @change="onTitleAutoApplyChange"
                             size="small"
                         >Auto-apply on new sessions</wa-switch>
+                        <wa-radio-group
+                            label="Model"
+                            name="title-suggestion-model"
+                            size="small"
+                            :value="titleSuggestionModel"
+                            :disabled="!titleGenerationEnabled"
+                            @change="onTitleSuggestionModelChange"
+                        >
+                            <wa-radio :value="TITLE_SUGGESTION_MODEL.PROVIDER">
+                                Match session provider — Haiku for Claude Code, GPT-5.6 Luna for Codex
+                            </wa-radio>
+                            <wa-radio :value="TITLE_SUGGESTION_MODEL.HAIKU">Claude Haiku for every session</wa-radio>
+                            <wa-radio :value="TITLE_SUGGESTION_MODEL.LUNA">GPT-5.6 Luna for every session</wa-radio>
+                        </wa-radio-group>
                         <div v-if="titleGenerationEnabled" class="title-prompt-section">
                             <label class="setting-group-label">System prompt</label>
                             <wa-textarea

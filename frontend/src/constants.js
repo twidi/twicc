@@ -204,7 +204,7 @@ export const WA_BRAND_LABELS = {
 export const SYNCED_SETTINGS_KEYS = new Set([
     'defaultProvider', 'defaultLayoutId', 'disabledProviders', 'orchestrationDisabledProviders',
     'titleGenerationEnabled', 'titleAutoApply',
-    'titleSystemPrompt', 'autoUnpinOnArchive',
+    'titleSuggestionModel', 'titleSystemPrompt', 'autoUnpinOnArchive',
     'worktreeDirectoryTemplate',
     'terminalUseTmux', 'terminalTmuxConfigPath',
     'waTheme', 'waBrand',
@@ -222,3 +222,15 @@ export const SYNCED_SETTINGS_KEYS = new Set([
     // telemetry notice (gates a one-time explainer). Shown in the General section.
     'telemetryEnabled', 'telemetryNoticeSeen',
 ])
+
+export const TITLE_SUGGESTION_MODEL = Object.freeze({
+    PROVIDER: 'provider',
+    HAIKU: 'haiku',
+    LUNA: 'luna',
+})
+
+const TITLE_SUGGESTION_MODEL_VALUES = new Set(Object.values(TITLE_SUGGESTION_MODEL))
+
+export function resolveTitleSuggestionModel(value) {
+    return TITLE_SUGGESTION_MODEL_VALUES.has(value) ? value : TITLE_SUGGESTION_MODEL.PROVIDER
+}

@@ -189,8 +189,6 @@ export class ClaudeCodeHelpers extends BaseProviderHelpers {
     static label = 'Claude'
     static icon = 'claude'
     static iconColor = 'var(--wa-color-orange-70)'
-    // Mirrors ``model="haiku"`` in the backend ``claude_code/title_suggest.py``.
-    static titleSuggestionModelLabel = 'Haiku'
     static serviceProductLabel = 'Claude Code'
     static serviceVendorLabel = 'Anthropic'
     static serviceStatusUrl = 'https://status.claude.com/'

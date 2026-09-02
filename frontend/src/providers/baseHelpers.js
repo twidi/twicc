@@ -38,11 +38,6 @@ export class BaseProviderHelpers {
     static icon = null
     // Brand tint for the provider icon (any CSS colour). null → inherit.
     static iconColor = null
-    // Display name of the model the backend pins for title suggestion (its
-    // own ``title_suggest`` module — never a user-configurable setting). Kept
-    // next to the provider's other model knowledge so the settings panel
-    // names it without hardcoding a provider list. null → not named in the UI.
-    static titleSuggestionModelLabel = null
     // Upstream service status, for the "<vendor> status update" toast and the
     // Settings footer. ``serviceProductLabel`` names what is down from the
     // user's side ("Claude Code" — ``label`` alone may be shorter),

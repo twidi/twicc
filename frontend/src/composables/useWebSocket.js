@@ -18,6 +18,7 @@ import { truncateTitle } from '../utils/truncate'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
 import { compareVersions } from '../utils/version'
 import { getProcessStateNotificationEffects } from '../utils/processStateNotifications.js'
+import { buildTitleSuggestionRequest } from '../utils/titleSuggestion.js'
 
 // Lazy (async) toast body for peer events — toast.custom detects a component
 // via its `setup` key, which an async wrapper has (see useToast.js precedent
@@ -320,10 +321,13 @@ export function requestTitleSuggestion(sessionId, prompt = null, systemPrompt) {
         console.warn(`[useWebSocket] requestTitleSuggestion: unknown provider for session ${sessionId}`)
         return false
     }
-    const message = { type: 'suggest_title', sessionId, provider, systemPrompt }
-    if (prompt) {
-        message.prompt = prompt
-    }
+    const message = buildTitleSuggestionRequest({
+        sessionId,
+        provider,
+        systemPrompt,
+        prompt,
+        titleSuggestionModel: useSettingsStore().getTitleSuggestionModel,
+    })
     return sendWsMessage(message)
 }
 

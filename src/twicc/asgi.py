@@ -63,6 +63,11 @@ from twicc.terminal import terminal_application
 
 logger = logging.getLogger(__name__)
 
+TITLE_SUGGESTION_MODEL_PROVIDERS = {
+    "haiku": Provider.CLAUDE_CODE,
+    "luna": Provider.CODEX,
+}
+
 # WebSocket close code for authentication failure.
 # 4000-4999 range is reserved for application use by the WebSocket spec.
 WS_CLOSE_AUTH_FAILURE = 4001
@@ -1442,6 +1447,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             "type": "suggest_title",
             "sessionId": "...",
             "provider": "claude_code" | "codex",
+            "titleSuggestionModel": "provider" | "haiku" | "luna",
             "systemPrompt": "System prompt with {text} placeholder",
             "prompt": "optional prompt text for draft/new sessions"
         }
@@ -1449,6 +1455,8 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         Requires systemPrompt and provider from the frontend (no fallback).
         ``provider`` travels in the payload because draft sessions don't exist
         in the DB yet — the backend can't resolve them via ``Session.provider``.
+        A missing or unknown ``titleSuggestionModel`` keeps the legacy behavior
+        and generates through the session provider.
 
         Modes:
         - prompt provided: Use prompt directly (draft/new session or regenerate)
@@ -1459,6 +1467,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         """
         session_id = content.get("sessionId")
         provider_key = content.get("provider")
+        title_model = content.get("titleSuggestionModel")
         system_prompt = content.get("systemPrompt")
         prompt = content.get("prompt")
 
@@ -1473,8 +1482,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             logger.warning("suggest_title: unknown provider %r", provider_key)
             return
 
+        title_provider = TITLE_SUGGESTION_MODEL_PROVIDERS.get(title_model, provider)
+
         try:
-            ensure_provider_running(provider)
+            ensure_provider_running(title_provider)
         except ProviderDisabledError as e:
             await self.send_json({
                 "type": "error",
@@ -1484,14 +1495,15 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             })
             return
 
-        helpers = get_provider_helpers(provider)
+        source_helpers = get_provider_helpers(provider)
+        title_helpers = get_provider_helpers(title_provider)
 
         if not prompt:
-            prompt = await sync_to_async(helpers.get_first_user_message)(session_id)
+            prompt = await sync_to_async(source_helpers.get_first_user_message)(session_id)
 
         suggestion = None
         if prompt:
-            suggestion = await helpers.generate_title(prompt, system_prompt)
+            suggestion = await title_helpers.generate_title(prompt, system_prompt)
 
         await self.send_json({
             "type": "title_suggested",

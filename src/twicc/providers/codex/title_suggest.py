@@ -32,10 +32,10 @@ logger = logging.getLogger(__name__)
 SUGGESTION_TIMEOUT_SECONDS = 15
 MAX_RETRIES = 5
 
-# Fixed SDK model name for title generation — bypasses our alias machinery
-# because the choice isn't user-configurable here (parallel to Claude Code
-# pinning ``model="haiku"`` in its own title_suggest module). Luna is the
-# cheapest model of the catalogue; its lowest reasoning effort is ``low``
+# Fixed SDK model name for Codex title generation. The global title-suggestion
+# setting selects this provider route; this module always uses Luna and bypasses
+# the agent-model alias machinery. Luna is the cheapest model of the catalogue;
+# its lowest reasoning effort is ``low``
 # (the CLI's ``model/list`` exposes no ``none``/``minimal`` on any model), so
 # the turn below pins ``low`` rather than taking Luna's ``medium`` default.
 TITLE_MODEL = "gpt-5.6-luna"

@@ -3,7 +3,20 @@
 
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { watch, nextTick } from 'vue'
-import { DEFAULT_DISPLAY_MODE, DEFAULT_COLOR_SCHEME, DEFAULT_SESSION_TIME_FORMAT, DEFAULT_MAX_CACHED_SESSIONS, DISPLAY_MODE, COLOR_SCHEME, SESSION_TIME_FORMAT, SYNCED_SETTINGS_KEYS, WA_THEME, WA_BRAND, WA_THEME_DEFAULT_PALETTE } from '../constants'
+import {
+    DEFAULT_DISPLAY_MODE,
+    DEFAULT_COLOR_SCHEME,
+    DEFAULT_SESSION_TIME_FORMAT,
+    DEFAULT_MAX_CACHED_SESSIONS,
+    DISPLAY_MODE,
+    COLOR_SCHEME,
+    SESSION_TIME_FORMAT,
+    SYNCED_SETTINGS_KEYS,
+    WA_THEME,
+    WA_BRAND,
+    WA_THEME_DEFAULT_PALETTE,
+    resolveTitleSuggestionModel,
+} from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 import { getProviderHelpers, getRegisteredProviders } from '../providers'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
@@ -75,6 +88,7 @@ export const SETTINGS_SCHEMA = {
     orchestrationDisabledProviders: [],
     titleGenerationEnabled: null,
     titleAutoApply: null,
+    titleSuggestionModel: null,
     titleSystemPrompt: null,
     autoUnpinOnArchive: null,
     worktreeDirectoryTemplate: null,
@@ -132,6 +146,7 @@ const SETTINGS_VALIDATORS = {
     sessionTimeFormat: (v) => [SESSION_TIME_FORMAT.TIME, SESSION_TIME_FORMAT.RELATIVE_SHORT, SESSION_TIME_FORMAT.RELATIVE_NARROW].includes(v),
     titleGenerationEnabled: (v) => typeof v === 'boolean',
     titleAutoApply: (v) => typeof v === 'boolean',
+    titleSuggestionModel: (v) => resolveTitleSuggestionModel(v) === v,
     titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
     showCosts: (v) => typeof v === 'boolean',
     extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
@@ -329,6 +344,7 @@ export const useSettingsStore = defineStore('settings', {
         getSessionTimeFormat: (state) => state.sessionTimeFormat,
         isTitleGenerationEnabled: (state) => state.titleGenerationEnabled,
         isTitleAutoApply: (state) => state.titleAutoApply,
+        getTitleSuggestionModel: (state) => resolveTitleSuggestionModel(state.titleSuggestionModel),
         getTitleSystemPrompt: (state) => state.titleSystemPrompt,
         areCostsShown: (state) => state.showCosts,
         isExtraUsageOnlyWhenNeeded: (state) => state.extraUsageOnlyWhenNeeded,
@@ -505,6 +521,16 @@ export const useSettingsStore = defineStore('settings', {
         setTitleAutoApply(enabled) {
             if (SETTINGS_VALIDATORS.titleAutoApply(enabled)) {
                 this.titleAutoApply = enabled
+            }
+        },
+
+        /**
+         * Select the model used for title suggestions.
+         * @param {'provider' | 'haiku' | 'luna'} model
+         */
+        setTitleSuggestionModel(model) {
+            if (SETTINGS_VALIDATORS.titleSuggestionModel(model)) {
+                this.titleSuggestionModel = model
             }
         },
 
@@ -1183,6 +1209,7 @@ export function initSettings() {
             sessionTimeFormat: store.sessionTimeFormat,
             titleGenerationEnabled: store.titleGenerationEnabled,
             titleAutoApply: store.titleAutoApply,
+            titleSuggestionModel: store.getTitleSuggestionModel,
             titleSystemPrompt: store.titleSystemPrompt,
             showCosts: store.showCosts,
             extraUsageOnlyWhenNeeded: store.extraUsageOnlyWhenNeeded,

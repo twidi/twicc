@@ -52,6 +52,7 @@ _GENERIC_SYNCED_SETTINGS_DEFAULTS: dict = {
     "defaultLayoutId": "single-pane",
     "titleGenerationEnabled": True,
     "titleAutoApply": True,
+    "titleSuggestionModel": "provider",
     "titleSystemPrompt": (
         "Summarize the following user message in 5-7 words to create a concise session title. "
         "You do NOT need to make a fully valid sentence, it will be used as a short title for the "
