@@ -65,6 +65,8 @@
       <tr><td><code>projects_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21-50</code>, <code>51-100</code>, <code>101+</code></td><td>scale of use</td></tr>
       <tr><td><code>workspaces_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>scale of use</td></tr>
       <tr><td><code>remote_access</code></td><td>boolean</td><td>whether the instance is served beyond localhost (a password is configured)</td></tr>
+      <tr><td><code>peer_messaging</code></td><td>boolean</td><td>whether peer messaging is configured (a peer base URL is set); no address is ever sent</td></tr>
+      <tr><td><code>peers_active_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>peer messaging adoption; active relationships only, never their identity</td></tr>
 
       <tr><th colspan="3" scope="colgroup">Daily block (one per complete day)</th></tr>
       <tr><td>sessions per model &times; effort</td><td>nested counts: provider &rarr; model family &rarr; version &rarr; effort; unresolvable values read <code>unknown</code></td><td>volumetry, model adoption</td></tr>
@@ -79,6 +81,7 @@
       <tr><td>shares created</td><td>count</td><td>feature adoption</td></tr>
       <tr><td>artifact bookmarks created</td><td>count</td><td>feature adoption</td></tr>
       <tr><td>sessions spawned by other sessions</td><td>count</td><td>orchestration adoption</td></tr>
+      <tr><td>peer messages</td><td>nested counts: direction (<code>out</code> / <code>in</code>) &rarr; <code>new</code> / <code>reply</code> &rarr; author (<code>agent</code> / <code>human</code>); no subject, no text, no peer identity</td><td>peer messaging adoption: which side initiates, whether threads are used, and which surface writes</td></tr>
     </tbody>
   </table>
   </div>

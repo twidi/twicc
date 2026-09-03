@@ -7,6 +7,11 @@ import pytest
 from twicc.core.models import (
     ArtifactBookmark,
     DailyActivity,
+    Peer,
+    PeerMessage,
+    PeerMessageDirection,
+    PeerMessageStatus,
+    PeerState,
     PinMode,
     Project,
     Session,
@@ -40,6 +45,33 @@ def _make_session(project, session_id, **overrides):
     }
     defaults.update(overrides)
     return Session.objects.create(**defaults)
+
+
+def _make_peer(state=PeerState.ACTIVE):
+    return Peer.objects.create(base_url="https://peer.example/", state=state)
+
+
+_peer_message_seq = iter(range(1, 10_000))
+
+
+def _make_peer_message(peer, *, direction, author=None, reply_to="", origin=None, created_at=None):
+    """One peer message, backdated to ``DAY`` (``created_at`` is auto_now_add)."""
+    message_id = f"pm_{next(_peer_message_seq):04d}"
+    if origin is None:
+        origin = {"sent_at": _at(9).isoformat(), "author": author}
+    message = PeerMessage.objects.create(
+        peer=peer,
+        direction=direction,
+        message_id=message_id,
+        reply_to=reply_to,
+        thread_id=reply_to or message_id,
+        title="subject",
+        payload={"text": "body", "images": [], "documents": []},
+        origin=origin,
+        status=PeerMessageStatus.PENDING,
+    )
+    PeerMessage.objects.filter(pk=message.pk).update(created_at=created_at or _at(9))
+    return message
 
 
 def test_build_day_block(project):
@@ -112,6 +144,61 @@ def test_build_day_block_counts_workflow_runs_and_crons_created(project):
 
     assert block["workflow_runs"] == 1
     assert block["crons_created"] == 1
+
+
+def test_build_day_block_counts_peer_messages_by_direction_kind_author(project):
+    peer = _make_peer()
+    _make_peer_message(peer, direction=PeerMessageDirection.OUT, author="agent")
+    _make_peer_message(peer, direction=PeerMessageDirection.OUT, author="human")
+    _make_peer_message(peer, direction=PeerMessageDirection.OUT, author="agent", reply_to="pm_remote")
+    _make_peer_message(peer, direction=PeerMessageDirection.IN, author="agent", reply_to="pm_ours")
+    _make_peer_message(peer, direction=PeerMessageDirection.IN, author="agent", reply_to="pm_ours")
+    # Outside the day: never counted.
+    _make_peer_message(peer, direction=PeerMessageDirection.OUT, author="agent", created_at=_at(9) - timedelta(days=1))
+
+    block = snapshot.build_day_block(DAY, {})
+
+    assert block["peer_messages_by_direction_kind_author"] == {
+        "out": {"new": {"agent": 1, "human": 1}, "reply": {"agent": 1}},
+        "in": {"reply": {"agent": 2}},
+    }
+
+
+def test_build_day_block_omits_peer_messages_without_traffic(project):
+    # Sparse like sessions_by_model_effort: no traffic, no keys.
+    assert snapshot.build_day_block(DAY, {})["peer_messages_by_direction_kind_author"] == {}
+
+
+def test_build_day_block_clamps_unknown_peer_author(project):
+    # The author is sender-declared. Whatever a remote instance puts there, it
+    # must never become a payload key (§3.3).
+    peer = _make_peer()
+    _make_peer_message(peer, direction=PeerMessageDirection.IN, author="arbitrary-remote-string")
+    _make_peer_message(peer, direction=PeerMessageDirection.IN, origin={})
+
+    block = snapshot.build_day_block(DAY, {})
+
+    assert block["peer_messages_by_direction_kind_author"] == {"in": {"new": {"unknown": 2}}}
+    assert "arbitrary-remote-string" not in orjson.dumps(block).decode()
+
+
+def test_instance_block_counts_active_peers_only(project):
+    _make_peer(state=PeerState.ACTIVE)
+    _make_peer(state=PeerState.ACTIVE)
+    _make_peer(state=PeerState.PENDING_SENT)
+    _make_peer(state=PeerState.BROKEN)
+    _make_peer(state=PeerState.REVOKED)
+
+    assert snapshot.build_instance_block()["peers_active_bucket"] == "2-5"
+
+
+def test_instance_block_reports_peer_messaging_gate(project, monkeypatch):
+    # An empty peerBaseUrl disables the whole feature; the boolean is that gate.
+    monkeypatch.setattr(snapshot, "peer_base_url", lambda: "")
+    assert snapshot.build_instance_block()["peer_messaging"] is False
+
+    monkeypatch.setattr(snapshot, "peer_base_url", lambda: "https://peer.example")
+    assert snapshot.build_instance_block()["peer_messaging"] is True
 
 
 def test_build_day_block_defaults_missing_day_state_to_zero(project):

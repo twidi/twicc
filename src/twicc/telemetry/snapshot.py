@@ -17,6 +17,9 @@ from django.db.models import Sum
 from twicc.core.models import (
     ArtifactBookmark,
     DailyActivity,
+    Peer,
+    PeerMessage,
+    PeerState,
     Project,
     Session,
     SessionCron,
@@ -24,6 +27,8 @@ from twicc.core.models import (
     Share,
     Workflow,
 )
+from twicc.core.services.peer_messages import PEER_MESSAGE_AUTHORS
+from twicc.core.services.peer_tokens import peer_base_url
 from twicc.providers.helpers import get_provider_helpers
 from twicc.providers.state import get_enabled_providers
 from twicc.telemetry.install_method import detect_install_method
@@ -140,6 +145,14 @@ def build_instance_block() -> dict:
         "projects_bucket": bucket(Project.objects.count(), PROJECT_BUCKETS),
         "workspaces_bucket": bucket(len(workspaces), WORKSPACE_BUCKETS),
         "remote_access": bool(settings.TWICC_PASSWORD_HASH),
+        # Peer messaging adoption, in two steps: an empty `peerBaseUrl` keeps
+        # the whole feature off, so the boolean is the configuration gate and
+        # the bucket the scale actually reached. Only ACTIVE relationships
+        # count — pending, broken and revoked ones are not usage.
+        "peer_messaging": bool(peer_base_url()),
+        "peers_active_bucket": bucket(
+            Peer.objects.filter(state=PeerState.ACTIVE).count(), WORKSPACE_BUCKETS
+        ),
     }
 
 
@@ -191,6 +204,26 @@ def build_day_block(day: date, day_state: dict) -> dict:
     shares_created = Share.objects.filter(created_at__gte=start, created_at__lt=end).count()
     bookmarks_created = ArtifactBookmark.objects.filter(created_at__gte=start, created_at__lt=end).count()
 
+    # Peer messaging traffic: direction -> new/reply -> author. Three closed
+    # vocabularies, so the counts stay sparse like sessions_by_model_effort —
+    # an instance with no peer traffic sends {}. Direction is what makes the
+    # fleet totals readable: one message is an "out" here and an "in" on the
+    # other instance, which reports its own payload.
+    # The author is a sender-declared hint, already whitelisted on receive;
+    # re-clamping it here is the payload's own guarantee that no free-form
+    # remote string can become a key (§3.3).
+    peer_messages: dict[str, dict[str, dict[str, int]]] = {}
+    peer_rows = PeerMessage.objects.filter(
+        created_at__gte=start, created_at__lt=end,
+    ).values_list("direction", "reply_to", "origin")
+
+    for direction, reply_to, origin in peer_rows:
+        author = origin.get("author") if isinstance(origin, dict) else None
+        if author not in PEER_MESSAGE_AUTHORS:
+            author = "unknown"
+        authors = peer_messages.setdefault(direction, {}).setdefault("reply" if reply_to else "new", {})
+        authors[author] = authors.get(author, 0) + 1
+
     return {
         "date": day.isoformat(),
         "sessions_by_model_effort": sessions_by_model_effort,
@@ -202,6 +235,7 @@ def build_day_block(day: date, day_state: dict) -> dict:
         "crons_created": crons_created,
         "shares_created": shares_created,
         "bookmarks_created": bookmarks_created,
+        "peer_messages_by_direction_kind_author": peer_messages,
         "cost_bucket": bucket(total_cost, COST_BUCKETS),
         "presence_bucket": bucket(day_state.get("presence_minutes", 0), PRESENCE_BUCKETS),
         "peak_agents": day_state.get("peak_agents", 0),
