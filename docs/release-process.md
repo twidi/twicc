@@ -62,3 +62,14 @@ When the user asks to make a new release, follow these steps in order:
     uvx uv-publish /home/twidi/dev/twicc-poc/dist/twicc-{version}*
     ```
     The glob picks up both `twicc-{version}-py3-none-any.whl` and `twicc-{version}.tar.gz`. The sdist is now safe to publish — it embeds the pre-built frontend assets, so `pip install` from source needs no npm. (The Codex CLI binary is fetched from the matching GitHub Release at first launch, not bundled — see `docs/codex-vendoring.md`.) **Do not run `uv-publish` yourself** unless the user explicitly asks you to.
+
+12. **Deploy the telemetry collector (user action, only if it changed):** Check whether `telemetry-collector/` changed since the previous tag:
+    ```bash
+    git diff --stat v{previous_version}..HEAD -- telemetry-collector/
+    ```
+    If it did, the deployed Worker and its transparency page are stale — a payload field documented in the repo but missing from `twicc-telemetry.twidi.com` breaks the transparency promise the whole default-on telemetry rests on. Give the user the commands, to run from `telemetry-collector/`:
+    ```
+    npm run db:migrate:remote   # only if migrations/ changed
+    npm run deploy
+    ```
+    **Do not run them yourself** — wrangler is authenticated per machine and this publishes to production.
