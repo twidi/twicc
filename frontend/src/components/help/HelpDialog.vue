@@ -114,7 +114,6 @@ function onAfterHide(event) {
             >
                 Don't show this again
             </wa-switch>
-            <span v-else class="help-footer-spacer"></span>
             <wa-button variant="brand" @click="closeDialog">Close</wa-button>
         </div>
     </wa-dialog>
@@ -138,15 +137,18 @@ function onAfterHide(event) {
     cursor: pointer;
 }
 
+/* The switch sits on the left, the button on the right — through an auto margin, not
+   space-between: once the footer wraps (narrow screen), space-between would leave the
+   lone button of the second line aligned to the start. */
 .help-footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 0.5rem;
 }
 
-.help-footer-spacer {
-    flex: 1;
+.help-footer wa-switch {
+    margin-inline-end: auto;
 }
 
 .help-loading,

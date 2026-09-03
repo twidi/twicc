@@ -563,11 +563,15 @@ html.wa-dark .changelog-image {
     min-width: 200px;
 }
 
+/* The auto margin, not space-between, pushes this group to the right: once the footer
+   wraps (narrow screen), space-between would leave this lone second line at the start. */
 .changelog-footer-right {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
     gap: 0.5rem;
-    flex-shrink: 0;
+    margin-inline-start: auto;
 }
 
 .changelog-counter {

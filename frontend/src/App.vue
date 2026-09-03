@@ -911,6 +911,15 @@ wa-dialog::part(footer) {
     padding-block-start: var(--spacing, var(--wa-space-m));
 }
 
+/* Web Awesome's footer part already wraps, but nearly every dialog slots a single
+   flex wrapper into it, so there is nothing for that wrap to act on: the wrapper's
+   automatic min-width is the sum of its buttons and it overflows the dialog on a
+   narrow screen. Wrapping the wrapper itself brings its min-width back down to the
+   widest button; each rule's own justify-content keeps the actions right-aligned. */
+wa-dialog [slot="footer"] {
+    flex-wrap: wrap;
+}
+
 /* Clearance the closed-sidebar floating reopen toggle (bottom-left) needs from nearby content — the
    single source of these values. SessionLayout refines them per dock context on .session-layout (see
    there). Consumers, no fallback: the composer (MessageInput toolbar + CollapsedBar) reads -x; the
