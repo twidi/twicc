@@ -22,6 +22,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { hostMessage, isCompanionMessage } from '../../browser-companion/protocol'
 import { isOpen as mediaPreviewOpen } from '../../composables/useMediaPreview'
+import { useCommandRegistry } from '../../composables/useCommandRegistry'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { useWorkspacesStore } from '../../stores/workspaces'
@@ -71,6 +72,12 @@ const store = useDataStore()
 const settingsStore = useSettingsStore()
 const workspacesStore = useWorkspacesStore()
 const instanceId = useId()
+
+// Palette commands, registered further down once their state exists. Ids are
+// per-instance: several panes can be mounted at once (one per cached session).
+const { registerCommand, unregisterCommand } = useCommandRegistry()
+const openSavedUrlCommandId = `nav.browser-open-url.${instanceId}`
+const saveUrlCommandId = `ui.browser-save-url.${instanceId}`
 
 // ── Default URL: project chain first, then the first non-archived workspace
 // containing the project (worktree-aware) that carries saved URLs.
@@ -299,6 +306,8 @@ onMounted(() => window.addEventListener('message', onWindowMessage))
 onBeforeUnmount(() => {
     window.removeEventListener('message', onWindowMessage)
     window.removeEventListener('keydown', onFullscreenKeydown, true)
+    unregisterCommand(openSavedUrlCommandId)
+    unregisterCommand(saveUrlCommandId)
     if (isFullscreen.value) expandPreviewHost?.(false)
     clearHelloGraceTimer()
     rejectPendingCapture('pane closed')
@@ -865,6 +874,44 @@ const homeOptions = computed(() => {
 // The URL the plain Home button navigates to: the resolved default (project
 // chain — flagged entry first — then workspaces), or the first saved option.
 const primaryHomeUrl = computed(() => defaultUrl.value || homeOptions.value[0]?.url)
+
+// ── Command palette: the two toolbar actions worth reaching by keyboard.
+// Registered only while this pane is the shown tab, like FilePane's edit
+// toggle — both act on "the browser you are looking at". The watch never fires
+// on unmount, so onBeforeUnmount unregisters too.
+watch(
+    () => props.active,
+    (active) => {
+        if (active) {
+            registerCommand({
+                id: openSavedUrlCommandId,
+                label: 'Open a Saved URL…',
+                icon: 'house',
+                category: 'navigation',
+                when: () => homeOptions.value.length > 0,
+                items: () => homeOptions.value.map(opt => ({
+                    id: opt.key,
+                    label: opt.label ? `${opt.label} — ${opt.url}` : opt.url,
+                    active: opt.url === currentUrl.value,
+                    action: () => navigate(opt.url),
+                })),
+            })
+            registerCommand({
+                id: saveUrlCommandId,
+                label: 'Save Current URL…',
+                icon: 'bookmark',
+                category: 'ui',
+                // Nothing loaded yet → nothing to save (same gate as the button).
+                when: () => canSave.value,
+                action: () => openSaveDialog(),
+            })
+        } else {
+            unregisterCommand(openSavedUrlCommandId)
+            unregisterCommand(saveUrlCommandId)
+        }
+    },
+    { immediate: true },
+)
 
 // Set by the per-entry action buttons so the click that triggered them never
 // doubles as a wa-select navigation (belt and suspenders next to @click.stop).

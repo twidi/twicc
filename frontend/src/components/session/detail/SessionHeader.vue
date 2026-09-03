@@ -18,8 +18,7 @@ import ProcessDuration from '../../ui/ProcessDuration.vue'
 import CostDisplay from '../../ui/CostDisplay.vue'
 import AppTooltip from '../../ui/AppTooltip.vue'
 import { useSharesStore } from '../../../stores/shares'
-import { hasAnyUserTurnChannel } from '../../../utils/userTurnChannels'
-import { toast } from '../../../composables/useToast'
+import { isUserTurnMuteInert, toggleSessionMute, USER_TURN_SETTINGS_PATH } from '../../../composables/useSessionMute'
 
 const props = defineProps({
     sessionId: {
@@ -451,30 +450,18 @@ const pinTooltip = computed(() => {
 // The mute button gates four channels at once (toast, sound, browser, Apprise).
 // When none of them is enabled it still toggles — the flag is a durable
 // preference that stays correct once a channel comes back — but it says so.
-const SETTINGS_PATH = 'Settings → Notifications → Agent finished working'
-const noUserTurnChannel = computed(() => !hasAnyUserTurnChannel(settingsStore))
+const noUserTurnChannel = computed(() => isUserTurnMuteInert())
 
 const muteTooltip = computed(() => {
     const base = session.value?.mute_on_user_turn
         ? 'Muted — click to restore the "finished working" notification'
         : 'Notifications on — click to mute the "finished working" notification'
     if (!noUserTurnChannel.value) return base
-    return `${base}. No such notification is enabled, so this has no effect right now — turn one on in ${SETTINGS_PATH}.`
+    return `${base}. No such notification is enabled, so this has no effect right now — turn one on in ${USER_TURN_SETTINGS_PATH}.`
 })
 
 function handleMuteToggle() {
-    if (!session.value || session.value.draft) return
-    store.setSessionMuteOnUserTurn(
-        session.value.project_id,
-        props.sessionId,
-        !session.value.mute_on_user_turn,
-    )
-    if (noUserTurnChannel.value) {
-        toast.warning(
-            `No "finished working" notification is enabled, so this has no effect right now. `
-            + `Turn one on in ${SETTINGS_PATH}.`,
-        )
-    }
+    toggleSessionMute(props.sessionId)
 }
 
 /**

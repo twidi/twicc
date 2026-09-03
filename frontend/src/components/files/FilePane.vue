@@ -308,6 +308,8 @@ const artifactBookmark = computed(() =>
         ? dataStore.artifactBookmarkFor(props.artifactBookmarkSessionId, relativeArtifactPath.value)
         : null,
 )
+// The header's bookmark/share buttons — also driven from the command palette.
+const artifactBookmarkButtonRef = ref(null)
 
 // --- Network broker (design §9) ---------------------------------------------
 // Wire the host onto the preview <iframe>: the artifact's fetch/XHR (caught by
@@ -1222,6 +1224,8 @@ const { registerCommand, unregisterCommand } = useCommandRegistry()
 // Unique per instance: every FilePane would otherwise share one id and an
 // unmounting/deactivating pane could unregister the active pane's command.
 const toggleEditCommandId = `display.toggle-file-edit.${useId()}`
+const bookmarkArtifactCommandId = `ui.bookmark-artifact.${useId()}`
+const shareArtifactCommandId = `ui.share-artifact.${useId()}`
 
 // Alt+E is dispatched as a window event by App.vue's global key handler. It
 // carries `detail.handled`, which we flip so App.vue knows to swallow the key
@@ -1239,6 +1243,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
     window.removeEventListener('twicc:toggle-file-edit', onToggleEditShortcut)
     unregisterCommand(toggleEditCommandId)
+    unregisterCommand(bookmarkArtifactCommandId)
+    unregisterCommand(shareArtifactCommandId)
     pickerIframe?.removeEventListener('load', onPickerFrameLoad)
     pickerIframe = null
     destroyPicker()
@@ -1261,6 +1267,41 @@ watch(
             })
         } else {
             unregisterCommand(toggleEditCommandId)
+        }
+    },
+    { immediate: true },
+)
+
+// Same for the artifact actions, which the file-path header shows as two icons.
+// That header is desktop-only (`displayPath` is passed only there), and the
+// button component hosts the dialog and the "bookmark first, then share" rule —
+// so the commands exist exactly where the buttons do, and delegate to them.
+// `null` = no artifact to act on; a boolean = there is one, already bookmarked
+// or not (the dialog creates or edits accordingly, so the label follows).
+watch(
+    () => (props.active && artifactBookmarkButtonRef.value ? !!artifactBookmark.value : null),
+    (bookmarked) => {
+        if (bookmarked !== null) {
+            registerCommand({
+                id: bookmarkArtifactCommandId,
+                label: bookmarked ? 'Edit Artifact Bookmark…' : 'Bookmark This Artifact…',
+                icon: 'bookmark',
+                category: 'ui',
+                action: () => artifactBookmarkButtonRef.value?.openDialog(),
+            })
+            registerCommand({
+                id: shareArtifactCommandId,
+                label: 'Share This Artifact…',
+                icon: 'share-nodes',
+                category: 'ui',
+                // No share host configured → nothing to create, like the
+                // session-level share command.
+                when: () => !!artifactBookmarkButtonRef.value?.isSharingEnabled(),
+                action: () => artifactBookmarkButtonRef.value?.shareArtifact(),
+            })
+        } else {
+            unregisterCommand(bookmarkArtifactCommandId)
+            unregisterCommand(shareArtifactCommandId)
         }
     },
     { immediate: true },
@@ -1487,6 +1528,7 @@ function goToNextDiff() {
                 <AppTooltip :for="filePathLabelId">{{ displayPath }}<template v-if="artifactBookmark"> ({{ artifactBookmark.name }})</template></AppTooltip>
                 <ArtifactBookmarkButton
                     v-if="artifactBookmarkSessionId && isRenderableArtifact && relativeArtifactPath"
+                    ref="artifactBookmarkButtonRef"
                     class="file-path-artifact-bookmark-btn"
                     :session-id="artifactBookmarkSessionId"
                     :relative-path="relativeArtifactPath"

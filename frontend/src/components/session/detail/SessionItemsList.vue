@@ -1902,6 +1902,19 @@ const {
 defineExpose({
     getScrollerElement,
     handleForwardedDrop,
+    // Transcript navigation, for the command-palette commands SessionView
+    // registers: the same four moves the ChatNavToolbar offers, plus the
+    // "anything to navigate at all" flag that gates them.
+    chatNav: {
+        // A getter, not the ref itself: only top-level exposed refs are
+        // unwrapped, and reading `.value` through two proxies invites the kind
+        // of silent `undefined` a guard would swallow.
+        hasNavigation: () => navHasNavigation.value,
+        goTop: navGoTop,
+        goPrevBlock: navGoPrevBlock,
+        goNextBlock: navGoNextBlock,
+        goBottom: navGoBottom,
+    },
     insertTextAtCursor: (text, options) => messageInputRef.value?.insertTextAtCursor(text, options),
     getSessionSetting: (key) => messageInputRef.value?.getSessionSetting(key) ?? null,
     setSessionSetting: (key, value) => messageInputRef.value?.setSessionSetting(key, value),

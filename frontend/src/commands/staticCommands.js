@@ -28,6 +28,10 @@ import { apiFetch } from '../utils/api'
 import { toast } from '../composables/useToast'
 import { useTerminalTabsStore } from '../stores/terminalTabs'
 import { useWorkflowRunsStore } from '../stores/workflowRuns'
+import { usePeersStore } from '../stores/peers'
+import { useHelpStore } from '../stores/help'
+import { usePeerSystemConfigured } from '../composables/usePeerSystemConfigured'
+import { showHelp } from '../components/help/showHelp'
 import { TERMINAL_ROUTES, WORKFLOW_ROUTES } from '../utils/tabRoutes'
 import {
     DISPLAY_MODE,
@@ -350,6 +354,9 @@ export function initStaticCommands(router) {
     const workspaces = useWorkspacesStore()
     const terminalTabsStore = useTerminalTabsStore()
     const workflowRunsStore = useWorkflowRunsStore()
+    const peers = usePeersStore()
+    const help = useHelpStore()
+    const peerSystemConfigured = usePeerSystemConfigured()
     const route = useRoute()
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -367,6 +374,15 @@ export function initStaticCommands(router) {
     /** Project ID from the current route (if any) */
     function routeProjectId() {
         return route.params.projectId || null
+    }
+
+    /** Help pages available in this environment, alphabetical (as Settings → Help lists them). */
+    function availableHelpPages() {
+        return help.getAvailableHelp({
+            platform: settings._isTouchDevice ? 'mobile' : 'desktop',
+            os: settings.os,
+            enabledProviders: settings.enabledProviders,
+        }).sort((a, b) => a.title.localeCompare(b.title))
     }
 
     /** Terminal indices of the currently visible terminal panel (empty if none). */
@@ -1189,6 +1205,17 @@ export function initStaticCommands(router) {
             action: () => settings.setShowActiveAcrossFilters(!settings.showActiveAcrossFilters),
         },
         {
+            id: 'display.toggle-user-turn-toast',
+            label: 'Toggle "Finished Working" Toast',
+            icon: 'bell',
+            category: 'display',
+            // One channel among four (Settings → Notifications → Agent finished
+            // working), not a master switch: the sound, the browser notification
+            // and the push are left untouched.
+            toggled: () => settings.isNotifUserTurnToast,
+            action: () => settings.setNotifUserTurnToast(!settings.notifUserTurnToast),
+        },
+        {
             id: 'display.font-increase',
             label: 'Increase Font Size',
             icon: 'magnifying-glass-plus',
@@ -1314,6 +1341,51 @@ export function initStaticCommands(router) {
             action: () => {
                 window.dispatchEvent(new CustomEvent('twicc:open-share-manager'))
             },
+        },
+        {
+            id: 'ui.peer-inbox',
+            label: 'Open Peer Inbox',
+            icon: 'envelope',
+            category: 'ui',
+            // The three peer commands share the condition that decides whether
+            // the peer surfaces exist at all (sidebar button, Settings → Peers
+            // actions): an address, or peers/messages that outlived one. With
+            // nothing at all, Peers is still a setup form and they lead nowhere.
+            when: () => peerSystemConfigured.value,
+            action: () => window.dispatchEvent(new CustomEvent('twicc:open-peer-inbox')),
+        },
+        {
+            id: 'ui.peer-compose',
+            label: 'Write to a Peer…',
+            icon: 'paper-plane',
+            category: 'ui',
+            // Also needs someone to write to — the compose dialog's peer select
+            // only lists active relationships (same gate as the inbox footer).
+            when: () => peerSystemConfigured.value && peers.peers.some(p => p.state === 'active'),
+            action: () => window.dispatchEvent(new CustomEvent('twicc:open-peer-compose')),
+        },
+        {
+            id: 'ui.manage-peers',
+            label: 'Manage Peers',
+            icon: 'user-group',
+            category: 'ui',
+            when: () => peerSystemConfigured.value,
+            action: () => window.dispatchEvent(new CustomEvent('twicc:open-peers-manager')),
+        },
+        {
+            id: 'ui.help',
+            label: 'Open Help Page…',
+            icon: 'circle-question',
+            category: 'ui',
+            // Same list as Settings → Help: every page whose constraints match
+            // this environment, alphabetical. Manual opens never show the
+            // "Don't show this again" switch — they are re-readings.
+            when: () => availableHelpPages().length > 0,
+            items: () => availableHelpPages().map(page => ({
+                id: page.key,
+                label: page.title,
+                action: () => showHelp(page.key, { showDontShowAgain: false }),
+            })),
         },
         {
             id: 'ui.edit-project',

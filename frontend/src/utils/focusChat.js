@@ -4,7 +4,12 @@
  * navigation, the command palette "Focus Message Input" action — anything that
  * wants to land on "the primary thing the user can act on right now" in the
  * chat panel.
+ *
+ * Also hosts `runOnChatTab`, the "be on the chat tab, then act" helper the
+ * footer-panel and transcript-navigation commands share.
  */
+
+import { nextTick } from 'vue'
 
 // Route names whose active tab IS the chat surface (the footer accordion lives
 // here). The non-chat session sub-tabs (files/git/terminal/subagent) keep this
@@ -27,16 +32,33 @@ const SESSION_CHAT_ROUTE_NAMES = new Set(['session', 'projects-session'])
  * @param {string} eventName - 'twicc:goto-message-input' | 'twicc:goto-pending-request' | 'twicc:goto-terminal'
  */
 export function gotoChatFooterPanel(route, router, eventName) {
-    const dispatch = () => window.dispatchEvent(new CustomEvent(eventName))
+    runOnChatTab(route, router, () => window.dispatchEvent(new CustomEvent(eventName)))
+}
+
+/**
+ * Run an action on the chat tab, navigating there first when we are on another
+ * session sub-tab (the chat panel stays mounted but hidden there, so acting on
+ * it from the Files tab would scroll something nobody can see).
+ *
+ * The action runs one tick after the route settles, so the panel is shown again
+ * before it measures anything.
+ *
+ * @param {import('vue-router').RouteLocationNormalizedLoaded} route
+ * @param {import('vue-router').Router} router
+ * @param {() => void} action
+ */
+export function runOnChatTab(route, router, action) {
     if (SESSION_CHAT_ROUTE_NAMES.has(route.name)) {
-        dispatch()
-    } else {
-        const chatRouteName = route.name.startsWith('projects-session') ? 'projects-session' : 'session'
-        // `query` carried explicitly: the guard only re-propagates ?workspace= when the target
-        // project belongs to it, so a session viewed from outside the workspace would otherwise
-        // lose it on the way to its own Chat tab.
-        router.push({ name: chatRouteName, params: route.params, query: route.query }).then(dispatch)
+        action()
+        return
     }
+    const chatRouteName = route.name.startsWith('projects-session') ? 'projects-session' : 'session'
+    // `query` carried explicitly: the guard only re-propagates ?workspace= when the target
+    // project belongs to it, so a session viewed from outside the workspace would otherwise
+    // lose it on the way to its own Chat tab.
+    router
+        .push({ name: chatRouteName, params: route.params, query: route.query })
+        .then(() => nextTick(action))
 }
 
 /**

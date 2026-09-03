@@ -149,6 +149,15 @@ function openInSession() {
         query: route.query.workspace ? { workspace: route.query.workspace } : {},
     })
 }
+
+// The two entry points its host (FilePane) also offers in the command palette.
+// They stay here because the create/edit dialog lives here, and because sharing
+// an unbookmarked artifact has to bookmark it first — one behaviour, one place.
+defineExpose({
+    openDialog,
+    shareArtifact,
+    isSharingEnabled: () => sharingEnabled.value,
+})
 </script>
 
 <template>

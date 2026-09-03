@@ -54,7 +54,8 @@ import {
     parseRouteTermIndex,
 } from '../utils/granularRoutes'
 import { getAgentDisplayLabel } from '../utils/agentLabel'
-import { focusChatPrimary, gotoChatFooterPanel } from '../utils/focusChat'
+import { focusChatPrimary, gotoChatFooterPanel, runOnChatTab } from '../utils/focusChat'
+import { toggleSessionMute } from '../composables/useSessionMute'
 import { fileRootsFromStore } from '../utils/projectRoots'
 import { normalizePosixPath } from '../utils/worktreePath'
 import { computeSessionArtifactBookmarks } from '../utils/sessionArtifactBookmarks'
@@ -1652,16 +1653,31 @@ function handleNeedsTitle() {
 // Command palette: contextual session commands
 // ═══════════════════════════════════════════════════════════════════════════
 
+// The transcript moves exposed by SessionItemsList's `chatNav`, in the order
+// the ChatNavToolbar shows them (and with its icons).
+const CHAT_NAV_COMMANDS = [
+    { idSuffix: 'top',    label: 'Go to First Message',    icon: 'angles-up',    move: 'goTop' },
+    { idSuffix: 'prev',   label: 'Previous Message Block', icon: 'chevron-up',   move: 'goPrevBlock' },
+    { idSuffix: 'next',   label: 'Next Message Block',     icon: 'chevron-down', move: 'goNextBlock' },
+    { idSuffix: 'bottom', label: 'Go to Last Message',     icon: 'angles-down',  move: 'goBottom' },
+]
+
 const SESSION_COMMAND_IDS = [
     'session.rename',
     'session.archive',
     'session.unarchive',
     'session.pin-mode',
+    'session.mute',
     'session.mark-read',
     'session.mark-unread',
     'session.stop',
+    'session.force-stop',
     'session.delete-draft',
     'session.focus-input',
+    'session.focus-pending',
+    'session.focus-terminal',
+    'session.toggle-hybrid',
+    ...CHAT_NAV_COMMANDS.map(c => `session.nav-${c.idSuffix}`),
     'session.collapse-input',
     'session.expand-input',
     'session.model',
@@ -1759,6 +1775,22 @@ function registerSessionCommands() {
                     { id: 'all',       label: 'Everywhere', action: () => pick('all'),       active: current === 'all' },
                 ]
             },
+        },
+        {
+            id: 'session.mute',
+            label: 'Mute "Finished Working" Notification',
+            icon: 'bell-slash',
+            category: 'session',
+            // Mirrors the session header's bell. Silences that one notification
+            // family for this session only; every other alert still comes
+            // through. Kept visible when no such channel is enabled — the flag
+            // is a durable preference, and the toggle says so itself.
+            when: () => {
+                const s = store.getSession(sessionId.value)
+                return !!s && !s.draft
+            },
+            toggled: () => !!store.getSession(sessionId.value)?.mute_on_user_turn,
+            action: () => toggleSessionMute(sessionId.value),
         },
         {
             id: 'session.mark-read',
@@ -1887,6 +1919,19 @@ function registerSessionCommands() {
             // draft, stage/un-stage, or open the confirm dialog). Mirrors Alt+Shift+H.
             action: () => gotoChatFooterPanel(route, router, 'twicc:toggle-hybrid'),
         },
+        ...CHAT_NAV_COMMANDS.map(({ idSuffix, label, icon, move }) => ({
+            id: `session.nav-${idSuffix}`,
+            label,
+            icon,
+            category: 'navigation',
+            // The four moves of the ChatNavToolbar, which is mouse-only. They
+            // share one guard — "there is something to navigate" — rather than
+            // one per direction: the palette hides what it can't offer, and a
+            // command that vanishes at an extreme reads as a bug. Each move is
+            // already a no-op once it runs out of blocks.
+            when: () => !!sessionItemsListRef.value?.chatNav?.hasNavigation(),
+            action: () => runOnChatTab(route, router, () => sessionItemsListRef.value?.chatNav?.[move]()),
+        })),
         {
             id: 'session.collapse-input',
             label: 'Collapse Message Input',
