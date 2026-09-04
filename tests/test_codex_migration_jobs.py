@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import orjson
 import pytest
@@ -30,6 +31,7 @@ from twicc.providers.codex.rollout_migration import (
     _apply_capture_snapshot_anchors_job,
     _apply_clear_snapshot_anchors_job,
     _apply_replace_codex_history_job,
+    apply_replace_codex_history_job_in_slices,
     prepare_full_history,
 )
 from twicc.providers.compute_base import BaseSessionCompute
@@ -207,8 +209,13 @@ def test_replace_history_resets_structure_but_keeps_compute_stale(session):
     assert session.stale is False
 
 
-def test_replace_history_rolls_back_old_rows_and_links_on_failure(session):
+def test_replace_history_failure_leaves_the_offset_zero_repair_marker(session):
+    """The replacement runs in slices: a failure mid-way is not rolled back to
+    the old history but leaves ``last_offset == 0``, the durable marker the
+    coordinator repairs by replacing the history again (see
+    ``_begin_replace_codex_history``)."""
     _seed_links(session)
+    Session.objects.filter(id=session.id).update(last_offset=333, last_line=2)
     job = ReplaceCodexHistoryJob(
         Provider.CODEX,
         session.id,
@@ -222,9 +229,82 @@ def test_replace_history_rolls_back_old_rows_and_links_on_failure(session):
     with pytest.raises(IntegrityError):
         _apply_replace_codex_history_job(job)
 
-    assert list(session.items.values_list("line_num", flat=True)) == [1, 2]
-    assert ToolResultLink.objects.filter(session=session).count() == 1
-    assert AgentLink.objects.filter(session=session).count() == 1
+    session.refresh_from_db()
+    assert list(session.items.values_list("line_num", flat=True)) == []
+    assert not ToolResultLink.objects.filter(session=session).exists()
+    assert not AgentLink.objects.filter(session=session).exists()
+    assert (session.last_offset, session.last_line) == (0, 0)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_replace_history_in_slices_matches_the_one_shot_form(session, monkeypatch):
+    from twicc.providers.codex import rollout_migration
+
+    monkeypatch.setattr(rollout_migration, "REPLACE_HISTORY_CHUNK_SIZE", 2)
+    _seed_links(session)
+    contents = [orjson.dumps({"type": "session_meta", "payload": {"history_mode": "paginated"}}).decode()]
+    contents += [orjson.dumps({"type": "event_msg", "payload": {"type": "token_count", "n": i}}).decode() for i in range(6)]
+    job = ReplaceCodexHistoryJob(Provider.CODEX, session.id, list(enumerate(contents, 1)), 777, 7, 5.5, _future())
+
+    count = asyncio.run(apply_replace_codex_history_job_in_slices(job))
+
+    session.refresh_from_db()
+    assert count == 7
+    assert list(session.items.order_by("line_num").values_list("content", flat=True)) == contents
+    assert (session.last_offset, session.last_line, session.mtime) == (777, 7, 5.5)
+    assert not ToolResultLink.objects.filter(session=session).exists()
+
+
+def test_item_updates_fast_path_stores_the_same_values_as_the_model_layer(session):
+    """The worker's JSON shape (cost as str, timestamp as ISO) lands typed."""
+    item = _item(session, 1)
+    BaseSessionCompute.apply_item_updates(
+        ["display_level", "group_head", "group_tail", "kind", "message_id", "cost", "context_usage", "timestamp", "git_directory", "git_branch"],
+        [{
+            "id": item.id, "display_level": 2, "group_head": 1, "group_tail": None, "kind": "user_message",
+            "message_id": "msg-1", "cost": "0.001234", "context_usage": 4321,
+            "timestamp": "2026-08-31T10:00:05.250000+00:00", "git_directory": "/repo", "git_branch": "main",
+        }],
+    )
+    BaseSessionCompute.apply_content_overrides([{"id": item.id, "content": "rewritten"}])
+
+    item.refresh_from_db()
+    assert (item.display_level, item.group_head, item.group_tail, item.kind, item.message_id) == (2, 1, None, "user_message", "msg-1")
+    assert item.cost == Decimal("0.001234")
+    assert item.context_usage == 4321
+    assert item.timestamp == datetime(2026, 8, 31, 10, 0, 5, 250000, tzinfo=UTC)
+    assert (item.git_directory, item.git_branch, item.content) == ("/repo", "main", "rewritten")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_db_writer_applies_large_results_in_slices_and_stops_when_superseded(session, monkeypatch):
+    from twicc.providers import db_writer
+
+    monkeypatch.setattr(db_writer, "COMPUTE_APPLY_CHUNK_SIZE", 2)
+    items = [_item(session, n) for n in range(1, 8)]
+    Session.objects.filter(id=session.id).update(last_offset=100)
+    msg = {
+        "session_id": session.id,
+        "observed_last_offset": 100,
+        "item_fields": ["kind"],
+        "item_updates": [{"id": it.id, "kind": f"k{it.line_num}"} for it in items],
+        "content_overrides": [{"id": items[0].id, "content": "override"}],
+    }
+
+    trimmed, outcome = asyncio.run(db_writer._apply_compute_items_in_chunks(msg))
+
+    assert outcome == "ok"
+    assert trimmed["item_updates"] == [] and trimmed["content_overrides"] == []
+    assert list(session.items.order_by("line_num").values_list("kind", flat=True)) == [f"k{n}" for n in range(1, 8)]
+    assert session.items.get(line_num=1).content == "override"
+
+    # The watcher moved on (last_offset advanced): the first slice already
+    # reports it and nothing more is written.
+    Session.objects.filter(id=session.id).update(last_offset=200)
+    msg["item_updates"] = [{"id": it.id, "kind": "stale"} for it in items]
+    _, outcome = asyncio.run(db_writer._apply_compute_items_in_chunks(msg))
+    assert outcome == "superseded"
+    assert not session.items.filter(kind="stale").exists()
 
 
 def test_prepare_full_history_reads_from_zero_and_drops_blank_records(tmp_path):

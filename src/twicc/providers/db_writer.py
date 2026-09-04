@@ -74,6 +74,12 @@ BATCH_ACTIVITY_COUNT = 50
 # and the producer is throttled to the DB writer's write rate.
 INITIAL_SYNC_QUEUE_MAXSIZE = 200
 COMPUTE_QUEUE_MAXSIZE = 200
+# A compute result carrying more item writes than this is applied in slices
+# of this size, each in its own ``sync_to_async`` call and transaction, so a
+# giant session (hundreds of thousands of items) cannot hold the shared
+# thread-sensitive executor — and with it every REST view, WebSocket
+# connect and watcher write of the process — for minutes.
+COMPUTE_APPLY_CHUNK_SIZE = 2000
 
 # "spawn" context — the compute result queue is created here and passed to
 # the spawn workers, so it must come from the same context they use.
@@ -1990,6 +1996,44 @@ async def _db_writer_loop() -> None:
 # =============================================================================
 
 
+async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
+    """Pre-apply a large result's item writes in slices; return the trimmed message.
+
+    Small results are returned untouched (``apply_session_complete`` writes
+    their items itself). For large ones every slice runs as its own
+    ``sync_to_async`` call, so other thread-sensitive callers interleave,
+    and re-checks the revision guard; the first non-``ok`` outcome stops the
+    apply and is returned so the caller reports it exactly as
+    ``apply_session_complete`` would have.
+    """
+    from twicc.providers.compute_base import BaseSessionCompute
+
+    item_updates = msg.get('item_updates') or []
+    content_overrides = msg.get('content_overrides') or []
+    if len(item_updates) + len(content_overrides) <= COMPUTE_APPLY_CHUNK_SIZE:
+        return msg, "ok"
+
+    session_id = msg['session_id']
+    observed_last_offset = msg.get('observed_last_offset')
+    item_fields = msg.get('item_fields') or []
+    apply_chunk = sync_to_async(BaseSessionCompute.apply_session_items_chunk)
+    for start in range(0, len(item_updates), COMPUTE_APPLY_CHUNK_SIZE):
+        outcome = await apply_chunk(
+            session_id, observed_last_offset, item_fields,
+            item_updates[start:start + COMPUTE_APPLY_CHUNK_SIZE], [],
+        )
+        if outcome != "ok":
+            return msg, outcome
+    for start in range(0, len(content_overrides), COMPUTE_APPLY_CHUNK_SIZE):
+        outcome = await apply_chunk(
+            session_id, observed_last_offset, [], [],
+            content_overrides[start:start + COMPUTE_APPLY_CHUNK_SIZE],
+        )
+        if outcome != "ok":
+            return msg, outcome
+    return {**msg, 'item_updates': [], 'content_overrides': []}, "ok"
+
+
 async def _process_compute_message(msg: dict) -> None:
     """Apply one message drained from the shared compute result queue."""
     msg_type = msg.get("type")
@@ -2046,8 +2090,13 @@ async def _process_compute_message(msg: dict) -> None:
         return
 
     try:
-        from twicc.providers.compute_base import BaseSessionCompute
-        result = await sync_to_async(BaseSessionCompute.apply_session_complete)(msg)
+        from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
+
+        msg, chunk_outcome = await _apply_compute_items_in_chunks(msg)
+        if chunk_outcome != "ok":
+            result = ComputeApplyResult(chunk_outcome)
+        else:
+            result = await sync_to_async(BaseSessionCompute.apply_session_complete)(msg)
     except Exception as e:
         logger.exception("Error applying session_complete")
         state.failed_count += 1

@@ -252,6 +252,21 @@ class CodexComputeCoordinator:
             raise RolloutMigrationError(f"Cannot read matching session_meta from {path}")
         return meta.history_mode
 
+    async def _database_mode(self, candidate: CodexComputeCandidate) -> HistoryMode:
+        """The stored history mode; a session at offset 0 with no rows counts as legacy.
+
+        Offset 0 without a stored ``session_meta`` is an interrupted history
+        replacement (or a row never synced): there is nothing to compute
+        from, the rollout must be read from byte zero, which the legacy
+        answer produces through the decision matrix.
+        """
+        try:
+            return await get_db_history_mode(candidate.session_id)
+        except RolloutMigrationError:
+            if candidate.last_offset == 0:
+                return HistoryMode.LEGACY
+            raise
+
     async def _submit_job(self, job_type, *args):
         future = asyncio.get_running_loop().create_future()
         try:
@@ -297,14 +312,17 @@ class CodexComputeCoordinator:
         self._started_at.setdefault(session_id, time.monotonic())
         try:
             source_mode = await self._source_mode(candidate.file_path, session_id)
-            database_mode = await get_db_history_mode(session_id)
+            database_mode = await self._database_mode(candidate)
             preparation = migration_preparation(source_mode, database_mode)
             anchors_existed = await _has_snapshot_anchor(session_id)
             # A rollout shorter than what TwiCC already ingested was rewritten
             # (a re-migration, a rollback...): its history must be replaced
-            # whatever the modes say.
+            # whatever the modes say. So must a session at offset 0: an
+            # interrupted history replacement (see
+            # ``_begin_replace_codex_history``) leaves it there with no or
+            # only part of its rows.
             size = _file_size(candidate.file_path)
-            truncated = size is not None and size < candidate.last_offset
+            truncated = (size is not None and size < candidate.last_offset) or candidate.last_offset == 0
             if truncated and preparation == MigrationPreparation.COMPUTE_ONLY:
                 preparation = MigrationPreparation.REPLACE_ONLY
 
@@ -320,7 +338,7 @@ class CodexComputeCoordinator:
             self.migration_paths[session_id] = candidate.file_path
 
             source_mode = await self._source_mode(candidate.file_path, session_id)
-            database_mode = await get_db_history_mode(session_id)
+            database_mode = await self._database_mode(candidate)
             preparation = migration_preparation(source_mode, database_mode)
             if truncated and preparation == MigrationPreparation.COMPUTE_ONLY:
                 preparation = MigrationPreparation.REPLACE_ONLY

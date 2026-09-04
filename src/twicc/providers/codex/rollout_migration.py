@@ -329,28 +329,74 @@ def _apply_clear_snapshot_anchors_job(job: ClearSnapshotAnchorsJob) -> int:
     return changed
 
 
+# Rows inserted per transaction by the history replacement. Each slice is
+# its own ``sync_to_async`` call, so a 500 MB rollout does not hold the shared
+# thread-sensitive executor (and every REST view, WebSocket connect and
+# watcher write behind it) for the whole rebuild.
+REPLACE_HISTORY_CHUNK_SIZE = 2000
+
+
 @transaction.atomic
-def _apply_replace_codex_history_job(job: ReplaceCodexHistoryJob) -> int:
-    session = Session.objects.select_for_update().get(id=job.session_id)
+def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
+    """First slice: drop the old history and mark the session as mid-replacement.
+
+    ``last_offset = 0`` is the durable marker of an unfinished replacement:
+    the coordinator treats a stale session at offset 0 as "replace from the
+    rollout" whatever its stored history mode says, so a crash between
+    this transaction and :func:`_finish_replace_codex_history` — leaving no
+    or only some of the new rows — is repaired by the next start instead of
+    being computed as a complete history.
+    """
+    Session.objects.select_for_update().get(id=job.session_id)
     ToolResultLink.objects.filter(session_id=job.session_id).delete()
     AgentLink.objects.filter(session_id=job.session_id).delete()
     SessionItem.objects.filter(session_id=job.session_id).delete()
+    Session.objects.filter(id=job.session_id).update(
+        last_offset=0, last_line=0, tasks={}, search_version=None,
+    )
+
+
+@transaction.atomic
+def _insert_replace_codex_history_chunk(session_id: str, items: list[tuple[int, str]]) -> int:
     SessionItem.objects.bulk_create([
-        SessionItem(session_id=job.session_id, line_num=line_num, content=content)
-        for line_num, content in job.items
+        SessionItem(session_id=session_id, line_num=line_num, content=content)
+        for line_num, content in items
     ], batch_size=100)
+    return len(items)
+
+
+@transaction.atomic
+def _finish_replace_codex_history(job: ReplaceCodexHistoryJob) -> int:
+    """Last slice: publish the new tracking values (the replacement is complete)."""
+    session = Session.objects.select_for_update().get(id=job.session_id)
     session.last_offset = job.last_offset
     session.last_line = job.last_line
     session.mtime = job.mtime
-    session.tasks = {}
-    session.search_version = None
     session.stale = False
     # A rebuilt history is showable again, whatever an earlier attempt said.
     session.unavailable_reason = None
-    session.save(update_fields=[
-        "last_offset", "last_line", "mtime", "tasks", "search_version", "stale", "unavailable_reason",
-    ])
+    session.save(update_fields=["last_offset", "last_line", "mtime", "stale", "unavailable_reason"])
     return len(job.items)
+
+
+def _apply_replace_codex_history_job(job: ReplaceCodexHistoryJob) -> int:
+    """Whole replacement in one call (tests and small histories); see the async form."""
+    _begin_replace_codex_history(job)
+    for start in range(0, len(job.items), REPLACE_HISTORY_CHUNK_SIZE):
+        _insert_replace_codex_history_chunk(job.session_id, job.items[start:start + REPLACE_HISTORY_CHUNK_SIZE])
+    return _finish_replace_codex_history(job)
+
+
+async def apply_replace_codex_history_job_in_slices(job: ReplaceCodexHistoryJob) -> int:
+    """The DB writer's form: one ``sync_to_async`` call per slice."""
+    from asgiref.sync import sync_to_async
+
+    await sync_to_async(_begin_replace_codex_history)(job)
+    for start in range(0, len(job.items), REPLACE_HISTORY_CHUNK_SIZE):
+        await sync_to_async(_insert_replace_codex_history_chunk)(
+            job.session_id, job.items[start:start + REPLACE_HISTORY_CHUNK_SIZE],
+        )
+    return await sync_to_async(_finish_replace_codex_history)(job)
 
 
 def _apply_mark_session_unavailable_job(job: MarkSessionUnavailableJob) -> int:

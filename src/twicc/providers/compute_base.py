@@ -34,13 +34,12 @@ import re
 from collections import Counter
 from collections.abc import Callable, Iterator
 from datetime import datetime, UTC
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, ClassVar, Literal, NamedTuple
 
 import orjson
 from django.core.exceptions import MultipleObjectsReturned
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F, QuerySet
 
 from twicc.context_injection import strip_context_blocks_in_place
@@ -2838,6 +2837,91 @@ class BaseSessionCompute:
         connection.close()
 
     @staticmethod
+    def guard_compute_revision(session_id: str, observed_last_offset: int | None) -> str:
+        """Check that a compute result is still current for ``session_id``.
+
+        Returns ``"ok"``, ``"superseded"`` (the watcher advanced ``last_offset``
+        past what the worker saw — see :meth:`apply_session_complete`) or
+        ``"missing"``. Must run as the first statement of the transaction
+        that applies the result: the conditional no-op UPDATE takes the
+        write lock up front instead of opening a read snapshot a concurrent
+        watcher commit could invalidate.
+        """
+        if observed_last_offset is not None:
+            rows = Session.objects.filter(
+                id=session_id, last_offset__lte=observed_last_offset,
+            ).update(last_offset=F('last_offset'))
+            if rows == 0:
+                return "superseded" if Session.objects.filter(id=session_id).exists() else "missing"
+            return "ok"
+        return "ok" if Session.objects.filter(id=session_id).exists() else "missing"
+
+    @staticmethod
+    def apply_item_updates(item_fields: list[str], item_updates: list[dict]) -> None:
+        """Write the worker's per-item metadata with one parametrised UPDATE per row.
+
+        ``item_updates`` is the worker's JSON shape (``serialize_item``: ``cost``
+        as a string, ``timestamp`` as an ISO string); each value goes through
+        the model field's ``get_db_prep_save`` so the stored bytes are exactly
+        what ``Model.save()`` would write. ``executemany`` of a plain UPDATE
+        is ~50× faster than ``bulk_update`` (which builds CASE/WHEN
+        expressions in Python): 186k rows take seconds instead of minutes.
+        """
+        if not item_updates or not item_fields:
+            return
+        fields = [SessionItem._meta.get_field(name) for name in item_fields]
+        table = connection.ops.quote_name(SessionItem._meta.db_table)
+        assignments = ", ".join(f"{connection.ops.quote_name(field.column)} = %s" for field in fields)
+        sql = f"UPDATE {table} SET {assignments} WHERE {connection.ops.quote_name('id')} = %s"
+        rows = [
+            [field.get_db_prep_save(update.get(field.name), connection=connection) for field in fields]
+            + [update['id']]
+            for update in item_updates
+        ]
+        with connection.cursor() as cursor:
+            cursor.executemany(sql, rows)
+
+    @staticmethod
+    def apply_content_overrides(content_overrides: list[dict]) -> None:
+        """Write the compute-time content rewrites (same fast path as :meth:`apply_item_updates`)."""
+        if not content_overrides:
+            return
+        table = connection.ops.quote_name(SessionItem._meta.db_table)
+        sql = (
+            f"UPDATE {table} SET {connection.ops.quote_name('content')} = %s "
+            f"WHERE {connection.ops.quote_name('id')} = %s"
+        )
+        with connection.cursor() as cursor:
+            cursor.executemany(sql, [[override['content'], override['id']] for override in content_overrides])
+
+    @staticmethod
+    @transaction.atomic
+    def apply_session_items_chunk(
+        session_id: str,
+        observed_last_offset: int | None,
+        item_fields: list[str],
+        item_updates: list[dict],
+        content_overrides: list[dict],
+    ) -> str:
+        """Apply one slice of a compute result's item writes in its own transaction.
+
+        The DB writer feeds a large result to the shared ``sync_to_async``
+        thread in slices, so the WebSocket consumer, the REST views and the
+        watcher can interleave between them instead of waiting minutes
+        behind one giant apply. Each slice re-checks the revision guard;
+        returns its outcome (``"ok"`` / ``"superseded"`` / ``"missing"``).
+        A slice applied before a later ``superseded`` is harmless: the
+        session's ``compute_version`` never advances, the next recompute
+        rewrites every row.
+        """
+        outcome = BaseSessionCompute.guard_compute_revision(session_id, observed_last_offset)
+        if outcome != "ok":
+            return outcome
+        BaseSessionCompute.apply_item_updates(item_fields, item_updates)
+        BaseSessionCompute.apply_content_overrides(content_overrides)
+        return "ok"
+
+    @staticmethod
     @transaction.atomic
     def apply_session_complete(msg: dict) -> ComputeApplyResult:
         """
@@ -2874,42 +2958,22 @@ class BaseSessionCompute:
         # include last_offset, so only the watcher advances it — a reliable
         # monotonic revision marker.
         observed_last_offset = msg.get('observed_last_offset')
-        if observed_last_offset is not None:
-            rows = Session.objects.filter(
-                id=session_id, last_offset__lte=observed_last_offset,
-            ).update(last_offset=F('last_offset'))
-            if rows == 0:
-                outcome = "superseded" if Session.objects.filter(id=session_id).exists() else "missing"
-                logger.info(
-                    "apply_session_complete: %s compute result for session %s "
-                    "at observed last_offset %s",
-                    outcome, session_id, observed_last_offset,
-                )
-                return ComputeApplyResult(outcome)
-        elif not Session.objects.filter(id=session_id).exists():
-            return ComputeApplyResult("missing")
+        outcome = BaseSessionCompute.guard_compute_revision(session_id, observed_last_offset)
+        if outcome != "ok":
+            logger.info(
+                "apply_session_complete: %s compute result for session %s "
+                "at observed last_offset %s",
+                outcome, session_id, observed_last_offset,
+            )
+            return ComputeApplyResult(outcome)
 
-        # 1. Apply item updates (only items that changed)
-        item_updates = msg.get('item_updates', [])
-        item_fields = msg.get('item_fields', [])
-        if item_updates and item_fields:
-            items = [
-                SessionItem(id=upd['id'], **{
-                    field: Decimal(value) if (value := upd.get(field)) is not None and field == 'cost' else value
-                    for field in item_fields
-                })
-                for upd in item_updates
-            ]
-            SessionItem.objects.bulk_update(items, item_fields, batch_size=50)
+        # 1. Apply item updates (only items that changed). The DB writer
+        # pre-applies large batches in slices (``apply_session_items_chunk``)
+        # and hands over an emptied list; small ones land here directly.
+        BaseSessionCompute.apply_item_updates(msg.get('item_fields', []), msg.get('item_updates', []))
 
         # 2. Apply content overrides (rare: provider-specific transformations applied at compute time)
-        content_overrides = msg.get('content_overrides', [])
-        if content_overrides:
-            items = [
-                SessionItem(id=ovr['id'], content=ovr['content'])
-                for ovr in content_overrides
-            ]
-            SessionItem.objects.bulk_update(items, ['content'], batch_size=50)
+        BaseSessionCompute.apply_content_overrides(msg.get('content_overrides', []))
 
         # 3. Sync tool result links (diff-based: create/update/delete)
         trl_to_create = msg.get('tool_result_links_to_create', [])

@@ -19,6 +19,7 @@ from twicc.providers.codex.migration_gate import gate_for, is_migrating, request
 from twicc.providers.codex.rollout_migration import (
     CodexMigrationOutcome,
     HistoryMode,
+    RolloutMigrationError,
     RolloutPreflight,
 )
 from twicc.providers.db_writer import ComputeApplied
@@ -527,3 +528,39 @@ def test_startup_progress_carries_the_detail_line():
     assert startup_progress.set_startup_progress("background_compute", 4, 10, provider="codex")
     assert startup_progress.get_startup_progress()[0]["detail"] is None
     startup_progress._current_progress.clear()
+
+
+def test_offset_zero_forces_a_history_replacement(monkeypatch, tmp_path):
+    """An interrupted replacement (last_offset 0, rows missing or partial) is repaired, never computed."""
+
+    async def scenario():
+        coordinator = _coordinator()
+        rollout = tmp_path / "rollout.jsonl"
+        rollout.write_bytes(b"{}\n")
+        candidate = CodexComputeCandidate("interrupted", rollout, SessionType.SESSION, last_offset=0)
+        jobs = _legacy_setup(coordinator, monkeypatch, source=HistoryMode.PAGINATED, database=HistoryMode.PAGINATED)
+
+        async def never_run(*_args):
+            raise AssertionError("a paginated source must not be migrated again")
+
+        coordinator.runner = SimpleNamespace(run=never_run, stop=lambda: _async_value(None))
+        result = await coordinator.prepare_candidate(candidate)
+        assert isinstance(result, PreparedCandidate)
+        assert result.kind == "replaced"
+        assert [name for name, _ in jobs] == ["CaptureSnapshotAnchorsJob", "ReplaceCodexHistoryJob"]
+        result.migration_lease.release()
+        coordinator._release_lease("interrupted", replay=False)
+
+        # No stored row at all (crash right after the delete slice): same repair.
+        async def no_first_item(*_args):
+            raise RolloutMigrationError("no stored first item")
+
+        monkeypatch.setattr(background_compute, "get_db_history_mode", no_first_item)
+        jobs.clear()
+        result = await coordinator.prepare_candidate(candidate)
+        assert isinstance(result, PreparedCandidate)
+        assert [name for name, _ in jobs] == ["CaptureSnapshotAnchorsJob", "ReplaceCodexHistoryJob"]
+        result.migration_lease.release()
+        coordinator._release_lease("interrupted", replay=False)
+
+    asyncio.run(scenario())

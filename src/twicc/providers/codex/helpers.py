@@ -860,7 +860,7 @@ class CodexHelpers(BaseProviderHelpers):
             _apply_clear_snapshot_anchors_job,
             _apply_mark_session_rebuild_job,
             _apply_mark_session_unavailable_job,
-            _apply_replace_codex_history_job,
+            apply_replace_codex_history_job_in_slices,
         )
         from .titles import (
             SyncSessionTitlesJob,
@@ -875,7 +875,17 @@ class CodexHelpers(BaseProviderHelpers):
             await settle_async_job(job, _apply_clear_snapshot_anchors_job, "Codex snapshot anchor cleanup")
             return True
         if isinstance(job, ReplaceCodexHistoryJob):
-            await settle_async_job(job, _apply_replace_codex_history_job, "Codex history replacement")
+            # Sliced: several short transactions on the shared thread-sensitive
+            # executor rather than one long one (see REPLACE_HISTORY_CHUNK_SIZE).
+            try:
+                count = await apply_replace_codex_history_job_in_slices(job)
+            except Exception as exc:
+                logger.error("Error applying Codex history replacement job: %s", exc, exc_info=True)
+                if not job.future.done():
+                    job.future.set_exception(exc)
+                return True
+            if not job.future.done():
+                job.future.set_result(count)
             return True
         if isinstance(job, MarkSessionUnavailableJob):
             await settle_async_job(job, _apply_mark_session_unavailable_job, "Codex session unavailable flag")
