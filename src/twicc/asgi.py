@@ -638,6 +638,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         if self._should_send("peer_messages_updated"):
             from twicc.core.models import PeerMessage, PeerMessageDirection, PeerMessageStatus, PeerState
             from twicc.core.serializers import serialize_peer_message
+            from twicc.core.services.peer_messages import peer_message_projects_map
 
             def _peer_messages_snapshot():
                 # The serializer reads each message's local session titles: one
@@ -652,12 +653,16 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 recent = list(rows.exclude(
                     direction=PeerMessageDirection.IN, status=PeerMessageStatus.PENDING,
                 )[:50])
-                return pending + recent
+                # Each row's effective project may be inherited from a
+                # thread row outside this page: resolved over every row.
+                return pending + recent, peer_message_projects_map(rows)
 
-            peer_messages = await sync_to_async(_peer_messages_snapshot)()
+            peer_messages, projects = await sync_to_async(_peer_messages_snapshot)()
             await self.send_json({
                 "type": "peer_messages_updated",
-                "messages": [serialize_peer_message(m) for m in peer_messages],
+                "messages": [
+                    serialize_peer_message(m, effective_project=projects.get(m.pk)) for m in peer_messages
+                ],
             })
 
         if self._should_send("tips_manifest_pushed"):

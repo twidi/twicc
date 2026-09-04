@@ -1889,6 +1889,16 @@ class PeerMessage(models.Model):
     delivered_to_session = models.ForeignKey(
         Session, null=True, blank=True, on_delete=models.SET_NULL, related_name="peer_messages_received",
     )
+    # LOCAL only: the project the owner attached BY HAND to a message that no
+    # session ties to one (read then done/refused, written directly, sent from
+    # the CLI outside a session). Never derived — a session's project is read
+    # off the FK above, and a session-less reply inherits its thread's — and
+    # never copied: the effective project is resolved at read time
+    # (`peer_messages.resolve_peer_message_projects`: session, else this,
+    # else the nearest row of its thread that has one, ancestors first).
+    project = models.ForeignKey(
+        Project, null=True, blank=True, on_delete=models.SET_NULL, related_name="peer_messages",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
     purged_at = models.DateTimeField(null=True, blank=True)

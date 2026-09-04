@@ -15,6 +15,7 @@ import { playNotificationSound, sendBrowserNotification, isPageActive } from '..
 import { installPresenceHeartbeat, isLocallyPresent } from '../utils/presence'
 import { handleResyncRequired } from '../utils/resync'
 import { truncateTitle } from '../utils/truncate'
+import { peerMessageRouting, peerRoutingText } from '../utils/peerMessageRouting'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
 import { compareVersions } from '../utils/version'
 import { getProcessStateNotificationEffects } from '../utils/processStateNotifications.js'
@@ -743,6 +744,17 @@ function buildNotificationBody(msg) {
  * @param {string} body
  * @param {Function} onClick
  */
+/** A project's text label for a peer notification: its display name, under
+ *  its main repository's for a worktree (`main › worktree`), each cut at 40
+ *  like the process-state notifications. */
+function peerProjectLabel(projectId) {
+    const store = useDataStore()
+    const project = store.getProject(projectId)
+    const name = truncateTitle(store.getProjectDisplayName(projectId), 40)
+    const parentId = project?.worktree_of
+    return parentId ? `${truncateTitle(store.getProjectDisplayName(parentId), 40)} › ${name}` : name
+}
+
 function notifyPeerEvent(title, body, onClick) {
     const settings = useSettingsStore()
     playNotificationSound(settings.notifPeerSound)
@@ -1343,11 +1355,13 @@ export function useWebSocket() {
                     })
                     // The one peer event worth leaving the app for: their agent
                     // — and their user — stay blocked until you deliver it.
+                    // Ends with where it counts (session, project) when known.
                     notifyPeerEvent(
                         heading,
                         [
                             msg.message?.title ? `"${msg.message.title}"` : '',
                             msg.message?.text_preview || '',
+                            peerRoutingText(peerMessageRouting(msg.message), peerProjectLabel),
                         ].filter(Boolean).join('\n'),
                         () => window.dispatchEvent(new CustomEvent('twicc:open-peer-inbox', {
                             detail: { messageId: msg.message?.id },
@@ -1373,9 +1387,15 @@ export function useWebSocket() {
                         const quoted = excerpt ? ` "${excerpt}"` : ''
                         // "done": their user dealt with it themselves, no agent
                         // received it — "was done" would not read as a sentence.
-                        toast.info(msg.message.status === 'done'
-                            ? `"${peerName}" marked your message${quoted} as done`
-                            : `Your message${quoted} to "${peerName}" was ${msg.message.status}`)
+                        // The body is where the message counts (session,
+                        // project), nothing else: no buttons on a 5s toast.
+                        toast.custom(PeerToastContent, {
+                            type: 'info',
+                            title: msg.message.status === 'done'
+                                ? `"${peerName}" marked your message${quoted} as done`
+                                : `Your message${quoted} to "${peerName}" was ${msg.message.status}`,
+                            props: { mode: 'status', message: msg.message },
+                        })
                     }
                 })
                 break

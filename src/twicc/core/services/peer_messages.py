@@ -112,52 +112,213 @@ def _resolve_reply_to_message(peer, direction: str, reply_to: str):
     return candidates.filter(direction=opposite).first() or candidates.first()
 
 
-def resolve_peer_message_project_ids(rows) -> dict:
-    """Map each message pk to its effective project id, or ``None``.
+# Where a message's effective project comes from (`effective_project.source`
+# on the wire). A message with a local session follows it; without one, the
+# project the owner attached by hand; without either, its conversation's —
+# the nearest ancestor of its reply chain that has one, else the nearest
+# other row of its thread that does. A reply to something a session sent shows under
+# that session's project, and so does a hand-written message answered into a
+# session. None of the three: no project, which is a normal state (a peer may
+# write about nothing in particular).
+PROJECT_SOURCE_SESSION = "session"
+PROJECT_SOURCE_ATTACHED = "attached"
+PROJECT_SOURCE_CONVERSATION = "conversation"
 
-    *rows* is an iterable of ``(pk, reply_to_message_id, own_project_id)``
-    where ``own_project_id`` is the project of the row's LOCAL session
-    (``origin_session`` outbound, ``delivered_to_session`` inbound; only one is
-    ever set). A message with a session of its own uses that project. Without
-    one — a pending inbound reply, a message the owner wrote directly — it
-    inherits from the nearest ancestor of its reply chain that has one, so a
-    reply to something a session sent still shows under that session's
-    project. A chain with no session anywhere resolves to ``None``.
+# (project_id, source, owner_pk): the row that OWNS the project — itself for
+# "session"/"attached", the thread row it came from for "conversation".
+NO_PROJECT = (None, None, None)
 
-    Pure: no queries. The chain is walked once per row (memoised), with a
+
+class EffectiveContext(NamedTuple):
+    """What a message counts under, resolved through its thread: the project,
+    where it came from, and — when inherited from a thread row that has a
+    local session — that session, as ``{id, title, project_id}``. The
+    message's own session is never repeated here: it rides the row's
+    ``origin_session`` / ``delivered_to_session`` refs."""
+    project_id: str | None
+    source: str | None
+    session: dict | None = None
+
+
+def resolve_peer_message_projects(rows) -> dict:
+    """Map each message pk to ``(project_id, source, owner_pk)``, ``(None,
+    None, None)`` when nothing in its reply chain names a project.
+
+    *rows* is an iterable of ``(pk, reply_to_message_id, own_project_id,
+    own_source)`` — the row's OWN project, if any: its local session's
+    (``PROJECT_SOURCE_SESSION``) or its hand-attached one
+    (``PROJECT_SOURCE_ATTACHED``), the session winning. A row without one
+    inherits from its conversation, reported as
+    ``PROJECT_SOURCE_CONVERSATION`` whatever the source it came from: the
+    nearest ancestor of its reply chain that owns one, else the nearest
+    message of the rest of its thread that does — its replies, and the
+    branches next to it (a message written by hand, then answered into a
+    session, counts under that session's project). Ancestors first: what a
+    message answers says more about it than what answered it.
+
+    Pure: no queries. The chain up is walked once per row (memoised); the
+    rest of the thread is a breadth-first search over reply links in both
+    directions, nearest first, earliest row first at equal distance. Both
     guard against a cycle that ``reply_to_message`` cannot produce (resolved
-    at creation, SET_NULL on deletion) but that must not hang if it ever did.
+    at creation, SET_NULL on deletion) but that must not hang if it ever
+    did.
     """
     parents = {}
+    children: dict = {}
     own = {}
-    for pk, parent_pk, project_id in rows:
+    for pk, parent_pk, project_id, source in rows:
         parents[pk] = parent_pk
-        own[pk] = project_id
+        own[pk] = (project_id, source, pk) if project_id else NO_PROJECT
+        children.setdefault(parent_pk, []).append(pk)
 
     resolved: dict = {}
 
-    def _resolve(pk):
+    def _inherited(found):
+        return (found[0], PROJECT_SOURCE_CONVERSATION, found[2]) if found[0] else NO_PROJECT
+
+    def _resolve_up(pk):
         if pk in resolved:
             return resolved[pk]
         path = []
         current = pk
-        found = None
+        found = NO_PROJECT
         while current is not None and current not in resolved and current in own:
             if current in path:
                 break
             path.append(current)
-            if own[current] is not None:
+            if own[current][0]:
                 found = own[current]
                 break
             current = parents[current]
         else:
             if current in resolved:
                 found = resolved[current]
-        for visited in path:
-            resolved[visited] = found
-        return found
+        # The row that owns the project keeps its own source; every row that
+        # climbed to it inherits.
+        for index, visited in enumerate(path):
+            resolved[visited] = found if index == len(path) - 1 and own[visited][0] else _inherited(found)
+        return resolved.get(pk, NO_PROJECT)
 
-    return {pk: _resolve(pk) for pk in own}
+    def _neighbours(pk):
+        parent = parents.get(pk)
+        yield from ([parent] if parent in own else [])
+        yield from children.get(pk, ())
+
+    def _resolve_around(pk):
+        # Only the thread rows' OWN projects matter: every row of the thread
+        # is reached by this search, so what any of them inherits comes from
+        # a row it visits anyway.
+        seen = {pk}
+        level = sorted(set(_neighbours(pk)))
+        while level:
+            for row in level:
+                if own[row][0]:
+                    return _inherited(own[row])
+            seen.update(level)
+            level = sorted({
+                neighbour
+                for row in level
+                for neighbour in _neighbours(row)
+                if neighbour not in seen
+            })
+        return NO_PROJECT
+
+    projects = {pk: _resolve_up(pk) for pk in own}
+    return {pk: project if project[0] else _resolve_around(pk) for pk, project in projects.items()}
+
+
+def peer_message_projects_map(queryset=None) -> dict:
+    """``{pk: EffectiveContext}`` for every message of *queryset* (default:
+    all), resolved through their reply chains — see
+    ``resolve_peer_message_projects``. One query over the scalar columns,
+    the in-memory walk, then one query for the titles of the sessions that
+    inherited contexts point at. Sync: call from a sync context.
+
+    A thread never leaves its peer relationship (``reply_to_message`` is
+    resolved within one peer at creation), so a peer-filtered queryset still
+    holds every row its rows need.
+    """
+    from twicc.core.models import PeerMessage, Session
+
+    # `prefetch_related(None)`: the caller's queryset may carry the `replies`
+    # prefetch its own rows need; scalar columns do not.
+    rows = list(
+        (queryset if queryset is not None else PeerMessage.objects.all()).prefetch_related(None).values_list(
+            "pk", "reply_to_message_id",
+            "origin_session__project_id", "delivered_to_session__project_id", "project_id",
+            "origin_session_id", "delivered_to_session_id",
+        )
+    )
+    session_of = {
+        pk: origin_session or delivered_session
+        for pk, _, _, _, _, origin_session, delivered_session in rows
+    }
+
+    def _own_rows():
+        for pk, parent_pk, origin_project, delivered_project, attached_project, _, _ in rows:
+            session_project = origin_project or delivered_project
+            if session_project:
+                yield pk, parent_pk, session_project, PROJECT_SOURCE_SESSION
+            elif attached_project:
+                yield pk, parent_pk, attached_project, PROJECT_SOURCE_ATTACHED
+            else:
+                yield pk, parent_pk, None, None
+
+    resolved = resolve_peer_message_projects(_own_rows())
+    # The session behind an inherited context, with its live title: what the
+    # inbox and the notifications name when the row itself has none.
+    inherited_session_ids = {
+        session_of[owner_pk]
+        for _, source, owner_pk in resolved.values()
+        if source == PROJECT_SOURCE_CONVERSATION and session_of.get(owner_pk)
+    }
+    sessions = {
+        session_id: {"id": session_id, "title": title, "project_id": project_id}
+        for session_id, title, project_id in Session.objects.filter(
+            id__in=inherited_session_ids,
+        ).values_list("id", "title", "project_id")
+    } if inherited_session_ids else {}
+    return {
+        pk: EffectiveContext(
+            project_id, source,
+            sessions.get(session_of.get(owner_pk)) if source == PROJECT_SOURCE_CONVERSATION else None,
+        )
+        for pk, (project_id, source, owner_pk) in resolved.items()
+    }
+
+
+async def attach_project(message, project_id: str | None) -> tuple[bool, list[PeerError]]:
+    """Attach a project by hand to a message no session ties to one, or
+    detach it (``None``).
+
+    Only for a message WITHOUT a local session: a session's project is a fact
+    read off the FK, not something to override. The attachment lives on this
+    row alone; the replies of a thread root inherit it at read time, so
+    attaching the root is enough — and it never touches the status, the
+    sessions or the peer.
+    """
+    from twicc.core.models import Project
+
+    async with _resolution_lock(message.pk):
+        message = await _fresh_message(message.pk)
+        if message is None:
+            return False, [PeerError("message", "not_found", "Message no longer exists.")]
+        if message.origin_session_id or message.delivered_to_session_id:
+            return False, [PeerError(
+                "message", "bad_state", "This message is tied to a session; its project follows that session.",
+            )]
+        if project_id:
+            exists = await sync_to_async(lambda: Project.objects.filter(id=project_id).exists())()
+            if not exists:
+                return False, [PeerError("project_id", "project_not_found", "Project not found.")]
+
+        def _apply():
+            message.project_id = project_id or None
+            message.save(update_fields=["project"])
+
+        await run_under_db_write_lock(lambda: sync_to_async(_apply)())
+        await broadcast_peer_message_updated(message)
+    return True, []
 
 
 class PeerSendResult(NamedTuple):
@@ -217,22 +378,33 @@ async def _serialize_for_broadcast(message) -> dict:
     from twicc.core.models import PeerMessage
     from twicc.core.serializers import serialize_peer_message
 
-    fresh = await sync_to_async(
-        lambda: PeerMessage.objects
-        .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
-        .prefetch_related("replies")
-        .filter(pk=message.pk).first()
-    )()
-    return serialize_peer_message(fresh or message)
+    def _load():
+        fresh = (
+            PeerMessage.objects
+            .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
+            .prefetch_related("replies")
+            .filter(pk=message.pk).first()
+        )
+        # The effective project may come from the rest of the thread:
+        # resolved here, in sync context, over the peer's rows.
+        projects = peer_message_projects_map(PeerMessage.objects.filter(peer_id=message.peer_id))
+        return fresh, projects.get(message.pk)
+
+    fresh, effective_project = await sync_to_async(_load)()
+    return serialize_peer_message(fresh or message, effective_project=effective_project)
 
 
 async def broadcast_peer_message_received(message) -> None:
-    from twicc.external_notifications import notify_peer_message
+    from twicc.external_notifications import notify_peer_message, peer_message_routing
 
-    await _broadcast({"type": "peer_message_received", "message": await _serialize_for_broadcast(message)})
+    serialized = await _serialize_for_broadcast(message)
+    # Where the message counts (session, project), resolved in sync context
+    # from the same serialized view the toast reads.
+    routing = await sync_to_async(peer_message_routing)(serialized)
+    await _broadcast({"type": "peer_message_received", "message": serialized})
     # Fire-and-forget, after the broadcast: the in-app surfaces must never wait
     # on an outbound push, and a push failure must never affect delivery.
-    notify_peer_message(message)
+    notify_peer_message(message, routing)
 
 
 async def broadcast_peer_message_updated(message) -> None:
@@ -343,14 +515,17 @@ async def send_peer_message_from_payload(
     """Drop-request handler for ``kind="peer:send"``.
 
     Payload: ``{peer: <peer_id or exact local name>, title, reply_to?, text,
-    images, documents, origin_session_id?}``. Attachments are already
-    validated/encoded by the CLI.
+    images, documents, origin_session_id?, project_id?}``. Attachments are
+    already validated/encoded by the CLI. ``project_id`` is the owner's
+    hand-attached project for a message no session sends (the compose
+    dialog); it must exist, and is ignored at read time when an origin
+    session is set.
 
     ``author`` is a keyword-only code path, deliberately NOT read from the
     payload: the drop-request/RPC surface always sends the default
     ``"agent"``, and only the owner REST composer passes ``"human"``.
     """
-    from twicc.core.models import Peer, PeerMessage, PeerMessageDirection, PeerMessageStatus, Session
+    from twicc.core.models import Peer, PeerMessage, PeerMessageDirection, PeerMessageStatus, Project, Session
     from twicc.peer import outbound
 
     peer_ref = (payload.get("peer") or "").strip()
@@ -359,6 +534,7 @@ async def send_peer_message_from_payload(
     text = (payload.get("text") or "").strip()
     images = payload.get("images") or []
     documents = payload.get("documents") or []
+    project_id = (payload.get("project_id") or "").strip() or None
 
     errors: list[PeerError] = []
     if not peer_ref:
@@ -369,6 +545,8 @@ async def send_peer_message_from_payload(
         errors.append(reply_to_error)
     if not text:
         errors.append(PeerError("text", "empty_text", "text is required"))
+    if project_id and not await sync_to_async(lambda: Project.objects.filter(id=project_id).exists())():
+        errors.append(PeerError("project_id", "project_not_found", "Project not found."))
     if errors:
         return PeerSendResult(False, None, None, errors, {})
 
@@ -429,6 +607,7 @@ async def send_peer_message_from_payload(
         attachments_meta=_attachments_meta(wire_payload),
         origin=origin,
         origin_session=origin_session,
+        project_id=project_id,
         status=PeerMessageStatus.PENDING,
     )
 

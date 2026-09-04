@@ -12,6 +12,10 @@
  *     | the message, quoted, two lines at most
  *   Delivered to session  “Peer inbox polish”  in ●twicc-poc
  *
+ * A row no session ties to a project may still count under one — attached
+ * by hand, or inherited from the conversation it replies to — and then says
+ * so on the same line: "In project ●twicc-poc (from the conversation)".
+ *
  * Reading order encodes importance (decision of 2026-08-11): WHO speaks (the
  * peer, on the header line), then WHAT it is about (the sender-written title),
  * then what it says (the preview). The title line is skipped on rows stored
@@ -33,6 +37,7 @@ import { useSettingsStore } from '../../stores/settings'
 import { SESSION_TIME_FORMAT } from '../../constants'
 import { formatDate } from '../../utils/date'
 import { answeredByLabel } from '../../utils/peerReplyTarget'
+import { peerMessageRouting, peerRoutingSessionTitle } from '../../utils/peerMessageRouting'
 import ProjectBadge from '../project/ProjectBadge.vue'
 
 const props = defineProps({
@@ -63,9 +68,10 @@ const icon = computed(() => {
     return isInbound.value ? 'arrow-down' : 'arrow-up'
 })
 
-// A session title is free text: a long one pushes the project out of sight and
-// wraps the row over three lines. Cut it here; the full title stays in the
-// hover tooltip.
+// A title is free text: a long one pushes the rest of the line out of sight
+// and wraps the row over three lines. Cut it here (the answered message's
+// title; session titles go through `peerRoutingSessionTitle`, same width);
+// the full title stays in the hover tooltip.
 const SESSION_TITLE_MAX = 40
 
 function shortTitle(title) {
@@ -118,15 +124,37 @@ const routes = computed(() => {
     // row server-side: they must not depend on what the front happens to have
     // loaded, and an id is never something a human can place. A row whose
     // session is gone (FK nulled) simply has no line.
-    const local = isInbound.value ? message.delivered_to_session : message.origin_session
-    if (local) {
-        const title = local.title || 'Untitled session'
+    const routing = peerMessageRouting(message)
+    if (routing?.sessionId && !routing.fromConversation) {
         lines.push({
             key: 'local',
             label: isInbound.value ? 'Delivered to session' : 'Sent from session',
-            title,
-            display: shortTitle(title),
-            projectId: local.project_id || null,
+            title: routing.sessionTitle,
+            display: peerRoutingSessionTitle(routing),
+            projectId: routing.projectId,
+        })
+    } else if (routing?.sessionId) {
+        // No session of its own, but its thread names one: the session the
+        // message is about, by the nearest thread row that has one.
+        lines.push({
+            key: 'session',
+            label: 'Session',
+            title: routing.sessionTitle,
+            display: peerRoutingSessionTitle(routing),
+            projectId: routing.projectId,
+            hint: 'from the conversation',
+        })
+    } else if (routing?.projectId) {
+        // A bare project: attached by hand, or inherited from a thread row
+        // that only has one. The badge alone on its line.
+        lines.push({
+            key: 'project',
+            label: 'In project',
+            title: '',
+            display: '',
+            projectId: routing.projectId,
+            projectOnly: true,
+            hint: routing.fromConversation ? 'from the conversation' : '',
         })
     }
     return lines
@@ -200,8 +228,9 @@ const timestampSeconds = computed(() =>
             <span class="pir__route-label">{{ route.label }}</span>
             <span v-if="route.display" class="pir__route-title" :title="route.title">“{{ route.display }}”</span>
             <template v-if="route.projectId">
-                <span class="pir__route-label">in</span>
+                <span v-if="!route.projectOnly" class="pir__route-label">in</span>
                 <ProjectBadge :project-id="route.projectId" class="pir__route-project" />
+                <span v-if="route.hint" class="pir__route-label">{{ route.hint }}</span>
             </template>
         </span>
     </button>

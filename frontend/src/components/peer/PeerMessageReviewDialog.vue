@@ -57,6 +57,7 @@ import {
 } from '../../utils/peerReplyTarget'
 import { dateBucketSeparator } from '../../utils/datePresets'
 import { matchQuery } from '../../utils/textFilter'
+import { peerMessageRouting, peerRoutingSessionTitle } from '../../utils/peerMessageRouting'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds'
 import { ensureProjectTrust } from '../../composables/useTrustGate'
 import { useProjectMark } from '../../composables/useProjectMark'
@@ -190,16 +191,71 @@ const sentAt = computed(() => {
 const localRoute = computed(() => {
     // Title and project ride with the message, read live from the session row
     // server-side — never resolved against the front's store, and never an id.
-    // A session that no longer exists (FK nulled) shows no line at all.
-    const local = isInbound.value ? detail.value?.delivered_to_session : detail.value?.origin_session
-    if (!local) return null
+    // Without a session of its own, the message shows the one its thread
+    // names (the nearest thread row that has one), flagged as such.
+    const routing = peerMessageRouting(detail.value)
+    if (!routing?.sessionId) return null
     return {
-        label: isInbound.value ? 'Delivered to session' : 'Sent from session',
-        title: local.title || 'Untitled session',
-        projectId: local.project_id || null,
-        sessionId: local.id,
+        label: routing.fromConversation
+            ? 'Session'
+            : isInbound.value ? 'Delivered to session' : 'Sent from session',
+        title: routing.sessionTitle,
+        display: peerRoutingSessionTitle(routing),
+        projectId: routing.projectId,
+        sessionId: routing.sessionId,
+        hint: routing.fromConversation ? 'from the conversation' : '',
     }
 })
+
+/** A session-less message that still counts under a project because the
+ *  conversation names one (another row of the thread, ancestors first) —
+ *  a bare project, when that row has no session either. Read-only: the
+ *  project belongs to that row, not to this one. */
+const projectRoute = computed(() => {
+    if (localRoute.value) return null
+    const routing = peerMessageRouting(detail.value)
+    if (routing?.projectId && routing.fromConversation) return { projectId: routing.projectId }
+    return null
+})
+// Attaching by hand — offered when neither a session nor the conversation
+// names a project, and kept editable once attached (to correct or remove).
+// Saved at once; the replies of this message inherit it at read time.
+const canAttachProject = computed(() =>
+    detailReady.value && !localRoute.value && !projectRoute.value
+)
+const attachedProjectId = computed(() => detail.value?.project_id || '')
+const { iconUrl: attachedIconUrl, dotColor: attachedDotColor } = useProjectMark(attachedProjectId)
+const attachingProject = ref(false)
+
+async function attachProject(projectId) {
+    const messageId = detail.value?.id
+    if (messageId == null || projectId === attachedProjectId.value) return
+    attachingProject.value = true
+    actionError.value = ''
+    try {
+        const response = await apiFetch(`/api/peer-messages/${messageId}/project/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_id: projectId || null }),
+        })
+        if (!response.ok) {
+            actionError.value = errorText(await response.json().catch(() => null))
+            return
+        }
+        // Re-read the two project fields: after a detach, the effective
+        // project may fall back to the conversation's, which only the server
+        // resolves.
+        const fresh = await apiFetch(`/api/peer-messages/${messageId}/?include_attachments=0`)
+        if (fresh.ok && detail.value?.id === messageId) {
+            const { project_id, effective_project } = await fresh.json()
+            detail.value = { ...detail.value, project_id, effective_project }
+        }
+    } catch {
+        actionError.value = 'Request failed.'
+    } finally {
+        attachingProject.value = false
+    }
+}
 
 /** Who answered this message, from its replies' authorship — never from its
  *  status (see `answeredByLabel`). */
@@ -1202,13 +1258,39 @@ function onHide(event) {
                     type="button" class="pr-route__title pr-route__title--link"
                     :title="`Open “${localRoute.title}”`"
                     @click="openLocalSession"
-                >“{{ localRoute.title }}”</button>
-                <span v-else class="pr-route__title" :title="localRoute.title">“{{ localRoute.title }}”</span>
+                >“{{ localRoute.display }}”</button>
+                <span v-else class="pr-route__title" :title="localRoute.title">“{{ localRoute.display }}”</span>
                 <template v-if="localRoute.projectId">
                     <span class="pr-route__label">in</span>
                     <ProjectBadge :project-id="localRoute.projectId" class="pr-route__project" />
                 </template>
+                <span v-if="localRoute.hint" class="pr-route__label">{{ localRoute.hint }}</span>
             </p>
+            <p v-if="projectRoute" class="pr-route">
+                <span class="pr-route__label">In project</span>
+                <ProjectBadge :project-id="projectRoute.projectId" class="pr-route__project" />
+                <span class="pr-route__label">from the conversation</span>
+            </p>
+            <!-- Attach by hand: the same picker as the delivery ones. A
+                 change saves at once — there is nothing else to confirm. -->
+            <div v-if="canAttachProject" class="pr-route">
+                <span class="pr-route__label">{{ attachedProjectId ? 'In project' : 'Attach to a project' }}</span>
+                <wa-select
+                    size="small" class="pr-attach-project"
+                    :value="attachedProjectId" :disabled="busy || attachingProject"
+                    @change="attachProject($event.target.value)"
+                >
+                    <ProjectMark
+                        v-if="attachedProjectId"
+                        slot="start"
+                        style="--project-mark-icon-size: var(--wa-space-m); --project-mark-size: 0.75em"
+                        :icon-url="attachedIconUrl"
+                        :color="attachedDotColor"
+                    />
+                    <wa-option value="">None</wa-option>
+                    <ProjectSelectOptions :projects="selectableProjects" include-worktrees />
+                </wa-select>
+            </div>
             <wa-callout v-if="attachmentsLost" variant="warning" size="small">
                 Its {{ detail.attachments_meta.length }} attachment(s) were purged — a new delivery
                 carries the text only.
@@ -1626,6 +1708,7 @@ function onHide(event) {
 }
 .pr-route__title--link:hover { text-decoration: underline; }
 .pr-route__project { max-width: 20ch; }
+.pr-attach-project { flex: 0 1 18rem; min-width: 12rem; }
 
 .pr-purged { color: var(--wa-color-text-quiet); font-size: 0.85rem; }
 /* Three kinds of text share this dialog and must not read alike: the routing

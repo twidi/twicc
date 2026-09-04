@@ -512,11 +512,38 @@ def peer_message_session_ref(session):
     return {"id": session.id, "title": session.title, "project_id": session.project_id}
 
 
-def serialize_peer_message(message, *, include_payload=False, include_attachments=True):
+def peer_message_own_project(message):
+    """The message's OWN ``EffectiveContext``: its local session's project,
+    else the hand-attached one, else none. No query: the session FKs are
+    select_related by every caller. The thread fallback needs the other
+    rows — see ``peer_messages.peer_message_projects_map``."""
+    from twicc.core.services.peer_messages import (
+        PROJECT_SOURCE_ATTACHED, PROJECT_SOURCE_SESSION, EffectiveContext,
+    )
+
+    session = message.origin_session if message.origin_session_id else (
+        message.delivered_to_session if message.delivered_to_session_id else None
+    )
+    if session is not None and session.project_id:
+        return EffectiveContext(session.project_id, PROJECT_SOURCE_SESSION)
+    if message.project_id:
+        return EffectiveContext(message.project_id, PROJECT_SOURCE_ATTACHED)
+    return EffectiveContext(None, None)
+
+
+def serialize_peer_message(message, *, include_payload=False, include_attachments=True, effective_project=None):
     """Peer-message serializer. Summary form by default — base64 blobs must never
     transit the channel layer; only the REST detail endpoint passes
-    ``include_payload=True``."""
+    ``include_payload=True``.
+
+    ``effective_project`` is the ``EffectiveContext`` resolved through the
+    thread (``peer_messages.peer_message_projects_map``); callers that have
+    the map pass it so a session-less reply reports the project — and the
+    session — it inherits. Without it, only the message's own project is
+    reported."""
     from twicc.core.models import PeerMessageDirection
+
+    effective = effective_project or peer_message_own_project(message)
 
     reply_to_message = message.reply_to_message
     reply_to_ref = None
@@ -582,6 +609,22 @@ def serialize_peer_message(message, *, include_payload=False, include_attachment
         "delivered_to_session_id": message.delivered_to_session_id,
         "origin_session": peer_message_session_ref(message.origin_session),
         "delivered_to_session": peer_message_session_ref(message.delivered_to_session),
+        # The project attached BY HAND (null = none). Distinct from the
+        # effective one below, which it feeds only when no session does.
+        "project_id": message.project_id,
+        # `{id, source}` — source "session" | "attached" | "conversation" — or
+        # null: the project the message counts under (the inbox filter, the
+        # "In project" line). "conversation" = inherited from its thread (the
+        # nearest ancestor of its reply chain that owns one, else the nearest
+        # other row of the thread); the row itself names nothing.
+        "effective_project": (
+            {"id": effective.project_id, "source": effective.source} if effective.project_id else None
+        ),
+        # `{id, title, project_id}` or null: the session behind a
+        # "conversation" project, when that thread row has one — the session
+        # a session-less message is about. The row's own session is not
+        # repeated here (see the two refs above).
+        "effective_session": effective.session,
         "created_at": message.created_at.isoformat() if message.created_at else None,
         "resolved_at": message.resolved_at.isoformat() if message.resolved_at else None,
         "purged": message.purged_at is not None,

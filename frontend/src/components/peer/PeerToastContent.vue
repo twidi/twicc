@@ -15,10 +15,21 @@
  *
  * mode 'message' reading order (decision of 2026-08-11): WHO speaks is the
  * toast's own title ("Message from <peer>", set by the caller), then the
- * sender-written message title, then the text preview.
+ * sender-written message title, then the text preview, then where the
+ * message counts — session and project, read the inbox row's way
+ * (`peerMessageRouting`: the message's own session, else the one its
+ * thread names, else a bare project).
+ *
+ * mode 'status': one of the owner's messages was resolved on the other side
+ * (the sentence is the toast's title). Only the routing line, no buttons:
+ * five seconds is too short for one to matter.
  */
+import { computed } from 'vue'
+import { peerMessageRouting, peerRoutingSessionTitle } from '../../utils/peerMessageRouting'
+import ProjectBadge from '../project/ProjectBadge.vue'
+
 const props = defineProps({
-    /** 'request' | 'message' */
+    /** 'request' | 'message' | 'status' */
     mode: {
         type: String,
         required: true,
@@ -39,6 +50,9 @@ const props = defineProps({
         default: null,
     },
 })
+
+const routing = computed(() => peerMessageRouting(props.message))
+const routingTitle = computed(() => peerRoutingSessionTitle(routing.value))
 
 function review() {
     window.dispatchEvent(new CustomEvent('twicc:open-peers-manager'))
@@ -74,7 +88,19 @@ function later() {
                 {{ message.text_preview }}
             </span>
         </template>
-        <div class="peer-toast-actions">
+        <!-- Where the message counts: session “…” in ●project, or the project
+             alone. Same reading as the inbox row, in one line. -->
+        <span v-if="routing" class="peer-toast-route">
+            <template v-if="routing.sessionId">
+                <span class="peer-toast-route__label">session</span>
+                <span class="peer-toast-route__title" :title="routing.sessionTitle">“{{ routingTitle }}”</span>
+            </template>
+            <template v-if="routing.projectId">
+                <span class="peer-toast-route__label">in</span>
+                <ProjectBadge :project-id="routing.projectId" class="peer-toast-route__project" />
+            </template>
+        </span>
+        <div v-if="mode !== 'status'" class="peer-toast-actions">
             <template v-if="mode === 'request'">
                 <wa-button
                     size="small" variant="brand" appearance="outlined"
@@ -128,6 +154,23 @@ function later() {
     margin-right: var(--wa-space-xs);
     color: var(--wa-color-brand-on-quiet);
 }
+
+.peer-toast-route {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--wa-space-2xs);
+    font-size: 0.85rem;
+    min-width: 0;
+}
+.peer-toast-route__label { opacity: 0.8; flex-shrink: 0; }
+.peer-toast-route__title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 6ch;
+}
+.peer-toast-route__project { max-width: 20ch; }
 
 .peer-toast-url {
     font-family: var(--wa-font-family-code, monospace);

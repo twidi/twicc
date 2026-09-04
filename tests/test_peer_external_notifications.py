@@ -9,6 +9,8 @@ process-state push and covered there.
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from twicc import external_notifications
 
 
@@ -160,3 +162,79 @@ def test_a_broken_notification_never_reaches_the_caller():
     ):
         external_notifications.notify_peer_message(_message())
         external_notifications.notify_peer_request(_peer())
+
+
+def test_routing_adds_project_and_session_lines_and_deep_links_to_the_session():
+    send, patched = _capture(_settings(_target()))
+    routing = external_notifications.PeerRouting(
+        session_id="sess-1",
+        session_title="Backend update, the long version that keeps going and going",
+        project_id="-repo-wt",
+        project_name="feature-x",
+        project_parent_name="repo",
+    )
+    with patched:
+        external_notifications.notify_peer_message(_message(), routing)
+
+    _, title, body = send.call_args.args
+    assert title == "Message from Alice"
+    assert body == (
+        '"Deploy the staging box"\n'
+        "Can you run the migration before the release?\n"
+        "Project: repo › feature-x\n"
+        "Session: Backend update, the long version that ke…\n\n"
+        "https://twicc.example.com/project/-repo-wt/session/sess-1"
+    )
+
+
+def test_routing_with_a_bare_project_keeps_the_app_link():
+    send, patched = _capture(_settings(_target()))
+    routing = external_notifications.PeerRouting(
+        session_id=None, session_title=None, project_id="-repo", project_name="repo", project_parent_name=None,
+    )
+    with patched:
+        external_notifications.notify_peer_message(_message(), routing)
+
+    _, _, body = send.call_args.args
+    assert body == (
+        '"Deploy the staging box"\n'
+        "Can you run the migration before the release?\n"
+        "Project: repo\n\n"
+        "https://twicc.example.com"
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_peer_message_routing_reads_the_thread_session_and_names_the_worktree_under_its_repo():
+    from twicc.core.models import Project
+
+    main = Project.objects.create(id="-pr-main", directory="/tmp/pr-main", name="Main repo")
+    Project.objects.create(id="-pr-wt", directory="/tmp/pr-main-wt", worktree_of=main)
+
+    inherited = external_notifications.peer_message_routing({
+        "direction": "in",
+        "delivered_to_session": None,
+        "effective_session": {"id": "sess-wt", "title": "Backend update", "project_id": "-pr-wt"},
+        "effective_project": {"id": "-pr-wt", "source": "conversation"},
+    })
+    assert inherited == external_notifications.PeerRouting(
+        "sess-wt", "Backend update", "-pr-wt", "pr-main-wt", "Main repo",
+    )
+
+    own = external_notifications.peer_message_routing({
+        "direction": "out",
+        "origin_session": {"id": "sess-main", "title": "Own", "project_id": "-pr-main"},
+        "effective_session": None,
+        "effective_project": {"id": "-pr-main", "source": "session"},
+    })
+    assert own == external_notifications.PeerRouting("sess-main", "Own", "-pr-main", "Main repo", None)
+
+    bare = external_notifications.peer_message_routing({
+        "direction": "in", "delivered_to_session": None, "effective_session": None,
+        "effective_project": {"id": "-pr-main", "source": "attached"},
+    })
+    assert bare == external_notifications.PeerRouting(None, None, "-pr-main", "Main repo", None)
+
+    assert external_notifications.peer_message_routing({
+        "direction": "in", "delivered_to_session": None, "effective_session": None, "effective_project": None,
+    }) is None

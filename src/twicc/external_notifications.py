@@ -22,6 +22,7 @@ Design doc: docs/plans/2026-06-11-external-notifications-apprise-design.md
 import asyncio
 import logging
 import time
+from typing import NamedTuple
 
 from twicc import presence
 from twicc.agent.states import AgentInfo, AgentState
@@ -279,18 +280,80 @@ def _send_extra_usage_started(provider, snapshot, settings: dict) -> None:
             _spawn(_send(away_urls, title, body))
 
 
-def notify_peer_message(message) -> None:
+class PeerRouting(NamedTuple):
+    """Where a peer message counts, for the push body: the session it is
+    about (its own, or the one its thread names) and the project, named like
+    the process-state push (worktree under its main repository). Any part
+    may be None; ``session_id``/``project_id`` feed the deep link."""
+    session_id: str | None
+    session_title: str | None
+    project_id: str | None
+    project_name: str | None
+    project_parent_name: str | None
+
+
+def peer_message_routing(serialized: dict) -> PeerRouting | None:
+    """Resolve the push routing of a serialized peer message (sync: one
+    Project query). Same reading as the inbox row: the message's own local
+    session, else ``effective_session`` (the thread's), else the bare
+    ``effective_project``. None when nothing names a project."""
+    from twicc.asgi import _get_project_display_name
+    from twicc.core.models import Project
+
+    local = (
+        serialized.get("delivered_to_session")
+        if serialized.get("direction") == "in"
+        else serialized.get("origin_session")
+    )
+    session = local or serialized.get("effective_session") or None
+    project_id = (session or {}).get("project_id") or (serialized.get("effective_project") or {}).get("id")
+    if not session and not project_id:
+        return None
+    project = Project.objects.select_related("worktree_of").filter(id=project_id).first() if project_id else None
+    return PeerRouting(
+        session_id=(session or {}).get("id"),
+        session_title=(session or {}).get("title"),
+        project_id=project_id,
+        project_name=_get_project_display_name(project) if project else None,
+        project_parent_name=(
+            _get_project_display_name(project.worktree_of) if project and project.worktree_of else None
+        ),
+    )
+
+
+def notify_peer_message(message, routing: PeerRouting | None = None) -> None:
     """Push an incoming peer message to opted-in external targets.
 
     Called from ``broadcast_peer_message_received``, so it fires exactly when
     the in-app toast does — and only for a genuinely new message (a replayed
     ``message_id`` returns before the broadcast). Never raises.
+
+    ``routing`` (see ``peer_message_routing``) appends where the message
+    counts — ``Project:`` / ``Session:`` lines like the process-state push —
+    and, when a session is known, deep-links to it instead of the bare app
+    URL: on a phone, that lands on the conversation the message is about.
     """
     try:
         title = f"{'Reply' if message.reply_to_message_id else 'Message'} from {_peer_label(message.peer)}"
         preview = _truncate((message.payload or {}).get("text"), 120, fallback="")
-        body = "\n".join(part for part in (f'"{message.title}"', preview) if part)
-        _send_peer_event(title, body)
+        parts = [f'"{message.title}"', preview]
+        if routing is not None:
+            if routing.project_name:
+                project = (
+                    f"{_truncate(routing.project_parent_name, 40)} › {_truncate(routing.project_name, 40)}"
+                    if routing.project_parent_name
+                    else _truncate(routing.project_name, 50)
+                )
+                parts.append(f"Project: {project}")
+            if routing.session_id:
+                parts.append(f"Session: {_truncate(routing.session_title, 40)}")
+        body = "\n".join(part for part in parts if part)
+        session_ref = (
+            (routing.project_id, routing.session_id)
+            if routing is not None and routing.session_id and routing.project_id
+            else None
+        )
+        _send_peer_event(title, body, session_ref=session_ref)
     except Exception:
         logger.exception("Peer-message external notification dispatch failed")
 
@@ -317,14 +380,15 @@ def _peer_label(peer) -> str:
     return peer.name or peer.remote_display_name or peer.base_url
 
 
-def _send_peer_event(title: str, body: str) -> None:
+def _send_peer_event(title: str, body: str, *, session_ref: tuple[str, str] | None = None) -> None:
     """Deliver one peer event, mirroring the process-state push.
 
     Enabled + tested targets that opted into ``notifyPeer`` (absent = opted
     in, like every other event flag), split by ``awayOnly`` with the same
-    presence-aware deferral. Unlike a session event there is nothing to
-    deep-link to — the inbox is a dialog, not a route — so the body ends with
-    the bare app URL when one is configured.
+    presence-aware deferral. The inbox is a dialog, not a route, so the body
+    ends with the session the event is about when one is known
+    (``session_ref`` = ``(project_id, session_id)``), else the bare app URL —
+    when a public URL is configured at all.
     """
     settings = read_synced_settings()
     targets = [
@@ -336,9 +400,10 @@ def _send_peer_event(title: str, body: str) -> None:
     if not eligible:
         return
 
-    base_url = usable_public_origin(settings.get("publicBaseUrl")) or None
-    if base_url:
-        body = f"{body}\n\n{base_url}"
+    link = _build_session_url(settings, *session_ref) if session_ref else None
+    link = link or usable_public_origin(settings.get("publicBaseUrl")) or None
+    if link:
+        body = f"{body}\n\n{link}"
 
     present = presence.is_user_present()
     baseline = presence.latest_activity()

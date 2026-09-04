@@ -7,13 +7,16 @@ from django.db.migrations.executor import MigrationExecutor
 
 MIGRATE_FROM = [("core", "0134_peermessage_threading")]
 MIGRATE_TO = [("core", "0135_peer_revocation_reconnection")]
-MIGRATE_LATEST = [("core", "0136_session_mute_on_user_turn")]
 
 
 @pytest.fixture
 def restore_latest_migration():
+    """Bring the schema back to the CURRENT leaf, whatever it is: a hardcoded
+    target goes stale with the next migration and leaves every later test on
+    an old schema."""
     yield
-    MigrationExecutor(connection).migrate(MIGRATE_LATEST)
+    executor = MigrationExecutor(connection)
+    executor.migrate(executor.loader.graph.leaf_nodes("core"))
 
 
 @pytest.mark.django_db(transaction=True)

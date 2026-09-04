@@ -2264,29 +2264,59 @@ def test_envelope_sanitizes_the_peer_alias(transactional_db, status_callbacks):
     assert "…" in header  # and truncated
 
 
-def test_resolve_peer_message_project_ids_walks_the_reply_chain():
-    """A message uses its own local session's project; without one it inherits
-    from the nearest ancestor that has one; a chain with none resolves to None."""
-    resolve = peer_messages.resolve_peer_message_project_ids
+def test_resolve_peer_message_projects_walks_the_reply_chain():
+    """A message uses its own project (session, else hand-attached); without
+    one it inherits the nearest ancestor's as "conversation"; a chain with
+    none resolves to (None, None)."""
+    resolve = peer_messages.resolve_peer_message_projects
+    S, A, C = (
+        peer_messages.PROJECT_SOURCE_SESSION,
+        peer_messages.PROJECT_SOURCE_ATTACHED,
+        peer_messages.PROJECT_SOURCE_CONVERSATION,
+    )
     rows = [
-        (1, None, "-repo-x"),      # sent from a session of X
-        (2, 1, None),              # human reply, no session
-        (3, 2, None),              # human reply to the reply
-        (4, 3, "-repo-y"),         # delivered to a session of Y: its own wins
-        (5, None, None),           # direct message, no chain
-        (6, 5, None),              # reply to a session-less root
-        (7, 99, None),             # parent row outside the input (deleted, SET_NULL race)
+        (1, None, "-repo-x", S),   # sent from a session of X
+        (2, 1, None, None),        # human reply, no session
+        (3, 2, None, None),        # human reply to the reply
+        (4, 3, "-repo-y", S),      # delivered to a session of Y: its own wins
+        (5, None, None, None),     # direct message, no chain
+        (6, 5, None, None),        # reply to a session-less root
+        (7, 99, None, None),       # parent row outside the input (deleted, SET_NULL race)
+        (8, None, "-repo-z", A),   # attached by hand
+        (9, 8, None, None),        # its reply inherits, as "conversation"
+        (10, 8, "-repo-w", A),     # a reply attached by hand keeps its own
+        (11, None, None, None),    # written by hand, then answered into a session:
+        (12, 11, None, None),      #   a human exchange first,
+        (13, 12, "-repo-v", S),    #   then the reply delivered to a session of V
+        (14, 11, None, None),      # a sibling branch without a session inherits too
+        (15, None, None, None),    # two replies with sessions: the nearest level wins,
+        (16, 15, None, None),      #   ...
+        (17, 16, "-repo-deep", S), #   this one is deeper
+        (18, 15, "-repo-near", S), #   this one is a direct reply
     ]
+    # (project, source, the row that owns it)
     assert resolve(rows) == {
-        1: "-repo-x", 2: "-repo-x", 3: "-repo-x", 4: "-repo-y",
-        5: None, 6: None, 7: None,
+        1: ("-repo-x", S, 1), 2: ("-repo-x", C, 1), 3: ("-repo-x", C, 1), 4: ("-repo-y", S, 4),
+        5: (None, None, None), 6: (None, None, None), 7: (None, None, None),
+        8: ("-repo-z", A, 8), 9: ("-repo-z", C, 8), 10: ("-repo-w", A, 10),
+        11: ("-repo-v", C, 13), 12: ("-repo-v", C, 13), 13: ("-repo-v", S, 13), 14: ("-repo-v", C, 13),
+        15: ("-repo-near", C, 18), 16: ("-repo-deep", C, 17), 17: ("-repo-deep", S, 17),
+        18: ("-repo-near", S, 18),
     }
     assert resolve([]) == {}
 
 
-def test_resolve_peer_message_project_ids_survives_a_cycle():
-    resolve = peer_messages.resolve_peer_message_project_ids
-    assert resolve([(1, 2, None), (2, 1, None), (3, 1, "-repo")]) == {1: None, 2: None, 3: "-repo"}
+def test_resolve_peer_message_projects_survives_a_cycle():
+    resolve = peer_messages.resolve_peer_message_projects
+    S, C = peer_messages.PROJECT_SOURCE_SESSION, peer_messages.PROJECT_SOURCE_CONVERSATION
+    # 1 and 2 answer each other (impossible by construction); 3 answers 1 from
+    # a session. Neither walk hangs, and the thread still resolves through 3.
+    assert resolve([(1, 2, None, None), (2, 1, None, None), (3, 1, "-repo", S)]) == {
+        1: ("-repo", C, 3), 2: ("-repo", C, 3), 3: ("-repo", S, 3),
+    }
+    assert resolve([(1, 2, None, None), (2, 1, None, None)]) == {
+        1: (None, None, None), 2: (None, None, None),
+    }
 
 
 def _project_session(project_id, *, worktree_of=None, session_id=None):
@@ -2441,3 +2471,123 @@ def test_owner_message_projects_is_empty_without_messages(client, transactional_
 
     assert response.status_code == 200
     assert orjson.loads(response.content) == {"project_ids": []}
+
+
+def test_owner_message_list_reports_effective_project_and_source(client, transactional_db):
+    peer = _active_peer()
+    _, session = _project_session("-ep-session")
+    Project.objects.create(id="-ep-attached", directory="/tmp/-ep-attached")
+
+    from_session = _out_message(
+        peer, message_id="ep-session", origin_session=session,
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    _in_message(
+        peer, message_id="ep-inherited", reply_to=from_session.message_id,
+        reply_to_message=from_session, thread_id=from_session.thread_id,
+    )
+    attached = _in_message(
+        peer, message_id="ep-attached", project_id="-ep-attached",
+        status=PeerMessageStatus.DONE, resolved_at=djtz.now(),
+    )
+    _out_message(
+        peer, message_id="ep-attached-reply", reply_to=attached.message_id,
+        reply_to_message=attached, thread_id=attached.thread_id,
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    _in_message(peer, message_id="ep-none")
+
+    response = _run(client.get("/api/peer-messages/", {"limit": 200}))
+
+    assert response.status_code == 200
+    rows = {row["message_id"]: row for row in orjson.loads(response.content)["messages"]}
+    assert rows["ep-session"]["effective_project"] == {"id": "-ep-session", "source": "session"}
+    assert rows["ep-session"]["project_id"] is None
+    assert rows["ep-inherited"]["effective_project"] == {"id": "-ep-session", "source": "conversation"}
+    # The inherited context names the session it came from; an own or an
+    # attached project never does (the row's own session rides its refs).
+    assert rows["ep-inherited"]["effective_session"] == {
+        "id": session.id, "title": session.title, "project_id": "-ep-session",
+    }
+    assert rows["ep-session"]["effective_session"] is None
+    assert rows["ep-attached"]["effective_session"] is None
+    assert rows["ep-attached-reply"]["effective_session"] is None
+    assert rows["ep-attached"]["effective_project"] == {"id": "-ep-attached", "source": "attached"}
+    assert rows["ep-attached"]["project_id"] == "-ep-attached"
+    assert rows["ep-attached-reply"]["effective_project"] == {"id": "-ep-attached", "source": "conversation"}
+    assert rows["ep-none"]["effective_project"] is None
+    # The attached project filters like a session's, replies included.
+    assert _list_ids(client, project_id="-ep-attached") == ["ep-attached", "ep-attached-reply"]
+    # The detail endpoint resolves the chain too.
+    detail = _run(client.get(f"/api/peer-messages/{rows['ep-inherited']['id']}/"))
+    assert orjson.loads(detail.content)["effective_project"] == {"id": "-ep-session", "source": "conversation"}
+
+
+def test_owner_attaches_and_detaches_a_project_by_hand(client, transactional_db, broadcasts):
+    peer = _active_peer()
+    Project.objects.create(id="-ap-one", directory="/tmp/-ap-one")
+    message = _in_message(
+        peer, message_id="ap-done", status=PeerMessageStatus.DONE, resolved_at=djtz.now(),
+    )
+
+    response = _post(client, f"/api/peer-messages/{message.pk}/project/", {"project_id": "-ap-one"})
+
+    assert response.status_code == 200
+    message.refresh_from_db()
+    assert message.project_id == "-ap-one"
+    assert broadcasts[-1]["type"] == "peer_message_updated"
+    assert broadcasts[-1]["message"]["effective_project"] == {"id": "-ap-one", "source": "attached"}
+    assert message.status == PeerMessageStatus.DONE
+
+    response = _post(client, f"/api/peer-messages/{message.pk}/project/", {"project_id": None})
+
+    assert response.status_code == 200
+    message.refresh_from_db()
+    assert message.project_id is None
+    assert broadcasts[-1]["message"]["effective_project"] is None
+
+
+def test_owner_cannot_attach_a_project_to_a_session_bound_message_or_an_unknown_project(
+        client, transactional_db):
+    peer = _active_peer()
+    _, session = _project_session("-ap-bound")
+    bound = _in_message(
+        peer, message_id="ap-bound", delivered_to_session=session,
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    free = _in_message(peer, message_id="ap-free", status=PeerMessageStatus.REFUSED, resolved_at=djtz.now())
+
+    bound_response = _post(client, f"/api/peer-messages/{bound.pk}/project/", {"project_id": "-ap-bound"})
+    unknown_response = _post(client, f"/api/peer-messages/{free.pk}/project/", {"project_id": "-ap-missing"})
+    bad_type_response = _post(client, f"/api/peer-messages/{free.pk}/project/", {"project_id": 3})
+
+    assert bound_response.status_code == 400
+    assert orjson.loads(bound_response.content)["errors"][0]["code"] == "bad_state"
+    assert unknown_response.status_code == 400
+    assert orjson.loads(unknown_response.content)["errors"][0]["code"] == "project_not_found"
+    assert bad_type_response.status_code == 400
+    bound.refresh_from_db()
+    free.refresh_from_db()
+    assert bound.project_id is None
+    assert free.project_id is None
+
+
+def test_owner_direct_send_files_the_message_under_a_project(
+        client, transactional_db, peer_host, broadcasts, monkeypatch):
+    peer = _active_peer()
+    Project.objects.create(id="-ds-project", directory="/tmp/-ds-project")
+    _patch_post_message(monkeypatch)
+
+    response = _post(client, "/api/peer-messages/send/", {
+        "peer_id": peer.pk, "title": "Filed", "text": "hello", "project_id": "-ds-project",
+    })
+    unknown = _post(client, "/api/peer-messages/send/", {
+        "peer_id": peer.pk, "title": "Filed", "text": "hello", "project_id": "-ds-missing",
+    })
+
+    assert response.status_code == 200
+    sent = PeerMessage.objects.get(message_id=orjson.loads(response.content)["message_id"])
+    assert sent.project_id == "-ds-project"
+    assert sent.origin_session_id is None
+    assert unknown.status_code == 400
+    assert orjson.loads(unknown.content)["errors"][0]["code"] == "project_not_found"

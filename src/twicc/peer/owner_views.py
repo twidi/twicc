@@ -168,7 +168,7 @@ async def peer_reconnect_cancel(request, peer_id):
 
 async def peer_message_send(request):
     """POST /api/peer-messages/send/ — {peer_id, title, text, reply_to?,
-    resolve_reply_to?}.
+    resolve_reply_to?, project_id?}.
 
     The owner composes a message directly (peer compose dialog). Text-only by
     design: attachments, drafts and long-form writing stay on the agent path
@@ -202,6 +202,10 @@ async def peer_message_send(request):
             "title": data.get("title"),
             "reply_to": reply_to,
             "text": data.get("text"),
+            # The project the owner files a direct message under (a reply
+            # inherits its thread's instead). Attached by hand: no session
+            # sends from this dialog.
+            "project_id": data.get("project_id") or None,
         },
         author=peer_messages.PEER_MESSAGE_AUTHOR_HUMAN,
     )
@@ -246,9 +250,10 @@ async def peer_messages_list(request):
     """GET peer-message summaries, optionally filtered by peer, project and full text.
 
     ``project_id`` keeps the messages whose effective project (their local
-    session's, else the nearest reply-chain ancestor's — see
-    ``peer_messages.resolve_peer_message_project_ids``) is the project or one
-    of its git worktrees (``project_scope_ids``: a worktree scopes to itself).
+    session's, else the hand-attached one, else their thread's — see
+    ``peer_messages.resolve_peer_message_projects``) is the project or one
+    of its git worktrees (``project_scope_ids``: a worktree scopes to
+    itself).
     """
     from twicc.core.models import PeerMessage, PeerMessageDirection, PeerMessageStatus, PeerState
     from twicc.projects import project_scope_ids
@@ -272,19 +277,13 @@ async def peer_messages_list(request):
         else:
             rows = rows.exclude(peer__state=PeerState.REVOKED)
 
+        # One pass over the (peer-filtered) rows: a thread never leaves its
+        # peer relationship, so every row of it is here. Feeds the
+        # filter AND each row's `effective_project` on the wire.
+        projects = peer_messages.peer_message_projects_map(rows)
         if project_id:
-            # One pass over the (peer-filtered) rows: a reply chain never
-            # leaves its peer relationship, so the ancestors are all here.
             scope = set(project_scope_ids(project_id))
-            chain_rows = (
-                (pk, parent_pk, origin_project or delivered_project)
-                for pk, parent_pk, origin_project, delivered_project in rows.values_list(
-                    "pk", "reply_to_message_id",
-                    "origin_session__project_id", "delivered_to_session__project_id",
-                ).iterator()
-            )
-            effective = peer_messages.resolve_peer_message_project_ids(chain_rows)
-            rows = rows.filter(pk__in=[pk for pk, project in effective.items() if project in scope])
+            rows = rows.filter(pk__in=[pk for pk, context in projects.items() if context.project_id in scope])
 
         if query:
             pending_ids = []
@@ -311,7 +310,7 @@ async def peer_messages_list(request):
                 "origin_session", "delivered_to_session", "reply_to_message",
             ).prefetch_related("replies").filter(pk__in=ordered_ids)
             by_id = {message.pk: message for message in selected}
-            return [by_id[pk] for pk in ordered_ids], history_has_more
+            return [by_id[pk] for pk in ordered_ids], history_has_more, projects
 
         # `replies` feeds the "answered by" line: one extra query for the
         # whole list, never one per row.
@@ -324,11 +323,14 @@ async def peer_messages_list(request):
         history = list(rows.exclude(
             direction=PeerMessageDirection.IN, status=PeerMessageStatus.PENDING,
         )[:limit + 1])
-        return pending + history[:limit], len(history) > limit
+        return pending + history[:limit], len(history) > limit, projects
 
-    messages, history_has_more = await sync_to_async(_fetch)()
+    messages, history_has_more, projects = await sync_to_async(_fetch)()
     return JsonResponse({
-        "messages": [serialize_peer_message(message) for message in messages],
+        "messages": [
+            serialize_peer_message(message, effective_project=projects.get(message.pk))
+            for message in messages
+        ],
         "history_has_more": history_has_more,
     })
 
@@ -345,30 +347,53 @@ async def peer_message_projects(request):
         return HttpResponseNotAllowed(["GET"])
 
     def _fetch():
-        chain_rows = (
-            (pk, parent_pk, origin_project or delivered_project)
-            for pk, parent_pk, origin_project, delivered_project in PeerMessage.objects.exclude(
-                peer__state=PeerState.REVOKED,
-            ).values_list(
-                "pk", "reply_to_message_id",
-                "origin_session__project_id", "delivered_to_session__project_id",
-            ).iterator()
+        projects = peer_messages.peer_message_projects_map(
+            PeerMessage.objects.exclude(peer__state=PeerState.REVOKED),
         )
-        effective = peer_messages.resolve_peer_message_project_ids(chain_rows)
-        return sorted({project for project in effective.values() if project})
+        return sorted({context.project_id for context in projects.values() if context.project_id})
 
     return JsonResponse({"project_ids": await sync_to_async(_fetch)()})
 
 
+async def peer_message_project(request, pk):
+    """POST /api/peer-messages/<pk>/project/ — {project_id: str | null}.
+
+    Attach a project by hand to a message no session ties to one, or detach
+    it. See ``peer_messages.attach_project``."""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    message = await _load_message(pk)
+    data = _parse_body(request)
+    if data is None:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    project_id = data.get("project_id")
+    if project_id is not None and not isinstance(project_id, str):
+        return JsonResponse({"error": "project_id must be a string or null"}, status=400)
+    success, errors = await peer_messages.attach_project(message, (project_id or "").strip() or None)
+    if not success:
+        return _err_response(errors)
+    return JsonResponse({"ok": True})
+
+
 async def peer_message_detail(request, pk):
     """GET /api/peer-messages/<pk>/ — message detail, optionally without attachment bytes."""
+    from twicc.core.models import PeerMessage
+
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
     message = await _load_message(pk)
+    # The effective project may be inherited from the rest of the thread:
+    # resolved over the peer's rows, which hold the whole thread.
+    effective_project = await sync_to_async(
+        lambda: peer_messages.peer_message_projects_map(
+            PeerMessage.objects.filter(peer_id=message.peer_id),
+        ).get(message.pk)
+    )()
     return JsonResponse(serialize_peer_message(
         message,
         include_payload=True,
         include_attachments=request.GET.get("include_attachments") != "0",
+        effective_project=effective_project,
     ))
 
 

@@ -57,7 +57,7 @@ export function peerInboxVisibleMessages(messages, peers) {
 
 /** Build the filtered inbox request without adding empty filter parameters.
  *  The project filter is resolved server-side (a message's own local session,
- *  else its nearest reply-chain ancestor's; a main repo folds in its
+ *  else its hand-attached project, else its thread's; a main repo folds in its
  *  worktrees) — the store only holds a page of history, never enough to
  *  filter client-side. */
 export function buildPeerInboxSearchUrl(peerId, query, projectId = '') {

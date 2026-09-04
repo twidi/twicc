@@ -15,9 +15,14 @@
  * peer) and threads the message.
  */
 import { ref, computed, watch, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
+import { useDataStore } from '../../stores/data'
 import { usePeersStore } from '../../stores/peers'
 import { apiFetch } from '../../utils/api'
 import { PEER_MESSAGE_TITLE_MAX_CHARS, replySubject } from '../../utils/peerReplyTarget'
+import { useProjectMark } from '../../composables/useProjectMark'
+import ProjectMark from '../project/ProjectMark.vue'
+import ProjectSelectOptions from '../project/ProjectSelectOptions.vue'
 
 const props = defineProps({
     open: Boolean,
@@ -32,7 +37,9 @@ const props = defineProps({
 })
 const emit = defineEmits(['close'])
 
+const dataStore = useDataStore()
 const peersStore = usePeersStore()
+const route = useRoute()
 const dialogRef = ref(null)
 const titleInputRef = ref(null)
 const textInputRef = ref(null)
@@ -49,6 +56,23 @@ const confirmingDiscard = ref(false)
 
 const activePeers = computed(() => peersStore.peers.filter(p => p.state === 'active'))
 const isReply = computed(() => !!props.replyTo)
+
+// The project a direct message is filed under, attached by hand: no session
+// sends from here, and a reply inherits its thread's instead of asking. The
+// same picker as the review dialog's delivery pickers (non-stale,
+// non-archived, worktrees nested), preset to the project the user is looking
+// at when the select offers it. Optional: "None" is a normal answer.
+const selectedProjectId = ref('')
+const selectableProjects = computed(() =>
+    dataStore.getListableProjects.filter(p => !p.archived && !p.stale)
+)
+function offeredProjectId(projectId) {
+    const project = projectId ? dataStore.getProject(projectId) : null
+    if (!project || project.archived || project.stale) return ''
+    const listedId = project.worktree_of || project.id
+    return selectableProjects.value.some(p => p.id === listedId) ? project.id : ''
+}
+const { iconUrl: projectIconUrl, dotColor: projectDotColor } = useProjectMark(selectedProjectId)
 // What becomes of the answered message once the reply is out (design of
 // 2026-09-01): kept open (default), marked done, or refused. Only meaningful
 // while it still awaits a decision — a delivered message being answered from
@@ -72,6 +96,7 @@ watch(() => props.open, (open) => {
     proposedTitle.value = props.replyTo ? replySubject(props.replyToTitle) : ''
     title.value = proposedTitle.value
     resolution.value = 'open'
+    selectedProjectId.value = isReply.value ? '' : offeredProjectId(route.params.projectId)
     text.value = ''
     error.value = ''
     confirmingDiscard.value = false
@@ -107,6 +132,7 @@ async function handleSend() {
                 title: cleanTitle,
                 text: cleanText,
                 reply_to: props.replyTo || undefined,
+                project_id: !isReply.value && selectedProjectId.value ? selectedProjectId.value : undefined,
                 resolve_reply_to: canResolveAnswered.value && resolution.value !== 'open'
                     ? resolution.value
                     : undefined,
@@ -229,6 +255,24 @@ function onAfterShow(event) {
                 >{{ peersStore.peerLabel(peer.id) }}</wa-option>
             </wa-select>
             <p v-if="!activePeers.length" class="pc-hint">No active peer to write to.</p>
+
+            <!-- A reply inherits its thread's project: no select for it. -->
+            <wa-select
+                v-if="!isReply"
+                v-model="selectedProjectId" size="small" label="Project"
+                hint="Optional — where this message counts in the inbox"
+                :disabled="busy"
+            >
+                <ProjectMark
+                    v-if="selectedProjectId"
+                    slot="start"
+                    style="--project-mark-icon-size: var(--wa-space-m); --project-mark-size: 0.75em"
+                    :icon-url="projectIconUrl"
+                    :color="projectDotColor"
+                />
+                <wa-option value="">None</wa-option>
+                <ProjectSelectOptions :projects="selectableProjects" include-worktrees />
+            </wa-select>
 
             <wa-input
                 ref="titleInputRef"
