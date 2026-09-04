@@ -681,22 +681,30 @@ class TestCodexIterToolResultImageRefs:
                     "output": "plain text result",
                 },
             },
-            # mcp_tool_call_end event — carries the same image bytes as
+            # McpToolCall item — carries the same image bytes as
             # the paired aggregated output (raw base64 in
-            # ``result.Ok.content``) and is deliberately NOT harvested:
+            # ``result.content``) and is deliberately NOT harvested:
             # walking both sources would duplicate the screenshot at two
             # consecutive offsets.
             {
                 "type": "event_msg",
                 "payload": {
-                    "type": "mcp_tool_call_end",
-                    "call_id": "exec-uuid",
-                    "result": {
-                        "Ok": {
+                    "type": "item_completed",
+                    "thread_id": "thread-1",
+                    "turn_id": "turn-1",
+                    "completed_at_ms": 0,
+                    "item": {
+                        "type": "McpToolCall",
+                        "id": "exec-uuid",
+                        "server": "demo",
+                        "tool": "screenshot",
+                        "arguments": {},
+                        "status": "completed",
+                        "result": {
                             "content": [
                                 {"type": "image", "data": _PNG_B64, "mimeType": "image/png"},
                             ]
-                        }
+                        },
                     },
                 },
             },

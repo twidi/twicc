@@ -37,6 +37,7 @@ from .constants import (
     UNTRUSTED_PERMISSION_MODE_SYNCED_KEY as _UNTRUSTED_PERMISSION_MODE_SYNCED_KEY,
     UNTRUSTED_PERMISSION_MODES as _UNTRUSTED_PERMISSION_MODES,
 )
+from .canonical import agent_message_text, canonical_call_id, canonical_result_item, user_message_text
 from .pricing import extract_model_info
 from .streaming_registry import get_streamed_item_registry
 
@@ -57,18 +58,6 @@ logger = logging.getLogger(__name__)
 _TYPE_RESPONSE_ITEM = "response_item"
 _TYPE_EVENT_MSG = "event_msg"
 _RESPONSE_TOOL_RESULT_PAYLOAD_TYPES = frozenset({"function_call_output", "custom_tool_call_output"})
-_PERSISTED_END_EVENT_TYPES = frozenset({
-    "patch_apply_end",
-    "mcp_tool_call_end",
-    "web_search_end",
-    "image_generation_end",
-})
-# event_msg sub-types that carry an indexable chat message body. Mirrors
-# the matching constants in ``codex.compute``; kept inline for the same
-# reason as the tool-result lookups above.
-_PAYLOAD_USER_MESSAGE = "user_message"
-_PAYLOAD_AGENT_MESSAGE = "agent_message"
-_INDEXABLE_PAYLOAD_TYPES = frozenset({_PAYLOAD_USER_MESSAGE, _PAYLOAD_AGENT_MESSAGE})
 
 if TYPE_CHECKING:
     from twicc.core.models import SessionItem
@@ -667,15 +656,9 @@ class CodexHelpers(BaseProviderHelpers):
             parsed = orjson.loads(item.content)
         except (orjson.JSONDecodeError, TypeError):
             return ""
-        if not isinstance(parsed, dict) or parsed.get("type") != _TYPE_EVENT_MSG:
+        if not isinstance(parsed, dict):
             return ""
-        payload = parsed.get("payload")
-        if not isinstance(payload, dict) or payload.get("type") not in _INDEXABLE_PAYLOAD_TYPES:
-            return ""
-        message = payload.get("message")
-        if isinstance(message, str) and message.strip():
-            return message
-        return ""
+        return user_message_text(parsed) or agent_message_text(parsed) or ""
 
     def get_user_messages(
         self,
@@ -798,18 +781,18 @@ class CodexHelpers(BaseProviderHelpers):
                 else:
                     continue
             elif wrapper_type == _TYPE_EVENT_MSG:
-                # Only structured End events from the whitelist count —
-                # mirror the compute side's :func:`_event_msg_call_id`.
-                if payload.get("type") not in _PERSISTED_END_EVENT_TYPES:
+                result_item = canonical_result_item(parsed)
+                if result_item is None:
                     continue
-                event_call_id = payload.get("call_id")
-                if not isinstance(event_call_id, str) or not event_call_id:
+                event_call_id = canonical_call_id(parsed)
+                if event_call_id is None:
                     continue
                 # A code-mode nested call's event carries a synthesized
                 # ``exec-<uuid>`` — the DB-side rebind to the outer
                 # ``exec`` is authoritative, so no equality to enforce.
                 if event_call_id != tool_use_id and not event_call_id.startswith("exec-"):
                     continue
+                payload = result_item
             else:
                 continue
             results.append(payload)
@@ -869,12 +852,29 @@ class CodexHelpers(BaseProviderHelpers):
         an exception — it will propagate to the producer through
         ``submit_async_job``'s ``await asyncio.shield(job.future)``.
         """
+        from .rollout_migration import (
+            CaptureSnapshotAnchorsJob,
+            ClearSnapshotAnchorsJob,
+            ReplaceCodexHistoryJob,
+            _apply_capture_snapshot_anchors_job,
+            _apply_clear_snapshot_anchors_job,
+            _apply_replace_codex_history_job,
+        )
         from .titles import (
             SyncSessionTitlesJob,
             _apply_sync_session_titles_job,
             _broadcast_changed_titles,
         )
 
+        if isinstance(job, CaptureSnapshotAnchorsJob):
+            await settle_async_job(job, _apply_capture_snapshot_anchors_job, "Codex snapshot anchor capture")
+            return True
+        if isinstance(job, ClearSnapshotAnchorsJob):
+            await settle_async_job(job, _apply_clear_snapshot_anchors_job, "Codex snapshot anchor cleanup")
+            return True
+        if isinstance(job, ReplaceCodexHistoryJob):
+            await settle_async_job(job, _apply_replace_codex_history_job, "Codex history replacement")
+            return True
         if isinstance(job, SyncSessionTitlesJob):
             await settle_async_job(
                 job, _apply_sync_session_titles_job, "title sync",

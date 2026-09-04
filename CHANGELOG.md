@@ -77,7 +77,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **More room for the session title** — When a session header gets narrow, the action icons before the title fold behind a single button. Click it to show them.
 - **GPT-5.4 leaves Codex** — GPT-5.4 and GPT-5.4 mini retire on August 31, 2026. The model pickers now show the date, and sessions still on them move to a supported model on the day.
 - **Claude Agent SDK** — Upgrade from 0.2.130 to 0.2.149 (bundled Claude Code CLI: 2.1.222 → 2.1.252)
-- **Codex runtime** — Update from v0.146.0 to v0.150.1.
+- **Codex runtime** — Update from v0.146.0 to v0.151.0.
+- **Codex session migration** — TwiCC now migrates old Codex histories automatically. A session stays unavailable until its canonical rebuild finishes.
 
 ### Fixed
 

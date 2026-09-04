@@ -1,6 +1,6 @@
 <script setup>
 /**
- * Codex ``event_msg.image_generation_end`` renderer.
+ * Codex canonical image-generation renderer.
  *
  * The payload carries everything we need to render the image inline:
  *
@@ -23,13 +23,12 @@
  */
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { useDataStore } from '../../../../../stores/data'
+import { imageGeneration } from '../../../../../providers/codex/canonical'
 import MarkdownContent from '../../../../ui/MarkdownContent.vue'
 import MediaPreviewDialog from '../../../../media/MediaPreviewDialog.vue'
 
 const props = defineProps({
-    // Parsed JSONL line:
-    // ``{ timestamp, type: 'event_msg', payload: { type: 'image_generation_end',
-    //    call_id, status, revised_prompt, result, saved_path } }``
+    // Parsed canonical ImageGeneration or image_gen.generation Extension line.
     data: {
         type: Object,
         required: true,
@@ -46,9 +45,9 @@ const props = defineProps({
 
 const dataStore = useDataStore()
 
-const payload = computed(() => props.data?.payload ?? {})
+const payload = computed(() => imageGeneration(props.data))
 const revisedPrompt = computed(() => {
-    const raw = payload.value.revised_prompt
+    const raw = payload.value?.revisedPrompt
     return typeof raw === 'string' ? raw : ''
 })
 
@@ -59,7 +58,7 @@ const revisedPrompt = computed(() => {
 // ``\n\n`` runs are left alone to avoid stacking blank lines further.
 const promptMarkdown = computed(() => revisedPrompt.value.replace(/(?<!\n)\n(?!\n)/g, '\n\n'))
 const savedPath = computed(() => {
-    const raw = payload.value.saved_path
+    const raw = payload.value?.savedPath
     return typeof raw === 'string' ? raw : ''
 })
 
@@ -69,7 +68,7 @@ const savedPath = computed(() => {
 // the JSONL doesn't carry it explicitly and a wrong type silently breaks
 // the data: URL.
 const imageSrc = computed(() => {
-    const raw = payload.value.result
+    const raw = payload.value?.result
     if (typeof raw !== 'string' || !raw) return ''
     return `data:image/png;base64,${raw}`
 })
@@ -85,6 +84,18 @@ const imageName = computed(() => {
 const previewItems = computed(() => {
     if (!imageSrc.value) return []
     return [{ type: 'image', src: imageSrc.value, name: imageName.value }]
+})
+
+const transparentBackground = computed(() => payload.value?.transparentBackground ?? null)
+const failureText = computed(() => {
+    const failure = payload.value?.failure
+    if (failure == null) return ''
+    if (typeof failure === 'string') return failure
+    try {
+        return JSON.stringify(failure, null, 2)
+    } catch {
+        return String(failure)
+    }
 })
 
 const previewDialogRef = ref(null)
@@ -150,6 +161,13 @@ function onPromptHide() {
             <wa-icon name="image" class="image-generation-path-icon"></wa-icon>
             <span class="image-generation-path-text">{{ savedPath }}</span>
         </div>
+        <div v-if="transparentBackground !== null" class="image-generation-metadata">
+            Transparent background: {{ transparentBackground ? 'yes' : 'no' }}
+        </div>
+        <wa-callout v-if="failureText" variant="danger">
+            <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+            <pre class="image-generation-failure">{{ failureText }}</pre>
+        </wa-callout>
         <MediaPreviewDialog v-if="imageSrc" ref="previewDialogRef" :items="previewItems" />
     </div>
 </template>
@@ -197,5 +215,16 @@ wa-details::part(content) {
 
 .image-generation-path-text {
     overflow-wrap: anywhere;
+}
+
+.image-generation-metadata {
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-s);
+}
+
+.image-generation-failure {
+    margin: 0;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
 }
 </style>

@@ -7,6 +7,7 @@ from asgiref.sync import sync_to_async
 from django.http import Http404, HttpResponseNotAllowed, JsonResponse
 
 from twicc.core.serializers import (
+    session_compute_ready,
     serialize_session_item,
     serialize_session_item_metadata,
 )
@@ -24,6 +25,11 @@ from twicc.share.resolver import SharePasswordRequired, password_required_respon
 
 def _json(data, *, safe=True):
     return apply_share_headers(JsonResponse(data, safe=safe))
+
+
+def _not_ready():
+    response = JsonResponse({"error": "session_not_ready"}, status=409)
+    return apply_share_headers(response)
 
 
 async def _ctx(request, token):
@@ -90,6 +96,15 @@ async def _resolve_shared_subagent(ctx, sid):
     return sub
 
 
+async def _resolve_ready_content_session(ctx, subagent_id=None):
+    if not session_compute_ready(ctx.session):
+        return None, _not_ready()
+    session = ctx.session if subagent_id is None else await _resolve_shared_subagent(ctx, subagent_id)
+    if not session_compute_ready(session):
+        return None, _not_ready()
+    return session, None
+
+
 # ── Page ────────────────────────────────────────────────────────────────────
 
 async def share_session_page(request, ctx):
@@ -131,7 +146,9 @@ async def _items_metadata(request, token, subagent_id=None):
     ctx, resp = await _ctx(request, token)
     if resp:
         return resp
-    session = ctx.session if subagent_id is None else await _resolve_shared_subagent(ctx, subagent_id)
+    session, not_ready = await _resolve_ready_content_session(ctx, subagent_id)
+    if not_ready:
+        return not_ready
     qs = filtered_items_qs(session, **_ceiling_kwargs(ctx, session)).defer("content").order_by("line_num")
     items = await sync_to_async(list)(qs)
     return _json([serialize_session_item_metadata(i) for i in items], safe=False)
@@ -141,10 +158,12 @@ async def _items(request, token, subagent_id=None):
     ctx, resp = await _ctx(request, token)
     if resp:
         return resp
+    session, not_ready = await _resolve_ready_content_session(ctx, subagent_id)
+    if not_ready:
+        return not_ready
     ranges = parse_line_ranges(request.GET.getlist("range"))
     if ranges is None:
         return _json({"error": "At least one 'range' query parameter is required"}, safe=True)
-    session = ctx.session if subagent_id is None else await _resolve_shared_subagent(ctx, subagent_id)
     qs = filtered_items_qs(session, extra=ranges, **_ceiling_kwargs(ctx, session)).order_by("line_num")
     items = await sync_to_async(list)(qs)
     return _json([serialize_session_item(i) for i in items], safe=False)
@@ -154,7 +173,9 @@ async def _tool_results(request, token, line_num, tool_id, subagent_id=None):
     ctx, resp = await _ctx(request, token)
     if resp:
         return resp
-    session = ctx.session if subagent_id is None else await _resolve_shared_subagent(ctx, subagent_id)
+    session, not_ready = await _resolve_ready_content_session(ctx, subagent_id)
+    if not_ready:
+        return not_ready
     # Tool-result rows are always at/under the ceiling for a visible tool_use, but
     # clamp to the frozen line defensively so a snapshot never leaks a post-freeze result.
     max_line = _ceiling_kwargs(ctx, session)["max_line"]
@@ -179,7 +200,9 @@ async def _result_items(request, token, tool_id, subagent_id=None):
     ctx, resp = await _ctx(request, token)
     if resp:
         return resp
-    session = ctx.session if subagent_id is None else await _resolve_shared_subagent(ctx, subagent_id)
+    session, not_ready = await _resolve_ready_content_session(ctx, subagent_id)
+    if not_ready:
+        return not_ready
     link_lines = await sync_to_async(list)(
         ToolResultLink.objects.filter(session=session, tool_use_id=tool_id)
         .values_list("tool_result_line_num", flat=True)
@@ -205,7 +228,9 @@ async def _tool_states(request, token, subagent_id=None):
     ctx, resp = await _ctx(request, token)
     if resp:
         return resp
-    session = ctx.session if subagent_id is None else await _resolve_shared_subagent(ctx, subagent_id)
+    session, not_ready = await _resolve_ready_content_session(ctx, subagent_id)
+    if not_ready:
+        return not_ready
     kw = _ceiling_kwargs(ctx, session)
     visible_lines = filtered_items_qs(session, **kw).values("line_num")
     links_qs = ToolResultLink.objects.filter(session=session, tool_use_line_num__in=visible_lines)
@@ -221,6 +246,8 @@ async def share_session_subagents(request, token):
     ctx, resp = await _ctx(request, token)
     if resp:
         return resp
+    if not session_compute_ready(ctx.session):
+        return _not_ready()
     if not ctx.options.get("include_subagents", True):
         return _json([], safe=False)
     links_qs = AgentLink.objects.filter(session=ctx.session)
@@ -297,6 +324,8 @@ async def share_session_media(request, token, filename):
     ctx, resp = await _ctx(request, token)
     if resp:
         return resp
+    if not session_compute_ready(ctx.session):
+        return _not_ready()
     content_type = _classify_artifact_filename(filename)
     if content_type is None:
         raise Http404("Artifact not found")

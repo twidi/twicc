@@ -4,6 +4,11 @@ import { SYNTHETIC_ITEM } from '../../../../../constants'
 import { useDataStore } from '../../../../../stores/data'
 import { emptyAssistantMessageMarkdown, showEmptyAssistantNotice } from '../../../../../utils/emptyMessage'
 import { interAgentTaskMarkdown } from '../../../../../providers/codex/interAgentTask'
+import {
+    agentMessageText,
+    userMessageImages,
+    userMessageText,
+} from '../../../../../providers/codex/canonical'
 import UserMessage from './UserMessage.vue'
 import AssistantMessage from './AssistantMessage.vue'
 import Reasoning from './Reasoning.vue'
@@ -90,7 +95,9 @@ const text = computed(() => {
         }
         return ''
     }
-    return props.data?.payload?.message || ''
+    return props.kind === 'user_message'
+        ? (userMessageText(props.data) || '')
+        : (agentMessageText(props.data) || '')
 })
 
 const dataStore = useDataStore()
@@ -126,8 +133,7 @@ const interAgentTask = computed(() =>
 // only the ``images`` array is consumed here.
 const images = computed(() => {
     if (props.kind !== 'user_message') return []
-    const list = props.data?.payload?.images
-    return Array.isArray(list) ? list : []
+    return userMessageImages(props.data).map(image => image.value)
 })
 </script>
 

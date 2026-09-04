@@ -99,12 +99,17 @@ def _spawn_call_v2(call_id: str, task_name: str = "display_test") -> str:
 
 def _sub_agent_activity(call_id: str, agent_id: str, agent_path: str, kind: str = "started") -> str:
     return _line("event_msg", {
-        "type": "sub_agent_activity",
-        "event_id": call_id,
-        "occurred_at_ms": 1786769944144,
-        "agent_thread_id": agent_id,
-        "agent_path": agent_path,
-        "kind": kind,
+        "type": "item_completed",
+        "thread_id": "parent-thread",
+        "turn_id": "turn-1",
+        "completed_at_ms": 1786769944144,
+        "item": {
+            "type": "SubAgentActivity",
+            "id": call_id,
+            "agent_thread_id": agent_id,
+            "agent_path": agent_path,
+            "kind": kind,
+        },
     })
 
 

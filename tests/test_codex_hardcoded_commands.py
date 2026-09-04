@@ -19,6 +19,7 @@ from twicc.providers.codex.agent.hardcoded_commands import (
     HardcodedCommand,
     parse_hardcoded_command,
 )
+from twicc.providers.codex.canonical import agent_message_text, user_message_text
 from twicc.providers.codex.compute import CodexSessionCompute
 from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
 from twicc.providers.helpers import AgentSettings
@@ -280,7 +281,17 @@ def _turn_context(mode: str) -> dict:
 
 
 def _user_message(text: str) -> dict:
-    return _codex_line("event_msg", {"type": "user_message", "message": text})
+    return _codex_line("event_msg", {
+        "type": "item_completed",
+        "thread_id": _COMPUTE_SESSION,
+        "turn_id": "turn-1",
+        "completed_at_ms": 1784214000000,
+        "item": {
+            "type": "UserMessage",
+            "id": "message-1",
+            "content": [{"type": "text", "text": text, "text_elements": []}],
+        },
+    })
 
 
 def _injected_plan_marker() -> dict:
@@ -324,8 +335,27 @@ def test_inline_prompt_user_message_is_reprefixed() -> None:
     rewritten_lines = [num for num, result in enumerate(results, 1) if result is not None]
     assert rewritten_lines == [4]
     parsed = orjson.loads(results[3])
-    assert parsed["payload"]["message"] == "/plan do the thing"
+    assert user_message_text(parsed) == "/plan do the thing"
     assert parsed["twiccPlanCommand"] is True
+
+
+def test_inline_prompt_prefix_preserves_multiple_text_blocks() -> None:
+    message = _user_message("first ")
+    message["payload"]["item"]["content"].append({
+        "type": "text",
+        "text": "second",
+        "text_elements": [],
+    })
+
+    results = _transform_all(_batch_compute(), [
+        _turn_context("plan"),
+        message,
+    ])
+
+    parsed = orjson.loads(results[1])
+    content = parsed["payload"]["item"]["content"]
+    assert [entry["text"] for entry in content] == ["/plan first ", "second"]
+    assert user_message_text(parsed) == "/plan first second"
 
 
 def test_plan_transition_on_a_new_drafts_first_turn() -> None:
@@ -336,7 +366,7 @@ def test_plan_transition_on_a_new_drafts_first_turn() -> None:
         _user_message("first prompt"),
     ])
 
-    assert orjson.loads(results[1])["payload"]["message"] == "/plan first prompt"
+    assert user_message_text(orjson.loads(results[1])) == "/plan first prompt"
 
 
 def test_bare_plan_marker_suppresses_the_prefix() -> None:
@@ -349,7 +379,7 @@ def test_bare_plan_marker_suppresses_the_prefix() -> None:
 
     marker = orjson.loads(results[1])
     assert marker["type"] == "event_msg"
-    assert marker["payload"] == {"type": "user_message", "message": "/plan"}
+    assert user_message_text(marker) == "/plan"
     assert results[3] is None
 
 
@@ -388,7 +418,7 @@ def test_proposed_plan_response_item_becomes_a_visible_agent_message() -> None:
 
     parsed = orjson.loads(result)
     assert parsed["type"] == "event_msg"
-    assert parsed["payload"] == {"type": "agent_message", "message": text}
+    assert agent_message_text(parsed) == text
     assert parsed["twiccOriginalContent"]["role"] == "assistant"
 
 
@@ -435,7 +465,7 @@ def test_live_seed_detects_the_transition_from_db(plan_compute_session) -> None:
         _user_message("live prompt"), session_id=session.id, line_num=11,
     )
 
-    assert orjson.loads(result)["payload"]["message"] == "/plan live prompt"
+    assert user_message_text(orjson.loads(result)) == "/plan live prompt"
 
 
 def test_live_seed_sees_a_persisted_bare_marker(plan_compute_session) -> None:
@@ -544,7 +574,7 @@ def test_only_first_context_after_goal_activation_is_a_user_message() -> None:
     results = _transform_all(compute, lines)
 
     first = orjson.loads(results[1])
-    assert first["payload"] == {"type": "user_message", "message": "/goal Count to five"}
+    assert user_message_text(first) == "/goal Count to five"
     assert compute.compute_item_kind(first) == ItemKind.USER_MESSAGE
     assert results[2:] == [None, None]
     assert all(compute.compute_item_kind(line) == ItemKind.SYSTEM for line in lines[2:])
@@ -559,7 +589,8 @@ def test_recompute_demotes_previously_rewritten_goal_continuations() -> None:
     ]
     results = _transform_all(compute, lines)
 
-    assert results[1] is None  # the true command boundary stays visible
+    first = orjson.loads(results[1])
+    assert user_message_text(first) == "/goal Count to five"
     demoted = orjson.loads(results[2])
     assert demoted["type"] == "response_item"
     assert "twiccOriginalContent" not in demoted
@@ -577,9 +608,9 @@ def test_goal_objective_update_arms_another_visible_boundary() -> None:
     ]
     results = _transform_all(compute, lines)
 
-    assert orjson.loads(results[1])["payload"]["message"] == "/goal First objective"
+    assert user_message_text(orjson.loads(results[1])) == "/goal First objective"
     assert results[2] is None
-    assert orjson.loads(results[4])["payload"]["message"] == "/goal Revised objective"
+    assert user_message_text(orjson.loads(results[4])) == "/goal Revised objective"
 
 
 def test_live_seed_hides_a_continuation_after_backend_restart(plan_compute_session) -> None:

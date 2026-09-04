@@ -1,9 +1,20 @@
 // Fetch layer for the share bundle — all requests stay under the share token path.
+export function isSessionNotReadyError(error) {
+    return error?.status === 409 && error?.code === 'session_not_ready'
+}
+
 export function makeShareApi(tokenPath) {
     const base = tokenPath.replace(/\/+$/, '')
     async function jget(url) {
         const res = await fetch(url, { credentials: 'same-origin' })
-        if (!res.ok) throw new Error(`share fetch ${res.status}`)
+        if (!res.ok) {
+            let code = null
+            try { code = (await res.json())?.error || null } catch { /* non-JSON error */ }
+            const error = new Error(`share fetch ${res.status}`)
+            error.status = res.status
+            error.code = code
+            throw error
+        }
         return res.json()
     }
     return {

@@ -35,6 +35,7 @@ from twicc.providers.db_writer import (
     UpdateSessionPayload,
 )
 from twicc.sync_helpers import BackpressureSyncQueue, check_file_has_content, read_session_items_from_file
+from .rollout_migration import HistoryMode, history_mode_from_record
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ class SessionMeta(NamedTuple):
     cwd: str
     parent_session_id: str | None = None
     ignored: bool = False
+    history_mode: HistoryMode = HistoryMode.LEGACY
 
 
 def extract_session_meta(file_path: Path) -> SessionMeta | None:
@@ -135,6 +137,7 @@ def extract_session_meta(file_path: Path) -> SessionMeta | None:
         cwd=cwd,
         parent_session_id=parent_session_id,
         ignored=ignored,
+        history_mode=history_mode_from_record(parsed),
     )
 
 

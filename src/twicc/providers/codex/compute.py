@@ -195,6 +195,17 @@ from twicc.providers.compute_base import (
 )
 
 from .agent.original_files_cache import pop_original_files
+from .canonical import (
+    agent_message_text,
+    build_twicc_agent_message,
+    build_twicc_user_message,
+    canonical_call_id,
+    canonical_result_item,
+    completed_item,
+    image_generation,
+    user_message_is_visible,
+    user_message_text,
+)
 from .code_mode_script import parse_code_mode_output, parse_code_mode_script
 from .pricing import extract_model_info, to_token_usage
 from .provider_errors import (
@@ -227,7 +238,6 @@ _TYPE_TURN_CONTEXT = "turn_context"
 # divider. The matching ``event_msg.context_compacted`` event is
 # redundant for our purposes and stays bucketed as SYSTEM.
 _TYPE_COMPACTED = "compacted"
-_PAYLOAD_USER_MESSAGE = "user_message"
 _PAYLOAD_AGENT_MESSAGE = "agent_message"
 # ``turn_context.payload.collaboration_mode.mode`` value for Codex's Plan
 # collaboration mode (entered via TwiCC's ``/plan`` hardcoded command). Every
@@ -242,12 +252,6 @@ _PLAN_COLLABORATION_MODE = "plan"
 _PAYLOAD_THREAD_GOAL_UPDATED = "thread_goal_updated"
 _GOAL_STATUS_ACTIVE = "active"
 _GOAL_STATUS_COMPLETE = "complete"
-# Codex emits ``event_msg.image_generation_end`` once an image generation
-# call has produced its file. The payload carries the base64 PNG, the
-# revised prompt and the on-disk path — see the header docstring's
-# ``event_msg.image_generation_end → IMAGE`` rule for the full contract.
-# Referenced by :meth:`compute_item_kind` and :meth:`analyze_content`.
-_PAYLOAD_IMAGE_GENERATION_END = "image_generation_end"
 # ``event_msg.token_count`` is the only Codex line that carries usage
 # counters (``info.last_token_usage`` for the last LLM call,
 # ``info.total_token_usage`` for the cumulative session totals). Read
@@ -495,7 +499,7 @@ _SPAWN_AGENT_TOOL_NAMES = frozenset({
 # link. ``agent_path`` (e.g. ``/root/task1_review``) is the stable
 # handle the collaboration tools use, and the key the v2 termination
 # signal is addressed by.
-_SUB_AGENT_ACTIVITY_PAYLOAD_TYPE = "sub_agent_activity"
+_SUB_AGENT_ACTIVITY_ITEM_TYPE = "SubAgentActivity"
 _SUB_AGENT_ACTIVITY_STARTED_KIND = "started"
 
 # Envelope of an inter-agent message, as persisted in the *receiving*
@@ -570,34 +574,6 @@ _TOOL_RESULT_PAYLOAD_TYPES = frozenset({"function_call_output", "custom_tool_cal
 # all rebinded by :meth:`remap_tool_result_id`). Anything else in the
 # family is atomic by definition.
 _EXEC_COMMAND_TOOLS = frozenset({"exec_command", "write_stdin"})
-
-# ``event_msg.*_end`` (and ``*Response``) sub-types we still consume as
-# tool_results. ``exec_command_end`` is intentionally excluded — Codex
-# CLI no longer persists it (TUI sets ``persist_extended_history=false``)
-# so we reconstruct the equivalent state from the chain of
-# ``function_call_output`` lines instead (exec_command direct +
-# write_stdin children sharing the same exec_command_id).
-#
-# ``web_search_end`` is also intentionally excluded: it carries a
-# ``call_id`` derived from a ``WebSearchItem.id`` that the matching
-# ``response_item.web_search_call`` never serialises to the JSONL, so
-# the two can't be paired from disk. We instead treat ``web_search_call``
-# as a resultless tool (see :data:`_RESULTLESS_TOOL_SUB_TYPES`) and let
-# the ``event_msg.web_search_end`` line fall through to ``SYSTEM`` /
-# ``DEBUG_ONLY`` like any other unmatched event_msg.
-#
-# ``image_generation_end`` is intentionally excluded too — it doesn't
-# slot into the tool_use/tool_result pairing at all: the event alone
-# carries everything we need (prompt, base64 PNG, saved_path) and the
-# matching ``response_item.image_generation_call`` duplicates the same
-# data minus the saved_path. We classify the event directly as
-# :attr:`ItemKind.IMAGE` in :meth:`compute_item_kind` and the matching
-# response_item falls through to ``SYSTEM`` / ``DEBUG_ONLY``.
-_PERSISTED_END_EVENT_TYPES = frozenset({
-    "patch_apply_end",
-    "mcp_tool_call_end",
-})
-
 
 class ExecCommandStatus(NamedTuple):
     """Parsed status of a Codex ``function_call_output`` for an exec tool.
@@ -850,11 +826,10 @@ def _mcp_end_qualified_name(payload: dict) -> str | None:
     invocation is missing or malformed (the matcher then falls back to
     recency).
     """
-    invocation = payload.get("invocation")
-    if not isinstance(invocation, dict):
+    if payload.get("type") != "McpToolCall":
         return None
-    server = invocation.get("server")
-    tool = invocation.get("tool")
+    server = payload.get("server")
+    tool = payload.get("tool")
     if not isinstance(server, str) or not server or not isinstance(tool, str) or not tool:
         return None
     return _normalize_code_mode_identifier(f"mcp__{server}__{tool}")
@@ -1040,23 +1015,25 @@ def _event_msg_call_id(parsed_json: dict) -> str | None:
     persists it. ``response_item`` lines are filtered out at the wrapper
     level. Returns the ``call_id`` for a matching event, else ``None``.
     """
-    if parsed_json.get("type") != _TYPE_EVENT_MSG:
-        return None
-    payload = parsed_json.get("payload")
-    if not isinstance(payload, dict):
-        return None
-    if payload.get("type") not in _PERSISTED_END_EVENT_TYPES:
-        return None
-    call_id = payload.get("call_id")
-    if isinstance(call_id, str) and call_id:
-        return call_id
-    return None
+    return canonical_call_id(parsed_json)
 
 
 def _payload(parsed_json: dict) -> dict | None:
     """Return ``parsed_json["payload"]`` if it's a dict, else ``None``."""
     payload = parsed_json.get("payload")
     return payload if isinstance(payload, dict) else None
+
+
+def _restore_private_source(parsed_json: dict) -> dict:
+    """Restore the raw payload before replacing an older private rewrite."""
+    original = parsed_json.get("twiccOriginalContent")
+    if not isinstance(original, dict):
+        return parsed_json
+    restored = dict(parsed_json)
+    restored["type"] = _TYPE_RESPONSE_ITEM
+    restored["payload"] = original
+    restored.pop("twiccOriginalContent", None)
+    return restored
 
 
 def _qualified_function_call_name(payload: dict) -> str:
@@ -1195,10 +1172,15 @@ def _goal_context_payload(parsed_json: dict) -> dict | None:
     if parsed_json.get("type") != _TYPE_EVENT_MSG:
         return None
     payload = _payload(parsed_json)
+    item = completed_item(parsed_json)
+    is_private_user_rewrite = (
+        item is not None and item.get("type") == "UserMessage"
+    ) or (
+        payload is not None and payload.get("type") == "user_message"
+    )
     original = parsed_json.get("twiccOriginalContent")
     if (
-        payload is not None
-        and payload.get("type") == _PAYLOAD_USER_MESSAGE
+        is_private_user_rewrite
         and isinstance(original, dict)
         and original.get("type") == "message"
         and original.get("role") == "user"
@@ -1334,12 +1316,7 @@ def _injected_provider_error(parsed_json: dict) -> CodexProviderError | None:
 
 def _is_internal_resume_message(parsed_json: dict) -> bool:
     """Whether an event is TwiCC's hidden instruction for a failed turn."""
-    if parsed_json.get("type") != _TYPE_EVENT_MSG:
-        return False
-    payload = _payload(parsed_json)
-    if payload is None or payload.get("type") != _PAYLOAD_USER_MESSAGE:
-        return False
-    message = payload.get("message")
+    message = user_message_text(parsed_json)
     return isinstance(message, str) and message.lstrip().startswith("<twicc-resume>")
 
 
@@ -1579,14 +1556,12 @@ def _parse_sub_agent_activity_started(parsed_json: dict) -> _SubAgentSpawn | Non
     Returns ``(spawn_call_id, agent_thread_id, agent_path)``, or ``None``
     for any other line shape / kind / malformed payload.
     """
-    if parsed_json.get("type") != _TYPE_EVENT_MSG:
-        return None
-    payload = _payload(parsed_json)
-    if payload is None or payload.get("type") != _SUB_AGENT_ACTIVITY_PAYLOAD_TYPE:
+    payload = completed_item(parsed_json)
+    if payload is None or payload.get("type") != "SubAgentActivity":
         return None
     if payload.get("kind") != _SUB_AGENT_ACTIVITY_STARTED_KIND:
         return None
-    call_id = payload.get("event_id")
+    call_id = payload.get("id")
     agent_id = payload.get("agent_thread_id")
     agent_path = payload.get("agent_path")
     if not isinstance(call_id, str) or not call_id:
@@ -1749,9 +1724,9 @@ def _patch_apply_error(payload: dict) -> str | None:
     Returns ``None`` on success or when the payload isn't a
     ``patch_apply_end``.
     """
-    if payload.get("type") != "patch_apply_end":
+    if payload.get("type") != "FileChange":
         return None
-    if payload.get("success") is True and payload.get("status") == "completed":
+    if payload.get("status") == "completed":
         return None
     stderr = payload.get("stderr")
     if isinstance(stderr, str) and stderr.strip():
@@ -1782,18 +1757,18 @@ def _mcp_tool_call_end_error(payload: dict) -> str | None:
     Returns ``None`` when the payload isn't an ``mcp_tool_call_end`` or
     when no error is reported.
     """
-    if payload.get("type") != "mcp_tool_call_end":
+    if payload.get("type") != "McpToolCall":
         return None
+    error = payload.get("error")
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+        return "Tool error"
     result = payload.get("result")
     if not isinstance(result, dict):
         return None
-    if "Err" in result:
-        err = result.get("Err")
-        if isinstance(err, str) and err.strip():
-            return err.strip()
-        return "Tool error"
-    ok = result.get("Ok")
-    if isinstance(ok, dict) and ok.get("isError") is True:
+    if result.get("isError") is True:
         return "Tool error"
     return None
 
@@ -1860,25 +1835,6 @@ def _has_summary_text(reasoning_payload: dict) -> bool:
         if isinstance(text, str) and text.strip():
             return True
     return False
-
-
-def _event_msg_text(parsed_json: dict, expected_subtype: str) -> str | None:
-    """Return the ``message`` string for an ``event_msg`` of the given subtype.
-
-    Codex stores the body of ``user_message`` / ``agent_message`` events
-    as a flat ``payload.message`` string — no content array, no nested
-    blocks. Returns ``None`` when the wrapper or subtype doesn't match,
-    or when the message is missing / empty.
-    """
-    if parsed_json.get("type") != _TYPE_EVENT_MSG:
-        return None
-    payload = _payload(parsed_json)
-    if payload is None or payload.get("type") != expected_subtype:
-        return None
-    message = payload.get("message")
-    if isinstance(message, str) and message.strip():
-        return message
-    return None
 
 
 def _user_terminated_tool_reason(session_id: str, call_id: str) -> str | None:
@@ -2275,14 +2231,14 @@ class CodexSessionCompute(BaseSessionCompute):
             return naive_tool_use_id
         if parsed_json.get("type") != _TYPE_EVENT_MSG:
             return naive_tool_use_id
-        payload = _payload(parsed_json)
+        payload = completed_item(parsed_json)
         if payload is None:
             return naive_tool_use_id
         records = self._code_exec_targets.get(session_id)
         if not records:
             return naive_tool_use_id
         event_type = payload.get("type")
-        if event_type == "patch_apply_end":
+        if event_type == "FileChange":
             changes = payload.get("changes")
             change_paths = (
                 [p for p in changes if isinstance(p, str)] if isinstance(changes, dict) else []
@@ -2296,7 +2252,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 if fallback is None:
                     fallback = exec_call_id
             return fallback if fallback is not None else naive_tool_use_id
-        if event_type == "mcp_tool_call_end":
+        if event_type == "McpToolCall":
             qualified = _mcp_end_qualified_name(payload)
             fallback = None
             for exec_call_id, targets in reversed(records):
@@ -2400,18 +2356,18 @@ class CodexSessionCompute(BaseSessionCompute):
                 session_id, item.line_num, naive_tool_use_id,
             )
         if parsed_json.get("type") == _TYPE_EVENT_MSG:
-            payload = _payload(parsed_json)
+            payload = completed_item(parsed_json)
             if payload is not None and naive_tool_use_id.startswith("exec-"):
-                if payload.get("type") == "patch_apply_end":
+                if payload.get("type") == "FileChange":
                     return self._lookup_orphan_end_exec_call_id(
                         session_id, item.line_num, naive_tool_use_id,
-                        event_type="patch_apply_end",
+                        event_type="FileChange",
                         changes=payload.get("changes"),
                     )
-                if payload.get("type") == "mcp_tool_call_end":
+                if payload.get("type") == "McpToolCall":
                     return self._lookup_orphan_end_exec_call_id(
                         session_id, item.line_num, naive_tool_use_id,
-                        event_type="mcp_tool_call_end",
+                        event_type="McpToolCall",
                         mcp_qualified=_mcp_end_qualified_name(payload),
                     )
             # Direct apply_patch / MCP end events keep their own call_id.
@@ -2499,7 +2455,7 @@ class CodexSessionCompute(BaseSessionCompute):
         candidates = SessionItem.objects.filter(
             session_id=session_id,
             line_num__lt=max_line_num,
-            content__contains=_SUB_AGENT_ACTIVITY_PAYLOAD_TYPE,
+            content__contains=_SUB_AGENT_ACTIVITY_ITEM_TYPE,
         ).filter(content__contains=agent_path).order_by('-line_num')
         for candidate in candidates.iterator(chunk_size=10):
             try:
@@ -2532,7 +2488,7 @@ class CodexSessionCompute(BaseSessionCompute):
         recency fallback. Returns ``fallback`` when nothing qualifies,
         so the live link is still created (just under the naive id).
         """
-        is_patch = event_type == "patch_apply_end"
+        is_patch = event_type == "FileChange"
         change_paths = (
             [p for p in changes if isinstance(p, str)] if isinstance(changes, dict) else []
         )
@@ -2876,14 +2832,15 @@ class CodexSessionCompute(BaseSessionCompute):
         if objective is not None:
             show = self._consume_goal_context(session_id, line_num, objective)
             if show:
-                if parsed_json.get("type") == _TYPE_RESPONSE_ITEM:
-                    parsed_json["twiccOriginalContent"] = parsed_json.get("payload")
-                    parsed_json["type"] = _TYPE_EVENT_MSG
-                    parsed_json["payload"] = {
-                        "type": _PAYLOAD_USER_MESSAGE,
-                        "message": f"/goal {objective}",
-                    }
-                    return orjson.dumps(parsed_json).decode("utf-8")
+                source = _restore_private_source(parsed_json)
+                if source.get("type") == _TYPE_RESPONSE_ITEM:
+                    built = build_twicc_user_message(
+                        source,
+                        session_id=session_id,
+                        line_num=line_num,
+                        text=f"/goal {objective}",
+                    )
+                    return orjson.dumps(built).decode("utf-8")
                 return None
             if parsed_json.get("type") == _TYPE_EVENT_MSG:
                 original = parsed_json.get("twiccOriginalContent")
@@ -2906,13 +2863,14 @@ class CodexSessionCompute(BaseSessionCompute):
                 # the next ``turn_context`` is not an inline-prompt command —
                 # see ``_note_turn_context_mode``.
                 self._plan_prefix_state(session_id).marker_seen = True
-            parsed_json["twiccOriginalContent"] = parsed_json.get("payload")
-            parsed_json["type"] = _TYPE_EVENT_MSG
-            parsed_json["payload"] = {
-                "type": _PAYLOAD_USER_MESSAGE,
-                "message": injected_command,
-            }
-            return orjson.dumps(parsed_json).decode("utf-8")
+            source = _restore_private_source(parsed_json)
+            built = build_twicc_user_message(
+                source,
+                session_id=session_id,
+                line_num=line_num,
+                text=injected_command,
+            )
+            return orjson.dumps(built).decode("utf-8")
 
         # ``/plan <prompt>`` display restoration: the command's turn carries
         # only ``<prompt>`` as its user message (the literal ``/plan`` never
@@ -2932,13 +2890,14 @@ class CodexSessionCompute(BaseSessionCompute):
         # ``<proposed_plan>`` block as a dedicated plan panel.
         plan_text = _proposed_plan_message_text(parsed_json)
         if plan_text is not None:
-            parsed_json["twiccOriginalContent"] = parsed_json.get("payload")
-            parsed_json["type"] = _TYPE_EVENT_MSG
-            parsed_json["payload"] = {
-                "type": _PAYLOAD_AGENT_MESSAGE,
-                "message": plan_text,
-            }
-            return orjson.dumps(parsed_json).decode("utf-8")
+            source = _restore_private_source(parsed_json)
+            built = build_twicc_agent_message(
+                source,
+                session_id=session_id,
+                line_num=line_num,
+                text=plan_text,
+            )
+            return orjson.dumps(built).decode("utf-8")
 
         # The other Codex rewrite is the cross-provider screenshot tag
         # substitution: ``<twicc:insert-screenshot />`` markers placed
@@ -2950,10 +2909,10 @@ class CodexSessionCompute(BaseSessionCompute):
         # legacy XML or normalisation work to do here.
         if parsed_json.get("type") != _TYPE_EVENT_MSG:
             return None
-        payload = _payload(parsed_json)
-        if payload is None or payload.get("type") != _PAYLOAD_AGENT_MESSAGE:
+        item = completed_item(parsed_json)
+        if item is None or item.get("type") != "AgentMessage":
             return None
-        message = payload.get("message")
+        message = agent_message_text(parsed_json)
         if not isinstance(message, str) or not message:
             return None
         if not INSERT_SCREENSHOT_TAG_RE.search(message):
@@ -2971,7 +2930,7 @@ class CodexSessionCompute(BaseSessionCompute):
         )
         if new_message == message:
             return None
-        payload["message"] = new_message
+        item["content"] = [{"type": "Text", "text": new_message}]
         return orjson.dumps(parsed_json).decode("utf-8")
 
     def _note_turn_context_mode(self, session_id: str, mode: str, line_num: int) -> None:
@@ -3025,19 +2984,29 @@ class CodexSessionCompute(BaseSessionCompute):
             return None
         if parsed_json.get("type") != _TYPE_EVENT_MSG:
             return None
-        payload = _payload(parsed_json)
-        if payload is None or payload.get("type") != _PAYLOAD_USER_MESSAGE:
+        item = completed_item(parsed_json)
+        if item is None or item.get("type") != "UserMessage":
             return None
         if _is_internal_resume_message(parsed_json):
             return None
-        message = payload.get("message")
+        message = user_message_text(parsed_json)
         if not isinstance(message, str):
             return None
         state.armed = False
         if parsed_json.get("twiccPlanCommand"):
             return None
         parsed_json["twiccPlanCommand"] = True
-        payload["message"] = f"/plan {message}" if message else "/plan"
+        content = item.get("content")
+        if not isinstance(content, list):
+            return None
+        for entry in content:
+            if (
+                isinstance(entry, dict)
+                and entry.get("type") == "text"
+                and isinstance(entry.get("text"), str)
+            ):
+                entry["text"] = f"/plan {entry['text']}"
+                break
         return orjson.dumps(parsed_json).decode("utf-8")
 
     def _lookup_prev_plan_context(
@@ -3076,23 +3045,18 @@ class CodexSessionCompute(BaseSessionCompute):
             session_id=session_id,
             line_num__gt=prev_tc_line,
             line_num__lt=current_line_num,
-            # The relabelled marker serialises its payload as
-            # ``{"type":"user_message","message":"/plan"}`` — the closing
+            # The relabelled marker serialises a canonical text entry with
+            # ``"text":"/plan"`` — the closing
             # brace keeps a prefixed inline prompt ("/plan foo") from
             # matching; candidates are still parse-verified below.
-            content__contains='"message":"/plan"}',
+            content__contains='"text":"/plan"}',
         ).order_by('-line_num')
         for candidate in marker_candidates.iterator(chunk_size=10):
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
                 continue
-            if parsed.get("type") != _TYPE_EVENT_MSG:
-                continue
-            payload = _payload(parsed)
-            if payload is None or payload.get("type") != _PAYLOAD_USER_MESSAGE:
-                continue
-            if payload.get("message") == "/plan":
+            if user_message_text(parsed) == "/plan":
                 return prev_mode, True
         return prev_mode, False
 
@@ -3246,12 +3210,10 @@ class CodexSessionCompute(BaseSessionCompute):
             if ptype == _PAYLOAD_THREAD_GOAL_UPDATED:
                 candidate = payload.get("goal")
                 goal = candidate if isinstance(candidate, dict) else None
-            elif ptype == _PAYLOAD_USER_MESSAGE:
-                message = payload.get("message")
-                if isinstance(message, str) and message.strip().lower() == "/goal clear":
-                    return GoalEvent(cleared=True)
-                return None
             else:
+                message = user_message_text(parsed_json)
+                if message is not None and message.strip().lower() == "/goal clear":
+                    return GoalEvent(cleared=True)
                 return None
         if goal is not None:
             status = goal.get("status")
@@ -3284,12 +3246,13 @@ class CodexSessionCompute(BaseSessionCompute):
             return ItemKind.COMPACT_SUMMARY
 
         if wrapper_type == _TYPE_EVENT_MSG and payload is not None:
-            sub_type = payload.get("type")
-            if sub_type == _PAYLOAD_USER_MESSAGE:
+            item = completed_item(parsed_json)
+            item_type = item.get("type") if item is not None else None
+            if item_type == "UserMessage" and user_message_is_visible(parsed_json):
                 if _is_internal_resume_message(parsed_json):
                     return ItemKind.SYSTEM
                 return ItemKind.USER_MESSAGE
-            if sub_type == _PAYLOAD_AGENT_MESSAGE:
+            if item_type == "AgentMessage" and agent_message_text(parsed_json):
                 return ItemKind.ASSISTANT_MESSAGE
             # ``image_generation_end`` is a standalone visible row, not a
             # tool_result. Its payload carries the base64 PNG, the revised
@@ -3297,7 +3260,7 @@ class CodexSessionCompute(BaseSessionCompute):
             # to render the image inline. The matching
             # ``response_item.image_generation_call`` duplicates the same
             # data (minus saved_path) and falls through to SYSTEM below.
-            if sub_type == _PAYLOAD_IMAGE_GENERATION_END:
+            if image_generation(parsed_json) is not None:
                 return ItemKind.IMAGE
             # event_msg lines whose sub-type is in
             # :data:`_PERSISTED_END_EVENT_TYPES` are tool_result End
@@ -3398,7 +3361,7 @@ class CodexSessionCompute(BaseSessionCompute):
             if task.payload:
                 return task.payload
             return _humanize_identifier(task.task_name) if task.task_name else None
-        return _event_msg_text(parsed_json, _PAYLOAD_USER_MESSAGE)
+        return user_message_text(parsed_json)
 
     # ------------------------------------------------------------------
     # Extraction — out-of-scope hooks (V1 stubs)
@@ -3684,7 +3647,7 @@ class CodexSessionCompute(BaseSessionCompute):
         if wrapper_type == _TYPE_EVENT_MSG:
             if _parse_sub_agent_activity_started(parsed_json) is not None:
                 return True
-            return _event_msg_call_id(parsed_json) is not None
+            return canonical_result_item(parsed_json) is not None
         return False
 
     def extract_tool_use_entries(
@@ -3812,7 +3775,8 @@ class CodexSessionCompute(BaseSessionCompute):
                 error_text = _code_mode_output_error(output)
         elif wrapper_type == _TYPE_EVENT_MSG:
             call_id = _event_msg_call_id(parsed_json)
-            error_text = _event_msg_payload_error(payload)
+            item = canonical_result_item(parsed_json)
+            error_text = _event_msg_payload_error(item or {})
         else:
             return None
         if not isinstance(call_id, str) or not call_id:
@@ -4072,10 +4036,8 @@ class CodexSessionCompute(BaseSessionCompute):
         # only ``patch_apply_end`` rows contribute paths here, and any
         # session that doesn't apply a patch falls back on the cwd-based
         # git resolution in the orchestrator (see ``compute_base``).
-        if parsed_json.get("type") != _TYPE_EVENT_MSG:
-            return _EMPTY_FILE_PATHS
-        payload = _payload(parsed_json)
-        if payload is None or payload.get("type") != "patch_apply_end":
+        payload = completed_item(parsed_json)
+        if payload is None or payload.get("type") != "FileChange":
             return _EMPTY_FILE_PATHS
         changes = payload.get("changes")
         if not isinstance(changes, dict):
@@ -4108,7 +4070,8 @@ class CodexSessionCompute(BaseSessionCompute):
 
         events: list[DocEditEvent] = []
         if line_type == _TYPE_EVENT_MSG:
-            if payload.get("type") != "patch_apply_end":
+            payload = completed_item(parsed_json)
+            if payload is None or payload.get("type") != "FileChange":
                 return []
             if _patch_apply_error(payload) is not None:
                 return []
@@ -4355,8 +4318,8 @@ class CodexSessionCompute(BaseSessionCompute):
             return None
         if parsed_json.get("type") != _TYPE_EVENT_MSG:
             return None
-        payload = _payload(parsed_json)
-        if payload is None or payload.get("type") != "patch_apply_end":
+        payload = completed_item(parsed_json)
+        if payload is None or payload.get("type") != "FileChange":
             return None
         changes = payload.get("changes")
         if not isinstance(changes, dict) or not changes:
@@ -4454,8 +4417,8 @@ class CodexSessionCompute(BaseSessionCompute):
         call_id = _event_msg_call_id(parsed_json)
         if call_id is None:
             return None
-        payload = _payload(parsed_json)
-        if payload is None or payload.get("type") != "patch_apply_end":
+        payload = completed_item(parsed_json)
+        if payload is None or payload.get("type") != "FileChange":
             return None
 
         # Always pop from the cache (consume the entry whether we use it or not).
@@ -4533,12 +4496,20 @@ class CodexSessionCompute(BaseSessionCompute):
             )
 
         if wrapper_type == _TYPE_EVENT_MSG:
-            sub_type = payload.get("type")
-            if sub_type in (_PAYLOAD_USER_MESSAGE, _PAYLOAD_AGENT_MESSAGE):
-                message = payload.get("message")
-                text = message.strip() if isinstance(message, str) else None
+            item = completed_item(parsed_json)
+            item_type = item.get("type") if item is not None else None
+            if item_type in {"UserMessage", "AgentMessage"}:
+                text = (
+                    user_message_text(parsed_json)
+                    if item_type == "UserMessage"
+                    else agent_message_text(parsed_json)
+                )
                 return ContentAnalysis(
-                    has_visible_content=bool(text),
+                    has_visible_content=(
+                        user_message_is_visible(parsed_json)
+                        if item_type == "UserMessage"
+                        else bool(text)
+                    ),
                     text_content=text,
                     is_system_xml=False,
                     has_tool_result=False,
@@ -4564,7 +4535,7 @@ class CodexSessionCompute(BaseSessionCompute):
             # spawn call_id`` so :meth:`remap_tool_result_id` can rebind
             # the later ``FINAL_ANSWER`` message — the v2 termination
             # signal — onto the same ToolResultLink chain.
-            if sub_type == _SUB_AGENT_ACTIVITY_PAYLOAD_TYPE:
+            if item_type == "SubAgentActivity":
                 spawn = _parse_sub_agent_activity_started(parsed_json)
                 if spawn is None:
                     return _EMPTY_ANALYSIS
@@ -4589,7 +4560,7 @@ class CodexSessionCompute(BaseSessionCompute):
             # content surfaced here — the frontend pulls ``revised_prompt``,
             # ``result`` and ``saved_path`` straight from the payload via
             # the ImageGeneration component.
-            if sub_type == _PAYLOAD_IMAGE_GENERATION_END:
+            if image_generation(parsed_json) is not None:
                 return ContentAnalysis(
                     has_visible_content=True,
                     text_content=None,
@@ -4613,7 +4584,7 @@ class CodexSessionCompute(BaseSessionCompute):
                     is_system_xml=False,
                     has_tool_result=True,
                     tool_result_id=event_call_id,
-                    tool_result_error=_event_msg_payload_error(payload),
+                    tool_result_error=_event_msg_payload_error(item or {}),
                     tool_use_entries=_EMPTY_TOOL_USE_ENTRIES,
                     task_tool_uses=_EMPTY_TASK_TOOL_USES,
                     file_paths=_EMPTY_FILE_PATHS,

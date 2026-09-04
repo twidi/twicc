@@ -29,6 +29,7 @@ import { canStealFocus } from '../../../../../utils/focusGuard'
 import { generateUUID } from '../../../../../utils/crypto'
 import { getParsedContent } from '../../../../../utils/parsedContent'
 import { splitProposedPlan } from '../../../../../providers/codex/proposedPlan'
+import { agentMessageText } from '../../../../../providers/codex/canonical'
 import { PROVIDER } from '../../../../../constants'
 
 const props = defineProps({
@@ -76,7 +77,7 @@ function latestProposedPlan() {
     for (let i = items.length - 1; i >= 0; i--) {
         const item = items[i]
         if (item?.kind !== 'assistant_message') continue
-        const text = getParsedContent(item)?.payload?.message
+        const text = agentMessageText(getParsedContent(item))
         const plan = splitProposedPlan(text)?.plan
         if (plan) return plan
     }

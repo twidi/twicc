@@ -234,6 +234,9 @@ class ComputeContext:
     compute_version: int
     compute_factory: str
     command_queue: _mp_ctx.Queue = field(default_factory=_mp_ctx.Queue)
+    # Codex enables this optional worker→coordinator channel. Claude uses
+    # the generic producer and must not accumulate status messages it never reads.
+    status_queue: _mp_ctx.Queue | None = None
     worker_stop_event: _mp_ctx.Event = field(default_factory=_mp_ctx.Event)
     stop_event: asyncio.Event = field(default_factory=asyncio.Event)
     process: _mp_ctx.Process | None = None
@@ -310,6 +313,10 @@ async def stop_background_task(ctx: ComputeContext) -> None:
     with suppress(Exception):
         ctx.command_queue.cancel_join_thread()
         ctx.command_queue.close()
+    if ctx.status_queue is not None:
+        with suppress(Exception):
+            ctx.status_queue.cancel_join_thread()
+            ctx.status_queue.close()
 
     logger.info("stop_background_task: shutdown complete")
 
@@ -354,7 +361,14 @@ def _set_pdeathsig_linux() -> None:
         logger.debug("Could not set PR_SET_PDEATHSIG: %s", exc)
 
 
-def compute_worker_main(command_queue, result_queue, stop_event, compute_factory: str, run_id: int) -> None:
+def compute_worker_main(
+    command_queue,
+    result_queue,
+    status_queue,
+    stop_event,
+    compute_factory: str,
+    run_id: int,
+) -> None:
     """
     Main function running in the compute worker process.
 
@@ -437,6 +451,8 @@ def compute_worker_main(command_queue, result_queue, stop_event, compute_factory
                 try:
                     # This function reads DB and sends batches via result_queue
                     compute.compute_session_metadata(session_id, result_queue, run_id)
+                    if status_queue is not None:
+                        status_queue.put({"type": "computed", "session_id": session_id})
                 except Exception as e:
                     worker_logger.error(f"Error computing session {session_id}: {e}", exc_info=True)
                     # Flush the file handler so the error survives process termination
@@ -450,6 +466,12 @@ def compute_worker_main(command_queue, result_queue, stop_event, compute_factory
                         'session_id': session_id,
                         'error': str(e),
                     }))
+                    if status_queue is not None:
+                        status_queue.put({
+                            "type": "failed",
+                            "session_id": session_id,
+                            "error": str(e),
+                        })
 
         except Exception as e:
             worker_logger.error(f"Unexpected error in compute worker: {e}", exc_info=True)
@@ -491,7 +513,14 @@ def start_compute_process(ctx: ComputeContext) -> None:
         ctx.worker_stop_event = _mp_ctx.Event()
         ctx.process = _mp_ctx.Process(
             target=compute_worker_main,
-            args=(ctx.command_queue, result_queue, ctx.worker_stop_event, ctx.compute_factory, ctx.run_id),
+            args=(
+                ctx.command_queue,
+                result_queue,
+                ctx.status_queue,
+                ctx.worker_stop_event,
+                ctx.compute_factory,
+                ctx.run_id,
+            ),
             daemon=True,
             name="compute-worker",
         )

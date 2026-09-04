@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import NamedTuple
 
 from openai_codex import CodexConfig
 
@@ -30,6 +31,13 @@ class CodexRuntimeNotReady(FileNotFoundError):
     Subclasses ``FileNotFoundError`` so existing sync callers (auth-status
     check) that already catch ``FileNotFoundError`` degrade gracefully.
     """
+
+
+class CodexCommand(NamedTuple):
+    """Bundled Codex command and its complete subprocess environment."""
+
+    binary: Path
+    env: dict[str, str]
 
 
 def resolve_bundled_binary() -> Path:
@@ -94,4 +102,13 @@ async def make_codex_config(*, cwd: str | None = None, **extra) -> CodexConfig:
         env=_codex_env(),
         cwd=cwd,
         **extra,
+    )
+
+
+async def resolve_codex_command() -> CodexCommand:
+    """Ensure the runtime exists and return a directly executable command."""
+    await ensure_codex_runtime()
+    return CodexCommand(
+        binary=codex_binary_path(),
+        env={**os.environ, **_codex_env()},
     )

@@ -53,7 +53,20 @@ def _claude_line(text):
 
 def _codex_line(text):
     return orjson.dumps(
-        {"type": "event_msg", "payload": {"type": "user_message", "message": text}}
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "thread-1",
+                "turn_id": "turn-1",
+                "completed_at_ms": 0,
+                "item": {
+                    "type": "UserMessage",
+                    "id": "message-1",
+                    "content": [{"type": "text", "text": text, "text_elements": []}],
+                },
+            },
+        }
     ).decode()
 
 

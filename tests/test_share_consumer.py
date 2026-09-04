@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from channels.layers import get_channel_layer
 from channels.testing import WebsocketCommunicator
+from django.conf import settings as django_settings
 from django.utils import timezone as djtz
 
 from twicc.core.models import Project, Session, SessionType, Share
@@ -22,6 +23,7 @@ def session(transactional_db):
         id="sess-cons", project=project, provider="claude_code",
         file_path="sess-cons.jsonl", type=SessionType.SESSION, title="Cons",
         created_at=now, last_new_content_at=now, user_message_count=1, last_line=5,
+        compute_version=django_settings.CLAUDE_CODE_COMPUTE_VERSION,
     )
 
 
@@ -69,6 +71,19 @@ def test_snapshot_share_rejected(session):
         connected, _ = await comm.connect()
         assert not connected  # snapshot shares never stream
         await comm.disconnect()
+
+    _run(scenario())
+
+
+def test_obsolete_root_share_rejected(session):
+    session.compute_version -= 1
+    session.save(update_fields=["compute_version"])
+    share = _share(session, options={"mode": "live"})
+
+    async def scenario():
+        communicator = _communicator(share.token)
+        connected, _ = await communicator.connect()
+        assert not connected
 
     _run(scenario())
 
@@ -194,6 +209,14 @@ def test_agent_link_forwarded_for_live_spawned_subagent(session):
     # tracks it as a descendant AND pushes a viewer link so "View Agent" resolves.
     share = _share(session, options={"mode": "live", "max_display_mode": "normal", "include_subagents": True})
     sid = session.id
+    Session.objects.create(
+        id="sub-1",
+        project=session.project,
+        provider=session.provider,
+        type=SessionType.SUBAGENT,
+        parent_session=session,
+        compute_version=session.compute_version,
+    )
 
     async def scenario():
         comm = _communicator(share.token)
@@ -239,6 +262,33 @@ def test_agent_link_not_forwarded_when_subagents_disabled(session):
         }})
         assert await comm.receive_nothing(timeout=0.5)
         await comm.disconnect()
+
+    _run(scenario())
+
+
+def test_obsolete_descendant_items_are_not_forwarded(session):
+    sub = Session.objects.create(
+        id="sub-stale",
+        project=session.project,
+        provider=session.provider,
+        type=SessionType.SUBAGENT,
+        parent_session=session,
+        compute_version=session.compute_version - 1,
+    )
+    share = _share(session, options={"mode": "live", "include_subagents": True})
+
+    async def scenario():
+        communicator = _communicator(share.token)
+        connected, _ = await communicator.connect()
+        assert connected
+        layer = get_channel_layer()
+        await layer.group_send("updates", {"type": "broadcast", "data": {
+            "type": "session_items_added",
+            "session_id": sub.id,
+            "items": [{"line_num": 1, "display_level": 1, "content": "{}"}],
+        }})
+        assert await communicator.receive_nothing(timeout=0.5)
+        await communicator.disconnect()
 
     _run(scenario())
 

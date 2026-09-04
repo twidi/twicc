@@ -98,6 +98,8 @@ from twicc.search import SearchIndexLockedError, init_search_index, shutdown_sea
 from twicc.search_indexing_task import (  # noqa: E402
     get_active_indexing_tasks,
     kick_off_search_indexing,
+    remove_obsolete_session_documents,
+    start_pending_session_reindexes,
     stop_search_index_task,
 )
 from twicc.version_check_task import start_version_check_task, stop_version_check_task  # noqa: E402
@@ -163,8 +165,12 @@ async def _orchestrate_global_search(
         request_shutdown()
         return
 
+    removed = await remove_obsolete_session_documents()
+    if removed:
+        logger.info("Search index removed %d obsolete session(s)", removed)
     logger.info("Search index initialized (after every provider's initial sync)")
     search_index_ready.set()
+    start_pending_session_reindexes()
 
     await orchestrators.wait_compute_done()
     if shutdown_event.is_set():
@@ -449,13 +455,13 @@ async def run_server(port: int):
         # both the boot pass and any hot-toggle re-trigger queued behind
         # it on the run lock.
         await _cancel_task(search_orchestrator_task, "Search lifecycle coordinator")
+        stop_search_index_task()
         active_indexing_tasks = get_active_indexing_tasks()
         if active_indexing_tasks:
             logger.info(
                 "Stopping search index task(s) (%d active)...",
                 len(active_indexing_tasks),
             )
-            stop_search_index_task()
             for idx, task in enumerate(active_indexing_tasks, start=1):
                 await _cancel_task(task, f"Search index task #{idx}")
         else:

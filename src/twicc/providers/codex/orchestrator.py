@@ -24,9 +24,9 @@ from twicc.core.models import Session, SessionType
 from twicc.orchestrator import BaseOrchestrator
 from twicc.providers.background_compute_task import (
     ComputeContext,
-    start_background_compute_task,
     stop_background_task,
 )
+from twicc.providers.codex.background_compute import start_codex_background_compute_task
 from twicc.providers.codex.agent import get_codex_agent_manager
 from twicc.providers.codex.agent.original_files_cache import (
     start_cleanup_task as start_original_files_cache_cleanup,
@@ -251,8 +251,9 @@ class CodexOrchestrator(BaseOrchestrator):
             # run's sessions are recomputed on the next start.
             from twicc.providers.db_writer import abandon_compute_run
             await abandon_compute_run(self._compute_ctx.run_id, self.provider)
-            await stop_background_task(self._compute_ctx)
+            self._compute_ctx.stop_event.set()
             await _cancel_task(self._compute_task, "Codex background compute task")
+            await stop_background_task(self._compute_ctx)
         else:
             logger.info("Codex background compute was not started, skipping")
 
@@ -515,7 +516,7 @@ class CodexOrchestrator(BaseOrchestrator):
             compute_factory="twicc.providers.codex.compute:get_compute",
         )
         self._compute_task = self._create_task(
-            start_background_compute_task(self._compute_ctx)
+            start_codex_background_compute_task(self._compute_ctx, self.compute_done)
         )
         self._compute_task.add_done_callback(lambda _t: self.compute_done.set())
         logger.info("Codex background compute started (after initial sync)")

@@ -2,6 +2,7 @@ import asyncio
 
 import orjson
 import pytest
+from django.conf import settings as django_settings
 from django.test import AsyncClient
 from django.utils import timezone as djtz
 
@@ -24,6 +25,7 @@ def session(transactional_db):
         id="sess-routes", project=project, provider="claude_code",
         file_path="sess-routes.jsonl", type=SessionType.SESSION, title="Routes session",
         created_at=now, last_new_content_at=now, user_message_count=1, last_line=5,
+        compute_version=django_settings.CLAUDE_CODE_COMPUTE_VERSION,
     )
     # display_level: 1=ALWAYS, 2=COLLAPSIBLE, 3=DEBUG_ONLY.
     for ln, dl in [(1, 1), (2, 2), (3, 2), (4, 3), (5, 1)]:
@@ -63,6 +65,38 @@ def test_meta_reports_compacted(client, session):
     share = _share(session, options={"mode": "live"})
     res = _run(client.get(f"/share/{share.token}/api/meta/"))
     assert orjson.loads(res.content)["compacted"] is True
+
+
+def test_obsolete_session_meta_and_page_remain_available(client, session):
+    session.compute_version -= 1
+    session.save(update_fields=["compute_version"])
+    share = _share(session, options={"mode": "live"})
+
+    meta = _run(client.get(f"/share/{share.token}/api/meta/"))
+    page = _run(client.get(f"/share/{share.token}/"))
+
+    assert meta.status_code == 200
+    assert orjson.loads(meta.content)["ready"] is False
+    assert page.status_code == 200
+    assert b"ready" in page.content and b"false" in page.content
+
+
+@pytest.mark.parametrize("path", [
+    "api/items/metadata/",
+    "api/items/?range=1:5",
+    "api/tool-states/",
+    "api/backend-patch/tool-1/",
+    "api/subagents/",
+])
+def test_obsolete_root_content_apis_return_409(client, session, path):
+    session.compute_version -= 1
+    session.save(update_fields=["compute_version"])
+    share = _share(session, options={"mode": "live"})
+
+    response = _run(client.get(f"/share/{share.token}/{path}"))
+
+    assert response.status_code == 409
+    assert orjson.loads(response.content) == {"error": "session_not_ready"}
 
 
 def test_unknown_token_404(client, session):
@@ -177,7 +211,7 @@ def _make_subagent(session, sub_id, line):
         id=sub_id, project=session.project, provider="claude_code",
         file_path=f"{sub_id}.jsonl", type=SessionType.SESSION, title=sub_id,
         created_at=now, last_new_content_at=now, user_message_count=0,
-        parent_session=session, last_line=1,
+        parent_session=session, last_line=1, compute_version=session.compute_version,
     )
     SessionItem.objects.create(session=sub, line_num=1, content="{}", display_level=1, kind="user_message")
     AgentLink.objects.create(session=session, tool_use_line_num=line, tool_use_id=f"tu-{sub_id}", agent_id=sub_id)
@@ -270,6 +304,20 @@ def test_subagent_tool_states(client, session):
     # include_subagents off → 404.
     share_off = _share(session, options={"mode": "live", "include_subagents": False})
     assert _run(client.get(f"/share/{share_off.token}/api/subagent/sub-ts/tool-states/")).status_code == 404
+
+
+def test_obsolete_subagent_content_returns_409(client, session):
+    sub = _make_subagent(session, "sub-stale", 2)
+    sub.compute_version -= 1
+    sub.save(update_fields=["compute_version"])
+    share = _share(session, options={"mode": "live", "include_subagents": True})
+
+    response = _run(client.get(
+        f"/share/{share.token}/api/subagent/{sub.id}/items/metadata/"
+    ))
+
+    assert response.status_code == 409
+    assert orjson.loads(response.content) == {"error": "session_not_ready"}
 
 
 def test_backend_patch_serves_debug_only_result_line(client, session):

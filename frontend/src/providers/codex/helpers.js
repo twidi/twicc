@@ -4,6 +4,11 @@ import { getTwiccLaunchPrefix } from '../../utils/twiccLaunch'
 import { SUPPORTED_IMAGE_TYPES } from '../../utils/fileUtils'
 import { CONTEXT_MAX, EFFORT, PERMISSION_MODE, UNTRUSTED_PERMISSION_MODES } from './constants'
 import { useCodexStore } from './store'
+import {
+    buildOptimisticUserMessage,
+    userMessageAttachmentCount,
+    userMessageText,
+} from './canonical'
 
 // TwiCC-handled hardcoded commands for Codex, invoked with ``/``. Unlike
 // Claude Code's built-ins (interpreted by the CLI once the raw text reaches
@@ -224,47 +229,26 @@ export class CodexHelpers extends BaseProviderHelpers {
     }
 
     buildOptimisticUserMessageContent(text, attachments) {
-        // Codex JSONL shape for user input: ``{ type: 'event_msg', payload:
-        // { type: 'user_message', message: '...', images: [...] } }``.
-        // ``payload.message`` is the flat text; attached images live in
-        // ``payload.images`` as full ``data:`` URLs (one per attachment).
-        //
         // The frontend ships images through the Claude-shaped block format
         // (``{ type, source: { type: 'base64', media_type, data } }``), so
-        // we re-pack each block into the ``data:`` URL the renderer will
-        // see once the real JSONL line lands — that way ``Message.vue``
-        // and ``UserMessage.vue`` run the exact same code path on both
-        // the optimistic placeholder and the persisted item, and the
-        // visual-item stabilizer can swap one for the other without
-        // remounting the thumbnail group. ``documents`` are dropped:
-        // Codex has no protocol equivalent (the frontend's capability
-        // gating refuses them at attach time anyway, this is just
-        // defensive).
+        // we re-pack each block as canonical UserMessage image content.
         const images = (attachments?.images ?? [])
             .filter(block => block.source?.type === 'base64' && block.source?.data)
-            .map(block => `data:${block.source.media_type || 'image/png'};base64,${block.source.data}`)
-        return {
-            type: 'event_msg',
-            syntheticKind: SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE.kind,
-            payload: { type: 'user_message', message: text, images },
-        }
+            .map(block => ({
+                type: 'image',
+                image_url: `data:${block.source.media_type || 'image/png'};base64,${block.source.data}`,
+            }))
+        const content = buildOptimisticUserMessage(text, images)
+        content.syntheticKind = SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE.kind
+        return content
     }
 
     extractUserMessageText(parsed) {
-        if (parsed?.payload?.type !== 'user_message') return null
-        if (typeof parsed.payload.message !== 'string') return null
-        return parsed.payload.message.trim() || null
+        return userMessageText(parsed)?.trim() || null
     }
 
     extractUserMessageAttachmentCount(parsed) {
-        if (parsed?.payload?.type !== 'user_message') return 0
-        // Codex CLI splits attachments over two sibling lists: ``images``
-        // (data URLs, what TwiCC sends) and ``local_images`` (paths, what the
-        // native CLI writes). Count both so the shape TwiCC did not produce
-        // still matches.
-        const { images, local_images: localImages } = parsed.payload
-        return (Array.isArray(images) ? images.length : 0)
-            + (Array.isArray(localImages) ? localImages.length : 0)
+        return userMessageAttachmentCount(parsed)
     }
 
     // ─── Authentication ─────────────────────────────────────────────────

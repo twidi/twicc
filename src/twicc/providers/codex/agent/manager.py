@@ -30,6 +30,7 @@ from twicc.pending_session_attributes import get_pending_session_attributes
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
 from ..bin import make_codex_config
+from ..migration_gate import gate_for, wake_migration_scheduler
 from ..permission_modes import resolve_codex_policy, resolve_codex_turn_overrides
 from ..sdk_wrappers import TwiccAsyncCodex, service_tier_from_fast_mode
 from .agent import CodexAgent
@@ -81,7 +82,11 @@ class CodexAgentManager(BaseAgentManager):
         :mod:`twicc.providers.codex.titles`).
         """
         await super()._on_state_change(agent)
-        if agent.get_info().state != AgentState.ASSISTANT_TURN:
+        state = agent.get_info().state
+        if state == AgentState.DEAD:
+            wake_migration_scheduler()
+            return
+        if state != AgentState.ASSISTANT_TURN:
             return
         # Only a (cold) resume can be clobbered: a brand-new session derives its
         # title from the first message for the first time, which is correct.
@@ -190,6 +195,30 @@ class CodexAgentManager(BaseAgentManager):
             )
 
     async def send_to_session(
+        self,
+        session_id: str,
+        project_id: str,
+        cwd: str,
+        text: str,
+        settings: AgentSettings,
+        *,
+        images: list[dict] | None = None,
+        documents: list[dict] | None = None,
+    ) -> bool:
+        """Serialize every existing-session send with rollout migration."""
+
+        async with gate_for(session_id):
+            return await self._send_to_session_under_gate(
+                session_id,
+                project_id,
+                cwd,
+                text,
+                settings,
+                images=images,
+                documents=documents,
+            )
+
+    async def _send_to_session_under_gate(
         self,
         session_id: str,
         project_id: str,

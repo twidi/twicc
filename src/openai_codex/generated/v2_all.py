@@ -4374,7 +4374,7 @@ class SubAgentActivityKind(Enum):
     started = "started"
     interacted = "interacted"
     interrupted = "interrupted"
-    # TwiCC patch (re-apply on re-vendoring): the 0.150.1 runtime emits
+    # TwiCC patch (re-apply on re-vendoring): the 0.151.0 runtime emits
     # ``completed`` items but the generated models at the same tag lag
     # behind, breaking thread resume on any rollout that contains one.
     completed = "completed"

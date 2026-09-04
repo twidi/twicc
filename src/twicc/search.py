@@ -367,6 +367,7 @@ def reindex_session(session_id: str) -> None:
     """
     from twicc.core.enums import ItemKind
     from twicc.core.models import Session, SessionItem
+    from twicc.core.serializers import session_compute_ready
     from twicc.providers.helpers import get_provider_helpers
 
     _check_writer()
@@ -380,6 +381,10 @@ def reindex_session(session_id: str) -> None:
 
     # Delete all existing documents for this session
     delete_session_documents(session_id)
+    if not session_compute_ready(session):
+        commit()
+        logger.debug("reindex_session: obsolete session %s removed and skipped", session_id)
+        return
 
     # Index title (if any)
     if session.title:
@@ -405,6 +410,15 @@ def reindex_session(session_id: str) -> None:
             spawned_by_id=session.spawned_by_id,
             spawn_root_id=session.spawn_root_id,
         )
+
+    # The compute version can change while extraction runs. Fail closed by
+    # deleting everything again before the commit when that happened.
+    fresh = Session.objects.filter(id=session_id).only("provider", "compute_version").first()
+    if fresh is None or not session_compute_ready(fresh):
+        delete_session_documents(session_id)
+        commit()
+        logger.debug("reindex_session: session %s became obsolete and was removed", session_id)
+        return
 
     commit()
     logger.debug("reindex_session: session %s re-indexed", session_id)

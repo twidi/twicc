@@ -44,6 +44,7 @@ from django.conf import settings
 from twicc import search
 from twicc.core.enums import ItemKind
 from twicc.core.models import Session, SessionType
+from twicc.core.serializers import session_compute_ready
 from twicc.providers.helpers import get_provider_helpers
 from twicc.startup_progress import broadcast_startup_progress
 
@@ -67,6 +68,9 @@ _indexing_run_lock: asyncio.Lock | None = None
 # active run (boot pass still mid-sweep when a hot-toggle arrives) and
 # every pending re-trigger queued behind it on the lock.
 _indexing_tasks: list[asyncio.Task] = []
+_pending_reindex_ids: set[str] = set()
+_session_reindex_task: asyncio.Task | None = None
+_shutting_down = False
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +271,8 @@ async def kick_off_search_indexing() -> None:
     keep the list bounded across long-lived processes.
     """
     global _indexing_run_lock
+    if _shutting_down:
+        return
     if _indexing_run_lock is None:
         _indexing_run_lock = asyncio.Lock()
 
@@ -279,6 +285,83 @@ async def kick_off_search_indexing() -> None:
     # bound (each restart of the indexing task adds an entry).
     _indexing_tasks[:] = [t for t in _indexing_tasks if not t.done()]
     _indexing_tasks.append(asyncio.create_task(_runner()))
+
+
+def request_session_reindex(session_id: str) -> asyncio.Task | None:
+    """Coalesce canonical per-session reindexes behind the global run lock."""
+
+    global _indexing_run_lock, _session_reindex_task
+    if _shutting_down:
+        return None
+    _pending_reindex_ids.add(session_id)
+    if not search.is_initialized():
+        return None
+    if _session_reindex_task is not None and not _session_reindex_task.done():
+        return _session_reindex_task
+    if _indexing_run_lock is None:
+        _indexing_run_lock = asyncio.Lock()
+
+    async def runner() -> None:
+        assert _indexing_run_lock is not None
+        async with _indexing_run_lock:
+            buffer = _MarkIndexedBuffer()
+            try:
+                while _pending_reindex_ids:
+                    session_ids = set(_pending_reindex_ids)
+                    _pending_reindex_ids.difference_update(session_ids)
+                    for pending_id in session_ids:
+                        try:
+                            await _index_session(pending_id, buffer)
+                        except Session.DoesNotExist:
+                            await asyncio.to_thread(search.delete_session_documents, pending_id)
+                            await asyncio.to_thread(search.commit)
+                        except Exception:
+                            logger.exception(
+                                "Search index: requested reindex failed for session %s",
+                                pending_id,
+                            )
+            finally:
+                await buffer.drain()
+
+    task = asyncio.create_task(runner())
+    _session_reindex_task = task
+    _indexing_tasks[:] = [item for item in _indexing_tasks if not item.done()]
+    _indexing_tasks.append(task)
+
+    def restart_if_needed(done_task: asyncio.Task) -> None:
+        global _session_reindex_task
+        if _session_reindex_task is done_task:
+            _session_reindex_task = None
+        if not _shutting_down and _pending_reindex_ids and search.is_initialized():
+            request_session_reindex(next(iter(_pending_reindex_ids)))
+
+    task.add_done_callback(restart_if_needed)
+    return task
+
+
+def start_pending_session_reindexes() -> asyncio.Task | None:
+    """Start requests collected before the Tantivy writer was initialized."""
+
+    global _shutting_down
+    _shutting_down = False
+    if not _pending_reindex_ids:
+        return None
+    return request_session_reindex(next(iter(_pending_reindex_ids)))
+
+
+async def remove_obsolete_session_documents() -> int:
+    """Delete all search documents for sessions blocked by compute readiness."""
+
+    sessions = await sync_to_async(
+        lambda: list(Session.objects.only("id", "provider", "compute_version"))
+    )()
+    obsolete_ids = [session.id for session in sessions if not session_compute_ready(session)]
+    if not obsolete_ids:
+        return 0
+    for session_id in obsolete_ids:
+        await asyncio.to_thread(search.delete_session_documents, session_id)
+    await asyncio.to_thread(search.commit)
+    return len(obsolete_ids)
 
 
 async def start_search_index_task():
@@ -309,14 +392,17 @@ async def _run_indexing():
     # Find sessions needing indexing — recent first so the user can
     # search through what they were just working on while older
     # sessions catch up in the background.
-    sessions_to_index = await sync_to_async(
+    candidate_sessions = await sync_to_async(
         lambda: list(
             Session.objects.filter(type=SessionType.SESSION)
             .exclude(search_version=settings.CURRENT_SEARCH_VERSION)
             .order_by("-mtime")
-            .values_list("id", flat=True)
+            .only("id", "provider", "compute_version")
         )
     )()
+    sessions_to_index = [
+        session.id for session in candidate_sessions if session_compute_ready(session)
+    ]
 
     total = len(sessions_to_index)
 
@@ -401,6 +487,11 @@ async def _index_session(session_id: str, buffer: _MarkIndexedBuffer):
     """
     session = await sync_to_async(Session.objects.get)(id=session_id)
 
+    if not session_compute_ready(session):
+        await asyncio.to_thread(search.delete_session_documents, session.id)
+        await asyncio.to_thread(search.commit)
+        return
+
     items = await sync_to_async(
         lambda: list(
             session.items.filter(
@@ -446,6 +537,14 @@ async def _index_session(session_id: str, buffer: _MarkIndexedBuffer):
             spawn_root_id=session.spawn_root_id,
         )
 
+    fresh = await sync_to_async(
+        lambda: Session.objects.filter(id=session.id).only("provider", "compute_version").first()
+    )()
+    if fresh is None or not session_compute_ready(fresh):
+        await asyncio.to_thread(search.delete_session_documents, session.id)
+        await asyncio.to_thread(search.commit)
+        return
+
     # Commit after each session
     await asyncio.to_thread(search.commit)
 
@@ -455,5 +554,7 @@ async def _index_session(session_id: str, buffer: _MarkIndexedBuffer):
 
 def stop_search_index_task():
     """Signal the search index task to stop."""
+    global _shutting_down
+    _shutting_down = True
     if _stop_event is not None:
         _stop_event.set()

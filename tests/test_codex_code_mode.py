@@ -277,20 +277,54 @@ def _function_output_line(call_id: str, output) -> str:
     )
 
 
-def _mcp_end_line(call_id: str, server: str, tool: str, *, result: dict | None = None) -> str:
-    # Shape lifted from the real 5.6 session
-    # ``019f4fcb-5ddb-71b0-ac0d-660c41ee5fd6`` (nested MCP call): the
-    # event's ``call_id`` is the synthesized ``exec-<uuid>`` and the
-    # ``invocation`` names the exact server/tool pair.
+def _completed_item_line(item: dict) -> str:
     return _codex_line("event_msg", {
-        "type": "mcp_tool_call_end",
-        "call_id": call_id,
-        "invocation": {"server": server, "tool": tool, "arguments": {}},
-        "duration": {"secs": 0, "nanos": 26792847},
-        "result": result if result is not None else {
-            "Ok": {"content": [{"type": "text", "text": "ok"}], "isError": False},
-        },
+        "type": "item_completed",
+        "thread_id": "test-session-code-mode",
+        "turn_id": "turn-1",
+        "item": item,
+        "completed_at_ms": int(_NOW.timestamp() * 1000),
     })
+
+
+def _file_change_line(
+    call_id: str,
+    changes: dict,
+    *,
+    status: str = "completed",
+    stdout: str = "Success.\n",
+    stderr: str = "",
+) -> str:
+    return _completed_item_line({
+        "type": "FileChange",
+        "id": call_id,
+        "changes": changes,
+        "status": status,
+        "stdout": stdout,
+        "stderr": stderr,
+    })
+
+
+def _mcp_end_line(call_id: str, server: str, tool: str, *, result: dict | None = None) -> str:
+    item = {
+        "type": "McpToolCall",
+        "id": call_id,
+        "server": server,
+        "tool": tool,
+        "arguments": {},
+        "status": "completed",
+        "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+    }
+    if result is not None:
+        if "Err" in result:
+            item["status"] = "failed"
+            item["error"] = {"message": result["Err"]}
+            item.pop("result")
+        else:
+            item["result"] = result["Ok"]
+            if result["Ok"].get("isError"):
+                item["status"] = "failed"
+    return _completed_item_line(item)
 
 
 _RUNNING_CELL_2 = "Script running with cell ID 2\nWall time 32.2 seconds\nOutput:\n"
@@ -606,15 +640,10 @@ class TestCodeModeCompute:
         _create_items(codex_session, [
             _exec_call_line("call_exec_4", script),
             _custom_output_line("call_exec_4", _COMPLETED_ARRAY),
-            _codex_line("event_msg", {
-                "type": "patch_apply_end",
-                "call_id": "exec-b179a299-665e-423e-84e0-1bc0f2daba9f",
-                "stdout": "Success.\n",
-                "stderr": "",
-                "success": True,
-                "changes": {"/tmp/toto3.txt": {"type": "add", "content": "x"}},
-                "status": "completed",
-            }),
+            _file_change_line(
+                "exec-b179a299-665e-423e-84e0-1bc0f2daba9f",
+                {"/tmp/toto3.txt": {"type": "add", "content": "x"}},
+            ),
         ])
         _run_batch_compute(codex_session)
 
@@ -641,15 +670,10 @@ class TestCodeModeCompute:
             _custom_output_line("call_exec_a", _RUNNING_CELL_2),
             _exec_call_line("call_exec_b", script_b),
             _custom_output_line("call_exec_b", _COMPLETED_ARRAY),
-            _codex_line("event_msg", {
-                "type": "patch_apply_end",
-                "call_id": "exec-11111111-2222-3333-4444-555555555555",
-                "stdout": "Success.\n",
-                "stderr": "",
-                "success": True,
-                "changes": {"/repo/docs/a.txt": {"type": "add", "content": "x"}},
-                "status": "completed",
-            }),
+            _file_change_line(
+                "exec-11111111-2222-3333-4444-555555555555",
+                {"/repo/docs/a.txt": {"type": "add", "content": "x"}},
+            ),
         ])
         _run_batch_compute(codex_session)
 
@@ -663,15 +687,13 @@ class TestCodeModeCompute:
         _create_items(codex_session, [
             _exec_call_line("call_exec_6", script),
             _custom_output_line("call_exec_6", _COMPLETED_ARRAY),
-            _codex_line("event_msg", {
-                "type": "patch_apply_end",
-                "call_id": "exec-66666666-7777-8888-9999-000000000000",
-                "stdout": "",
-                "stderr": "apply_patch: /tmp/f.txt: No such file",
-                "success": False,
-                "changes": {"/tmp/f.txt": {"type": "update", "unified_diff": ""}},
-                "status": "failed",
-            }),
+            _file_change_line(
+                "exec-66666666-7777-8888-9999-000000000000",
+                {"/tmp/f.txt": {"type": "update", "unified_diff": ""}},
+                status="failed",
+                stdout="",
+                stderr="apply_patch: /tmp/f.txt: No such file",
+            ),
         ])
         _run_batch_compute(codex_session)
 
@@ -798,15 +820,10 @@ class TestCodeModeCompute:
                 "input": "*** Begin Patch\n*** Add File: /tmp/z.txt\n+z\n*** End Patch",
             }),
             _custom_output_line("call_patch_1", "Done"),
-            _codex_line("event_msg", {
-                "type": "patch_apply_end",
-                "call_id": "call_patch_1",
-                "stdout": "Success.\n",
-                "stderr": "",
-                "success": True,
-                "changes": {"/tmp/z.txt": {"type": "add", "content": "z"}},
-                "status": "completed",
-            }),
+            _file_change_line(
+                "call_patch_1",
+                {"/tmp/z.txt": {"type": "add", "content": "z"}},
+            ),
         ])
         _run_batch_compute(codex_session)
 
@@ -871,15 +888,10 @@ class TestCodeModeLiveRemap:
         ])
         event_item = SessionItem.objects.create(
             session=codex_session, line_num=3,
-            content=_codex_line("event_msg", {
-                "type": "patch_apply_end",
-                "call_id": "exec-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                "stdout": "Success.\n",
-                "stderr": "",
-                "success": True,
-                "changes": {"/repo/toto3.txt": {"type": "add", "content": "x"}},
-                "status": "completed",
-            }),
+            content=_file_change_line(
+                "exec-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                {"/repo/toto3.txt": {"type": "add", "content": "x"}},
+            ),
         )
         compute = get_compute()
         remapped = compute.remap_tool_result_id_live(
@@ -1076,7 +1088,7 @@ class TestGetToolResults:
         ]
         helpers = get_provider_helpers(Provider.CODEX)
         results = helpers.get_tool_results(items, "call_exec_api_1")
-        assert [r.get("type") for r in results] == ["mcp_tool_call_end", "custom_tool_call_output"]
+        assert [r.get("type") for r in results] == ["McpToolCall", "custom_tool_call_output"]
 
     def test_direct_end_event_call_id_check_still_enforced(self, codex_session):
         """Defensive equality stays for direct calls: an event carrying a

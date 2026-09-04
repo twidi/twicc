@@ -43,10 +43,11 @@ import multiprocessing
 import queue
 import threading
 from collections import defaultdict
+from collections.abc import Callable, Coroutine
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import date as date_cls
-from typing import Any, NamedTuple, TypeVar
+from typing import Any, Literal, NamedTuple, TypeVar
 from collections.abc import Callable, Coroutine
 
 import orjson
@@ -223,6 +224,14 @@ class InitialSyncDoneMarker(NamedTuple):
 
     provider: Provider
     done_future: asyncio.Future
+
+
+class ComputeApplied(NamedTuple):
+    """Per-session result emitted after the DB writer handles compute output."""
+
+    session_id: str
+    outcome: Literal["applied", "superseded", "missing", "failed"]
+    error: str | None = None
 
 
 # =============================================================================
@@ -446,6 +455,7 @@ class _ComputeProviderState:
     completed_count: int = 0
     failed_count: int = 0
     abandoned: bool = False
+    applied_queue: asyncio.Queue | None = None
 
 
 class _AbandonComputeRunJob(NamedTuple):
@@ -957,6 +967,7 @@ def arm_compute_completion(
     provider: Provider,
     display_session_ids: set[str] | None,
     total_display: int,
+    applied_queue: asyncio.Queue | None = None,
 ) -> tuple[int, asyncio.Future]:
     """Declare a compute run for ``provider``; return ``(run_id, Future)``.
 
@@ -985,6 +996,7 @@ def arm_compute_completion(
         run_id=run_id,
         display_session_ids=display_session_ids,
         total_display=total_display,
+        applied_queue=applied_queue,
     )
     future = asyncio.get_running_loop().create_future()
     _compute_done_events[run_id] = future
@@ -2002,10 +2014,14 @@ async def _process_compute_message(msg: dict) -> None:
         return
 
     if msg_type == "error":
-        logger.error(f"Compute error for {msg.get('session_id')}: {msg.get('error')}")
+        error = str(msg.get("error") or "Unknown compute worker error")
+        logger.error(f"Compute error for {msg.get('session_id')}: {error}")
         state = _compute_states.get(run_id)
         if state is not None:
             state.failed_count += 1
+            session_id = msg.get("session_id")
+            if state.applied_queue is not None and isinstance(session_id, str):
+                state.applied_queue.put_nowait(ComputeApplied(session_id, "failed", error))
         return
 
     if msg_type != "session_complete":
@@ -2032,15 +2048,28 @@ async def _process_compute_message(msg: dict) -> None:
 
     try:
         from twicc.providers.compute_base import BaseSessionCompute
-        folded_ancestor_id = await sync_to_async(BaseSessionCompute.apply_session_complete)(msg)
+        result = await sync_to_async(BaseSessionCompute.apply_session_complete)(msg)
+    except Exception as e:
+        logger.exception("Error applying session_complete")
+        state.failed_count += 1
+        if state.applied_queue is not None:
+            state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], "failed", str(e)))
+        return
+
+    if state.applied_queue is not None:
+        state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], result.outcome))
+    if result.outcome != "applied":
+        return
+
+    try:
         await _handle_compute_done(msg["session_id"])
         # A subagent's compute may have folded plan-doc entries into its
         # top-level ancestor — _handle_compute_done above skipped it (the
         # completed session is the subagent), so push the ancestor too.
-        if folded_ancestor_id:
-            await _handle_compute_done(folded_ancestor_id)
-    except Exception as e:
-        logger.error(f"Error applying session_complete: {e}", exc_info=True)
+        if result.folded_ancestor_id:
+            await _handle_compute_done(result.folded_ancestor_id)
+    except Exception:
+        logger.exception("Error broadcasting applied session_complete")
         state.failed_count += 1
         return
 

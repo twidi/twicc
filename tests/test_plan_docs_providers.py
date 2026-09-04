@@ -115,15 +115,20 @@ class TestClaudeCodeDocEdits:
         assert claude.extra_doc_edit_events(Session(slug='gone'), last_slug=None) == []
 
 
-def codex_patch_apply_end(changes, *, success=True, status='completed'):
+def codex_file_change(changes, *, status='completed'):
     return {
         'type': 'event_msg',
         'payload': {
-            'type': 'patch_apply_end',
-            'call_id': 'c1',
-            'success': success,
-            'status': status,
-            'changes': changes,
+            'type': 'item_completed',
+            'thread_id': 'thread-1',
+            'turn_id': 'turn-1',
+            'completed_at_ms': 0,
+            'item': {
+                'type': 'FileChange',
+                'id': 'c1',
+                'status': status,
+                'changes': changes,
+            },
         },
     }
 
@@ -142,7 +147,7 @@ def codex_function_call(name, arguments):
 
 class TestCodexDocEdits:
     def test_patch_apply_end_add_and_update(self, codex):
-        line = codex_patch_apply_end({
+        line = codex_file_change({
             '/repo/docs/plans/a.md': {'type': 'add', 'content': 'x'},
             '/repo/spec.md': {'type': 'update', 'unified_diff': '+x'},
             '/repo/src/main.py': {'type': 'add', 'content': 'code'},
@@ -153,16 +158,16 @@ class TestCodexDocEdits:
         }
 
     def test_patch_apply_end_delete(self, codex):
-        line = codex_patch_apply_end({'/repo/old-notes.md': {'type': 'delete', 'content': 'x'}})
+        line = codex_file_change({'/repo/old-notes.md': {'type': 'delete', 'content': 'x'}})
         events = codex.extract_doc_edit_events(line, cwd='/repo')
         assert [(e.path, e.action) for e in events] == [('/repo/old-notes.md', 'delete')]
 
     def test_failed_or_declined_patch_ignored(self, codex):
         changes = {'/repo/plan.md': {'type': 'add', 'content': 'x'}}
         assert codex.extract_doc_edit_events(
-            codex_patch_apply_end(changes, success=False, status='failed'), cwd='/repo') == []
+            codex_file_change(changes, status='failed'), cwd='/repo') == []
         assert codex.extract_doc_edit_events(
-            codex_patch_apply_end(changes, success=False, status='declined'), cwd='/repo') == []
+            codex_file_change(changes, status='declined'), cwd='/repo') == []
 
     def test_shell_argv(self, codex):
         line = codex_function_call('shell', {'command': ['bash', '-lc', 'echo x > notes.md'], 'workdir': '/work'})

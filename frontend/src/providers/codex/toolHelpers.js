@@ -138,24 +138,11 @@ const RESULTLESS_TOOLS = new Set([
     'web_search_call',
 ])
 
-// ``function_call`` tools with a persisted ``event_msg.*_end`` event
-// paired by ``call_id``. Source of truth: ``rollout/src/policy.rs`` in
-// the Codex repo (Limited persistence). ``apply_patch``'s JSON variant
-// is here; its Freeform variant lands as a ``custom_tool_call`` and is
-// handled inline in :meth:`getExpectedResultCount`.
-const FUNCTION_CALL_TOOLS_WITH_END_EVENT = new Set([
+// ``function_call`` tools with a canonical completed result item.
+// ``apply_patch``'s JSON variant is here. Its Freeform variant lands as
+// a ``custom_tool_call`` and is handled inline in getExpectedResultCount.
+const FUNCTION_CALL_TOOLS_WITH_COMPLETED_ITEM = new Set([
     'apply_patch',
-])
-
-// ``event_msg.*_end`` sub-types we still consume — mirrors the backend
-// whitelist :data:`twicc.providers.codex.compute._PERSISTED_END_EVENT_TYPES`.
-// ``web_search_end`` is intentionally absent: the matching
-// ``response_item.web_search_call`` doesn't serialise its id, so the
-// pair can't be reconciled from disk (see :data:`RESULTLESS_TOOLS`).
-const PERSISTED_END_EVENT_TYPES = new Set([
-    'patch_apply_end',
-    'mcp_tool_call_end',
-    'image_generation_end',
 ])
 
 // MCP tools are dispatched as ``custom_tool_call`` and their names are
@@ -499,31 +486,17 @@ function extractCommandPayload(name, input) {
 }
 
 /**
- * Locate the ``event_msg.*_end`` line that pairs with this tool_use
- * by ``call_id`` and return its parsed payload. Used for tools that
- * still get a structured End event in the rollout (apply_patch, MCP,
- * web_search, image_generation). Returns ``null`` when the result line
- * hasn't arrived yet (live session) or isn't loaded in the store.
- *
- * Direct lookup via the ``toolStates`` index (keyed by tool_use_id).
- * The API exposes every persisted ``ToolResultLink`` line number via
- * ``toolState.toolResultLineNums`` so we just iterate that list and
- * return the first ``event_msg`` whose ``call_id`` and sub-type match
- * the whitelist :data:`PERSISTED_END_EVENT_TYPES`.
+ * Locate a canonical completed result item in this tool's result rows.
  */
-function findCodexEndEventPayload(toolId, options) {
+function findCanonicalResultItem(toolId, options, itemType) {
     if (!toolId) return null
-    // ``options.resultsArray`` carries every payload paired with this
-    // tool_use_id by ``get_tool_results`` (wrapper dropped — entries are
-    // ``payload`` objects). The backend already filtered by ``call_id``,
-    // so any entry whose ``type`` belongs to PERSISTED_END_EVENT_TYPES
-    // is ours; we just return the first.
+    // The backend unwraps item_completed and returns the item directly.
+    // ToolResultLink is authoritative for nested code-mode rebinding.
     const results = options?.resultsArray
     if (!Array.isArray(results) || results.length === 0) return null
-    for (const payload of results) {
-        if (!payload || typeof payload !== 'object') continue
-        if (!PERSISTED_END_EVENT_TYPES.has(payload.type)) continue
-        return payload
+    for (const item of results) {
+        if (!item || typeof item !== 'object' || item.type !== itemType) continue
+        return item
     }
     return null
 }
@@ -531,39 +504,28 @@ function findCodexEndEventPayload(toolId, options) {
 /**
  * Pull the rich body out of an MCP call's result rows for the Result
  * section — shared by direct MCP ``function_call``s and code-mode
- * ``exec``s wrapping a single MCP call (whose ``mcp_tool_call_end`` the
+ * ``exec``s wrapping a single MCP call (whose ``McpToolCall`` item the
  * backend rebound onto the exec's chain).
  *
- * ``get_tool_results`` (Codex helpers) returns the JSONL ``payload``
- * directly, so the wrapper key is ``mcp_tool_call_end``, not
- * ``event_msg``. The event's ``result`` is a Rust
- * `Result<CallToolResult, String>` (cf.
- * `codex-rs/protocol/src/protocol.rs:McpToolCallEndEvent`), serialised
- * as either `{"Ok": ...}` or `{"Err": "..."}` — never anything else.
- * We unwrap each branch:
- *  - `Ok.structuredContent` is the parsed JSON body when the server
+ * The backend returns the canonical item directly. We unwrap:
+ *  - `result.structuredContent` when the server
  *    provides a structured schema (most modern MCPs);
- *  - `Ok` as-is otherwise — at minimum it carries
+ *  - `result` as-is otherwise — at minimum it carries
  *    `content: [{type:"text", text:"..."}]` + `isError`;
- *  - `Err` is the raw error string (JsonHumanView renders it as a
- *    quoted string).
+ *  - `error.message` for transport failures.
  * Falls back to the whole row on any unexpected shape so we never drop
  * content silently, and to ``undefined`` (= shell default behaviour)
  * when no end event is in the rows yet.
  */
 function mcpEndDisplayResult(resultData) {
     if (!Array.isArray(resultData)) return undefined
-    const mcpEnd = resultData.find((row) => row?.type === 'mcp_tool_call_end')
+    const mcpEnd = resultData.find((row) => row?.type === 'McpToolCall')
     if (!mcpEnd) return undefined
     const result = mcpEnd.result
     if (result && typeof result === 'object') {
-        if ('Ok' in result && result.Ok && typeof result.Ok === 'object') {
-            return result.Ok.structuredContent ?? result.Ok
-        }
-        if ('Err' in result) {
-            return result.Err
-        }
+        return result.structuredContent ?? result
     }
+    if (typeof mcpEnd.error?.message === 'string') return mcpEnd.error.message
     return mcpEnd
 }
 
@@ -756,16 +718,10 @@ function relPathFromWorkdir(path, input, baseDir) {
 }
 
 /**
- * Locate the matching ``event_msg.patch_apply_end`` payload for an
- * ``apply_patch`` call. Same shape as ``findCodexEndEventPayload``
- * but filtered on the patch-specific subtype (defensive — the
- * whitelist already excludes the unrelated end events but a tool_use
- * could in theory share a call_id with a different shape).
+ * Locate the matching canonical FileChange item for an apply_patch call.
  */
 function findPatchApplyEndPayload(toolId, options) {
-    const payload = findCodexEndEventPayload(toolId, options)
-    if (payload && payload.type === 'patch_apply_end') return payload
-    return null
+    return findCanonicalResultItem(toolId, options, 'FileChange')
 }
 
 /**
@@ -1048,7 +1004,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
             // notification arrives, matching the agent-running
             // semantics the View-Agent UI relies on.
             if (isSpawnAgentTool(name)) return 2
-            return FUNCTION_CALL_TOOLS_WITH_END_EVENT.has(name) ? 2 : 1
+            return FUNCTION_CALL_TOOLS_WITH_COMPLETED_ITEM.has(name) ? 2 : 1
         }
         if (wrapperType === 'custom_tool_call') {
             // apply_patch (Freeform variant) is the only custom_tool_call
@@ -1603,7 +1559,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
             if (
                 nested?.name?.startsWith(MCP_TOOL_NAME_PREFIX)
                 && Array.isArray(options?.resultsArray)
-                && options.resultsArray.some((row) => row?.type === 'mcp_tool_call_end')
+                && options.resultsArray.some((row) => row?.type === 'McpToolCall')
             ) {
                 return null
             }

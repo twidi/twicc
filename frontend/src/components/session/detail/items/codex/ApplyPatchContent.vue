@@ -5,6 +5,7 @@ import { getParsedContent, hasContent } from '../../../../../utils/parsedContent
 import { applyStructuredPatch, reconstructFromHunks } from '../../../../../utils/patchUtils'
 import { parseApplyPatchEnvelope } from '../../../../../providers/codex/parsePatch'
 import { parseUnifiedDiff } from '../../../../../providers/codex/parseUnifiedDiff'
+import { fileChangeItem } from '../../../../../providers/codex/canonical'
 import { formatRelativePath, fileIconFor } from '../../../../../providers/utils/path'
 import { fileRootsFromStore } from '../../../../../utils/projectRoots'
 import ApplyPatchFileEntry from './ApplyPatchFileEntry.vue'
@@ -107,17 +108,16 @@ const patchEndPayload = computed(() => {
         const item = dataStore.getSessionItem(props.sessionId, ln)
         if (!item) continue
         const parsed = getParsedContent(item)
-        if (!parsed || parsed.type !== 'event_msg') continue
-        const payload = parsed.payload
-        if (!payload || payload.type !== 'patch_apply_end') continue
+        const payload = fileChangeItem(parsed)
+        if (!payload) continue
         // Direct apply_patch: the event carries our own call_id. Nested
         // (code-mode) patch: the backend rebound the event to our exec's
         // link chain but the payload keeps Codex's synthesized nested id
         // (``exec-<uuid>``) — accept it, the lineNums list is already
         // scoped to our tool_use so this stays unambiguous.
         if (
-            payload.call_id !== props.toolId
-            && !(typeof payload.call_id === 'string' && payload.call_id.startsWith('exec-'))
+            payload.id !== props.toolId
+            && !(typeof payload.id === 'string' && payload.id.startsWith('exec-'))
         ) continue
         return payload
     }

@@ -20,6 +20,7 @@ const store = useDataStore()
 const settings = useSettingsStore()
 const meta = reactive({ ...props.meta })
 const revoked = ref(false)
+const ready = computed(() => meta.ready !== false)
 
 // Seed a session-ish object the reused components read via getSession.
 store.setSession({
@@ -83,7 +84,7 @@ function onPopState(e) {
     subagentStack.value = Array.isArray(e.state?.shareAgentStack) ? e.state.shareAgentStack : []
 }
 
-if (meta.include_subagents) {
+if (ready.value && meta.include_subagents) {
     provide('openSubagent', openSubagent)
     api.fetchSubagents().then((links) => {
         store.setAgentLinks(meta.session_id, links)
@@ -107,7 +108,7 @@ onMounted(() => {
     if (meta.include_subagents && hash && hash[1]) {
         for (const id of hash[1].split(',').filter(Boolean)) openSubagent(id)
     }
-    if (meta.mode === 'live') {
+    if (ready.value && meta.mode === 'live') {
         connectShareLive({
             tokenPath: props.tokenPath, sessionId: meta.session_id,
             // The consumer forwards subagent traffic too — route by the message's
@@ -181,12 +182,17 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
             This share is no longer available.
         </wa-callout>
 
+        <wa-callout v-else-if="!ready" variant="neutral" class="share-banner">
+            This shared session is being prepared. Refresh this page later.
+        </wa-callout>
+
         <ShareItemsList
+            v-else
             :session-id="meta.session_id"
             :last-line="meta.last_line"
         />
 
-        <SharedSubagentView v-if="subagentStack.length"
+        <SharedSubagentView v-if="ready && subagentStack.length"
             :stack="subagentStack" @close="closeSubagent" @clear="clearSubagents" />
 
         <GlobalMediaPreview />

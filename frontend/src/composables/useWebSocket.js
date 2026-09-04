@@ -4,6 +4,7 @@ import { ref, watch, defineAsyncComponent } from 'vue'
 import { useWebSocket as useVueWebSocket, useDebounceFn, useThrottleFn } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
+import { applySessionItemsAdded } from './wsSessionItems'
 import { useSharesStore } from '../stores/shares'
 import { useAuthStore } from '../stores/auth'
 import { useReconciliation } from './useReconciliation'
@@ -1407,15 +1408,7 @@ export function useWebSocket() {
                 store.applyBulkArchiveFromBroadcast(msg.session_ids)
                 break
             case 'session_items_added':
-                // Mark items as live (arrived via WebSocket) before adding them,
-                // so the live flag is available when components mount during addSessionItems.
-                if (msg.items?.length) {
-                    store.markItemsLive(msg.session_id, msg.items.map(i => i.line_num))
-                }
-                // Only add if we've fetched items for this session
-                if (store.areSessionItemsFetched(msg.session_id)) {
-                    store.addSessionItems(msg.session_id, msg.items, msg.updated_metadata)
-                }
+                if (!applySessionItemsAdded(store, msg)) break
                 // If user is currently viewing this session, mark as viewed (throttled
                 // with trailing edge, so last_viewed_at stays fresh as content arrives).
                 // requirePresence: without it, an unattended desktop would mark read via

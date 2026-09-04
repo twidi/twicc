@@ -33,10 +33,10 @@ import os
 import re
 from collections import Counter
 from collections.abc import Callable, Iterator
-from datetime import datetime, UTC
+from datetime import datetime, timezone, UTC
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, ClassVar, NamedTuple
+from typing import Any, ClassVar, Literal, NamedTuple
 
 import orjson
 from django.core.exceptions import MultipleObjectsReturned
@@ -45,7 +45,7 @@ from django.db.models import F, QuerySet
 
 from twicc.context_injection import strip_context_blocks_in_place
 from twicc.core.enums import ItemDisplayLevel, ItemKind, Provider
-from twicc.core.models import AgentLink, Session, SessionItem, SessionType, ToolResultLink
+from twicc.core.models import AgentLink, Session, SessionItem, SessionType, Share, ToolResultLink
 from twicc.core.session_queries import TOOL_STATE_ANNOTATIONS
 from twicc.git import is_git_root_related, read_head_branch, resolve_git_from_path
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
@@ -114,6 +114,13 @@ class AgentStoppedUpdate(NamedTuple):
     """Describes a subagent session whose process has naturally finished."""
     agent_session_id: str
     stopped_at: datetime
+
+
+class ComputeApplyResult(NamedTuple):
+    """Outcome of applying one background-compute result."""
+
+    outcome: Literal["applied", "superseded", "missing"]
+    folded_ancestor_id: str | None = None
 
 
 class ToolResultInfo(NamedTuple):
@@ -2832,17 +2839,16 @@ class BaseSessionCompute:
 
     @staticmethod
     @transaction.atomic
-    def apply_session_complete(msg: dict) -> str | None:
+    def apply_session_complete(msg: dict) -> ComputeApplyResult:
         """
         Apply a ``session_complete`` payload produced by :meth:`compute_session_metadata`.
 
         Pure DB plumbing — no provider hook involved. Performs item
         bulk_updates, link create/update/delete diffs, session field
         updates, cost recalculation, title persistence, and project
-        metadata refresh. Returns the id of the top-level ancestor whose
-        ``plan_paths`` a subagent's events were folded into (the caller
-        broadcasts it — the completed session's own broadcast skips
-        subagents), ``None`` otherwise.
+        metadata refresh. Returns an explicit apply outcome and, after a
+        successful apply, the optional top-level ancestor whose ``plan_paths``
+        changed.
 
         Wrapped in ``transaction.atomic`` so the dozen-ish SQL statements
         below run as a single transaction: one write-lock acquisition and
@@ -2873,13 +2879,15 @@ class BaseSessionCompute:
                 id=session_id, last_offset__lte=observed_last_offset,
             ).update(last_offset=F('last_offset'))
             if rows == 0:
+                outcome = "superseded" if Session.objects.filter(id=session_id).exists() else "missing"
                 logger.info(
-                    "apply_session_complete: skipping stale compute result for "
-                    "session %s — last_offset advanced past the worker's observed "
-                    "value %s (watcher live-computed newer lines, or the row is gone)",
-                    session_id, observed_last_offset,
+                    "apply_session_complete: %s compute result for session %s "
+                    "at observed last_offset %s",
+                    outcome, session_id, observed_last_offset,
                 )
-                return
+                return ComputeApplyResult(outcome)
+        elif not Session.objects.filter(id=session_id).exists():
+            return ComputeApplyResult("missing")
 
         # 1. Apply item updates (only items that changed)
         item_updates = msg.get('item_updates', [])
@@ -3008,14 +3016,50 @@ class BaseSessionCompute:
                 session_fields['plan_paths'] = fold_concurrent_entries(
                     session_fields['plan_paths'], db_plan_paths, sources=FOLDED_SOURCES,
                 )
+            if 'compute_version' in session_fields:
+                session_fields['search_version'] = None
             rows = Session.objects.filter(id=session_id).update(**session_fields)
             if rows == 0:
-                logger.debug(f"apply_session_complete: session {session_id} not found for update (0 rows affected)")
+                logger.debug(f"apply_session_complete: session {session_id} not found for update")
+                return ComputeApplyResult("missing")
             else:
                 logger.debug(
                     f"apply_session_complete: session {session_id} updated"
                     f" (compute_version={session_fields.get('compute_version')})"
                 )
+
+        # Remap private snapshot anchors before advancing outside this atomic
+        # metadata apply. The greatest matching line includes every canonical
+        # row that shares the source timestamp.
+        snapshot_anchor_key = "_codex_rollout_migration_anchor"
+        shares = Share.objects.select_for_update().filter(session_id=session_id)
+        for share in shares:
+            options = share.options
+            anchor_payload = options.get(snapshot_anchor_key)
+            if options.get("mode") != "snapshot" or anchor_payload is None:
+                continue
+
+            frozen_at_line = 0
+            timestamp_text = anchor_payload.get("timestamp") if isinstance(anchor_payload, dict) else None
+            if isinstance(timestamp_text, str):
+                try:
+                    anchor_timestamp = datetime.fromisoformat(timestamp_text)
+                    if anchor_timestamp.tzinfo is None:
+                        anchor_timestamp = anchor_timestamp.replace(tzinfo=UTC)
+                    matched_line = SessionItem.objects.filter(
+                        session_id=session_id,
+                        timestamp__lte=anchor_timestamp,
+                    ).order_by("-line_num").values_list("line_num", flat=True).first()
+                    if matched_line is not None:
+                        frozen_at_line = matched_line
+                except ValueError:
+                    pass
+
+            new_options = dict(options)
+            new_options["frozen_at_line"] = frozen_at_line
+            new_options.pop(snapshot_anchor_key, None)
+            share.options = new_options
+            share.save(update_fields=["options"])
 
         # 6. Recalculate session costs from SessionItem data (idempotent)
         session = Session.objects.get(id=session_id)
@@ -3080,7 +3124,7 @@ class BaseSessionCompute:
         if project_id:
             update_project_metadata(project_id)
 
-        return folded_ancestor_id
+        return ComputeApplyResult("applied", folded_ancestor_id)
 
     # ------------------------------------------------------------------
     # Watcher orchestration — concrete in later steps

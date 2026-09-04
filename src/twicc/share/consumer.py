@@ -19,6 +19,15 @@ logger = logging.getLogger(__name__)
 WS_CLOSE_SHARE_UNAVAILABLE = 4404
 
 
+@sync_to_async
+def _session_is_ready(session_id: str) -> bool:
+    from twicc.core.models import Session
+    from twicc.core.serializers import session_compute_ready
+
+    session = Session.objects.filter(id=session_id).first()
+    return session is not None and session_compute_ready(session)
+
+
 class ShareConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         token = self.scope["url_route"]["kwargs"]["token"]
@@ -29,6 +38,9 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
         # Snapshot shares never stream.
         opts = share.options or {}
         if opts.get("mode") != "live":
+            await self.close(code=WS_CLOSE_SHARE_UNAVAILABLE)
+            return
+        if not await _session_is_ready(share.session_id):
             await self.close(code=WS_CLOSE_SHARE_UNAVAILABLE)
             return
         # Per-link password grant (same fingerprint check as HTTP).
@@ -127,6 +139,8 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
             is_sub = self.include_subagents and sid in self.descendant_ids
             if not (is_root or is_sub):
                 return
+            if not await _session_is_ready(sid):
+                return
             items = [it for it in (data.get("items") or []) if self._visible(it)]
             if not items:
                 return
@@ -143,6 +157,8 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
             is_sub = self.include_subagents and sid in self.descendant_ids
             if not (is_root or is_sub):
                 return
+            if not await _session_is_ready(sid):
+                return
             # A hidden (over-ceiling) tool_use must not leak its error/extra.
             if not await self._tool_use_visible(sid, data.get("tool_use_id")):
                 return
@@ -154,6 +170,8 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
             # indicator. Carries the state alone — never the label/tools/crons the
             # owner UI shows.
             if data.get("session_id") != self.session_id:
+                return
+            if not await _session_is_ready(self.session_id):
                 return
             await self.send_json({"type": "share_process_state", "state": data.get("state")})
             return

@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import orjson
@@ -40,6 +42,8 @@ from twicc.providers.sessions_watcher import (
 
 from .compute import get_compute as _get_compute
 from .initial_sync import extract_session_meta, is_session_file
+from .migration_gate import gate_for
+from .rollout_migration import HistoryMode
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +64,13 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         # Resolved at instantiation (``get_watcher()`` creates the singleton
         # lazily), never at import: the home is configurable per instance.
         self.projects_dir = codex_sessions_dir()
+
+    @asynccontextmanager
+    async def session_change_context(
+        self, parsed: ParsedSessionFile,
+    ) -> AsyncIterator[None]:
+        async with gate_for(parsed.session_id):
+            yield
 
     async def parse_session_file(self, path: Path) -> ParsedSessionFile | None:
         if not is_session_file(path):
@@ -96,6 +107,7 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             session_type,
             file_path=str(relative),
             parent_session_id=meta.parent_session_id,
+            compute_ready_on_create=meta.history_mode == HistoryMode.PAGINATED,
         )
 
     async def _fetch_initial_title(self, parsed: ParsedSessionFile) -> str | None:

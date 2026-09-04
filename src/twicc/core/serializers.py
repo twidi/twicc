@@ -11,6 +11,12 @@ from twicc.project_icons import project_own_icon_url, project_repo_icon_url
 from twicc.providers.helpers import AGENT_SETTINGS_HIDDEN_FROM_FRONTEND, AgentSettings, get_provider_helpers
 
 
+def session_compute_ready(session) -> bool:
+    """Return whether a session uses its provider's current compute rules."""
+
+    return session.compute_version == get_provider_helpers(session.provider).current_compute_version
+
+
 def serialize_project(project):
     """Serialize a Project model to a dictionary."""
     return {
@@ -157,7 +163,7 @@ def serialize_session(session):
         "slug": session.slug,
         "user_message_count": session.user_message_count,  # Number of user messages (message turns)
         # Boolean indicating if session metadata is up-to-date for the owning provider
-        "compute_version_up_to_date": session.compute_version == provider_helpers.current_compute_version,
+        "compute_version_up_to_date": session_compute_ready(session),
         # Cost and context usage fields
         "context_usage": session.context_usage,  # Current context usage in tokens
         "self_cost": float(session.self_cost) if session.self_cost else None,  # Own items cost in USD
@@ -343,6 +349,17 @@ def serialize_session_item_metadata(item):
     }
 
 
+_PRIVATE_SHARE_OPTION_KEYS = frozenset({"_codex_rollout_migration_anchor"})
+
+
+def _serialize_share_options(options: dict | None) -> dict:
+    return {
+        key: value
+        for key, value in (options or {}).items()
+        if key not in _PRIVATE_SHARE_OPTION_KEYS
+    }
+
+
 def serialize_share(share):
     """Owner-facing full serializer. Query-light: reads target refs via *_id and
     only touches the related row's already-loaded fields (callers select_related).
@@ -360,7 +377,7 @@ def serialize_share(share):
         "expires_at": share.expires_at.isoformat() if share.expires_at else None,
         "revoked_at": share.revoked_at.isoformat() if share.revoked_at else None,
         "status": share.status(),
-        "options": share.options,
+        "options": _serialize_share_options(share.options),
         "view_count": share.view_count,
         "last_viewed_at": share.last_viewed_at.isoformat() if share.last_viewed_at else None,
         "notify_on_view": share.notify_on_view,
@@ -412,7 +429,7 @@ def serialize_share_public_meta(share):
     exposed to viewers."""
     from twicc.core.enums import ShareKind
 
-    opts = share.options or {}
+    opts = _serialize_share_options(share.options)
     if share.kind == ShareKind.SESSION.value:
         sess = share.session
         frozen = opts.get("frozen_at_line")
@@ -421,6 +438,7 @@ def serialize_share_public_meta(share):
             last_line = min(last_line, frozen)
         data = {
             "kind": "session",
+            "ready": session_compute_ready(sess) if sess else False,
             "session_id": share.session_id,
             "provider": sess.provider if sess else None,
             "last_line": last_line,
