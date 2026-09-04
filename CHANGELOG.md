@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Command palette** — New entries for the peer inbox and peers, the help pages, moving through a conversation, muting a session, bookmarking and sharing an artifact, and the Browser tab's saved URLs.
 - **Title suggestions** — You can now use Claude Haiku or GPT-5.6 Luna for every session, or keep matching each session's provider.
 - **Peer inbox** — Filter messages by project, alongside the peer and text filters.
+- **Another Claude Code or Codex home** — TwiCC can now work with a Claude Code or Codex home other than the default one, configured in your `.env`.
 
 ### Changed
 
