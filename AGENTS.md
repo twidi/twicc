@@ -34,6 +34,8 @@ uv + npm · Django 6 ASGI (Uvicorn, Python ≥ 3.13) · Channels + InMemoryChann
 
 **Tests: pytest + pytest-django** (declared in the `test` extra, so `uv run` resolves them). Main repo: `uv run pytest`. Worktree: `cd <worktree> && TWICC_DATA_DIR=$PWD uv run pytest`.
 
+**Codex real-binary integration tests** (`tests/test_codex_migration_integration.py`, rollout migration against the bundled `codex` in a throwaway `CODEX_HOME`) are skipped unless `TWICC_CODEX_INTEGRATION=1`; they need the runtime already downloaded. They never touch `~/.codex`.
+
 **uv — never target the ACTIVE environment.**
 
 | Command | Targets | |

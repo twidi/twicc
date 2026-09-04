@@ -98,6 +98,13 @@ const searchIndexingPercent = computed(() => {
                     <p v-if="isComputeActive" class="phase-hint">
                         Most recent sessions are indexed first and already available to browse.
                     </p>
+                    <p
+                        v-for="detail in (computeProgress?.details || [])"
+                        :key="detail"
+                        class="phase-detail"
+                    >
+                        {{ detail }}
+                    </p>
                 </div>
 
                 <!-- Phase 3: Building search index -->
@@ -155,6 +162,13 @@ const searchIndexingPercent = computed(() => {
     margin: var(--wa-space-s) 0 0;
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
+}
+
+.phase-detail {
+    margin: var(--wa-space-2xs) 0 0;
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+    font-variant-numeric: tabular-nums;
 }
 
 /* Transition for callout disappearance */

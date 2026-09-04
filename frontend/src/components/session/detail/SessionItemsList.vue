@@ -173,10 +173,15 @@ const items = computed(() => store.getSessionItems(props.sessionId))
 // Visual items (filtered by display mode and expanded groups)
 const visualItems = computed(() => store.getSessionVisualItems(props.sessionId))
 
+// Why the history cannot be shown at all (Codex rollout gone from disk, or
+// refused by Codex's own rollout migration). Takes precedence over the
+// "being prepared" state: the metadata stays stale on purpose.
+const unavailableReason = computed(() => store.getSession(props.sessionId)?.unavailable_reason || null)
+
 // Check if session computation is pending
 const isComputePending = computed(() => {
     const sess = store.getSession(props.sessionId)
-    return sess && sess.compute_version_up_to_date === false
+    return sess && sess.compute_version_up_to_date === false && !unavailableReason.value
 })
 const computePendingHintPhase = ref(null)
 const computePendingHint = createComputePendingHint({
@@ -1941,8 +1946,25 @@ defineExpose({
             @update:terms="handleSearchTerms"
         />
 
+        <!-- Unavailable history (Codex rollout gone or refused by Codex's migration) -->
+        <div v-if="unavailableReason" class="compute-pending-state">
+            <wa-callout variant="danger">
+                <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                <div class="compute-pending-copy">
+                    <span>This session's history is not available.</span>
+                    <span v-if="unavailableReason === 'rollout_missing'">
+                        Its Codex rollout file is no longer on disk.
+                    </span>
+                    <span v-else>
+                        Codex could not convert its rollout to the current session format
+                        ({{ unavailableReason }}).
+                    </span>
+                </div>
+            </wa-callout>
+        </div>
+
         <!-- Compute pending state -->
-        <div v-if="isComputePending" class="compute-pending-state">
+        <div v-else-if="isComputePending" class="compute-pending-state">
             <wa-callout variant="warning">
                 <wa-icon slot="icon" name="hourglass"></wa-icon>
                 <div class="compute-pending-copy">

@@ -24,26 +24,33 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 import orjson
 from asgiref.sync import sync_to_async
+from watchfiles import Change
 
+from twicc.core.enums import Provider
 from twicc.core.models import SessionItem, SessionType
 from twicc.paths import path_to_project_id
 from twicc.provider_homes import codex_sessions_dir
 from twicc.providers.compute_base import BaseSessionCompute
+from twicc.providers.db_writer import submit_async_job
 from twicc.providers.sessions_watcher import (
     BaseSessionsWatcher,
     ParsedSessionFile,
+    get_session_by_id,
 )
 
 from .compute import get_compute as _get_compute
 from .initial_sync import extract_session_meta, is_session_file
-from .migration_gate import gate_for
-from .rollout_migration import HistoryMode
+from .migration_gate import is_migrating, request_rebuild
+from .rollout_migration import (
+    HistoryMode,
+    MarkSessionRebuildJob,
+    RolloutMigrationError,
+    get_db_history_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +71,75 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         # Resolved at instantiation (``get_watcher()`` creates the singleton
         # lazily), never at import: the home is configurable per instance.
         self.projects_dir = codex_sessions_dir()
+        # Sessions whose stored history is known to be paginated: the
+        # rewrite check (legacy in DB, paginated on disk) is skipped for
+        # them, so a live paginated session costs no extra DB read per event.
+        self._paginated_in_db: set[str] = set()
 
-    @asynccontextmanager
-    async def session_change_context(
-        self, parsed: ParsedSessionFile,
-    ) -> AsyncIterator[None]:
-        async with gate_for(parsed.session_id):
-            yield
+    async def defer_session_change(self, parsed: ParsedSessionFile) -> bool:
+        # The coordinator is rewriting this session's history: skip the
+        # event, it replays the file through ``process_path`` afterwards.
+        return is_migrating(parsed.session_id)
+
+    async def _process_parsed_session_change(
+        self,
+        path: Path,
+        parsed: ParsedSessionFile,
+        change_type: Change,
+        channel_layer,
+    ) -> None:
+        if change_type != Change.deleted and await self._rewrite_detected(parsed, path):
+            return
+        await super()._process_parsed_session_change(path, parsed, change_type, channel_layer)
+
+    async def _rewrite_detected(self, parsed: ParsedSessionFile, path: Path) -> bool:
+        """Whether the rollout was rewritten under TwiCC (not appended to).
+
+        Two signals, both cheap on the hot path:
+
+        - the file is shorter than the ``last_offset`` TwiCC already
+          ingested — the incremental reader would seek past EOF or read a
+          suffix under wrong line numbers;
+        - the file's ``session_meta`` says ``paginated`` while the history
+          TwiCC stored is legacy — a ``codex migrate-rollouts --apply`` (manual,
+          or Codex's own background migration once enabled) rewrote a
+          session TwiCC had not migrated itself. Checked once per session,
+          then remembered.
+
+        On detection the session is marked for rebuild (``compute_version``
+        reset through the DB writer, which hides it until the coordinator
+        replaces its history from byte zero) and the coordinator is woken.
+        """
+
+        session = await get_session_by_id(parsed.session_id)
+        if session is None:
+            return False
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return False
+        rewritten = size < session.last_offset
+        if not rewritten and parsed.compute_ready_on_create and session.id not in self._paginated_in_db:
+            try:
+                database_mode = await get_db_history_mode(session.id)
+            except RolloutMigrationError:
+                # No stored session_meta yet (brand-new session): nothing to compare.
+                return False
+            if database_mode == HistoryMode.PAGINATED:
+                self._paginated_in_db.add(session.id)
+            else:
+                rewritten = True
+        if not rewritten:
+            return False
+        logger.info(
+            "Codex rollout of session %s was rewritten (size=%d, last_offset=%d): scheduling a rebuild",
+            session.id, size, session.last_offset,
+        )
+        self._paginated_in_db.discard(session.id)
+        future = asyncio.get_running_loop().create_future()
+        await submit_async_job(MarkSessionRebuildJob(Provider.CODEX, session.id, future))
+        request_rebuild(session.id)
+        return True
 
     async def parse_session_file(self, path: Path) -> ParsedSessionFile | None:
         if not is_session_file(path):

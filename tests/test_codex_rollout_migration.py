@@ -24,11 +24,14 @@ from twicc.providers.codex.rollout_migration import (
     HistoryMode,
     MigrationPreparation,
     RolloutMigrationError,
+    configured_mcp_server_names,
     get_db_history_mode,
     history_mode_from_record,
     migration_preparation,
     parse_migration_report,
     preflight_rollout,
+    register_thread_with_codex,
+    registration_thread_config,
 )
 from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
 from twicc.providers.db_writer import start_db_writer, stop_db_writer
@@ -308,3 +311,129 @@ def test_fake_codex_binary_drives_candidate_preparation(tmp_path, monkeypatch, s
         assert result.phase == "Codex migration"
         assert mode == HistoryMode.LEGACY
         assert count == 1
+
+
+def test_parse_migration_report_reads_the_failure_reason(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    report = orjson.loads(_report(rollout, status="failed"))
+    report["outcomes"][0]["failure_reason"] = "missing_sqlite_metadata"
+    report["outcomes"][0]["message"] = "thread thread-1 is missing its SQLite metadata"
+
+    outcome = parse_migration_report(orjson.dumps(report), "thread-1", rollout)
+
+    assert outcome.status == "failed"
+    assert outcome.failure_reason == "missing_sqlite_metadata"
+    assert parse_migration_report(_report(rollout), "thread-1", rollout).failure_reason is None
+
+
+def test_registration_config_disables_every_configured_mcp_server(tmp_path):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'model = "gpt-5.6"\n'
+        '[mcp_servers.chrome]\ncommand = "chrome-mcp"\n'
+        '[mcp_servers.twicc]\nurl = "http://localhost:3500/mcp"\n'
+    )
+
+    names = configured_mcp_server_names(config)
+
+    assert names == ["chrome", "twicc"]
+    assert registration_thread_config(names) == {
+        "mcp_servers": {"chrome": {"enabled": False}, "twicc": {"enabled": False}},
+    }
+    assert configured_mcp_server_names(tmp_path / "absent.toml") == []
+
+
+@pytest.mark.parametrize("cwd_exists", [True, False])
+def test_register_thread_resumes_once_with_the_rollout_cwd(tmp_path, monkeypatch, cwd_exists):
+    cwd = tmp_path / "project"
+    if cwd_exists:
+        cwd.mkdir()
+    rollout = tmp_path / "rollout.jsonl"
+    meta = _session_meta()
+    meta["payload"]["cwd"] = str(cwd)
+    rollout.write_bytes(orjson.dumps(meta) + b"\n")
+    calls: dict = {}
+
+    class FakeCodex:
+        def __init__(self, config):
+            calls["config"] = config
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            calls["closed"] = True
+
+        async def thread_resume(self, thread_id, **kwargs):
+            calls["resume"] = (thread_id, kwargs)
+
+    async def fake_config(*, cwd):
+        return SimpleNamespace(cwd=cwd)
+
+    monkeypatch.setattr("openai_codex.AsyncCodex", FakeCodex)
+    monkeypatch.setattr("twicc.providers.codex.rollout_migration.make_codex_config", fake_config)
+    monkeypatch.setattr("twicc.providers.codex.rollout_migration.configured_mcp_server_names", lambda: ["chrome"])
+
+    asyncio.run(register_thread_with_codex("thread-1", rollout))
+
+    expected_cwd = str(cwd) if cwd_exists else str(Path.home())
+    assert calls["config"].cwd == expected_cwd
+    assert calls["resume"] == ("thread-1", {
+        "cwd": expected_cwd,
+        "config": {"mcp_servers": {"chrome": {"enabled": False}}},
+    })
+    assert calls["closed"] is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_watcher_detects_a_rewritten_rollout(tmp_path, monkeypatch):
+    """Shorter than last_offset, or paginated on disk while legacy in DB → rebuild request."""
+
+    from twicc.providers.codex import migration_gate
+
+    project = Project.objects.create(id="rewrite-project")
+    rollout = tmp_path / "rollout.jsonl"
+    jobs = []
+
+    async def submit(job):
+        jobs.append(job)
+
+    monkeypatch.setattr("twicc.providers.codex.sessions_watcher.submit_async_job", submit)
+    monkeypatch.setattr(migration_gate, "_rebuild_requests", set())
+    watcher = CodexSessionsWatcher()
+
+    def make(session_id, *, last_offset, db_mode, disk_mode):
+        session = Session.objects.create(
+            id=session_id, project=project, provider=Provider.CODEX, last_offset=last_offset,
+            file_path=f"2026/09/04/rollout-{session_id}.jsonl",
+        )
+        SessionItem.objects.create(
+            session=session, line_num=1, content=orjson.dumps(_session_meta(history_mode=db_mode)).decode(),
+        )
+        rollout.write_bytes(orjson.dumps(_session_meta(history_mode=disk_mode)) + b"\n")
+        return ParsedSessionFile(
+            project.id, session_id, SessionType.SESSION, "rollout.jsonl",
+            compute_ready_on_create=disk_mode == "paginated",
+        )
+
+    # 1. Both paginated, file at least as long as last_offset: nothing, and cached.
+    parsed = make("steady", last_offset=10, db_mode="paginated", disk_mode="paginated")
+    assert asyncio.run(watcher._rewrite_detected(parsed, rollout)) is False
+    assert "steady" in watcher._paginated_in_db
+    assert jobs == []
+
+    # 2. Shorter than what TwiCC ingested: rewritten.
+    parsed = make("shrunk", last_offset=10_000, db_mode="paginated", disk_mode="paginated")
+    assert asyncio.run(watcher._rewrite_detected(parsed, rollout)) is True
+    assert [type(job).__name__ for job in jobs] == ["MarkSessionRebuildJob"]
+    assert jobs[-1].session_id == "shrunk"
+    assert "shrunk" in migration_gate._rebuild_requests
+
+    # 3. Legacy in DB, paginated on disk: an external migration rewrote it.
+    parsed = make("migrated-outside", last_offset=10, db_mode="legacy", disk_mode="paginated")
+    assert asyncio.run(watcher._rewrite_detected(parsed, rollout)) is True
+    assert jobs[-1].session_id == "migrated-outside"
+
+    # 4. Legacy on disk (not yet migrated): the normal path.
+    parsed = make("legacy-live", last_offset=10, db_mode="legacy", disk_mode="legacy")
+    assert asyncio.run(watcher._rewrite_detected(parsed, rollout)) is False

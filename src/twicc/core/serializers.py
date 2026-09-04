@@ -164,6 +164,9 @@ def serialize_session(session):
         "user_message_count": session.user_message_count,  # Number of user messages (message turns)
         # Boolean indicating if session metadata is up-to-date for the owning provider
         "compute_version_up_to_date": session_compute_ready(session),
+        # Why the history cannot be shown (Codex rollout gone or refused by
+        # Codex's migration), or None. See ``Session.unavailable_reason``.
+        "unavailable_reason": session.unavailable_reason,
         # Cost and context usage fields
         "context_usage": session.context_usage,  # Current context usage in tokens
         "self_cost": float(session.self_cost) if session.self_cost else None,  # Own items cost in USD

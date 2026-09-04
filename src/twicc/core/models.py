@@ -396,6 +396,14 @@ class Session(models.Model):
     stale = models.BooleanField(default=False)  # True if folder/file no longer exists on disk
     compute_version = models.PositiveIntegerField(null=True, blank=True)  # NULL = never computed
     search_version = models.PositiveIntegerField(null=True, blank=True)
+    # Why TwiCC cannot show this session's history, or NULL when it can. Set
+    # by the Codex rollout-migration coordinator when the source rollout is
+    # gone from disk or Codex itself refuses to read/convert it (its own
+    # ``migrate-rollouts`` failure reason, e.g. ``invalid_session_metadata``).
+    # The compute_version stays stale (one retry per backend start); the
+    # frontend shows the reason instead of the "metadata pending" hint.
+    # Cleared whenever the history is successfully rebuilt.
+    unavailable_reason = models.CharField(max_length=100, null=True, blank=True)
     title = models.CharField(max_length=250, null=True, blank=True)  # Session title (from first user message or custom-title)
     user_message_count = models.PositiveIntegerField(default=0)  # Number of user messages (message turns)
 

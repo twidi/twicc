@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from pathlib import Path
 from contextlib import suppress
 
 from asgiref.sync import sync_to_async
@@ -515,8 +516,15 @@ class CodexOrchestrator(BaseOrchestrator):
             compute_version=settings.CODEX_COMPUTE_VERSION,
             compute_factory="twicc.providers.codex.compute:get_compute",
         )
+        async def _replay_after_migration(session_id: str, path: Path) -> None:
+            # The watcher skipped this session's events while the coordinator
+            # rebuilt it; replay the file so appended lines are ingested.
+            await get_watcher().process_path(path)
+
         self._compute_task = self._create_task(
-            start_codex_background_compute_task(self._compute_ctx, self.compute_done)
+            start_codex_background_compute_task(
+                self._compute_ctx, self.compute_done, on_session_released=_replay_after_migration,
+            )
         )
         self._compute_task.add_done_callback(lambda _t: self.compute_done.set())
         logger.info("Codex background compute started (after initial sync)")

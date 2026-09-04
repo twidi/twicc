@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import queue
+from pathlib import Path
 from types import SimpleNamespace
 
 from twicc.core.models import SessionType
@@ -13,7 +15,7 @@ from twicc.providers.codex.background_compute import (
     FailedCandidate,
     PreparedCandidate,
 )
-from twicc.providers.codex.migration_gate import gate_for
+from twicc.providers.codex.migration_gate import gate_for, is_migrating, request_rebuild
 from twicc.providers.codex.rollout_migration import (
     CodexMigrationOutcome,
     HistoryMode,
@@ -276,8 +278,200 @@ def test_worker_dispatches_next_only_after_computed_not_applied(monkeypatch):
         status_queue.put({"type": "computed", "session_id": "older"})
         await coordinator.applied_queue.put(ComputeApplied("newest", "applied"))
         await coordinator.applied_queue.put(ComputeApplied("older", "applied"))
-        await asyncio.wait_for(task, timeout=2)
-        assert command_queue.commands[-1] is None
+        # Nothing left: the worker is stopped (``None``), the coordinator stays
+        # alive for runtime rebuild requests.
+        await _wait_until(lambda: command_queue.commands[-1] is None)
+        await _wait_until(lambda: coordinator.run_active is False)
+        assert not task.done()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+
+def _legacy_setup(coordinator, monkeypatch, *, source=HistoryMode.LEGACY, database=HistoryMode.LEGACY):
+    monkeypatch.setattr(coordinator, "_source_mode", lambda *_args: _async_value(source))
+    monkeypatch.setattr(background_compute, "get_db_history_mode", lambda *_args: _async_value(database))
+    monkeypatch.setattr(background_compute, "_has_snapshot_anchor", lambda *_args: _async_value(False))
+    monkeypatch.setattr(coordinator, "_is_agent_active", lambda _session_id: False)
+    monkeypatch.setattr(background_compute, "preflight_rollout", lambda _path: _clean_preflight())
+    monkeypatch.setattr(background_compute, "prepare_full_history", lambda _path: SimpleNamespace(
+        items=[(1, "{}")], last_offset=2, last_line=1, mtime=1.0,
+    ))
+    monkeypatch.setattr(background_compute.search, "is_initialized", lambda: False)
+    jobs = []
+
+    async def submit(job_type, *args):
+        jobs.append((job_type.__name__, args))
+
+    coordinator._submit_job = submit
+    return jobs
+
+
+def test_missing_sqlite_metadata_registers_the_thread_then_retries(monkeypatch):
+    async def scenario():
+        coordinator = _coordinator()
+        candidate = CodexComputeCandidate("unknown", SimpleNamespace(), SessionType.SESSION)
+        jobs = _legacy_setup(coordinator, monkeypatch)
+        outcomes = [
+            CodexMigrationOutcome("failed", 0, "thread unknown is missing its SQLite metadata", "missing_sqlite_metadata"),
+            CodexMigrationOutcome("migrated", 10, None),
+        ]
+        runs, registered = [], []
+
+        async def run(session_id, path):
+            runs.append(session_id)
+            return outcomes.pop(0)
+
+        async def register(session_id, path):
+            registered.append(session_id)
+
+        coordinator.runner = SimpleNamespace(run=run, stop=lambda: _async_value(None))
+        monkeypatch.setattr(background_compute, "register_thread_with_codex", register)
+
+        result = await coordinator.prepare_candidate(candidate)
+
+        assert isinstance(result, PreparedCandidate)
+        assert result.migrated_history is True
+        assert runs == ["unknown", "unknown"]
+        assert registered == ["unknown"]
+        assert [name for name, _ in jobs] == ["CaptureSnapshotAnchorsJob", "ReplaceCodexHistoryJob"]
+        assert gate_for("unknown").locked()
+        assert is_migrating("unknown")
+        result.migration_lease.release()
+        coordinator._release_lease("unknown", replay=False)
+        assert not is_migrating("unknown")
+
+    asyncio.run(scenario())
+
+
+def test_unreadable_rollout_is_flagged_unavailable(monkeypatch):
+    async def scenario():
+        coordinator = _coordinator()
+        candidate = CodexComputeCandidate("corrupt", SimpleNamespace(), SessionType.SESSION)
+        jobs = _legacy_setup(coordinator, monkeypatch)
+        coordinator.runner = SimpleNamespace(
+            run=lambda *_args: _async_value(
+                CodexMigrationOutcome("failed", 0, "rollout metadata invalid", "invalid_session_metadata"),
+            ),
+            stop=lambda: _async_value(None),
+        )
+
+        result = await coordinator.prepare_candidate(candidate)
+
+        assert isinstance(result, FailedCandidate)
+        assert result.unavailable_reason == "codex_migration_failed:invalid_session_metadata"
+        assert ("MarkSessionUnavailableJob", ("corrupt", "codex_migration_failed:invalid_session_metadata")) in jobs
+        assert not gate_for("corrupt").locked()
+        assert not is_migrating("corrupt")
+
+    asyncio.run(scenario())
+
+
+def test_environmental_codex_failure_is_not_flagged_unavailable(monkeypatch):
+    async def scenario():
+        coordinator = _coordinator()
+        candidate = CodexComputeCandidate("busy-disk", SimpleNamespace(), SessionType.SESSION)
+        jobs = _legacy_setup(coordinator, monkeypatch)
+        coordinator.runner = SimpleNamespace(
+            run=lambda *_args: _async_value(
+                CodexMigrationOutcome("failed", 0, "publish failed", "rollout_publish_failed"),
+            ),
+            stop=lambda: _async_value(None),
+        )
+
+        result = await coordinator.prepare_candidate(candidate)
+
+        assert isinstance(result, FailedCandidate)
+        assert result.unavailable_reason is None
+        assert all(name != "MarkSessionUnavailableJob" for name, _ in jobs)
+
+    asyncio.run(scenario())
+
+
+def test_missing_rollout_is_flagged_unavailable(monkeypatch, tmp_path):
+    async def scenario():
+        coordinator = _coordinator()
+        candidate = CodexComputeCandidate("gone", tmp_path / "missing.jsonl", SessionType.SESSION)
+        jobs = []
+
+        async def submit(job_type, *args):
+            jobs.append((job_type.__name__, args))
+
+        coordinator._submit_job = submit
+
+        result = await coordinator.prepare_candidate(candidate)
+
+        assert isinstance(result, FailedCandidate)
+        assert result.unavailable_reason == "rollout_missing"
+        assert jobs == [("MarkSessionUnavailableJob", ("gone", "rollout_missing"))]
+
+    asyncio.run(scenario())
+
+
+def test_truncated_rollout_forces_history_replacement(monkeypatch, tmp_path):
+    """A file shorter than last_offset was rewritten: replace even when both modes agree."""
+
+    async def scenario():
+        coordinator = _coordinator()
+        rollout = tmp_path / "rollout.jsonl"
+        rollout.write_bytes(b"{}\n")
+        candidate = CodexComputeCandidate("rewritten", rollout, SessionType.SESSION, last_offset=500)
+        jobs = _legacy_setup(coordinator, monkeypatch, source=HistoryMode.PAGINATED, database=HistoryMode.PAGINATED)
+
+        async def never_run(*_args):
+            raise AssertionError("a paginated source must not be migrated again")
+
+        coordinator.runner = SimpleNamespace(run=never_run, stop=lambda: _async_value(None))
+
+        result = await coordinator.prepare_candidate(candidate)
+
+        assert isinstance(result, PreparedCandidate)
+        assert result.migrated_history is True
+        assert [name for name, _ in jobs] == ["CaptureSnapshotAnchorsJob", "ReplaceCodexHistoryJob"]
+        result.migration_lease.release()
+        coordinator._release_lease("rewritten", replay=False)
+
+    asyncio.run(scenario())
+
+
+def test_rebuild_request_lifts_the_per_run_failure(monkeypatch):
+    from twicc.providers.codex import migration_gate
+
+    monkeypatch.setattr(migration_gate, "_rebuild_requests", set())
+    coordinator = _coordinator()
+    coordinator.failed_this_run.add("retry-me")
+    coordinator.failures["retry-me"] = FailedCandidate("retry-me", "phase", "error")
+    coordinator.deferred.add("retry-me")
+
+    request_rebuild("retry-me")
+    coordinator._absorb_rebuild_requests()
+
+    assert "retry-me" not in coordinator.failed_this_run
+    assert "retry-me" not in coordinator.failures
+    assert "retry-me" not in coordinator.deferred
+
+
+def test_released_session_is_replayed_through_the_callback():
+    async def scenario():
+        replayed = []
+
+        async def on_released(session_id, path):
+            replayed.append((session_id, path))
+
+        ctx = SimpleNamespace(compute_version=2, stop_event=asyncio.Event())
+        coordinator = CodexComputeCoordinator(ctx, asyncio.Event(), on_released)
+        lease = gate_for("done")
+        await lease.acquire()
+        coordinator.migration_leases["done"] = lease
+        coordinator.migration_paths["done"] = Path("/tmp/done.jsonl")
+
+        coordinator._release_lease("done")
+        await asyncio.sleep(0)
+
+        assert replayed == [("done", Path("/tmp/done.jsonl"))]
+        assert not lease.locked()
 
     asyncio.run(scenario())
 
@@ -288,3 +482,48 @@ async def _wait_until(predicate, timeout=1):
             await asyncio.sleep(0.01)
 
     await asyncio.wait_for(wait(), timeout=timeout)
+
+
+def test_outcome_tally_feeds_the_ui_detail_line(monkeypatch):
+    coordinator = _coordinator()
+    assert coordinator._detail() == "Codex rollouts: nothing to migrate"
+
+    coordinator._prepared["a"] = PreparedCandidate("a", None, True, kind="migrated", registered=True)
+    coordinator._prepared["b"] = PreparedCandidate("b", None, True, kind="replaced")
+    coordinator.deferred.add("c")
+    # A fake logger rather than caplog: other tests disable logging globally.
+    messages: list[str] = []
+
+    def record(message, *args, **_kwargs):
+        messages.append(message % args if args else message)
+
+    monkeypatch.setattr(
+        background_compute, "logger",
+        SimpleNamespace(info=record, error=record, warning=record, exception=record, debug=record),
+    )
+    asyncio.run(coordinator._handle_applied(ComputeApplied("a", "applied")))
+    asyncio.run(coordinator._handle_applied(ComputeApplied("b", "applied")))
+    asyncio.run(coordinator._record_failure(FailedCandidate("d", "Codex migration", "boom", "rollout_missing")))
+    asyncio.run(coordinator._record_failure(FailedCandidate("e", "history read", "boom")))
+
+    assert coordinator._detail() == (
+        "Codex rollouts: 1 migrated, 1 registered with Codex first, 1 rebuilt after an external rewrite, "
+        "1 waiting for a running agent, 1 failed, 1 unavailable"
+    )
+    assert any("session a migrated by Codex and rebuilt (registered with Codex first)" in m for m in messages)
+    assert any("session b rebuilt from its rewritten rollout" in m for m in messages)
+
+
+def test_startup_progress_carries_the_detail_line():
+    from twicc import startup_progress
+
+    startup_progress._current_progress.clear()
+    assert startup_progress.set_startup_progress(
+        "background_compute", 3, 10, provider="codex", detail="Codex rollouts: 3 migrated",
+    )
+    [state] = startup_progress.get_startup_progress()
+    assert state["detail"] == "Codex rollouts: 3 migrated"
+    # Replaced, never accumulated; absent by default.
+    assert startup_progress.set_startup_progress("background_compute", 4, 10, provider="codex")
+    assert startup_progress.get_startup_progress()[0]["detail"] is None
+    startup_progress._current_progress.clear()

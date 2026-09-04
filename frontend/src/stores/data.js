@@ -247,12 +247,16 @@ function aggregatePhase(byProvider) {
     let current = 0
     let total = 0
     let completed = true
+    // Free-text per-provider status lines (e.g. the Codex rollout-migration
+    // tally), in the order the providers reported.
+    const details = []
     for (const entry of entries) {
         current += entry.current ?? 0
         total += entry.total ?? 0
         if (!entry.completed) completed = false
+        if (entry.detail) details.push(entry.detail)
     }
-    return { current, total, completed }
+    return { current, total, completed, details }
 }
 
 // Cheap "still booting" probe used by hot getters (unread counts, sessions
@@ -1402,13 +1406,13 @@ export const useDataStore = defineStore('data', {
         },
 
         // Startup progress
-        setStartupProgress(provider, phase, current, total, completed) {
+        setStartupProgress(provider, phase, current, total, completed, detail = null) {
             const key = provider ?? '__global__'
             this.startupProgress = {
                 ...this.startupProgress,
                 [phase]: {
                     ...(this.startupProgress[phase] || {}),
-                    [key]: { current, total, completed },
+                    [key]: { current, total, completed, detail: detail || null },
                 },
             }
         },

@@ -33,7 +33,7 @@ import os
 import re
 from collections import Counter
 from collections.abc import Callable, Iterator
-from datetime import datetime, timezone, UTC
+from datetime import datetime, UTC
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, ClassVar, Literal, NamedTuple

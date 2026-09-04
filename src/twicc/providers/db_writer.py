@@ -48,7 +48,6 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import date as date_cls
 from typing import Any, Literal, NamedTuple, TypeVar
-from collections.abc import Callable, Coroutine
 
 import orjson
 from asgiref.sync import sync_to_async

@@ -22,8 +22,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -257,6 +255,10 @@ class BaseSessionsWatcher:
         self._stop_event: asyncio.Event | None = None
         self._boost_event: asyncio.Event | None = None
         self._fast_poll_until: float = 0.0
+        # Serialises the live event loop with out-of-band replays
+        # (:meth:`process_path`): one file event is processed at a time.
+        self._change_lock = asyncio.Lock()
+        self._channel_layer = None
 
     # ------------------------------------------------------------------
     # Provider extension surface — overridden by each subclass
@@ -299,13 +301,17 @@ class BaseSessionsWatcher:
         """
         return None
 
-    @asynccontextmanager
-    async def session_change_context(
-        self, parsed: ParsedSessionFile,
-    ) -> AsyncIterator[None]:
-        """Wrap one complete parsed-file callback with provider coordination."""
+    async def defer_session_change(self, parsed: ParsedSessionFile) -> bool:
+        """Whether to skip this file event for now (provider hook, default: never).
 
-        yield
+        A provider that rewrites a session's history under a lock (Codex's
+        rollout migration) answers ``True`` while that session is being
+        rebuilt: the event is dropped instead of queueing the whole watcher
+        behind the lock, and the provider replays the file through
+        :meth:`process_path` once the session is released.
+        """
+
+        return False
 
     async def _after_tool_result_broadcast(self, update: ToolResultUpdate) -> None:
         """Hook fired right after a ``tool_state`` broadcast.
@@ -1015,6 +1021,7 @@ class BaseSessionsWatcher:
         current_provider.set(self.get_compute().provider.value)
 
         channel_layer = get_channel_layer()
+        self._channel_layer = channel_layer
         projects_dir = self.projects_dir
         stop_event = self.get_stop_event()
         # Reset the stop event so a hot-restart (provider toggled off then
@@ -1046,7 +1053,21 @@ class BaseSessionsWatcher:
 
         async for changes in awatch(projects_dir, stop_event=stop_event):
             for change_type, path_str in changes:
-                await self._process_change(change_type, path_str, channel_layer)
+                async with self._change_lock:
+                    await self._process_change(change_type, path_str, channel_layer)
+
+    async def process_path(self, path: Path) -> None:
+        """Replay one session file as if a ``modified`` event had arrived.
+
+        Used by a provider after it rebuilt a session it had asked the
+        watcher to defer (see :meth:`defer_session_change`): the incremental
+        read starts at the stored ``last_offset``, so an unchanged file is a
+        cheap no-op. Serialised with the live loop through the same lock.
+        """
+
+        channel_layer = self._channel_layer or get_channel_layer()
+        async with self._change_lock:
+            await self._process_change(Change.modified, str(path), channel_layer)
 
     async def _catch_up_existing_files(self, channel_layer) -> None:
         """Process every session file already present under :attr:`projects_dir`.
@@ -1100,11 +1121,15 @@ class BaseSessionsWatcher:
                 # Invalid path — silently skip
                 return
 
-            # Keep the provider context across title lookup, DB sync,
-            # indexing, the search-version mark, and post-sync hooks.
-            async with self.session_change_context(parsed):
-                await self._process_parsed_session_change(
-                    path, parsed, change_type, channel_layer,
+            if await self.defer_session_change(parsed):
+                logger.debug(
+                    "Watcher: deferring %s on %s (session %s is being rebuilt)",
+                    change_type, path_str, parsed.session_id,
                 )
+                return
+
+            await self._process_parsed_session_change(
+                path, parsed, change_type, channel_layer,
+            )
         except Exception:
             logger.exception("Error processing watcher change %s on %s", change_type, path_str)

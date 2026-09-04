@@ -853,9 +853,13 @@ class CodexHelpers(BaseProviderHelpers):
         from .rollout_migration import (
             CaptureSnapshotAnchorsJob,
             ClearSnapshotAnchorsJob,
+            MarkSessionRebuildJob,
+            MarkSessionUnavailableJob,
             ReplaceCodexHistoryJob,
             _apply_capture_snapshot_anchors_job,
             _apply_clear_snapshot_anchors_job,
+            _apply_mark_session_rebuild_job,
+            _apply_mark_session_unavailable_job,
             _apply_replace_codex_history_job,
         )
         from .titles import (
@@ -872,6 +876,12 @@ class CodexHelpers(BaseProviderHelpers):
             return True
         if isinstance(job, ReplaceCodexHistoryJob):
             await settle_async_job(job, _apply_replace_codex_history_job, "Codex history replacement")
+            return True
+        if isinstance(job, MarkSessionUnavailableJob):
+            await settle_async_job(job, _apply_mark_session_unavailable_job, "Codex session unavailable flag")
+            return True
+        if isinstance(job, MarkSessionRebuildJob):
+            await settle_async_job(job, _apply_mark_session_rebuild_job, "Codex session rebuild request")
             return True
         if isinstance(job, SyncSessionTitlesJob):
             await settle_async_job(

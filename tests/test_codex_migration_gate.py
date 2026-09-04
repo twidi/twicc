@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+
+from watchfiles import Change
 
 from twicc.core.models import SessionType
 from twicc.providers.codex.agent.manager import CodexAgentManager
 from twicc.providers.codex.migration_gate import (
+    migrating,
+    request_rebuild,
+    take_rebuild_requests,
     gate_for,
     wait_for_migration_wake,
     wake_migration_scheduler,
@@ -137,29 +143,67 @@ def test_scheduler_wait_wakes_immediately():
     asyncio.run(scenario())
 
 
-def test_codex_watcher_context_uses_session_gate(monkeypatch):
+def test_codex_watcher_defers_events_of_a_migrating_session():
     async def scenario():
-        from twicc.providers.codex import migration_gate
-
-        monkeypatch.setattr(migration_gate, "_migration_wake_generation", 0)
         watcher = CodexSessionsWatcher()
         parsed = ParsedSessionFile(
             "project", "watcher-session", SessionType.SESSION, "rollout.jsonl",
         )
-        callback_entered = asyncio.Event()
-
-        async def callback():
-            async with watcher.session_change_context(parsed):
-                callback_entered.set()
-
-        async with gate_for(parsed.session_id):
-            task = asyncio.create_task(callback())
-            await asyncio.sleep(0)
-            assert not callback_entered.is_set()
-        await task
-        assert migration_gate._migration_wake_generation == 0
+        assert await watcher.defer_session_change(parsed) is False
+        with migrating(parsed.session_id):
+            assert await watcher.defer_session_change(parsed) is True
+        assert await watcher.defer_session_change(parsed) is False
 
     asyncio.run(scenario())
+
+
+def test_watcher_skips_a_deferred_change_and_replays_it_on_demand(monkeypatch):
+    """A deferred event never blocks the loop; ``process_path`` replays the file."""
+
+    async def scenario():
+        watcher = CodexSessionsWatcher()
+        parsed = ParsedSessionFile("project", "replay-session", SessionType.SESSION, "rollout.jsonl")
+        processed: list[tuple[str, Change]] = []
+        deferring = True
+
+        async def parse(_path):
+            return parsed
+
+        async def defer(_parsed):
+            return deferring
+
+        async def process(path, _parsed, change_type, _channel_layer):
+            processed.append((str(path), change_type))
+
+        async def special(*_args):
+            return False
+
+        monkeypatch.setattr(watcher, "parse_session_file", parse)
+        monkeypatch.setattr(watcher, "defer_session_change", defer)
+        monkeypatch.setattr(watcher, "_process_parsed_session_change", process)
+        monkeypatch.setattr(watcher, "maybe_handle_special_change", special)
+        monkeypatch.setattr("twicc.providers.sessions_watcher.run_under_db_write_lock", lambda fn: fn())
+        monkeypatch.setattr("twicc.providers.sessions_watcher.get_channel_layer", lambda: object())
+
+        await watcher._process_change(Change.modified, "/tmp/rollout.jsonl", object())
+        assert processed == []
+
+        deferring = False
+        await watcher.process_path(Path("/tmp/rollout.jsonl"))
+        assert processed == [("/tmp/rollout.jsonl", Change.modified)]
+
+    asyncio.run(scenario())
+
+
+def test_rebuild_request_is_drained_once_and_wakes_the_scheduler(monkeypatch):
+    from twicc.providers.codex import migration_gate
+
+    monkeypatch.setattr(migration_gate, "_migration_wake_generation", 0)
+    monkeypatch.setattr(migration_gate, "_rebuild_requests", set())
+    request_rebuild("rewritten")
+    assert migration_gate._migration_wake_generation == 1
+    assert take_rebuild_requests() == {"rewritten"}
+    assert take_rebuild_requests() == set()
 
 
 def test_codex_send_uses_gate_before_manager_lock(monkeypatch):

@@ -18,6 +18,10 @@ from twicc.core.models import (
 )
 from twicc.core.serializers import serialize_share, serialize_share_public_meta
 from twicc.providers.codex.rollout_migration import (
+    MarkSessionRebuildJob,
+    MarkSessionUnavailableJob,
+    _apply_mark_session_rebuild_job,
+    _apply_mark_session_unavailable_job,
     SNAPSHOT_ANCHOR_KEY,
     CaptureSnapshotAnchorsJob,
     ClearSnapshotAnchorsJob,
@@ -172,6 +176,9 @@ def _seed_links(session):
 def test_replace_history_resets_structure_but_keeps_compute_stale(session):
     _seed_links(session)
     old_compute_version = session.compute_version
+    # An earlier attempt may have condemned the session; a rebuilt history
+    # makes it showable again.
+    Session.objects.filter(id=session.id).update(unavailable_reason="rollout_missing", stale=True)
     contents = [
         orjson.dumps({"type": "session_meta", "payload": {"history_mode": "paginated"}}).decode(),
         orjson.dumps({"type": "event_msg", "payload": {"type": "item_completed"}}).decode(),
@@ -196,6 +203,8 @@ def test_replace_history_resets_structure_but_keeps_compute_stale(session):
     assert session.tasks == {}
     assert session.search_version is None
     assert session.compute_version == old_compute_version
+    assert session.unavailable_reason is None
+    assert session.stale is False
 
 
 def test_replace_history_rolls_back_old_rows_and_links_on_failure(session):
@@ -277,3 +286,20 @@ def test_final_compute_apply_remaps_snapshot_and_invalidates_search(session):
     assert session.search_version is None
     assert share.options["frozen_at_line"] == 2
     assert SNAPSHOT_ANCHOR_KEY not in share.options
+
+
+def test_unavailable_and_rebuild_jobs_touch_only_their_column(session):
+    assert _apply_mark_session_unavailable_job(
+        MarkSessionUnavailableJob(Provider.CODEX, session.id, "codex_migration_failed:invalid_session_metadata", _future()),
+    ) == 1
+    session.refresh_from_db()
+    assert session.unavailable_reason == "codex_migration_failed:invalid_session_metadata"
+
+    assert _apply_mark_session_unavailable_job(MarkSessionUnavailableJob(Provider.CODEX, session.id, None, _future())) == 1
+    session.refresh_from_db()
+    assert session.unavailable_reason is None
+
+    Session.objects.filter(id=session.id).update(compute_version=7)
+    assert _apply_mark_session_rebuild_job(MarkSessionRebuildJob(Provider.CODEX, session.id, _future())) == 1
+    session.refresh_from_db()
+    assert session.compute_version is None

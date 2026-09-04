@@ -44,8 +44,13 @@ def set_startup_progress(
     *,
     provider: str | None = None,
     completed: bool = False,
+    detail: str | None = None,
 ) -> bool:
     """Update the module-level progress state for a (provider, phase) pair.
+
+    ``detail`` is an optional free-text status the UI shows under the phase
+    counter (e.g. the Codex rollout-migration tally). It is replaced on
+    every accepted update, never accumulated.
 
     Monotonic by design: a stale ``completed=False`` message arriving after
     a ``completed=True`` for the same key, or a ``current`` that would move
@@ -74,6 +79,7 @@ def set_startup_progress(
         "current": current,
         "total": total,
         "completed": completed,
+        "detail": detail,
     }
     return True
 
@@ -85,6 +91,7 @@ async def broadcast_startup_progress(
     *,
     provider: str | None = None,
     completed: bool = False,
+    detail: str | None = None,
 ) -> None:
     """Update state and broadcast progress via Django Channels.
 
@@ -94,7 +101,7 @@ async def broadcast_startup_progress(
     ``completed`` or backwards ``current``) are also skipped on the wire so
     connected clients never see the regression.
     """
-    if not set_startup_progress(phase, current, total, provider=provider, completed=completed):
+    if not set_startup_progress(phase, current, total, provider=provider, completed=completed, detail=detail):
         return
 
     message = {
@@ -104,6 +111,7 @@ async def broadcast_startup_progress(
         "current": current,
         "total": total,
         "completed": completed,
+        "detail": detail,
     }
 
     channel_layer = get_channel_layer()
