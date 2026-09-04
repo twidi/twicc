@@ -17,6 +17,7 @@ from twicc.agent import AgentState
 from twicc.core.enums import Provider
 from twicc.core.models import Session, SessionType, Share
 from twicc.projects import load_project_directories, load_project_git_roots
+from twicc.provider_homes import codex_sessions_dir
 from twicc.providers.background_compute_task import (
     ComputeContext,
     start_compute_process,
@@ -30,7 +31,6 @@ from twicc.providers.db_writer import (
 from twicc.startup_progress import broadcast_startup_progress
 
 from .agent import get_codex_agent_manager
-from .helpers import CodexHelpers
 from .initial_sync import extract_session_meta
 from .migration_gate import gate_for, wait_for_migration_wake
 from .rollout_migration import (
@@ -89,8 +89,9 @@ async def _load_stale_candidates(compute_version: int) -> list[CodexComputeCandi
             .values_list("id", "file_path", "type")
         )
     )()
+    sessions_dir = codex_sessions_dir()
     return [
-        CodexComputeCandidate(session_id, CodexHelpers.SESSIONS_DIR / file_path, session_type)
+        CodexComputeCandidate(session_id, sessions_dir / file_path, session_type)
         for session_id, file_path, session_type in rows
     ]
 
