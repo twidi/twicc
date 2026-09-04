@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **Peer inbox** — The inbox button stays next to Settings even when nothing is waiting, so you can open the inbox and its history whenever you want. It still stays hidden until peers are set up.
+- **Claude Agent SDK** — Upgrade from 0.2.151 to 0.2.152 (bundled Claude Code CLI: 2.1.258 → 2.1.259)
 
 ### Fixed
 
