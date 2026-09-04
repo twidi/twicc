@@ -2262,3 +2262,182 @@ def test_envelope_sanitizes_the_peer_alias(transactional_db, status_callbacks):
     assert "**bold**" not in header and "`code`" not in header  # escaped
     assert "ali\\*ce" in header
     assert "…" in header  # and truncated
+
+
+def test_resolve_peer_message_project_ids_walks_the_reply_chain():
+    """A message uses its own local session's project; without one it inherits
+    from the nearest ancestor that has one; a chain with none resolves to None."""
+    resolve = peer_messages.resolve_peer_message_project_ids
+    rows = [
+        (1, None, "-repo-x"),      # sent from a session of X
+        (2, 1, None),              # human reply, no session
+        (3, 2, None),              # human reply to the reply
+        (4, 3, "-repo-y"),         # delivered to a session of Y: its own wins
+        (5, None, None),           # direct message, no chain
+        (6, 5, None),              # reply to a session-less root
+        (7, 99, None),             # parent row outside the input (deleted, SET_NULL race)
+    ]
+    assert resolve(rows) == {
+        1: "-repo-x", 2: "-repo-x", 3: "-repo-x", 4: "-repo-y",
+        5: None, 6: None, 7: None,
+    }
+    assert resolve([]) == {}
+
+
+def test_resolve_peer_message_project_ids_survives_a_cycle():
+    resolve = peer_messages.resolve_peer_message_project_ids
+    assert resolve([(1, 2, None), (2, 1, None), (3, 1, "-repo")]) == {1: None, 2: None, 3: "-repo"}
+
+
+def _project_session(project_id, *, worktree_of=None, session_id=None):
+    now = djtz.now()
+    project = Project.objects.create(id=project_id, directory=f"/tmp{project_id}", worktree_of=worktree_of)
+    session = Session.objects.create(
+        id=session_id or f"sess{project_id}", project=project, provider="claude_code",
+        file_path=f"{project_id}.jsonl", type=SessionType.SESSION, title=project_id,
+        created_at=now, last_new_content_at=now,
+    )
+    return project, session
+
+
+def _list_ids(client, **params):
+    response = _run(client.get("/api/peer-messages/", {"limit": 200, **params}))
+    assert response.status_code == 200
+    return sorted(row["message_id"] for row in orjson.loads(response.content)["messages"])
+
+
+def test_owner_message_list_filters_by_project_through_sessions_and_reply_chains(
+        client, transactional_db):
+    peer = _active_peer()
+    main, main_session = _project_session("-pf-main")
+    _, worktree_session = _project_session("-pf-wt", worktree_of=main)
+    _, other_session = _project_session("-pf-other")
+
+    # Sent from a session of the main repo; a pending human reply inherits it.
+    sent = _out_message(
+        peer, message_id="pf-sent", origin_session=main_session,
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    _in_message(
+        peer, message_id="pf-reply", reply_to=sent.message_id, reply_to_message=sent,
+        thread_id=sent.thread_id,
+    )
+    # A second-level human reply still climbs to the sending session.
+    first_human = _out_message(
+        peer, message_id="pf-human-1", reply_to="pf-reply", thread_id=sent.thread_id,
+        reply_to_message=PeerMessage.objects.get(message_id="pf-reply"),
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    _in_message(
+        peer, message_id="pf-reply-2", reply_to=first_human.message_id,
+        reply_to_message=first_human, thread_id=sent.thread_id,
+    )
+    # Delivered into the worktree: matches the main repo and the worktree.
+    _in_message(
+        peer, message_id="pf-worktree", delivered_to_session=worktree_session,
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    # A reply to a main-repo message, delivered to another project: its own
+    # session wins over the chain.
+    _in_message(
+        peer, message_id="pf-moved", reply_to=sent.message_id, reply_to_message=sent,
+        thread_id=sent.thread_id, delivered_to_session=other_session,
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    # No session anywhere: never under a project filter.
+    _in_message(peer, message_id="pf-orphan-pending")
+    _out_message(peer, message_id="pf-direct", status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now())
+
+    assert _list_ids(client, project_id="-pf-main") == sorted(
+        ["pf-sent", "pf-reply", "pf-human-1", "pf-reply-2", "pf-worktree"]
+    )
+    assert _list_ids(client, project_id="-pf-wt") == ["pf-worktree"]
+    assert _list_ids(client, project_id="-pf-other") == ["pf-moved"]
+    assert _list_ids(client, project_id="-pf-unknown") == []
+    # Unfiltered: everything, orphans included.
+    assert len(_list_ids(client)) == 8
+
+
+def test_owner_message_list_combines_project_with_peer_and_text_filters(client, transactional_db):
+    first_peer = _active_peer(name="first")
+    second_peer = _active_peer(
+        name="second",
+        base_url="https://second.example.com",
+        token_ours=mint_token(),
+        token_theirs="second-" + "s" * 30,
+    )
+    _, session = _project_session("-pf-combo")
+    _out_message(
+        first_peer, message_id="pf-c-first-needle", origin_session=session, title="Needle here",
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    _out_message(
+        first_peer, message_id="pf-c-first-other", origin_session=session, title="Nothing",
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    _out_message(
+        second_peer, message_id="pf-c-second-needle", origin_session=session, title="Needle here",
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    _in_message(first_peer, message_id="pf-c-first-nosession", title="Needle here")
+
+    assert _list_ids(client, project_id="-pf-combo") == sorted(
+        ["pf-c-first-needle", "pf-c-first-other", "pf-c-second-needle"]
+    )
+    assert _list_ids(client, project_id="-pf-combo", peer_id=first_peer.pk) == sorted(
+        ["pf-c-first-needle", "pf-c-first-other"]
+    )
+    assert _list_ids(client, project_id="-pf-combo", q="needle") == sorted(
+        ["pf-c-first-needle", "pf-c-second-needle"]
+    )
+    assert _list_ids(client, project_id="-pf-combo", peer_id=first_peer.pk, q="needle") == [
+        "pf-c-first-needle"
+    ]
+
+
+def test_owner_message_projects_lists_effective_projects_without_revoked_peers(
+        client, transactional_db):
+    peer = _active_peer()
+    revoked = _active_peer(
+        name="revoked",
+        base_url="https://revoked.example.com",
+        token_ours=mint_token(),
+        token_theirs="revoked-" + "r" * 30,
+        state=PeerState.REVOKED,
+    )
+    main, main_session = _project_session("-pp-main")
+    _, worktree_session = _project_session("-pp-wt", worktree_of=main)
+    _, revoked_session = _project_session("-pp-revoked")
+
+    sent = _out_message(
+        peer, message_id="pp-sent", origin_session=main_session,
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    # A pending reply inherits the project of what it answers: no new id.
+    _in_message(
+        peer, message_id="pp-reply", reply_to=sent.message_id, reply_to_message=sent,
+        thread_id=sent.thread_id,
+    )
+    _in_message(
+        peer, message_id="pp-worktree", delivered_to_session=worktree_session,
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+    # Session-less rows contribute nothing.
+    _in_message(peer, message_id="pp-orphan")
+    # A revoked peer's history stays out, like in the unfiltered list.
+    _out_message(
+        revoked, message_id="pp-revoked", origin_session=revoked_session,
+        status=PeerMessageStatus.DELIVERED, resolved_at=djtz.now(),
+    )
+
+    response = _run(client.get("/api/peer-messages/projects/"))
+
+    assert response.status_code == 200
+    assert orjson.loads(response.content) == {"project_ids": ["-pp-main", "-pp-wt"]}
+
+
+def test_owner_message_projects_is_empty_without_messages(client, transactional_db):
+    response = _run(client.get("/api/peer-messages/projects/"))
+
+    assert response.status_code == 200
+    assert orjson.loads(response.content) == {"project_ids": []}

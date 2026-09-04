@@ -53,6 +53,13 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    /** With `includeWorktrees`, list only the worktrees whose id is in this
+     *  Set (the consumer restricts `projects` itself). Null lists every
+     *  worktree. */
+    onlyWorktreeIds: {
+        type: Set,
+        default: null,
+    },
 })
 
 const store = useDataStore()
@@ -101,7 +108,7 @@ const flatTree = computed(() => {
                     </span>
                 </span>
             </wa-option>
-            <WorktreeSelectOptions v-if="includeWorktrees" :parent-id="p.id" />
+            <WorktreeSelectOptions v-if="includeWorktrees" :parent-id="p.id" :only-project-ids="onlyWorktreeIds" />
         </template>
 
         <!-- Divider + "Other projects" header between priority and remaining projects -->
@@ -125,7 +132,7 @@ const flatTree = computed(() => {
                 </span>
             </span>
         </wa-option>
-        <WorktreeSelectOptions v-if="includeWorktrees" :parent-id="p.id" />
+        <WorktreeSelectOptions v-if="includeWorktrees" :parent-id="p.id" :only-project-ids="onlyWorktreeIds" />
     </template>
 
     <!-- Divider between named and unnamed sections (only when both exist) -->
@@ -155,7 +162,7 @@ const flatTree = computed(() => {
                     </span>
                 </span>
             </wa-option>
-            <WorktreeSelectOptions v-if="includeWorktrees" :parent-id="item.project.id" :base-depth="item.depth" />
+            <WorktreeSelectOptions v-if="includeWorktrees" :parent-id="item.project.id" :base-depth="item.depth" :only-project-ids="onlyWorktreeIds" />
         </template>
     </template>
 </template>

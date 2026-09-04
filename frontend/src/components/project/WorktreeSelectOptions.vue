@@ -22,6 +22,10 @@ const props = defineProps({
     // Indent depth of the parent project option; the header sits one level
     // deeper, the worktree options one more (mirrors the directory tree).
     baseDepth: { type: Number, default: 0 },
+    // When set, only the worktrees whose id is in this Set are listed (a
+    // select restricted to projects that own something, e.g. peer messages).
+    // Null lists every worktree.
+    onlyProjectIds: { type: Set, default: null },
 })
 
 const dataStore = useDataStore()
@@ -29,7 +33,9 @@ const dataStore = useDataStore()
 // Same rule as the parent projects of every select: archived and stale ones
 // are not offered (a stale worktree's directory is gone).
 const worktrees = computed(() =>
-    dataStore.getWorktreesOf(props.parentId).filter(p => !p.archived && !p.stale)
+    dataStore.getWorktreesOf(props.parentId).filter(p =>
+        !p.archived && !p.stale && (!props.onlyProjectIds || props.onlyProjectIds.has(p.id))
+    )
 )
 
 const headerDepth = computed(() => props.baseDepth + 1)

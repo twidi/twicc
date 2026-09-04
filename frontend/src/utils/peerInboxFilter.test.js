@@ -5,6 +5,7 @@ import {
     buildPeerInboxSearchUrl,
     peerInboxFiltersActive,
     peerInboxSelectablePeers,
+    peerInboxSelectableProjects,
     peerInboxVisibleMessages,
     peerInboxView,
 } from './peerInboxFilter.js'
@@ -49,6 +50,8 @@ test('treats a nonempty peer or trimmed query as an active filter', () => {
     assert.equal(peerInboxFiltersActive('', '   '), false)
     assert.equal(peerInboxFiltersActive('peer-a', ''), true)
     assert.equal(peerInboxFiltersActive('', ' needle '), true)
+    assert.equal(peerInboxFiltersActive('', '', ''), false)
+    assert.equal(peerInboxFiltersActive('', '', '-home-me-repo'), true)
 })
 
 test('offers established peers and any peer that owns message history', () => {
@@ -91,4 +94,31 @@ test('builds an encoded search URL with the 200-row history limit', () => {
         buildPeerInboxSearchUrl('', 'needle'),
         '/api/peer-messages/?limit=200&q=needle',
     )
+    assert.equal(
+        buildPeerInboxSearchUrl('', '', '-home-me-repo'),
+        '/api/peer-messages/?limit=200&project_id=-home-me-repo',
+    )
+    assert.equal(
+        buildPeerInboxSearchUrl('peer-a', 'needle', '-home-me-repo'),
+        '/api/peer-messages/?limit=200&peer_id=peer-a&project_id=-home-me-repo&q=needle',
+    )
+})
+
+test('offers only projects that own messages, themselves or through a worktree', () => {
+    const projects = [
+        { id: 'direct' },
+        { id: 'via-worktree' },
+        { id: 'silent' },
+    ]
+    const worktrees = {
+        'via-worktree': [{ id: 'via-worktree-wt' }],
+        silent: [{ id: 'silent-wt' }],
+    }
+    const withMessages = new Set(['direct', 'via-worktree-wt'])
+
+    assert.deepEqual(
+        peerInboxSelectableProjects(projects, withMessages, id => worktrees[id] || []).map(p => p.id),
+        ['direct', 'via-worktree'],
+    )
+    assert.deepEqual(peerInboxSelectableProjects(projects, new Set(), () => []), [])
 })

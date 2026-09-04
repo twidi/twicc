@@ -112,6 +112,54 @@ def _resolve_reply_to_message(peer, direction: str, reply_to: str):
     return candidates.filter(direction=opposite).first() or candidates.first()
 
 
+def resolve_peer_message_project_ids(rows) -> dict:
+    """Map each message pk to its effective project id, or ``None``.
+
+    *rows* is an iterable of ``(pk, reply_to_message_id, own_project_id)``
+    where ``own_project_id`` is the project of the row's LOCAL session
+    (``origin_session`` outbound, ``delivered_to_session`` inbound; only one is
+    ever set). A message with a session of its own uses that project. Without
+    one — a pending inbound reply, a message the owner wrote directly — it
+    inherits from the nearest ancestor of its reply chain that has one, so a
+    reply to something a session sent still shows under that session's
+    project. A chain with no session anywhere resolves to ``None``.
+
+    Pure: no queries. The chain is walked once per row (memoised), with a
+    guard against a cycle that ``reply_to_message`` cannot produce (resolved
+    at creation, SET_NULL on deletion) but that must not hang if it ever did.
+    """
+    parents = {}
+    own = {}
+    for pk, parent_pk, project_id in rows:
+        parents[pk] = parent_pk
+        own[pk] = project_id
+
+    resolved: dict = {}
+
+    def _resolve(pk):
+        if pk in resolved:
+            return resolved[pk]
+        path = []
+        current = pk
+        found = None
+        while current is not None and current not in resolved and current in own:
+            if current in path:
+                break
+            path.append(current)
+            if own[current] is not None:
+                found = own[current]
+                break
+            current = parents[current]
+        else:
+            if current in resolved:
+                found = resolved[current]
+        for visited in path:
+            resolved[visited] = found
+        return found
+
+    return {pk: _resolve(pk) for pk in own}
+
+
 class PeerSendResult(NamedTuple):
     success: bool
     message_id: str | None

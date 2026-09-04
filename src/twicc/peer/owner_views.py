@@ -243,8 +243,15 @@ async def peer_message_done(request, pk):
 
 
 async def peer_messages_list(request):
-    """GET peer-message summaries, optionally filtered by peer and full text."""
+    """GET peer-message summaries, optionally filtered by peer, project and full text.
+
+    ``project_id`` keeps the messages whose effective project (their local
+    session's, else the nearest reply-chain ancestor's — see
+    ``peer_messages.resolve_peer_message_project_ids``) is the project or one
+    of its git worktrees (``project_scope_ids``: a worktree scopes to itself).
+    """
     from twicc.core.models import PeerMessage, PeerMessageDirection, PeerMessageStatus, PeerState
+    from twicc.projects import project_scope_ids
 
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
@@ -253,6 +260,7 @@ async def peer_messages_list(request):
     except ValueError:
         limit = 50
     peer_id = (request.GET.get("peer_id") or "").strip()
+    project_id = (request.GET.get("project_id") or "").strip()
     query = (request.GET.get("q") or "").strip()
 
     def _fetch():
@@ -263,6 +271,20 @@ async def peer_messages_list(request):
             rows = rows.filter(peer_id=peer_id)
         else:
             rows = rows.exclude(peer__state=PeerState.REVOKED)
+
+        if project_id:
+            # One pass over the (peer-filtered) rows: a reply chain never
+            # leaves its peer relationship, so the ancestors are all here.
+            scope = set(project_scope_ids(project_id))
+            chain_rows = (
+                (pk, parent_pk, origin_project or delivered_project)
+                for pk, parent_pk, origin_project, delivered_project in rows.values_list(
+                    "pk", "reply_to_message_id",
+                    "origin_session__project_id", "delivered_to_session__project_id",
+                ).iterator()
+            )
+            effective = peer_messages.resolve_peer_message_project_ids(chain_rows)
+            rows = rows.filter(pk__in=[pk for pk, project in effective.items() if project in scope])
 
         if query:
             pending_ids = []
@@ -309,6 +331,33 @@ async def peer_messages_list(request):
         "messages": [serialize_peer_message(message) for message in messages],
         "history_has_more": history_has_more,
     })
+
+
+async def peer_message_projects(request):
+    """GET /api/peer-messages/projects/ — ``{project_ids}``: the effective
+    project of every message (same resolution as the list's ``project_id``
+    filter), revoked peers excluded like the unfiltered list. Feeds the
+    inbox's project filter, which offers only projects that own messages.
+    One query over four columns, then the in-memory chain walk."""
+    from twicc.core.models import PeerMessage, PeerState
+
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    def _fetch():
+        chain_rows = (
+            (pk, parent_pk, origin_project or delivered_project)
+            for pk, parent_pk, origin_project, delivered_project in PeerMessage.objects.exclude(
+                peer__state=PeerState.REVOKED,
+            ).values_list(
+                "pk", "reply_to_message_id",
+                "origin_session__project_id", "delivered_to_session__project_id",
+            ).iterator()
+        )
+        effective = peer_messages.resolve_peer_message_project_ids(chain_rows)
+        return sorted({project for project in effective.values() if project})
+
+    return JsonResponse({"project_ids": await sync_to_async(_fetch)()})
 
 
 async def peer_message_detail(request, pk):

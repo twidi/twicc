@@ -10,25 +10,34 @@
  * `detail.messageId` → App.vue opens the review dialog directly).
  */
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { useDataStore } from '../../stores/data'
 import { usePeersStore } from '../../stores/peers'
+import { useProjectMark } from '../../composables/useProjectMark'
 import { apiFetch } from '../../utils/api'
 import { debounce } from '../../utils/debounce'
 import {
     buildPeerInboxSearchUrl,
     peerInboxFiltersActive,
     peerInboxSelectablePeers,
+    peerInboxSelectableProjects,
     peerInboxVisibleMessages,
     peerInboxView,
 } from '../../utils/peerInboxFilter'
 import PeerInboxRow from './PeerInboxRow.vue'
 import PeerHelpLink from './PeerHelpLink.vue'
+import ProjectMark from '../project/ProjectMark.vue'
+import ProjectSelectOptions from '../project/ProjectSelectOptions.vue'
 
 const props = defineProps({ open: Boolean })
 const emit = defineEmits(['close', 'review'])
 
+const dataStore = useDataStore()
 const peersStore = usePeersStore()
 const dialogRef = ref(null)
 const selectedPeerId = ref('')
+// Always "All projects" when the inbox opens: a filter pre-set from the
+// current route would hide messages the user never asked to hide.
+const selectedProjectId = ref('')
 const textFilter = ref('')
 const filteredMessages = ref([])
 const searching = ref(false)
@@ -41,8 +50,52 @@ const pendingRequests = computed(() => peersStore.pendingRequests)
 const selectablePeers = computed(() =>
     peerInboxSelectablePeers(peersStore.peers, peersStore.messages)
 )
+// The same wa-select + ProjectSelectOptions as the review dialog's delivery
+// pickers (non-stale, non-archived, each repository's worktrees listed under
+// it), restricted to the projects that own messages — themselves or through
+// a worktree — so the list stays short. The set comes from the server, which
+// resolves reply chains over the whole history; it is fetched when the inbox
+// opens and again whenever the messages change. Picking a repository matches
+// it and its worktrees; picking a worktree matches only that worktree
+// (server-side `project_scope_ids`).
+const projectIdsWithMessages = ref(new Set())
+const selectableProjects = computed(() =>
+    peerInboxSelectableProjects(
+        dataStore.getListableProjects.filter(p => !p.archived && !p.stale),
+        projectIdsWithMessages.value,
+        dataStore.getWorktreesOf,
+    )
+)
+
+async function loadProjectIdsWithMessages() {
+    try {
+        const response = await apiFetch('/api/peer-messages/projects/')
+        if (!response.ok) return
+        const payload = await response.json()
+        projectIdsWithMessages.value = new Set(payload.project_ids || [])
+    } catch {
+        // The filter keeps its last list; the next open or message refreshes it.
+    }
+}
+
+// A project that just lost its last message (or a worktree that did) leaves
+// the list: fall back to "All projects" rather than keep a filter the select
+// no longer offers.
+watch([selectableProjects, projectIdsWithMessages], () => {
+    const id = selectedProjectId.value
+    if (!id) return
+    const project = dataStore.getProject(id)
+    const parentId = project?.worktree_of || null
+    const offered = parentId
+        ? projectIdsWithMessages.value.has(id) && selectableProjects.value.some(p => p.id === parentId)
+        : selectableProjects.value.some(p => p.id === id)
+    if (!offered) selectedProjectId.value = ''
+})
+// Icon + dot of the selected project for the select's own button (a wa-select
+// shows the option's label as plain text, never its rendered content).
+const { iconUrl: projectIconUrl, dotColor: projectDotColor } = useProjectMark(selectedProjectId)
 const filtersActive = computed(() =>
-    peerInboxFiltersActive(selectedPeerId.value, textFilter.value)
+    peerInboxFiltersActive(selectedPeerId.value, textFilter.value, selectedProjectId.value)
 )
 const activeMessages = computed(() => {
     if (filtersActive.value) return filteredMessages.value
@@ -65,7 +118,7 @@ async function searchMessages(generation) {
     searchController = controller
     try {
         const response = await apiFetch(
-            buildPeerInboxSearchUrl(selectedPeerId.value, textFilter.value),
+            buildPeerInboxSearchUrl(selectedPeerId.value, textFilter.value, selectedProjectId.value),
             { signal: controller.signal },
         )
         if (!response.ok) throw new Error(`Search failed with status ${response.status}`)
@@ -102,9 +155,11 @@ function prepareSearch(immediate) {
 }
 
 watch(selectedPeerId, () => prepareSearch(true))
+watch(selectedProjectId, () => prepareSearch(true))
 watch(textFilter, () => prepareSearch(false))
 watch(() => props.open, (open) => {
     if (open) {
+        loadProjectIdsWithMessages()
         if (filtersActive.value) prepareSearch(true)
         return
     }
@@ -117,7 +172,9 @@ watch(
         `${message.id}:${message.status}:${message.title}:${message.text_preview}`
     ).join('|'),
     () => {
-        if (props.open && filtersActive.value) prepareSearch(true)
+        if (!props.open) return
+        loadProjectIdsWithMessages()
+        if (filtersActive.value) prepareSearch(true)
     },
 )
 
@@ -173,6 +230,20 @@ function onHide(event) {
                     v-for="peer in selectablePeers" :key="peer.id"
                     :value="peer.id" :label="peersStore.peerLabel(peer.id)"
                 >{{ peersStore.peerLabel(peer.id) }}</wa-option>
+            </wa-select>
+            <wa-select v-model="selectedProjectId" size="small" class="pi-filter-project">
+                <ProjectMark
+                    v-if="selectedProjectId"
+                    slot="start"
+                    style="--project-mark-icon-size: var(--wa-space-m); --project-mark-size: 0.75em"
+                    :icon-url="projectIconUrl"
+                    :color="projectDotColor"
+                />
+                <wa-option value="">All projects</wa-option>
+                <ProjectSelectOptions
+                    :projects="selectableProjects" include-worktrees
+                    :only-worktree-ids="projectIdsWithMessages"
+                />
             </wa-select>
             <wa-input
                 size="small" class="pi-filter-text" placeholder="Filter messages…"
@@ -258,7 +329,8 @@ function onHide(event) {
     gap: var(--wa-space-xs);
     margin-bottom: var(--wa-space-s);
 }
-.pi-filter-peer { flex: 0 1 40%; min-width: 0; }
+.pi-filter-peer,
+.pi-filter-project { flex: 0 1 30%; min-width: 0; }
 .pi-filter-text { flex: 1 1 auto; min-width: 0; }
 .pi-searching {
     display: flex;
@@ -320,6 +392,7 @@ wa-dialog > wa-callout { margin-block: var(--wa-space-s); }
 @media (max-width: 520px) {
     .pi-filters { align-items: stretch; flex-direction: column; }
     .pi-filter-peer,
+    .pi-filter-project,
     .pi-filter-text { width: 100%; }
 }
 </style>

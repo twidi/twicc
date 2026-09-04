@@ -335,6 +335,7 @@ function defaultScopeId() {
 // Icon + dot of the picked scope, for the select's own button (a wa-select
 // shows the option's label as plain text, never its rendered content).
 const { iconUrl: scopeIconUrl, dotColor: scopeDotColor } = useProjectMark(scopeId)
+const { iconUrl: pickedIconUrl, dotColor: pickedDotColor } = useProjectMark(pickedProjectId)
 
 // `computeSidebarSessionBlocks` already applies these project exclusions to
 // normal rows. The same set lets a hydrated page-omitted row use the exact
@@ -1344,6 +1345,16 @@ function onHide(event) {
                             v-model="pickedProjectId"
                             size="small" placeholder="Pick a project…"
                         >
+                            <!-- The closed select shows the option's label as
+                                 plain text: the picked project's mark rides
+                                 the start slot, like the scope select below. -->
+                            <ProjectMark
+                                v-if="pickedProjectId"
+                                slot="start"
+                                style="--project-mark-icon-size: var(--wa-space-m); --project-mark-size: 0.75em"
+                                :icon-url="pickedIconUrl"
+                                :color="pickedDotColor"
+                            />
                             <ProjectSelectOptions
                                 :projects="selectableProjects"
                                 :priority-project-ids="activeWorkspace?.projectIds || null"
