@@ -381,8 +381,43 @@ def test_register_thread_resumes_once_with_the_rollout_cwd(tmp_path, monkeypatch
     assert calls["resume"] == ("thread-1", {
         "cwd": expected_cwd,
         "config": {"mcp_servers": {"chrome": {"enabled": False}}},
+        # ``_session_meta()`` carries no model_provider (like the 2025 rollouts):
+        # the resume names the default one explicitly.
+        "model_provider": "openai",
     })
     assert calls["closed"] is True
+
+
+def test_register_thread_keeps_the_rollout_model_provider(tmp_path, monkeypatch):
+    rollout = tmp_path / "rollout.jsonl"
+    meta = _session_meta()
+    meta["payload"]["model_provider"] = "azure"
+    rollout.write_bytes(orjson.dumps(meta) + b"\n")
+    calls: dict = {}
+
+    class FakeCodex:
+        def __init__(self, config):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            pass
+
+        async def thread_resume(self, thread_id, **kwargs):
+            calls["resume"] = kwargs
+
+    async def fake_config(*, cwd):
+        return SimpleNamespace(cwd=cwd)
+
+    monkeypatch.setattr("openai_codex.AsyncCodex", FakeCodex)
+    monkeypatch.setattr("twicc.providers.codex.rollout_migration.make_codex_config", fake_config)
+    monkeypatch.setattr("twicc.providers.codex.rollout_migration.configured_mcp_server_names", lambda: [])
+
+    asyncio.run(register_thread_with_codex("thread-1", rollout))
+
+    assert calls["resume"]["model_provider"] == "azure"
 
 
 @pytest.mark.django_db(transaction=True)

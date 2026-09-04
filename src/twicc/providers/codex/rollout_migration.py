@@ -43,6 +43,9 @@ ROLLOUT_UNREADABLE_REASONS = frozenset({
 })
 # ``Session.unavailable_reason`` value when the rollout is gone from disk.
 UNAVAILABLE_ROLLOUT_MISSING = "rollout_missing"
+# Provider named on a registration resume when the rollout predates the
+# ``model_provider`` field of ``session_meta``.
+DEFAULT_MODEL_PROVIDER = "openai"
 
 
 class RolloutMigrationError(RuntimeError):
@@ -456,14 +459,23 @@ async def register_thread_with_codex(session_id: str, rollout_path: Path) -> Non
     from openai_codex import AsyncCodex
 
     record = _first_record(rollout_path)
-    payload = record.get("payload") if record else None
-    cwd = payload.get("cwd") if isinstance(payload, dict) else None
+    payload = record.get("payload") if record else {}
+    if not isinstance(payload, dict):
+        payload = {}
+    cwd = payload.get("cwd")
     if not isinstance(cwd, str) or not os.path.isdir(cwd):
         cwd = str(Path.home())
+    # Rollouts written before Codex 0.35 (autumn 2025) carry no
+    # ``model_provider``; the app-server then fails to load the thread's
+    # configuration ("Model provider `` not found"). Name the provider
+    # explicitly, the rollout's own when it has one.
+    model_provider = payload.get("model_provider")
+    if not isinstance(model_provider, str) or not model_provider:
+        model_provider = DEFAULT_MODEL_PROVIDER
     thread_config = registration_thread_config(configured_mcp_server_names())
     config = await make_codex_config(cwd=cwd)
     async with AsyncCodex(config=config) as codex:
-        await codex.thread_resume(session_id, cwd=cwd, config=thread_config)
+        await codex.thread_resume(session_id, cwd=cwd, config=thread_config, model_provider=model_provider)
     logger.info("Registered Codex thread %s in Codex's state DB via thread/resume", session_id)
 
 
