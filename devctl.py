@@ -369,9 +369,12 @@ def synced_config_files(base_dir: Path) -> list[Path]:
 def copy_data_from_main() -> bool:
     """Copy the database, search index and user config from the main data directory to the worktree.
 
-    Copies data.sqlite and any WAL/SHM files, the search-index/ directory, the
-    project-icons/ directory, the user preference files (settings, workspaces,
-    presets, snippets, tips) and the per-install secret-key.
+    Copies data.sqlite as a consistent snapshot (SQLite's online backup API,
+    in one step under a read lock — a plain file copy of the database plus
+    its WAL/SHM while the main instance keeps writing produces a torn,
+    "malformed" copy), the search-index/ directory, the project-icons/
+    directory, the user preference files (settings, workspaces, presets,
+    snippets, tips) and the per-install secret-key.
     Only called in worktree mode when the local database doesn't exist yet, so
     everything lands together on first setup. Existing local files are never
     overwritten.
@@ -395,13 +398,32 @@ def copy_data_from_main() -> bool:
     # Ensure target directory exists
     target_db_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy data.sqlite and any associated files (-wal, -shm)
-    source_pattern = str(source_db) + "*"
-    copied_files = []
-    for source_file in glob.glob(source_pattern):
-        filename = os.path.basename(source_file)
-        shutil.copy2(source_file, target_db_dir / filename)
-        copied_files.append(filename)
+    # Snapshot data.sqlite with the backup API. The WAL/SHM files are not
+    # copied: the snapshot already folds in every committed transaction, and
+    # a stray WAL from another process would only corrupt it. ``pages=-1``
+    # copies everything in one step — a stepped backup restarts from zero
+    # whenever the source is written to in between, which on a busy main
+    # instance can take many times longer than the copy itself.
+    import sqlite3
+
+    try:
+        source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
+        try:
+            target = sqlite3.connect(str(target_db))
+            try:
+                source.backup(target, pages=-1)
+            finally:
+                target.close()
+        finally:
+            source.close()
+    except sqlite3.Error as e:
+        print("FAILED")
+        print(f"    {e}")
+        for leftover in (target_db, Path(f"{target_db}-journal")):
+            if leftover.exists():
+                leftover.unlink()
+        return False
+    copied_files = ["data.sqlite (snapshot)"]
 
     print("OK")
     print(f"    Files: {', '.join(copied_files)}")
