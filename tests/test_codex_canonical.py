@@ -256,3 +256,53 @@ def test_compute_reads_canonical_subagent_started_item():
 
     analysis = compute.analyze_content(record, session_id="thread-1", tool_use_map={})
     assert analysis.tool_result_agent_info == ("spawn-call", "child-thread", True)
+
+
+def test_blank_text_counts_as_no_text():
+    blank_user = _completed({
+        "type": "UserMessage", "id": "u1",
+        "content": [{"type": "text", "text": " \n\t", "text_elements": []}],
+    })
+    blank_with_image = _completed({
+        "type": "UserMessage", "id": "u2",
+        "content": [
+            {"type": "text", "text": " ", "text_elements": []},
+            {"type": "image", "image_url": "data:image/png;base64,AA"},
+        ],
+    })
+    padded = _completed({
+        "type": "UserMessage", "id": "u3",
+        "content": [{"type": "text", "text": "  hi \n", "text_elements": []}],
+    })
+    blank_agent = _completed({"type": "AgentMessage", "id": "a1", "content": [{"type": "Text", "text": "  "}]})
+
+    assert user_message_text(blank_user) is None
+    assert user_message_is_visible(blank_user) is False
+    assert user_message_is_visible(blank_with_image) is True
+    # Surrounding whitespace of a real message is preserved: in-place
+    # editors (``/plan`` prefixing, screenshot tags) see the persisted string.
+    assert user_message_text(padded) == "  hi \n"
+    assert agent_message_text(blank_agent) is None
+
+
+def test_compute_keeps_an_empty_agent_message_as_an_assistant_message():
+    # The frontend renders the "empty response" notice for it, as it did for
+    # the legacy ``agent_message`` event. Only its visibility is text-driven.
+    compute = CodexSessionCompute()
+    empty = _completed({"type": "AgentMessage", "id": "a1", "content": []})
+
+    assert compute.compute_item_kind(empty) == ItemKind.ASSISTANT_MESSAGE
+    analysis = compute.analyze_content(empty, session_id="thread-1", tool_use_map={})
+    assert analysis.has_visible_content is False
+    assert analysis.text_content is None
+
+
+def test_compute_strips_message_text_content():
+    compute = CodexSessionCompute()
+    record = _completed({
+        "type": "UserMessage", "id": "u1",
+        "content": [{"type": "text", "text": "  hello \n", "text_elements": []}],
+    })
+    analysis = compute.analyze_content(record, session_id="thread-1", tool_use_map={})
+    assert analysis.has_visible_content is True
+    assert analysis.text_content == "hello"

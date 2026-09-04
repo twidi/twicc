@@ -3,7 +3,7 @@ In-memory FIFO registry that bridges the Codex agent (SDK event stream)
 and the Codex watcher (JSONL → DB).
 
 The agent pushes one ``item_id`` per completed ``agentMessage`` SDK event.
-The watcher pops one ``item_id`` per ``event_msg.agent_message`` line it
+The watcher pops one ``item_id`` per canonical ``AgentMessage`` item line it
 inserts into the DB and stores it on ``SessionItem.stream_uuid``. The
 frontend then matches its streaming placeholder to the freshly-inserted
 SessionItem by that uuid — exactly the way Claude does it, but with an

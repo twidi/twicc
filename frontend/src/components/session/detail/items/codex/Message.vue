@@ -81,9 +81,8 @@ const streamingBlockType = computed(() => {
 // Plain text source for the ``AssistantMessage`` / ``UserMessage`` path.
 // Two shapes feed in:
 //
-//  - Real Codex line: the flat string sits under ``payload.message``
-//    (event_msg.user_message / event_msg.agent_message) — no content
-//    array, no nested blocks.
+//  - Real Codex line: a canonical ``UserMessage`` / ``AgentMessage``
+//    completed item whose text entries are joined by ``canonical.js``.
 //  - Streaming text placeholder: the store paints the live SDK delta into
 //    a Claude-style content array under ``message.content`` so the same
 //    rendering plumbing can carry both providers.
@@ -116,7 +115,7 @@ const assistantText = computed(() => {
 })
 
 // A subagent's opening prompt (Codex multi-agent v2) is a ``NEW_TASK``
-// inter-agent message, not an ``event_msg.user_message``: the text sits in
+// inter-agent message, not an canonical ``UserMessage`` item: the text sits in
 // a content-block array and the payload itself is usually encrypted. The
 // backend classifies it as a USER_MESSAGE (it IS what this thread was asked
 // to do), so it lands in the user bubble; the helper composes the markdown
@@ -125,15 +124,17 @@ const interAgentTask = computed(() =>
     props.kind === 'user_message' ? interAgentTaskMarkdown(props.data) : null
 )
 
-// Attached images on a user_message line. Codex CLI persists them in
-// ``payload.images`` as full ``data:image/...;base64,...`` URLs (one per
-// attachment). ``local_images`` / ``text_elements`` are protocol fields
-// the CLI uses when input is referenced by path or annotated with byte
-// ranges — neither shape is produced by TwiCC's send pipeline today, so
-// only the ``images`` array is consumed here.
+// Attached images on a user_message line. TwiCC sends them as ``image``
+// content entries carrying full ``data:image/...;base64,...`` URLs, in
+// source order. ``local_image`` entries (a path on the agent's machine,
+// written by the native CLI) have no URL the browser could load, so they
+// only count as attachments (see ``userMessageAttachmentCount``) and are
+// not rendered here.
 const images = computed(() => {
     if (props.kind !== 'user_message') return []
-    return userMessageImages(props.data).map(image => image.value)
+    return userMessageImages(props.data)
+        .filter(image => image.type === 'image')
+        .map(image => image.value)
 })
 </script>
 

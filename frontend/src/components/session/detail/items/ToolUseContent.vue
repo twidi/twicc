@@ -373,7 +373,7 @@ const displayResult = computed(() => {
     // ToolResultLink rows back the same call but only one carries the
     // user-facing payload (Codex MCP tools, for example, push aside the
     // ``function_call_output`` and surface the richer
-    // ``event_msg.mcp_tool_call_end`` instead). ``undefined`` means
+    // canonical ``McpToolCall`` item instead). ``undefined`` means
     // "default behaviour" — single row collapses to the row itself,
     // multiple rows stay as an array.
     // ``input`` rides along for helpers whose pick depends on what the
@@ -447,7 +447,7 @@ const helperOptions = computed(() => {
         // The link's own slug is resolved when the link is *created*, so it
         // is null whenever the subagent's transcript had not been parsed yet
         // — systematically on Codex multi-agent v2, where the parent
-        // announces the spawn (`sub_agent_activity`) ~100 ms before the
+        // announces the spawn (`SubAgentActivity`) ~100 ms before the
         // subagent's file exists. The subagent's session row carries the
         // same nickname and reaches the store through its own
         // `session_updated`, so fall back to it; a reload re-resolves the
@@ -561,7 +561,7 @@ const inputRendering = computed(() => {
         originalFile: fileChangeOriginalFile.value,
         // Plumbed through so per-provider input renderers can locate
         // the matching tool_result rows in the store on their own
-        // (e.g. Codex's ``apply_patch`` reading ``patch_apply_end``).
+        // (e.g. Codex's ``apply_patch`` reading ``FileChange``).
         sessionId: props.sessionId,
         toolId: props.toolId,
     })
@@ -793,7 +793,7 @@ const toolStartedAt = computed(() => {
 // section can render meaningful content. Drives both the polling
 // loop and the "Result not yet available" placeholder. Default 1
 // (= render whatever arrives first); Codex's ``apply_patch`` raises
-// it to 2 so the rich ``event_msg.patch_apply_end`` is always part of
+// it to 2 so the rich canonical ``FileChange`` item is always part of
 // what's displayed (see helper docs).
 const requiredDisplayCount = computed(() => (
     toolHelpers.value?.getRequiredResultCountForDisplay(props.name, props.input, helperOptions.value) ?? 1

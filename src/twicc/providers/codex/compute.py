@@ -8,37 +8,48 @@ and, for tool calls, lets the inherited base orchestration build the
 
 Classification rules (any change MUST bump CODEX_COMPUTE_VERSION):
 
-- ``event_msg.user_message`` → ``USER_MESSAGE``
-- ``event_msg.agent_message`` → ``ASSISTANT_MESSAGE``
+Codex persists chat messages and tool outcomes as canonical completed
+items — ``event_msg.item_completed`` lines whose ``payload.item.type`` is a
+PascalCase ``TurnItem`` — since 0.151 (paginated history; legacy rollouts
+are migrated to the same shape). The readers live in :mod:`.canonical`.
+
+- ``item_completed`` / ``UserMessage`` → ``USER_MESSAGE`` (text joined
+  from the ``text`` entries; ``image`` / ``local_image`` entries make an
+  attachment-only prompt visible too)
+- ``item_completed`` / ``AgentMessage`` → ``ASSISTANT_MESSAGE``
 - The first ``response_item.message`` (role=user) carrying a
   ``<codex_internal_context source="goal">`` block after a goal set/update is
-  rewritten by :meth:`_transform_inline_provider` into a synthetic
-  ``event_msg.user_message`` of text ``/goal <objective>``. Later continuation
+  rewritten by :meth:`_transform_inline_provider` into a TwiCC-private
+  canonical ``UserMessage`` of text ``/goal <objective>``. Later continuation
   prompts for the same goal stay ``SYSTEM`` / ``DEBUG_ONLY`` so the command is
   not repeated between every assistant response. The original payload of the
   visible boundary is kept under ``twiccOriginalContent``.
 - A ``response_item.message`` (role=user) that is a TwiCC-injected command
   (via ``thread/inject_items`` — ``/goal clear`` and ``/compact``, for which
   Codex writes no "the user asked" rollout line of its own) is likewise
-  rewritten into an ``event_msg.user_message`` carrying that command. Same
-  ``twiccOriginalContent`` preservation.
+  rewritten into a private canonical ``UserMessage`` carrying that command.
+  Same ``twiccOriginalContent`` preservation.
 - A ``response_item.message`` carrying TwiCC's terminal provider-error marker
   is rewritten into ``twicc_provider_error`` → ``API_ERROR`` (→ ``ALWAYS``).
   Codex only emits these errors on its live app-server stream, so the agent
   injects the marker before teardown to make the recovery block durable.
-- An ``event_msg.user_message`` starting with ``<twicc-resume>`` is TwiCC's
-  hidden mid-turn recovery instruction → ``SYSTEM`` (→ ``DEBUG_ONLY``).
-- ``event_msg.*`` whose sub-type is in :data:`_PERSISTED_END_EVENT_TYPES`
-  (``patch_apply_end``, ``mcp_tool_call_end``) → kind stays ``None``;
-  routed to ``DEBUG_ONLY`` via :meth:`is_tool_result_item`. Pairs with the
-  matching ``function_call`` / ``custom_tool_call`` by ``call_id``. These
-  events carry the structured outcome of the tool (``changes`` map,
-  ``CallToolResult``, …) and coexist as a second :class:`ToolResultLink`
-  row alongside the LLM-facing ``function_call_output`` for the same
-  tool_use_id. ``web_search_end`` is intentionally absent — see the
-  ``response_item.web_search_call`` rule below.
-- ``event_msg.image_generation_end`` → ``IMAGE`` (-> ``ALWAYS``). Codex
-  emits this line right after generating an image; the payload carries
+- A ``UserMessage`` starting with ``<twicc-resume>`` is TwiCC's hidden
+  mid-turn recovery instruction → ``SYSTEM`` (→ ``DEBUG_ONLY``).
+- ``item_completed`` / ``FileChange`` and ``McpToolCall`` → kind stays
+  ``None``; routed to ``DEBUG_ONLY`` via :meth:`is_tool_result_item`. Pairs
+  with the matching ``function_call`` / ``custom_tool_call`` by the item
+  ``id`` (the call_id). These items carry the structured outcome of the
+  tool (``changes`` map, ``CallToolResult``, …) and coexist as a second
+  :class:`ToolResultLink` row alongside the LLM-facing
+  ``function_call_output`` for the same tool_use_id. ``WebSearch`` is
+  intentionally not a result — see the ``response_item.web_search_call``
+  rule below. Every other completed item (``Reasoning``,
+  ``CommandExecution``, ``Plan``, ``FunctionCallOutput``, …) duplicates a
+  raw ``response_item`` TwiCC already reads and stays ``SYSTEM``.
+- ``item_completed`` / ``ImageGeneration`` (native hosted call) or
+  ``Extension`` with ``kind == "image_gen.generation"`` (what the migration
+  emits) → ``IMAGE`` (-> ``ALWAYS``). Codex writes it right after
+  generating an image; the item carries
   the ``revised_prompt`` (the actual prompt the image generator received
   after the model rewrote the user's request), the base64-encoded PNG
   ``result``, and the on-disk ``saved_path`` (typically under
@@ -85,9 +96,9 @@ Classification rules (any change MUST bump CODEX_COMPUTE_VERSION):
   terminated on arrival so the frontend stops the spinner.
   ``web_search_call`` is a **resultless** tool (see
   :data:`_RESULTLESS_TOOL_SUB_TYPES`): no ``call_id`` is serialised
-  on the call, so the matching ``event_msg.web_search_end`` can't be
-  paired from the JSONL and is intentionally ignored (kept out of
-  :data:`_PERSISTED_END_EVENT_TYPES`). The tool_use card stands alone
+  on the call, so the matching canonical ``WebSearch`` item can't be
+  paired from the JSONL and is intentionally ignored (not a result item
+  for :func:`canonical.canonical_result_item`). The tool_use card stands alone
   — no ``ToolResultLink``, no spinner; ``analyze_content`` emits a
   visible-but-unpaired :class:`ContentAnalysis` for it.
 - ``response_item.{function_call_output, custom_tool_call_output}`` →
@@ -135,7 +146,7 @@ re-emission, compaction-zero) — see the method docstring for details.
 
 Subagent linkage is wired for both multi-agent generations: the
 ``(spawn_agent call_id, subagent thread id)`` pair comes from the spawn
-ack on v1 and from the ``event_msg.sub_agent_activity`` event on v2,
+ack on v1 and from the canonical ``SubAgentActivity`` item on v2,
 and the completion signal rebound as the spawn's second
 ``ToolResultLink`` is the ``<subagent_notification>`` user message on
 v1, the ``FINAL_ANSWER`` inter-agent message on v2 — see
@@ -153,7 +164,7 @@ mid-session ``cd`` / model swap / window change is reflected on
 ``session_meta`` declares one (top-level sessions have none).
 File-change stats are
 wired for ``apply_patch`` (aggregated ``+`` / ``-`` from the
-``patch_apply_end.changes`` map). ``event_msg.patch_apply_end`` lines
+``FileChange.changes`` map). Canonical ``FileChange`` items
 are also enriched in-place with an ``original_files`` map
 (``{abs_path: pre_patch_content}``) when the matching capture is in
 cache — see :meth:`transform_tool_result_with_cache` and the
@@ -748,7 +759,7 @@ def _code_mode_output_error(output: object) -> str | None:
 
 # Declared targets of a v4a patch envelope (``*** Add File: <path>`` /
 # ``*** Update File: <path>`` / ``*** Delete File: <path>``). Used to match
-# an orphan ``patch_apply_end`` back to the code-mode ``exec`` whose script
+# an orphan ``FileChange`` back to the code-mode ``exec`` whose script
 # declared a patch on the same files — see
 # :meth:`CodexSessionCompute._remap_orphan_end_event`.
 _PATCH_ENVELOPE_PATH_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
@@ -757,11 +768,11 @@ _PATCH_ENVELOPE_PATH_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$
 class CodeModeScriptTargets(NamedTuple):
     """What a code-mode script declares that later orphan end events can match.
 
-    ``has_patch`` / ``patch_paths`` feed the ``patch_apply_end`` pairing
+    ``has_patch`` / ``patch_paths`` feed the ``FileChange`` pairing
     (paths possibly empty when the envelope isn't statically resolvable —
     the matcher then falls back to recency); ``mcp_tools`` holds the
     fully-qualified ``mcp__<server>__<tool>`` names of every nested MCP
-    call and feeds the ``mcp_tool_call_end`` pairing the same way.
+    call and feeds the ``McpToolCall`` pairing the same way.
     """
 
     has_patch: bool
@@ -774,8 +785,8 @@ def _script_targets(script_input: object) -> CodeModeScriptTargets:
 
     Covers the two nested tool families whose handler emits a persisted
     ``event_msg.*_end`` under a synthesized ``exec-<uuid>`` call_id:
-    ``apply_patch`` (→ ``patch_apply_end``) and ``mcp__*`` (→
-    ``mcp_tool_call_end``, whose ``invocation`` field carries the exact
+    ``apply_patch`` (→ ``FileChange``) and ``mcp__*`` (→
+    ``McpToolCall``, whose ``invocation`` field carries the exact
     server/tool pair to match against ``mcp_tools``).
     """
     script = parse_code_mode_script(script_input)
@@ -817,7 +828,7 @@ def _normalize_code_mode_identifier(name: str) -> str:
 
 
 def _mcp_end_qualified_name(payload: dict) -> str | None:
-    """Qualified ``mcp__<server>__<tool>`` name of an ``mcp_tool_call_end``.
+    """Qualified ``mcp__<server>__<tool>`` name of an ``McpToolCall``.
 
     Built from the event's ``invocation`` field and normalised like the
     JS identifier the code-mode script uses to address the tool
@@ -836,7 +847,7 @@ def _mcp_end_qualified_name(payload: dict) -> str | None:
 
 
 def _changes_match_declared(change_paths: list[str], declared: frozenset[str]) -> bool:
-    """True when a ``patch_apply_end.changes`` path matches a declared one.
+    """True when a ``FileChange.changes`` path matches a declared one.
 
     ``changes`` keys are absolute; envelope declarations may be relative
     (the patch grammar allows both), so a suffix match on a path-segment
@@ -1004,16 +1015,18 @@ def _plan_to_todos(plan) -> list[dict] | None:
 def _event_msg_call_id(parsed_json: dict) -> str | None:
     """Return ``payload.call_id`` for a persisted Codex ``event_msg`` line.
 
-    Codex's runtime emits a constellation of ``*End`` / ``*Response``
-    events that carry the canonical, structured outcome of a tool call
-    (``changes`` map for ``patch_apply_end``, ``CallToolResult`` for
-    ``mcp_tool_call_end``, …). Each one is paired with the originating
-    ``function_call`` / ``custom_tool_call`` by ``call_id``.
+    Codex persists canonical completed items that carry the structured
+    outcome of a tool call (``changes`` map for ``FileChange``,
+    ``CallToolResult`` for ``McpToolCall``, …). Each one is paired with
+    the originating ``function_call`` / ``custom_tool_call`` by its item
+    ``id``, which is the call_id.
 
-    Only sub-types listed in :data:`_PERSISTED_END_EVENT_TYPES` qualify;
-    notably ``exec_command_end`` is excluded because the CLI no longer
-    persists it. ``response_item`` lines are filtered out at the wrapper
-    level. Returns the ``call_id`` for a matching event, else ``None``.
+    Only ``FileChange`` and ``McpToolCall`` qualify (see
+    :func:`canonical.canonical_result_item`); ``CommandExecution`` is
+    excluded because shell transcripts are rebuilt from the
+    ``function_call_output`` chain. ``response_item`` lines are filtered
+    out at the wrapper level. Returns the call_id for a matching item,
+    else ``None``.
     """
     return canonical_call_id(parsed_json)
 
@@ -1160,7 +1173,7 @@ def _goal_context_payload(parsed_json: dict) -> dict | None:
     """Return the native goal-context message payload, raw or rewritten.
 
     Older compute passes rewrote every continuation prompt into an
-    ``event_msg.user_message`` and preserved the native ``response_item``
+    canonical ``UserMessage`` item and preserved the native ``response_item``
     payload under ``twiccOriginalContent``. Recognising both shapes lets a
     compute-version bump demote those already-persisted duplicates again.
     """
@@ -1290,7 +1303,7 @@ def _goal_snapshot_from_tool_result(parsed_json: dict) -> dict | None:
 #     <prompt>`` opens a real turn whose user_message needs no marker.
 # They land as a ``response_item.message`` (role=user) carrying the literal
 # command; the transform relabels them as real user messages. Real user input
-# never takes this shape (it is an ``event_msg.user_message``), so an exact
+# never takes this shape (it is an canonical ``UserMessage`` item), so an exact
 # match is unambiguous.
 _INJECTED_COMMANDS = frozenset({"/goal clear", "/compact", "/plan"})
 
@@ -1357,14 +1370,14 @@ def _proposed_plan_message_text(parsed_json: dict) -> str | None:
 
     A Plan collaboration-mode turn delivers its final answer as a ``Plan``
     turn item, NOT an ``agentMessage`` — so Codex writes no
-    ``event_msg.agent_message`` for it (and ``task_complete`` carries
+    canonical ``AgentMessage`` item for it (and ``task_complete`` carries
     ``last_agent_message: null``). The only rollout line with the plan text
     is the model-history ``response_item.message`` (role=assistant), which
     normally classifies as SYSTEM because it duplicates the agent_message…
     except here, where there is nothing to duplicate. Matches an assistant
     ``response_item.message`` whose ``output_text`` content carries a
     ``<proposed_plan>`` opening tag on its own line; the caller relabels it
-    into a canonical ``event_msg.agent_message`` so the plan actually shows.
+    into a canonical canonical ``AgentMessage`` item so the plan actually shows.
     """
     if parsed_json.get("type") != _TYPE_RESPONSE_ITEM:
         return None
@@ -1529,7 +1542,7 @@ def _status_error_text(status) -> str | None:
 
 
 class _SubAgentSpawn(NamedTuple):
-    """One multi-agent v2 spawn, as decoded from a ``sub_agent_activity``.
+    """One multi-agent v2 spawn, as decoded from a ``SubAgentActivity``.
 
     - ``call_id``: the ``spawn_agent`` call this event acknowledges.
     - ``agent_id``: the subagent's thread id (a TwiCC ``Session.id``).
@@ -1545,7 +1558,7 @@ class _SubAgentSpawn(NamedTuple):
 def _parse_sub_agent_activity_started(parsed_json: dict) -> _SubAgentSpawn | None:
     """Decode the multi-agent **v2** spawn event.
 
-    ``event_msg.sub_agent_activity`` is emitted in the parent thread
+    canonical ``SubAgentActivity`` item is emitted in the parent thread
     every time a collaboration tool touches a subagent. Only
     ``kind == "started"`` marks a spawn, and only then does ``event_id``
     hold the ``call_id`` of the originating ``spawn_agent``: the
@@ -1712,7 +1725,7 @@ def _parse_agent_new_task(parsed_json: dict) -> _InterAgentMessage | None:
 
 
 def _patch_apply_error(payload: dict) -> str | None:
-    """Synthesise an error string from a ``patch_apply_end`` payload.
+    """Synthesise an error string from a ``FileChange`` payload.
 
     Codex emits a structured ``success`` boolean alongside ``status``
     (``completed`` / ``failed`` / ``declined``) and a ``stderr`` line
@@ -1722,7 +1735,7 @@ def _patch_apply_error(payload: dict) -> str | None:
     parser/IO error, falling back to a generic label when it isn't.
 
     Returns ``None`` on success or when the payload isn't a
-    ``patch_apply_end``.
+    ``FileChange``.
     """
     if payload.get("type") != "FileChange":
         return None
@@ -1737,7 +1750,7 @@ def _patch_apply_error(payload: dict) -> str | None:
 
 
 def _mcp_tool_call_end_error(payload: dict) -> str | None:
-    """Synthesise an error string from a ``mcp_tool_call_end`` payload.
+    """Synthesise an error string from a ``McpToolCall`` payload.
 
     The wire shape of ``payload.result`` mirrors the Rust
     ``Result<CallToolResult, String>`` (cf. ``codex-rs/protocol/src/protocol.rs``)
@@ -1754,7 +1767,7 @@ def _mcp_tool_call_end_error(payload: dict) -> str | None:
       brittle, so we surface a generic ``"Tool error"`` label for now
       — adjust later if we see consistent shapes worth parsing.
 
-    Returns ``None`` when the payload isn't an ``mcp_tool_call_end`` or
+    Returns ``None`` when the payload isn't an ``McpToolCall`` or
     when no error is reported.
     """
     if payload.get("type") != "McpToolCall":
@@ -1774,15 +1787,14 @@ def _mcp_tool_call_end_error(payload: dict) -> str | None:
 
 
 def _event_msg_payload_error(payload: dict) -> str | None:
-    """Dispatch ``payload`` to the matching ``*_end`` error helper.
+    """Dispatch a canonical result item to the matching error helper.
 
-    ``patch_apply_end`` and ``mcp_tool_call_end`` expose a usable error
-    signal today; ``web_search_end`` doesn't, so the helper returns
-    ``None`` for it. Errors for the exec_command family are derived from
-    the ``function_call_output`` text via
-    :func:`_exit_code_error_from_output` instead.
-    ``image_generation_end`` is classified as ``IMAGE`` (not a tool
-    result) and never reaches this helper.
+    ``FileChange`` and ``McpToolCall`` expose a usable error signal;
+    any other item yields ``None``. Errors for the exec_command family
+    are derived from the ``function_call_output`` text via
+    :func:`_exit_code_error_from_output` instead. Image-generation items
+    are classified as ``IMAGE`` (not a tool result) and never reach this
+    helper.
     """
     err = _patch_apply_error(payload)
     if err is not None:
@@ -1934,8 +1946,8 @@ class CodexSessionCompute(BaseSessionCompute):
         # {session_id: [(exec_call_id, targets), ...]} in line order.
         # One entry per code-mode ``exec`` whose script declares at
         # least one nested call that later emits an orphan end event
-        # (``apply_patch`` → ``patch_apply_end``, ``mcp__*`` →
-        # ``mcp_tool_call_end``). Populated by :meth:`analyze_content`;
+        # (``apply_patch`` → ``FileChange``, ``mcp__*`` →
+        # ``McpToolCall``). Populated by :meth:`analyze_content`;
         # read by :meth:`_remap_orphan_end_event` to rebind the orphan
         # event (whose ``call_id`` is the nested ``exec-<uuid>``) to the
         # outer ``exec`` call — declared-target match first (patch paths
@@ -1955,7 +1967,7 @@ class CodexSessionCompute(BaseSessionCompute):
         #   carries ``agent_id``); the ``<subagent_notification>`` user
         #   message repeats it in its ``agent_path`` field.
         # - **v2**: the subagent's ``agent_path``, recorded when
-        #   ``analyze_content`` sees the ``sub_agent_activity`` spawn
+        #   ``analyze_content`` sees the ``SubAgentActivity`` spawn
         #   event; the ``FINAL_ANSWER`` message names it as ``Sender``.
         #
         # Live mode ignores this map: v1 falls back to
@@ -2135,7 +2147,7 @@ class CodexSessionCompute(BaseSessionCompute):
           message on v2: rebound to the originating ``spawn_agent`` via
           ``self._agent_id_to_spawn_call_id``, populated by
           :meth:`analyze_content` when it saw the spawn ack output
-          ``{"agent_id": ...}`` (v1) / the ``sub_agent_activity`` spawn
+          ``{"agent_id": ...}`` (v1) / the ``SubAgentActivity`` spawn
           event (v2). Falls back to identity when no mapping is
           registered (e.g. a completion whose spawn happened in an
           earlier, unsynced part of the thread).
@@ -2157,7 +2169,7 @@ class CodexSessionCompute(BaseSessionCompute):
             return agent_map.get(naive_tool_use_id, naive_tool_use_id)
         parent = tool_use_map.get(naive_tool_use_id)
         if parent is None:
-            # A ``patch_apply_end`` / ``mcp_tool_call_end`` from a
+            # A ``FileChange`` / ``McpToolCall`` from a
             # code-mode nested call carries the synthesized
             # ``exec-<uuid>`` call_id, matching no rollout tool_use —
             # rebind it to the owning ``exec``.
@@ -2202,9 +2214,9 @@ class CodexSessionCompute(BaseSessionCompute):
 
         When a code-mode script applies a patch or calls an MCP tool, the
         nested handler emits the same persisted end event as a direct
-        call — ``patch_apply_end`` with all its riches (structured
+        call — ``FileChange`` with all its riches (structured
         ``changes``, the live-captured ``original_files`` splice),
-        ``mcp_tool_call_end`` with the structured ``CallToolResult`` —
+        ``McpToolCall`` with the structured ``CallToolResult`` —
         but under a synthesized ``exec-<uuid>`` call_id that pairs with
         nothing. Rebinding it to the outer ``exec`` call restores 5.5
         display parity (full-file diff / MCP result body, error surfacing).
@@ -2215,9 +2227,9 @@ class CodexSessionCompute(BaseSessionCompute):
         1. most recent exec whose statically-extracted script declares a
            matching target — a patch path matching the event's
            ``changes`` (suffix match, the envelope may use relative
-           paths) for ``patch_apply_end``, the exact
+           paths) for ``FileChange``, the exact
            ``mcp__<server>__<tool>`` name from the event's ``invocation``
-           for ``mcp_tool_call_end``;
+           for ``McpToolCall``;
         2. else the most recent exec declaring a call of the same family
            (covers the unresolvable-script case; the canonical wrappers
            run their nested calls synchronously, so recency is right in
@@ -2320,7 +2332,7 @@ class CodexSessionCompute(BaseSessionCompute):
           but the naive id is an agent *path* no model column carries,
           so it goes through
           :meth:`_lookup_spawn_call_id_for_agent_path` (newest
-          ``sub_agent_activity`` announcing that path).
+          ``SubAgentActivity`` announcing that path).
         - ``write_stdin`` ``function_call_output``: resolves the parent
           ``exec_command`` through two DB lookups (write_stdin
           arguments → exec_command_id → function_call_output that
@@ -2330,7 +2342,7 @@ class CodexSessionCompute(BaseSessionCompute):
           shape (wait arguments → cell_id → the ``exec``
           custom_tool_call_output that announced ``Script running with
           cell ID <id>``).
-        - nested ``patch_apply_end`` / ``mcp_tool_call_end`` (code mode,
+        - nested ``FileChange`` / ``McpToolCall`` (code mode,
           ``call_id`` prefixed ``exec-``): rebound to the owning ``exec``
           custom_tool_call via :meth:`_lookup_orphan_end_exec_call_id`
           (declared-target match on the statically-extracted script —
@@ -2349,7 +2361,7 @@ class CodexSessionCompute(BaseSessionCompute):
             return link.tool_use_id
         if _parse_agent_final_answer(parsed_json) is not None:
             # v2: the naive id is an agent *path*, which no model column
-            # carries — resolve it through the ``sub_agent_activity``
+            # carries — resolve it through the ``SubAgentActivity``
             # line that announced the spawn (it holds both the path and
             # the spawning call_id).
             return self._lookup_spawn_call_id_for_agent_path(
@@ -2445,7 +2457,7 @@ class CodexSessionCompute(BaseSessionCompute):
         """Resolve a multi-agent v2 agent path to its ``spawn_agent`` call_id.
 
         Live counterpart of the batch ``_agent_id_to_spawn_call_id``
-        side-table: walks back to the ``event_msg.sub_agent_activity``
+        side-table: walks back to the canonical ``SubAgentActivity`` item
         line that announced the spawn (newest first — an agent path can
         be reused by a later spawn once the previous holder is gone) and
         returns the ``event_id`` it carries. Returns ``agent_path``
@@ -2482,8 +2494,8 @@ class CodexSessionCompute(BaseSessionCompute):
         Walks the preceding code-mode ``exec`` custom_tool_calls (newest
         first, textual pre-filter on ``"name":"exec"``), re-extracts each
         script, and returns the first whose declared targets match the
-        event — patch paths against ``changes`` for ``patch_apply_end``,
-        the exact ``mcp_qualified`` name for ``mcp_tool_call_end``; the
+        event — patch paths against ``changes`` for ``FileChange``,
+        the exact ``mcp_qualified`` name for ``McpToolCall``; the
         newest exec declaring a call of the same family is kept as the
         recency fallback. Returns ``fallback`` when nothing qualifies,
         so the live link is still created (just under the naive id).
@@ -2854,7 +2866,7 @@ class CodexSessionCompute(BaseSessionCompute):
         # TwiCC-injected command (``/goal clear``, ``/compact``) → user message.
         # Injected via ``thread/inject_items`` for commands Codex writes no
         # rollout line for; relabel the injected ``response_item.message`` as the
-        # canonical ``event_msg.user_message`` so it counts + renders like the
+        # canonical canonical ``UserMessage`` item so it counts + renders like the
         # command the user issued. Original kept under ``twiccOriginalContent``.
         injected_command = _injected_command_text(parsed_json)
         if injected_command is not None:
@@ -2883,7 +2895,7 @@ class CodexSessionCompute(BaseSessionCompute):
 
         # Plan-mode final answer → visible assistant message. The turn's
         # ``<proposed_plan>`` answer is a ``Plan`` item, not an
-        # ``agentMessage``, so no ``event_msg.agent_message`` exists for it
+        # ``agentMessage``, so no canonical ``AgentMessage`` item exists for it
         # and the plan text would stay buried in a SYSTEM ``response_item``.
         # Relabel it as the canonical agent_message (original kept under
         # ``twiccOriginalContent``); the frontend then renders the
@@ -2901,7 +2913,7 @@ class CodexSessionCompute(BaseSessionCompute):
 
         # The other Codex rewrite is the cross-provider screenshot tag
         # substitution: ``<twicc:insert-screenshot />`` markers placed
-        # by the agent in an ``event_msg.agent_message`` payload are
+        # by the agent in an canonical ``AgentMessage`` item payload are
         # replaced inline with a markdown image link (images looked up
         # via :meth:`iter_tool_result_image_refs`), or with the
         # missing-screenshot placeholder when no image is available.
@@ -2971,7 +2983,7 @@ class CodexSessionCompute(BaseSessionCompute):
         """Re-prefix a ``/plan <prompt>`` turn's user message, if armed.
 
         Fires at most once per armed transition, on the turn's first native
-        ``event_msg.user_message`` — the inline prompt, written at turn
+        canonical ``UserMessage`` item — the inline prompt, written at turn
         start right after the arming ``turn_context`` (steered messages come
         later and find the state disarmed). The rewrite tags the line with
         ``twiccPlanCommand``: a later batch re-compute of already-rewritten
@@ -2989,16 +3001,16 @@ class CodexSessionCompute(BaseSessionCompute):
             return None
         if _is_internal_resume_message(parsed_json):
             return None
-        message = user_message_text(parsed_json)
-        if not isinstance(message, str):
-            return None
         state.armed = False
         if parsed_json.get("twiccPlanCommand"):
             return None
         parsed_json["twiccPlanCommand"] = True
         content = item.get("content")
         if not isinstance(content, list):
-            return None
+            content = []
+            item["content"] = content
+        # Prefix the first text entry only; an attachment-only prompt gets
+        # a bare ``/plan`` text entry in front of its attachments.
         for entry in content:
             if (
                 isinstance(entry, dict)
@@ -3007,6 +3019,8 @@ class CodexSessionCompute(BaseSessionCompute):
             ):
                 entry["text"] = f"/plan {entry['text']}"
                 break
+        else:
+            content.insert(0, {"type": "text", "text": "/plan", "text_elements": []})
         return orjson.dumps(parsed_json).decode("utf-8")
 
     def _lookup_prev_plan_context(
@@ -3045,11 +3059,12 @@ class CodexSessionCompute(BaseSessionCompute):
             session_id=session_id,
             line_num__gt=prev_tc_line,
             line_num__lt=current_line_num,
-            # The relabelled marker serialises a canonical text entry with
-            # ``"text":"/plan"`` — the closing
-            # brace keeps a prefixed inline prompt ("/plan foo") from
-            # matching; candidates are still parse-verified below.
-            content__contains='"text":"/plan"}',
+            # The relabelled marker serialises a canonical text entry
+            # ``{"type":"text","text":"/plan","text_elements":[]}`` (plus
+            # the raw source under ``twiccOriginalContent``). A prefixed
+            # inline prompt ("/plan foo") never contains the closed
+            # string; candidates are still parse-verified below.
+            content__contains='"text":"/plan"',
         ).order_by('-line_num')
         for candidate in marker_candidates.iterator(chunk_size=10):
             try:
@@ -3252,20 +3267,26 @@ class CodexSessionCompute(BaseSessionCompute):
                 if _is_internal_resume_message(parsed_json):
                     return ItemKind.SYSTEM
                 return ItemKind.USER_MESSAGE
-            if item_type == "AgentMessage" and agent_message_text(parsed_json):
+            if item_type == "AgentMessage":
+                # Even an empty one: the frontend renders the "empty
+                # response" notice for it, as it did for the legacy event.
                 return ItemKind.ASSISTANT_MESSAGE
-            # ``image_generation_end`` is a standalone visible row, not a
-            # tool_result. Its payload carries the base64 PNG, the revised
-            # prompt and the on-disk path — everything the frontend needs
-            # to render the image inline. The matching
-            # ``response_item.image_generation_call`` duplicates the same
-            # data (minus saved_path) and falls through to SYSTEM below.
+            # A canonical image-generation item (native ``ImageGeneration``
+            # or the ``image_gen.generation`` Extension the migration
+            # emits) is a standalone visible row, not a tool_result. It
+            # carries the base64 PNG, the revised prompt and the on-disk
+            # path — everything the frontend needs to render the image
+            # inline. The matching ``response_item.image_generation_call``
+            # duplicates the same data (minus saved_path) and falls
+            # through to SYSTEM below.
             if image_generation(parsed_json) is not None:
                 return ItemKind.IMAGE
-            # event_msg lines whose sub-type is in
-            # :data:`_PERSISTED_END_EVENT_TYPES` are tool_result End
-            # events. Kind stays ``None`` so the base falls into the
-            # ``is_tool_result_item`` branch (-> DEBUG_ONLY).
+            # Canonical ``FileChange`` / ``McpToolCall`` items are
+            # tool_results. Kind stays ``None`` so the base falls into the
+            # ``is_tool_result_item`` branch (-> DEBUG_ONLY). Every other
+            # completed item (Reasoning, CommandExecution, Plan, WebSearch,
+            # …) duplicates a raw ``response_item`` TwiCC already reads
+            # and stays SYSTEM.
             if _event_msg_call_id(parsed_json) is not None:
                 return None
 
@@ -3602,12 +3623,12 @@ class CodexSessionCompute(BaseSessionCompute):
         #   shells this is the chunked transcript; for write_stdin it's
         #   one chunk of the parent exec_command's transcript (rebound
         #   via :meth:`remap_tool_result_id`).
-        # - ``event_msg`` whose sub-type is in
-        #   :data:`_PERSISTED_END_EVENT_TYPES` (patch_apply_end,
-        #   mcp_tool_call_end). They carry the structured outcome of
+        # - ``event_msg.item_completed`` carrying a canonical ``FileChange``
+        #   or ``McpToolCall`` item. They carry the structured outcome of
         #   the tool call and are paired with the originating function_call
-        #   by ``call_id``. ``web_search_end`` and ``image_generation_end``
-        #   are intentionally absent (see their set's docstring).
+        #   by the item ``id`` (the call_id). ``WebSearch`` and the
+        #   image-generation items are intentionally not results (see the
+        #   module docstring).
         # - ``response_item.message role=user`` whose content opens with
         #   ``<subagent_notification>``: this synthetic user message is
         #   injected by Codex when a spawned subagent reaches a final
@@ -3623,7 +3644,7 @@ class CodexSessionCompute(BaseSessionCompute):
         #   answer handed back to its parent, rebound to the originating
         #   ``spawn_agent`` the same way (naive id = the sender's agent
         #   path).
-        # - ``event_msg.sub_agent_activity`` with ``kind == "started"``:
+        # - canonical ``SubAgentActivity`` item with ``kind == "started"``:
         #   the v2 spawn event. It carries no tool *result* (the ack
         #   ``function_call_output`` already pairs with the call by
         #   ``call_id``, and :meth:`extract_tool_result_info` returns
@@ -3745,9 +3766,8 @@ class CodexSessionCompute(BaseSessionCompute):
         #       line — :func:`_exit_code_error_from_output` handles it.
         #     * everything else has no exit signal here, so all three
         #       helpers return ``None`` and ``error_text`` stays ``None``.
-        # - event_msg.* whose sub-type is in
-        #   :data:`_PERSISTED_END_EVENT_TYPES` (patch_apply_end,
-        #   mcp_tool_call_end). Both shapes coexist as separate
+        # - ``event_msg.item_completed`` carrying a canonical ``FileChange``
+        #   or ``McpToolCall`` item. Both shapes coexist as separate
         #   ``ToolResultLink`` rows for the same call_id (no dedup);
         #   the front knows whether to wait for both via
         #   ``getExpectedResultCount``.
@@ -3820,7 +3840,7 @@ class CodexSessionCompute(BaseSessionCompute):
         # pre-5.6 MCP, view_image, ...) or ``custom_tool_call_output``
         # (5.6 code-mode ``exec`` cells): ``{type: "input_image",
         # image_url: "data:image/png;base64,<data>"}``. The paired
-        # ``mcp_tool_call_end`` event usually duplicates the same bytes
+        # ``McpToolCall`` event usually duplicates the same bytes
         # (raw base64 in ``result.Ok.content``) — intentionally NOT
         # harvested here: the aggregated output is the canonical
         # model-visible result, and walking both sources would surface
@@ -3876,7 +3896,7 @@ class CodexSessionCompute(BaseSessionCompute):
 
         - **v1**: the ``spawn_agent`` ``function_call_output`` itself,
           a JSON string ``{"agent_id": "...", "nickname": "..."}``.
-        - **v2**: the ``event_msg.sub_agent_activity`` line with
+        - **v2**: the canonical ``SubAgentActivity`` item line with
           ``kind == "started"`` — the v2 ack (``{"task_name": ...}``)
           has no thread id, so the event carries the pair instead
           (``event_id`` = the spawning call_id, ``agent_thread_id`` =
@@ -4033,7 +4053,7 @@ class CodexSessionCompute(BaseSessionCompute):
         # its patch as raw Lark grammar with paths that may be relative,
         # and ``exec_command`` / ``write_stdin`` carry arbitrary shell
         # text — neither is a reliable source for git resolution. So
-        # only ``patch_apply_end`` rows contribute paths here, and any
+        # only ``FileChange`` rows contribute paths here, and any
         # session that doesn't apply a patch falls back on the cwd-based
         # git resolution in the orchestrator (see ``compute_base``).
         payload = completed_item(parsed_json)
@@ -4046,7 +4066,7 @@ class CodexSessionCompute(BaseSessionCompute):
 
     def extract_doc_edit_events(self, parsed_json: dict, *, cwd: str | None) -> list[DocEditEvent]:
         # Three sources of plan-doc writes/deletes:
-        # 1. ``event_msg.patch_apply_end`` — the canonical apply_patch result
+        # 1. canonical ``FileChange`` item — the canonical apply_patch result
         #    (absolute paths + per-file add/update/delete type), regardless of
         #    how the patch was invoked (custom_tool_call, shell-wrapped, or
         #    nested in a code-mode script — the event is persisted in all
@@ -4060,7 +4080,7 @@ class CodexSessionCompute(BaseSessionCompute):
         # 3. Code-mode ``exec`` scripts (custom_tool_call): every statically
         #    resolved nested ``exec_command`` call feeds its ``cmd`` through
         #    the same shell-write heuristic. Nested ``apply_patch`` calls are
-        #    deliberately NOT mined here — ``patch_apply_end`` (source 1)
+        #    deliberately NOT mined here — ``FileChange`` (source 1)
         #    already covers them, exactly like the direct apply_patch
         #    custom_tool_call which has no branch here either.
         line_type = parsed_json.get("type")
@@ -4160,7 +4180,7 @@ class CodexSessionCompute(BaseSessionCompute):
           rebound ``wait`` chunks) follow the same chained logic, keyed
           on the script status header instead of the unified-exec
           trailer.
-        - ``apply_patch`` ``event_msg.patch_apply_end`` rows produce
+        - ``apply_patch`` canonical ``FileChange`` item rows produce
           ``{"lines_added": N, "lines_removed": M, "files": [...]}``
           so the front can show the per-tool badge.
 
@@ -4409,8 +4429,8 @@ class CodexSessionCompute(BaseSessionCompute):
         # CodexAgent captures pre-patch file contents when it sees a
         # ``FileChangeThreadItem`` arrive on ``item/started`` (the SDK's
         # equivalent of Claude's PreToolUse hook). When the matching
-        # ``event_msg.patch_apply_end`` line lands here, we pop the
-        # captured contents and splice them into the payload under
+        # canonical ``FileChange`` item lands here, we pop the captured
+        # contents and splice them into the item under
         # ``original_files`` so the frontend can render a full-file diff
         # (``EditContent.vue``-style) instead of only the ``unified_diff``
         # hunks Codex persists.
@@ -4433,7 +4453,7 @@ class CodexSessionCompute(BaseSessionCompute):
 
         payload["original_files"] = cached
         logger.debug(
-            "Injected cached original_files into patch_apply_end "
+            "Injected cached original_files into FileChange item "
             "(session=%s, line=%d, call_id=%s, files=%d)",
             session_id, line_num, call_id, len(cached),
         )
@@ -4451,11 +4471,11 @@ class CodexSessionCompute(BaseSessionCompute):
         tool_use_map: dict[str, ToolUseEntry],
     ) -> ContentAnalysis:
         # Line shapes that contribute to content analysis in Codex:
-        # - ``event_msg.user_message`` / ``event_msg.agent_message`` carry
+        # - canonical ``UserMessage`` / ``AgentMessage`` items carry
         #   plain text.
-        # - ``event_msg.*`` whose sub-type is in
-        #   :data:`_PERSISTED_END_EVENT_TYPES` is a tool_result End event
-        #   paired by ``call_id`` with the originating function_call.
+        # - canonical ``FileChange`` / ``McpToolCall`` items are
+        #   tool_results paired by their id with the originating
+        #   function_call.
         # - ``response_item.function_call`` / ``custom_tool_call`` declares
         #   a tool_use. ``write_stdin`` lands in ``tool_use_map`` here so
         #   :meth:`remap_tool_result_id` can later rebind its output to
@@ -4504,6 +4524,7 @@ class CodexSessionCompute(BaseSessionCompute):
                     if item_type == "UserMessage"
                     else agent_message_text(parsed_json)
                 )
+                text = text.strip() if text else None
                 return ContentAnalysis(
                     has_visible_content=(
                         user_message_is_visible(parsed_json)
@@ -4523,7 +4544,7 @@ class CodexSessionCompute(BaseSessionCompute):
                     tool_result_agent_info=None,
                 )
 
-            # ``sub_agent_activity`` (multi-agent v2): the spawn event
+            # ``SubAgentActivity`` (multi-agent v2): the spawn event
             # carries the ``(spawn call_id, subagent thread id)`` pair
             # the v2 ack dropped, so it feeds ``tool_result_agent_info``
             # — the base batch loop turns that into the AgentLink as
@@ -4633,7 +4654,7 @@ class CodexSessionCompute(BaseSessionCompute):
             # on an ``agent_message`` payload (no ``call_id`` either), with
             # the sender's agent path as the naive tool_result_id — the
             # remap hook resolves it to the spawning call_id through the
-            # side-table the ``sub_agent_activity`` branch populated.
+            # side-table the ``SubAgentActivity`` branch populated.
             # ``NEW_TASK`` / ``MESSAGE`` envelopes are deliberately left
             # alone: they're mid-flight traffic, not a completion, and
             # their payloads are encrypted.
@@ -4716,7 +4737,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 tool_use_entries = {call_id: name}
                 # Register code-mode execs whose script declares a nested
                 # apply_patch or MCP call, so the later orphan
-                # ``patch_apply_end`` / ``mcp_tool_call_end`` can be
+                # ``FileChange`` / ``McpToolCall`` can be
                 # rebound to them (see _remap_orphan_end_event). Bounded
                 # to the last 50 records per session.
                 if sub_type == "custom_tool_call" and name == _CODE_MODE_EXEC_TOOL:

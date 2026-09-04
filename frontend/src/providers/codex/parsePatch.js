@@ -19,7 +19,7 @@
  * (Authoritative grammar: ``codex-rs/apply-patch/src/parser.rs``.)
  *
  * Used purely as a *pre-result* fallback — once the matching
- * ``event_msg.patch_apply_end`` arrives, we switch to the official
+ * canonical ``FileChange`` item arrives, we switch to the official
  * ``changes`` map (real ``unified_diff`` per file) which carries
  * accurate line numbers. Before that, this parser is enough to know
  * which files the call touches and to render a fragment-style diff

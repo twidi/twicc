@@ -50,10 +50,9 @@ logger = logging.getLogger(__name__)
 # tool_result and pair with their function_call by ``call_id``:
 # - ``response_item.{function_call_output, custom_tool_call_output}`` —
 #   the LLM-facing output string of a standard / custom function call.
-# - ``event_msg.*`` whose sub-type is in :data:`_PERSISTED_END_EVENT_TYPES`
-#   — patch_apply_end, mcp_tool_call_end, web_search_end,
-#   image_generation_end. ``exec_command_end`` is intentionally absent:
-#   Codex CLI no longer persists it, so we reconstruct shell transcripts
+# - ``event_msg.item_completed`` carrying a canonical ``FileChange`` or
+#   ``McpToolCall`` item (see :mod:`.canonical`). ``CommandExecution``
+#   items are intentionally not results: we reconstruct shell transcripts
 #   from the chain of function_call_output rows instead.
 _TYPE_RESPONSE_ITEM = "response_item"
 _TYPE_EVENT_MSG = "event_msg"
@@ -269,10 +268,9 @@ class CodexHelpers(BaseProviderHelpers):
         Classifies user/assistant messages, tool_use lines
         (function_call / custom_tool_call), and pairs each tool_use with
         its result through the inherited ``ToolResultLink`` machinery.
-        Persisted ``event_msg`` ends in :data:`_PERSISTED_END_EVENT_TYPES`
-        (``patch_apply_end``, ``mcp_tool_call_end``, ``web_search_end``,
-        ``image_generation_end``) get their own ``ToolResultLink`` row
-        alongside the matching ``function_call_output``.
+        Canonical ``FileChange`` / ``McpToolCall`` completed items get
+        their own ``ToolResultLink`` row alongside the matching
+        ``function_call_output``.
         ``exec_command_end`` is no longer persisted by Codex CLI, so for
         long-running shells we instead chain the parent ``exec_command``
         and every ``write_stdin`` polling output onto a single
@@ -645,11 +643,10 @@ class CodexHelpers(BaseProviderHelpers):
     # Full-text search indexing
     # ------------------------------------------------------------------
     #
-    # Codex stores chat message bodies as a flat ``payload.message``
-    # string on ``event_msg.user_message`` / ``event_msg.agent_message``
-    # lines (no content array, no nested blocks — see
-    # :func:`codex.compute._event_msg_text`). We use that single string
-    # both as the searchable text and as the title-suggest input.
+    # Codex stores chat message bodies as canonical ``UserMessage`` /
+    # ``AgentMessage`` completed items whose text entries we join (see
+    # :mod:`.canonical`). We use that single string both as the
+    # searchable text and as the title-suggest input.
 
     def extract_indexable_text(self, item: SessionItem) -> str:
         try:
@@ -714,10 +711,11 @@ class CodexHelpers(BaseProviderHelpers):
           :meth:`CodexSessionCompute.remap_tool_result_id`, so the
           payload's own ``call_id`` legitimately diverges from
           ``tool_use_id`` on every chunk past the first).
-        - ``event_msg`` lines whose sub-type is in
-          :data:`_PERSISTED_END_EVENT_TYPES` (the structured End events
-          we still consume). A direct call's event carries the call's
-          own ``call_id``; a code-mode nested call's event carries a
+        - ``event_msg.item_completed`` lines carrying a canonical
+          ``FileChange`` / ``McpToolCall`` item (the structured results
+          we consume; the item itself is returned, unwrapped). A direct
+          call's item carries the call's own id; a code-mode nested
+          call's item carries a
           synthesized ``exec-<uuid>`` and is rebound DB-side to the
           outer ``exec`` (see
           :meth:`CodexSessionCompute._remap_orphan_end_event`), so its

@@ -7,7 +7,7 @@
  * That shape is what ``utils/patchUtils.js → reconstructFromHunks``
  * consumes to produce the per-side line maps for ``DiffEditor``.
  *
- * Codex's ``patch_apply_end`` event ships exactly this format inside
+ * Codex's ``FileChange`` event ships exactly this format inside
  * ``changes[path].unified_diff`` (no leading ``--- a/foo`` /
  * ``+++ b/foo`` file headers — just the ``@@`` hunks and their bodies).
  * We parse only what we receive; if either of the line-range counts is

@@ -18,7 +18,7 @@ import ApplyPatchFileEntry from './ApplyPatchFileEntry.vue'
  *  - One block per file. ``apply_patch`` can touch several paths in
  *    a single call; each gets its own header + diff viewer.
  *  - Two information sources, depending on whether the matching
- *    ``event_msg.patch_apply_end`` is loaded:
+ *    canonical ``FileChange`` item is loaded:
  *      * pre-result: parse the raw v4a envelope (``input``) locally.
  *        We get every path + a fragment-style diff per file (no
  *        gutter line numbers).
@@ -42,13 +42,13 @@ const props = defineProps({
     // base-dir computation for relative paths.
     sessionId: { type: String, required: true },
     // ``call_id`` of the originating ``custom_tool_call``. Used to find
-    // the matching ``event_msg.patch_apply_end`` line in the session.
+    // the matching canonical ``FileChange`` item line in the session.
     toolId: { type: String, required: true },
 })
 
 const dataStore = useDataStore()
 
-// Share-only: the ``event_msg.patch_apply_end`` line carrying ``original_files`` is
+// Share-only: the canonical ``FileChange`` item line carrying ``original_files`` is
 // DEBUG_ONLY and filtered out of the share's /items, so ``patchEndPayload`` (which
 // reads it from the store) finds nothing → hunks fallback. Pull it ceiling-exempt
 // by tool id and seed the store; patchEndPayload then reacts to its arrival.
@@ -86,7 +86,7 @@ const fileTabRoots = computed(() =>
 )
 
 /**
- * Look up the ``event_msg.patch_apply_end`` line that pairs with our
+ * Look up the canonical ``FileChange`` item line that pairs with our
  * ``call_id`` and return its parsed payload, or ``null`` until the
  * matching tool_result row reaches the store.
  *
@@ -95,7 +95,7 @@ const fileTabRoots = computed(() =>
  * custom_tool_call_output) at line numbers that aren't necessarily
  * adjacent, so we walk every line number the API surfaces in
  * ``toolResultLineNums`` and return the first ``event_msg`` whose
- * payload is a ``patch_apply_end`` for our call. Reactive both on
+ * payload is a ``FileChange`` for our call. Reactive both on
  * item arrival (new line content) and on ``toolStates`` update (new
  * link recorded).
  */
@@ -128,7 +128,7 @@ const patchEndPayload = computed(() => {
  * Per-path lookup table built from the backend's
  * ``compute_link_extra`` JSON, exposed by the ``tool-states``
  * REST view as ``ToolResultLink.extra``. The base orchestration
- * computes stats once when the ``patch_apply_end`` line is recorded;
+ * computes stats once when the ``FileChange`` line is recorded;
  * we just read the result here. Returns ``null`` until the link is
  * persisted (live race window or pre-result), so callers fall back
  * to the v4a parser's own counts in that case.
@@ -167,7 +167,7 @@ const backendFileStatsByPath = computed(() => {
  *   - 'pending-delete':   pre-result delete (no body to show yet)
  */
 /**
- * Per-file +/- counts derived from the ``patch_apply_end`` change entry
+ * Per-file +/- counts derived from the ``FileChange`` change entry
  * itself — the fallback when the backend stats aren't available on
  * ``ToolResultLink.extra`` (nested code-mode patches: that slot carries
  * the exec spinner's ``is_terminated`` instead). Mirrors the backend's

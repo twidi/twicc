@@ -727,7 +727,7 @@ function findPatchApplyEndPayload(toolId, options) {
 /**
  * Resolve the file paths an ``apply_patch`` call touches, with
  * supersedence:
- *   1. ``patch_apply_end.changes`` keys when loaded — the canonical,
+ *   1. ``FileChange.changes`` keys when loaded — the canonical,
  *      absolute paths the runtime actually applied to.
  *   2. Local v4a parser otherwise — what the model declared in its
  *      ``input``, available immediately on the tool_use line.
@@ -977,9 +977,9 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // and the backend's ``_qualified_function_call_name``). They
         // always emit two ToolResultLinks: the LLM-facing
         // ``function_call_output`` and the richer
-        // ``event_msg.mcp_tool_call_end`` paired by ``call_id``. We keep
+        // canonical ``McpToolCall`` item paired by ``call_id``. We keep
         // both in the store; ``transformDisplayResult`` picks the
-        // mcp_tool_call_end for the Result section.
+        // McpToolCall item for the Result section.
         if (typeof name === 'string' && name.startsWith(MCP_TOOL_NAME_PREFIX)) return 2
 
         const wrapperType = options?.wrapperType
@@ -1047,7 +1047,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // Any errored link → tool is dead, no more results coming.
         // Catches Codex aborting before the full expected result set
         // lands (Deny / Cancel turn on apply_patch only emits the
-        // ``custom_tool_call_output`` row; the ``patch_apply_end`` row
+        // ``custom_tool_call_output`` row; the ``FileChange`` row
         // never comes because Codex never applies the patch). The
         // aggregated ``toolState.error`` is ``Max('error')`` across
         // every link, so any non-null marks the tool as terminated.
@@ -1635,7 +1635,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
      *
      * Codex emits two ToolResultLinks per MCP call: the LLM-facing
      * `function_call_output` (text trailer) and the structured
-     * `event_msg.mcp_tool_call_end` carrying the actual server payload.
+     * canonical `McpToolCall` item carrying the actual server payload.
      * The latter is strictly richer, so we surface it instead of the
      * raw two-row dump JsonHumanView would otherwise produce — see
      * :func:`mcpEndDisplayResult` for the unwrap rules. Applies both to
@@ -1706,7 +1706,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
             return undefined
         }
         // Code-mode ``exec`` wrapping a single MCP call: the backend
-        // rebound the nested ``mcp_tool_call_end`` (synthesized
+        // rebound the nested ``McpToolCall`` (synthesized
         // ``exec-<uuid>`` call_id) onto this exec's chain — surface it
         // exactly like a direct MCP call would (the script's own output
         // only repeats the same payload as an opaque JSON string). When

@@ -1180,7 +1180,7 @@ export class BaseProviderHelpers {
  *     Edit/Write rendering when the backend has computed structured patches
  *   - ``sessionId`` / ``toolId`` — for input renderers that need to scan
  *     the store for a matching tool_result row on their own (e.g. Codex's
- *     ``apply_patch`` reading the linked ``patch_apply_end`` event)
+ *     ``apply_patch`` reading the linked ``FileChange`` event)
  */
 export class BaseToolHelpers {
     static provider = null
@@ -1362,7 +1362,7 @@ export class BaseToolHelpers {
      * ``run_in_background``: there, the first result already carries
      * the canonical "Command running in background" notice and the
      * second one is just a completion stub. Codex's ``apply_patch``
-     * still raises it to 2 so the rich ``patch_apply_end`` row is
+     * still raises it to 2 so the rich ``FileChange`` row is
      * always part of what's displayed; ``exec_command`` returns 1 and
      * relies on :meth:`isToolRunning` to keep the spinner spinning
      * across the chain of polled chunks.
@@ -1458,7 +1458,7 @@ export class BaseToolHelpers {
      * same call_id but where only one of them carries the user-facing
      * payload. Codex's MCP tools, for example, get both a
      * ``function_call_output`` (LLM-facing text) and an
-     * ``event_msg.mcp_tool_call_end`` (parsed result with
+     * canonical ``McpToolCall`` item (parsed result with
      * ``structuredContent``) — only the latter is worth showing in the
      * Result section. The hook lets the provider helper pick it out
      * without changing how ``ToolResultLink`` rows are stored or counted.

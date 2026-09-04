@@ -586,7 +586,7 @@ function findDiffPairs(obj) {
  * Matches two wire shapes carrying the media type under different keys:
  * - Claude SDK sources: { type, media_type, data } (snake_case);
  * - MCP CallToolResult content items: { type: "image"|..., data, mimeType }
- *   (camelCase — surfaced by Codex `mcp_tool_call_end` events, direct or
+ *   (camelCase — surfaced by Codex `McpToolCall` events, direct or
  *   code-mode nested).
  * Returns null if not a content block source, or an info object describing how to render the data field.
  * @param {Object} obj

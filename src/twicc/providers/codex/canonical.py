@@ -41,14 +41,27 @@ def _content(item: dict | None) -> list[dict]:
     return [entry for entry in content if isinstance(entry, dict)]
 
 
-def user_message_text(record: dict) -> str | None:
+def _joined_text(entries: list[dict], entry_type: str) -> str | None:
+    """Concatenate the ``text`` of every ``entry_type`` entry, with no separator.
+
+    Mirrors Codex's own ``UserMessageItem::message()`` / app-server history
+    reducer. Whitespace-only text counts as no text — the legacy readers
+    required a non-blank message, and TwiCC never renders a blank one — but
+    the surrounding whitespace of a real message is preserved so callers
+    that edit the text in place (``/plan`` prefixing, screenshot tags) see
+    the exact persisted string.
+    """
     parts = [
         entry.get("text")
-        for entry in _content(_item_of_type(record, "UserMessage"))
-        if entry.get("type") == "text" and isinstance(entry.get("text"), str)
+        for entry in entries
+        if entry.get("type") == entry_type and isinstance(entry.get("text"), str)
     ]
     text = "".join(parts)
-    return text or None
+    return text if text.strip() else None
+
+
+def user_message_text(record: dict) -> str | None:
+    return _joined_text(_content(_item_of_type(record, "UserMessage")), "text")
 
 
 def user_message_is_visible(record: dict) -> bool:
@@ -65,13 +78,7 @@ def user_message_attachment_count(record: dict) -> int:
 
 
 def agent_message_text(record: dict) -> str | None:
-    parts = [
-        entry.get("text")
-        for entry in _content(_item_of_type(record, "AgentMessage"))
-        if entry.get("type") == "Text" and isinstance(entry.get("text"), str)
-    ]
-    text = "".join(parts)
-    return text or None
+    return _joined_text(_content(_item_of_type(record, "AgentMessage")), "Text")
 
 
 def canonical_result_item(record: dict) -> dict | None:

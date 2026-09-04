@@ -5,7 +5,7 @@ import MediaThumbnailGroup from '../../../../media/MediaThumbnailGroup.vue'
 import TextContent from '../TextContent.vue'
 
 const props = defineProps({
-    // The flat string body of ``event_msg.user_message`` (Codex doesn't
+    // The flat string body of canonical ``UserMessage`` item (Codex doesn't
     // model the input as a content-block array at this layer — image
     // attachments come through the sibling ``images`` prop instead).
     text: {

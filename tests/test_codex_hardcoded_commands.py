@@ -358,6 +358,29 @@ def test_inline_prompt_prefix_preserves_multiple_text_blocks() -> None:
     assert user_message_text(parsed) == "/plan first second"
 
 
+def test_inline_prompt_prefix_on_an_attachment_only_prompt() -> None:
+    # An image-only prompt has no text entry: the prefix becomes a bare
+    # ``/plan`` text entry in front of the attachments, and the armed state
+    # is consumed (the next prompt must NOT be prefixed).
+    image_only = _user_message("")
+    image_only["payload"]["item"]["content"] = [
+        {"type": "image", "image_url": "data:image/png;base64,AA"},
+    ]
+    results = _transform_all(_batch_compute(), [
+        _turn_context("default"),
+        _turn_context("plan"),
+        image_only,
+        _user_message("second prompt"),
+    ])
+
+    parsed = orjson.loads(results[2])
+    content = parsed["payload"]["item"]["content"]
+    assert content[0] == {"type": "text", "text": "/plan", "text_elements": []}
+    assert content[1]["type"] == "image"
+    assert parsed["twiccPlanCommand"] is True
+    assert results[3] is None
+
+
 def test_plan_transition_on_a_new_drafts_first_turn() -> None:
     # ``/plan <prompt>`` as the first input of a brand-new session: the very
     # first turn_context is already in plan mode.
