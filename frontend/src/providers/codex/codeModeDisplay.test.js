@@ -2,7 +2,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { describeWebRun, resolveCodeModeCall, summarizeCodeModeCalls } from './codeModeDisplay.js'
+import {
+    IMAGE_GEN_TOOL_NAME,
+    describeWebRun,
+    extractInputImageUrls,
+    resolveCodeModeCall,
+    summarizeCodeModeCalls,
+} from './codeModeDisplay.js'
 
 test('resolves a code-mode update_plan call for Todo rendering', () => {
     const input = {
@@ -74,6 +80,37 @@ test('keeps existing shell, patch, image, and MCP resolution intact', () => {
     assert.equal(resolveCodeModeCall('await tools.apply_patch("*** Begin Patch\\n*** End Patch");').name, 'apply_patch')
     assert.equal(resolveCodeModeCall('await tools.view_image({path:"/tmp/a.png"});').name, 'view_image')
     assert.equal(resolveCodeModeCall('await tools.mcp__demo__read({id:1});').name, 'mcp__demo__read')
+})
+
+test('resolves a code-mode image generation call and rejects a prompt-less one', () => {
+    const call = resolveCodeModeCall('const r = await tools.image_gen__imagegen({prompt:"a blue square", size:"1024x1024"});')
+    assert.equal(call.name, IMAGE_GEN_TOOL_NAME)
+    assert.equal(call.arg.prompt, 'a blue square')
+    assert.equal(resolveCodeModeCall('await tools.image_gen__imagegen({size:"1024x1024"});'), null)
+    assert.equal(resolveCodeModeCall('await tools.image_gen__imagegen({prompt:"  "});'), null)
+})
+
+test('extracts input_image URLs from a single row or a chained row array', () => {
+    const image = { type: 'input_image', image_url: 'data:image/png;base64,AAA' }
+    const single = { type: 'function_call_output', output: [image, { type: 'input_text', text: 'saved to /x.png' }] }
+    assert.deepEqual(extractInputImageUrls(single), ['data:image/png;base64,AAA'])
+
+    // A wrapped imagegen that outlived yield_time_ms: three text-only chunks, then the image.
+    const chained = [
+        { type: 'custom_tool_call_output', output: 'Script running with cell ID 2' },
+        null,
+        { type: 'function_call_output', output: [{ type: 'input_text', text: 'Script running with cell ID 2' }] },
+        { type: 'function_call_output', output: [
+            { type: 'input_text', text: 'Script completed' },
+            image,
+            { type: 'input_image', image_url: 'data:image/png;base64,BBB' },
+        ] },
+    ]
+    assert.deepEqual(extractInputImageUrls(chained), ['data:image/png;base64,AAA', 'data:image/png;base64,BBB'])
+
+    assert.deepEqual(extractInputImageUrls({ output: 'plain text' }), [])
+    assert.deepEqual(extractInputImageUrls(undefined), [])
+    assert.deepEqual(extractInputImageUrls([{ output: [{ type: 'input_image', image_url: '' }] }]), [])
 })
 
 test('does not resolve multi-call or dynamic wrappers', () => {

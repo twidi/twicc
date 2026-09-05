@@ -26,7 +26,13 @@ import { capitalize } from '../utils/format'
 import { formatRelativePath, fileIconFor, resolveAbsolutePath } from '../utils/path'
 import { parseCommand } from './parseCommand'
 import { parseCodeModeOutput, parseCodeModeScript } from './parseCodeModeScript'
-import { describeWebRun, resolveCodeModeCall, summarizeCodeModeCalls } from './codeModeDisplay'
+import {
+    IMAGE_GEN_TOOL_NAME,
+    describeWebRun,
+    extractInputImageUrls,
+    resolveCodeModeCall,
+    summarizeCodeModeCalls,
+} from './codeModeDisplay'
 import { parseApplyPatchEnvelope } from './parsePatch'
 import { getTodoDescription } from '../../utils/todoList'
 import { formatToolNameForHeader, humanizeToolSegment } from '../../utils/toolNames'
@@ -253,32 +259,12 @@ function isSpawnAgentTool(name) {
 // ``view_image`` loads a local image file and feeds it back to the model.
 // Its ``function_call_output`` carries the bytes inline as ``input_image``
 // part(s) (``{type:"input_image", image_url:"data:image/…;base64,…"}``).
-// ``getResultRendering`` pulls those data URLs out and hands them to
-// ``ViewImageResult`` so the Result section shows the actual image instead
-// of dumping the base64 blob through JsonHumanView. Everything else (the
+// ``getResultRendering`` pulls those data URLs out (``extractInputImageUrls``
+// in ``codeModeDisplay.js``) and hands them to ``ViewImageResult`` so the
+// Result section shows the actual image instead of dumping the base64 blob
+// through JsonHumanView. Everything else (the
 // tool card, the ``{path, detail}`` input JSON) is the default tool path.
 const VIEW_IMAGE_TOOL_NAME = 'view_image'
-
-/**
- * Extract the base64 ``data:`` URLs from a ``view_image``
- * ``function_call_output`` payload's ``output`` array. Returns ``[]``
- * when the row carries no usable ``input_image`` part.
- */
-function extractViewImageUrls(result) {
-    const output = result?.output
-    if (!Array.isArray(output)) return []
-    const urls = []
-    for (const part of output) {
-        if (
-            part && typeof part === 'object' &&
-            part.type === 'input_image' &&
-            typeof part.image_url === 'string' && part.image_url
-        ) {
-            urls.push(part.image_url)
-        }
-    }
-    return urls
-}
 
 // Per-tool ``JsonHumanView`` overrides used when the Result/Input
 // fallback rendering kicks in. Mirrors Claude Code's pattern: a tiny
@@ -1141,6 +1127,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
             }
             if (nested?.name === 'apply_patch') return 'Edit'
             if (nested?.name === VIEW_IMAGE_TOOL_NAME) return 'Image'
+            if (nested?.name === IMAGE_GEN_TOOL_NAME) return 'Image generation'
             if (nested?.name === 'update_plan') return 'Todo'
             if (nested?.name === 'web__run') {
                 const web = describeWebRun(nested.arg)
@@ -1160,6 +1147,11 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // ``view_image`` loads a local image for the model — show the
         // clean "Image" header instead of the raw ``view_image`` name.
         if (name === VIEW_IMAGE_TOOL_NAME) return 'Image'
+        // GPT-5.6 hosted image generation: the raw namespaced name would
+        // format as "Image gen : Imagegen". The generated picture itself is
+        // a separate ``image`` item (``ImageGeneration.vue``); this card is
+        // the call that produced it.
+        if (name === IMAGE_GEN_TOOL_NAME) return 'Image generation'
         // Only SEMANTIC remaps live here (Edit, Todo, WebSearch, Image,
         // Run code) — where the header word differs from the tool's raw
         // name. Pure snake_case → clean-label cases (``create_goal``,
@@ -1191,6 +1183,9 @@ export class CodexToolHelpers extends BaseToolHelpers {
             }
             if (nested?.name === VIEW_IMAGE_TOOL_NAME) {
                 return this.getSummaryRendering(VIEW_IMAGE_TOOL_NAME, nested.arg, baseDir, options)
+            }
+            if (nested?.name === IMAGE_GEN_TOOL_NAME) {
+                return this.getSummaryRendering(IMAGE_GEN_TOOL_NAME, nested.arg, baseDir, options)
             }
             if (nested?.name === 'update_plan') {
                 return this.getSummaryRendering('update_plan', nested.arg, baseDir, options)
@@ -1269,6 +1264,16 @@ export class CodexToolHelpers extends BaseToolHelpers {
             return {
                 component: TodoSummary,
                 props: { parts: getTodoDescription(planToTodos(input.plan)) },
+            }
+        }
+        // Image generation: the prompt is the only thing worth a glance
+        // (size / quality knobs stay in the detail view).
+        if (name === IMAGE_GEN_TOOL_NAME) {
+            const prompt = typeof input?.prompt === 'string' ? input.prompt.trim() : ''
+            if (!prompt) return null
+            return {
+                component: DescriptionSummary,
+                props: { description: prompt, fileIconSrc: null, truncate: true },
             }
         }
         // Codex Goal tools. ``create_goal`` shows the (truncated) objective;
@@ -1518,7 +1523,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // model (carried inline as base64 ``input_image`` data URLs)
         // instead of the raw ``function_call_output`` JSON.
         if (name === VIEW_IMAGE_TOOL_NAME) {
-            const images = extractViewImageUrls(result)
+            const images = extractInputImageUrls(result)
             if (images.length === 0) return null
             // Title for the preview dialog — the input path basename.
             let imageName = 'Image'
@@ -1530,6 +1535,22 @@ export class CodexToolHelpers extends BaseToolHelpers {
             return {
                 component: ViewImageResult,
                 props: { images, name: imageName },
+            }
+        }
+        // ``image_gen__imagegen``: same wire shape as ``view_image`` — the
+        // output is a list of parts: one or more ``input_image`` data URLs
+        // surrounded by ``input_text`` parts (the leading script status header
+        // when wrapped in code mode, the trailing "saved to <path>" notice). Render the
+        // picture rather than the megabytes of base64 JsonHumanView would
+        // print; the saved path is already on the adjacent ``image`` card.
+        // Kept behind the Result disclosure (not inline): the generated
+        // image has its own ``image`` card right after this one.
+        if (name === IMAGE_GEN_TOOL_NAME) {
+            const images = extractInputImageUrls(result)
+            if (images.length === 0) return null
+            return {
+                component: ViewImageResult,
+                props: { images, name: 'Generated image' },
             }
         }
         if (name === CODE_MODE_EXEC_TOOL_NAME) {
@@ -1548,6 +1569,14 @@ export class CodexToolHelpers extends BaseToolHelpers {
             // would otherwise render an empty ExecResultContent.
             if (nested?.name === VIEW_IMAGE_TOOL_NAME) {
                 return this.getResultRendering(VIEW_IMAGE_TOOL_NAME, result, nested.arg, options)
+            }
+            // Tier-1 image generation: same ``input_image`` parts in the
+            // outer custom_tool_call_output — same delegation. No image yet
+            // (``Script running`` window, ``Script failed``): fall through to
+            // the aggregated script output below rather than the raw rows.
+            if (nested?.name === IMAGE_GEN_TOOL_NAME) {
+                const rendering = this.getResultRendering(IMAGE_GEN_TOOL_NAME, result, nested.arg, options)
+                if (rendering) return rendering
             }
             // Tier-1 MCP with its rebound end event in the chain:
             // ``transformDisplayResult`` already unwrapped the payload
@@ -1733,7 +1762,11 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // MCP argument keys.
         if (name === CODE_MODE_EXEC_TOOL_NAME) {
             const nestedName = resolveCodeModeCall(input)?.name
-            if (nestedName?.startsWith(MCP_TOOL_NAME_PREFIX) || nestedName === 'web__run') {
+            if (
+                nestedName?.startsWith(MCP_TOOL_NAME_PREFIX)
+                || nestedName === 'web__run'
+                || nestedName === IMAGE_GEN_TOOL_NAME
+            ) {
                 return {}
             }
         }
@@ -1766,6 +1799,9 @@ export class CodexToolHelpers extends BaseToolHelpers {
             // the JavaScript transport wrapper. The response still renders
             // through the normal code-mode result aggregation path.
             if (nested?.name === 'web__run') return nested.arg
+            // Tier-1 image generation: the prompt and its knobs, like the
+            // direct call's input.
+            if (nested?.name === IMAGE_GEN_TOOL_NAME) return nested.arg
             // Tier-1 MCP: show the call's arguments object like a direct
             // MCP call does (nothing when the call takes none — the full
             // JS source stays reachable through the raw toggle).

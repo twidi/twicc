@@ -5,6 +5,9 @@ const MCP_TOOL_NAME_PREFIX = 'mcp__'
 const VIEW_IMAGE_TOOL_NAME = 'view_image'
 const UPDATE_PLAN_TOOL_NAME = 'update_plan'
 const WEB_RUN_TOOL_NAME = 'web__run'
+// Hosted image generation on GPT-5.6 (``image_gen`` namespace). Shared with
+// ``toolHelpers.js`` so the direct and the code-mode-wrapped call render alike.
+export const IMAGE_GEN_TOOL_NAME = 'image_gen__imagegen'
 
 const WEB_OPERATION_DEFINITIONS = [
     { key: 'search_query', category: 'search', label: 'Search' },
@@ -97,6 +100,35 @@ export function describeWebRun(input) {
 }
 
 /**
+ * Extract the base64 ``data:`` URLs from the ``input_image`` parts of a tool
+ * result (``view_image``, ``image_gen__imagegen``). ``result`` is the shell's
+ * ``displayResult``: a single row payload (``function_call_output`` /
+ * ``custom_tool_call_output``), or the row array of a chained code-mode
+ * ``exec`` — a wrapped ``imagegen`` that outlives its ``yield_time_ms``
+ * returns ``Script running`` first and the image only lands in a later
+ * ``wait`` chunk. Returns ``[]`` when no row carries a usable ``input_image``
+ * part.
+ */
+export function extractInputImageUrls(result) {
+    const rows = Array.isArray(result) ? result : [result]
+    const urls = []
+    for (const row of rows) {
+        const output = row?.output
+        if (!Array.isArray(output)) continue
+        for (const part of output) {
+            if (
+                part && typeof part === 'object' &&
+                part.type === 'input_image' &&
+                typeof part.image_url === 'string' && part.image_url
+            ) {
+                urls.push(part.image_url)
+            }
+        }
+    }
+    return urls
+}
+
+/**
  * Return the single resolved nested call when TwiCC has a dedicated display
  * path for its argument shape. Other scripts intentionally fall back to the
  * generic Run code card.
@@ -123,6 +155,10 @@ export function resolveCodeModeCall(input) {
     }
     if (call.name === WEB_RUN_TOOL_NAME) {
         return describeWebRun(call.arg) ? call : null
+    }
+    if (call.name === IMAGE_GEN_TOOL_NAME) {
+        const arg = call.arg
+        return isObject(arg) && typeof arg.prompt === 'string' && arg.prompt.trim() ? call : null
     }
     if (call.name.startsWith(MCP_TOOL_NAME_PREFIX)) {
         const arg = call.arg
