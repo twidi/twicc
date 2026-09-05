@@ -38,8 +38,10 @@ Two tool dispatch generations coexist and both must be exercised
 - **GPT-5.5 (`gpt`) — native function calls.** `exec_command` +
   `write_stdin` chains, `shell` / `shell_command` / `local_shell_call`,
   native `apply_patch` (JSON or freeform), `update_plan`, `view_image`,
-  `web_search_call`, `image_generation_call`, MCP tools as
-  `function_call` with `namespace` + `name` (stored as `namespace__name`).
+  `web_search_call`, MCP tools as `function_call` with `namespace` + `name`
+  (stored as `namespace__name`). Image generation is `image_gen__imagegen`
+  on 5.5 too (observed 2026-09-05); the older `image_generation_call` shape
+  only survives in pre-0.15x rollouts.
 
 Agent settings (`selected_model`, `effort`, `permission_mode`, `context_max`,
 `fast_mode`) are **idle** settings: a change applies at the next turn, never
@@ -121,7 +123,7 @@ dirs plus the orchestration tree's shared scratch (`writable_roots`), and `/tmp`
 |---|---|---|---|---|---|
 | C1 | `/plan <task>` | W | L | F | plan collaboration mode; the user bubble reads `/plan <task>` (prefix restored by `_restore_plan_prefix`, live and after recompute); proposed plan → `PlanImplementationBody` with the Implement button; clicking it switches the thread back to Default mode, then runs the fixed `Implement the plan.` turn (no turn if the switch fails). A bare `/plan` injects a visible `/plan` user line |
 | C2 | `/goal <objective>` | W | L | F | `GoalBlock` in the input area, `GoalUpdateSummary` cards, goal continuation across turns until a `thread_goal_updated` line — or, on 5.6 code mode, a successful Goal-tool result with a non-`active` status — completes it. A `get_goal` probe shows no card (DEBUG_ONLY) |
-| C3 | `/goal clear` | W | | F | private canonical `UserMessage` `/goal clear` visible, block cleared |
+| C3 | `/goal clear` | W | | F | must target an **open** goal: send it while the continuation of a long `/goal` is still running (allowed mid-continuation). Private canonical `UserMessage` `/goal clear` visible, `Session.goals[-1].cleared` true, `GoalBlock` reads Stopped, session back to USER_TURN. On an already completed goal the command is a no-op by design (the goal is closed; the block shows Completed with a dismiss cross) |
 | C4 | `/compact` | see M7 | | | |
 
 ### 2.6 Session-level data (sidebar, header, tabs)
@@ -134,7 +136,7 @@ dirs plus the orchestration tree's shared scratch (`writable_roots`), and `/tmp`
 | D4 | Model / effort switch between turns | W | `Session.model` follows the next `turn_context`; picker constraints apply (`max` effort only on 5.6 tiers; `ultra` is disabled product-wide) |
 | D5 | `cwd`, `cwd_git_branch` | W | from `session_meta`; branch shown in the header |
 | D6 | Search | W | live indexing: a word from the new session is found in the search UI within seconds |
-| D7 | Live share | | on a fresh checkout run `cd frontend && npm run build` first (the share viewer bundle is not HMR'd and not committed); create a live share link; the viewer renders the canonical items and streams new ones |
+| D7 | Live share | | prerequisite: a share host configured in Settings > Sharing (the instance under test had none, so this item was skipped on 2026-09-05); on a fresh checkout run `cd frontend && npm run build` first (the share viewer bundle is not HMR'd and not committed); create a live share link; the viewer renders the canonical items and streams new ones |
 | D8 | `<twicc:context>` hygiene | W | after a settings change, the next user bubble must not show the injected `<twicc:context>` block (scrubbed from the stored copy) |
 
 ### 2.7 Migration-specific continuity
@@ -204,7 +206,7 @@ Covers: A3.
 
 Covers: S1, S2 (label visible while the parent waits), S3 (open both View Agent tabs), S4.
 
-**Step 6 — commands.** Send `/goal Make README.md mention TwiCC in its first line`, let it complete. Then `/goal clear`. Then `/plan Add a CONTRIBUTING.md with three sections`, click Implement. Then `/compact`.
+**Step 6 — commands.** Send `/goal Make README.md mention TwiCC in its first line`, let it complete (C2). Then `/goal Rewrite README.md into five sections, one section per turn, explaining each` and, within ~10 s while the continuation runs, `/goal clear` (C3). Then `/plan Add a CONTRIBUTING.md with three sections`, click Implement. Then `/compact`.
 
 Covers: C1, C2, C3, M7.
 
@@ -313,8 +315,12 @@ diff /tmp/before.txt /tmp/after.txt && echo "watcher == compute"
 
 An empty diff proves the watcher's inline classification and the batch
 compute agree on the canonical format. Tolerated: `self_cost` rounding.
-`error` / `extra` match by preservation (the recompute keeps the stored
-values on rows it has no live source for), which is the intended behaviour.
+`error` / `extra` match by preservation only when the recompute yields
+`None` (rows whose live source is gone, e.g. user-terminated markers). A
+denied `apply_patch` is the known exception: live, the link's `error` is
+TwiCC's decision label (`User denied this action`); the recompute derives
+`patch rejected by user` from Codex's output row and overwrites it. Same
+fact, different wording — observed 2026-09-05, accepted.
 `title` must be unchanged: the compute only extracts a first-message title
 for a session that has none (`initial_title_set` guard in
 `compute_base.py`). Observation on the test machine after run 4 (not reproducible from the

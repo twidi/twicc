@@ -224,6 +224,9 @@ class CodexComputeCoordinator:
         # Initial top-level sessions currently deferred, failed or unavailable
         # (the UI line's "set aside"); a later success removes them again.
         self._set_aside: set[str] = set()
+        # Initial sessions whose rollout was still legacy at startup (all
+        # types); the user-facing line counts the top-level ones only.
+        self._legacy_ids: set[str] = set()
         self._initial_total = 0
         self._pumps: list[asyncio.Task] = []
         self._status_pump: asyncio.Task | None = None
@@ -507,18 +510,24 @@ class CodexComputeCoordinator:
     def _detail(self) -> str | None:
         """User-facing line under the startup progress bar.
 
-        Counts top-level sessions like the bar above it: ``done`` is every
-        initial session that ended well (migrated, rebuilt or recomputed),
-        ``set aside`` the ones waiting for a running agent, failed or
-        unavailable. ``None`` (line hidden) when there was nothing to do.
+        Speaks only about the sessions that actually need Codex's migration:
+        the top-level ones whose rollout was still legacy at startup. A pass
+        with none of them (a plain compute-version bump on an already
+        migrated store) shows no line — the progress bar alone is the truth
+        there. ``done`` is every legacy session that ended well (migrated,
+        or rebuilt / recomputed if it had been migrated externally
+        meanwhile), ``set aside`` the ones waiting for a running agent,
+        failed or unavailable.
         """
 
-        if not self._initial_total:
+        legacy = self._legacy_ids & self.initial_ids
+        if not legacy:
             return None
-        done = len(self.initial_classified - self._set_aside)
-        line = f"Migrating Codex legacy sessions ({done} / {self._initial_total}"
-        if self._set_aside:
-            line += f", {len(self._set_aside)} set aside"
+        set_aside = self._set_aside & legacy
+        done = len((self.initial_classified & legacy) - set_aside)
+        line = f"Migrating Codex legacy sessions ({done} / {len(legacy)}"
+        if set_aside:
+            line += f", {len(set_aside)} set aside"
         return line + ")"
 
     def _log_summary(self, *, force: bool = False, label: str = "Codex rollout migration progress") -> None:
@@ -702,10 +711,15 @@ class CodexComputeCoordinator:
             self.initial_done.set()
 
     @staticmethod
-    def _classify_sources(candidates: list[CodexComputeCandidate]) -> Counter[str]:
-        """Count the stale sessions by source format (first line of each rollout)."""
+    def _classify_sources(candidates: list[CodexComputeCandidate]) -> tuple[Counter[str], set[str]]:
+        """Count the stale sessions by source format (first line of each rollout).
+
+        Also returns the ids whose rollout is still legacy: they are the ones
+        the user-facing progress line talks about (see :meth:`_detail`).
+        """
 
         tally: Counter[str] = Counter()
+        legacy_ids: set[str] = set()
         for candidate in candidates:
             try:
                 path = Path(candidate.file_path)
@@ -719,7 +733,9 @@ class CodexComputeCoordinator:
                 tally["unreadable"] += 1
             else:
                 tally[meta.history_mode.value] += 1
-        return tally
+                if meta.history_mode == HistoryMode.LEGACY:
+                    legacy_ids.add(candidate.session_id)
+        return tally, legacy_ids
 
     def _absorb_rebuild_requests(self) -> None:
         """A rewrite detected by the watcher lifts the per-run exclusions."""
@@ -788,7 +804,7 @@ class CodexComputeCoordinator:
         initial_candidates = await _load_stale_candidates(self.ctx.compute_version)
         await self._initialize_progress(initial_candidates)
         if initial_candidates:
-            sources = await asyncio.to_thread(self._classify_sources, initial_candidates)
+            sources, self._legacy_ids = await asyncio.to_thread(self._classify_sources, initial_candidates)
             logger.info(
                 "Codex rollout migration: %d stale session(s) at startup — %d legacy (to migrate through Codex), "
                 "%d paginated (rebuild or recompute), %d missing from disk, %d unreadable",
@@ -797,6 +813,13 @@ class CodexComputeCoordinator:
             )
             await sync_to_async(load_project_directories)()
             await sync_to_async(load_project_git_roots)()
+            if self._detail() is not None:
+                # The first broadcast went out before the sources were known;
+                # publish the migration line now that we know there is one.
+                await broadcast_startup_progress(
+                    "background_compute", 0, self._initial_total,
+                    provider=Provider.CODEX.value, completed=False, detail=self._detail(),
+                )
         else:
             logger.info("Codex background compute: no sessions to process at startup")
 

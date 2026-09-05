@@ -557,8 +557,11 @@ def test_ui_detail_line_counts_top_level_sessions_done_and_set_aside(monkeypatch
     """The user-facing line: done / total like the bar, plus what is set aside."""
 
     coordinator = _coordinator()
-    coordinator.initial_ids = {"a", "b", "c"}
-    coordinator._initial_total = 3
+    coordinator.initial_ids = {"a", "b", "c", "already-paginated"}
+    coordinator._initial_total = 4
+    # Only the sessions whose rollout was legacy at startup are counted; a
+    # paginated one that merely needs a recompute is not "migrating".
+    coordinator._legacy_ids = {"a", "b", "c", "sub"}
     monkeypatch.setattr(background_compute, "broadcast_startup_progress", lambda *_a, **_k: _async_value(None))
     monkeypatch.setattr(
         background_compute, "logger",
@@ -583,7 +586,24 @@ def test_ui_detail_line_counts_top_level_sessions_done_and_set_aside(monkeypatch
         coordinator._record_outcome("b", "migrated")
         assert coordinator._detail() == "Migrating Codex legacy sessions (2 / 3, 1 set aside)"
 
+        # The paginated session's outcome does not move the line.
+        coordinator._record_outcome("already-paginated", "compute")
+        await coordinator._classify_initial("already-paginated")
+        assert coordinator._detail() == "Migrating Codex legacy sessions (2 / 3, 1 set aside)"
+
     asyncio.run(scenario())
+
+
+def test_ui_detail_line_is_hidden_when_nothing_is_legacy() -> None:
+    """A compute-version bump on a migrated store must not say "Migrating"."""
+
+    coordinator = _coordinator()
+    coordinator.initial_ids = {"a", "b"}
+    coordinator._initial_total = 2
+    coordinator._legacy_ids = set()
+    coordinator._record_outcome("a", "compute")
+    assert coordinator._detail() is None
+    assert coordinator._tally() == "Codex rollouts: 1 recomputed"
 
 
 def test_startup_progress_carries_the_detail_line():
