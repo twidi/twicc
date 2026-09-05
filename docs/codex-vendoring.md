@@ -4,7 +4,7 @@
 
 The Codex provider relies on OpenAI's Codex Python SDK (`openai_codex`) plus the Codex CLI binary it drives over JSON-RPC.
 
-- The **SDK** is vendored from the `openai/codex` repository at tag [`rust-v0.153.2`](https://github.com/openai/codex/releases/tag/rust-v0.153.2). A PyPI release (`openai-codex`) exists but currently pins an older runtime version, so we stay on the vendored source to ride a known-good combination with the matching upstream tag.
+- The **SDK** is vendored from the `openai/codex` repository at tag [`rust-v0.153.4`](https://github.com/openai/codex/releases/tag/rust-v0.153.4). A PyPI release (`openai-codex`) exists but currently pins an older runtime version, so we stay on the vendored source to ride a known-good combination with the matching upstream tag.
 - The **CLI binary** is downloaded at first launch from the matching GitHub Release (`openai-codex-cli-bin` wheel), extracted into a shared cache, and pointed at via `CodexConfig(codex_bin=…)`. It is no longer a PyPI dependency: OpenAI stopped publishing stable `openai-codex-cli-bin` wheels on PyPI after `0.136.0` (the wheel is ~122 MB, above practical PyPI quotas), but every tagged stable still ships the same manylinux / macOS wheels as GitHub Release assets. Provisioning lives in `src/twicc/providers/codex/runtime.py`; the download is triggered unconditionally in the background at startup (`OrchestratorRegistry.start_all`) and on demand by `make_codex_config`.
 
 The cache is shared by every checkout on the machine, so bumping `CODEX_VERSION` in a worktree would prune the version the main instance is running on. `TWICC_NO_CODEX_RUNTIME_CLEANUP=1` (set by devctl in worktree mode) downloads without ever pruning, and provisioning re-checks the store on every call so a runtime deleted under a live process is downloaded again.
@@ -24,13 +24,13 @@ The extracted tree is the whole `codex_cli_bin/` package (not just the `codex` b
 
 Deliberate divergences from the pristine upstream tree. Re-apply them after every re-vendor (a `diff -rq <pristine> src/openai_codex` against the current version's pristine tree finds them all), and drop each one once upstream ships the fix.
 
-- `generated/v2_all.py` — `SubAgentActivityKind`: added `completed = "completed"` (2026-08-27, retained on 0.153.2). The runtime emits `subAgentActivity` items with that kind, but the generated models at the same tag lag behind; without the patch, `thread/resume` validation (`ThreadResumeResponse`) rejects any rollout containing one and the session can no longer resume.
+- `generated/v2_all.py` — `SubAgentActivityKind`: added `completed = "completed"` (2026-08-27, retained on 0.153.4). The runtime emits `subAgentActivity` items with that kind, but the generated models at the same tag lag behind; without the patch, `thread/resume` validation (`ThreadResumeResponse`) rejects any rollout containing one and the session can no longer resume.
 
 ## Updating to a newer Codex version
 
 Assumes the new version is published as a `rust-vX.Y.Z` GitHub tag/Release with the `openai-codex-cli-bin` wheels attached (they still are, even though PyPI stopped receiving stable ones).
 
-1. Pick the release tag matching the upstream version you want, e.g. `rust-v0.153.2`. Verify that `sdk/python/src/openai_codex/` exists at that tag and the GitHub Release carries the 4 platform wheels.
+1. Pick the release tag matching the upstream version you want, e.g. `rust-v0.153.4`. Verify that `sdk/python/src/openai_codex/` exists at that tag and the GitHub Release carries the 4 platform wheels.
 2. Re-vendor the SDK source (extract the `openai_codex` package from the tarball):
    ```bash
    rm -rf src/openai_codex
