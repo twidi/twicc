@@ -12,6 +12,7 @@ from twicc.providers.codex.agent.manager import (
     _apply_auto_review_network,
     _apply_codex_work_dirs,
     _apply_request_user_input,
+    _apply_update_plan,
 )
 from twicc.providers.helpers import AgentSettings
 
@@ -236,6 +237,16 @@ def test_request_user_input_enabled_forces_the_default_mode_feature() -> None:
     assert "tools" not in config
 
 
+def test_update_plan_is_forced_on_for_every_thread() -> None:
+    """Codex 0.151 made ``update_plan`` opt-in; the Tasks tab needs it."""
+    config: dict = {"tools": {"experimental_request_user_input": {"enabled": False}}}
+    _apply_update_plan(config)
+
+    assert config["tools"]["update_plan"] == {"enabled": True}
+    # Sibling entries of the ``tools`` table are left alone.
+    assert config["tools"]["experimental_request_user_input"] == {"enabled": False}
+
+
 def test_request_user_input_disabled_drops_the_tool_and_the_feature() -> None:
     config: dict = {}
     _apply_request_user_input(config, enabled=False)
@@ -281,4 +292,5 @@ def test_resumed_thread_keeps_request_user_input_when_widget_unset(monkeypatch) 
 
     config = codex.resume_calls[0][1]["config"]
     assert config["features"]["default_mode_request_user_input"] is True
-    assert "tools" not in config
+    # ``update_plan`` is always forced on; ``request_user_input`` stays untouched.
+    assert config["tools"] == {"update_plan": {"enabled": True}}

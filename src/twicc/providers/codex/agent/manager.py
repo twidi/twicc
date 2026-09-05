@@ -677,6 +677,7 @@ class CodexAgentManager(BaseAgentManager):
             _apply_request_user_input(
                 thread_config, enabled=settings.question_widget is not False,
             )
+            _apply_update_plan(thread_config)
             if approvals_reviewer is ApprovalsReviewer.auto_review:
                 # Give the workspace sandbox direct network access. Do not turn
                 # on Codex's managed network proxy here: without an administrator
@@ -915,6 +916,22 @@ def _apply_request_user_input(thread_config: dict, *, enabled: bool) -> None:
     if not enabled:
         tools = thread_config.setdefault("tools", {})
         tools["experimental_request_user_input"] = {"enabled": False}
+
+
+def _apply_update_plan(thread_config: dict) -> None:
+    """Register Codex's ``update_plan`` tool for this thread.
+
+    Codex made the tool opt-in in 0.151 (commit ``a9519cbcdd``, "Make the
+    update_plan tool opt-in"): ``tools.update_plan`` now resolves to *off*
+    when unset, where it used to resolve to on. TwiCC's Tasks tab for Codex
+    is fed by ``update_plan`` calls (``Session.tasks``), so force the tool on
+    in the per-thread ``config`` patch — same ``{enabled = bool}`` table shape
+    as ``tools.experimental_request_user_input``, read at ``thread_start`` /
+    ``thread_resume`` only. This wins over a ``tools.update_plan`` entry in
+    the user's ``config.toml``: a TwiCC session always has the tool.
+    """
+    tools = thread_config.setdefault("tools", {})
+    tools["update_plan"] = {"enabled": True}
 
 
 def _apply_codex_work_dirs(thread_config: dict, work_dirs: list[str]) -> None:
