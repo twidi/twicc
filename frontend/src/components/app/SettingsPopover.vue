@@ -123,7 +123,7 @@ const sections = computed(() => [
     { id: 'terminal',      label: 'Terminal' },
     { id: 'sharing',       label: 'Sharing', synced: true },
     { id: 'usage',         label: 'Providers quotas/usage', navLabel: 'Usage' },
-    { id: 'mcp', label: 'MCP', synced: true },
+    { id: 'mcp',           label: 'External MCP', navLabel: 'MCP', synced: true },
     { id: 'peers',         label: 'Peers', synced: true, badge: peersStore.inboxCount },
 ])
 

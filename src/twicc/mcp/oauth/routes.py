@@ -91,7 +91,8 @@ def continuation(data):
 
 
 WAIT_PAGE = """<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>Authorize TwiCC MCP</title><style>body{font:18px system-ui;max-width:38rem;margin:10vh auto;padding:24px}
+<title>Authorize TwiCC MCP</title><style>:root{color-scheme:light dark}
+body{font:18px system-ui;max-width:38rem;margin:10vh auto;padding:24px}
 code{font-size:2em;letter-spacing:.15em}p{line-height:1.5}</style>
 <h1>Authorize TwiCC MCP</h1><p>Open your TwiCC instance on any device. Review the pending MCP request and enter this code:</p>
 <code id="code"></code><p id="status">Waiting for your decision. Keep this page open.</p>

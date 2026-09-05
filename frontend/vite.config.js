@@ -71,6 +71,12 @@ export default defineConfig(({ command }) => ({
             // rewritten to the proxy target (the string shorthand implies
             // `changeOrigin: true`).
             '/peer': { target: `http://localhost:${backendPort}`, changeOrigin: false },
+            // Preserve the dedicated MCP host for OAuth and origin routing.
+            '^/mcp(?:/|$|\\?)': { target: `http://localhost:${backendPort}`, changeOrigin: false },
+            '^/\\.well-known/oauth-(?:protected-resource/mcp|authorization-server/mcp/oauth)(?:$|\\?)': {
+                target: `http://localhost:${backendPort}`,
+                changeOrigin: false,
+            },
             // The broker shim, injected into backend-served artifact iframes.
             '/_twicc': `http://localhost:${backendPort}`,
             '/ws': { target: `ws://localhost:${backendPort}`, ws: true }

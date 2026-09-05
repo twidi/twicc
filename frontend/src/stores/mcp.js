@@ -3,7 +3,27 @@ import { defineStore } from 'pinia'
 const pendingRefresh = new WeakMap()
 
 export const useMcpStore = defineStore('mcp', {
-    state: () => ({ connections: [], requests: [], config: {}, error: '', loadError: '', loading: false }),
+    state: () => ({
+        connections: [], requests: [], config: {}, error: '', loadError: '', loading: false,
+        // Reference instant for the TTL filter below, advanced by McpManager.
+        clock: Date.now(),
+    }),
+    getters: {
+        /**
+         * Pending requests that have not run out their TTL.
+         *
+         * A request expires on its own and nothing announces it: no mutation
+         * happens, so no WebSocket broadcast fires, and the owner snapshot
+         * simply stops listing it. `expires_at` travels in the payload, so
+         * drop the request locally the second it lapses — McpManager arms one
+         * timer on the nearest deadline — instead of polling the endpoint.
+         *
+         * An unreadable `expires_at` keeps the request: never hide a real one.
+         */
+        pendingRequests(state) {
+            return state.requests.filter(row => !(new Date(row.expires_at).getTime() <= state.clock))
+        },
+    },
     actions: {
         async request(options) {
             const { apiFetch } = await import('../utils/api')

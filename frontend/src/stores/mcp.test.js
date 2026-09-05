@@ -49,3 +49,21 @@ test('concurrent callers wait for the same initial configuration', async () => {
     assert.equal(calls, 1)
     assert.equal(store.config.externalMcpEnabled, true)
 })
+
+test('a lapsed request leaves the pending list without a round trip', () => {
+    const store = setup()
+    const now = Date.now()
+    store.requests = [
+        { id: 'fresh', expires_at: new Date(now + 60_000).toISOString() },
+        { id: 'lapsed', expires_at: new Date(now - 1_000).toISOString() },
+    ]
+    store.clock = now
+    assert.deepEqual(store.pendingRequests.map(row => row.id), ['fresh'])
+})
+
+test('an unreadable deadline keeps the request visible', () => {
+    const store = setup()
+    store.requests = [{ id: 'undated' }, { id: 'garbage', expires_at: 'not a date' }]
+    store.clock = Date.now()
+    assert.deepEqual(store.pendingRequests.map(row => row.id), ['undated', 'garbage'])
+})
