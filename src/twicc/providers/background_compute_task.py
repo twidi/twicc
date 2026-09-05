@@ -264,10 +264,10 @@ def _resolve_factory(dotted_path: str):
 async def stop_background_task(ctx: ComputeContext) -> None:
     """Signal the background compute task to stop and terminate worker process.
 
-    Async so the blocking ``process.join()`` calls can run off the event loop:
-    joining on the loop thread would freeze the DB writer task,
-    and a worker blocked on a full result queue only makes progress (drains,
-    then exits) while that DB writer keeps running.
+    Sets the context's asyncio ``stop_event`` (the provider's compute task
+    exits on it) and then stops the worker process. A coordinator that
+    outlives its worker (Codex, between runs) must call
+    :func:`stop_compute_worker` instead, or it stops itself.
     """
     logger.info("stop_background_task: starting shutdown...")
 
@@ -275,37 +275,52 @@ async def stop_background_task(ctx: ComputeContext) -> None:
     ctx.stop_event.set()
     logger.info("stop_background_task: asyncio stop_event set")
 
+    await stop_compute_worker(ctx)
+
+
+async def stop_compute_worker(ctx: ComputeContext) -> None:
+    """Stop the worker process and close the context's queues, nothing else.
+
+    Leaves ``ctx.stop_event`` alone so the caller keeps running.
+    ``start_compute_process`` recreates ``worker_stop_event`` for the next
+    run; the caller recreates the queues.
+
+    Async so the blocking ``process.join()`` calls can run off the event loop:
+    joining on the loop thread would freeze the DB writer task,
+    and a worker blocked on a full result queue only makes progress (drains,
+    then exits) while that DB writer keeps running.
+    """
     # Signal worker process to stop via multiprocessing event
     ctx.worker_stop_event.set()
-    logger.info("stop_background_task: worker_stop_event set")
+    logger.info("stop_compute_worker: worker_stop_event set")
 
     # Send stop signal to worker process via queue (backup)
     try:
         ctx.command_queue.put_nowait(None)  # None = stop signal
-        logger.info("stop_background_task: stop signal sent to queue")
+        logger.info("stop_compute_worker: stop signal sent to queue")
     except Exception as e:
-        logger.warning(f"stop_background_task: failed to send stop signal to queue: {e}")
+        logger.warning(f"stop_compute_worker: failed to send stop signal to queue: {e}")
 
     # Wait for worker process to exit gracefully, then terminate if needed.
     # join() runs off the event loop (asyncio.to_thread) so the DB writer
     # keeps draining while we wait — terminate()/kill() are non-blocking
     # signals and stay on the loop.
     if ctx.process is not None and ctx.process.is_alive():
-        logger.info(f"stop_background_task: waiting for worker process (PID: {ctx.process.pid}) to exit...")
+        logger.info(f"stop_compute_worker: waiting for worker process (PID: {ctx.process.pid}) to exit...")
         await asyncio.to_thread(ctx.process.join, 2.0)
         if ctx.process.is_alive():
-            logger.warning("stop_background_task: worker process still alive, terminating...")
+            logger.warning("stop_compute_worker: worker process still alive, terminating...")
             ctx.process.terminate()
             await asyncio.to_thread(ctx.process.join, 1.0)
             if ctx.process.is_alive():
-                logger.error("stop_background_task: worker process did not terminate, killing...")
+                logger.error("stop_compute_worker: worker process did not terminate, killing...")
                 ctx.process.kill()
                 await asyncio.to_thread(ctx.process.join, 0.5)
         else:
-            logger.info("stop_background_task: worker process exited gracefully")
+            logger.info("stop_compute_worker: worker process exited gracefully")
         ctx.process = None
     else:
-        logger.info("stop_background_task: no worker process to stop")
+        logger.info("stop_compute_worker: no worker process to stop")
 
     # Cancel the command queue's feeder thread to prevent blocking on shutdown.
     # The result queue is the process-wide shared queue owned by db_writer —
@@ -318,7 +333,7 @@ async def stop_background_task(ctx: ComputeContext) -> None:
             ctx.status_queue.cancel_join_thread()
             ctx.status_queue.close()
 
-    logger.info("stop_background_task: shutdown complete")
+    logger.info("stop_compute_worker: shutdown complete")
 
 
 # =============================================================================

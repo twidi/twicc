@@ -263,7 +263,14 @@ def test_worker_dispatches_next_only_after_computed_not_applied(monkeypatch):
         monkeypatch.setattr(background_compute, "load_project_git_roots", lambda: None)
         monkeypatch.setattr(background_compute, "arm_compute_completion", lambda *_a, **_k: (1, done_future))
         monkeypatch.setattr(background_compute, "start_compute_process", lambda _ctx: None)
-        monkeypatch.setattr(background_compute, "stop_background_task", lambda _ctx: _async_value(None))
+
+        async def stop_background_task(ctx):
+            # Mirrors the real one: it sets ``ctx.stop_event``, the
+            # coordinator's own exit condition. ``_finish_run`` must not use it.
+            ctx.stop_event.set()
+
+        monkeypatch.setattr(background_compute, "stop_background_task", stop_background_task)
+        monkeypatch.setattr(background_compute, "stop_compute_worker", lambda _ctx: _async_value(None))
         coordinator.prepare_candidate = prepare
         coordinator._handle_applied = handle_applied
 
@@ -513,6 +520,36 @@ def test_outcome_tally_feeds_the_ui_detail_line(monkeypatch):
     )
     assert any("session a migrated by Codex and rebuilt (registered with Codex first)" in m for m in messages)
     assert any("session b rebuilt from its rewritten rollout" in m for m in messages)
+
+
+def test_final_summary_waits_for_the_in_flight_subagent(monkeypatch):
+    """The last top-level session may be classified while a subagent is still applying."""
+
+    coordinator = _coordinator()
+    coordinator.initial_ids = {"parent"}
+    coordinator._initial_total = 1
+    coordinator._prepared["parent"] = PreparedCandidate("parent", None, True, kind="migrated")
+    coordinator._prepared["child"] = PreparedCandidate("child", None, True, kind="migrated", registered=True)
+    coordinator.computed_not_applied.add("child")
+    messages: list[str] = []
+
+    def record(message, *args, **_kwargs):
+        messages.append(message % args if args else message)
+
+    monkeypatch.setattr(
+        background_compute, "logger",
+        SimpleNamespace(info=record, error=record, warning=record, exception=record, debug=record),
+    )
+    monkeypatch.setattr(background_compute, "broadcast_startup_progress", lambda *_a, **_k: _async_value(None))
+    monkeypatch.setattr("twicc.search_indexing_task.request_session_reindex", lambda _session_id: None)
+
+    asyncio.run(coordinator._handle_applied(ComputeApplied("parent", "applied")))
+    assert coordinator.initial_done.is_set()
+    assert not any("initial pass complete" in m for m in messages)
+
+    asyncio.run(coordinator._handle_applied(ComputeApplied("child", "applied")))
+    [summary] = [m for m in messages if "initial pass complete" in m]
+    assert "2 migrated, 1 registered with Codex first" in summary
 
 
 def test_startup_progress_carries_the_detail_line():

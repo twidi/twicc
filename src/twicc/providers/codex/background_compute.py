@@ -65,6 +65,7 @@ from twicc.providers.background_compute_task import (
     ComputeContext,
     start_compute_process,
     stop_background_task,
+    stop_compute_worker,
 )
 from twicc.providers.db_writer import (
     ComputeApplied,
@@ -232,7 +233,8 @@ class CodexComputeCoordinator:
         self._outcomes_since_summary = 0
         self._last_summary_at = time.monotonic()
         self._pass_started_at = time.monotonic()
-        # ``stop_background_task`` closes the context's queues at the end of
+        self._final_summary_pending = False
+        # ``stop_compute_worker`` closes the context's queues at the end of
         # a run; the next run needs fresh ones.
         self._queues_closed = False
 
@@ -525,6 +527,7 @@ class CodexComputeCoordinator:
         if log:
             logger.info("Codex rollout migration: session %s %s%s", session_id, log, elapsed)
         self._log_summary()
+        self._flush_final_summary()
 
     async def _classify_initial(self, session_id: str) -> None:
         if session_id not in self.initial_ids or session_id in self.initial_classified:
@@ -541,8 +544,20 @@ class CodexComputeCoordinator:
             detail=self._detail(),
         )
         if completed:
-            self._log_summary(force=True, label="Codex rollout migration: initial pass complete")
             self.initial_done.set()
+            # The last top-level session may be classified while one of its
+            # subagents is still being applied: hold the final summary until
+            # nothing is in flight so its counts are complete.
+            self._final_summary_pending = True
+            self._flush_final_summary()
+
+    def _flush_final_summary(self) -> None:
+        if not self._final_summary_pending:
+            return
+        if self.in_flight is not None or self.submitted or self.computed_not_applied:
+            return
+        self._final_summary_pending = False
+        self._log_summary(force=True, label="Codex rollout migration: initial pass complete")
 
     def _release_lease(self, session_id: str, *, replay: bool = True) -> None:
         """Release a session's gate and migrating flag; replay its file when asked.
@@ -728,7 +743,9 @@ class CodexComputeCoordinator:
             with suppress(Exception, asyncio.CancelledError):
                 await self._status_pump
             self._status_pump = None
-        await stop_background_task(self.ctx)
+        # Not ``stop_background_task``: that one sets ``ctx.stop_event``,
+        # which is the coordinator's own exit condition.
+        await stop_compute_worker(self.ctx)
         self._queues_closed = True
 
     @staticmethod
