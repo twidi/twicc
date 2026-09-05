@@ -313,13 +313,19 @@ def find_available_port(start: int, max_attempts: int = 100) -> int:
     )
 
 
-def save_ports_to_env(backend_port: int, frontend_port: int) -> None:
-    """Append port configuration to the .env file in the data directory."""
+def save_worktree_env(backend_port: int, frontend_port: int) -> None:
+    """Append the worktree configuration to the .env file in the data directory.
+
+    The ports, plus the opt-out of the backend's startup log trim: a worktree
+    log is short-lived, keeping it bounded is pointless work.
+    """
     lines_to_add = [
         "",
-        "# Ports auto-configured by devctl (worktree mode)",
+        "# Auto-configured by devctl (worktree mode)",
         f"TWICC_PORT={backend_port}",
         f"VITE_PORT={frontend_port}",
+        "# No startup trim of logs/backend.log in a worktree",
+        "TWICC_NO_LOG_TRIM=1",
         "",
     ]
     with open(ENV_FILE, "a") as f:
@@ -581,7 +587,7 @@ def get_ports(auto_find: bool = False) -> tuple[int, int]:
             backend_port = find_available_port(DEFAULT_BACKEND_PORT + 1)
         if not has_frontend_port:
             frontend_port = find_available_port(DEFAULT_FRONTEND_PORT + 1)
-        save_ports_to_env(backend_port, frontend_port)
+        save_worktree_env(backend_port, frontend_port)
         print(f"  Auto-configured ports for worktree: backend={backend_port}, frontend={frontend_port}")
         print(f"  Saved to {ENV_FILE}")
 
@@ -756,7 +762,11 @@ def verify_port(proc_key: str, log_start_pos: int, processes: dict, timeout: flo
 
     while time.time() - start_time < timeout:
         if log_file.exists():
-            # Only read NEW content since process started
+            # Only read NEW content since process started. The backend trims
+            # its log at startup: a file shorter than it was is a new file,
+            # read it from its beginning.
+            if log_file.stat().st_size < log_start_pos:
+                log_start_pos = 0
             with open(log_file) as f:
                 f.seek(log_start_pos)
                 new_content = f.read()
@@ -1112,7 +1122,7 @@ EXAMPLES:
     uv run ./devctl.py kill-tmux       # Worktree: kill its tmux servers before deleting it
 
 FILES:
-    <data_dir>/.env               Configuration (ports, password hash)
+    <data_dir>/.env               Configuration (ports, password hash, TWICC_NO_LOG_TRIM)
     <data_dir>/db/data.sqlite     SQLite database
     <data_dir>/search-index/      Tantivy full-text search index
     <data_dir>/project-icons/     Project icon files (repo + per-project)

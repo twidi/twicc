@@ -81,8 +81,9 @@ logging.getLogger("twicc").addHandler(_startup_console)
 from django.core.management import call_command  # noqa: E402
 
 from twicc.instance_lock import InstanceAlreadyRunning, InstanceLock  # noqa: E402
+from twicc.log_retention import log_trim_enabled, trim_log_file  # noqa: E402
 from twicc.orchestrator import get_orchestrator_registry  # noqa: E402
-from twicc.paths import get_data_dir  # noqa: E402
+from twicc.paths import get_backend_log_path, get_data_dir  # noqa: E402
 from twicc.pricing_task import start_price_sync_task, sync_all_providers  # noqa: E402
 from twicc.benchmarks_task import start_benchmark_sync_task  # noqa: E402
 from twicc.quota_wakeup_task import start_quota_wakeup_task  # noqa: E402
@@ -477,6 +478,19 @@ async def run_server(port: int):
         logger.info("Server shutdown complete")
 
 
+def _close_log_file_handlers() -> None:
+    """Close the ``FileHandler``s of the file-logging loggers.
+
+    A closed ``FileHandler`` (mode ``a``) reopens its path at the next record,
+    so any stream opened before the log trim is dropped in favour of the
+    trimmed file.
+    """
+    for name in ("twicc", "uvicorn"):
+        for handler in logging.getLogger(name).handlers:
+            if isinstance(handler, logging.FileHandler):
+                handler.close()
+
+
 def main():
     # Acquire the per-data-dir instance lock before doing anything that
     # touches state shared by every TwiCC process (DB migrations, Tantivy
@@ -491,6 +505,23 @@ def main():
         sys.exit(1)
 
     try:
+        # Trim backend.log to its retention window. Under the instance lock
+        # (no other TwiCC process of this data dir appends to the file) and
+        # before this process logs anything: the file handler is ``delay``ed
+        # (settings.LOGGING) so no descriptor is open on the old inode yet;
+        # closing the handlers afterwards makes sure of it — the next record
+        # reopens the path, i.e. the new file.
+        if log_trim_enabled():
+            trim = trim_log_file(get_backend_log_path())
+            _close_log_file_handlers()
+            if trim.error:
+                logger.warning("backend.log trim failed, file left as is: %s", trim.error)
+            elif trim.trimmed:
+                logger.info(
+                    "Trimmed backend.log: dropped %.0f MB of entries before %s",
+                    trim.dropped_bytes / 1_000_000, trim.cut_date,
+                )
+
         logger.info("TWICC starting...")
         logger.info("Environment loaded")
         # Provider homes: what the .env dropped (already printed to stderr by

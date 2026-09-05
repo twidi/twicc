@@ -363,6 +363,11 @@ LOGGING = {
             "formatter": "standard",
             "encoding": "utf-8",
             "filters": ["provider"],
+            # Open the file at the first record, not at ``django.setup()``: the
+            # server trims backend.log at startup (``twicc.log_retention``) and
+            # must do so before any descriptor is open on it — and a CLI
+            # command that never logs should not touch the file at all.
+            "delay": True,
         },
     },
     "loggers": {
