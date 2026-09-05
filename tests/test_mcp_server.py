@@ -30,7 +30,7 @@ def test_call_tool_runs_command_and_returns_envelope():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_call_tool_whoami_uses_bound_identity(isolated_data_dir):
+def test_call_tool_whoami_uses_bound_identity(isolated_data_dir, monkeypatch):
     import os
 
     import orjson
@@ -47,6 +47,9 @@ def test_call_tool_whoami_uses_bound_identity(isolated_data_dir):
         id="22222222-2222-2222-2222-222222222222", project=project,
         provider="claude_code", file_path="p2.jsonl",
     )
+    # This test exercises identity, not OS process discovery. Some sandboxed
+    # worker threads cannot probe even the test process through psutil.
+    monkeypatch.setattr("twicc.cli._twicc_info.psutil.pid_exists", lambda pid: pid == os.getpid())
     result = asyncio.run(mcp_server.dispatch_tool("whoami", {}, session_id=session.id))
     assert result["exit_code"] == 0
     assert result["result"]["session"]["id"] == session.id

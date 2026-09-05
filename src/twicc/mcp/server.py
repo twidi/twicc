@@ -2,7 +2,7 @@
 
 One ``Server`` instance serves every agent session; per-call identity comes
 from the ``Authorization`` header of the underlying HTTP request (available
-via ``request_context.request`` on the streamable-HTTP transport) and is
+via the handler's ``ctx.request`` on the streamable-HTTP transport) and is
 bound into two ContextVars before the command runs in a worker thread:
 
 - ``whoami.forced_session_id`` — makes ``self``/``parent``/``whoami``/
@@ -21,9 +21,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import jsonschema
 import orjson
 from mcp import types as mcp_types
-from mcp.server.lowlevel import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -91,9 +92,8 @@ async def dispatch_tool(name: str, arguments: dict, *, session_id: str | None) -
     return orjson.loads(orjson.dumps(envelope))
 
 
-def _session_id_from_request() -> str | None:
+def _session_id_from_request(ctx: ServerRequestContext) -> str | None:
     """Caller identity from the HTTP Authorization header, if session-bound."""
-    ctx = _server.request_context
     request = getattr(ctx, "request", None)
     if request is None:
         return None
@@ -102,24 +102,53 @@ def _session_id_from_request() -> str | None:
     return resolve_session_token(token)
 
 
-_server: Server = Server("twicc", instructions=INSTRUCTIONS)
+async def _list_tools(
+    ctx: ServerRequestContext, params: mcp_types.PaginatedRequestParams | None,
+) -> mcp_types.ListToolsResult:
+    return mcp_types.ListToolsResult(tools=iter_mcp_tools())
 
 
-@_server.list_tools()
-async def _list_tools() -> list[mcp_types.Tool]:
-    return iter_mcp_tools()
-
-
-@_server.call_tool()
-async def _call_tool(name: str, arguments: dict) -> dict:
-    session_id = _session_id_from_request()
+async def _call_tool(
+    ctx: ServerRequestContext, params: mcp_types.CallToolRequestParams,
+) -> mcp_types.CallToolResult:
+    name, arguments = params.name, params.arguments or {}
+    session_id = _session_id_from_request(ctx)
     try:
-        return await dispatch_tool(name, arguments, session_id=session_id)
+        # The v1 call_tool decorator validated inputs before dispatch. The v2
+        # lowlevel API leaves this to us; render_argv assumes validated types.
+        spec = tools_by_name().get(name)
+        if spec is not None:
+            try:
+                jsonschema.validate(instance=arguments, schema=spec.json_schema)
+            except jsonschema.ValidationError as exc:
+                return mcp_types.CallToolResult(
+                    content=[mcp_types.TextContent(type="text", text=f"Input validation error: {exc.message}")],
+                    is_error=True,
+                )
+        envelope = await dispatch_tool(name, arguments, session_id=session_id)
     except UnknownToolError:
-        raise ValueError(f"Unknown tool: {name}")
-    except Exception:
+        return mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text=f"Unknown tool: {name}")],
+            is_error=True,
+        )
+    except Exception as exc:
         logger.exception("MCP tool %r failed (arguments=%r)", name, arguments)
-        raise
+        return mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text=str(exc))],
+            is_error=True,
+        )
+    # v1 wrapped dicts automatically; v2 lowlevel handlers own both representations.
+    # A non-zero CLI exit_code remains business data, not an MCP tool error.
+    return mcp_types.CallToolResult(
+        content=[mcp_types.TextContent(type="text", text=orjson.dumps(envelope, option=orjson.OPT_INDENT_2).decode())],
+        structured_content=envelope,
+        is_error=False,
+    )
+
+
+_server: Server = Server(
+    "twicc", instructions=INSTRUCTIONS, on_list_tools=_list_tools, on_call_tool=_call_tool,
+)
 
 
 _session_manager: StreamableHTTPSessionManager | None = None
@@ -133,6 +162,9 @@ def get_session_manager() -> StreamableHTTPSessionManager:
             app=_server,
             json_response=True,
             stateless=True,
+            # Allow 32 MiB of attachments after base64 encoding, plus prompt/JSON
+            # overhead. v2 defaults to 4 MiB, below existing CLI attachment limits.
+            max_request_body_size=64 * 1024 * 1024,
             # The Bearer token is the real gate (endpoint.py); Host/Origin
             # validation would only break worktree ports and tunnels.
             security_settings=TransportSecuritySettings(

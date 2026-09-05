@@ -1,9 +1,11 @@
 """End-to-end JSON-RPC over the raw-ASGI /mcp endpoint (sync tests, asyncio.run)."""
 
 import asyncio
+import base64
 import contextlib
 
 import httpx
+import orjson
 import pytest
 
 from twicc.mcp import identity
@@ -99,5 +101,139 @@ def test_initialize_list_call_roundtrip():
             assert r.status_code == 200, r.text
             payload = r.json()["result"]
             assert payload["structuredContent"]["exit_code"] == 0
+
+    asyncio.run(scenario())
+
+
+def _session_headers(session_id):
+    return {
+        **HEADERS_BASE,
+        "authorization": f"Bearer {identity.mint_session_token(session_id)}",
+    }
+
+
+@pytest.mark.parametrize("exit_code", [0, 3])
+def test_tool_wire_result_preserves_envelope(monkeypatch, exit_code):
+    from twicc.mcp import server
+
+    envelope = {"exit_code": exit_code, "result": {"items": [1]}, "error": "rejected" if exit_code else None}
+
+    async def dispatch(name, arguments, *, session_id):
+        assert name == "workspaces" and arguments == {} and session_id == "caller"
+        return envelope
+
+    monkeypatch.setattr(server, "dispatch_tool", dispatch)
+
+    async def scenario():
+        async with _client() as client:
+            response = await client.post(
+                "/mcp", json=_rpc("tools/call", {"name": "workspaces"}),
+                headers=_session_headers("caller"),
+            )
+            assert response.status_code == 200
+            result = response.json()["result"]
+            assert result["structuredContent"] == envelope
+            assert orjson.loads(result["content"][0]["text"]) == envelope
+            assert result.get("isError", False) is False
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+def test_tool_failures_remain_mcp_tool_errors(monkeypatch, unknown):
+    from twicc.mcp import server
+
+    async def dispatch(name, arguments, *, session_id):
+        if unknown:
+            raise server.UnknownToolError(name)
+        raise RuntimeError("command failed")
+
+    monkeypatch.setattr(server, "dispatch_tool", dispatch)
+
+    async def scenario():
+        async with _client() as client:
+            response = await client.post(
+                "/mcp", json=_rpc("tools/call", {"name": "workspaces", "arguments": {}}),
+                headers=_session_headers("caller"),
+            )
+            result = response.json()["result"]
+            assert result["isError"] is True
+            assert result["content"][0]["text"] == (
+                "Unknown tool: workspaces" if unknown else "command failed"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_http_calls_keep_session_identity(monkeypatch):
+    from twicc.mcp import server
+
+    async def scenario():
+        both_entered = asyncio.Event()
+        callers = []
+
+        async def dispatch(name, arguments, *, session_id):
+            callers.append(session_id)
+            if len(callers) == 2:
+                both_entered.set()
+            await asyncio.wait_for(both_entered.wait(), timeout=5)
+            return {"exit_code": 0, "result": session_id, "error": None}
+
+        monkeypatch.setattr(server, "dispatch_tool", dispatch)
+        async with _client() as client:
+            responses = await asyncio.gather(*(
+                client.post(
+                    "/mcp", json=_rpc("tools/call", {"name": "workspaces", "arguments": {}}),
+                    headers=_session_headers(sid),
+                ) for sid in ("first", "second")
+            ))
+            assert [r.json()["result"]["structuredContent"]["result"] for r in responses] == ["first", "second"]
+
+    asyncio.run(scenario())
+
+
+def test_invalid_tool_arguments_are_rejected_before_dispatch(monkeypatch):
+    from twicc.mcp import server
+
+    async def dispatch(*args, **kwargs):
+        pytest.fail("invalid arguments must not reach the command")
+
+    monkeypatch.setattr(server, "dispatch_tool", dispatch)
+
+    async def scenario():
+        async with _client() as client:
+            response = await client.post(
+                "/mcp", json=_rpc("tools/call", {"name": "create_workspace", "arguments": {"name": 123}}),
+                headers=_session_headers("caller"),
+            )
+            result = response.json()["result"]
+            assert result["isError"] is True
+            assert "Input validation error" in result["content"][0]["text"]
+
+    asyncio.run(scenario())
+
+
+def test_large_attachment_request_reaches_dispatch(monkeypatch):
+    from twicc.mcp import server
+
+    # A valid 4 MiB attachment exceeds v2's default HTTP cap once base64 encoded.
+    attachment = "data:image/png;base64," + base64.b64encode(b"x" * (4 * 1024 * 1024)).decode()
+
+    async def dispatch(name, arguments, *, session_id):
+        assert arguments["attach"] == [attachment]
+        return {"exit_code": 0, "result": None, "error": None}
+
+    monkeypatch.setattr(server, "dispatch_tool", dispatch)
+
+    async def scenario():
+        async with _client() as client:
+            response = await client.post(
+                "/mcp", json=_rpc("tools/call", {
+                    "name": "send_message",
+                    "arguments": {"session_id": "self", "prompt": "Inspect this", "attach": [attachment]},
+                }), headers=_session_headers("caller"),
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["result"]["structuredContent"]["exit_code"] == 0
 
     asyncio.run(scenario())
