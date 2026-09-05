@@ -874,7 +874,11 @@ defineExpose({
                             >
                                 <wa-icon name="circle-stop" label="Interrupt"></wa-icon>
                             </wa-button>
-                            <AppTooltip :for="`session-header-${sessionId}-interrupt-button`">Interrupt the current turn (keeps the session alive)</AppTooltip>
+                            <!-- Same v-if as the button: wa-tooltip resolves its anchor once, when it
+                                 connects, and never re-resolves. The interrupt button only appears in
+                                 ASSISTANT_TURN, after this block mounted, so an always-mounted tooltip
+                                 would stay anchorless (unlike the stop button, born with the block). -->
+                            <AppTooltip v-if="canInterruptTurn" :for="`session-header-${sessionId}-interrupt-button`">Interrupt the current turn (keeps the session alive)</AppTooltip>
 
                             <wa-button
                                 v-if="canStopProcess"
@@ -913,7 +917,7 @@ defineExpose({
                             >
                                 <wa-icon name="ban" label="Stop Agent"></wa-icon>
                             </wa-button>
-                            <AppTooltip :for="`session-header-${sessionId}-stop-agent-button`">Stop this agent</AppTooltip>
+                            <AppTooltip v-if="canStopAgent" :for="`session-header-${sessionId}-stop-agent-button`">Stop this agent</AppTooltip>
                         </div>
                     </div>
                 </template>
