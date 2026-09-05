@@ -2110,12 +2110,12 @@ async def _process_compute_message(msg: dict) -> None:
         return
 
     try:
-        await _handle_compute_done(msg["session_id"])
+        await broadcast_session_updated(msg["session_id"])
         # A subagent's compute may have folded plan-doc entries into its
-        # top-level ancestor — _handle_compute_done above skipped it (the
+        # top-level ancestor — broadcast_session_updated above skipped it (the
         # completed session is the subagent), so push the ancestor too.
         if result.folded_ancestor_id:
-            await _handle_compute_done(result.folded_ancestor_id)
+            await broadcast_session_updated(result.folded_ancestor_id)
     except Exception:
         logger.exception("Error broadcasting applied session_complete")
         state.failed_count += 1
@@ -2248,8 +2248,13 @@ async def _finalize_abandoned_run(run_id: int, provider: Provider) -> None:
             logger.error(f"Error in abandoned-run activity flush: {e}", exc_info=True)
 
 
-async def _handle_compute_done(session_id: str) -> None:
-    """Broadcast session_updated for a real, user-visible session."""
+async def broadcast_session_updated(session_id: str) -> None:
+    """Broadcast session_updated for a real, user-visible session.
+
+    Used after a compute apply, and by the Codex migration jobs that flip
+    what the UI shows for a session (``compute_version`` reset, unavailable
+    flag) without going through a compute.
+    """
     from twicc.core.models import Session, SessionType
     from twicc.core.serializers import serialize_session
 

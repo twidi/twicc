@@ -27,7 +27,7 @@ def _run_compute_message(monkeypatch, outcome: str):
         async def reject_broadcast(_session_id):
             raise AssertionError("non-applied outcomes must not broadcast")
 
-        monkeypatch.setattr(db_writer, "_handle_compute_done", reject_broadcast)
+        monkeypatch.setattr(db_writer, "broadcast_session_updated", reject_broadcast)
         try:
             await db_writer._process_compute_message({
                 "type": "session_complete",

@@ -103,6 +103,22 @@ for the user to see them; only save a copy if the user asks for it.
 """
 
 
+async def _broadcast_flagged_session(job) -> None:
+    """Push the session row after a flag job changed what the UI shows.
+
+    ``unavailable_reason`` and a reset ``compute_version`` are both read by
+    the frontend from ``session_updated`` (the unavailable notice, the
+    "being prepared" state that gates live items and triggers the reload
+    once the rebuild lands). The jobs run outside any compute, so nothing
+    else broadcasts the row.
+    """
+    if job.future.cancelled() or job.future.exception() is not None or not job.future.result():
+        return
+    from twicc.providers.db_writer import broadcast_session_updated
+
+    await broadcast_session_updated(job.session_id)
+
+
 class CodexHelpers(BaseProviderHelpers):
     """Helpers for sessions produced by the Codex CLI."""
 
@@ -889,9 +905,11 @@ class CodexHelpers(BaseProviderHelpers):
             return True
         if isinstance(job, MarkSessionUnavailableJob):
             await settle_async_job(job, _apply_mark_session_unavailable_job, "Codex session unavailable flag")
+            await _broadcast_flagged_session(job)
             return True
         if isinstance(job, MarkSessionRebuildJob):
             await settle_async_job(job, _apply_mark_session_rebuild_job, "Codex session rebuild request")
+            await _broadcast_flagged_session(job)
             return True
         if isinstance(job, SyncSessionTitlesJob):
             await settle_async_job(

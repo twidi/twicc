@@ -128,7 +128,7 @@ export class BaseProviderHelpers {
      * item dispatcher in ``SessionItem.vue`` hands off to the provider's
      * own message renderer, which expects its own native JSONL shape (e.g.
      * Claude Code reads ``data.message.content[]``, Codex reads
-     * ``data.payload.message``).
+     * ``data.payload.item.content[]``).
      *
      * Implementations return a plain object suitable for ``setParsedContent``
      * — it must include the ``syntheticKind`` marker

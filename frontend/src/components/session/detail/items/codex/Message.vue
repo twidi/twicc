@@ -17,7 +17,8 @@ import WorkingAssistantMessage from '../WorkingAssistantMessage.vue'
 const props = defineProps({
     // Parsed JSONL line. Two shapes are supported:
     //  - Real Codex line: ``{ timestamp, type: 'event_msg', payload: { type:
-    //    'user_message' | 'agent_message', message: string, ... } }``
+    //    'item_completed', item: { type: 'UserMessage' | 'AgentMessage',
+    //    content: [...] } } }``
     //  - Synthetic placeholder injected by the store (optimistic user
     //    message, or STARTING / WORKING assistant message, or live
     //    streaming text/thinking block). These carry ``syntheticKind``

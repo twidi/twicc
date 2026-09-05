@@ -368,6 +368,45 @@ def test_final_compute_apply_remaps_snapshot_and_invalidates_search(session):
     assert SNAPSHOT_ANCHOR_KEY not in share.options
 
 
+def test_flag_jobs_broadcast_the_session_row(session, monkeypatch):
+    """The UI reads both flags from ``session_updated``; nothing else pushes the row."""
+    from twicc.providers import db_writer
+    from twicc.providers.codex.helpers import CodexHelpers
+
+    broadcast: list[str] = []
+
+    async def record(session_id):
+        broadcast.append(session_id)
+
+    monkeypatch.setattr(db_writer, "broadcast_session_updated", record)
+
+    async def settle(job, _apply, _label):
+        # The apply's own DB effect is covered below; here only the settled
+        # update count matters (1 = row flagged, 0 = no such session).
+        job.future.set_result(1 if job.session_id == session.id else 0)
+
+    async def scenario():
+        helpers = CodexHelpers()
+        handled = await helpers.try_handle_async_job(
+            MarkSessionUnavailableJob(Provider.CODEX, session.id, "rollout_missing", asyncio.get_running_loop().create_future()),
+            settle,
+        )
+        assert handled
+        handled = await helpers.try_handle_async_job(
+            MarkSessionRebuildJob(Provider.CODEX, session.id, asyncio.get_running_loop().create_future()),
+            settle,
+        )
+        assert handled
+        # A row that no longer exists is not broadcast.
+        await helpers.try_handle_async_job(
+            MarkSessionRebuildJob(Provider.CODEX, "gone", asyncio.get_running_loop().create_future()),
+            settle,
+        )
+
+    asyncio.run(scenario())
+    assert broadcast == [session.id, session.id]
+
+
 def test_unavailable_and_rebuild_jobs_touch_only_their_column(session):
     assert _apply_mark_session_unavailable_job(
         MarkSessionUnavailableJob(Provider.CODEX, session.id, "codex_migration_failed:invalid_session_metadata", _future()),

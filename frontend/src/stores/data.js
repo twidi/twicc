@@ -3226,7 +3226,7 @@ export const useDataStore = defineStore('data', {
             // The parsed-content shape is provider-specific: each renderer in
             // ``SessionItem.vue`` expects its own native JSONL layout (Claude
             // Code reads ``message.content[]``, Codex reads
-            // ``payload.message``). The provider's helpers own that mapping.
+            // ``payload.item.content[]``). The provider's helpers own that mapping.
             const provider = this.getSession(sessionId)?.provider
             const helpers = getProviderHelpers(provider)
             setParsedContent(

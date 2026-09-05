@@ -91,11 +91,11 @@ const fileTabRoots = computed(() =>
  * matching tool_result row reaches the store.
  *
  * Direct hit through the ``toolStates`` index — Codex creates two
- * ``ToolResultLink`` rows per tool_use (event_msg.patch_apply_end +
+ * ``ToolResultLink`` rows per tool_use (the canonical ``FileChange`` item +
  * custom_tool_call_output) at line numbers that aren't necessarily
  * adjacent, so we walk every line number the API surfaces in
- * ``toolResultLineNums`` and return the first ``event_msg`` whose
- * payload is a ``FileChange`` for our call. Reactive both on
+ * ``toolResultLineNums`` and return the first line carrying a
+ * ``FileChange`` item for our call. Reactive both on
  * item arrival (new line content) and on ``toolStates`` update (new
  * link recorded).
  */
