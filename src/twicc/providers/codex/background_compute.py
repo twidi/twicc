@@ -109,6 +109,8 @@ _EXTERNAL_WRITER_RETRY_SECONDS = 30.0
 _STATUS_QUEUE_POLL_SECONDS = 0.05
 # A progress summary line is logged every N outcomes or every N seconds,
 # whichever comes first, while sessions are being processed.
+# Final outcomes that count as "done" in the user-facing progress line.
+_GOOD_OUTCOMES = frozenset({"migrated", "replaced", "compute"})
 _SUMMARY_EVERY_OUTCOMES = 50
 _SUMMARY_EVERY_SECONDS = 30.0
 
@@ -219,6 +221,9 @@ class CodexComputeCoordinator:
         self.in_flight: str | None = None
         self.initial_ids: set[str] = set()
         self.initial_classified: set[str] = set()
+        # Initial top-level sessions currently deferred, failed or unavailable
+        # (the UI line's "set aside"); a later success removes them again.
+        self._set_aside: set[str] = set()
         self._initial_total = 0
         self._pumps: list[asyncio.Task] = []
         self._status_pump: asyncio.Task | None = None
@@ -484,8 +489,8 @@ class CodexComputeCoordinator:
     # Bookkeeping
     # ------------------------------------------------------------------
 
-    def _detail(self) -> str:
-        """One-line tally for the UI's startup callout and the log summaries."""
+    def _tally(self) -> str:
+        """Developer-facing one-line tally for the log summaries."""
 
         parts = [
             (self.stats["migrated"], "migrated"),
@@ -499,6 +504,23 @@ class CodexComputeCoordinator:
         shown = [f"{count} {label}" for count, label in parts if count]
         return "Codex rollouts: " + (", ".join(shown) if shown else "nothing to migrate")
 
+    def _detail(self) -> str | None:
+        """User-facing line under the startup progress bar.
+
+        Counts top-level sessions like the bar above it: ``done`` is every
+        initial session that ended well (migrated, rebuilt or recomputed),
+        ``set aside`` the ones waiting for a running agent, failed or
+        unavailable. ``None`` (line hidden) when there was nothing to do.
+        """
+
+        if not self._initial_total:
+            return None
+        done = len(self.initial_classified - self._set_aside)
+        line = f"Migrating Codex legacy sessions ({done} / {self._initial_total}"
+        if self._set_aside:
+            line += f", {len(self._set_aside)} set aside"
+        return line + ")"
+
     def _log_summary(self, *, force: bool = False, label: str = "Codex rollout migration progress") -> None:
         now = time.monotonic()
         due = (
@@ -511,7 +533,7 @@ class CodexComputeCoordinator:
         remaining = self._initial_total - len(self.initial_classified)
         logger.info(
             "%s: %s; %d of %d initial session(s) remaining, %.0fs elapsed",
-            label, self._detail(), max(remaining, 0), self._initial_total, now - self._pass_started_at,
+            label, self._tally(), max(remaining, 0), self._initial_total, now - self._pass_started_at,
         )
         self._outcomes_since_summary = 0
         self._last_summary_at = now
@@ -521,6 +543,11 @@ class CodexComputeCoordinator:
 
         if outcome is not None:
             self.stats[outcome] += 1
+        if session_id in self.initial_ids:
+            if outcome in _GOOD_OUTCOMES:
+                self._set_aside.discard(session_id)
+            else:
+                self._set_aside.add(session_id)
         self._outcomes_since_summary += 1
         started = self._started_at.pop(session_id, None)
         elapsed = f" in {time.monotonic() - started:.1f}s" if started is not None else ""

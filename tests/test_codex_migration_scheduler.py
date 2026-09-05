@@ -494,7 +494,8 @@ async def _wait_until(predicate, timeout=1):
 
 def test_outcome_tally_feeds_the_ui_detail_line(monkeypatch):
     coordinator = _coordinator()
-    assert coordinator._detail() == "Codex rollouts: nothing to migrate"
+    assert coordinator._tally() == "Codex rollouts: nothing to migrate"
+    assert coordinator._detail() is None
 
     coordinator._prepared["a"] = PreparedCandidate("a", None, True, kind="migrated", registered=True)
     coordinator._prepared["b"] = PreparedCandidate("b", None, True, kind="replaced")
@@ -514,7 +515,7 @@ def test_outcome_tally_feeds_the_ui_detail_line(monkeypatch):
     asyncio.run(coordinator._record_failure(FailedCandidate("d", "Codex migration", "boom", "rollout_missing")))
     asyncio.run(coordinator._record_failure(FailedCandidate("e", "history read", "boom")))
 
-    assert coordinator._detail() == (
+    assert coordinator._tally() == (
         "Codex rollouts: 1 migrated, 1 registered with Codex first, 1 rebuilt after an external rewrite, "
         "1 waiting for a running agent, 1 failed, 1 unavailable"
     )
@@ -550,6 +551,39 @@ def test_final_summary_waits_for_the_in_flight_subagent(monkeypatch):
     asyncio.run(coordinator._handle_applied(ComputeApplied("child", "applied")))
     [summary] = [m for m in messages if "initial pass complete" in m]
     assert "2 migrated, 1 registered with Codex first" in summary
+
+
+def test_ui_detail_line_counts_top_level_sessions_done_and_set_aside(monkeypatch):
+    """The user-facing line: done / total like the bar, plus what is set aside."""
+
+    coordinator = _coordinator()
+    coordinator.initial_ids = {"a", "b", "c"}
+    coordinator._initial_total = 3
+    monkeypatch.setattr(background_compute, "broadcast_startup_progress", lambda *_a, **_k: _async_value(None))
+    monkeypatch.setattr(
+        background_compute, "logger",
+        SimpleNamespace(info=lambda *_a, **_k: None, error=lambda *_a, **_k: None),
+    )
+
+    async def scenario():
+        assert coordinator._detail() == "Migrating Codex legacy sessions (0 / 3)"
+
+        coordinator._record_outcome("a", "migrated")
+        await coordinator._classify_initial("a")
+        # A subagent's outcome never moves the top-level counters.
+        coordinator._record_outcome("sub", "migrated")
+        assert coordinator._detail() == "Migrating Codex legacy sessions (1 / 3)"
+
+        coordinator._record_outcome("b", None, log="deferred")
+        await coordinator._classify_initial("b")
+        await coordinator._record_failure(FailedCandidate("c", "Codex migration", "boom", "rollout_missing"))
+        assert coordinator._detail() == "Migrating Codex legacy sessions (1 / 3, 2 set aside)"
+
+        # The deferred session comes back and succeeds.
+        coordinator._record_outcome("b", "migrated")
+        assert coordinator._detail() == "Migrating Codex legacy sessions (2 / 3, 1 set aside)"
+
+    asyncio.run(scenario())
 
 
 def test_startup_progress_carries_the_detail_line():
