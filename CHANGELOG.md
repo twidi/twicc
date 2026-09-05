@@ -6,10 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Added
-
-- **External MCP access** — Connect remote MCP clients through a dedicated HTTPS hostname with OAuth and PKCE. Approve requests from any connected TwiCC device, name and revoke connections in Settings, and identify externally sent messages. Internal Claude and Codex agents keep automatic local MCP access.
-
 ### Fixed
 
 - **Connection loss** — Sessions in the background no longer miss messages written while the connection was down.

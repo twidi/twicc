@@ -24,6 +24,7 @@ import { SESSION_TIME_FORMAT } from '../../constants'
 import { formatDate } from '../../utils/date'
 import { toast } from '../../composables/useToast'
 import McpConnectionDialog from './McpConnectionDialog.vue'
+import HelpFeatureLink from '../help/HelpFeatureLink.vue'
 
 const McpToast = defineAsyncComponent(() => import('./McpToast.vue'))
 
@@ -175,6 +176,11 @@ onBeforeUnmount(() => {
         style="--width: min(760px, calc(100vw - 2rem))"
         @wa-hide.self="listOpen = false"
     >
+        <div slot="label" class="mcp-dialog-title">
+            <span>MCP connections</span>
+            <HelpFeatureLink help-key="external-mcp" label="What is external MCP?" />
+        </div>
+
         <wa-callout v-if="disabledReason" variant="warning" size="small" class="mcp-block">
             {{ disabledReason }}
         </wa-callout>
@@ -258,6 +264,13 @@ onBeforeUnmount(() => {
    siblings, so the separation belongs to the callout, not to whatever block
    happens to precede it. */
 wa-dialog > wa-callout { margin-block: var(--wa-space-s); }
+
+.mcp-dialog-title {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--wa-space-3xs);
+}
 
 .mcp-block { margin-bottom: var(--wa-space-m); }
 .mcp-own-address {

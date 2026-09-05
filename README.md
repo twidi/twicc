@@ -179,6 +179,12 @@ The same surface is also exposed as **native MCP tools**: TwiCC runs a built-in 
 
 See [`SKILLS-AND-CLI.md`](SKILLS-AND-CLI.md) for the full reference, or run `twicc --help`.
 
+### External MCP access
+
+The same MCP tools can also be handed to an MCP client **outside** TwiCC — a desktop assistant, a hosted agent — so it can inspect your projects, search your history, and create or drive sessions. You approve every connection: the connecting browser shows a verification code, TwiCC notifies your connected devices, and you type that code to authorize it. Connections are listed, named, and revoked one by one in **Settings → MCP**. TwiCC stays single-user — approving a client does not create a second account.
+
+Like sharing, external MCP is served on a **dedicated hostname**, separate from the app you log into, and protected by OAuth with PKCE. That host serves only MCP and its OAuth endpoints; the TwiCC interface is never reachable there. Leave it empty, or turn external access off, to keep TwiCC's MCP server internal — Claude Code and Codex sessions running inside TwiCC keep their automatic local access either way.
+
 ### HTTP RPC API
 
 The same CLI is also exposed over HTTP under `/rpc/`, so one TwiCC instance — or any HTTP client — can drive another over the network. Every command is auto-generated as a route from the CLI itself, so there is no separate API to keep in sync.

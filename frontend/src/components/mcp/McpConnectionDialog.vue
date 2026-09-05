@@ -20,6 +20,7 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useMcpStore } from '../../stores/mcp'
+import HelpFeatureLink from '../help/HelpFeatureLink.vue'
 
 const props = defineProps({ entry: { type: Object, required: true }, review: Boolean })
 const emit = defineEmits(['close'])
@@ -69,6 +70,11 @@ async function act(action) {
         @wa-after-show.self="focus"
         @wa-after-hide.self="emit('close')"
     >
+        <div slot="label" class="mcp-dialog-title">
+            <span>{{ title }}</span>
+            <HelpFeatureLink help-key="external-mcp" label="What is external MCP?" />
+        </div>
+
         <form :id="formId" class="mcp-detail" @submit.prevent="act(review ? 'approve' : 'rename')">
             <div class="mcp-detail__client">{{ entry.client_name || 'External MCP client' }}</div>
 
@@ -133,6 +139,13 @@ async function act(action) {
 </template>
 
 <style scoped>
+.mcp-dialog-title {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--wa-space-3xs);
+}
+
 .mcp-detail {
     display: grid;
     gap: var(--wa-space-m);
