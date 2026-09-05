@@ -166,6 +166,27 @@ def _merge_and_write(patch: dict, base_version: int | None) -> dict:
                     field_error.code,
                     _ORIGIN_ERROR_MESSAGES.get(field_error.code, _ORIGIN_STRUCTURAL_MESSAGE),
                 ))
+        if set(patch) & {"mcpBaseUrl", "externalMcpEnabled", "publicBaseUrl", "shareBaseUrl", "peerBaseUrl"}:
+            merged_mcp = {**existing_settings, **normalized_patch}
+            raw_mcp = merged_mcp.get("mcpBaseUrl", "")
+            parsed_mcp = normalize_public_origin(raw_mcp)
+            if ("externalMcpEnabled" in patch and type(patch["externalMcpEnabled"]) is not bool):
+                errors.append(SettingsDropError("externalMcpEnabled", "invalid_type", "Expected a boolean."))
+            if "mcpBaseUrl" in patch:
+                if (
+                    not isinstance(raw_mcp, str) or parsed_mcp.error
+                    or (parsed_mcp.value and parsed_mcp.scheme != "https")
+                    or parsed_mcp.hostname in ("localhost", "127.0.0.1", "::1")
+                ):
+                    errors.append(SettingsDropError("mcpBaseUrl", "invalid_origin", "Enter a dedicated HTTPS origin."))
+                else:
+                    normalized_patch["mcpBaseUrl"] = parsed_mcp.value
+            if merged_mcp.get("externalMcpEnabled") and not parsed_mcp.value:
+                errors.append(SettingsDropError("mcpBaseUrl", "required", "A dedicated MCP origin is required."))
+            for key in ("publicBaseUrl", "shareBaseUrl", "peerBaseUrl"):
+                other = normalize_public_origin(merged_mcp.get(key, ""))
+                if parsed_mcp.value and other.value and other.hostname == parsed_mcp.hostname:
+                    errors.append(SettingsDropError("mcpBaseUrl", "origin_conflict", "MCP must use a separate hostname."))
         if errors:
             clean, version = prepare_settings_for_client(existing_settings)
             return {
@@ -349,7 +370,18 @@ async def update_synced_settings(
     When ``broadcast=True`` and the merge is accepted, the orchestrator
     transitions run and ``synced_settings_updated`` is broadcast to all clients.
     """
+    previous_mcp = read_synced_settings()
     result = await sync_to_async(_merge_and_write)(patch, base_version)
+    if result["status"] == "accepted" and set(patch) & {"mcpBaseUrl", "externalMcpEnabled"}:
+        current_mcp = read_synced_settings()
+        if (
+            (previous_mcp.get("mcpBaseUrl") and previous_mcp.get("mcpBaseUrl") != current_mcp.get("mcpBaseUrl"))
+            or (previous_mcp.get("externalMcpEnabled") and not current_mcp.get("externalMcpEnabled"))
+        ):
+            from twicc.mcp.oauth.storage import revoke_all, write, changed
+            await write(revoke_all)
+            if broadcast:
+                await changed()
     if result["status"] == "accepted" and "peerBaseUrl" in patch:
         from twicc.core.services.peer_mutation import invalidate_peers_for_local_origin
         from twicc.core.services.public_origin import usable_public_origin

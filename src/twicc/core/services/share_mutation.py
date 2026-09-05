@@ -389,6 +389,11 @@ async def _resolve_caller_session(payload: dict):
     itself the first ORM access)."""
     from twicc.core.models import Session
 
+    from twicc.mcp.identity import external_caller
+    if external_caller.get() is not None:
+        # Explicit owner-granted full access, without a fabricated internal session.
+        # The MCP dispatcher records the connection and share operation durably.
+        return None
     cid = payload.get("caller_session_id")
     if not isinstance(cid, str):
         return None

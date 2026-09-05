@@ -1,6 +1,6 @@
 """The lowlevel MCP server: tool listing + in-process command dispatch.
 
-One ``Server`` instance serves every agent session; per-call identity comes
+The internal ``Server`` instance serves every agent session; per-call identity comes
 from the ``Authorization`` header of the underlying HTTP request (available
 via the handler's ``ctx.request`` on the streamable-HTTP transport) and is
 bound into two ContextVars before the command runs in a worker thread:
@@ -73,6 +73,20 @@ async def dispatch_tool(name: str, arguments: dict, *, session_id: str | None) -
     spec = tools_by_name().get(name)
     if spec is None:
         raise UnknownToolError(name)
+    from twicc.mcp.identity import external_caller
+
+    external = external_caller.get()
+    if external is not None:
+        from twicc.cli._remote import HOST_BOUND_PARAMS
+
+        if name == "whoami":
+            raise UnknownToolError(name)
+        if name == "topology" and not arguments.get("session_id"):
+            raise ValueError("External MCP requires an explicit session_id for topology.")
+        for key, value in arguments.items():
+            values = value if isinstance(value, list) else [value]
+            if key in HOST_BOUND_PARAMS and any(v in ("self", "parent") for v in values):
+                raise ValueError(f"External MCP requires explicit IDs for {key}.")
     argv = render_argv(spec, arguments)
     loop = asyncio.get_running_loop()
     tok_sid = forced_session_id.set(session_id)
@@ -82,6 +96,26 @@ async def dispatch_tool(name: str, arguments: dict, *, session_id: str | None) -
     finally:
         transport.backend_loop.reset(tok_loop)
         forced_session_id.reset(tok_sid)
+    if external is not None:
+        from twicc.core.models import McpOperation
+        from twicc.mcp.oauth.storage import write
+
+        targets = {
+            k: v
+            for k, v in arguments.items()
+            if k in {"session_id", "session_ids", "project", "project_id", "bookmark_id", "share_id", "peer"}
+        }
+        if isinstance(result.result, dict):
+            targets["result"] = {
+                k: v
+                for k, v in result.result.items()
+                if k in {"id", "session_id", "project_id", "share_id", "bookmark_id", "message_id"}
+            }
+        await write(
+            lambda: McpOperation.objects.create(
+                connection_id=external.connection_id, name=external.name, tool=name, targets=targets
+            )
+        )
     envelope = {"exit_code": result.exit_code, "result": result.result, "error": result.error}
     # Normalize to plain JSON-native types, exactly as the CLI (``_output.emit_json``)
     # and the ``/rpc/`` view (``views._json``) do. Command results carry orjson-native
@@ -103,13 +137,15 @@ def _session_id_from_request(ctx: ServerRequestContext) -> str | None:
 
 
 async def _list_tools(
-    ctx: ServerRequestContext, params: mcp_types.PaginatedRequestParams | None,
+    ctx: ServerRequestContext,
+    params: mcp_types.PaginatedRequestParams | None,
 ) -> mcp_types.ListToolsResult:
     return mcp_types.ListToolsResult(tools=iter_mcp_tools())
 
 
 async def _call_tool(
-    ctx: ServerRequestContext, params: mcp_types.CallToolRequestParams,
+    ctx: ServerRequestContext,
+    params: mcp_types.CallToolRequestParams,
 ) -> mcp_types.CallToolResult:
     name, arguments = params.name, params.arguments or {}
     session_id = _session_id_from_request(ctx)
@@ -147,7 +183,10 @@ async def _call_tool(
 
 
 _server: Server = Server(
-    "twicc", instructions=INSTRUCTIONS, on_list_tools=_list_tools, on_call_tool=_call_tool,
+    "twicc",
+    instructions=INSTRUCTIONS,
+    on_list_tools=_list_tools,
+    on_call_tool=_call_tool,
 )
 
 
@@ -177,3 +216,41 @@ def get_session_manager() -> StreamableHTTPSessionManager:
             ),
         )
     return _session_manager
+
+
+EXTERNAL_INSTRUCTIONS = """TwiCC external MCP: tools run on the TwiCC host.
+Use explicit session IDs; self, parent, and whoami are unavailable.
+Paths refer to the server filesystem. Attachments can use base64 data URIs.
+Results contain exit_code, result, and error. Use info for current models and settings.
+"""
+
+
+async def _external_list(ctx, params):
+    tools = []
+    for tool in iter_mcp_tools():
+        if tool.name == "whoami":
+            continue
+        item = tool.model_copy(deep=True)
+        item.description = (item.description or "") + "\nExternal MCP: use explicit IDs. No self or parent references."
+        item.meta = {"securitySchemes": [{"type": "oauth2", "scopes": ["twicc:full"]}]}
+        tools.append(item)
+    return mcp_types.ListToolsResult(tools=tools)
+
+
+_external_server = Server(
+    "twicc", instructions=EXTERNAL_INSTRUCTIONS, on_list_tools=_external_list, on_call_tool=_call_tool
+)
+_external_manager = None
+
+
+def get_external_session_manager():
+    global _external_manager
+    if _external_manager is None:
+        _external_manager = StreamableHTTPSessionManager(
+            app=_external_server,
+            json_response=True,
+            stateless=True,
+            max_request_body_size=MAX_REQUEST_BODY_BYTES,
+            security_settings=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        )
+    return _external_manager

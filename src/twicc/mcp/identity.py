@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import hmac
 import logging
+from contextvars import ContextVar
+from typing import NamedTuple
 
 from django.utils.crypto import salted_hmac
 
@@ -64,3 +66,11 @@ def register_draft_alias(draft_id: str, canonical_id: str) -> None:
     if draft_id != canonical_id:
         _draft_aliases[draft_id] = canonical_id
         logger.info("MCP identity: draft %s aliased to %s", draft_id, canonical_id)
+
+
+class ExternalCaller(NamedTuple):
+    connection_id: str
+    name: str
+
+
+external_caller: ContextVar[ExternalCaller | None] = ContextVar("mcp_external_caller", default=None)

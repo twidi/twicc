@@ -14,7 +14,10 @@ from .share import views_assets as share_views_assets
 from .peer import inbound_views as peer_inbound_views
 from .peer import owner_views as peer_owner_views
 
+from .mcp.owner_views import management as mcp_management
+
 urlpatterns = [
+    path("api/mcp/", mcp_management),
     # Auth endpoints (always accessible, no auth required)
     path("api/auth/check/", auth_views.auth_check),
     path("api/auth/login/", auth_views.login),

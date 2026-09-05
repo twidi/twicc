@@ -1,17 +1,8 @@
-"""Raw-ASGI entry for /mcp: auth gate + streamable-HTTP session manager.
+"""Raw-ASGI MCP entry with separate internal and external authentication.
 
-Mounted by twicc.asgi *in front of* Django (no middleware, no urls.py, no
-SPA-catch-all involvement). Authentication is mandatory and header-based:
-
-- ``Authorization: Bearer twicc_mcp_<sid>.<sig>`` — a per-session token
-  minted at agent wiring time (twicc.mcp.identity); grants full access and
-  binds caller identity (whoami / self / parent).
-- ``Authorization: Bearer twicc_pat_...`` — a user-created API token
-  (``twicc token create``); full access, no session identity.
-
-Anything else → 401. Additionally, remote connections go through the same
-``scope_remote_access_blocked`` gate as the WebSocket consumers (an
-unprotected instance refuses non-loopback callers outright).
+The origin gate marks requests from the dedicated public MCP host. Those
+requests require OAuth. Direct local requests retain automatic session-token
+or API-token access. Application cookies never authenticate MCP calls.
 """
 
 from __future__ import annotations
@@ -51,11 +42,13 @@ def _authorized(scope) -> bool:
 
 async def _plain_response(send, status: int, body: dict, *, headers=()) -> None:
     payload = orjson.dumps(body)
-    await send({
-        "type": "http.response.start",
-        "status": status,
-        "headers": [(b"content-type", b"application/json"), *headers],
-    })
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", b"application/json"), *headers],
+        }
+    )
     await send({"type": "http.response.body", "body": payload})
 
 
@@ -66,6 +59,59 @@ async def handle_mcp(scope, receive, send) -> None:
     if not mcp_enabled() or not _started:
         await _plain_response(send, 503, {"error": "MCP server not available."})
         return
+    if scope.get("twicc_external_mcp"):
+        from twicc.mcp.oauth.provider import provider
+        from twicc.mcp.oauth.config import base_url, RESOURCE_METADATA
+        from twicc.mcp.identity import external_caller, ExternalCaller
+        from twicc.core.models import McpConnection
+        from starlette.responses import Response
+
+        if scope.get("method") == "OPTIONS":
+            await Response(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+                    "Access-Control-Allow-Headers": "Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id",
+                },
+            )(scope, receive, send)
+            return
+
+        async def cors_send(message):
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", []).extend(
+                    [
+                        (b"access-control-allow-origin", b"*"),
+                        (b"access-control-expose-headers", b"WWW-Authenticate, MCP-Session-Id"),
+                    ]
+                )
+            await send(message)
+
+        access = await provider.load_access_token(_bearer(scope))
+        if access is None:
+            await _plain_response(
+                cors_send,
+                401,
+                {"error": "OAuth authorization required."},
+                headers=[
+                    (
+                        b"www-authenticate",
+                        (
+                            'Bearer resource_metadata="' + base_url() + RESOURCE_METADATA + '", scope="twicc:full"'
+                        ).encode(),
+                    ),
+                ],
+            )
+            return
+        connection = await McpConnection.objects.aget(pk=access.subject)
+        token = external_caller.set(ExternalCaller(connection.id, connection.name))
+        try:
+            from twicc.mcp.server import get_external_session_manager
+
+            await get_external_session_manager().handle_request(scope, receive, cors_send)
+        finally:
+            external_caller.reset(token)
+        return
     if scope_remote_access_blocked(scope):
         await _plain_response(send, 403, {"error": "Remote access is disabled."})
         return
@@ -73,7 +119,9 @@ async def handle_mcp(scope, receive, send) -> None:
     # matching the /rpc/ auth middleware's sync_to_async convention.
     if not await asyncio.to_thread(_authorized, scope):
         await _plain_response(
-            send, 401, {"error": "A TwiCC MCP session token or API token is required."},
+            send,
+            401,
+            {"error": "A TwiCC MCP session token or API token is required."},
             headers=[(b"www-authenticate", b"Bearer")],
         )
         return
@@ -87,7 +135,9 @@ async def mcp_lifespan():
     """Run the session manager's task group (call once, from run.py or tests)."""
     global _started
     manager = get_session_manager()
-    async with manager.run():
+    from twicc.mcp.server import get_external_session_manager
+
+    async with manager.run(), get_external_session_manager().run():
         _started = True
         logger.info("MCP server ready at /mcp")
         try:
@@ -102,4 +152,14 @@ async def start_mcp_task(shutdown_event) -> None:
         logger.info("MCP server disabled (TWICC_NO_MCP)")
         return
     async with mcp_lifespan():
-        await shutdown_event.wait()
+        while not shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=60)
+            except TimeoutError:
+                from twicc.mcp.oauth.storage import cleanup, changed
+
+                try:
+                    if await cleanup():
+                        await changed()
+                except Exception:
+                    logger.exception("MCP OAuth cleanup failed")

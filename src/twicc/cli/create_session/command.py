@@ -466,6 +466,10 @@ def create_session_cmd(
     # auto-create the Project from inside the main process — that's where
     # the WS broadcasts of ``project_added`` and ``workspaces_updated``
     # need to originate to reach connected UI clients live.
+    from twicc.mcp.identity import external_caller
+    if external_caller.get() is not None:
+        from twicc.cli._drop_request.sender_header import prefix_sender_header
+        text = prefix_sender_header(text, None, recipient_id="", recipient_spawned_by_id=None)
     payload = {
         "project_id": resolved_project.project_id,
         "directory": resolved_project.directory,

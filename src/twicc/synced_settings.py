@@ -119,6 +119,8 @@ _GENERIC_SYNCED_SETTINGS_DEFAULTS: dict = {
     # outbound handshake can be sent. Unlike shareBaseUrl it MAY be the
     # working origin — /peer/ is a same-origin carve-out, not a dedicated host.
     "peerBaseUrl": "",
+    "mcpBaseUrl": "",
+    "externalMcpEnabled": False,
     # Display name sent to peers in handshakes (requests and accepts) so the
     # other user sees WHO is asking, not just an URL. Empty = fall back to the
     # hostname of peerBaseUrl. A hint on the other side, never authoritative.

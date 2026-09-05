@@ -130,6 +130,25 @@ class PublicOriginGate:
         except Exception:
             logger.exception("Public-origin routing settings are unavailable")
             return await _reject_request(stype, send)
+        # MCP owns a dedicated hostname, including when disabled or invalid.
+        from twicc.mcp.oauth.config import base_url, protocol_path
+        from twicc.core.services.origin_policy import recognize_authority
+        from twicc.auth.local_access import scope_is_local
+        mcp_host = recognize_authority(snapshot.settings.get("mcpBaseUrl", ""))
+        if (mcp_host and authority.hostname == mcp_host.hostname
+                and authority.authority != policy.external_authority):
+            if stype != "http" or not base_url() or authority.authority != mcp_host.authority:
+                return await _reject_request(stype, send)
+            if path in ("/mcp", "/mcp/"):
+                from twicc.mcp.endpoint import handle_mcp
+                return await handle_mcp({**scope, "twicc_external_mcp": True}, receive, send)
+            from twicc.mcp.oauth.routes import application as oauth_application
+            return await oauth_application(scope, receive, send)
+        if protocol_path(path):
+            # Keep the agents' direct loopback route. A proxy is not a local caller.
+            if (path not in ("/mcp", "/mcp/") or stype != "http" or not scope_is_local(scope)
+                    or authority.hostname not in ("127.0.0.1", "localhost", "::1")):
+                return await _reject_request(stype, send)
         surface = classify_request(policy, authority, path, stype)
         if surface == "share_surface":
             return await self.share_only_app(scope, receive, send)

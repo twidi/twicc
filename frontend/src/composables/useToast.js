@@ -152,6 +152,7 @@ function custom(componentOrOptions, options = {}) {
         title: opts.title,
         props: {
             custom: true,
+            persistent: opts.persistent === true,
             ...(component ? { content: markRaw(component), contentProps: opts.props || {} } : {}),
             ...(opts.html ? { html: opts.html } : {}),
             ...(opts.style ? { style: opts.style } : {}),

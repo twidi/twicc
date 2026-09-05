@@ -14,6 +14,7 @@ import ProviderAuthToastContent from './components/app/ProviderAuthToastContent.
 import { getRegisteredProviders, getProviderHelpers } from './providers'
 import { reconcileProviderStatusToasts } from './providers/serviceStatusToast'
 import { useProvidersStatusStore } from './stores/providersStatus'
+import McpManager from './components/mcp/McpManager.vue'
 import ConnectionIndicator from './components/app/ConnectionIndicator.vue'
 import CustomNotification from './components/app/CustomNotification.vue'
 import CommandPalette from './components/app/CommandPalette.vue'
@@ -829,6 +830,7 @@ const toastTheme = computed(() => {
          Our specific drop handlers in SessionItemsList call preventDefault themselves;
          this catches any drops that miss those zones. -->
     <div class="app-container" @dragover.prevent @drop.prevent>
+        <McpManager />
         <router-view />
     </div>
 

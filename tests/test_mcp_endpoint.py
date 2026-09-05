@@ -17,8 +17,10 @@ def _fresh_session_manager(monkeypatch):
     """The streamable-HTTP session manager's ``.run()`` is single-shot per
     instance; drop the process-wide singleton so each test starts a fresh one."""
     monkeypatch.setattr("twicc.mcp.server._session_manager", None)
+    monkeypatch.setattr("twicc.mcp.server._external_manager", None)
     yield
     monkeypatch.setattr("twicc.mcp.server._session_manager", None)
+    monkeypatch.setattr("twicc.mcp.server._external_manager", None)
 
 
 HEADERS_BASE = {

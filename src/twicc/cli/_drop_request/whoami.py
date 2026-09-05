@@ -67,6 +67,9 @@ def resolve_current_session():
     from twicc.agent.states import AgentState
     from twicc.core.models import ProcessRun, Session
 
+    from twicc.mcp.identity import external_caller
+    if external_caller.get() is not None:
+        return None
     forced = forced_session_id.get()
     if forced is not None:
         return Session.objects.filter(pk=forced).first()

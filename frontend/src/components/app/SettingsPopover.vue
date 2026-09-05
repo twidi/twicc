@@ -1,4 +1,5 @@
 <script setup>
+import McpSettings from '../mcp/McpSettings.vue'
 // SettingsPopover.vue - Settings button with popover panel
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -122,6 +123,7 @@ const sections = computed(() => [
     { id: 'terminal',      label: 'Terminal' },
     { id: 'sharing',       label: 'Sharing', synced: true },
     { id: 'usage',         label: 'Providers quotas/usage', navLabel: 'Usage' },
+    { id: 'mcp', label: 'MCP', synced: true },
     { id: 'peers',         label: 'Peers', synced: true, badge: peersStore.inboxCount },
 ])
 
@@ -1513,6 +1515,7 @@ function onChangelogClose() {
                 <!-- Notifications Section -->
                 <NotificationSettings v-if="activeSection === 'notifications'" ref="notificationSettingsRef" @go-to-public-base-url="goToPublicBaseUrl" />
 
+                <McpSettings v-if="activeSection === 'mcp'" />
                 <!-- Sharing Section -->
                 <section v-if="activeSection === 'sharing'" class="settings-section">
                     <h3 class="settings-section-title">Sharing</h3>

@@ -1,7 +1,7 @@
 # External MCP access
 
 Date: 2026-09-05
-Status: Design for review. Implementation is not part of this change.
+Status: Implemented in this worktree. Live cloud-client verification remains pending.
 
 ## 1. Purpose and decisions
 
@@ -325,3 +325,25 @@ Implementation creates migrations; the owner applies them through the normal dev
 
 External documentation was consulted on 2026-09-05.
 Recheck client-specific registration requirements against the implementation's pinned SDK before coding.
+
+
+## 12. Implementation notes
+
+The models use explicit prefixes: `McpConnection`, `McpOperation`,
+`McpOAuthClient`, `McpOAuthRequest`, and `McpOAuthCredential`.
+`McpOperation` records external operation provenance without adding an internal Session.
+
+The integration uses the SDK AuthorizationHandler and TokenHandler, including its PKCE validation.
+TwiCC adds hashed client authentication, atomic credential consumption, resource validation,
+CIMD retrieval with DNS pinning, durable owner consent, and dedicated routing.
+CIMD supports public clients with PKCE. DCR supports public clients and Basic/post client secrets.
+No client-specific adapter or Django authentication provider is introduced.
+
+The tunnel must target the backend port, preserve Host and forwarding information,
+and omit any tunnel-provider login. Do not point the dedicated hostname at Vite.
+The Settings MCP section supplies the endpoint URL and connection manager.
+
+Local verification covers 159 Python tests and four MCP store tests.
+The SPA production build also passes using the already installed dependencies in an isolated temporary copy.
+No dependencies were installed, no live database migration was applied, and no development server was restarted.
+Cloud accounts and a live dedicated tunnel were not used. Actual ChatGPT/Claude connection tests remain pending.

@@ -78,6 +78,12 @@ def prefix_sender_header(
     caller, or on a self-send (a session messaging itself needs no
     attribution).
     """
+    from twicc.mcp.identity import external_caller
+    external = external_caller.get()
+    if external is not None:
+        name = inline_md(external.name)
+        header = f":: message via {name or 'external MCP'}"
+        return f"{header}\n\n{text}" if text else header
     if caller is None or caller.id == recipient_id:
         return text
 
@@ -110,4 +116,4 @@ def has_sender_header(text: str) -> bool:
     Two shapes are deliberately NOT covered, because they carry no header: a
     session messaging itself, and the initial prompt of a spawned session.
     """
-    return text.lstrip().startswith(SENDER_HEADER_PREFIX)
+    return text.lstrip().startswith((SENDER_HEADER_PREFIX, ":: message via "))

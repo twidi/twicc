@@ -19,6 +19,9 @@ def _redacted_kinds(current: dict) -> set[str]:
     from twicc.cli._drop_request.whoami import resolve_current_session
     from twicc.core.services.share_agent_gate import SETTING_KEYS
 
+    from twicc.mcp.identity import external_caller
+    if external_caller.get() is not None:
+        return set()  # The external connection has an explicit twicc:full grant.
     if resolve_current_session() is None:
         return set()
     return {kind for kind, key in SETTING_KEYS.items() if not current.get(key, False)}

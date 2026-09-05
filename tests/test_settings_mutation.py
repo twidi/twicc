@@ -465,3 +465,29 @@ def test_update_from_payload_returns_origin_relationship_errors(temp_settings):
         ("shareBaseUrl", "origin_conflict_share_external_hostname"),
         ("publicBaseUrl", "origin_conflict_share_external_hostname"),
     ]
+
+
+def test_mcp_origin_requires_https_and_dedicated_hostname(temp_settings):
+    assert _update({"publicBaseUrl": "https://app.example.com"}).status == "accepted"
+    for origin in ("http://mcp.example.com", "https://app.example.com", "https://localhost", "https://mcp.example.com/path"):
+        assert _update({"mcpBaseUrl": origin, "externalMcpEnabled": True}).status == "rejected"
+    assert _update({"mcpBaseUrl": "https://mcp.example.com", "externalMcpEnabled": True}).status == "accepted"
+    assert _update({"peerBaseUrl": "https://mcp.example.com"}).status == "rejected"
+    assert _update({"externalMcpEnabled": "yes"}).status == "rejected"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_disabling_external_mcp_revokes_existing_connections(temp_settings, monkeypatch):
+    from twicc.core.models import McpConnection, McpOAuthClient
+    async def direct(factory):
+        return await factory()
+    monkeypatch.setattr("twicc.mcp.oauth.storage.run_under_db_write_lock", direct)
+    _update({"mcpBaseUrl": "https://mcp.example.com", "externalMcpEnabled": True})
+    client = McpOAuthClient.objects.create(id="client", metadata={})
+    connection = McpConnection.objects.create(id="grant", client=client, resource="https://mcp.example.com/mcp")
+    assert _update({"externalMcpEnabled": False}).status == "accepted"
+    connection.refresh_from_db()
+    assert connection.revoked_at is not None
+    assert _update({"externalMcpEnabled": True}).status == "accepted"
+    connection.refresh_from_db()
+    assert connection.revoked_at is not None

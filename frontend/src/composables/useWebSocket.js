@@ -1255,6 +1255,9 @@ export function useWebSocket() {
                     if (store.getSession(id)) store.removeSession(id)
                 }
                 break
+            case 'mcp_updated':
+                window.dispatchEvent(new CustomEvent('twicc:mcp-updated'))
+                break
             case 'peers_updated': {
                 // Full snapshot pushed on WS connect (share precedent).
                 // Lazy import to avoid a useWebSocket ↔ store cycle.

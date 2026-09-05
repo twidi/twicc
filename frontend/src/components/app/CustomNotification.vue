@@ -110,7 +110,7 @@ const mergedStyle = computed(() => ({
 
         <!-- Close button -->
         <button
-            v-if="!hideClose && CloseIcon && item.type !== 'promise'"
+            v-if="!hideClose && !item.props?.persistent && CloseIcon && item.type !== 'promise'"
             class="Notivue__close"
             :aria-label="closeAriaLabel"
             type="button"

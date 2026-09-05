@@ -1928,3 +1928,61 @@ class PeerMessage(models.Model):
 
     def __str__(self):
         return f"PeerMessage {self.message_id} [{self.direction}/{self.status}] peer={self.peer_id}"
+
+
+class McpOAuthClient(models.Model):
+    """Registered OAuth application; registration alone grants no access."""
+
+    id = models.CharField(primary_key=True, max_length=2048)
+    metadata = models.JSONField(default=dict)
+    secret_hash = models.CharField(max_length=64, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class McpConnection(models.Model):
+    """One owner-approved external grant, independent of the OAuth client ID."""
+
+    id = models.CharField(primary_key=True, max_length=64)
+    client = models.ForeignKey(McpOAuthClient, on_delete=models.CASCADE)
+    name = models.CharField(max_length=80, blank=True)
+    resource = models.URLField(max_length=2048)
+    established_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True)
+    revoked_at = models.DateTimeField(null=True)
+
+
+class McpOAuthRequest(models.Model):
+    """Durable consent and single-use browser continuation."""
+
+    id = models.CharField(primary_key=True, max_length=64)
+    client = models.ForeignKey(McpOAuthClient, on_delete=models.CASCADE)
+    connection = models.ForeignKey(McpConnection, null=True, on_delete=models.CASCADE)
+    params = models.JSONField(default=dict)
+    continuation_hash = models.CharField(max_length=64)
+    verification_hash = models.CharField(max_length=64)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    state = models.CharField(max_length=16, default="pending")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+
+class McpOAuthCredential(models.Model):
+    """Hashed code, access token, or rotating refresh token."""
+
+    digest = models.CharField(primary_key=True, max_length=64)
+    connection = models.ForeignKey(McpConnection, on_delete=models.CASCADE)
+    kind = models.CharField(max_length=16)
+    params = models.JSONField(default=dict)
+    consumed = models.BooleanField(default=False)
+    expires_at = models.DateTimeField(db_index=True)
+
+
+class McpOperation(models.Model):
+    """External provenance without impersonating a Session."""
+
+    connection = models.ForeignKey(McpConnection, on_delete=models.PROTECT)
+    name = models.CharField(max_length=80, blank=True)
+    tool = models.CharField(max_length=120)
+    created_at = models.DateTimeField(auto_now_add=True)
+    targets = models.JSONField(default=dict)
