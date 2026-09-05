@@ -84,9 +84,9 @@ def iter_mcp_tools() -> list[mcp_types.Tool]:
             mcp_types.Tool(
                 name=tool_name_for(path),
                 description=_description_for(path, spec),
-                inputSchema=spec.json_schema,
+                input_schema=spec.json_schema,
                 annotations=mcp_types.ToolAnnotations(
-                    readOnlyHint=path in MCP_READ_ONLY_PATHS,
+                    read_only_hint=path in MCP_READ_ONLY_PATHS,
                 ),
                 _meta=meta,
             )

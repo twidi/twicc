@@ -44,22 +44,22 @@ def test_tool_names_are_mcp_safe_and_bijective():
 def test_schemas_and_descriptions():
     by_name = {t.name: t for t in iter_mcp_tools()}
     reg = build_mcp_registry()
-    assert by_name["create_session"].inputSchema == reg["create-session"].json_schema
+    assert by_name["create_session"].input_schema == reg["create-session"].json_schema
     assert by_name["create_session"].description  # full help, non-empty
     assert len(by_name["create_session"].description) > len(reg["create-session"].summary)
-    create_properties = by_name["create_session"].inputSchema["properties"]
+    create_properties = by_name["create_session"].input_schema["properties"]
     assert create_properties["mute_on_user_turn"]["type"] == "boolean"
     assert "finished-working" in create_properties["mute_on_user_turn"]["description"]
 
 
 def test_annotations_and_always_load():
     by_name = {t.name: t for t in iter_mcp_tools()}
-    assert by_name["sessions"].annotations.readOnlyHint is True
-    assert by_name["create_session"].annotations.readOnlyHint is False
+    assert by_name["sessions"].annotations.read_only_hint is True
+    assert by_name["create_session"].annotations.read_only_hint is False
     assert (by_name["whoami"].meta or {}).get("anthropic/alwaysLoad") is True
     assert (by_name["update_workspace"].meta or {}).get("anthropic/alwaysLoad") is None
-    assert by_name["share"].annotations.readOnlyHint is True
-    assert by_name["share_show"].annotations.readOnlyHint is True
+    assert by_name["share"].annotations.read_only_hint is True
+    assert by_name["share_show"].annotations.read_only_hint is True
     for name in (
         "share_create_session",
         "share_create_artifact",
@@ -69,4 +69,4 @@ def test_annotations_and_always_load():
         "share_delete",
         "share_propagate",
     ):
-        assert by_name[name].annotations.readOnlyHint is False
+        assert by_name[name].annotations.read_only_hint is False
