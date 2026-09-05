@@ -1037,6 +1037,21 @@ def _payload(parsed_json: dict) -> dict | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _rewrite_in_place(parsed_json: dict, built: dict) -> str:
+    """Make ``built`` the content of ``parsed_json`` and return its serialisation.
+
+    ``transform_inline`` promises that everything computed after it — kind,
+    display level, goal events, tasks, title — sees the rewritten item. The
+    ``build_twicc_*`` helpers return a fresh dict, so the caller's dict must be
+    replaced in place; returning the copy alone would persist the rewritten
+    content while classifying the raw line (a hidden ``/goal clear`` whose
+    goal never gets cleared).
+    """
+    parsed_json.clear()
+    parsed_json.update(built)
+    return orjson.dumps(parsed_json).decode("utf-8")
+
+
 def _restore_private_source(parsed_json: dict) -> dict:
     """Restore the raw payload before replacing an older private rewrite."""
     original = parsed_json.get("twiccOriginalContent")
@@ -2852,7 +2867,7 @@ class CodexSessionCompute(BaseSessionCompute):
                         line_num=line_num,
                         text=f"/goal {objective}",
                     )
-                    return orjson.dumps(built).decode("utf-8")
+                    return _rewrite_in_place(parsed_json, built)
                 return None
             if parsed_json.get("type") == _TYPE_EVENT_MSG:
                 original = parsed_json.get("twiccOriginalContent")
@@ -2882,7 +2897,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 line_num=line_num,
                 text=injected_command,
             )
-            return orjson.dumps(built).decode("utf-8")
+            return _rewrite_in_place(parsed_json, built)
 
         # ``/plan <prompt>`` display restoration: the command's turn carries
         # only ``<prompt>`` as its user message (the literal ``/plan`` never
@@ -2909,7 +2924,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 line_num=line_num,
                 text=plan_text,
             )
-            return orjson.dumps(built).decode("utf-8")
+            return _rewrite_in_place(parsed_json, built)
 
         # The other Codex rewrite is the cross-provider screenshot tag
         # substitution: ``<twicc:insert-screenshot />`` markers placed

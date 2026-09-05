@@ -390,7 +390,7 @@ LOGGING = {
 # rules change to trigger recomputation. ``None`` declares "no compute pipeline
 # yet" — sessions of that provider are reported up-to-date as-is.
 CLAUDE_CODE_COMPUTE_VERSION = 108  # 108: dedup task tool_use replay against compaction-duplicated JSONL lines + repair corrupted twiccTasksData snapshots (107 = repair agent links wrongly flipped to background by SendMessage-continuation notifications, 106 = plan_paths from subagent writes too, 105 = Session.plan_paths backfill)
-CODEX_COMPUTE_VERSION = 48  # 48: canonical paginated history with automatic legacy rollout migration (47: multi-agent v2 NEW_TASK opening message, 46: multi-agent v2 subagent linkage)
+CODEX_COMPUTE_VERSION = 49  # 49: TwiCC-injected commands and plan answers classified from the rewritten item (48: canonical paginated history with automatic legacy rollout migration, 47: multi-agent v2 NEW_TASK opening message, 46: multi-agent v2 subagent linkage)
 
 # Search index version
 # Bumped when the schema or document layout changes — forces a full

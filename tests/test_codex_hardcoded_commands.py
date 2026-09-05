@@ -445,6 +445,53 @@ def test_proposed_plan_response_item_becomes_a_visible_agent_message() -> None:
     assert parsed["twiccOriginalContent"]["role"] == "assistant"
 
 
+def test_injected_goal_clear_is_classified_from_the_rewritten_item() -> None:
+    # ``transform_inline`` mutates the caller's dict: kind, goal event and
+    # title are computed on that same dict afterwards. A rewrite that only
+    # returned a copy would store a visible ``/goal clear`` yet classify the
+    # raw ``response_item`` as SYSTEM and never clear the goal.
+    from twicc.core.enums import ItemKind
+
+    line = _codex_line("response_item", {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "/goal clear"}],
+    })
+    compute = _batch_compute()
+    result = compute.transform_inline(line, session_id=_COMPUTE_SESSION, line_num=1)
+
+    assert result is not None
+    assert user_message_text(line) == "/goal clear"
+    assert compute.compute_item_kind(line) == ItemKind.USER_MESSAGE
+    event = compute.extract_goal_event(line)
+    assert event is not None and event.cleared is True
+    assert orjson.loads(result) == line
+
+
+def test_injected_compact_is_a_visible_user_message_after_transform() -> None:
+    from twicc.core.enums import ItemKind
+
+    line = _codex_line("response_item", {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "/compact"}],
+    })
+    compute = _batch_compute()
+    compute.transform_inline(line, session_id=_COMPUTE_SESSION, line_num=1)
+
+    assert compute.compute_item_kind(line) == ItemKind.USER_MESSAGE
+
+
+def test_proposed_plan_is_classified_as_assistant_message_after_transform() -> None:
+    from twicc.core.enums import ItemKind
+
+    line = _assistant_response_item("Intro.\n<proposed_plan>\n# Title\n\n- step\n</proposed_plan>")
+    compute = _batch_compute()
+    compute.transform_inline(line, session_id=_COMPUTE_SESSION, line_num=1)
+
+    assert compute.compute_item_kind(line) == ItemKind.ASSISTANT_MESSAGE
+
+
 def test_ordinary_assistant_response_item_stays_hidden() -> None:
     # The normal duplicate of an ``event_msg.agent_message`` must keep its
     # SYSTEM classification — no relabel without a ``<proposed_plan>`` block.
