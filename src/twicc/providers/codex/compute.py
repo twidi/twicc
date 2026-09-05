@@ -3442,8 +3442,8 @@ class CodexSessionCompute(BaseSessionCompute):
         #   input window. We divide it back by
         #   :data:`_TASK_STARTED_WINDOW_HEADROOM_FACTOR` and snap to the
         #   nearest 1000 to recover the nominal window — per-model, see
-        #   ``CodexModelExtra.context_window`` (272K pre-5.6, 372K for
-        #   the GPT-5.6 tiers) — then surface it as ``context_max`` so
+        #   ``CodexModelExtra.context_window`` (272K for Astra and pre-5.6,
+        #   372K for the GPT-5.6 tiers) — then surface it as ``context_max`` so
         #   the base loop can write it onto ``Session.context_max``.
         #   This gives us a real window value for sessions imported
         #   from JSONL (and a tracking value if the user switches to a

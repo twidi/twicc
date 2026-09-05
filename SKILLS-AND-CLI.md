@@ -115,7 +115,7 @@ Show or mutate one provider's settings slice.
 
 **With flags:** drops a `settings:update` patch for the provider's `{provider}Default*` synced keys. Flags accepted by both providers (Claude Code and Codex):
 - `--model TEXT` — default model for NEW sessions (aliases `max`/`strongest`/`min`/`fastest` resolved per provider).
-- `--effort TEXT` — default reasoning effort (`low`, `medium`, `high`, `xhigh`; `max` also on Claude Code and GPT-5.6 Codex models; aliases `min`/`max`).
+- `--effort TEXT` — default reasoning effort (`low`, `medium`, `high`, `xhigh`; `max` also on Claude Code, GPT-6 Astra, and GPT-5.6 Codex models; aliases `min`/`max`).
 - `--permission-mode TEXT` — default tool-permission policy for trusted projects (aliases `min`/`safe`, `max`, …).
 - `--context-max TEXT` — default max context window (`200k`, `1m`, `272k`; aliases `min`/`max`).
 - `--untrusted-permission-mode TEXT` — default permission mode for NEW sessions in an **untrusted** project; restricted to the provider's untrusted-allowed set; aliases `min`/`safe`/`max` resolve within that set. This flag maps to a separate synced key (`claudeCodeDefaultUntrustedPermissionMode` / `codexDefaultUntrustedPermissionMode`), not to the closed-bundle mapping.

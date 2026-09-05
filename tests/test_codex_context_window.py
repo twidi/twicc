@@ -42,6 +42,7 @@ def helpers():
 @pytest.mark.parametrize(
     ("selected_model", "expected"),
     [
+        ("gpt-astra", 272_000),
         # GPT-5.6 tiers temporarily rolled back to 272K (see module docstring).
         ("gpt-sol", 272_000),
         ("gpt-terra", 272_000),
@@ -53,6 +54,13 @@ def helpers():
 )
 def test_selected_model_context_window(helpers, selected_model, expected):
     assert helpers.selected_model_context_window(selected_model) == expected
+
+
+def test_astra_alias_resolves_to_the_codex_model(helpers):
+    assert helpers.resolve_sdk_model("gpt-astra") == "gpt-6-astra"
+    constraints = helpers.get_agent_settings_constraints()["effort"]
+    assert "gpt-astra" in constraints["max"]
+    assert "gpt-astra" not in constraints["ultra"]
 
 
 def test_context_window_unknown_model_falls_back_to_default(helpers, temp_settings):
@@ -124,6 +132,7 @@ def test_constraints_map_each_window_to_its_models(helpers):
     # longer a catalogue value, so only the 272K bucket is present.
     constraints = helpers.get_agent_settings_constraints()["context_max"]
     assert set(constraints[272_000]) == {
+        "gpt-astra-6", "gpt-astra",
         "gpt-5.5", "gpt", "gpt-5.4", "gpt-mini-5.4", "gpt-mini",
         "gpt-sol-5.6", "gpt-sol", "gpt-terra-5.6", "gpt-terra", "gpt-luna-5.6", "gpt-luna",
     }

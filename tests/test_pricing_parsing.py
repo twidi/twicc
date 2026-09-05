@@ -26,6 +26,8 @@ or a JSONL-only stamp shape changing) is caught immediately.
 
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
 from typing import NamedTuple
 from collections.abc import Callable
 
@@ -160,6 +162,8 @@ CLAUDE_SPEC = ProviderSpec(
 
 
 CODEX_MODEL_CASES: list[ModelCase] = [
+    ModelCase("gpt-astra", "6", ("openai/gpt-6-astra",), ("gpt-6-astra",)),
+
     # gpt (flagship line — bare family, no variant suffix). ``gpt-4-0314``
     # is a dated snapshot of ``gpt-4`` so it shares the same case via
     # the date-stamp drop rule.
@@ -287,6 +291,21 @@ CODEX_SPEC = ProviderSpec(
 
 
 PROVIDERS: list[ProviderSpec] = [CLAUDE_SPEC, CODEX_SPEC]
+
+
+@pytest.mark.django_db
+def test_astra_cost_uses_codex_fallback_prices():
+    from twicc.pricing import TokenUsage, calculate_line_cost
+
+    usage = TokenUsage(
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+        cache_read_input_tokens=1_000_000,
+        cache_write_input_tokens_5m=1_000_000,
+        cache_write_input_tokens_1h=1_000_000,
+    )
+
+    assert calculate_line_cost(Provider.CODEX, usage, "openai/gpt-6-astra", date.today()) == Decimal("86.000000")
 
 
 def _case_id(spec: ProviderSpec, case: ModelCase) -> str:

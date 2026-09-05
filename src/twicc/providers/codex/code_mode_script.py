@@ -1,8 +1,8 @@
 """Static extraction from Codex "code mode" ``exec`` scripts (GPT-5.6+).
 
-GPT-5.6 Codex models run in code mode: every action is a ``custom_tool_call``
-named ``exec`` whose ``input`` is JavaScript executed in a V8 isolate by the
-CLI. The JS calls nested tools on a global ``tools`` object
+GPT-5.6 Codex models and GPT-6 Astra run in code mode. Every action is a
+``custom_tool_call`` named ``exec`` whose ``input`` is JavaScript executed in
+a V8 isolate by the CLI. The JS calls nested tools on a global ``tools`` object
 (``await tools.exec_command({...})``, ``await tools.apply_patch("...")``,
 ``tools.mcp__server__tool({...})``) — and the rollout JSONL only persists the
 outer script, never the nested calls. This module statically recovers those

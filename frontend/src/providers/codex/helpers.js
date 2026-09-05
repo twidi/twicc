@@ -165,13 +165,13 @@ const AGENT_SETTINGS_CHOICES = {
             value: true,
             label: 'Enabled',
             display_label: 'Fast mode',
-            description: 'Faster generation — 2.5x on GPT-5.6, 1.5x before; uses credits at 2.5x.',
+            description: 'Faster generation — 2x on GPT-6 Astra, 2.5x on GPT-5.6, 1.5x before; uses credits at 2.5x.',
         },
         { value: false, label: 'Disabled', display_label: 'No fast mode' },
     ],
-    // Not a user choice: the window is fixed by the model (272K pre-5.6,
-    // 372K for the GPT-5.6 tiers) — for the selected model the non-matching
-    // option is disabled, a window no model supports is dropped entirely by
+    // Not a user choice: the window is fixed by the model (272K for Astra and
+    // pre-5.6, 372K for the GPT-5.6 tiers) — for the selected model the
+    // non-matching option is disabled, a window no model supports is dropped entirely by
     // ``getFieldChoices``, and ``enforceAgentSettingsConsistency`` pins the
     // value to the model's.
     context_max: [
@@ -351,8 +351,9 @@ export class CodexHelpers extends BaseProviderHelpers {
     /**
      * Effective context window for a Codex session.
      *
-     * The window is a fixed per-model property (272K pre-5.6, 372K for the
-     * GPT-5.6 tiers — the registry's ``provider_extra.context_window``), so
+     * The window is a fixed per-model property (272K for Astra and pre-5.6,
+     * 372K for the GPT-5.6 tiers — the registry's
+     * ``provider_extra.context_window``), so
      * when the session names a model the registry knows, that window wins
      * over the persisted ``session.context_max``: rows written before the
      * per-model split (or by an out-of-date client) may carry the other
@@ -457,8 +458,9 @@ export class CodexHelpers extends BaseProviderHelpers {
     }
 
     /**
-     * The model's fixed Codex input window (272K pre-5.6, 372K for the
-     * GPT-5.6 tiers), from the registry's ``provider_extra.context_window``.
+     * The model's fixed Codex input window (272K for Astra and pre-5.6,
+     * 372K for the GPT-5.6 tiers), from the registry's
+     * ``provider_extra.context_window``.
      * Falls back to the default model when ``selectedModel`` is unknown
      * (same convention as the effort capability checks); ``null`` when
      * nothing resolves (registry not seeded yet). Mirrors the backend

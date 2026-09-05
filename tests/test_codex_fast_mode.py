@@ -29,6 +29,7 @@ def temp_settings(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("selected_model", "expected"),
     [
+        ("gpt-astra", True),
         ("gpt-sol", True),
         ("gpt-terra", True),
         ("gpt-luna", True),
@@ -51,6 +52,7 @@ def test_fast_mode_is_idle_setting_with_default(helpers) -> None:
 def test_fast_constraint_lists_only_supported_models(helpers) -> None:
     supported = set(helpers.get_agent_settings_constraints()["fast_mode"][True])
     assert supported == {
+        "gpt-astra-6", "gpt-astra",
         "gpt-sol-5.6", "gpt-sol",
         "gpt-terra-5.6", "gpt-terra",
         "gpt-luna-5.6", "gpt-luna",

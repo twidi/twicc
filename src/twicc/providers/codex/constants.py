@@ -101,7 +101,7 @@ AGENT_SETTINGS_DESCRIPTIONS: dict[str, dict] = {
         "yolo": "No restrictions.",
     },
     "fast_mode": {
-        True: "Faster generation — 2.5x on GPT-5.6, 1.5x before; uses credits at 2.5x.",
+        True: "Faster generation — 2x on GPT-6 Astra, 2.5x on GPT-5.6, 1.5x before; uses credits at 2.5x.",
     },
 }
 
@@ -120,7 +120,7 @@ AGENT_SETTINGS_ALIASES: dict[str, dict[str, str]] = {
     "selected_model": {
         "min": "gpt-luna", "fastest": "gpt-luna", "cheapest": "gpt-luna",
         "medium": "gpt-terra", "balanced": "gpt-terra",
-        "max": "gpt-sol", "strongest": "gpt-sol",
+        "max": "gpt-astra", "strongest": "gpt-astra",
     },
     # ``max`` is a native effort since GPT-5.6, so native-first keeps it as-is
     # and this entry is a no-op kept for symmetry (same shape as Claude Code).
@@ -154,12 +154,12 @@ class CodexModelExtra(NamedTuple):
     single-agent reasoning) and ``ultra`` (subagent parallelisation). They are
     NOT uniform across the family, and not Sol-only as the launch coverage
     claimed — the CLI is the source of truth and reports the per-model set in
-    ``model/list`` under ``supportedReasoningEfforts``. As of Codex 0.150.1:
-    Sol and Terra expose both, Luna exposes ``max`` only, and every pre-5.6
-    model exposes neither. Mirrors ``claude_code.constants.ClaudeCodeModelExtra``.
+    ``model/list`` under ``supportedReasoningEfforts``. Astra, Sol, and Terra
+    expose both, Luna exposes ``max`` only, and every pre-5.6 model exposes
+    neither. Mirrors ``claude_code.constants.ClaudeCodeModelExtra``.
 
     ``supports_fast`` mirrors the model catalog's ``serviceTiers`` list: the
-    five frontier models expose the ``priority`` tier, while GPT-5.4 mini does
+    six frontier models expose the ``priority`` tier, while GPT-5.4 mini does
     not. Keeping it in the registry lets every settings surface use the same
     model gate without guessing from a model name.
 
@@ -169,8 +169,8 @@ class CodexModelExtra(NamedTuple):
     128K for output and publishes 95% of the input part in
     ``task_started.model_context_window`` (see ``compute.py``'s
     ``_TASK_STARTED_WINDOW_HEADROOM_FACTOR``). Empirically: 272K for the
-    pre-5.6 models (400K total = 272K input + 128K output, published as
-    258_400) and 372K for the GPT-5.6 tiers (published as 353_400).
+    Astra and the pre-5.6 models (400K total = 272K input + 128K output,
+    published as 258_400) and 372K for the GPT-5.6 tiers (published as 353_400).
     ``enforce_agent_settings_consistency`` pins ``context_max`` to this value,
     so the stored/displayed window always matches what Codex actually runs.
     """
@@ -181,8 +181,8 @@ class CodexModelExtra(NamedTuple):
 
 
 # Temporary product-wide kill switch for the ``ultra`` reasoning effort
-# (2026-07-14). Sol and Terra natively expose ``ultra`` (see ``CodexModelExtra``
-# and the CLI ``model/list``) and their entries below keep
+# (2026-07-14). Astra, Sol, and Terra natively expose ``ultra`` (see
+# ``CodexModelExtra`` and the CLI ``model/list``) and their entries below keep
 # ``supports_effort_ultra=True`` as the real, documented capability. While this
 # is ``True``, the post-processing step just after ``MODEL_VERSIONS`` forces the
 # flag off across the whole registry, so no model offers ``ultra`` and any
@@ -233,6 +233,21 @@ GPT_56_CONTEXT_WINDOW_TEMPORARILY_REDUCED = True
 # on 5.4 declined the newer generations, so the substitution moves them by the
 # smallest possible step.
 MODEL_VERSIONS: list[ModelVersion] = [
+    ModelVersion(
+        provider=Provider.CODEX,
+        model="gpt-astra",
+        version="6",
+        full_name="gpt-6-astra",
+        retirement_date=None,
+        latest=True,
+        weight=300,
+        provider_extra=CodexModelExtra(
+            supports_effort_max=True,
+            supports_effort_ultra=True,
+            supports_fast=True,
+            context_window=272_000,
+        ),
+    ),
     ModelVersion(
         provider=Provider.CODEX,
         model="gpt-sol",

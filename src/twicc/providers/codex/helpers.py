@@ -71,9 +71,9 @@ AGENT_SETTINGS_CHOICES: dict[str, list] = {
     # One entry per distinct ``CodexModelExtra.context_window`` value, derived
     # from the live registry so it never lists a window no model runs. Unlike
     # Claude's 200K/1M these are not a user choice: the window is pinned to the
-    # model by ``enforce_agent_settings_consistency`` (272K pre-5.6, 372K for
-    # the GPT-5.6 tiers); the catalogue only tells validation which concrete
-    # values exist. While ``GPT_56_CONTEXT_WINDOW_TEMPORARILY_REDUCED`` is on the
+    # model by ``enforce_agent_settings_consistency`` (272K for Astra and
+    # pre-5.6, 372K for the GPT-5.6 tiers); the catalogue only tells validation
+    # which concrete values exist. While ``GPT_56_CONTEXT_WINDOW_TEMPORARILY_REDUCED`` is on the
     # 5.6 tiers run at 272K, so 372K drops out here and reappears on revert — no
     # extra edit needed, the single backend switch drives it.
     "context_max": sorted(
@@ -181,7 +181,7 @@ class CodexHelpers(BaseProviderHelpers):
 
     # Per-family default prices (USD per million tokens) — fallback when no
     # ``ModelPrice`` row matches and no other version of the same family is
-    # in the DB. Covers the families Codex CLI actually runs: the pre-5.6
+    # in the DB. Covers the families Codex CLI actually runs: Astra, the pre-5.6
     # ``gpt`` / ``gpt-codex`` / ``gpt-codex-max``, plus one bucket per GPT-5.6
     # tier (each tier is its own family, and each is priced differently). Other
     # OpenAI families (``gpt-pro``, …) get parsed correctly by
@@ -189,14 +189,21 @@ class CodexHelpers(BaseProviderHelpers):
     # OpenRouter rows since Codex CLI doesn't run them today.
     #
     # Cache writes: OpenRouter exposes no ``input_cache_write`` price for the
-    # pre-5.6 OpenAI models (hence their zeros), but does for the GPT-5.6 tiers
-    # — 1.25x the uncached input rate, with no 5m/1h split (that distinction is
-    # Anthropic's). The figures below mirror the synced rows. They stay inert
+    # pre-5.6 OpenAI models (hence their zeros), but does for Astra and the
+    # GPT-5.6 tiers — 1.25x the uncached input rate, with no 5m/1h split (that
+    # distinction is Anthropic's). The figures below mirror the synced rows. They stay inert
     # either way: :func:`codex.pricing.to_token_usage` always reports zero
     # cache-write tokens, because OpenAI's Responses counters have no such
     # bucket. Keep them honest anyway, so the fallback never understates a cost
     # if those tokens ever start being counted.
     DEFAULT_FAMILY_PRICES: ClassVar[dict[str, FamilyPrices]] = {
+        "gpt-astra": FamilyPrices(  # gpt-6-astra pricing
+            input_price=Decimal("10.00"),
+            output_price=Decimal("50.00"),
+            cache_read_price=Decimal("1.00"),
+            cache_write_5m_price=Decimal("12.50"),
+            cache_write_1h_price=Decimal("12.50"),
+        ),
         "gpt": FamilyPrices(  # gpt-5.5 pricing (the family's latest; gpt-5.4 retires 2026-08-31)
             input_price=Decimal("5.00"),
             output_price=Decimal("30.00"),
@@ -465,8 +472,9 @@ class CodexHelpers(BaseProviderHelpers):
     def selected_model_context_window(self, selected_model: str | None) -> int | None:
         """Return the model's Codex input window (or the default fallback's).
 
-        The window is a fixed per-model property (272K pre-5.6, 372K for the
-        GPT-5.6 tiers — see :class:`CodexModelExtra`), not a user choice.
+        The window is a fixed per-model property (272K for Astra and pre-5.6,
+        372K for the GPT-5.6 tiers — see :class:`CodexModelExtra`), not a user
+        choice.
         Returns ``None`` when neither the given model nor the synced default
         resolves in the registry, so callers can leave ``context_max``
         untouched rather than guess.
@@ -518,9 +526,9 @@ class CodexHelpers(BaseProviderHelpers):
         3. Clears ``fast_mode`` when the model does not expose the Priority
            service tier (currently GPT-5.4 mini).
         4. Pins ``context_max`` to the (post-substitution) model's fixed
-           window (272K pre-5.6, 372K for the GPT-5.6 tiers). Unlike Claude's
-           1M cap this is bidirectional — the window is not a user choice, so
-           any stored value that diverges (stale row, cross-model preset) is
+           window (272K for Astra and pre-5.6, 372K for the GPT-5.6 tiers).
+           Unlike Claude's 1M cap this is bidirectional — the window is not a
+           user choice, so any stored value that diverges (stale row, cross-model preset) is
            replaced, in both directions. A ``None`` ``context_max`` stays
            ``None`` (resolution to defaults is the caller's job), and an
            unresolvable model leaves the value untouched.
