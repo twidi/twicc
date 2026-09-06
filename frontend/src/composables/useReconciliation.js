@@ -1,6 +1,7 @@
 // frontend/src/composables/useReconciliation.js
 
 import { useDataStore } from '../stores/data'
+import { sweepLoadedSessions } from './reconcileSweep'
 
 const MAX_RETRIES = 5
 
@@ -42,6 +43,20 @@ export function useReconciliation() {
             }
         } finally {
             isReconciling = false
+            // The pre-outage mtimes have served every pass; the next disconnect
+            // captures a fresh set (store.captureSyncBaseline on CLOSED).
+            store.clearSyncBaseline()
+        }
+
+        // The passes above only GUARANTEE the focused session: every other
+        // loaded session went through the mtime change-set, and the baseline
+        // above cannot cover a session loaded during the outage or a fetch
+        // that failed all retries. Sweep every loaded session — refresh its
+        // record, then heal its holes — so no open pane is left stale until
+        // the user happens to re-activate it.
+        const sweepFailed = await sweepLoadedSessions(store)
+        if (sweepFailed.length) {
+            console.warn('Reconciliation sweep: coverage still incomplete for', sweepFailed)
         }
 
         // Items are back in sync, but the tool_state / agent_link broadcasts

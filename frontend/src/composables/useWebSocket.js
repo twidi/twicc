@@ -1903,6 +1903,11 @@ export function useWebSocket() {
             // Clear send function when disconnected
             __hmrState.wsSendFn = null
             store.wsConnected = false
+            // Freeze the mtimes the next reconciliation compares against. From
+            // here on, every frame is one of the reopened socket — and those
+            // refresh the local mtimes to the server value before the
+            // reconciliation's fetches land, hiding what the outage lost.
+            store.captureSyncBaseline()
         }
     })
 

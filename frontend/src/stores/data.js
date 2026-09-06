@@ -46,6 +46,7 @@ import { debounce } from '../utils/debounce'
 import { apiFetch } from '../utils/api'
 import { applySessionMuteOnUserTurn } from '../utils/sessionMute'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../utils/workspaceIds'
+import { syncBaseline } from '../utils/syncBaseline'
 import { getParsedContent, setParsedContent, clearParsedContent, hasContent } from '../utils/parsedContent'
 import { initBuffer, feedDelta, flushBuffer, destroySessionBuffers, destroyAllBuffers } from '../utils/streamingBuffer'
 
@@ -2152,8 +2153,13 @@ export const useDataStore = defineStore('data', {
                     const local = this.projects[fresh.id]
                     const wasSessionsFetched = this.localState.projects[fresh.id]?.sessionsFetched
 
-                    // Project changed if: sessionsFetched AND (new OR mtime different)
-                    if (wasSessionsFetched && (!local || local.mtime !== fresh.mtime)) {
+                    // Project changed if: sessionsFetched AND (new OR mtime different).
+                    // Compared against the pre-outage baseline when one is pending:
+                    // the live project_updated frames the reopened socket delivers
+                    // while this fetch is in flight overwrite `local.mtime` with the
+                    // server value, which would hide the outage (utils/syncBaseline.js).
+                    const knownMtime = syncBaseline.projectMtime(fresh.id, local?.mtime)
+                    if (wasSessionsFetched && (!local || knownMtime !== fresh.mtime)) {
                         changedIds.add(fresh.id)
                     }
 
@@ -2351,8 +2357,12 @@ export const useDataStore = defineStore('data', {
                     const local = this.sessions[fresh.id]
                     const wasItemsFetched = this.localState.sessions[fresh.id]?.itemsFetched
 
-                    // Session changed if: itemsFetched AND (new OR mtime different)
-                    if (wasItemsFetched && (!local || local.mtime !== fresh.mtime)) {
+                    // Session changed if: itemsFetched AND (new OR mtime different).
+                    // Same pre-outage baseline as loadProjects: a session_updated
+                    // frame received during this fetch would otherwise make the
+                    // session read as unchanged while its outage lines are missing.
+                    const knownMtime = syncBaseline.sessionMtime(fresh.id, local?.mtime)
+                    if (wasItemsFetched && (!local || knownMtime !== fresh.mtime)) {
                         changedIds.add(fresh.id)
                     }
 
@@ -2781,6 +2791,51 @@ export const useDataStore = defineStore('data', {
                 if (isBare(items[line - 1])) newLines.push(line)
             }
             if (newLines.length) this.markItemsLive(sessionId, newLines)
+        },
+
+        /**
+         * Re-fetch one session's record from the server and merge it in
+         * (``updateSession``), so ``last_line`` / ``mtime`` are authoritative
+         * before a coverage scan — ``ensureSessionItemsCoverage`` is bounded by
+         * the local ``last_line`` and silently finds nothing when that value
+         * is stale. Used by the post-reconnect sweep (composables/reconcileSweep.js).
+         * @param {string} sessionId
+         * @returns {Promise<boolean>} false if the fetch failed (record unchanged).
+         */
+        async refreshSessionRecord(sessionId) {
+            const session = this.sessions[sessionId]
+            if (!session) return false
+            const parentSessionId = session.parent_session_id || null
+            const url = parentSessionId
+                ? `/api/projects/${session.project_id}/sessions/${parentSessionId}/subagent/${sessionId}/`
+                : `/api/sessions/${sessionId}/`
+            try {
+                const res = await apiFetch(url)
+                if (!res.ok) {
+                    console.error('Failed to refresh session record:', sessionId, res.status, res.statusText)
+                    return false
+                }
+                this.updateSession(await res.json())
+                return true
+            } catch (error) {
+                console.error('Failed to refresh session record:', sessionId, error)
+                return false
+            }
+        },
+
+        /**
+         * Freeze the projects' and sessions' current mtimes as the comparison
+         * point of the next reconciliation (utils/syncBaseline.js). Called when
+         * the WebSocket closes, BEFORE any frame of the reopened socket can
+         * refresh those mtimes. No-op while a baseline is already pending.
+         */
+        captureSyncBaseline() {
+            syncBaseline.capture({ projects: this.projects, sessions: this.sessions })
+        },
+
+        /** Drop the pending baseline once the reconciliation has settled. */
+        clearSyncBaseline() {
+            syncBaseline.clear()
         },
 
         /**
