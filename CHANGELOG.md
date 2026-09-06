@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **WebSocket security** — Reject browser connections from a different host or port before opening the main stream, terminals, or live shares. Preserve local, development-proxy, and HTTPS tunnel connections.
 - **External MCP** — Require a TwiCC password to enable external access. Starting without a password disables access while preserving existing authorizations for manual reactivation. Settings show a disabled switch and a danger callout.
 - **Connection loss** — Sessions in the background no longer miss messages written while the connection was down.
+- **Codex goals** — Follow-up messages sent during `/goal` now reach the agent without a timeout error.
 
 ## [1.94.0] - 2026-09-05
 

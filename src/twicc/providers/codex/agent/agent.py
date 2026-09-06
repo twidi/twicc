@@ -68,6 +68,7 @@ from .approvals import (
     is_mcp_tool_call_approval,
     make_pending_request,
 )
+from .goal_continuation import GoalContinuation
 from .hardcoded_commands import HardcodedCommand
 from .original_files_cache import (
     MAX_FILE_SIZE as _ORIGINAL_FILE_MAX_SIZE,
@@ -365,16 +366,11 @@ class CodexAgent(BaseAgent):
         # safety net that ends the turn if that line never arrives.
         self._manual_compaction: bool = False
         self._compaction_timeout_task: asyncio.Task[None] | None = None
-        # Goal-continuation tracking. ``/goal <objective>`` sets an active goal,
-        # which makes Codex autonomously run a continuation turn TwiCC does NOT
-        # drive; ``run_goal_command`` flips the agent into a synthetic
-        # ASSISTANT_TURN and sets this flag. When the goal later leaves
-        # ``active`` (the agent marks it complete/blocked, or a limit hits), the
-        # watcher → manager → ``notify_goal_continuation_stopped`` path uses the
-        # flag to settle us back to USER_TURN. There is no fixed safety timeout
-        # (a continuation's duration is unbounded); a missed signal just leaves
-        # the prior stuck-ASSISTANT_TURN behaviour, never worse.
+        # The goal route observes physical turns before goal/set returns. Its
+        # consumer owns streaming and completion; the rollout watcher is only
+        # a fallback for agents without an attached route.
         self._goal_continuation_active: bool = False
+        self._goal_monitor: GoalContinuation | None = None
         # Plan-item tracking. Codex delivers a Plan collaboration-mode final
         # answer as a ``plan`` turn item; seeing its ``item/completed`` on the
         # stream sets this flag, and ``_run_turn`` consumes it at turn end to
@@ -613,6 +609,18 @@ class CodexAgent(BaseAgent):
             raise SendDeliveryError("Cannot send message: agent is dead", code="agent_dead")
 
         if self.state == AgentState.ASSISTANT_TURN:
+            monitor = getattr(self, "_goal_monitor", None)
+            if monitor is not None:
+                turn_input = await self._build_turn_input(text, images)
+                try:
+                    await monitor.steer(turn_input)
+                except TransportClosedError:
+                    raise
+                except Exception as e:
+                    raise RuntimeError(f"Steer failed: {e}") from e
+                self.last_activity = time.time()
+                return True
+
             if self._subagent_hold_active and self._current_turn is None:
                 # Parked in the subagent hold: ASSISTANT_TURN with no active
                 # turn to steer (steering would just time out on the
@@ -1252,6 +1260,19 @@ class CodexAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def run_goal_command(self, args: str) -> None:
+        """Keep goal completion from settling in the middle of a goal command."""
+        monitor = self._goal_monitor
+        if monitor is not None:
+            monitor.command_done.clear()
+        try:
+            await self._apply_goal_command(args)
+        finally:
+            if monitor is not None:
+                monitor.command_done.set()
+            if self._goal_monitor is not None:
+                self._goal_monitor.command_done.set()
+
+    async def _apply_goal_command(self, args: str) -> None:
         """Apply a user ``/goal`` command captured by the manager.
 
         Two forms, mirroring the Codex CLI surface TwiCC ports:
@@ -1268,15 +1289,15 @@ class CodexAgent(BaseAgent):
         The goal RPCs themselves are instant, but their *effect* on the session
         state differs:
 
-        - ``/goal clear`` (and any failure) → ``USER_TURN``: nothing is left
-          running.
+        - ``/goal clear`` prevents future continuation turns. An existing
+          turn keeps running until its completion notification arrives.
+        - Failure leaves an existing continuation usable; otherwise idle.
         - ``/goal <objective>`` → ``ASSISTANT_TURN``: setting an active goal
           makes Codex autonomously run a "continuation" turn to pursue it (the
           app-server starts AND drives it; TwiCC does not). Marking the session
           ASSISTANT_TURN lets the frontend show it working and stream the
-          continuation's messages live. The watcher observes the goal leaving
-          ``active`` through either its status event or the successful
-          Goal-tool result and flips the parked agent back to ``USER_TURN``.
+          continuation's messages live. The SDK goal route tracks its physical
+          turns and settles after both the goal and the last turn have ended.
 
         Either way the optimistic ``/goal`` bubble is dropped (see
         :meth:`_settle_after_command`). On failure the agent is left usable and
@@ -1288,8 +1309,11 @@ class CodexAgent(BaseAgent):
                 raise RuntimeError("Usage: /goal <objective>  or  /goal clear")
             if objective.lower() == "clear":
                 await self._thread.goal_clear()
-                self._goal_continuation_active = False
-                settle_state = AgentState.USER_TURN
+                # Clearing prevents future continuations but does not end the active turn.
+                settle_state = (
+                    AgentState.ASSISTANT_TURN if self._goal_monitor is not None else AgentState.USER_TURN
+                )
+                self._goal_continuation_active = self._goal_monitor is not None
                 # ``/goal clear`` writes nothing to the rollout (the clear RPC
                 # only emits a wire-only notification), so — unlike a set, whose
                 # transcript line comes free from Codex's goal-context injection
@@ -1307,22 +1331,60 @@ class CodexAgent(BaseAgent):
                     )
             else:
                 await self._set_goal(objective)
-                # An active goal makes Codex run a continuation turn we don't
-                # drive; arm the flag so the watcher's "goal left active" signal
-                # settles us back to USER_TURN (see
-                # :meth:`notify_goal_continuation_stopped`).
+                # The monitor follows runtime-owned turns without starting
+                # them. Keep the session working across continuation boundaries.
                 self._goal_continuation_active = True
                 settle_state = AgentState.ASSISTANT_TURN
         except Exception as e:
             logger.warning(
                 "Codex /goal failed for session %s: %s", self.session_id, e,
             )
-            self._goal_continuation_active = False
-            await self._settle_after_command(AgentState.USER_TURN, "goal_command_done")
+            self._goal_continuation_active = self._goal_monitor is not None
+            await self._settle_after_command(
+                AgentState.ASSISTANT_TURN if self._goal_monitor is not None else AgentState.USER_TURN,
+                "goal_command_done",
+            )
             if isinstance(e, RuntimeError):
                 raise
             raise RuntimeError(f"/goal failed: {e}") from e
+        if self._goal_monitor is not None and (self._turn_task is None or self._turn_task.done()):
+            self._turn_task = asyncio.create_task(self._run_goal_continuation(self._goal_monitor))
         await self._settle_after_command(settle_state, "goal_command_done")
+
+    async def _run_goal_continuation(self, monitor: GoalContinuation) -> None:
+        """Stream physical goal turns without starting or interrupting them."""
+        stream = monitor.stream()
+        try:
+            async for event in stream:
+                if event.method == "turn/started":
+                    self._current_turn = AsyncTurnHandle(self._codex, self._thread.id, event.payload.turn.id)
+                    self._current_turn_ready.set()
+                elif event.method == "turn/completed":
+                    if self._current_turn is not None and self._current_turn.id == event.payload.turn.id:
+                        self._current_turn = None
+                        self._current_turn_ready.clear()
+                await self._handle_stream_event(event)
+                if self.state == AgentState.DEAD:
+                    return
+        except TransportClosedError:
+            if self.state != AgentState.DEAD:
+                self.last_activity = time.time()
+                await self._transition_to_dead()
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if self.state != AgentState.DEAD:
+                await self._handle_error(f"Goal continuation failed: {e}", exc=e)
+            return
+        finally:
+            await stream.aclose()
+            monitor.close()
+            if self._goal_monitor is monitor:
+                self._goal_monitor = None
+                self._current_turn = None
+                self._current_turn_ready.clear()
+        await self.notify_goal_continuation_stopped()
 
     async def _set_goal(self, objective: str) -> None:
         """Create or update the thread's goal from ``/goal <objective>``.
@@ -1337,7 +1399,17 @@ class CodexAgent(BaseAgent):
         existing = await self._thread.goal_get()
         if existing is not None and existing.status is not ThreadGoalStatus.active:
             await self._thread.goal_clear()
-        await self._thread.goal_set(objective)
+        new_monitor = self._goal_monitor is None
+        if new_monitor:
+            self._goal_monitor = GoalContinuation(self._codex, self._thread.id)
+            self._goal_monitor.command_done.clear()
+        try:
+            await self._thread.goal_set(objective)
+        except BaseException:
+            if new_monitor:
+                self._goal_monitor.close()
+                self._goal_monitor = None
+            raise
 
     async def _settle_after_command(self, state: AgentState, done_event: str) -> None:
         """Move to ``state`` and tell the frontend a hardcoded command is done.
@@ -1388,7 +1460,8 @@ class CodexAgent(BaseAgent):
         """
         if not self._goal_continuation_active or self.state == AgentState.DEAD:
             return
-        if self._current_turn is not None:
+        if self._current_turn is not None or self._goal_monitor is not None:
+            # The wire stream owns completion while a monitor is attached.
             return
         logger.info(
             "Codex /goal: continuation ended for session %s — back to USER_TURN",
@@ -1783,6 +1856,13 @@ class CodexAgent(BaseAgent):
                     "Turn task raised on cancellation for session %s",
                     self.session_id, exc_info=True,
                 )
+
+        # A goal task cancelled before its first instruction has no finally
+        # block to release its registered route.
+        if getattr(self, "_goal_monitor", None) is not None:
+            self._goal_monitor.close()
+            self._goal_monitor = None
+        self._goal_continuation_active = False
 
         # Drop any item_ids buffered for this session. The agent is going
         # away, so the watcher will never get matching JSONL lines for
