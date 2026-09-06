@@ -2190,7 +2190,7 @@ async def http_router(scope, receive, send):
     protocol with its own token auth.
     """
     path = scope.get("path", "")
-    if path == "/mcp" or path.startswith("/mcp/"):
+    if path in ("/mcp", "/mcp/"):
         from twicc.mcp.endpoint import handle_mcp
 
         await handle_mcp(scope, receive, send)

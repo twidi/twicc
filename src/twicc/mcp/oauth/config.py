@@ -35,4 +35,9 @@ def issuer_url():
 
 
 def protocol_path(path):
-    return path in ("/mcp", "/mcp/", RESOURCE_METADATA, SERVER_METADATA) or path.startswith("/mcp/oauth/")
+    """Reserve the entire MCP branch, including unregistered subpaths.
+
+    Only the exact loopback endpoint may use internal credentials. A path
+    omitted here must never become an alias for that endpoint on a public host.
+    """
+    return path == "/mcp" or path.startswith("/mcp/") or path in (RESOURCE_METADATA, SERVER_METADATA)

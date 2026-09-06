@@ -24,6 +24,20 @@ from .storage import digest, issue, write
 
 _limits = {}
 
+# The public OAuth application owns only these exact paths. Check this before
+# preflight handling, request-body reads and rate limiting, including when the
+# dedicated-host gate forwards an unrelated path here.
+OAUTH_PATHS = frozenset({
+    RESOURCE_METADATA,
+    SERVER_METADATA,
+    "/mcp/oauth/authorize",
+    "/mcp/oauth/wait",
+    "/mcp/oauth/continue",
+    "/mcp/oauth/register",
+    "/mcp/oauth/token",
+    "/mcp/oauth/revoke",
+})
+
 
 def error(message, status=400, code="invalid_request"):
     return JSONResponse({"error": code, "error_description": message}, status_code=status)
@@ -207,7 +221,7 @@ async def handle(request):
 
 
 async def application(scope, receive, send):
-    if not base_url():
+    if scope.get("path") not in OAUTH_PATHS or not base_url():
         await Response(status_code=404)(scope, receive, send)
         return
     # Bound aggregate traffic, including metadata fetch amplification. No unbounded IP map.

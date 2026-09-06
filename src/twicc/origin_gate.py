@@ -4,12 +4,13 @@ design §9-§11).
 A single :class:`PublicOriginGate` replaces the former ``ShareHostGate``. It
 wraps the application ABOVE BlackNoise, so it runs before static files, Django
 and its SPA fallback, the raw ``/mcp`` endpoint, and application WebSockets.
-Per request it reads the three origins from the active in-process cache, builds
+Per request it reads the four origins from the active in-process cache, builds
 the pure routing policy, classifies the request authority + path, and executes
 the result:
 
   Share hostname                → ShareOnlyApp (existing Share-only policy)
   dedicated Peer authority      → only /peer/ HTTP; everything else 404/4404
+  dedicated MCP authority       → only /mcp and explicit MCP OAuth/discovery routes
   shared External+Peer authority→ full app, /peer/ included
   every other authority         → full app, but never /peer/
   quarantined / invalid Host    → plain 404, WebSocket close 4404
@@ -18,6 +19,8 @@ the result:
 Rejections answer the plain ``404 Not found`` (or close ``4404``) without
 calling the inner application and without revealing the configured addresses.
 The gate never repairs or writes settings.
+The received Host header is authoritative. Proxies must preserve the configured
+hostname; the gate does not recover a rewritten host from forwarding headers.
 """
 
 from __future__ import annotations
@@ -101,7 +104,7 @@ class ShareOnlyApp:
 
 class PublicOriginGate:
     """Route every HTTP request and WebSocket by its request authority against
-    the live External / Share / Peer settings."""
+    the live External / Share / Peer / MCP settings."""
 
     def __init__(self, full_app, share_only_app):
         self.full_app = full_app

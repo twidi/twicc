@@ -420,3 +420,120 @@ def test_expired_code_and_new_provider_instance():
             assert await Provider().load_access_token(pair["access_token"])
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/", "/mcp/anything", "/mcp/oauth", "/mcp/oauth/token/", "/mcp%2Fanything"])
+@pytest.mark.parametrize(
+    "origin,remote,forwarding",
+    [
+        ("https://app.example.com", "198.51.100.25", {}),
+        ("http://localhost", "198.51.100.25", {}),
+        ("http://localhost", "127.0.0.1", {"X-Forwarded-For": "127.0.0.1"}),
+    ],
+)
+def test_remote_mcp_branch_rejects_internal_token(settings, path, origin, remote, forwarding):
+    """Every MCP subpath must cross the origin gate, even with a valid internal token."""
+    from twicc.asgi import http_router
+    from twicc.mcp.identity import mint_session_token
+
+    # A password permits remote app access, but must not expose the internal MCP.
+    settings.TWICC_PASSWORD_HASH = "password-configured"
+
+    async def run():
+        app = PublicOriginGate(http_router, http_router)
+        async with mcp_lifespan(), httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, client=(remote, 1000)), base_url=origin
+        ) as c:
+            response = await c.post(
+                path,
+                headers={
+                    "Authorization": "Bearer " + mint_session_token("test-internal-session"),
+                    "Accept": "application/json, text/event-stream",
+                    **forwarding,
+                },
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            )
+            assert response.status_code == 404
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/"])
+def test_origin_gate_preserves_direct_local_mcp(path):
+    from twicc.asgi import http_router
+    from twicc.mcp.identity import mint_session_token
+
+    async def run():
+        app = PublicOriginGate(http_router, http_router)
+        async with mcp_lifespan(), httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 1000)), base_url="http://localhost"
+        ) as c:
+            response = await c.post(
+                path,
+                headers={
+                    "Authorization": "Bearer " + mint_session_token("test-internal-session"),
+                    "Accept": "application/json, text/event-stream",
+                },
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            )
+            assert response.status_code == 200
+            assert "whoami" in {tool["name"] for tool in response.json()["result"]["tools"]}
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+def test_dedicated_host_unknown_paths_are_always_404(method):
+    async def run():
+        async with client() as c:
+            for path in (
+                "/", "/api/mcp/", "/static/app.js", "/rpc/", "/artifacts/", "/peer/", "/ws/",
+                "/mcp/anything", "/mcp/oauth", "/mcp/oauth/other", "/mcp/oauth/token/",
+                "/mcp%2Fanything", "/.well-known/other",
+            ):
+                response = await c.request(method, path, headers={"Origin": "https://client.example.com"})
+                assert response.status_code == 404, path
+                assert "access-control-allow-origin" not in response.headers, path
+
+    asyncio.run(run())
+
+
+def test_unknown_oauth_paths_rejected_before_body_and_rate_limiter():
+    from twicc.mcp.oauth.routes import _limits, application
+
+    async def run():
+        # An exhausted rate limit must not turn an unrelated path into an OAuth endpoint.
+        import time
+        from collections import deque
+
+        _limits["audit-client"] = deque([time.monotonic()] * 300)
+        messages = []
+
+        async def receive():
+            raise AssertionError("An unknown route must not read the request body")
+
+        async def send(message):
+            messages.append(message)
+
+        await application(
+            {"type": "http", "method": "POST", "path": "/api/mcp/", "client": ("audit-client", 1000)},
+            receive, send,
+        )
+        assert messages[0]["status"] == 404
+
+    asyncio.run(run())
+
+
+def test_preflight_stays_available_on_explicit_protocol_routes():
+    async def run():
+        async with mcp_lifespan(), client() as c:
+            for path in (
+                "/mcp", "/mcp/", "/.well-known/oauth-protected-resource/mcp",
+                "/.well-known/oauth-authorization-server/mcp/oauth", "/mcp/oauth/register",
+                "/mcp/oauth/token", "/mcp/oauth/revoke",
+            ):
+                response = await c.options(path, headers={"Origin": "https://client.example.com"})
+                assert response.status_code == 204, path
+                assert response.headers["access-control-allow-origin"] == "*", path
+
+    asyncio.run(run())
