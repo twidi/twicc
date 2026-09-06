@@ -40,6 +40,15 @@ existing authorizations. The dedicated URL stays saved. After restoring a passwo
 enable external MCP again. Clients can resume with their existing credentials,
 subject to their normal expiration. Previously revoked authorizations stay revoked.
 
+To set a password, run:
+
+```
+<twicc> password set
+```
+
+For `<twicc>`, use your usual way to start TwiCC. Restart TwiCC after you set
+the password.
+
 Open **Settings → External MCP**. Enter your **Dedicated MCP URL**, then select
 **Apply**. Enter the HTTPS origin, such as `https://mcp.example.com`, without
 `/mcp`. Then enable **external MCP access**.

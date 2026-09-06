@@ -6,12 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **External MCP** — Let an agent outside TwiCC, such as a desktop or remote assistant, work with your instance. Each connection needs your approval, and you can revoke it.
+
 ### Fixed
 
-- **OAuth client compatibility** — Accept OAuth 2.1 code exchanges without a repeated redirect URI. Allow native clients to select an available HTTP loopback callback port while preserving the callback address and path, PKCE, and existing client authentication.
-- **OAuth abuse protection** — Limit new requests per client and network source, preserve authorized token budgets, and pause new connections for ten minutes when abuse is suspected. Show an owner alert and add manual suspension without revoking authorizations.
-- **WebSocket security** — Reject browser connections from a different host or port before opening the main stream, terminals, or live shares. Preserve local, development-proxy, and HTTPS tunnel connections.
-- **External MCP** — Require a TwiCC password to enable external access. Starting without a password disables access while preserving existing authorizations for manual reactivation. Settings show a disabled switch and a danger callout.
 - **Connection loss** — Sessions in the background no longer miss messages written while the connection was down.
 - **Codex goals** — Follow-up messages sent during `/goal` now reach the agent without a timeout error.
 
