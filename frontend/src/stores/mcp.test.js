@@ -15,6 +15,23 @@ test('a fresh owner snapshot removes completed requests', async () => {
     assert.equal(store.connections[0].id, 'grant')
 })
 
+test('owner snapshots update protection and suspension sends its own action', async () => {
+    const store = setup()
+    const calls = []
+    store.request = async options => {
+        calls.push(options)
+        return response(options ? { ok: true } : {
+            connections: [], requests: [], config: { externalMcpEnabled: false },
+            protection: { paused: true, retryAfter: 600, incident: { reason: 'Admission limit' } },
+        })
+    }
+    assert.equal(await store.act('suspend'), true)
+    assert.deepEqual(JSON.parse(calls[0].body), { action: 'suspend' })
+    assert.equal(store.config.externalMcpEnabled, false)
+    assert.equal(store.protection.paused, true)
+    assert.equal(store.protection.retryAfter, 600)
+})
+
 test('background refresh preserves a consent error', async () => {
     const store = setup()
     store.request = async () => response({ error: 'Verification code does not match.' }, false)

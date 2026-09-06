@@ -1,5 +1,7 @@
 """Live external MCP configuration and exclusive route classification."""
 
+from django.conf import settings
+
 from twicc.core.services.public_origin import normalize_public_origin
 from twicc.core.services.origin_policy import recognize_authority
 from twicc.synced_settings import read_routing_settings
@@ -11,7 +13,7 @@ SERVER_METADATA = "/.well-known/oauth-authorization-server/mcp/oauth"
 def base_url():
     from twicc.mcp import mcp_enabled
 
-    if not mcp_enabled():
+    if not mcp_enabled() or not settings.TWICC_PASSWORD_HASH:
         return ""
     snapshot = read_routing_settings()
     if not snapshot.available or snapshot.settings.get("externalMcpEnabled") is not True:

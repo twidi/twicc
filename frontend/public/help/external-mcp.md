@@ -34,6 +34,12 @@ context; they cannot infer it from the external connection.
 
 ### Before connecting
 
+Start TwiCC with a password. External MCP cannot be enabled without one.
+If you restart TwiCC without a password, TwiCC disables external MCP and preserves
+existing authorizations. The dedicated URL stays saved. After restoring a password,
+enable external MCP again. Clients can resume with their existing credentials,
+subject to their normal expiration. Previously revoked authorizations stay revoked.
+
 Open **Settings → External MCP**. Enter your **Dedicated MCP URL**, then select
 **Apply**. Enter the HTTPS origin, such as `https://mcp.example.com`, without
 `/mcp`. Then enable **external MCP access**.
@@ -62,6 +68,11 @@ configuration. This address includes `/mcp`, for example
 Use a client that supports remote MCP with OAuth. The exact setup controls
 depend on the client. TwiCC supplies the authorization information through
 standard MCP discovery endpoints.
+
+Desktop clients can receive the browser callback on `http://127.0.0.1` or
+`http://[::1]` with a different available port at each connection. The registered
+address, path, and query must still match. This port exception does not apply to
+remote HTTPS callbacks or the hostname `localhost`.
 
 Start the connection from the client. It opens an authorization page with a
 verification code. Keep that page open until the connection finishes.
@@ -118,6 +129,36 @@ connection from the client and approve its new request.
 
 Changing the dedicated MCP URL or disabling external access revokes existing
 connections. Configure the new address in your clients and connect again.
+
+### Protection against OAuth abuse
+
+TwiCC limits new OAuth requests per client and per network source. One client
+can have three pending requests; one source can have ten. One source can keep
+twenty registered clients that have never received an authorization.
+
+Repeated admission refusals or unusually high admission traffic trigger a
+ten-minute pause on new registrations and authorization requests. The owner
+receives a **Suspected OAuth abuse** notification. Settings and the connection
+manager show the reason, recent counters, and the remaining pause time.
+
+The pause leaves existing MCP connections, token renewals, revocation, and
+authorization requests already in progress available. It expires automatically.
+The alert remains until you dismiss it. High traffic is a suspicion of abuse,
+not proof of an attack. Multiple clients can share a network source.
+
+Select **Suspend all external access** to stop all new external MCP and OAuth
+requests without revoking existing authorizations. Requests already executing
+may finish. To resume, enable external access again in Settings. This manual
+suspension persists across restarts.
+
+Traffic counters, alerts, and automatic pauses reset when TwiCC restarts.
+The registration and pending-request quotas remain stored. Normal token and
+request expiration still applies throughout a suspension.
+
+Rate limits use the client address supplied by the ASGI server. A proxy must
+pass the real client address and be trusted by the server; TwiCC never trusts
+arbitrary forwarding headers itself. IPv6 addresses in the same /64 share a
+source quota. Only a keyed source hash is stored, not the IP address.
 
 ### If a connection does not finish
 

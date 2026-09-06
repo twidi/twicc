@@ -23,19 +23,23 @@ CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest())
 
 
 @pytest.fixture(autouse=True)
-def config(monkeypatch):
+def config(monkeypatch, settings):
+    # Import before patching the source reader, so teardown restores the real function.
+    from twicc.mcp.oauth import config as oauth_config
+
+    settings.TWICC_PASSWORD_HASH = "configured-password"
     async def serialized(factory):
         return await factory()
 
     monkeypatch.setattr("twicc.mcp.oauth.storage.run_under_db_write_lock", serialized)
     values = {"mcpBaseUrl": BASE, "externalMcpEnabled": True}
     monkeypatch.setattr("twicc.synced_settings.read_routing_settings", lambda: RoutingSettingsSnapshot(values, True))
-    monkeypatch.setattr("twicc.mcp.oauth.config.read_routing_settings", lambda: RoutingSettingsSnapshot(values, True))
+    monkeypatch.setattr(oauth_config, "read_routing_settings", lambda: RoutingSettingsSnapshot(values, True))
     monkeypatch.setattr("twicc.mcp.server._session_manager", None)
     monkeypatch.setattr("twicc.mcp.server._external_manager", None)
-    from twicc.mcp.oauth.routes import _limits
+    from twicc.mcp.oauth import protection
 
-    _limits.clear()
+    monkeypatch.setattr(protection, "protection", protection.Protection())
     return values
 
 
@@ -371,6 +375,29 @@ def test_disabled_origin_never_serves_private_app(config):
     asyncio.run(run())
 
 
+def test_passwordless_external_origin_stays_closed_with_enabled_setting(settings):
+    settings.TWICC_PASSWORD_HASH = ""
+
+    async def run():
+        async with client() as c:
+            for path in ("/", "/mcp", "/mcp/oauth/authorize", "/.well-known/oauth-protected-resource/mcp",
+                         "/.well-known/oauth-authorization-server/mcp/oauth"):
+                assert (await c.get(path)).status_code == 404, path
+            for path in ("/mcp/oauth/register", "/mcp/oauth/token", "/mcp/oauth/continue"):
+                assert (await c.post(path, json={})).status_code == 404, path
+
+    asyncio.run(run())
+
+
+def test_owner_snapshot_reports_password_requirement(settings):
+    from django.test import Client
+
+    settings.TWICC_PASSWORD_HASH = ""
+    response = Client(REMOTE_ADDR="127.0.0.1").get("/api/mcp/")
+    assert response.status_code == 200
+    assert response.json()["config"].get("passwordConfigured") is False
+
+
 def test_cimd_fetch_pins_dns_and_preserves_tls_hostname(monkeypatch):
     from twicc.mcp.oauth import provider as module
 
@@ -499,14 +526,13 @@ def test_dedicated_host_unknown_paths_are_always_404(method):
 
 
 def test_unknown_oauth_paths_rejected_before_body_and_rate_limiter():
-    from twicc.mcp.oauth.routes import _limits, application
+    from twicc.mcp.oauth.routes import application
+    from twicc.mcp.oauth import protection
 
     async def run():
         # An exhausted rate limit must not turn an unrelated path into an OAuth endpoint.
-        import time
-        from collections import deque
-
-        _limits["audit-client"] = deque([time.monotonic()] * 300)
+        for _ in range(301):
+            protection.protection.check("discovery", "audit-client")
         messages = []
 
         async def receive():

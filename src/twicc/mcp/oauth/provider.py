@@ -16,6 +16,9 @@ from mcp.shared.auth import OAuthClientInformationFull
 from twicc.core.models import McpConnection, McpOAuthClient, McpOAuthCredential, McpOAuthRequest
 from .config import base_url, resource_url
 from .storage import changed, digest, exchange_or_error, write
+from . import protection
+
+_metadata_slots = asyncio.Semaphore(4)
 
 
 def valid_redirect(uri):
@@ -32,9 +35,35 @@ def valid_redirect(uri):
     )
 
 
+def loopback_redirect_key(uri):
+    """RFC 8252 §7.3: only the port may vary for HTTP loopback IP callbacks."""
+    raw = str(uri)
+    parsed = urlsplit(raw)
+    if parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "::1") and valid_redirect(uri):
+        # Preserve the exact suffix, including empty '?' or '#' delimiters.
+        suffix = raw.partition("://")[2][len(parsed.netloc):]
+        return parsed.hostname, suffix
+    return None
+
+
+class ClientInformation(OAuthClientInformationFull):
+    """Keep SDK validation, with its missing native-app port exception."""
+
+    def validate_redirect_uri(self, redirect_uri):
+        if redirect_uri is not None:
+            key = loopback_redirect_key(redirect_uri)
+            if key is not None and any(key == loopback_redirect_key(uri) for uri in self.redirect_uris or []):
+                return redirect_uri
+        return super().validate_redirect_uri(redirect_uri)
+
+
 async def fetch_metadata(client_id):
+    async def bounded_fetch():
+        async with _metadata_slots:
+            return await _fetch_metadata(client_id)
+
     try:
-        return await asyncio.wait_for(_fetch_metadata(client_id), timeout=10)
+        return await asyncio.wait_for(bounded_fetch(), timeout=10)
     except (TimeoutError, ValueError):
         return None
 
@@ -78,7 +107,7 @@ async def _fetch_metadata(client_id):
             return None
         # Public clients with PKCE are supported. Do not trust a remote client secret.
         metadata.update(client_secret=None, token_endpoint_auth_method="none", scope="twicc:full")
-        info = OAuthClientInformationFull.model_validate(metadata)
+        info = ClientInformation.model_validate(metadata)
         if not info.redirect_uris or not all(valid_redirect(u) for u in info.redirect_uris):
             return None
         return info
@@ -87,25 +116,27 @@ async def _fetch_metadata(client_id):
 
 
 class Provider:
-    async def get_client(self, client_id):
+    async def get_client(self, client_id, *, allow_registration=True):
         if not isinstance(client_id, str) or len(client_id) > 2048:
             return None
         row = await McpOAuthClient.objects.filter(pk=client_id).afirst()
-        if row and (not client_id.startswith("https://") or row.created_at > timezone.now() - timedelta(hours=1)):
-            return OAuthClientInformationFull.model_validate(row.metadata)
-        if not client_id.startswith("https://"):
+        if row and (not allow_registration or not client_id.startswith("https://")
+                    or row.created_at > timezone.now() - timedelta(hours=1)):
+            return ClientInformation.model_validate(row.metadata)
+        if not allow_registration or not client_id.startswith("https://"):
             return None
         info = await fetch_metadata(client_id)
         if info:
 
             def store():
-                if row is None and McpOAuthClient.objects.count() >= 1000:
+                if row is None and not protection.registration_allowed():
                     return False
                 McpOAuthClient.objects.update_or_create(
                     id=client_id,
                     defaults={
                         "metadata": info.model_dump(mode="json"),
                         "created_at": timezone.now(),
+                        "source_hash": row.source_hash if row else protection.request_source.get(),
                     },
                 )
                 return True
@@ -117,11 +148,16 @@ class Provider:
     async def register_client(self, client_info):
         metadata = client_info.model_dump(mode="json")
         secret = metadata.pop("client_secret", None)
-        await write(
-            lambda: McpOAuthClient.objects.create(
-                id=client_info.client_id, metadata=metadata, secret_hash=digest(secret) if secret else ""
+        def register():
+            if not protection.registration_allowed():
+                return False
+            McpOAuthClient.objects.create(
+                id=client_info.client_id, metadata=metadata, secret_hash=digest(secret) if secret else "",
+                source_hash=protection.request_source.get(),
             )
-        )
+            return True
+
+        return await write(register)
 
     async def authorize(self, client, params):
         if params.resource != resource_url():
@@ -136,12 +172,20 @@ class Provider:
         code = secrets.token_hex(4).upper()
 
         def create():
-            if McpOAuthRequest.objects.filter(state="pending", expires_at__gt=timezone.now()).count() >= 30:
+            pending = McpOAuthRequest.objects.filter(state="pending", expires_at__gt=timezone.now())
+            source = protection.request_source.get()
+            if pending.count() >= protection.MAX_PENDING:
+                protection.protection.reject(source, capacity=True)
+                return False
+            if (pending.filter(client_id=client.client_id).count() >= protection.MAX_CLIENT_PENDING
+                    or pending.filter(source_hash=source).count() >= protection.MAX_SOURCE_PENDING):
+                protection.protection.reject(source)
                 return False
             McpOAuthRequest.objects.create(
                 id=request_id,
                 client_id=client.client_id,
                 params=params.model_dump(mode="json"),
+                source_hash=source,
                 continuation_hash=digest(handle),
                 verification_hash=digest(code),
                 expires_at=timezone.now() + timedelta(minutes=10),
@@ -233,6 +277,25 @@ class Provider:
         if row:
             await write(lambda: McpConnection.objects.filter(pk=row.connection_id).update(revoked_at=timezone.now()))
             await changed()
+
+
+class TokenExchangeProvider(Provider):
+    """Per-request SDK adapter for OAuth 2.1's optional token redirect_uri.
+
+    The SDK uses the authorization-time presence flag to require a repeated URI.
+    Set that flag on the loaded copy to match this token request instead: omission
+    is allowed, while a supplied URI must equal the actual authorization callback.
+    Stored codes and all SDK client, expiry, PKCE and exchange checks stay intact.
+    """
+
+    def __init__(self, *, redirect_uri_present):
+        self.redirect_uri_present = redirect_uri_present
+
+    async def load_authorization_code(self, client, authorization_code):
+        code = await super().load_authorization_code(client, authorization_code)
+        if code is not None:
+            code.redirect_uri_provided_explicitly = self.redirect_uri_present
+        return code
 
 
 provider = Provider()

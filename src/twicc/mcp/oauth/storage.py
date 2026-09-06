@@ -7,6 +7,7 @@ from datetime import timedelta
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from mcp.server.auth.provider import TokenError
@@ -147,6 +148,31 @@ def revoke_all():
     with transaction.atomic():
         McpConnection.objects.filter(revoked_at__isnull=True).update(revoked_at=timezone.now())
         McpOAuthRequest.objects.filter(state__in=["pending", "approved"]).update(state="expired")
+
+
+async def enforce_password_requirement():
+    """Disable passwordless external access before the server accepts requests.
+
+    Preserve existing grants for manual reactivation after restoring a password.
+    Keep the MCP hostname reserved, including when other routing settings are
+    invalid. An unreadable file stays intact.
+    """
+    if settings.TWICC_PASSWORD_HASH:
+        return False
+
+    from twicc.synced_settings import _settings_lock, read_routing_settings, write_synced_settings
+
+    def disable():
+        with _settings_lock:
+            snapshot = read_routing_settings()
+            if not snapshot.available or not snapshot.settings.get("externalMcpEnabled"):
+                return False
+            updated = {**snapshot.settings, "externalMcpEnabled": False,
+                       "_version": snapshot.settings.get("_version", 0) + 1}
+            write_synced_settings(updated)
+            return True
+
+    return await sync_to_async(disable)()
 
 
 async def cleanup():

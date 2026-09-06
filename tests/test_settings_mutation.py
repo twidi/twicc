@@ -467,7 +467,8 @@ def test_update_from_payload_returns_origin_relationship_errors(temp_settings):
     ]
 
 
-def test_mcp_origin_requires_https_and_dedicated_hostname(temp_settings):
+def test_mcp_origin_requires_https_and_dedicated_hostname(temp_settings, settings):
+    settings.TWICC_PASSWORD_HASH = "configured-password"
     assert _update({"publicBaseUrl": "https://app.example.com"}).status == "accepted"
     for origin in ("http://mcp.example.com", "https://app.example.com", "https://localhost", "https://mcp.example.com/path"):
         assert _update({"mcpBaseUrl": origin, "externalMcpEnabled": True}).status == "rejected"
@@ -477,7 +478,8 @@ def test_mcp_origin_requires_https_and_dedicated_hostname(temp_settings):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_disabling_external_mcp_revokes_existing_connections(temp_settings, monkeypatch):
+def test_disabling_external_mcp_revokes_existing_connections(temp_settings, monkeypatch, settings):
+    settings.TWICC_PASSWORD_HASH = "configured-password"
     from twicc.core.models import McpConnection, McpOAuthClient
     async def direct(factory):
         return await factory()
@@ -491,3 +493,26 @@ def test_disabling_external_mcp_revokes_existing_connections(temp_settings, monk
     assert _update({"externalMcpEnabled": True}).status == "accepted"
     connection.refresh_from_db()
     assert connection.revoked_at is not None
+
+
+def test_external_mcp_activation_requires_password(temp_settings, settings):
+    settings.TWICC_PASSWORD_HASH = ""
+    assert _update({"mcpBaseUrl": "https://mcp.example.com"}).status == "accepted"
+    before = ss.read_synced_settings()
+    result = _update({"externalMcpEnabled": True})
+    assert result.status == "rejected"
+    assert [(error.field, error.code) for error in result.errors] == [("externalMcpEnabled", "password_required")]
+    assert ss.read_synced_settings() == before
+
+
+def test_external_mcp_payload_cannot_bypass_password_requirement(temp_settings, settings):
+    from twicc.core.services.settings_mutation import update_synced_settings_from_payload
+
+    settings.TWICC_PASSWORD_HASH = ""
+    result = async_to_sync(update_synced_settings_from_payload)({
+        "kind": "settings:update",
+        "patch": {"mcpBaseUrl": "https://mcp.example.com", "externalMcpEnabled": True},
+        "broadcast": False,
+    })
+    assert result.success is False
+    assert ss.read_synced_settings()["externalMcpEnabled"] is False

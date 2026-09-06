@@ -29,7 +29,10 @@ async def management(request):
         state["config"] = {
             "mcpBaseUrl": config.get("mcpBaseUrl", ""),
             "externalMcpEnabled": config.get("externalMcpEnabled", False),
+            "passwordConfigured": bool(settings.TWICC_PASSWORD_HASH),
         }
+        from .oauth.protection import protection
+        state["protection"] = protection.snapshot()
         return JsonResponse(state)
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
@@ -47,7 +50,18 @@ async def management(request):
     if not isinstance(name, str) or len(name.strip()) > 80:
         return JsonResponse({"error": "Name must have at most 80 characters."}, status=400)
     name = name.strip()
-    if action == "configure":
+    if action == "suspend":
+        from twicc.core.services.settings_mutation import update_synced_settings
+
+        result = await update_synced_settings({"externalMcpEnabled": False}, revoke_mcp_grants=False)
+        if result.status != "accepted":
+            return JsonResponse({"error": "; ".join(e.message for e in result.errors)}, status=400)
+    elif action == "acknowledge_security":
+        from .oauth.protection import protection
+
+        if not protection.acknowledge():
+            return JsonResponse({"error": "Automatic protection is still active."}, status=409)
+    elif action == "configure":
         from twicc.core.services.settings_mutation import update_synced_settings
 
         result = await update_synced_settings({k: data[k] for k in ("mcpBaseUrl", "externalMcpEnabled") if k in data})

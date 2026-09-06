@@ -8,11 +8,13 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useMcpStore } from '../../stores/mcp'
 import HelpFeatureLink from '../help/HelpFeatureLink.vue'
+import McpProtection from './McpProtection.vue'
 
 const store = useMcpStore()
 const url = ref('')
 const saving = ref(false)
-const enabled = computed(() => store.config.externalMcpEnabled === true)
+const passwordConfigured = computed(() => store.config.passwordConfigured === true)
+const enabled = computed(() => passwordConfigured.value && store.config.externalMcpEnabled === true)
 const hasActions = computed(() => enabled.value || store.connections.length > 0 || store.pendingRequests.length > 0)
 const applied = computed(() => url.value.trim() === (store.config.mcpBaseUrl || ''))
 const endpoint = computed(() => `${store.config.mcpBaseUrl}/mcp`)
@@ -104,12 +106,18 @@ function manage() { window.dispatchEvent(new CustomEvent('twicc:open-mcp-manager
         <div class="setting-group">
             <label class="setting-group-label">External access <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
             <wa-switch
-                size="small" :checked="enabled" :disabled="saving || !store.config.mcpBaseUrl" @change="toggle"
+                size="small" :checked="enabled"
+                :disabled="saving || !passwordConfigured || !store.config.mcpBaseUrl" @change="toggle"
             >Accept external MCP clients</wa-switch>
+            <wa-callout v-if="store.config.passwordConfigured === false" variant="danger" size="small">
+                External MCP requires a TwiCC password. Set a password and restart TwiCC before enabling external access.
+            </wa-callout>
             <span class="setting-group-hint">
                 Needs the URL above. Changing that URL or turning access off revokes existing connections.
             </span>
         </div>
+
+        <McpProtection />
 
         <wa-callout v-if="store.error || store.loadError" variant="danger" size="small">
             {{ store.error || store.loadError }}

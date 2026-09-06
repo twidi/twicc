@@ -4,7 +4,7 @@ const pendingRefresh = new WeakMap()
 
 export const useMcpStore = defineStore('mcp', {
     state: () => ({
-        connections: [], requests: [], config: {}, error: '', loadError: '', loading: false,
+        connections: [], requests: [], config: {}, protection: {}, error: '', loadError: '', loading: false,
         // Reference instant for the TTL filter below, advanced by McpManager.
         clock: Date.now(),
     }),
@@ -40,6 +40,7 @@ export const useMcpStore = defineStore('mcp', {
                 this.connections = data.connections
                 this.requests = data.requests
                 this.config = data.config
+                this.protection = data.protection || {}
                 this.loadError = ''
             } catch (error) { this.loadError = error.message }
             finally { this.loading = false; pendingRefresh.delete(this) }

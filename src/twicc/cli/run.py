@@ -203,6 +203,12 @@ async def run_server(port: int):
     from twicc.providers.db_writer import start_db_writer, stop_db_writer
     start_db_writer()
 
+    # Run even with TWICC_NO_MCP: restoring the password still requires manual
+    # reactivation of external access. This precedes all request handling.
+    from twicc.mcp.oauth.storage import enforce_password_requirement
+    if await enforce_password_requirement():
+        logger.warning("External MCP disabled: a TwiCC password is required. Existing authorizations are preserved.")
+
     # Cross-provider initial price sync runs *before* per-provider orchestrators
     # so they can rely on prices being in DB by the time their compute paths run.
     # A single OpenRouter fetch covers every provider that has declared an

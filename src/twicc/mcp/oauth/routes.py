@@ -3,8 +3,6 @@
 import base64
 import hmac
 import secrets
-import time
-from collections import deque
 from urllib.parse import unquote, urlencode
 
 import orjson
@@ -17,12 +15,11 @@ from mcp.shared.auth import OAuthClientInformationFull
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from twicc.core.models import McpOAuthClient, McpOAuthRequest
+from twicc.core.models import McpOAuthClient, McpOAuthCredential, McpOAuthRequest
 from .config import RESOURCE_METADATA, SERVER_METADATA, base_url, issuer_url, resource_url
-from .provider import provider, valid_redirect
+from .provider import TokenExchangeProvider, provider, valid_redirect
 from .storage import digest, issue, write
-
-_limits = {}
+from . import protection
 
 # The public OAuth application owns only these exact paths. Check this before
 # preflight handling, request-body reads and rate limiting, including when the
@@ -66,7 +63,8 @@ class Authenticator:
                 request._form = FormData({**dict(form), "client_id": client_id})
             except (ValueError, UnicodeError):
                 raise AuthenticationError("Invalid Basic authentication") from None
-        client = await provider.get_client(str(client_id or ""))
+        # Token and revocation requests never register a client or fetch CIMD.
+        client = await provider.get_client(str(client_id or ""), allow_registration=False)
         if not client or client.token_endpoint_auth_method != method:
             raise AuthenticationError("Invalid client authentication")
         row = await McpOAuthClient.objects.filter(pk=client.client_id).afirst()
@@ -179,8 +177,6 @@ async def handle(request):
         method = data.get("token_endpoint_auth_method", "client_secret_post")
         if method not in ("none", "client_secret_post", "client_secret_basic"):
             return error("Unsupported client authentication method")
-        if await McpOAuthClient.objects.acount() >= 1000:
-            return error("Client registration limit reached", 429)
         client = OAuthClientInformationFull.model_validate(
             {
                 **data,
@@ -198,13 +194,15 @@ async def handle(request):
             or not all(valid_redirect(u) for u in client.redirect_uris)
         ):
             return error("Valid HTTPS or localhost redirect URIs are required")
-        await provider.register_client(client)
+        if not await provider.register_client(client):
+            return limited(60, "Client registration capacity reached. Try again later.")
         return JSONResponse(client.model_dump(mode="json", exclude_none=True), status_code=201)
     if path == "/mcp/oauth/token" and method == "POST":
         form = await request.form()
         if form.get("resource") != resource_url():
             return error("Use the advertised MCP resource", code="invalid_target")
-        return await TokenHandler(provider, Authenticator()).handle(request)
+        token_provider = TokenExchangeProvider(redirect_uri_present="redirect_uri" in form)
+        return await TokenHandler(token_provider, Authenticator()).handle(request)
     if path == "/mcp/oauth/revoke" and method == "POST":
         try:
             client = await Authenticator().authenticate_request(request)
@@ -220,37 +218,85 @@ async def handle(request):
     return Response(status_code=404)
 
 
+def limited(seconds, message="OAuth request limit reached. Try again later."):
+    response = error(message, 429, "temporarily_unavailable")
+    response.headers["Retry-After"] = str(seconds)
+    return response
+
+
+async def budget_identity(request, category):
+    """Only possession of a live secret gets a separate authorized budget.
+
+    A client_id, including an approved client's public ID, is never sufficient.
+    The actual SDK authentication and grant validation still run afterwards.
+    """
+    if request.method != "POST":
+        return None
+    if category in ("token", "revoke"):
+        form = await request.form()
+        value = form.get("token") if category == "revoke" else form.get("refresh_token") or form.get("code")
+        if not isinstance(value, str) or not value:
+            return None
+        row = await McpOAuthCredential.objects.filter(
+            digest=digest(value), expires_at__gt=timezone.now(),
+            connection__revoked_at__isnull=True, connection__resource=resource_url(),
+        ).values_list("connection_id", flat=True).afirst()
+        return f"grant:{row}" if row else None
+    if category == "continue":
+        data = await request.json()
+        if not isinstance(data, dict) or not isinstance(data.get("id"), str):
+            return None
+        row = await McpOAuthRequest.objects.filter(
+            pk=data["id"], continuation_hash=digest(str(data.get("handle", ""))),
+            expires_at__gt=timezone.now(), state__in=["pending", "approved", "refused"],
+        ).values_list("id", flat=True).afirst()
+        return f"request:{row}" if row else None
+    return None
+
+
+async def process(request, source):
+    # Cheap static prerequisites carry no secret that could identify the grant.
+    # Keep them available so a discovery flood cannot block an admitted flow.
+    if request.method == "OPTIONS":
+        return Response(status_code=204)
+    if request.method == "GET" and request.url.path == "/mcp/oauth/wait":
+        return await handle(request)
+    category = request.url.path.rsplit("/", 1)[-1]
+    if category not in protection.RATE_LIMITS:
+        category = "discovery"
+    # Cheap admission checks precede parsing and CIMD network requests.
+    if category in protection.ADMISSION or category == "discovery":
+        retry = protection.protection.check(category, source)
+        if retry:
+            return limited(retry)
+    body = bytearray()
+    async for part in request.stream():
+        body.extend(part)
+        if len(body) > 65536:
+            return error("Request too large", 413)
+    request._body = bytes(body)
+    if category not in protection.ADMISSION and category != "discovery":
+        identity = await budget_identity(request, category)
+        retry = protection.protection.check(category, source, identity)
+        if retry:
+            return limited(retry)
+    return await handle(request)
+
+
 async def application(scope, receive, send):
     if scope.get("path") not in OAUTH_PATHS or not base_url():
         await Response(status_code=404)(scope, receive, send)
         return
-    # Bound aggregate traffic, including metadata fetch amplification. No unbounded IP map.
-    now = time.monotonic()
-    key = scope.get("client", ("unknown",))[0]
-    if len(_limits) > 1024:
-        _limits.clear()
-    times = _limits.setdefault(key, deque())
-    while times and times[0] < now - 60:
-        times.popleft()
-    if len(times) >= 300:
-        await error("Rate limit reached", 429)(scope, receive, send)
-        return
-    times.append(now)
     request = Request(scope, receive)
+    source = protection.source_hash(scope)
+    context = protection.request_source.set(source)
     try:
-        if request.method == "OPTIONS":
-            response = Response(status_code=204)
-        else:
-            body = bytearray()
-            async for part in request.stream():
-                body.extend(part)
-                if len(body) > 65536:
-                    await error("Request too large", 413)(scope, receive, send)
-                    return
-            request._body = bytes(body)
-            response = await handle(request)
+        response = await process(request, source)
     except (ValueError, orjson.JSONDecodeError):
         response = error("Invalid request")
+    finally:
+        protection.request_source.reset(context)
+        await protection.protection.publish()
     response.headers.update(
         {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"}
     )
@@ -260,6 +306,7 @@ async def application(scope, receive, send):
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                 "Access-Control-Allow-Headers": "Authorization, Content-Type, MCP-Protocol-Version",
+                "Access-Control-Expose-Headers": "Retry-After",
             }
         )
     await response(scope, receive, send)

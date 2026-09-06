@@ -16,7 +16,11 @@ the result:
   quarantined / invalid Host    → plain 404, WebSocket close 4404
   unavailable routing settings → plain 404, WebSocket close 4404
 
-Rejections answer the plain ``404 Not found`` (or close ``4404``) without
+Browser WebSocket Origins must match the request host and effective port.
+Foreign, opaque, or malformed Origins are rejected before the handshake with
+ASGI close 4403. Origin-less native clients keep the existing authentication.
+
+Routing rejections answer the plain ``404 Not found`` (or close ``4404``) without
 calling the inner application and without revealing the configured addresses.
 The gate never repairs or writes settings.
 The received Host header is authoritative. Proxies must preserve the configured
@@ -27,6 +31,7 @@ from __future__ import annotations
 
 import logging
 
+from twicc.auth.websocket_origin import websocket_origin_allowed
 from twicc.core.services.origin_policy import (
     SHARE_ONLY_PREFIXES,
     classify_request,
@@ -123,6 +128,10 @@ class PublicOriginGate:
             # own log — the reply below stays the plain 404 / close 4404.
             logger.debug("Origin gate: unusable Host header %r (%s %s)", _raw_host_header(scope), stype, path)
             return await _reject_request(stype, send)
+        if stype == "websocket" and not websocket_origin_allowed(scope, authority):
+            logger.debug("WebSocket rejected: Origin does not match the request authority")
+            await send({"type": "websocket.close", "code": 4403})
+            return
         from twicc.synced_settings import read_routing_settings
 
         try:

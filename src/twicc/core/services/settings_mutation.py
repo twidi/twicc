@@ -21,6 +21,7 @@ from typing import NamedTuple
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
+from django.conf import settings
 
 from twicc.agent.registry import get_agent_manager_registry
 from twicc.core.enums import Provider
@@ -172,6 +173,10 @@ def _merge_and_write(patch: dict, base_version: int | None) -> dict:
             parsed_mcp = normalize_public_origin(raw_mcp)
             if ("externalMcpEnabled" in patch and type(patch["externalMcpEnabled"]) is not bool):
                 errors.append(SettingsDropError("externalMcpEnabled", "invalid_type", "Expected a boolean."))
+            if merged_mcp.get("externalMcpEnabled") is True and not settings.TWICC_PASSWORD_HASH:
+                errors.append(SettingsDropError(
+                    "externalMcpEnabled", "password_required", "External MCP requires a TwiCC password."
+                ))
             if "mcpBaseUrl" in patch:
                 if (
                     not isinstance(raw_mcp, str) or parsed_mcp.error
@@ -362,6 +367,7 @@ async def _apply_transitions_and_broadcast(patch: dict, result: dict) -> None:
 
 async def update_synced_settings(
     patch: dict, *, base_version: int | None = None, broadcast: bool = True,
+    revoke_mcp_grants: bool = True,
 ) -> SettingsUpdateResult:
     """Merge ``patch`` into the synced settings and (optionally) broadcast.
 
@@ -369,6 +375,8 @@ async def update_synced_settings(
     the CLI passes ``None`` (last-write-wins, like the WS "old client" branch).
     When ``broadcast=True`` and the merge is accepted, the orchestrator
     transitions run and ``synced_settings_updated`` is broadcast to all clients.
+    Only the owner suspension action skips revocation when turning MCP off.
+    Origin changes always revoke grants, including on that internal path.
     """
     previous_mcp = read_synced_settings()
     result = await sync_to_async(_merge_and_write)(patch, base_version)
@@ -376,7 +384,7 @@ async def update_synced_settings(
         current_mcp = read_synced_settings()
         if (
             (previous_mcp.get("mcpBaseUrl") and previous_mcp.get("mcpBaseUrl") != current_mcp.get("mcpBaseUrl"))
-            or (previous_mcp.get("externalMcpEnabled") and not current_mcp.get("externalMcpEnabled"))
+            or (revoke_mcp_grants and previous_mcp.get("externalMcpEnabled") and not current_mcp.get("externalMcpEnabled"))
         ):
             from twicc.mcp.oauth.storage import revoke_all, write, changed
             await write(revoke_all)

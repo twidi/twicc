@@ -25,8 +25,12 @@ import { formatDate } from '../../utils/date'
 import { toast } from '../../composables/useToast'
 import McpConnectionDialog from './McpConnectionDialog.vue'
 import HelpFeatureLink from '../help/HelpFeatureLink.vue'
+import McpProtection from './McpProtection.vue'
 
 const McpToast = defineAsyncComponent(() => import('./McpToast.vue'))
+const McpSecurityToast = defineAsyncComponent(() => import('./McpSecurityToast.vue'))
+let securityNotification = null
+let protectionTimer = null
 
 const store = useMcpStore()
 const auth = useAuthStore()
@@ -155,13 +159,24 @@ watch(() => store.pendingRequests, requests => {
     armExpiryTimer()
 })
 
+watch(() => store.config.externalMcpEnabled && store.protection.paused ? store.protection.incident?.detectedAt : null,
+    incident => {
+        securityNotification?.clear()
+        securityNotification = incident ? toast.custom(McpSecurityToast, {
+            title: 'Suspected OAuth abuse', duration: Infinity, persistent: true,
+        }) : null
+    })
+
 onMounted(() => {
+    protectionTimer = setInterval(() => { if (store.protection.paused) refresh() }, 15000)
     window.addEventListener('twicc:open-mcp-manager', open)
     window.addEventListener('twicc:mcp-updated', refresh)
     window.addEventListener('focus', refresh)
     refresh()
 })
 onBeforeUnmount(() => {
+    clearInterval(protectionTimer)
+    securityNotification?.clear()
     clearTimeout(expiryTimer)
     for (const notification of notifications.values()) notification.clear()
     window.removeEventListener('twicc:open-mcp-manager', open)
@@ -187,6 +202,8 @@ onBeforeUnmount(() => {
         <p v-else-if="store.config.mcpBaseUrl" class="mcp-own-address">
             Your MCP address: <code>{{ store.config.mcpBaseUrl }}/mcp</code>
         </p>
+
+        <McpProtection />
 
         <wa-callout v-if="store.error || store.loadError" variant="danger" size="small">
             {{ store.error || store.loadError }}

@@ -1936,6 +1936,7 @@ class McpOAuthClient(models.Model):
     id = models.CharField(primary_key=True, max_length=2048)
     metadata = models.JSONField(default=dict)
     secret_hash = models.CharField(max_length=64, blank=True)
+    source_hash = models.CharField(max_length=64, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
@@ -1959,6 +1960,7 @@ class McpOAuthRequest(models.Model):
     client = models.ForeignKey(McpOAuthClient, on_delete=models.CASCADE)
     connection = models.ForeignKey(McpConnection, null=True, on_delete=models.CASCADE)
     params = models.JSONField(default=dict)
+    source_hash = models.CharField(max_length=64, blank=True, db_index=True)
     continuation_hash = models.CharField(max_length=64)
     verification_hash = models.CharField(max_length=64)
     attempts = models.PositiveSmallIntegerField(default=0)
