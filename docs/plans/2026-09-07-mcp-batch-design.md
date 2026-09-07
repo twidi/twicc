@@ -356,7 +356,9 @@ The wrapper error message states that the command ran but its response is omitte
 Do not automatically retry the command or expose an artifact/download endpoint for the omitted data.
 
 Twenty retained envelopes use at most 7.5 MiB. Bound wrapper metadata and use compact JSON text.
-Require the full serialized MCP response, including both representations, to remain below 16 MiB.
+Require the serialized MCP CallToolResult, including both representations, to remain below 16 MiB.
+The outer JSON-RPC envelope is excluded: it repeats a client-controlled request ID whose size follows existing transport rules.
+Do not truncate that ID or introduce a new request-ID restriction for batch calls.
 Check this invariant in tests with worst-case valid metadata and escaped text.
 If escaping exceeds the final limit, omit retained envelopes from the end until the response fits.
 Never change execution statuses or retry commands while shrinking the response.
@@ -515,7 +517,7 @@ An implementation changelog entry belongs only in the then-current Unreleased se
 36. Long waits exhaust admission predictably; excess batches reject without allocating worker tasks.
 37. MCP batch draining respects its five-second grace even when a worker never returns; no hard process-exit claim follows.
 38. An external validity-check exception stops new starts with `authorization_unavailable` and preserves previous results.
-39. Both accepted and rejected responses satisfy the final serialized response limit, including escaped diagnostic strings.
+39. Both accepted and rejected tool results satisfy the final serialized tool-result limit, including escaped diagnostic strings.
 
 ### 13.5 Product validation
 
