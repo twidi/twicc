@@ -74,3 +74,23 @@ class ExternalCaller(NamedTuple):
 
 
 external_caller: ContextVar[ExternalCaller | None] = ContextVar("mcp_external_caller", default=None)
+
+
+class ExternalGrant(NamedTuple):
+    """Authenticated grant facts captured at the external request boundary."""
+
+    connection_id: str
+    resource: str
+    expires_at: int
+
+
+class BatchCorrelation(NamedTuple):
+    """Server-owned batch identity and validated child coordinates."""
+
+    batch_id: str
+    call_id: str
+    index: int
+
+
+external_grant: ContextVar[ExternalGrant | None] = ContextVar("mcp_external_grant", default=None)
+batch_correlation: ContextVar[BatchCorrelation | None] = ContextVar("mcp_batch_correlation", default=None)

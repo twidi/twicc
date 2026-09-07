@@ -1,7 +1,7 @@
 # MCP batch calls
 
 Date: 2026-09-07
-Status: Proposed; implementation is not authorized by this document.
+Status: Implemented on 2026-09-07 after user authorization; automated checks pass. Real-client validation remains pending.
 Scope: Internal and external TwiCC MCP servers.
 
 ## 1. Objective
@@ -533,7 +533,8 @@ Run focused MCP tests and relevant existing identity, endpoint, server, and exte
 This specification incorporates the corrections from an internal sub-agent's adversarial review on 2026-09-07.
 The same reviewer verifies the corrections and reports no remaining blockers.
 The review uses source inspection; runtime behavior and client compatibility still require implementation validation.
-It does not authorize implementation, installation, migrations, or server restarts.
+The user subsequently authorizes implementation. The implementation record is in [the plan](2026-09-07-mcp-batch-implementation-plan.md).
+No server restart or real-client validation is performed during implementation.
 No mandatory product decision remains unspecified; numerical limits are initial defaults to validate during implementation.
 Changing public error or scheduling semantics requires updating this specification before shipping.
 

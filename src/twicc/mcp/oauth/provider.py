@@ -9,16 +9,39 @@ from datetime import timedelta
 from urllib.parse import urlsplit
 
 import httpx
+from django.db.models import Q
 from django.utils import timezone
 from mcp.server.auth.provider import AccessToken, AuthorizationCode, AuthorizeError, RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
 
 from twicc.core.models import McpConnection, McpOAuthClient, McpOAuthCredential, McpOAuthRequest
+from twicc.mcp.identity import ExternalGrant
 from .config import base_url, resource_url
 from .storage import changed, digest, exchange_or_error, write
 from . import protection
 
 _metadata_slots = asyncio.Semaphore(4)
+
+
+def active_connection_filter(resource: str, *, prefix: str = "") -> Q:
+    """Match an unrevoked connection for the specified MCP resource."""
+    return Q(**{prefix + "revoked_at__isnull": True, prefix + "resource": resource})
+
+
+async def batch_grant_valid(grant: ExternalGrant) -> bool:
+    """Recheck live authority before a child starts, without refreshing the grant.
+
+    Database errors propagate so scheduling distinguishes unavailable authority
+    from confirmed revocation. No per-child last-used update is needed.
+    """
+    if not base_url() or grant.resource != resource_url() or grant.expires_at <= timezone.now().timestamp():
+        return False
+    active = await McpConnection.objects.filter(
+        active_connection_filter(grant.resource), pk=grant.connection_id,
+    ).aexists()
+    # The database await can outlive the credential or a configuration change.
+    return bool(active and base_url() and grant.resource == resource_url()
+                and grant.expires_at > timezone.now().timestamp())
 
 
 def valid_redirect(uri):
@@ -251,11 +274,10 @@ class Provider:
         row = (
             await McpOAuthCredential.objects.select_related("connection")
             .filter(
+                active_connection_filter(resource_url(), prefix="connection__"),
                 digest=digest(token),
                 kind="access",
                 expires_at__gt=timezone.now(),
-                connection__revoked_at__isnull=True,
-                connection__resource=resource_url(),
             )
             .afirst()
         )

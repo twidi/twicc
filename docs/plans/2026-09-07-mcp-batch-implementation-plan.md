@@ -1,6 +1,6 @@
 # MCP Batch Implementation Plan
 
-> **For agentic workers:** Use `superpowers:subagent-driven-development` or `superpowers:executing-plans` when available to execute this plan task by task. Implementation requires a separate user instruction. Steps use checkboxes for tracking.
+> **For agentic workers:** This plan is implemented. The checkboxes track completed implementation work; client validation limits are recorded below. Implementation is authorized by the user on 2026-09-07. Steps use checkboxes for tracking.
 
 **Goal:** Execute several existing TwiCC commands through one internal or external MCP call.
 
@@ -47,7 +47,7 @@ uv run pytest tests/test_mcp_server.py tests/test_mcp_tools.py -q
 If the user later selects a worktree, prefix commands with `cd <worktree> &&` and set `TWICC_DATA_DIR=$PWD` for Python commands.
 Do not use `uv pip`, `--active`, manual migrations, or package installation for test setup.
 
-Make one implementation commit per task after its checks pass. Use a Conventional Commit subject and descriptive body.
+The user authorizes one final implementation commit after tests and adversarial reviews pass. Use a Conventional Commit subject and descriptive body.
 Read the actual current model identity for the Codex co-author trailer at commit time.
 Do not claim that the commands documented here have already run.
 
@@ -127,7 +127,7 @@ The MCP single-call handler uses `prepare_tool()` and then `execute_prepared()`.
 Re-export `UnknownToolError` from server.py to preserve current imports.
 Keep `_run_invoke` referenced from server.py so existing thread tests still intercept the real execution seam.
 
-- [ ] Add a parity test and a validation-before-invoke regression.
+- [x] Add a parity test and a validation-before-invoke regression.
 
 ```python
 def test_invalid_single_call_does_not_invoke(monkeypatch):
@@ -143,17 +143,17 @@ Import `SimpleNamespace`, `mcp.types`, and existing `mcp_server` in this test fi
 Capture the pre-refactor responses for valid calls, invalid schemas, unknown tools, and external restriction failures.
 Assert the refactor preserves content, `isError`, and structured-content behavior.
 
-- [ ] Run `uv run pytest tests/test_mcp_server.py -q`; demonstrate the new helper-specific tests fail before extraction.
-- [ ] Move only lookup, validation, and caller checks to dispatch.py. Preserve current error wording for individual calls.
-- [ ] Split execution into `execute_prepared()`, retaining renderer, ContextVar `finally` cleanup, `_run_invoke`, and orjson normalization.
-- [ ] Add an optional `on_start` callback. Render arguments first; call the callback immediately before submitting `_run_invoke` with `asyncio.to_thread`.
-- [ ] This submission marker means business effects may occur, not that the worker has already applied them. Rendering failures leave it unset.
-- [ ] Keep ordinary exception types and messages unchanged; individual calls omit the callback.
-- [ ] Migrate the five endpoint tests that patch `server.dispatch_tool` to patch `server.execute_prepared` with `(prepared, *, session_id)`.
-- [ ] In those fakes, read `prepared.name` and `prepared.arguments`. Preserve every existing wire-envelope, error, caller-isolation, and attachment assertion.
-- [ ] Copy validated arguments once before asynchronous execution. Do not mutate incoming arguments or schema defaults.
-- [ ] Run `uv run pytest tests/test_mcp_server.py tests/test_mcp_endpoint.py tests/test_mcp_external.py tests/test_mcp_identity.py -q`.
-- [ ] Commit this compatible extraction with `refactor(mcp): share command preparation`.
+- [x] Run `uv run pytest tests/test_mcp_server.py -q`; demonstrate the new helper-specific tests fail before extraction.
+- [x] Move only lookup, validation, and caller checks to dispatch.py. Preserve current error wording for individual calls.
+- [x] Split execution into `execute_prepared()`, retaining renderer, ContextVar `finally` cleanup, `_run_invoke`, and orjson normalization.
+- [x] Add an optional `on_start` callback. Render arguments first; call the callback immediately before submitting `_run_invoke` with `asyncio.to_thread`.
+- [x] This submission marker means business effects may occur, not that the worker has already applied them. Rendering failures leave it unset.
+- [x] Keep ordinary exception types and messages unchanged; individual calls omit the callback.
+- [x] Migrate the five endpoint tests that patch `server.dispatch_tool` to patch `server.execute_prepared` with `(prepared, *, session_id)`.
+- [x] In those fakes, read `prepared.name` and `prepared.arguments`. Preserve every existing wire-envelope, error, caller-isolation, and attachment assertion.
+- [x] Copy validated arguments once before asynchronous execution. Do not mutate incoming arguments or schema defaults.
+- [x] Run `uv run pytest tests/test_mcp_server.py tests/test_mcp_endpoint.py tests/test_mcp_external.py tests/test_mcp_identity.py -q`.
+- [x] Commit this compatible extraction with `refactor(mcp): share command preparation`.
 
 **Acceptance:** Existing clients see no batch tools yet and no single-call behavior changes.
 
@@ -190,7 +190,7 @@ def validate_batch(name: str, arguments: object, *, registry: dict[str, CommandS
     # Exactly one result member is non-null.
 ```
 
-- [ ] Add parameterized validation cases for every rule in spec sections 4–5.
+- [x] Add parameterized validation cases for every rule in spec sections 4–5.
 
 ```python
 def test_late_invalid_child_rejects_whole_batch():
@@ -206,18 +206,18 @@ def test_late_invalid_child_rejects_whole_batch():
     assert result.rejection["errors"][0]["index"] == 1
 ```
 
-- [ ] Run `uv run pytest tests/test_mcp_batch_contract.py -q` and observe the missing contract implementation.
-- [ ] Build separate input schemas with defaults and `additionalProperties: false` at both wrapper levels.
-- [ ] Resolve defaults explicitly; JSON Schema validation does not insert defaults. Reject parallel `stop` and general-batch parallel mode.
-- [ ] Validate outer shape first. Then collect child errors in input order, capped at 100, probing one more error to set truncation.
-- [ ] Use `jsonschema.validators.validator_for(schema)` with the schema's declared dialect; validate schemas once and cache validators by tool name.
-- [ ] Inspect real child schemas instead of rebuilding their fields. Reject wrappers before ordinary lookup.
-- [ ] Classify errors without exposing exception text: structural -> `invalid_batch`; duplicate -> `duplicate_id`; policy -> `invalid_policy`; missing name -> `unknown_tool`; schema -> `invalid_arguments`; caller/read restriction -> `tool_not_allowed`.
-- [ ] Build JSON Pointers only from schema-defined properties and numeric list indexes. Escape `~` and `/` per JSON Pointer.
-- [ ] Use fixed messages by validator category: required, type, enum, additional properties, range/pattern, and generic invalid arguments.
-- [ ] Test huge secret-bearing values and unknown keys. Assert the secret is absent, diagnostic limits hold, and the rejection remains small.
-- [ ] Run `uv run pytest tests/test_mcp_batch_contract.py tests/test_mcp_tools.py -q`.
-- [ ] Commit with `feat(mcp): validate batch command inputs`.
+- [x] Run `uv run pytest tests/test_mcp_batch_contract.py -q` and observe the missing contract implementation.
+- [x] Build separate input schemas with defaults and `additionalProperties: false` at both wrapper levels.
+- [x] Resolve defaults explicitly; JSON Schema validation does not insert defaults. Reject parallel `stop` and general-batch parallel mode.
+- [x] Validate outer shape first. Then collect child errors in input order, capped at 100, probing one more error to set truncation.
+- [x] Use `jsonschema.validators.validator_for(schema)` with the schema's declared dialect; validate schemas once and cache validators by tool name.
+- [x] Inspect real child schemas instead of rebuilding their fields. Reject wrappers before ordinary lookup.
+- [x] Classify errors without exposing exception text: structural -> `invalid_batch`; duplicate -> `duplicate_id`; policy -> `invalid_policy`; missing name -> `unknown_tool`; schema -> `invalid_arguments`; caller/read restriction -> `tool_not_allowed`.
+- [x] Build JSON Pointers only from schema-defined properties and numeric list indexes. Escape `~` and `/` per JSON Pointer.
+- [x] Use fixed messages by validator category: required, type, enum, additional properties, range/pattern, and generic invalid arguments.
+- [x] Test huge secret-bearing values and unknown keys. Assert the secret is absent, diagnostic limits hold, and the rejection remains small.
+- [x] Run `uv run pytest tests/test_mcp_batch_contract.py tests/test_mcp_tools.py -q`.
+- [x] Commit with `feat(mcp): validate batch command inputs`.
 
 **Acceptance:** Validation is deterministic and performs no invocation, grant lookup, or mutation.
 
@@ -251,7 +251,7 @@ For oversized envelopes, retain execution status, null the response, and set `re
 Make the omission helper shared by per-child and aggregate fitting, so they produce identical metadata.
 If a provenance failure prevents a normal envelope, preserve the current dispatch exception as `tool_error`; do not replay.
 
-- [ ] Add tests for all exit classes, technical errors before/after start, skipped records, and output omission.
+- [x] Add tests for all exit classes, technical errors before/after start, skipped records, and output omission.
 
 ```python
 def test_omission_keeps_success_status(prepared_call):
@@ -268,16 +268,16 @@ def test_omission_keeps_success_status(prepared_call):
 
 Define `prepared_call` in this test module by preparing one real `workspaces` call through the Task 2 validator.
 
-- [ ] Run the new result tests before implementing the constructors.
-- [ ] Publish `BATCH_OUTPUT_SCHEMA` as a union of rejected/completed objects, with strict required fields and seven-field child records.
-- [ ] Define response as null or the existing three-field envelope, with unconstrained JSON `result`; never invent an output schema for command results.
-- [ ] Use schema enum sets for statuses and error codes from spec section 8. Check relational invariants in tests and constructors.
-- [ ] Serialize the actual SDK `CallToolResult` with aliases and unset-field exclusion when measuring size. Include both content representations.
-- [ ] Recompute `ok` after each omission; remove retained envelopes from the end until the serialized result fits.
-- [ ] Test accepted and rejected payloads, ASCII quotes, backslashes, control characters, non-ASCII text, and twenty boundary-size records.
-- [ ] Compare the helper's serialized bytes with the actual endpoint transport response in Task 6.
-- [ ] Run `uv run pytest tests/test_mcp_batch_contract.py -q`.
-- [ ] Commit with `feat(mcp): assemble bounded batch results`.
+- [x] Run the new result tests before implementing the constructors.
+- [x] Publish `BATCH_OUTPUT_SCHEMA` as a union of rejected/completed objects, with strict required fields and seven-field child records.
+- [x] Define response as null or the existing three-field envelope, with unconstrained JSON `result`; never invent an output schema for command results.
+- [x] Use schema enum sets for statuses and error codes from spec section 8. Check relational invariants in tests and constructors.
+- [x] Serialize the actual SDK `CallToolResult` with aliases and unset-field exclusion when measuring size. Include both content representations.
+- [x] Recompute `ok` after each omission; remove retained envelopes from the end until the serialized result fits.
+- [x] Test accepted and rejected payloads, ASCII quotes, backslashes, control characters, non-ASCII text, and twenty boundary-size records.
+- [x] Compare the helper's serialized bytes with the actual endpoint transport response in Task 6.
+- [x] Run `uv run pytest tests/test_mcp_batch_contract.py -q`.
+- [x] Commit with `feat(mcp): assemble bounded batch results`.
 
 **Transport accounting clarification:** The bounded object is the MCP `CallToolResult`, including `content` and `structuredContent`.
 The outer JSON-RPC envelope repeats the client-supplied request ID, which can itself exceed 16 MiB under the existing 48 MiB input limit.
@@ -318,19 +318,19 @@ Keep `ExternalCaller`'s two-field shape unchanged for existing callers and tests
 The endpoint sets and resets both trusted contexts around the session manager.
 External batches with missing trusted grant context must stop with `authorization_unavailable`; never fall back to internal identity.
 
-- [ ] Add unit tests for validity, expiry, revocation, disablement, changed resource, and missing connection.
-- [ ] Reuse the external test suite's transaction-enabled configuration pattern, isolated settings, and database-write passthrough.
-- [ ] Add a grant-context endpoint test asserting it is present inside the handler and reset after the request.
-- [ ] Run `uv run pytest tests/test_mcp_batch_external.py -q` before implementing grant support.
-- [ ] Factor the connection predicate into a `Q` helper using keys `prefix + "revoked_at__isnull"` and `prefix + "resource"`.
-- [ ] Call it with an empty prefix for connection queries and `prefix="connection__"` for credential queries.
-- [ ] Check `base_url()` is nonempty, captured resource equals current `resource_url()`, and expiry exceeds the current time.
-- [ ] Query connection validity without refreshing tokens or updating last-used timestamps per child.
-- [ ] Keep the original credential digest/kind/expiry checks and throttled last-used update in `load_access_token()`.
-- [ ] In existing external operation recording, append `_batch` from the trusted correlation context only when present.
-- [ ] Verify ordinary provenance remains unchanged; external child failures do not create fake successful audit rows.
-- [ ] Run `uv run pytest tests/test_mcp_batch_external.py tests/test_mcp_external.py tests/test_mcp_identity.py -q`.
-- [ ] Commit with `feat(mcp): preserve batch caller authority and provenance`.
+- [x] Add unit tests for validity, expiry, revocation, disablement, changed resource, and missing connection.
+- [x] Reuse the external test suite's transaction-enabled configuration pattern, isolated settings, and database-write passthrough.
+- [x] Add a grant-context endpoint test asserting it is present inside the handler and reset after the request.
+- [x] Run `uv run pytest tests/test_mcp_batch_external.py -q` before implementing grant support.
+- [x] Factor the connection predicate into a `Q` helper using keys `prefix + "revoked_at__isnull"` and `prefix + "resource"`.
+- [x] Call it with an empty prefix for connection queries and `prefix="connection__"` for credential queries.
+- [x] Check `base_url()` is nonempty, captured resource equals current `resource_url()`, and expiry exceeds the current time.
+- [x] Query connection validity without refreshing tokens or updating last-used timestamps per child.
+- [x] Keep the original credential digest/kind/expiry checks and throttled last-used update in `load_access_token()`.
+- [x] In existing external operation recording, append `_batch` from the trusted correlation context only when present.
+- [x] Verify ordinary provenance remains unchanged; external child failures do not create fake successful audit rows.
+- [x] Run `uv run pytest tests/test_mcp_batch_external.py tests/test_mcp_external.py tests/test_mcp_identity.py -q`.
+- [x] Commit with `feat(mcp): preserve batch caller authority and provenance`.
 
 **Policy boundary:** A validity lookup exception is distinct from a false lookup. Task 5 converts these to `authorization_unavailable` and `authorization_changed` respectively.
 
@@ -366,7 +366,7 @@ Each coordinator owns its child task set, ordered result slots, next input index
 The runtime also retains all active child tasks directly, so a coordinator failure cannot hide them from shutdown.
 No task is created for a non-admitted batch. A coordinator creates at most four child tasks, not twenty semaphore-waiting tasks.
 
-- [ ] Write a test proving prevalidation, admission, sequential error policy, and ordering through injected callbacks.
+- [x] Write a test proving prevalidation, admission, sequential error policy, and ordering through injected callbacks.
 
 ```python
 def test_sequential_stop_never_starts_third():
@@ -395,36 +395,36 @@ def test_sequential_stop_never_starts_third():
     asyncio.run(scenario())
 ```
 
-- [ ] Run `uv run pytest tests/test_mcp_batch_runtime.py -q` before implementing scheduling.
-- [ ] Admit synchronously before the first await: check accepting/count, increment count, create a coordinator task, and register its completion callback.
-- [ ] Capture caller contexts at admission. Run coordinators as native asyncio tasks outside the SDK AnyIO request task group.
-- [ ] Await the coordinator with `asyncio.shield()`. On request cancellation, set its stop Event and re-raise without awaiting drainage in the cancelled request.
-- [ ] The coordinator owns child startup serially, including grant checks, so input-order starts and authorization stops have one decision point.
-- [ ] Before a child starts: check stop, wait for global capacity interruptibly, check stop again, check grant, check stop again, then create the child without another await.
-- [ ] Implement interruptible permit acquisition by racing a semaphore-acquire task with `stop.wait()`. Cancel and consume the losing waiter.
-- [ ] If stop and acquisition both complete, release the acquired permit exactly once and do not launch the child.
-- [ ] Do not hold the semaphore permit indefinitely in a failed grant check: false or exception releases it and sets the batch authorization stop code.
-- [ ] For external batches, capture the grant locally; missing grant context produces `authorization_unavailable`. Internal API-token calls may legitimately have `session_id=None`.
-- [ ] Child tasks set/reset session, external caller, grant, and correlation ContextVars in `finally`; execute the injected dispatcher and build a record.
-- [ ] Initialize `started=False` in each child. Pass a closure that sets it true as the dispatcher's `on_start` callback.
-- [ ] Convert ordinary exceptions to `failed_record(started=started)`. A rendering failure is known unstarted; provenance failure after submission is indeterminate.
-- [ ] Release the child permit only after dispatch and provenance settle. Exit code 5 releases it even if a service Future continues.
-- [ ] In parallel mode, wait for first completion when four local slots are occupied; collect all settled records before filling slots again.
-- [ ] In sequential mode, inspect execution status and unknown outcome before starting the next call. Ignore output omission for stop policy.
-- [ ] On an authorization stop, skip all remaining inputs using that code. Existing children finish normally and preserve their results.
-- [ ] On request cancellation, stop pending scheduling and drain started children in the owned coordinator. Do not produce a client result promise.
-- [ ] Wrap the coordinator scheduling loop in exception handling and `finally` drainage, including unexpected scheduler failures.
-- [ ] On an unexpected coordinator error, stop scheduling, retain indexed child records, drain owned children, and mark never-started calls skipped with `execution_error`.
-- [ ] These skipped records have `outcome_unknown=False` and `caused_by=None`; completed children retain their own actual statuses.
-- [ ] Keep child references in both the coordinator and runtime until completion. Never cancel siblings simply because the coordinator encounters an ordinary exception.
-- [ ] The coordinator cannot finish before its children settle during normal operation. Only forced lifespan shutdown may abandon drainage after grace.
-- [ ] Release the admission count in the coordinator completion callback, after children settle, not in the request handler's `finally`.
-- [ ] Use callbacks to consume coordinator exceptions and keep references until completion. Do not print argument-containing exception messages.
-- [ ] Implement `close()` using a snapshot of owned coordinators, their stop Events, and `asyncio.wait(..., timeout=shutdown_grace)`.
-- [ ] After grace, explicitly cancel tracked child and coordinator async tasks; consume eventual exceptions via callbacks. Do not join threads or await cancellation indefinitely.
-- [ ] Drop the runtime singleton only after admission is disabled; next lifespan creates fresh loop primitives. Never reuse the closed runtime.
-- [ ] Run `uv run pytest tests/test_mcp_batch_runtime.py -q`.
-- [ ] Commit with `feat(mcp): schedule lifecycle-owned batch calls`.
+- [x] Run `uv run pytest tests/test_mcp_batch_runtime.py -q` before implementing scheduling.
+- [x] Admit synchronously before the first await: check accepting/count, increment count, create a coordinator task, and register its completion callback.
+- [x] Capture caller contexts at admission. Run coordinators as native asyncio tasks outside the SDK AnyIO request task group.
+- [x] Await the coordinator with `asyncio.shield()`. On request cancellation, set its stop Event and re-raise without awaiting drainage in the cancelled request.
+- [x] The coordinator owns child startup serially, including grant checks, so input-order starts and authorization stops have one decision point.
+- [x] Before a child starts: check stop, wait for global capacity interruptibly, check stop again, check grant, check stop again, then create the child without another await.
+- [x] Implement interruptible permit acquisition by racing a semaphore-acquire task with `stop.wait()`. Cancel and consume the losing waiter.
+- [x] If stop and acquisition both complete, release the acquired permit exactly once and do not launch the child.
+- [x] Do not hold the semaphore permit indefinitely in a failed grant check: false or exception releases it and sets the batch authorization stop code.
+- [x] For external batches, capture the grant locally; missing grant context produces `authorization_unavailable`. Internal API-token calls may legitimately have `session_id=None`.
+- [x] Child tasks set/reset session, external caller, grant, and correlation ContextVars in `finally`; execute the injected dispatcher and build a record.
+- [x] Initialize `started=False` in each child. Pass a closure that sets it true as the dispatcher's `on_start` callback.
+- [x] Convert ordinary exceptions to `failed_record(started=started)`. A rendering failure is known unstarted; provenance failure after submission is indeterminate.
+- [x] Release the child permit only after dispatch and provenance settle. Exit code 5 releases it even if a service Future continues.
+- [x] In parallel mode, wait for first completion when four local slots are occupied; collect all settled records before filling slots again.
+- [x] In sequential mode, inspect execution status and unknown outcome before starting the next call. Ignore output omission for stop policy.
+- [x] On an authorization stop, skip all remaining inputs using that code. Existing children finish normally and preserve their results.
+- [x] On request cancellation, stop pending scheduling and drain started children in the owned coordinator. Do not produce a client result promise.
+- [x] Wrap the coordinator scheduling loop in exception handling and `finally` drainage, including unexpected scheduler failures.
+- [x] On an unexpected coordinator error, stop scheduling, retain indexed child records, drain owned children, and mark never-started calls skipped with `execution_error`.
+- [x] These skipped records have `outcome_unknown=False` and `caused_by=None`; completed children retain their own actual statuses.
+- [x] Keep child references in both the coordinator and runtime until completion. Never cancel siblings simply because the coordinator encounters an ordinary exception.
+- [x] The coordinator cannot finish before its children settle during normal operation. Only forced lifespan shutdown may abandon drainage after grace.
+- [x] Release the admission count in the coordinator completion callback, after children settle, not in the request handler's `finally`.
+- [x] Use callbacks to consume coordinator exceptions and keep references until completion. Do not print argument-containing exception messages.
+- [x] Implement `close()` using a snapshot of owned coordinators, their stop Events, and `asyncio.wait(..., timeout=shutdown_grace)`.
+- [x] After grace, explicitly cancel tracked child and coordinator async tasks; consume eventual exceptions via callbacks. Do not join threads or await cancellation indefinitely.
+- [x] Drop the runtime singleton only after admission is disabled; next lifespan creates fresh loop primitives. Never reuse the closed runtime.
+- [x] Run `uv run pytest tests/test_mcp_batch_runtime.py -q`.
+- [x] Commit with `feat(mcp): schedule lifecycle-owned batch calls`.
 
 **Required runtime scenarios:**
 
@@ -455,7 +455,7 @@ Test shutdown cancellation under an AnyIO CancelScope too; a normal asyncio-only
 **Consumes:** All preceding interfaces.
 **Produces:** Both advertised tools, shared live runtime, unchanged ordinary call surface.
 
-- [ ] Add the catalog regression before exposing wrappers.
+- [x] Add the catalog regression before exposing wrappers.
 
 ```python
 def test_batch_tools_do_not_enter_command_registry():
@@ -468,27 +468,27 @@ def test_batch_tools_do_not_enter_command_registry():
     assert tools["batch"].output_schema == BATCH_OUTPUT_SCHEMA
 ```
 
-- [ ] Run the new catalog and endpoint tests and confirm wrappers are absent before integration.
-- [ ] Add two synthetic tool declarations using Task 2 schemas and Task 3 output schema. Assert no generated name collisions.
-- [ ] Keep wrappers out of `ALWAYS_LOAD_PATHS`. Preserve the external OAuth securitySchemes metadata on both wrappers.
-- [ ] In `_call_tool`, branch on `BATCH_NAMES` before the ordinary schema/error handler. Do not apply `params.arguments or {}` to wrapper inputs before structural validation.
-- [ ] Generate the batch UUID, validate, and return rejection immediately when invalid. Otherwise call the common runtime and then `fit_result()`.
-- [ ] Supply dispatch callback `execute(prepared, session_id, *, on_start)` that forwards both keywords to `execute_prepared`.
-- [ ] Wrap the batch branch with dedicated safe exception logging. No wrapper failure may enter the old `arguments=%r` exception path.
-- [ ] Runtime initialization occurs once in `mcp_lifespan()` inside the active loop, shared across both managers. Do not create separate runtime objects for the endpoints.
-- [ ] Set `_started=False` and stop runtime admission before shutting down manager task groups.
-- [ ] Protect the five-second cleanup with `anyio.CancelScope(shield=True)` so an already-cancelled MCP task can execute its bounded drain.
-- [ ] Preserve existing manager single-use reset fixtures and add runtime reset assertions across separate `asyncio.run()` calls.
-- [ ] Add authenticated internal HTTP tests using `mint_session_token`, `_rpc`, and the existing `_client()` pattern.
-- [ ] Add external HTTP tests using isolated OAuth authorization/token issuance from `tests/test_mcp_external.py`; use real handlers and DB grant rows.
-- [ ] Verify both tool representations decode to equal JSON; validate them against the published output schema.
-- [ ] Check error classes across HTTP 401/413, MCP rejected result, and completed partial-failure result.
-- [ ] Test external identity through a real mutation to a temporary test workspace/session. Assert `_batch` correlation and unchanged sender/share provenance rules.
-- [ ] Test aggregate attachments with a small monkeypatched transport body cap and synthetic payloads. Preserve per-command validation fixtures.
-- [ ] Add a raw ASGI disconnect harness; explicitly send `http.disconnect` while a child is blocked. Record whether this SDK delivers cancellation.
-- [ ] Test SDK cancellation separately from disconnect. Stateless calls may not share a cancellation backchannel between separate POSTs.
-- [ ] Run `uv run pytest tests/test_mcp_tools.py tests/test_mcp_server.py tests/test_mcp_endpoint.py tests/test_mcp_batch_contract.py tests/test_mcp_batch_runtime.py tests/test_mcp_batch_external.py -q`.
-- [ ] Commit with `feat(mcp): expose internal and external batch tools`.
+- [x] Run the new catalog and endpoint tests and confirm wrappers are absent before integration.
+- [x] Add two synthetic tool declarations using Task 2 schemas and Task 3 output schema. Assert no generated name collisions.
+- [x] Keep wrappers out of `ALWAYS_LOAD_PATHS`. Preserve the external OAuth securitySchemes metadata on both wrappers.
+- [x] In `_call_tool`, branch on `BATCH_NAMES` before the ordinary schema/error handler. Do not apply `params.arguments or {}` to wrapper inputs before structural validation.
+- [x] Generate the batch UUID, validate, and return rejection immediately when invalid. Otherwise call the common runtime and then `fit_result()`.
+- [x] Supply dispatch callback `execute(prepared, session_id, *, on_start)` that forwards both keywords to `execute_prepared`.
+- [x] Wrap the batch branch with dedicated safe exception logging. No wrapper failure may enter the old `arguments=%r` exception path.
+- [x] Runtime initialization occurs once in `mcp_lifespan()` inside the active loop, shared across both managers. Do not create separate runtime objects for the endpoints.
+- [x] Set `_started=False` and stop runtime admission before shutting down manager task groups.
+- [x] Protect the five-second cleanup with `anyio.CancelScope(shield=True)` so an already-cancelled MCP task can execute its bounded drain.
+- [x] Preserve existing manager single-use reset fixtures and add runtime reset assertions across separate `asyncio.run()` calls.
+- [x] Add authenticated internal HTTP tests using `mint_session_token`, `_rpc`, and the existing `_client()` pattern.
+- [x] Add external HTTP tests using isolated OAuth authorization/token issuance from `tests/test_mcp_external.py`; use real handlers and DB grant rows.
+- [x] Verify both tool representations decode to equal JSON; validate them against the published output schema.
+- [x] Check error classes across HTTP 401/413, MCP rejected result, and completed partial-failure result.
+- [x] Test external identity through a real mutation to a temporary test workspace/session. Assert `_batch` correlation and unchanged sender/share provenance rules.
+- [x] Test aggregate attachments with a small monkeypatched transport body cap and synthetic payloads. Preserve per-command validation fixtures.
+- [x] Add a raw ASGI disconnect harness; explicitly send `http.disconnect` while a child is blocked. Record whether this SDK delivers cancellation.
+- [x] Test SDK cancellation separately from disconnect. Stateless calls may not share a cancellation backchannel between separate POSTs.
+- [x] Run `uv run pytest tests/test_mcp_tools.py tests/test_mcp_server.py tests/test_mcp_endpoint.py tests/test_mcp_batch_contract.py tests/test_mcp_batch_runtime.py tests/test_mcp_batch_external.py -q`.
+- [x] Commit with `feat(mcp): expose internal and external batch tools`.
 
 **Failure boundary:** If runtime initialization is missing during shutdown, no child starts. The batch path returns a safe busy/unavailable rejection.
 Unexpected pre-invocation orchestration failures must not claim a command executed. Unexpected post-invocation failures must retain completed records where available and never retry.
@@ -497,13 +497,13 @@ Unexpected pre-invocation orchestration failures must not claim a command execut
 
 **Files:** Modify `mcp/batch.py`, `mcp/server.py`, `mcp/endpoint.py`, `frontend/public/help/external-mcp.md`, and `CHANGELOG.md`; extend relevant batch tests.
 
-- [ ] Add a log-capture test with a secret marker in a prompt and invalid key; assert no batch diagnostic contains it.
-- [ ] Emit bounded structured events for admission/rejection, child completion, authorization stop, cancellation, shutdown abandonment, and final summary.
-- [ ] Use validated tool names and IDs only. Record caller ID, elapsed milliseconds, execution status and known exit code; never arguments or result bodies.
-- [ ] Measure authentication at the endpoint, validation in the adapter, permit waiting in the scheduler, dispatch duration in children, and serialization in `fit_result()`.
-- [ ] Keep request/auth timing correlation in trusted per-request context or ASGI scope. Do not send timing fields that are absent from the output schema.
-- [ ] Update both instruction strings to distinguish ordinary CLI envelopes from batch aggregate envelopes.
-- [ ] Add this behavioral guidance to internal and external instructions and external help:
+- [x] Add a log-capture test with a secret marker in a prompt and invalid key; assert no batch diagnostic contains it.
+- [x] Emit bounded structured events for admission/rejection, child completion, authorization stop, cancellation, shutdown abandonment, and final summary.
+- [x] Use validated tool names and IDs only. Record caller ID, elapsed milliseconds, execution status and known exit code; never arguments or result bodies.
+- [x] Measure authentication at the endpoint, validation in the adapter, permit waiting in the scheduler, dispatch duration in children, and serialization in `fit_result()`.
+- [x] Keep request/auth timing correlation in trusted per-request context or ASGI scope. Do not send timing fields that are absent from the output schema.
+- [x] Update both instruction strings to distinguish ordinary CLI envelopes from batch aggregate envelopes.
+- [x] Add this behavioral guidance to internal and external instructions and external help:
 
 ```text
 Use batch_read for independent reads and batch for ordered commands.
@@ -515,18 +515,18 @@ Do not replay an uncertain write batch automatically. Inspect the affected resou
 Large command responses can be omitted explicitly even when the command succeeds.
 ```
 
-- [ ] Document the exact limits, error policies, `ok` versus execution status, unavailable grants, and long-wait admission limitation.
-- [ ] Re-read the top of `CHANGELOG.md`; add a concise entry only under the current `## [Unreleased]`.
-- [ ] Do not edit packaged skills for this implementation. MCP descriptions and help are sufficient and avoid an unnecessary plugin version change.
-- [ ] Run all focused batch tests, then the MCP regression set once:
+- [x] Document the exact limits, error policies, `ok` versus execution status, unavailable grants, and long-wait admission limitation.
+- [x] Re-read the top of `CHANGELOG.md`; add a concise entry only under the current `## [Unreleased]`.
+- [x] Do not edit packaged skills for this implementation. MCP descriptions and help are sufficient and avoid an unnecessary plugin version change.
+- [x] Run all focused batch tests, then the MCP regression set once:
 
 ```bash
 uv run pytest tests/test_mcp_*.py tests/test_rpc_auth.py -q
 ```
 
-- [ ] Run `git diff --check` on changed files. If Python lint is useful, run `uvx ruff check` on those Python files only.
-- [ ] Verify no migrations, dependencies, CLI routes, or unrelated generated assets entered the patch.
-- [ ] Commit with `docs(mcp): document batch behavior and validation` after the implementation checks pass.
+- [x] Run `git diff --check` on changed files. If Python lint is useful, run `uvx ruff check` on those Python files only.
+- [x] Verify no migrations, dependencies, CLI routes, or unrelated generated assets entered the patch.
+- [x] Commit with `docs(mcp): document batch behavior and validation` after the implementation checks pass.
 
 ### Product checks after the implementation is available
 
@@ -562,10 +562,45 @@ If client/account access is unavailable, record the check as unexecuted and dist
 
 Review this plan against the current code and spec before implementation.
 Apply review corrections directly to this document. Keep only a short closure statement here, not a separate review file.
-Plan approval and this document's commit do not execute its unchecked implementation steps.
+The execution record below tracks the implementation authorized after this plan was committed.
 
 An internal adversarial sub-agent reviews this plan on 2026-09-07.
 Corrections cover endpoint test seams, child ownership after coordinator failure, and the invocation-start marker.
 The review also validates the spec's explicit tool-result byte boundary.
 The same reviewer verifies the revised documents and reports no remaining blockers.
-This is a source-based planning review. Implementation and runtime validation remain unexecuted.
+This initial review covers planning only. The subsequent execution record follows.
+
+
+## Implementation execution record — 2026-09-07
+
+The seven implementation tasks are implemented. They are included in one final commit, as authorized by the user.
+Independent workers implement the pure contracts and trusted grant support; the primary agent integrates and tests the scheduler.
+Code review corrections are applied directly to the implementation; no separate review document is created.
+
+| Review finding | Resolution and regression evidence |
+|---|---|
+| SDK rejects catalog output schemas without a root object type | Added `type: object` and actual SDK catalog serialization tests |
+| Raw asyncio cancellation interrupts shutdown drainage | `close()` accounts for remaining owned tasks in `finally`; fail-then-pass cancellation test |
+| A grant can expire during the database await | Recheck expiry and live configuration after the query; three fail-then-pass cases |
+| Multiple missing required fields share the wrong diagnostic path | Correct required-field paths with a real command regression |
+
+Automated checks exercise real command invocation, SDK HTTP handling, OAuth registration/consent/PKCE, and database provenance.
+Concurrency checks include threads, AnyIO cancellation, admission pressure, coordinator fault injection, and shutdown drainage.
+The JSON-response ASGI disconnect probe confirms that a command can still finish after `http.disconnect`.
+No live development server is restarted, and no real user messages or shares are created.
+
+A local ASGI parity probe runs projects, sessions, and workspaces as three separate calls, a sequential batch, and a parallel batch.
+It uses the isolated test database and verifies equal command envelopes in all modes.
+One observed run reports cold / median of three warm runs, in milliseconds:
+separate 38.00 / 17.91; sequential 17.25 / 7.49; parallel 7.90 / 7.64.
+These observations exclude desktop/remote client and network overhead. They are not a promised speedup.
+
+Real internal Claude/Codex agents and desktop/remote external clients have not exercised the new running server.
+Those checks require deploying/restarting the implementation and available client accounts.
+They remain explicitly unexecuted; protocol tests do not establish client-specific compatibility or confirmation behavior.
+
+Final verification: `uv run pytest tests/test_mcp_*.py tests/test_rpc_auth.py -q` reports 233 passed.
+Targeted `uvx ruff check` and `git diff --check` pass.
+The final independent adversarial reviewer verifies the last correction and reports no remaining defects.
+The reviewer independently runs 58 contract/runtime tests successfully.
+Per-task commit checkboxes mean inclusion in the final combined implementation commit, not separate historical commits.

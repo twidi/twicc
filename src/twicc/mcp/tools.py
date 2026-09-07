@@ -20,6 +20,7 @@ import click
 from mcp import types as mcp_types
 
 from twicc.cli._local_only import LOCAL_ONLY_COMMANDS
+from twicc.mcp.batch_contract import BATCH_INPUT_SCHEMAS, BATCH_OUTPUT_SCHEMA, BATCH_NAMES
 from twicc.rpc.generator import CommandSpec, build_registry
 from twicc.rpc.invoker import get_command
 from twicc.rpc.permissions import COOKIE_READONLY_COMMANDS
@@ -29,7 +30,8 @@ MCP_EXCLUDED_ROOTS: frozenset[str] = frozenset(
     (set(LOCAL_ONLY_COMMANDS) - {"whoami"}) | {"settings"}
 )
 
-# Read-only annotation source (metadata only — NOT used for availability).
+# Read-only annotation source and enforced eligibility for batch_read.
+# This does not change individual-tool availability.
 # Every tool is exposed in every mode (D9); `readOnlyHint` is honest metadata
 # for clients (and on Codex it feeds `requires_mcp_tool_approval`, though our
 # `default_tools_approval_mode="approve"` makes that moot). COOKIE_READONLY_COMMANDS
@@ -91,4 +93,26 @@ def iter_mcp_tools() -> list[mcp_types.Tool]:
                 _meta=meta,
             )
         )
+    if BATCH_NAMES & {tool.name for tool in out}:
+        raise RuntimeError("Generated MCP command collides with a batch tool.")
+    for name in sorted(BATCH_NAMES):
+        read = name == "batch_read"
+        out.append(mcp_types.Tool(
+            name=name,
+            description=(
+                "Run up to 20 read-only commands in one call. Parallel by default (4 at once); "
+                "mode=sequential is also available. on_error defaults to continue. "
+                if read else
+                "Run up to 20 commands in order through one call. Sequential only. "
+                "on_error defaults to stop; continue is available. "
+            ) + "Discover each command's schema first. Each calls entry needs id, name, arguments. "
+            "All inputs validate before execution. Results retain input order. "
+            "No rollback, result references, or automatic retries. Keep long waits separate. "
+            "A timeout does not prove writes stopped. Responses over 384 KiB are explicitly omitted. "
+            "Returns a batch aggregate, not a single CLI envelope. Parallel mode requires on_error=continue.",
+            input_schema=BATCH_INPUT_SCHEMAS[name], output_schema=BATCH_OUTPUT_SCHEMA,
+            annotations=mcp_types.ToolAnnotations(
+                read_only_hint=read, destructive_hint=not read, idempotent_hint=read, open_world_hint=True,
+            ),
+        ))
     return out

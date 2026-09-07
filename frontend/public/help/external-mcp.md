@@ -178,3 +178,57 @@ and does not show a tunnel-provider login page.
 Keep the connecting browser open while you approve. If the list says
 **connecting**, approval succeeded but the client has not completed OAuth yet.
 If the request expires, start a new connection from the client.
+
+### Batch commands
+
+Use `batch_read` to collect independent reads in one MCP call. It runs up to four
+commands at once by default. Set `mode` to `sequential` to run them in order.
+Use `batch` for ordered commands, including changes. It always runs sequentially.
+The same tools are available to agents running inside TwiCC.
+
+Discover each command's schema first. Supply its normal MCP name and arguments:
+
+```json
+{
+  "calls": [
+    {"id": "recent", "name": "sessions", "arguments": {"limit": 5}},
+    {"id": "projects", "name": "projects", "arguments": {}}
+  ]
+}
+```
+
+Each call needs a unique `id`, a command `name`, and an `arguments` object.
+TwiCC validates the complete batch before any command starts. One invalid call
+rejects the batch without executing its other commands. Normal permission checks
+still apply to every command. External calls still require explicit session IDs.
+
+Results arrive together, in input order. Each record includes its ID, execution
+status, and the command's normal `{exit_code, result, error}` response.
+Check the aggregate `ok` field and each record. A completed batch can contain
+failed or skipped commands. A command can also succeed while its large response
+is omitted (`response_omitted: true`); in that case the aggregate `ok` is false.
+
+`batch` stops after an execution error by default. Set `on_error` to `continue`
+to attempt the remaining commands. `batch_read` defaults to `continue`.
+Parallel execution requires `continue`; use sequential mode for `stop`.
+Output omission does not stop subsequent commands. Completed changes stay applied:
+there is no rollback, automatic retry, or transfer of results into later arguments.
+Nested batches are not supported.
+
+A batch accepts up to 20 commands. Both MCP connections share a limit of four
+active batches and eight active batch commands across the instance. Extra batches
+receive `server_busy`. Individual tools remain outside this batch admission limit.
+The complete request retains the existing 48 MiB limit, including attachments.
+Command responses over 384 KiB are explicitly omitted. The combined tool result,
+including text and structured data, stays below 16 MiB. Clients can have smaller limits.
+
+Keep batches short and use separate calls for long waits. Existing command timeouts
+still apply; there is no additional batch timeout. Long waits can occupy all batch
+capacity, even after the client cancels its request. A cancellation or timeout does
+not prove that writes stopped. Inspect affected resources before retrying an uncertain
+write. Batch IDs identify calls for diagnostics; they do not prevent duplicate work.
+
+TwiCC checks external authorization before starting each command. Expiration,
+revocation, or disabled external access stops the remaining commands. If TwiCC
+cannot verify authorization, it also stops them. Already-started commands can
+finish, and their collected results are preserved.

@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from time import monotonic
+from uuid import uuid4
+from collections.abc import Callable
 
 import jsonschema
 import orjson
@@ -30,20 +33,19 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from twicc.cli._drop_request import transport
 from twicc.cli._drop_request.whoami import forced_session_id
-from twicc.mcp.identity import resolve_session_token
-from twicc.mcp.tools import iter_mcp_tools, tools_by_name
+from twicc.mcp.identity import resolve_session_token, external_caller, batch_correlation
+from twicc.mcp.batch import BatchRuntime
+from twicc.mcp.batch_contract import BATCH_NAMES, validate_batch, fit_result, rejected_batch
+from twicc.mcp.dispatch import PreparedTool, UnknownToolError, check_caller_arguments, prepare_tool
+from twicc.mcp.tools import iter_mcp_tools, tools_by_name, MCP_READ_ONLY_PATHS
 from twicc.rpc.generator import render_argv
 from twicc.rpc.views import _run_invoke
 
 logger = logging.getLogger(__name__)
 
 
-class UnknownToolError(Exception):
-    pass
-
-
 INSTRUCTIONS = """\
-These tools are the TwiCC CLI (`twicc <command>`), one tool per command; the
+Ordinary tools are the TwiCC CLI (`twicc <command>`), one tool per command; the
 `twicc-*` skills document the same surface in depth. Results are the CLI's
 JSON wrapped in {"exit_code", "result", "error"} — exit_code 0 is success,
 non-zero maps to the exit codes the skills document (3 rejected, 4 failed,
@@ -73,25 +75,22 @@ async def dispatch_tool(name: str, arguments: dict, *, session_id: str | None) -
     spec = tools_by_name().get(name)
     if spec is None:
         raise UnknownToolError(name)
-    from twicc.mcp.identity import external_caller
+    check_caller_arguments(name, arguments, external=external_caller.get() is not None)
+    return await execute_prepared(PreparedTool(name, spec, arguments), session_id=session_id)
 
+
+async def execute_prepared(prepared: PreparedTool, *, session_id: str | None,
+                           on_start: Callable[[], None] | None = None) -> dict:
+    """Run a prepared command using the existing invocation and provenance path."""
+    name, spec, arguments = prepared
     external = external_caller.get()
-    if external is not None:
-        from twicc.cli._remote import HOST_BOUND_PARAMS
-
-        if name == "whoami":
-            raise UnknownToolError(name)
-        if name == "topology" and not arguments.get("session_id"):
-            raise ValueError("External MCP requires an explicit session_id for topology.")
-        for key, value in arguments.items():
-            values = value if isinstance(value, list) else [value]
-            if key in HOST_BOUND_PARAMS and any(v in ("self", "parent") for v in values):
-                raise ValueError(f"External MCP requires explicit IDs for {key}.")
     argv = render_argv(spec, arguments)
     loop = asyncio.get_running_loop()
     tok_sid = forced_session_id.set(session_id)
     tok_loop = transport.backend_loop.set(loop)
     try:
+        if on_start is not None:
+            on_start()
         result = await asyncio.to_thread(_run_invoke, argv)
     finally:
         transport.backend_loop.reset(tok_loop)
@@ -110,6 +109,11 @@ async def dispatch_tool(name: str, arguments: dict, *, session_id: str | None) -
                 k: v
                 for k, v in result.result.items()
                 if k in {"id", "session_id", "project_id", "share_id", "bookmark_id", "message_id"}
+            }
+        correlation = batch_correlation.get()
+        if correlation is not None:
+            targets["_batch"] = {
+                "id": correlation.batch_id, "call_id": correlation.call_id, "index": correlation.index,
             }
         await write(
             lambda: McpOperation.objects.create(
@@ -143,25 +147,68 @@ async def _list_tools(
     return mcp_types.ListToolsResult(tools=iter_mcp_tools())
 
 
+_batch_runtime: BatchRuntime | None = None
+
+
+def start_batch_runtime() -> BatchRuntime:
+    global _batch_runtime
+    from twicc.mcp.oauth.provider import batch_grant_valid
+
+    async def execute(prepared, session_id, *, on_start):
+        return await execute_prepared(prepared, session_id=session_id, on_start=on_start)
+
+    _batch_runtime = BatchRuntime(execute=execute, check_grant=batch_grant_valid)
+    return _batch_runtime
+
+
+async def _call_batch(ctx, params, session_id):
+    batch_id = str(uuid4())
+    started = monotonic()
+    try:
+        validation = validate_batch(
+            params.name, params.arguments, registry=tools_by_name(),
+            read_only_paths=MCP_READ_ONLY_PATHS, external=external_caller.get() is not None, batch_id=batch_id,
+        )
+        request = getattr(ctx, "request", None)
+        auth_ms = request.scope.get("twicc_mcp_auth_ms") if request is not None else None
+        logger.info("MCP batch validated batch_id=%s auth_ms=%s validation_ms=%.3f rejected=%s", batch_id,
+                    auth_ms, (monotonic() - started) * 1000, validation.rejection is not None)
+        if validation.rejection is not None:
+            payload = validation.rejection
+        elif _batch_runtime is None:
+            payload = rejected_batch(batch_id, "server_busy")
+        else:
+            payload = await _batch_runtime.run(validation.prepared, session_id=session_id)
+        started = monotonic()
+        result = fit_result(payload)
+        logger.info("MCP batch serialized batch_id=%s elapsed_ms=%.3f", batch_id, (monotonic() - started) * 1000)
+        return result
+    except Exception:
+        # Never route batch arguments or exception text to the single-call logger.
+        logger.error("MCP batch failed batch_id=%s", batch_id)
+        return mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text="Batch result unavailable. Commands may have executed. "
+                                          "Inspect affected resources before retrying.")], is_error=True,
+        )
+
+
 async def _call_tool(
     ctx: ServerRequestContext,
     params: mcp_types.CallToolRequestParams,
 ) -> mcp_types.CallToolResult:
     name, arguments = params.name, params.arguments or {}
     session_id = _session_id_from_request(ctx)
+    if name in BATCH_NAMES:
+        return await _call_batch(ctx, params, session_id)
     try:
-        # The v1 call_tool decorator validated inputs before dispatch. The v2
-        # lowlevel API leaves this to us; render_argv assumes validated types.
-        spec = tools_by_name().get(name)
-        if spec is not None:
-            try:
-                jsonschema.validate(instance=arguments, schema=spec.json_schema)
-            except jsonschema.ValidationError as exc:
-                return mcp_types.CallToolResult(
-                    content=[mcp_types.TextContent(type="text", text=f"Input validation error: {exc.message}")],
-                    is_error=True,
-                )
-        envelope = await dispatch_tool(name, arguments, session_id=session_id)
+        try:
+            prepared = prepare_tool(name, arguments, registry=tools_by_name(), external=external_caller.get() is not None)
+        except jsonschema.ValidationError as exc:
+            return mcp_types.CallToolResult(
+                content=[mcp_types.TextContent(type="text", text=f"Input validation error: {exc.message}")],
+                is_error=True,
+            )
+        envelope = await execute_prepared(prepared, session_id=session_id)
     except UnknownToolError:
         return mcp_types.CallToolResult(
             content=[mcp_types.TextContent(type="text", text=f"Unknown tool: {name}")],
@@ -181,6 +228,20 @@ async def _call_tool(
         is_error=False,
     )
 
+
+BATCH_INSTRUCTIONS = """
+Batch tools are MCP-only wrappers. Discover each child's ordinary schema first.
+Use batch_read for independent reads (parallel default, up to four at once), or batch for ordered commands.
+Supply calls entries with id, name, arguments. All inputs validate before any command starts.
+Results retain input order in a batch aggregate. Check ok, each status, and response_omitted.
+Batch defaults to stop on execution failure; batch_read defaults to continue. Parallel stop is invalid.
+No rollback, nested batches, result references, or automatic retries. Keep long waits separate.
+A timeout/cancellation does not prove writes stopped; inspect resources before retrying uncertain writes.
+Limits: 20 calls, 4 active batches, 8 active batch commands globally, 384 KiB per command response.
+Oversized responses are explicitly omitted even on success; the complete tool result is below 16 MiB.
+Long waits can occupy all batch capacity. Individual tools remain available outside batch admission.
+"""
+INSTRUCTIONS += BATCH_INSTRUCTIONS
 
 _server: Server = Server(
     "twicc",
@@ -221,7 +282,7 @@ def get_session_manager() -> StreamableHTTPSessionManager:
 EXTERNAL_INSTRUCTIONS = """TwiCC external MCP: tools run on the TwiCC host.
 Use explicit session IDs; self, parent, and whoami are unavailable.
 Paths refer to the server filesystem. Attachments can use base64 data URIs.
-Results contain exit_code, result, and error. Use info for current models and settings.
+Ordinary results contain exit_code, result, and error. Use info for current models and settings.
 """
 
 
@@ -238,7 +299,7 @@ async def _external_list(ctx, params):
 
 
 _external_server = Server(
-    "twicc", instructions=EXTERNAL_INSTRUCTIONS, on_list_tools=_external_list, on_call_tool=_call_tool
+    "twicc", instructions=EXTERNAL_INSTRUCTIONS + BATCH_INSTRUCTIONS, on_list_tools=_external_list, on_call_tool=_call_tool
 )
 _external_manager = None
 

@@ -10,6 +10,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from time import monotonic
+
+import anyio
 
 import orjson
 
@@ -62,7 +65,7 @@ async def handle_mcp(scope, receive, send) -> None:
     if scope.get("twicc_external_mcp"):
         from twicc.mcp.oauth.provider import provider
         from twicc.mcp.oauth.config import base_url, RESOURCE_METADATA
-        from twicc.mcp.identity import external_caller, ExternalCaller
+        from twicc.mcp.identity import external_caller, ExternalCaller, external_grant, ExternalGrant
         from twicc.core.models import McpConnection
         from starlette.responses import Response
 
@@ -87,6 +90,7 @@ async def handle_mcp(scope, receive, send) -> None:
                 )
             await send(message)
 
+        auth_started = monotonic()
         access = await provider.load_access_token(_bearer(scope))
         if access is None:
             await _plain_response(
@@ -104,12 +108,15 @@ async def handle_mcp(scope, receive, send) -> None:
             )
             return
         connection = await McpConnection.objects.aget(pk=access.subject)
+        scope["twicc_mcp_auth_ms"] = (monotonic() - auth_started) * 1000
         token = external_caller.set(ExternalCaller(connection.id, connection.name))
+        grant_token = external_grant.set(ExternalGrant(connection.id, access.resource, access.expires_at))
         try:
             from twicc.mcp.server import get_external_session_manager
 
             await get_external_session_manager().handle_request(scope, receive, cors_send)
         finally:
+            external_grant.reset(grant_token)
             external_caller.reset(token)
         return
     if scope_remote_access_blocked(scope):
@@ -117,6 +124,7 @@ async def handle_mcp(scope, receive, send) -> None:
         return
     # ``_authorized`` reads the token/secret files; keep that off the event loop,
     # matching the /rpc/ auth middleware's sync_to_async convention.
+    auth_started = monotonic()
     if not await asyncio.to_thread(_authorized, scope):
         await _plain_response(
             send,
@@ -125,6 +133,7 @@ async def handle_mcp(scope, receive, send) -> None:
             headers=[(b"www-authenticate", b"Bearer")],
         )
         return
+    scope["twicc_mcp_auth_ms"] = (monotonic() - auth_started) * 1000
     # The session manager expects to own the path; it treats the mount point
     # as the endpoint regardless of the exact path value.
     await get_session_manager().handle_request(scope, receive, send)
@@ -137,13 +146,21 @@ async def mcp_lifespan():
     manager = get_session_manager()
     from twicc.mcp.server import get_external_session_manager
 
+    from twicc.mcp import server
+
     async with manager.run(), get_external_session_manager().run():
+        runtime = server.start_batch_runtime()
         _started = True
         logger.info("MCP server ready at /mcp")
         try:
             yield
         finally:
             _started = False
+            with anyio.CancelScope(shield=True):
+                try:
+                    await runtime.close()
+                finally:
+                    server._batch_runtime = None
 
 
 async def start_mcp_task(shutdown_event) -> None:
