@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Ephemeral sessions** — Run a one-shot session with Claude or Codex. Keep its prompt and final answer in this browser until you discard them.
 - **Nested subagents** — Follow subagents created by other subagents, at every level, in Claude and Codex sessions.
 
+### Changed
+
+- **Peer messages** — Delivering a message now opens on the project it already belongs to, instead of the one you are looking at.
+
 ## [1.94.1] - 2026-09-06
 
 ### Summary

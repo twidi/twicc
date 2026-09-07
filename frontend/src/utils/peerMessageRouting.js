@@ -51,6 +51,20 @@ export function peerMessageRouting(message) {
     return null
 }
 
+/**
+ * The project a delivery to a NEW session opens on: the routing project —
+ * the message's own, its hand-attached one, or its conversation's — when the
+ * picker actually offers it. `''` otherwise: a suggestion only shows when it
+ * is founded, never the project the owner happens to be looking at.
+ *
+ * @param {object|null} routing `peerMessageRouting()`'s result
+ * @param {(projectId: string) => boolean} isSelectable
+ */
+export function peerDefaultDeliveryProjectId(routing, isSelectable) {
+    const projectId = routing?.projectId || ''
+    return projectId && isSelectable(projectId) ? projectId : ''
+}
+
 /** The routing's session title, one flattened line cut at
  *  `PEER_ROUTING_TITLE_MAX` — the full title stays for tooltips. */
 export function peerRoutingSessionTitle(routing) {

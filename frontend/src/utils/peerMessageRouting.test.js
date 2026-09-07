@@ -1,7 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { peerMessageRouting, peerRoutingSessionTitle, peerRoutingText } from './peerMessageRouting.js'
+import {
+    peerDefaultDeliveryProjectId,
+    peerMessageRouting,
+    peerRoutingSessionTitle,
+    peerRoutingText,
+} from './peerMessageRouting.js'
 
 const labels = { '-repo': 'repo', '-repo-wt': 'repo › wt' }
 const label = id => labels[id] || id
@@ -55,4 +60,36 @@ test('renders one plain-text line for notifications', () => {
     assert.equal(peerRoutingText({ sessionId: null, sessionTitle: '', projectId: '-repo' }, label), 'in repo')
     assert.equal(peerRoutingText({ sessionId: 's', sessionTitle: 'Solo', projectId: null }, label), 'session “Solo”')
     assert.equal(peerRoutingText(null, label), '')
+})
+
+test('the new-session delivery opens on the routing project, when offered', () => {
+    const selectable = id => id === '-repo'
+    const ownSession = {
+        direction: 'in',
+        delivered_to_session: { id: 's1', title: 'Landed here', project_id: '-repo' },
+    }
+    assert.equal(peerDefaultDeliveryProjectId(peerMessageRouting(ownSession), selectable), '-repo')
+    const viaThread = {
+        direction: 'in',
+        effective_session: { id: 's3', title: 'Backend update', project_id: '-repo' },
+    }
+    assert.equal(peerDefaultDeliveryProjectId(peerMessageRouting(viaThread), selectable), '-repo')
+    const attached = { direction: 'in', effective_project: { id: '-repo', source: 'attached' } }
+    assert.equal(peerDefaultDeliveryProjectId(peerMessageRouting(attached), selectable), '-repo')
+})
+
+test('the new-session delivery stays empty without a founded suggestion', () => {
+    const selectable = id => id === '-repo'
+    // Nothing in the thread names a project.
+    assert.equal(peerDefaultDeliveryProjectId(peerMessageRouting({ direction: 'in' }), selectable), '')
+    // A session whose project the picker does not offer (archived, stale).
+    const archived = {
+        direction: 'in',
+        delivered_to_session: { id: 's1', title: 'Old work', project_id: '-gone' },
+    }
+    assert.equal(peerDefaultDeliveryProjectId(peerMessageRouting(archived), selectable), '')
+    // A session without a project of its own.
+    const projectless = { direction: 'out', origin_session: { id: 's2', title: '', project_id: null } }
+    assert.equal(peerDefaultDeliveryProjectId(peerMessageRouting(projectless), selectable), '')
+    assert.equal(peerDefaultDeliveryProjectId(null, selectable), '')
 })

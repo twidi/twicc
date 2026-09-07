@@ -57,7 +57,11 @@ import {
 } from '../../utils/peerReplyTarget'
 import { dateBucketSeparator } from '../../utils/datePresets'
 import { matchQuery } from '../../utils/textFilter'
-import { peerMessageRouting, peerRoutingSessionTitle } from '../../utils/peerMessageRouting'
+import {
+    peerDefaultDeliveryProjectId,
+    peerMessageRouting,
+    peerRoutingSessionTitle,
+} from '../../utils/peerMessageRouting'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds'
 import { ensureProjectTrust } from '../../composables/useTrustGate'
 import { useProjectMark } from '../../composables/useProjectMark'
@@ -112,8 +116,9 @@ const pickedProjectId = ref('')   // 'new' mode: wa-select value
 const sessionFilter = ref('')
 const existingPickerMounted = ref(false)
 const existingPickerPreparing = ref(false)
-// 'existing' mode: the scope the session list is built from — the sidebar
-// frame by default, narrowable to one project (or the frame's workspace).
+// 'existing' mode: the scope the session list is built from — the message's
+// own project by default, narrowable to one project (or the frame's
+// workspace), widenable to all of them.
 const scopeId = ref(ALL_PROJECTS_ID)
 // 'existing' mode: a click only SELECTS (highlight); the explicit Deliver
 // button sends — no accidental one-click delivery.
@@ -379,19 +384,43 @@ const activeWorkspace = computed(() =>
     activeWorkspaceId.value ? workspacesStore.getWorkspaceById(activeWorkspaceId.value) : null
 )
 
-/** The scope the session picker opens on: the sidebar frame — the project (or
- *  workspace) the user is already looking at is where a message most often
- *  goes. Anything the select does not offer falls back to all projects. */
+// Both delivery modes open on the project the message already counts under —
+// its own, the one the owner attached by hand, or its conversation's (the
+// server walks the whole thread, ancestors first). The same reading the inbox
+// rows and the project filter use, so a delivery starts where the message
+// already lives. Nothing else is presumed: a message a peer wrote has no
+// relation to the frame the owner happens to be looking at.
+const defaultDeliveryProjectId = computed(() => peerDefaultDeliveryProjectId(
+    peerMessageRouting(detail.value),
+    isSelectableProject,
+))
+
+/** The scope the session picker opens on. Without a founded project, all of
+ *  them — the scope's own way of proposing nothing. */
 function defaultScopeId() {
-    const frameId = effectiveProjectId.value
-    if (isWorkspaceProjectId(frameId)) return activeWorkspace.value ? frameId : ALL_PROJECTS_ID
-    return isSelectableProject(frameId) ? frameId : ALL_PROJECTS_ID
+    return defaultDeliveryProjectId.value || ALL_PROJECTS_ID
 }
 
 // Icon + dot of the picked scope, for the select's own button (a wa-select
 // shows the option's label as plain text, never its rendered content).
 const { iconUrl: scopeIconUrl, dotColor: scopeDotColor } = useProjectMark(scopeId)
 const { iconUrl: pickedIconUrl, dotColor: pickedDotColor } = useProjectMark(pickedProjectId)
+
+// The last values the dialog filled in on its own. Anything else in a picker
+// is the owner's own choice, and a later default never overwrites it — while
+// an untouched one follows the project they attach by hand.
+let autoProjectId = ''
+let autoScopeId = ALL_PROJECTS_ID
+watch(defaultDeliveryProjectId, () => {
+    if (pickedProjectId.value === autoProjectId) {
+        pickedProjectId.value = defaultDeliveryProjectId.value
+        autoProjectId = pickedProjectId.value
+    }
+    if (scopeId.value === autoScopeId) {
+        scopeId.value = defaultScopeId()
+        autoScopeId = scopeId.value
+    }
+})
 
 // `computeSidebarSessionBlocks` already applies these project exclusions to
 // normal rows. The same set lets a hydrated page-omitted row use the exact
@@ -762,9 +791,15 @@ watch(() => [props.open, props.messageId], async ([open, messageId]) => {
     note.value = ''
     actionError.value = ''
     mode.value = null
-    pickedProjectId.value = ''
+    // Seeded from the store summary, which already carries the routing: the
+    // pickers paint their suggestion at once. Read here rather than left to
+    // the watcher, which stays silent when two messages in a row share a
+    // project.
+    pickedProjectId.value = defaultDeliveryProjectId.value
+    autoProjectId = pickedProjectId.value
     sessionFilter.value = ''
     scopeId.value = defaultScopeId()
+    autoScopeId = scopeId.value
     selectedSessionId.value = null
     existingPickerMounted.value = false
     existingPickerPreparing.value = false
