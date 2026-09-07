@@ -672,11 +672,11 @@ function handleMenuSelect(event) {
 </template>
 
 <style scoped>
-.ephemeral-icon { flex-shrink: 0; color: var(--wa-color-neutral-on-normal); }
-.ephemeral-icon.running { color: var(--wa-color-brand-on-normal); }
+.ephemeral-icon { flex-shrink: 0; color: var(--wa-color-neutral-60); }
+.ephemeral-icon.running { color: var(--wa-color-brand-60); }
 .ephemeral-icon.done { color: var(--wa-color-success-60); }
-.ephemeral-icon.error { color: var(--wa-color-danger-on-normal); }
-.ephemeral-icon.lost { color: var(--wa-color-warning-on-normal); }
+.ephemeral-icon.error { color: var(--wa-color-danger-60); }
+.ephemeral-icon.lost { color: var(--wa-color-warning-60); }
 
 .session-item-wrapper {
     position: relative;
