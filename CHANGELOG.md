@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Ephemeral sessions** — Run a one-shot session with Claude or Codex. Keep its prompt and final answer in this browser until you discard them.
 - **Nested subagents** — Follow subagents created by other subagents, at every level, in Claude and Codex sessions.
+- **Subagent tree** — The Orchestration tab now also shows the subagents a session launched, at every level, with their cost and activity. It opens for any session that ran one.
 
 ### Changed
 

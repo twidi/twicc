@@ -1,5 +1,13 @@
 <script setup>
-// Orchestration tab content: the full spawned-session tree (``spawned_by``
+// Orchestration tab content. Two trees, one selector (shown only when both
+// exist — see "The two views" below):
+//
+//   - "sessions": the spawned-session tree, described here;
+//   - "agents": the subagents this session launched, at any depth. Live off the
+//     agent-link cache, so nothing below (fetch, poll, error state) applies to
+//     it — see AgentTreeNode.
+//
+// The sessions tree: the full spawned-session tree (``spawned_by``
 // links) rooted at the session's top-level ancestor, fetched from
 // ``/api/projects/<pid>/sessions/<sid>/topology/`` (the same engine as
 // ``twicc topology``).
@@ -13,9 +21,13 @@
 // a stop-gap until the tree is pushed over the WebSocket.)
 import { ref, computed, watch, onUnmounted } from 'vue'
 import OrchestrationNode from './OrchestrationNode.vue'
+import AgentTreeNode from './AgentTreeNode.vue'
 import CostDisplay from '../ui/CostDisplay.vue'
+import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
+import { agentForestCost } from '../../utils/agentTreeMetrics'
 
+const store = useDataStore()
 const settingsStore = useSettingsStore()
 // Honour the global "Show costs" toggle, like the rest of the app.
 const showCosts = computed(() => settingsStore.areCostsShown)
@@ -23,7 +35,40 @@ const showCosts = computed(() => settingsStore.areCostsShown)
 const props = defineProps({
     sessionId: { type: String, required: true },
     projectId: { type: String, required: true },
+    // Whether the session belongs to a spawned-session tree (``spawn_root``).
+    // The tab can also be here for subagents alone, in which case there is no
+    // topology to fetch and the sessions view is not offered.
+    hasSpawnTree: { type: Boolean, default: false },
     active: { type: Boolean, default: false },
+})
+
+// ── The two views ───────────────────────────────────────────────────────────
+// "sessions": the spawned-session topology (TwiCC sessions created by other
+// sessions). "agents": the subagents this session launched, at any depth.
+// A session can have either, or both; the selector only appears with both.
+// The agent tree is scoped to THIS session, whereas the session tree covers the
+// whole spawn tree — deliberate: an agent belongs to the session that ran it.
+const hasAgents = computed(() => store.hasSubagents(props.sessionId))
+const agentTree = computed(() => store.getAgentTree(props.sessionId))
+const agentCount = computed(() => {
+    const count = (nodes) => nodes.reduce((n, node) => n + 1 + count(node.children), 0)
+    return count(agentTree.value)
+})
+const runningAgentCount = computed(() => {
+    const count = (nodes) => nodes.reduce(
+        (n, node) => n + (store.getProcessState(node.id) ? 1 : 0) + count(node.children), 0,
+    )
+    return count(agentTree.value)
+})
+// All-inclusive cost of the agent tree, resolved exactly like each node's own.
+const agentTotalCost = computed(() => agentForestCost(store, agentTree.value))
+const canSwitchView = computed(() => props.hasSpawnTree && hasAgents.value)
+// User choice, only honoured when both views exist; otherwise the available one
+// wins (a session that loses its last agent must not stay on an empty view).
+const selectedView = ref('sessions')
+const view = computed(() => {
+    if (canSwitchView.value) return selectedView.value
+    return props.hasSpawnTree ? 'sessions' : 'agents'
 })
 
 const loading = ref(false)
@@ -71,14 +116,22 @@ const activity = computed(() => {
         .filter(b => b.count > 0)
 })
 
-// Parenthetical shown after the session count: "All stopped" when every session
-// shares one state, otherwise the per-state breakdown ("2 working · 9 stopped").
-const activitySummary = computed(() => {
-    const buckets = activity.value
-    if (buckets.length === 0) return ''
-    if (buckets.length === 1) return `All ${buckets[0].label}`
-    return buckets.map(b => `${b.count} ${b.label}`).join(' · ')
-})
+// Parenthetical shown after the node count, shared by both trees: "All stopped"
+// when every node shares one state, otherwise the per-state breakdown
+// ("2 working · 9 stopped"). Empty when there is nothing to count.
+function summarizeActivity(buckets) {
+    const present = buckets.filter(b => b.count > 0)
+    if (present.length === 0) return ''
+    if (present.length === 1) return `All ${present[0].label}`
+    return present.map(b => `${b.count} ${b.label}`).join(' · ')
+}
+const activitySummary = computed(() => summarizeActivity(activity.value))
+// The agent equivalent. An agent has only two states — it works, or it is done
+// — so the same phrasing yields "All working", "All stopped", or the mix.
+const agentActivitySummary = computed(() => summarizeActivity([
+    { label: 'working', count: runningAgentCount.value },
+    { label: 'stopped', count: agentCount.value - runningAgentCount.value },
+]))
 
 // Auto-refresh gate: the tree is "live" while at least one node (root included)
 // is not ``dead``. This single signal drives both the poll timer and the
@@ -92,6 +145,7 @@ const hasLiveNode = computed(() =>
 // under the user. Manual Refresh and tab-activation loads are non-silent.
 async function load({ silent = false } = {}) {
     if (!props.projectId || !props.sessionId) return
+    if (!props.hasSpawnTree) return  // no spawned session: nothing to fetch
     // A newer load supersedes any in-flight one (e.g. a manual Refresh landing
     // on top of a background tick).
     if (inFlightController) inFlightController.abort()
@@ -139,12 +193,32 @@ function syncAuto() {
 }
 watch([() => props.active, hasLiveNode], syncAuto, { immediate: true })
 
-// Force a fresh fetch every time the tab becomes active, regardless of the poll
-// condition or any snapshot already held.
+// Refreshing the agent view re-reads the ``/subagents/`` snapshot: the tree
+// itself is live over the WebSocket, but the per-agent numbers it carries (cost,
+// turns, context) only move with a read.
+const agentsLoading = ref(false)
+const refreshing = computed(() => (view.value === 'agents' ? agentsLoading.value : loading.value))
+async function refreshAgents() {
+    agentsLoading.value = true
+    try {
+        await store.fetchSubagentsState(props.projectId, props.sessionId)
+    } finally {
+        agentsLoading.value = false
+    }
+}
+function refresh() {
+    return view.value === 'agents' ? refreshAgents() : load()
+}
+
+// Force a fresh read every time the tab becomes active, regardless of the poll
+// condition or any snapshot already held. Both views: each one's data can have
+// moved while the tab was hidden.
 watch(
     () => props.active,
     (active) => {
-        if (active) load()
+        if (!active) return
+        load()
+        if (hasAgents.value) refreshAgents()
     },
     { immediate: true },
 )
@@ -160,15 +234,43 @@ onUnmounted(() => {
         <div class="orch-header">
             <div class="orch-toolbar">
                 <div class="orch-toolbar-meta">
-                    <span class="orch-toolbar-title">Orchestration tree</span>
-                    <span v-if="nodeCount" class="orch-meta-item">{{ nodeCount }} session{{ nodeCount > 1 ? 's' : '' }}<template v-if="activitySummary"> ({{ activitySummary }})</template></span>
-                    <span v-if="showCosts && totalCost != null" class="orch-meta-item">
-                        <CostDisplay :cost="totalCost" /> total
-                    </span>
+                    <span class="orch-toolbar-title">{{ view === 'agents' ? 'Agent tree' : 'Orchestration tree' }}</span>
+                    <template v-if="view === 'agents'">
+                        <span class="orch-meta-item">{{ agentCount }} agent{{ agentCount > 1 ? 's' : '' }}<template v-if="agentActivitySummary"> ({{ agentActivitySummary }})</template></span>
+                        <span v-if="showCosts && agentTotalCost != null" class="orch-meta-item">
+                            <CostDisplay :cost="agentTotalCost" /> total
+                        </span>
+                    </template>
+                    <template v-else>
+                        <span v-if="nodeCount" class="orch-meta-item">{{ nodeCount }} session{{ nodeCount > 1 ? 's' : '' }}<template v-if="activitySummary"> ({{ activitySummary }})</template></span>
+                        <span v-if="showCosts && totalCost != null" class="orch-meta-item">
+                            <CostDisplay :cost="totalCost" /> total
+                        </span>
+                    </template>
                 </div>
                 <div class="orch-toolbar-actions">
+                    <wa-button-group v-if="canSwitchView" label="Tree to show" class="orch-view-switch">
+                        <wa-button
+                            size="small"
+                            :variant="view === 'sessions' ? 'brand' : 'neutral'"
+                            :appearance="view === 'sessions' ? 'filled' : 'outlined'"
+                            @click="selectedView = 'sessions'"
+                        >
+                            <wa-icon slot="start" name="diagram-project"></wa-icon>
+                            Sessions
+                        </wa-button>
+                        <wa-button
+                            size="small"
+                            :variant="view === 'agents' ? 'brand' : 'neutral'"
+                            :appearance="view === 'agents' ? 'filled' : 'outlined'"
+                            @click="selectedView = 'agents'"
+                        >
+                            <wa-icon slot="start" name="robot"></wa-icon>
+                            Agents
+                        </wa-button>
+                    </wa-button-group>
                     <span
-                        v-if="nodeCount"
+                        v-if="view === 'sessions' && nodeCount"
                         class="orch-autorefresh"
                         :class="hasLiveNode ? 'is-live' : 'is-stopped'"
                         :title="hasLiveNode
@@ -182,40 +284,57 @@ onUnmounted(() => {
                     <wa-button
                         size="small"
                         appearance="plain"
-                        :loading="loading"
-                        :disabled="loading"
-                        @click="load()"
+                        :loading="refreshing"
+                        :disabled="refreshing"
+                        @click="refresh()"
                     >
                         <wa-icon slot="start" name="arrow-rotate-right"></wa-icon>
                         Refresh
                     </wa-button>
                 </div>
             </div>
-            <div class="orch-note">
+            <div v-if="view === 'sessions'" class="orch-note">
                 Sessions marked <wa-icon name="eye-slash" class="orch-note-icon"></wa-icon> were created hidden by their parent and can't be opened.
             </div>
         </div>
 
         <div class="orch-content">
-            <div v-if="loading && !topology" class="orch-state">
-                <wa-spinner></wa-spinner>
-                <span>Loading topology…</span>
-            </div>
-            <wa-callout v-else-if="error" variant="danger" size="small">
-                <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                {{ error }}
-            </wa-callout>
-            <div v-else-if="rootTree" class="orch-tree">
-                <OrchestrationNode
-                    :node="rootTree"
-                    :nodes-by-id="nodesById"
-                    :current-session-id="sessionId"
-                />
-            </div>
-            <div v-else class="orch-state orch-state-empty">
-                <wa-icon name="sitemap"></wa-icon>
-                <span>No orchestration data.</span>
-            </div>
+            <template v-if="view === 'agents'">
+                <div v-if="agentCount" class="orch-tree">
+                    <AgentTreeNode
+                        v-for="node in agentTree"
+                        :key="node.id"
+                        :node="node"
+                        :session-id="sessionId"
+                        :project-id="projectId"
+                    />
+                </div>
+                <div v-else class="orch-state orch-state-empty">
+                    <wa-icon name="robot"></wa-icon>
+                    <span>No agent.</span>
+                </div>
+            </template>
+            <template v-else>
+                <div v-if="loading && !topology" class="orch-state">
+                    <wa-spinner></wa-spinner>
+                    <span>Loading topology…</span>
+                </div>
+                <wa-callout v-else-if="error" variant="danger" size="small">
+                    <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                    {{ error }}
+                </wa-callout>
+                <div v-else-if="rootTree" class="orch-tree">
+                    <OrchestrationNode
+                        :node="rootTree"
+                        :nodes-by-id="nodesById"
+                        :current-session-id="sessionId"
+                    />
+                </div>
+                <div v-else class="orch-state orch-state-empty">
+                    <wa-icon name="sitemap"></wa-icon>
+                    <span>No orchestration data.</span>
+                </div>
+            </template>
         </div>
     </div>
 </template>
@@ -278,6 +397,10 @@ onUnmounted(() => {
 @keyframes orch-autorefresh-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
+}
+
+.orch-view-switch {
+    flex-shrink: 0;
 }
 
 .orch-note {

@@ -154,8 +154,12 @@ def tree_agent_links(root):
     return list(AgentLink.objects.filter(Q(session_id=root.id) | Q(session_id__in=owners)).exclude(agent_id=root.id).order_by("id"))
 
 
-def build_subagents_state(root, *, frozen_at_line=None):
-    """Build the shared owner/share tree payload with one completion scan."""
+def build_subagents_state(root, *, frozen_at_line=None, include_metrics=False):
+    """Build the shared owner/share tree payload with one completion scan.
+
+    ``include_metrics`` adds each agent's cost, turns and context usage — owner
+    surfaces only. A share link never carries them.
+    """
     from twicc.core.models import SessionItem, ToolResultLink
     from twicc.providers.helpers import get_provider_helpers
 
@@ -186,19 +190,23 @@ def build_subagents_state(root, *, frozen_at_line=None):
     return serialize_agent_links(
         links, completions=completions, result_counts=counts,
         trust_agent_stopped=helpers.subagent_idle_trusted, root_cutoff=root.cutoff,
-        root_session_id=root.id,
+        root_session_id=root.id, include_metrics=include_metrics,
     )
 
 
 def serialize_agent_links(
     links, *, completions=None, result_counts=None, trust_agent_stopped=False,
-    root_cutoff=None, root_session_id=None,
+    root_cutoff=None, root_session_id=None, include_metrics=False,
 ) -> list[dict]:
     """Serialize links with distinct persisted-completion and provider-idle evidence.
 
     Child idle may be mtime-derived during recompute. Only providers whose
     parent result stream cannot conclude opt into that signal. Queue completion
     is keyed by both child and tool id and never derives from child idle.
+
+    ``include_metrics`` adds the agent's own cost, turns and context usage, read
+    from the same row this already loads for the slug. Off by default: the share
+    view builds the very same payload and must not expose them.
     """
     from twicc.core.models import Session
 
@@ -208,16 +216,24 @@ def serialize_agent_links(
     subagents = {
         row[0]: row[1:]
         for row in Session.objects.filter(id__in=[link.agent_id for link in links])
-        .values_list("id", "slug", "last_stopped_at")
+        .values_list("id", "slug", "last_stopped_at", "total_cost", "user_message_count", "context_usage")
     }
     result = []
     for link in links:
-        slug, agent_stopped = subagents.get(link.agent_id, (None, None))
+        slug, agent_stopped, total_cost, turns, context_usage = subagents.get(
+            link.agent_id, (None, None, None, 0, None)
+        )
         stopped = completions.get((link.agent_id, link.tool_use_id))
         before_cutoff = root_cutoff is not None and (
             link.started_at is None or link.started_at < root_cutoff
         )
+        metrics = {} if not include_metrics else {
+            "total_cost": float(total_cost) if total_cost is not None else None,
+            "user_message_count": turns,
+            "context_usage": context_usage,
+        }
         result.append({
+            **metrics,
             "agent_id": link.agent_id,
             "agent_slug": slug,
             "owner_session_id": link.session_id,

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { reactive, computed } from 'vue'
-import { agentLinkState, setAgentLink, clearAgentLinks, markAgentStopped, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, handleAgentEvent } from './agentLinkIndex.js'
+import { agentLinkState, setAgentLink, clearAgentLinks, markAgentStopped, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, handleAgentEvent, buildAgentTree, hasTreeAgents } from './agentLinkIndex.js'
 
 const start = '2026-09-07T01:00:00Z'
 const stop = '2026-09-07T01:01:00Z'
@@ -131,4 +131,23 @@ test('duplicate live link retains cold REST idle and server stop without creatin
     assert.equal(state.agentLinkIndex.child.agentStoppedAt, null)
     assert.equal(state.agentLinkIndex.child.running, undefined)
     assert.equal(calls.length, 1)
+})
+
+test('agent tree nests by launcher ownership at any depth', () => {
+    const state = agentLinkState()
+    snapshot(state, [api('depth1', 'root'), api('depth2', 'depth1'), api('depth3', 'depth2')])
+    const tree = buildAgentTree(state, 'root')
+    assert.deepEqual(tree.map(n => n.id), ['depth1'])
+    assert.deepEqual(tree[0].children.map(n => n.id), ['depth2'])
+    assert.deepEqual(tree[0].children[0].children.map(n => n.id), ['depth3'])
+    assert.equal(hasTreeAgents(state, 'root'), true)
+    assert.equal(hasTreeAgents(state, 'other'), false)
+})
+test('agent tree re-anchors an unreachable owner chain on the root', () => {
+    const state = agentLinkState()
+    // ``orphan``'s launcher is not in the tree; ``loopA``/``loopB`` own each other.
+    snapshot(state, [api('orphan', 'gone'), api('loopA', 'loopB'), api('loopB', 'loopA')])
+    const tree = buildAgentTree(state, 'root')
+    assert.deepEqual(tree.map(n => n.id).sort(), ['loopA', 'loopB', 'orphan'])
+    assert.deepEqual(tree.flatMap(n => n.children), [])
 })

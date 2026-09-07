@@ -1,0 +1,226 @@
+/* Tree-node presentation shared by the Orchestration tab's two trees
+   (``OrchestrationNode`` for spawned sessions, ``AgentTreeNode`` for subagents):
+   the connector geometry, the node's first line, the status icon and its
+   pulses, the title link and the quiet dates line. Imported with
+   ``<style scoped src="./treeNode.css">`` so each component keeps its own scope
+   while the geometry stays defined once — the two trees must not drift.
+   Everything specific to one tree (costs, settings summary, project badge,
+   context ring, annotations…) stays in that component's own scoped block. */
+
+/* Tree connector geometry. ``--elbow-y`` is the vertical centre of a node's
+   first line (where the chevron sits and where the elbow joins); it must equal
+   the row's top padding plus half the first-line height. */
+.onode {
+    --orch-rail-w: 1rem;       /* chevron column width */
+    --orch-elbow-w: 0.85rem;   /* horizontal elbow length (child's left padding) */
+    --orch-line-w: 2px;        /* connector thickness */
+    --orch-line-c: var(--wa-color-neutral-border-normal);
+    --orch-row-line: 1.5rem;        /* first-line height */
+    --orch-row-pad-top: 0.4rem;     /* breathing room above each node */
+    --orch-row-pad-bottom: 0.5rem;  /* and below — space before children / next node */
+    --orch-elbow-y: calc(var(--orch-row-pad-top) + var(--orch-row-line) / 2);
+    position: relative;
+}
+
+.onode-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    padding-top: var(--orch-row-pad-top);
+    padding-bottom: var(--orch-row-pad-bottom);
+}
+
+.onode-rail {
+    flex: 0 0 var(--orch-rail-w);
+    height: var(--orch-row-line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.onode-chevron {
+    appearance: none;
+    background: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-s);
+    line-height: 1;
+}
+
+.onode-chevron:hover {
+    color: var(--wa-color-text-normal);
+}
+
+.onode-body {
+    flex: 1;
+    min-width: 0;
+    /* Breathing room between the chevron / connectors and the content. */
+    margin-left: var(--wa-space-xs);
+}
+
+/* Children container: indented so the connecting line falls under the parent's
+   chevron centre (rail centre = --orch-rail-w / 2). */
+.onode-kids {
+    margin-left: calc(var(--orch-rail-w) / 2);
+}
+
+/* Each child reserves elbow space on its left; the connectors are absolutely
+   positioned at its box-left, which equals the parent's chevron centre. */
+.onode-kids > .onode {
+    padding-left: var(--orch-elbow-w);
+}
+
+/* Vertical line segment for each child (full height → the line continues to the
+   next sibling). */
+.onode-kids > .onode::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--orch-line-w);
+    background: var(--orch-line-c);
+    transform: translateX(-50%);
+}
+
+/* The last child stops the vertical line at its own elbow (└ instead of ├). */
+.onode-kids > .onode:last-child::before {
+    bottom: auto;
+    height: var(--orch-elbow-y);
+}
+
+/* Horizontal elbow from the vertical line to the child's rail. */
+.onode-kids > .onode::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: var(--orch-elbow-y);
+    width: calc(var(--orch-elbow-w) - var(--wa-space-3xs));
+    height: var(--orch-line-w);
+    background: var(--orch-line-c);
+    transform: translateY(-50%);
+}
+
+/* Leaves have no chevron, so their elbow runs further right across the empty
+   chevron column toward the label (rather than stopping where a chevron would
+   sit, like nodes that do have children). */
+.onode-kids > .onode:not(.has-children)::after {
+    width: calc(var(--orch-elbow-w) + var(--orch-rail-w));
+}
+
+/* A parent's own segment: from its chevron centre down to the bottom of its
+   content row (= the top of its children), bridging the multi-line block. Only
+   while expanded — a collapsed node has no visible children, so the line would
+   dangle for nothing. */
+.onode.has-children.is-expanded > .onode-row::before {
+    content: '';
+    position: absolute;
+    left: calc(var(--orch-rail-w) / 2);
+    /* Start a touch below the chevron so the line isn't glued to it. */
+    top: calc(var(--orch-elbow-y) + var(--wa-space-xs));
+    bottom: 0;
+    width: var(--orch-line-w);
+    background: var(--orch-line-c);
+    transform: translateX(-50%);
+}
+
+
+.onode-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--wa-space-xs) var(--wa-space-s);
+    min-height: var(--orch-row-line);
+}
+
+.orch-status-icon {
+    flex-shrink: 0;
+    align-self: center;
+    font-size: var(--wa-font-size-m);
+}
+
+/* Pulse the live states, matching the indicators used elsewhere: the working
+   robot (ProcessIndicator's ``pulse``, 1s, 1→0.4) and the awaiting-user hand
+   (AggregatedProcessIndicator's ``pending-pulse``, 1.5s, 1→0.3). */
+.orch-status-icon--pulse-work {
+    animation: orch-status-pulse-work 1s ease-in-out infinite;
+}
+
+.orch-status-icon--pulse-pending {
+    animation: orch-status-pulse-pending 1.5s ease-in-out infinite;
+}
+
+@keyframes orch-status-pulse-work {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+@keyframes orch-status-pulse-pending {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+.orch-title {
+    font-weight: 600;
+}
+
+.orch-title.is-current {
+    color: var(--wa-color-brand-60);
+}
+
+.orch-title-link {
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.orch-title-link:hover {
+    text-decoration: underline;
+}
+
+
+.onode-dates {
+    margin-top: var(--wa-space-3xs);
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+}
+
+/* Inline icons (clock before the duration, comment before the turns count) sit
+   a touch low against the text baseline by default — nudge them onto it. */
+.onode-dates wa-icon {
+    vertical-align: -0.1em;
+}
+
+.orch-cost {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--wa-space-s);
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+}
+
+.orch-cost-sub {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--wa-space-3xs);
+}
+
+/* Context window usage ring — same sizing/colors as the SessionHeader ring.
+   Centered against the line; the inner % uses normal text color so it stays
+   legible over the quiet dates line. */
+.onode-context-ring {
+    --size: 2rem;
+    --track-width: 3px;
+    font-size: var(--wa-font-size-2xs);
+    vertical-align: middle;
+    color: var(--wa-color-text-normal);
+    translate: 0px -0.2em;
+    margin-left: 1em;
+}

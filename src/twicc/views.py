@@ -1505,7 +1505,7 @@ async def subagents_state(request, project_id, session_id):
     if session.parent_session_id is not None:
         raise Http404("Session not found")
 
-    result = await sync_to_async(build_subagents_state)(session)
+    result = await sync_to_async(build_subagents_state)(session, include_metrics=True)
     return JsonResponse(result, safe=False)
 
 

@@ -1,4 +1,4 @@
-import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds } from '../utils/agentLinkIndex'
+import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, buildAgentTree, hasTreeAgents } from '../utils/agentLinkIndex'
 // frontend/src/stores/data.js
 
 import { createEphemeralActions, createSendFailureActions, ephemeralFields, serializeDraftSession, isLaunchedEphemeral } from '../utils/ephemeralSessions'
@@ -1252,6 +1252,13 @@ export const useDataStore = defineStore('data', {
 
         getAgentLinkInfo: (state) => (agentId) => state.localState.agentLinkIndex[agentId] || null,
         getRootAgentToolUseLineNum: (state) => (root, agentId) => rootAgentToolLine(state.localState, root, agentId),
+
+        /** True once the session's ``/subagents/`` snapshot has landed (or failed to). */
+        areSubagentsLoaded: (state) => (rootSessionId) => !!state.localState.agentLoaded[rootSessionId],
+        /** Whether a session spawned at least one agent, at any depth. */
+        hasSubagents: (state) => (rootSessionId) => hasTreeAgents(state.localState, rootSessionId),
+        /** The session's agent tree, nested by launcher — see ``buildAgentTree``. */
+        getAgentTree: (state) => (rootSessionId) => buildAgentTree(state.localState, rootSessionId),
 
         // Get cached agent link for a tool_id in a session
         // Returns: { agentId, isBackground } or undefined (not in cache)
@@ -4585,6 +4592,12 @@ export const useDataStore = defineStore('data', {
                 }
             } catch (error) {
                 console.error('Failed to fetch subagents state:', error)
+            } finally {
+                // The answer is in — including "this session has no agent", and
+                // including a failed read (no link will ever arrive from it).
+                // Gates the Orchestration tab's agent view against a redirect
+                // that would fire before the tree is known.
+                this.localState.agentLoaded[sessionId] = true
             }
         },
 

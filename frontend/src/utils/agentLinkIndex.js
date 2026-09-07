@@ -1,6 +1,8 @@
 // Shared owner-view/share-view agent cache. Roots identify trees; owners identify transcripts.
+// ``agentLoaded`` marks the roots whose ``/subagents/`` snapshot has landed, so a
+// consumer can tell "this tree has no agent" from "we don't know yet".
 export function agentLinkState() {
-    return { agentLinks: {}, agentLinkIndex: {}, agentStops: {}, agentIdle: {}, agentRevision: 0, agentRevisions: {}, agentFetches: {} }
+    return { agentLinks: {}, agentLinkIndex: {}, agentStops: {}, agentIdle: {}, agentRevision: 0, agentRevisions: {}, agentFetches: {}, agentLoaded: {} }
 }
 const time = value => value ? Date.parse(value) || 0 : 0
 const latest = (a, b) => time(a) >= time(b) ? a : b
@@ -17,6 +19,11 @@ export function setAgentLink(state, owner, tool, entry, live = true) {
     if (live && prior?.agentId === entry.agentId) {
         entry = { ...entry, agentStoppedAt: prior.agentStoppedAt, running: prior.running }
     }
+    // ``metrics`` (cost / turns / context) only ever arrives with a snapshot;
+    // a live event carries identity, so it must not erase them.
+    if (entry.metrics === undefined && prior?.agentId === entry.agentId) {
+        entry = { ...entry, metrics: prior.metrics }
+    }
     const idle = state.agentIdle[entry.agentId]
     if (idle) entry = { ...entry, agentStoppedAt: idle.stoppedAt, running: undefined }
     const value = { ...entry, running: stoppedAt ? false : entry.running, stoppedAt, ownerSessionId: owner, toolUseId: tool }
@@ -30,6 +37,7 @@ export function clearAgentLinks(state, owner) {
         if (state.agentLinkIndex[entry.agentId]?.ownerSessionId === owner) delete state.agentLinkIndex[entry.agentId]
     }
     delete state.agentLinks[owner]
+    delete state.agentLoaded[owner]
     // Invalidate in-flight reads, including an owner evicted during its root fetch.
     state.agentRevision++
     for (const root of Object.keys(state.agentFetches)) state.agentFetches[root]++
@@ -77,6 +85,11 @@ export function applyAgentSnapshot(state, root, agents, token) {
             toolUseLineNum: agent.tool_use_line_num, slug: agent.agent_slug ?? null,
             startedAt: agent.started_at ?? null, stoppedAt: agent.stopped_at ?? null,
             agentStoppedAt: agent.agent_stopped_at ?? null, running: agent.running,
+            // Owner payload only (never shared): the agent's own numbers, for a
+            // tree node that has no Session row loaded.
+            metrics: Object.hasOwn(agent, 'total_cost')
+                ? { totalCost: agent.total_cost, userMessageCount: agent.user_message_count, contextUsage: agent.context_usage }
+                : undefined,
         }, false))
     }
     return applied
@@ -96,6 +109,40 @@ export function staleSyntheticAgentIds(state, root, processStates, cutoffMs) {
     return Object.values(state.agentLinkIndex).filter(entry => entry.rootSessionId === root
         && processStates[entry.agentId]?.synthetic
         && (processStates[entry.agentId].started_at || 0) * 1000 < cutoffMs).map(entry => entry.agentId)
+}
+// Every agent of one tree, whatever its depth (the snapshot and the WS events
+// both stamp ``rootSessionId``).
+function treeAgentEntries(state, root) {
+    return Object.values(state.agentLinkIndex).filter(entry => entry.rootSessionId === root && entry.agentId !== root)
+}
+export function hasTreeAgents(state, root) {
+    return Object.values(state.agentLinkIndex).some(entry => entry.rootSessionId === root && entry.agentId !== root)
+}
+// Owner-anchored tree of a root's agents: ``ownerSessionId`` is the launching
+// session (the root itself, or another agent), so nesting comes for free at any
+// depth. An owner chain that does not provably reach the root — a missing owner,
+// or a cycle — re-anchors the agent on the root, so the result is always a tree
+// and no agent is silently dropped. Returns the root's children as
+// ``{ id, entry, children }`` nodes, oldest spawn first.
+export function buildAgentTree(state, root) {
+    const entries = treeAgentEntries(state, root)
+    const byId = new Map(entries.map(entry => [entry.agentId, entry]))
+    const children = new Map()
+    for (const entry of entries) {
+        let owner = entry.ownerSessionId
+        const seen = new Set([entry.agentId])
+        while (owner && owner !== root && byId.has(owner) && !seen.has(owner)) {
+            seen.add(owner)
+            owner = byId.get(owner).ownerSessionId
+        }
+        const anchored = owner === root ? entry.ownerSessionId : root
+        if (children.has(anchored)) children.get(anchored).push(entry)
+        else children.set(anchored, [entry])
+    }
+    const order = (a, b) => (time(a.startedAt) - time(b.startedAt)) || (a.agentId < b.agentId ? -1 : 1)
+    const build = owner => (children.get(owner) ?? []).sort(order)
+        .map(entry => ({ id: entry.agentId, entry, children: build(entry.agentId) }))
+    return build(root)
 }
 // Executable WS seam shared with the main dispatcher.
 export function handleAgentEvent(store, msg) {

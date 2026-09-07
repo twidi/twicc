@@ -465,6 +465,16 @@ const hasGitRepo = computed(() =>
 // is a topology worth showing. Drives the Orchestration tab's visibility.
 const hasSpawnRoot = computed(() => !!session.value?.spawn_root)
 
+// Whether the session spawned at least one subagent, at any depth. Derived from
+// the agent-link cache (``AgentLink`` ownership), which the session load always
+// fills — ``SessionItemsList`` is mounted whatever the active tab, so this is
+// reliable even when the user never opens the chat. The Orchestration tab shows
+// its agent view on this signal, next to the spawned-session tree.
+const hasSubagents = computed(() => store.hasSubagents(sessionId.value))
+// "We know whether this session has agents" — the snapshot has landed (or
+// failed). Guards the absent-tab redirect against firing before the answer.
+const subagentsResolved = computed(() => store.areSubagentsLoaded(sessionId.value))
+
 // Whether the session has a provider plan file on disk (Claude Code:
 // <claude home>/plans/<slug>.md). Drives the read-only Plan tab's visibility.
 // Unlike artifacts, this is NOT monotonic — it flips back to false (and the tab
@@ -560,7 +570,7 @@ const TOOL_TABS = [
     { id: 'tasks', label: 'Tasks', icon: 'square-check', present: () => hasTasks.value, redirectReady: () => !!session.value },
     { id: 'plan', label: 'Plan', icon: 'list-check', present: () => hasPlan.value, redirectReady: () => !!session.value },
     { id: 'artifacts', label: 'Artifacts', icon: 'shapes', present: () => hasArtifacts.value, redirectReady: () => !!session.value && store.artifactBookmarksLoaded },
-    { id: 'orchestration', label: 'Orchestration', icon: 'diagram-project', present: () => hasSpawnRoot.value, redirectReady: () => !!session.value },
+    { id: 'orchestration', label: 'Orchestration', icon: 'diagram-project', present: () => hasSpawnRoot.value || hasSubagents.value, redirectReady: () => !!session.value && subagentsResolved.value },
     { id: 'workflows', label: 'Workflows', icon: 'sitemap', present: () => hasWorkflows.value, redirectReady: () => !!session.value },
     { id: 'browser', label: 'Browser', icon: 'globe', present: () => true },
 ]
@@ -2568,6 +2578,7 @@ onBeforeUnmount(() => {
                     <OrchestrationPanel
                         :session-id="session.id"
                         :project-id="session.project_id"
+                        :has-spawn-tree="hasSpawnRoot"
                         :active="isActive && isToolTabShown('orchestration')"
                     />
                 </div>
