@@ -42,7 +42,7 @@ The unrelated MCP descriptions remain unchanged.
 | 4.1: trusted entry point, validation, read-only identifiers | `core/services/session_creation.py`, `asgi.py`; `test_ephemeral_creation.py`, `test_ephemeral_ws.py` cover conflicts, cross-provider and mixed-mode races, existing rows, pending snapshots, and normal follow-ups |
 | 4.2: no database row, result exactly once, clean terminal lifecycle | `base_manager.py`, `base_agent.py`; `test_ephemeral_lifecycle.py` covers success, failure, Stop, startup failure, shutdown, ownership and buffer cleanup |
 | 4.3: Claude persistence, MCP, plugin and cron suppression | Claude agent/manager; provider tests inspect actual options and bypasses; real CLI parent/child control comparison proves no ephemeral JSONL |
-| 4.4: Codex persistence, inherited configuration and final text | Codex agent/manager; provider tests cover dotted MCP keys, empty config, plugin feature flag, final-answer precedence, child/commentary exclusion, runtime child hold and factory cancellation |
+| 4.4: Codex persistence, inherited configuration and final text | Codex agent/manager; provider tests cover literal MCP names in nested override tables, empty config, plugin feature flag, final-answer precedence, child/commentary exclusion, runtime child hold and factory cancellation |
 | 4.5: final frame and in-memory error | Lifecycle and provider tests verify text, cost, duration, terminal status, exact-once delivery and content-safe logs |
 | 4.6: ephemeral addendum | `agent/system_prompt.py`; tests verify no session work-directory or MCP contract; runtime child uses `fork_turns="none"` |
 | 4.7–4.8: accepted external traces | Runtime tests inspect isolated provider homes. Agent-created task files remain allowed. Network requests still reach the model endpoint. No promise of anonymous or trace-free execution is made |
@@ -97,3 +97,22 @@ Implementation ownership and review ownership differ.
 The final D reviewer independently runs all 15 lifecycle helper tests.
 All review blockers are resolved. No provider/runtime gate is waived.
 No dependencies, migrations, or user-server restarts are required for verification.
+
+## Follow-up: inherited MCP configuration
+
+A user report exposes a gap in the initial runtime coverage: the runtime tests
+start threads without inherited MCP servers. The factory unit test incorrectly
+expects TOML-quoted dotted RPC keys. Codex treats those quotes literally and
+rejects the resulting transport-less server entry.
+
+The factory now sends a nested `mcp_servers` table with literal server names.
+Two regression cases call the real factory and bundled runtime with inherited
+stdio servers, initially enabled or disabled, including names with dots and
+quotes. Both cases fail before the fix and pass after it. No configured MCP
+command runs, no ephemeral JSONL is written, and user configuration stays unchanged.
+
+Follow-up verification: 35 tests pass across the provider, runtime and work-dir
+files. The unchanged `test_runtime_ephemeral_transcript_and_final_answer[True]`
+fails on subagent tracking/hold assertions in both runs. That test starts the
+runtime directly and does not use the modified factory. This separate failure
+remains open; the inherited-MCP regression cases both pass. Ruff and diff checks pass.

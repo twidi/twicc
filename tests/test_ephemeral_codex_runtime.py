@@ -321,3 +321,49 @@ supports_websockets=false
         server.shutdown()
         server.server_close()
         server_thread.join()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_ephemeral_factory_disables_inherited_mcp_transports(tmp_path, monkeypatch, enabled):
+    """Use the real thread/start parser, including names with dots and quotes."""
+    from tests.test_codex_thread_work_dirs import _install_factory_fakes
+    from twicc.providers.codex.agent import manager as module
+
+    _install_factory_fakes(monkeypatch, [])
+    home = tmp_path / "codex"
+    home.mkdir()
+    marker = tmp_path / "mcp-started"
+    names = ["node_repl", 'literal.dot"quote']
+    config_text = '[features]\nplugins=false\n'
+    for name in names:
+        config_text += (
+            f'\n[mcp_servers.{orjson.dumps(name).decode()}]\n'
+            'command="/bin/sh"\n'
+            f'args=["-c", "touch {marker}"]\n'
+            f'enabled={str(enabled).lower()}\n'
+        )
+    (home / "config.toml").write_text(config_text)
+
+    async def make_config(**kwargs):
+        return CodexConfig(
+            codex_bin=str(codex_binary_path()), cwd=str(tmp_path),
+            env={"HOME": str(tmp_path), "CODEX_HOME": str(home)},
+        )
+
+    monkeypatch.setattr(module, "make_codex_config", make_config)
+    monkeypatch.setattr(module, "TwiccAsyncCodex", TwiccAsyncCodex)
+
+    async def run():
+        agent = await module.CodexAgentManager()._create_agent(
+            "draft", "project", str(tmp_path), resume=False,
+            settings=AgentSettings(permission_mode="auto"), ephemeral=True,
+        )
+        try:
+            assert agent.kwargs["thread"].id
+            assert agent.kwargs["ephemeral"]
+            assert not marker.exists()
+            assert not list(home.rglob("*.jsonl"))
+        finally:
+            await agent.kwargs["codex"].close()
+
+    asyncio.run(run())

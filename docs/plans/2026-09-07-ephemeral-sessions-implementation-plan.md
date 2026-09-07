@@ -149,7 +149,7 @@ soft interruption before it transitions back to USER_TURN.
 
 Use process-local `features.plugins=false`. After initialization call
 `config/read` with `includeLayers:false` and the actual cwd. For every existing
-MCP server, pass `mcp_servers.<name>.enabled=false` in thread config. Preserve
+MCP server, set `mcp_servers[name].enabled=false` through a nested table in thread config. Preserve
 its transport; do not create absent transportless entries. Do not inject
 TwiCC MCP config, alias registration, or session context. Start an ephemeral
 thread and pass `work_dirs=[]` explicitly. Do not create work directories or
@@ -160,8 +160,8 @@ Suppress payload-bearing Codex error/approval exceptions and startup exceptions
 in the agent, manager, service and WS path. Do not print exception strings,
 tracebacks containing SDK payloads, or stderr tails for ephemeral runs. Test
 with a sensitive marker embedded in an SDK exception and inspect captured logs.
-Quote MCP server names as TOML key segments, including dots and quotes; do
-not split a literal server name into nested keys.
+Keep MCP server names as literal keys in the nested table, including dots and
+quotes. RPC override keys do not interpret TOML quoting.
 Capture only parent-thread agent messages. Prefer the latest final_answer
 phase; fall back to the latest unphased message. Ignore commentary-only and
 child-thread messages. No Codex cost is invented. Native child creation uses
@@ -318,6 +318,6 @@ runtime gate. Do not declare completion with missing runtime evidence.
 
 All three reviewers return PASS. The review adds provisional reservation
 release for existing persistent sessions, payload-safe Codex exception logs,
-quoted MCP keys, and offline-send rollback. These details also clarify the
+literal MCP names, and offline-send rollback. These details also clarify the
 approved design. Implementation acceptance and correction records appear in the
 [validation report](2026-09-07-ephemeral-sessions-validation.md).

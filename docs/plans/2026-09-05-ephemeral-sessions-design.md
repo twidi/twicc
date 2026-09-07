@@ -360,7 +360,8 @@ counts (a held turn may see several).
   log for the ephemeral id. Suppress payload-bearing error and approval
   exception logs too, including startup errors propagated through manager,
   service and WS handling. Keep diagnostics limited to technical status.
-  Quote literal MCP server names in dotted TOML override keys.
+  Use a nested `mcp_servers` override table keyed by literal server names.
+  RPC override keys do not interpret TOML quoting.
 - `CodexAgent(..., ephemeral=True, work_dirs=[])`.
 - Native Codex subagents must use `fork_turns="none"`; inheriting the parent
   requires a persisted thread and fails for ephemeral parents. State this in

@@ -18,8 +18,6 @@ import asyncio
 import logging
 from typing import Any, ClassVar
 
-import orjson
-
 from asgiref.sync import sync_to_async
 from openai_codex.generated.v2_all import ApprovalsReviewer, ConfigReadResponse, SandboxMode
 
@@ -689,9 +687,12 @@ class CodexAgentManager(BaseAgentManager):
                 inherited = await codex._client.request(
                     "config/read", {"includeLayers": False, "cwd": cwd}, response_model=ConfigReadResponse,
                 )
-                for name in inherited.config.model_dump().get("mcp_servers", {}):
-                    quoted_name = orjson.dumps(name).decode()
-                    thread_config[f"mcp_servers.{quoted_name}.enabled"] = False
+                # RPC override keys do not parse TOML quoting. A nested table
+                # preserves literal server names and merges their transport settings.
+                thread_config["mcp_servers"] = {
+                    name: {"enabled": False}
+                    for name in inherited.config.model_dump().get("mcp_servers", {})
+                }
             elif mcp_enabled():
                 thread_config["mcp_servers"] = {"twicc": _twicc_mcp_server_config(session_id)}
                 _apply_codex_mcp_context_mode(thread_config)

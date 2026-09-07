@@ -64,8 +64,10 @@ def test_codex_ephemeral_factory_disables_inherited_tools_and_all_persistence(mo
     assert agent.kwargs["work_dirs"] == []
     call = codex.start_calls[0]
     assert call["ephemeral"] is True
-    assert call["config"]['mcp_servers."twicc".enabled'] is False
-    assert call["config"]['mcp_servers."literal.dot\\"quote".enabled'] is False
+    assert call["config"]["mcp_servers"] == {
+        "twicc": {"enabled": False},
+        'literal.dot"quote': {"enabled": False},
+    }
     assert codex.started_thread.settings_updates == []
 
 
