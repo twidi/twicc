@@ -682,13 +682,16 @@ class BaseAgentManager:
             status = "stopped" if agent.ephemeral_soft_interrupted else "done"
         else:
             status = "stopped" if agent.kill_reason in DELIBERATE_STOP_REASONS else "error"
+        duration_ms = agent.ephemeral_usage.get("duration_ms")
+        if duration_ms is None:
+            duration_ms = round((time.monotonic() - agent.ephemeral_started_monotonic) * 1000)
         frame = {
             "type": "ephemeral_result", "session_id": agent.session_id,
             "project_id": agent.project_id, "provider": agent.provider.value,
             "status": status, "text": agent.ephemeral_final_text or "",
             "error": (agent.error or agent.kill_reason) if status == "error" else None,
             "cost_usd": agent.ephemeral_usage.get("cost_usd"),
-            "duration_ms": agent.ephemeral_usage.get("duration_ms"),
+            "duration_ms": duration_ms,
             "finished_at": datetime.now(UTC).isoformat(),
         }
         try:

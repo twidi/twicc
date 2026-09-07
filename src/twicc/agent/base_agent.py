@@ -75,6 +75,7 @@ class BaseAgent:
         self.ephemeral_draft_id = session_id
         self.ephemeral_final_text: str = ""
         self.ephemeral_usage: dict = {}
+        self.ephemeral_started_monotonic = time.monotonic() if ephemeral else None
         self.ephemeral_result_emitted = False
         self.ephemeral_soft_interrupted = False
 

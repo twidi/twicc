@@ -272,3 +272,25 @@ def test_direct_normal_factory_claim_blocks_other_provider_ephemeral_start():
         ephemeral.clear()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("sdk_duration,expected", [(None, 1250), (0, 0), (450, 450)])
+@pytest.mark.parametrize("state", [AgentState.USER_TURN, AgentState.DEAD])
+def test_ephemeral_duration_falls_back_to_monotonic_elapsed_time(sdk_duration, expected, state):
+    async def scenario():
+        manager = Manager()
+        manager.kill_agent = AsyncMock()
+        with patch("twicc.agent.base_agent.time.monotonic", return_value=100):
+            agent = Agent("duration-id", "p", "/tmp", AgentSettings(), ephemeral=True)
+        agent.ephemeral_usage = {"duration_ms": sdk_duration}
+        agent.kill_reason = "manual" if state == AgentState.DEAD else None
+        layer = Mock(group_send=AsyncMock())
+        with (
+            patch("channels.layers.get_channel_layer", return_value=layer),
+            patch("twicc.agent.base_manager.time.monotonic", return_value=101.25),
+        ):
+            await manager._complete_ephemeral(agent, state)
+        await asyncio.gather(*manager._ephemeral_cleanup_tasks)
+        assert layer.group_send.call_args.args[1]["data"]["duration_ms"] == expected
+
+    asyncio.run(scenario())
