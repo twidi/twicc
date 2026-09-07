@@ -462,7 +462,7 @@ function handleMenuSelect(event) {
                 </AppTooltip>
                 <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
                 <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
-                <wa-tag v-else-if="session.ephemeral && !session.draft" size="small" variant="neutral"><span class="ephemeral-phase-dot" :class="session.ephemeralPhase"></span>Ephemeral</wa-tag>
+                <wa-icon v-else-if="session.ephemeral && !session.draft" name="ghost" label="Ephemeral session" class="ephemeral-icon" :class="session.ephemeralPhase"></wa-icon>
                 <wa-tag v-else-if="session.draft && !processState" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                 <ProviderIcon v-if="providerIcon" :provider="session.provider" :colored="false" class="provider-icon" />
                 <wa-icon
@@ -672,11 +672,11 @@ function handleMenuSelect(event) {
 </template>
 
 <style scoped>
-.ephemeral-phase-dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; margin-right: 0.35rem; background: var(--wa-color-neutral-fill-normal); }
-.ephemeral-phase-dot.running { background: var(--wa-color-brand-fill-loud); }
-.ephemeral-phase-dot.done { background: var(--wa-color-success-fill-loud); }
-.ephemeral-phase-dot.error { background: var(--wa-color-danger-fill-loud); }
-.ephemeral-phase-dot.lost { background: var(--wa-color-warning-fill-loud); }
+.ephemeral-icon { flex-shrink: 0; color: var(--wa-color-neutral-on-normal); }
+.ephemeral-icon.running { color: var(--wa-color-brand-on-normal); }
+.ephemeral-icon.done { color: var(--wa-color-success-on-normal); }
+.ephemeral-icon.error { color: var(--wa-color-danger-on-normal); }
+.ephemeral-icon.lost { color: var(--wa-color-warning-on-normal); }
 
 .session-item-wrapper {
     position: relative;

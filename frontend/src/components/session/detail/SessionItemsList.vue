@@ -1954,7 +1954,7 @@ defineExpose({
         <wa-callout v-if="isEphemeral" :variant="ephemeralNotice.variant" class="ephemeral-notice">
             <wa-spinner v-if="session.ephemeralPhase === 'running'" slot="icon"></wa-spinner>
             <span>{{ ephemeralNotice.text }}</span>
-            <span v-if="session.ephemeralResult?.cost_usd != null"> · ${{ Number(session.ephemeralResult.cost_usd).toFixed(4) }}</span>
+            <span v-if="settingsStore.areCostsShown && session.ephemeralResult?.cost_usd != null"> · ${{ Number(session.ephemeralResult.cost_usd).toFixed(4) }}</span>
             <span v-if="session.ephemeralResult?.duration_ms != null"> · {{ (session.ephemeralResult.duration_ms / 1000).toFixed(1) }} s</span>
         </wa-callout>
 

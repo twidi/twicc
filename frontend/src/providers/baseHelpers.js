@@ -142,8 +142,11 @@ export class BaseProviderHelpers {
      *        Attachment blocks in SDK format. Providers that don't support
      *        attachments may safely ignore the argument.
      */
-    buildEphemeralUserMessageContent(text, attachments = []) {
-        return this.buildOptimisticUserMessageContent(ephemeralPromptText(text, attachments))
+    buildEphemeralUserMessageContent(text, attachments = [], timestamp = null) {
+        const content = this.buildOptimisticUserMessageContent(ephemeralPromptText(text, attachments))
+        // This local message is permanent until Discard, not an optimistic placeholder.
+        delete content.syntheticKind
+        return { ...content, timestamp }
     }
 
     buildOptimisticUserMessageContent(/* text, attachments */) {

@@ -1414,9 +1414,9 @@ export const useDataStore = defineStore('data', {
             },
             buildPrompt: (session, prompt) => {
                 const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE
-                const item = { line_num: lineNum, content: null, kind: 'user_message', syntheticKind,
+                const item = { line_num: lineNum, content: null, kind: 'user_message', syntheticKind, timestamp: session.ephemeralStartedAt,
                     display_level: DISPLAY_LEVEL.ALWAYS, group_head: null, group_tail: null }
-                setParsedContent(item, getProviderHelpers(session.provider).buildEphemeralUserMessageContent(prompt.text, prompt.attachments))
+                setParsedContent(item, getProviderHelpers(session.provider).buildEphemeralUserMessageContent(prompt.text, prompt.attachments, session.ephemeralStartedAt))
                 return item
             },
         }),
@@ -3209,9 +3209,12 @@ export const useDataStore = defineStore('data', {
             const ephemeralSession = this.sessions[sessionId]
             if (isLaunchedEphemeral(ephemeralSession) && ephemeralSession.ephemeralResult?.text) {
                 const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.EPHEMERAL_RESULT
-                const resultItem = { line_num: lineNum, content: null, kind: 'assistant_message', syntheticKind,
+                const resultItem = { line_num: lineNum, content: null, kind: 'assistant_message', syntheticKind, timestamp: ephemeralSession.ephemeralResult.finished_at,
                     display_level: DISPLAY_LEVEL.ALWAYS, group_head: null, group_tail: null }
-                setParsedContent(resultItem, getProviderHelpers(ephemeralSession.provider).buildEphemeralResultContent(ephemeralSession.ephemeralResult.text))
+                setParsedContent(resultItem, {
+                    ...getProviderHelpers(ephemeralSession.provider).buildEphemeralResultContent(ephemeralSession.ephemeralResult.text),
+                    timestamp: ephemeralSession.ephemeralResult.finished_at,
+                })
                 allItems = [...allItems, resultItem]
             }
             const visualItems = computeVisualItems(allItems, mode, expandedGroups, isAssistantTurn, detailedBlocks)
@@ -5897,7 +5900,8 @@ export const useDataStore = defineStore('data', {
                         if (restored.ephemeralPrompt) {
                             const prompt = restored.ephemeralPrompt
                             this.setOptimisticMessage(sessionId, prompt.text)
-                            setParsedContent(this.localState.optimisticMessages[sessionId], getProviderHelpers(provider).buildEphemeralUserMessageContent(prompt.text, prompt.attachments))
+                            this.localState.optimisticMessages[sessionId].timestamp = restored.ephemeralStartedAt
+                            setParsedContent(this.localState.optimisticMessages[sessionId], getProviderHelpers(provider).buildEphemeralUserMessageContent(prompt.text, prompt.attachments, restored.ephemeralStartedAt))
                         }
                         this.recomputeVisualItems(sessionId)
                     }
