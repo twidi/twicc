@@ -304,6 +304,11 @@ function clearLongPress() {
 // scroller by hand (wa-tab-group's shadow `.nav`, the same element WA's chevrons drive), with a
 // small fling on release. Vertical movement keeps cancelling the pending drag as before. Mouse is
 // untouched: it arms the drag on any direction and already pans via TabBar's wheel handler.
+//
+// The pan is NOT tied to the drag: a tab the layout refuses to drag still wears `touch-action:
+// none`, so without a pan of its own its icon/name is a dead zone in an otherwise pannable strip.
+// That covers the fixed Chat tab and every tab created on the fly outside the resolver's model
+// (the `agent-*` subagent tabs), so those arm a pan-only gesture — see `canPanOnly`.
 const PAN_FLING_DECAY = 0.94        // per-16ms multiplier on the fling velocity
 const PAN_FLING_MIN_VELOCITY = 0.02 // px/ms below which the fling stops
 
@@ -317,6 +322,22 @@ function navScrollerForEvent(event) {
     const group = tab?.parentElement
     if (!group?.matches?.('.session-tabs, .dock-tabnav, .overlay-tabnav')) return null
     return group.shadowRoot?.querySelector('.nav') || null
+}
+
+// Whether the pan is ours to run. `touch-action: none` is set on `.session-tab-link` only, so the
+// browser still pans the strip natively from everywhere else (the tab's own padding, the placement
+// arrow, a subagent tab's close icon). Panning by hand there too would scroll twice as fast.
+function panIsOurs(event) {
+    return event.target instanceof Element && !!event.target.closest('.session-tab-link')
+}
+
+// A pointer press on a tab the layout will not drag: arm the gesture for panning only, so the
+// strip still follows the finger there. Mouse is excluded (it never panned by drag and has the
+// wheel), and so is the mobile strip, where `.tab-drag-disabled` hands the links back to the
+// browser's own pan.
+function canPanOnly(event, scroller) {
+    if (tabDragDisabled.value || event.pointerType === 'mouse') return false
+    return !!scroller && panIsOurs(event) && !eventHitsDragControl(event)
 }
 
 function stopPanInertia() {
@@ -382,7 +403,8 @@ function onTabPointerDown(event) {
     if (tabPan) return
     stopPanInertia() // a new touch grabs a flinging strip, as native scrolling would
     const tab = sourceTabForEvent(event)
-    if (!tab) return
+    const scroller = navScrollerForEvent(event)
+    if (!tab && !canPanOnly(event, scroller)) return
     pendingTabDrag = {
         pointerId: event.pointerId,
         pointerType: event.pointerType,
@@ -391,17 +413,22 @@ function onTabPointerDown(event) {
         lastX: event.clientX,
         lastY: event.clientY,
         tab,
-        scroller: navScrollerForEvent(event),
+        scroller,
+        // Set once at press time: the pan reads the surface the finger LANDED on, not the one it
+        // has moved over since.
+        panOwned: panIsOurs(event),
         timer: null,
     }
     addTabPointerListeners()
-    if (event.pointerType !== 'mouse') {
+    // Only a draggable tab reserves the long press; a pan-only press keeps its native long press
+    // (text callout, link context menu) since nothing else claims it.
+    if (tab && event.pointerType !== 'mouse') {
         pendingTabDrag.timer = setTimeout(() => startTabDrag(pendingTabDrag.lastX, pendingTabDrag.lastY), TOUCH_LONG_PRESS_MS)
     }
 }
 
 function startTabDrag(clientX, clientY) {
-    if (!pendingTabDrag || tabDrag.value) return
+    if (!pendingTabDrag?.tab || tabDrag.value) return
     clearLongPress()
     const { pointerId, pointerType, tab } = pendingTabDrag
     tabDrag.value = {
@@ -519,9 +546,10 @@ function onTabPointerMove(event) {
             if (distance >= MOUSE_DRAG_DISTANCE) startTabDrag(event.clientX, event.clientY)
         } else if (distance > TOUCH_MOVE_TOLERANCE) {
             // Early movement decides the touch gesture: mostly horizontal over a scrollable
-            // strip → pan it; anything else → not a drag, give the pointer up.
+            // strip → pan it; anything else → not a drag, give the pointer up (which also hands
+            // a press that started outside `.session-tab-link` back to the browser's own pan).
             const scroller = pendingTabDrag.scroller
-            if (Math.abs(dx) > Math.abs(dy) && scroller && scroller.scrollWidth > scroller.clientWidth) {
+            if (Math.abs(dx) > Math.abs(dy) && pendingTabDrag.panOwned && scroller && scroller.scrollWidth > scroller.clientWidth) {
                 startTabPan(event)
             } else {
                 cancelTabPointer()
@@ -595,7 +623,8 @@ function onCapturedClick(event) {
     event.stopImmediatePropagation()
 }
 function onCapturedContextMenu(event) {
-    if (tabDrag.value || tabPan || (pendingTabDrag && pendingTabDrag.pointerType !== 'mouse')) event.preventDefault()
+    // A pan-only press (`tab` null) reserves nothing, so its native long press stays available.
+    if (tabDrag.value || tabPan || (pendingTabDrag?.tab && pendingTabDrag.pointerType !== 'mouse')) event.preventDefault()
 }
 function onNativeDragStart(event) {
     if (sourceTabForEvent(event)) event.preventDefault()
@@ -757,8 +786,10 @@ onBeforeUnmount(() => {
 .session-layout.tab-drag-active :deep(iframe) {
     pointer-events: none;
 }
-/* A long press on the icon/name is reserved for tab dragging. The surrounding tab strip still owns
-   its native horizontal touch pan through its empty space and placement controls. */
+/* A long press on the icon/name is reserved for tab dragging, and the horizontal pan is
+   reimplemented there (see "Touch pan on the tab strips" above — including for the tabs that
+   cannot be dragged). The surrounding tab strip still owns its native horizontal touch pan through
+   its empty space and its controls (placement arrow, close icon). */
 .session-layout :deep(.session-tab-link),
 .session-layout :deep(.g-chip) {
     touch-action: none;
