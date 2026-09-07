@@ -14,7 +14,9 @@ from twicc.core.serializers import (
 from twicc.core.session_queries import (
     aggregate_tool_states,
     parse_line_ranges,
-    serialize_agent_links,
+    build_subagents_state,
+    tree_agent_links,
+    visible_tree_agent_ids,
     tool_results_payload,
 )
 from twicc.share.display import filtered_items_qs, is_descendant_of
@@ -58,24 +60,10 @@ async def _snapshot_allowed_child_ids(ctx):
     ))
 
 
-async def _crosses_allowed_root_child(sub, root, allowed_ids, *, max_hops: int = 16) -> bool:
-    """Walk ``sub``'s parent chain to ``root``; return True iff a node on the path is an
-    allowed root child (a subagent spawned at/before the frozen line)."""
-    from twicc.core.models import Session
-
-    node = sub
-    for _ in range(max_hops):
-        if node.id in allowed_ids:
-            return True
-        parent_id = node.parent_session_id
-        if parent_id is None:
-            return False
-        if parent_id == root.id:
-            return node.id in allowed_ids
-        node = await sync_to_async(lambda pid=parent_id: Session.objects.filter(id=pid).first())()
-        if node is None:
-            return False
-    return False
+async def _crosses_allowed_root_child(sub, root, allowed_ids) -> bool:
+    """Snapshot visibility follows launch owners, not flat storage parents."""
+    links = await sync_to_async(tree_agent_links)(root)
+    return sub.id in visible_tree_agent_ids(root.id, links, allowed_ids)
 
 
 async def _resolve_shared_subagent(ctx, sid):
@@ -241,7 +229,6 @@ async def _tool_states(request, token, subagent_id=None):
 
 
 async def share_session_subagents(request, token):
-    from twicc.core.models import AgentLink
 
     ctx, resp = await _ctx(request, token)
     if resp:
@@ -250,13 +237,11 @@ async def share_session_subagents(request, token):
         return _not_ready()
     if not ctx.options.get("include_subagents", True):
         return _json([], safe=False)
-    links_qs = AgentLink.objects.filter(session=ctx.session)
-    # Snapshot: never disclose subagents spawned by a post-freeze root tool_use.
     frozen = ctx.options.get("frozen_at_line") if ctx.options.get("mode") == "snapshot" else None
-    if frozen is not None:
-        links_qs = links_qs.filter(tool_use_line_num__lte=frozen)
-    links = await sync_to_async(list)(links_qs.order_by("id"))
-    return _json(await sync_to_async(serialize_agent_links)(links), safe=False)
+    if ctx.options.get("mode") == "snapshot" and frozen is None:
+        frozen = ctx.session.last_line
+    payload = await sync_to_async(build_subagents_state)(ctx.session, frozen_at_line=frozen)
+    return _json(payload, safe=False)
 
 
 # Public entry points (URL-mapped). Method-guarded, delegating to the helpers above.

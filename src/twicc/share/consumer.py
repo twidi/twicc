@@ -177,7 +177,7 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
             return
 
         if mtype == "agent_link_created" and self.include_subagents:
-            if data.get("parent_session_id") == self.session_id:
+            if (data.get("root_session_id") or data.get("parent_session_id")) == self.session_id:
                 agent_id = data.get("agent_session_id")
                 self.descendant_ids.add(agent_id)
                 # Let the viewer open a subagent spawned after page load — its
@@ -187,6 +187,8 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
                     "type": "share_agent_link",
                     "link": {
                         "agent_id": agent_id,
+                        "owner_session_id": data.get("parent_session_id"),
+                        "root_session_id": self.session_id,
                         "agent_slug": data.get("agent_slug"),
                         "tool_use_id": data.get("tool_use_id"),
                         "tool_use_line_num": data.get("tool_use_line_num"),
@@ -196,9 +198,28 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
                 })
             return
 
+        if mtype == "agent_stopped" and self.include_subagents:
+            if data.get("root_session_id") == self.session_id:
+                await self.send_json({
+                    "type": "share_agent_stopped",
+                    "agent_session_id": data.get("agent_session_id"),
+                    "stopped_at": data.get("stopped_at"),
+                    "root_session_id": self.session_id,
+                })
+            return
+
         if mtype == "session_updated":
             session = data.get("session") or {}
             if session.get("id") != self.session_id:
+                agent_id = session.get("id")
+                if (self.include_subagents and agent_id in self.descendant_ids
+                        and "last_stopped_at" in session and await _session_is_ready(agent_id)):
+                    await self.send_json({
+                        "type": "share_agent_idle",
+                        "agent_session_id": agent_id,
+                        "agent_stopped_at": session["last_stopped_at"],
+                        "root_session_id": self.session_id,
+                    })
                 return
             meta = await self._public_meta()
             if meta is not None:

@@ -28,6 +28,7 @@ store.setSession({
     title: meta.title || 'Shared session',
     last_line: meta.last_line, git_directory: null, cwd: null, artifacts_dir: null,
     created_at: meta.created_at, last_updated_at: meta.last_updated_at,
+    last_started_at: meta.last_started_at, last_stopped_at: meta.last_stopped_at,
     compacted: meta.compacted === true,
 })
 // Show-timestamps: the viewer's persisted choice wins (carries across shares);
@@ -63,6 +64,7 @@ function seedAgentSession(id, slug = null) {
     // Without it getSession returns null → provider undefined → every item falls to
     // UnknownEntry ("Unhandled event").
     store.setSession({
+        ...store.getSession(id),
         id, provider: meta.provider, slug: slug || store.getSession(id)?.slug || null,
         project_id: 'share', title: null, last_line: 0,
         git_directory: null, cwd: null, artifacts_dir: null,
@@ -86,8 +88,9 @@ function onPopState(e) {
 
 if (ready.value && meta.include_subagents) {
     provide('openSubagent', openSubagent)
+    const linkFetch = store.beginAgentFetch(meta.session_id)
     api.fetchSubagents().then((links) => {
-        store.setAgentLinks(meta.session_id, links)
+        store.applyAgentSnapshot(meta.session_id, links, linkFetch)
         // Seed each subagent's slug so the drawer labels them like the owner UI
         // (Agent <slug>, else Agent <shortId>) via getAgentDisplayLabel.
         for (const l of links) if (l.agent_id) seedAgentSession(l.agent_id, l.agent_slug)
@@ -116,7 +119,13 @@ onMounted(() => {
             onItems: (items, sid) => store.addSessionItems(sid || meta.session_id, items),
             // Fresh meta can carry a TIGHTENED max_display_mode: re-clamp the
             // viewer's current mode so the select never sits on a now-invalid value.
-            onMeta: (m) => { Object.assign(meta, m); settings.setDisplayMode(clampMode(settings.displayMode)) },
+            onMeta: (m) => {
+                Object.assign(meta, m)
+                store.setSession({ ...store.getSession(meta.session_id),
+                    last_started_at: meta.last_started_at, last_stopped_at: meta.last_stopped_at,
+                })
+                settings.setDisplayMode(clampMode(settings.displayMode))
+            },
             onToolState: (m) => store.setToolState(
                 m.session_id, m.tool_use_id, m.result_count, m.completed_at,
                 m.error ?? null, m.extra ?? null, m.tool_result_line_nums || [],
@@ -126,6 +135,8 @@ onMounted(() => {
             onProcessState: (m) => store.setLiveAssistantTurn(meta.session_id, m.state === 'assistant_turn'),
             // A subagent spawned live becomes openable (seed its link + session so
             // the tool card's "View Agent" resolves it).
+            onAgentIdle: (msg) => store.markAgentIdle(msg.agent_session_id, msg.agent_stopped_at, msg.root_session_id),
+            onAgentStopped: (msg) => store.markAgentStopped(msg.agent_session_id, msg.stopped_at, msg.root_session_id),
             onAgentLink: (link) => {
                 if (!link?.agent_id) return
                 store.addAgentLink(meta.session_id, link)

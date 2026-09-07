@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, inject, provide, watch, watchEffect, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, reactive, ref, inject, provide, watch, watchEffect, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCodeCommentsStore } from '../../../../stores/codeComments'
 import CodeCommentsIndicator from '../../../ui/CodeCommentsIndicator.vue'
@@ -96,23 +96,25 @@ const props = defineProps({
     }
 })
 
+const rootSessionId = computed(() => props.parentSessionId || props.sessionId)
+
 // Line number of the Agent/Task tool_use in the parent session (for subagent comment indicators)
 const parentToolUseLineNum = computed(() => {
     if (!props.parentSessionId) return null
-    return dataStore.getAgentToolUseLineNum(props.parentSessionId, props.sessionId)
+    return dataStore.getRootAgentToolUseLineNum(props.parentSessionId, props.sessionId)
 })
 
 // Provide tool context for code comments in child editors (ToolDiffViewer).
 // sessionId is always the root/main session so that "Add all" works session-wide.
 // subagentSessionId tracks the subagent's own ID for scoped indicators.
-provide('codeCommentToolContext', {
-    toolUseId: props.toolId,
-    sessionId: props.parentSessionId || props.sessionId,
-    subagentSessionId: props.parentSessionId ? props.sessionId : '',
-    projectId: props.projectId,
-    lineNum: props.lineNum,  // tool_use's line number in the session
-    subagentToolLineNum: props.parentSessionId ? parentToolUseLineNum.value : null,
-})
+provide('codeCommentToolContext', reactive({
+    toolUseId: computed(() => props.toolId),
+    sessionId: rootSessionId,
+    subagentSessionId: computed(() => props.parentSessionId ? props.sessionId : ''),
+    projectId: computed(() => props.projectId),
+    lineNum: computed(() => props.lineNum),
+    subagentToolLineNum: parentToolUseLineNum,
+}))
 
 // Polling configuration
 const POLLING_DELAY_MS = 3000
@@ -781,6 +783,11 @@ const isStaleToolUse = computed(() => {
     return cutoff > 0 && new Date(props.timestamp).getTime() < cutoff
 })
 
+const isStaleAgentUse = computed(() => {
+    const cutoff = getSessionCutoffMs(dataStore.sessions[rootSessionId.value])
+    return !!props.timestamp && cutoff > 0 && Date.parse(props.timestamp) < cutoff
+})
+
 // Unix timestamp (seconds) for ProcessDuration — from the JSONL item timestamp
 const toolStartedAt = computed(() => {
     if (!props.timestamp) return null
@@ -833,15 +840,18 @@ const agentCommentsCount = computed(() => {
 // can outlive its subagent's completion — see `agentRunEndsOnSubagentIdle`.
 const agentReportedIdle = computed(() => {
     if (!agentId.value) return false
+    if (agentLink.value?.stoppedAt) return true
     if (!toolHelpers.value?.agentRunEndsOnSubagentIdle?.()) return false
-    return !!(dataStore.getSession(agentId.value)?.last_stopped_at ?? agentLink.value?.stoppedAt)
+    const child = dataStore.getSession(agentId.value)
+    return !!(child && Object.hasOwn(child, 'last_stopped_at') ? child.last_stopped_at : agentLink.value?.agentStoppedAt)
 })
 
 const isAgentRunning = computed(() => {
     if (transcriptFrozen.value) return false
     if (!isTask.value || !agentId.value) return false
-    if (isStaleToolUse.value) return false
+    if (isStaleAgentUse.value) return false
     if (agentReportedIdle.value) return false
+    if (agentLink.value?.running === false) return false
     const resultCount = toolState.value?.resultCount || 0
     const requiredCount = (agentLink.value?.isBackground) ? 2 : 1
     return resultCount < requiredCount
@@ -864,7 +874,7 @@ const isAgentSpawnPending = computed(() => {
     if (transcriptFrozen.value) return false
     if (!isTask.value) return false
     if (agentId.value) return false
-    if (isStaleToolUse.value) return false
+    if (isStaleAgentUse.value) return false
     return !!toolHelpers.value?.isToolRunning(props.name, props.input, helperOptions.value)
 })
 
@@ -876,8 +886,7 @@ const isEditOrWrite = computed(() => !!toolHelpers.value?.isFileChangeTool(props
 const toolCommentsCount = computed(() => {
     if (!isEditOrWrite.value) return 0
     if (!toolHelpers.value?.getFilePath(props.name, props.input)) return 0
-    const rootSessionId = props.parentSessionId || props.sessionId
-    return codeCommentsStore.getCommentsBySession(props.projectId, rootSessionId)
+    return codeCommentsStore.getCommentsBySession(props.projectId, rootSessionId.value)
         .filter(c => c.source === 'tool' && c.sourceRef === props.toolId).length
 })
 
@@ -901,7 +910,7 @@ function navigateToSubagent() {
     // only open the subagent suffix. Carrying the workspace explicitly keeps it
     // even when viewing a cross-filter session whose project is outside it.
     router.push(sessionRouteLocation(
-        { id: props.sessionId, project_id: props.projectId },
+        { id: rootSessionId.value, project_id: props.projectId },
         route,
         { subagentId: agentId.value },
     ))
@@ -931,7 +940,7 @@ function navigateToWorkflow() {
 function handleStopAgent() {
     if (agentId.value && isAgentRunning.value && !stoppingAgent.value) {
         stoppingAgent.value = true
-        stopSubagent(props.sessionId, agentId.value)
+        stopSubagent(rootSessionId.value, agentId.value)
     }
 }
 
@@ -950,8 +959,8 @@ function handleStopAgent() {
                 </template>
             </div>
             <div class="items-details-summary-right">
-                <!-- View Agent indicator for Task tool_use (only in regular sessions) -->
-                <template v-if="isTask && !parentSessionId">
+                <!-- View Agent indicator for Task tool_use at every depth -->
+                <template v-if="isTask">
                     <!-- Agent not yet started: spinner. Hidden when the spawn
                          itself failed (toolState.error) or was otherwise
                          flagged terminated by the backend — see

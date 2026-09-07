@@ -1,3 +1,4 @@
+import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds } from '../utils/agentLinkIndex'
 // frontend/src/stores/data.js
 
 import { createEphemeralActions, createSendFailureActions, ephemeralFields, serializeDraftSession, isLaunchedEphemeral } from '../utils/ephemeralSessions'
@@ -7,7 +8,7 @@ import { toRaw } from 'vue'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems, visualItemEqual, insertDaySeparators } from '../utils/visualItems'
 import { DISPLAY_LEVEL, DISPLAY_MODE, INITIAL_ITEMS_COUNT, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
-import { getProviderHelpers, getProviderStore } from '../providers'
+import { getProviderHelpers, getProviderStore, getToolHelpers } from '../providers'
 import { getSessionCutoffMs, isSessionUnread } from '../utils/sessions'
 import {
     resolveDraftProvider,
@@ -574,7 +575,7 @@ export const useDataStore = defineStore('data', {
             // Agent links cache - maps tool_id to agent_id for Task tool_use items
             // { sessionId: { toolId: agentId } }
             // Only caches found agents (not-found triggers polling, not caching)
-            agentLinks: {},
+            ...agentLinkState(),
             // sessionId -> { tool_use_id: run_id } for the in-chat "View Workflow" button.
             workflowLinks: {},
 
@@ -1249,6 +1250,9 @@ export const useDataStore = defineStore('data', {
         getSessionLayoutTemplate: (state) => (sessionId) =>
             layoutTemplate(state.localState.sessionLayout[sessionId]),
 
+        getAgentLinkInfo: (state) => (agentId) => state.localState.agentLinkIndex[agentId] || null,
+        getRootAgentToolUseLineNum: (state) => (root, agentId) => rootAgentToolLine(state.localState, root, agentId),
+
         // Get cached agent link for a tool_id in a session
         // Returns: { agentId, isBackground } or undefined (not in cache)
         getAgentLink: (state) => (sessionId, toolId) => {
@@ -1557,6 +1561,10 @@ export const useDataStore = defineStore('data', {
             // When lifecycle timestamps change, clean up stale synthetic process states
             // for child agents that predate the new cutoff
             const prev = this.sessions[session.id]
+            if (session.parent_session_id && (!prev || prev.last_stopped_at !== session.last_stopped_at)) {
+                // An idle/wake event also outranks a pending tree snapshot.
+                markAgentIdle(this.localState, session.id, session.last_stopped_at)
+            }
             if (prev && (prev.last_started_at !== session.last_started_at ||
                          prev.last_stopped_at !== session.last_stopped_at)) {
                 this._cleanStaleChildSynthetics(session)
@@ -2949,7 +2957,7 @@ export const useDataStore = defineStore('data', {
             delete this.localState.sessionVisualItems[sessionId]
             delete this.localState.visualItemCache[sessionId]
             delete this.localState.optimisticMessages[sessionId]
-            delete this.localState.agentLinks[sessionId]
+            this.clearAgentLinks(sessionId)
             delete this.localState.workflowLinks[sessionId]
             delete this.localState.toolStates[sessionId]
             delete this.localState.liveItems[sessionId]
@@ -4330,25 +4338,18 @@ export const useDataStore = defineStore('data', {
          *   downstream code can label tab headers / tool-card summaries
          *   without separately hydrating the subagent Session row.
          */
-        setAgentLink(sessionId, toolId, agentId, isBackground = false, toolUseLineNum = null, slug = null, stoppedAt = null) {
-            if (!agentId) return // Only cache found agents
-            if (!this.localState.agentLinks[sessionId]) {
-                this.localState.agentLinks[sessionId] = {}
-            }
-            // ``stoppedAt``: the subagent's own file reported it idle (see the
-            // backend's ``subagent_turn_boundary``). Only the load path knows
-            // it — a link is created at spawn time, when nothing has stopped
-            // yet — so the live view reads ``sessions[agentId].last_stopped_at`
-            // instead, which the subagent's own ``session_updated`` refreshes.
-            this.localState.agentLinks[sessionId][toolId] = { agentId, isBackground, toolUseLineNum, slug, stoppedAt }
+        setAgentLink(sessionId, toolId, agentId, isBackground = false, toolUseLineNum = null, slug = null, stoppedAt = null, startedAt = null, agentStoppedAt = null, rootSessionId = null) {
+            return cacheAgentLink(this.localState, sessionId, toolId, {
+                agentId, isBackground, toolUseLineNum, slug, stoppedAt, startedAt, agentStoppedAt,
+                rootSessionId: rootSessionId || this.sessions[sessionId]?.parent_session_id || sessionId,
+            })
         },
-
-        /**
-         * Clear agent links cache for a session.
-         * @param {string} sessionId - The session ID
-         */
+        markAgentStopped(agentId, stoppedAt, rootSessionId = null) {
+            cacheAgentStop(this.localState, agentId, stoppedAt, rootSessionId)
+            this.removeSyntheticProcessState(agentId)
+        },
         clearAgentLinks(sessionId) {
-            delete this.localState.agentLinks[sessionId]
+            clearAgentLinkCache(this.localState, sessionId)
         },
 
         setWorkflowLink(sessionId, toolId, runId) {
@@ -4465,6 +4466,14 @@ export const useDataStore = defineStore('data', {
          * @param {number|null} startedAtUnix - Unix timestamp (seconds) of when the agent started
          */
         setSyntheticProcessState(agentSessionId, parentSessionId, projectId, startedAtUnix) {
+            const cutoff = getSessionCutoffMs(this.sessions[parentSessionId])
+            const reportedIdle = this.sessions[agentSessionId]?.last_stopped_at
+                && getToolHelpers(this.getSessionProvider(parentSessionId))?.agentRunEndsOnSubagentIdle?.()
+            if (this.localState.agentLinkIndex[agentSessionId]?.stoppedAt || reportedIdle
+                || (cutoff && (startedAtUnix || 0) * 1000 < cutoff)) {
+                this.removeSyntheticProcessState(agentSessionId)
+                return
+            }
             // Don't overwrite real process states (from ProcessManager)
             if (this.processStates[agentSessionId] && !this.processStates[agentSessionId].synthetic) {
                 return
@@ -4501,18 +4510,11 @@ export const useDataStore = defineStore('data', {
          * @param {Object} session - The session object (with last_started_at, last_stopped_at)
          */
         _cleanStaleChildSynthetics(session) {
-            const links = this.localState.agentLinks[session.id]
-            if (!links) return
+            if (session.parent_session_id) return
             const cutoff = getSessionCutoffMs(session)
             if (!cutoff) return
-            for (const { agentId } of Object.values(links)) {
-                const ps = this.processStates[agentId]
-                if (!ps?.synthetic) continue
-                // started_at is in seconds, cutoff in ms
-                const startedMs = ps.started_at ? ps.started_at * 1000 : 0
-                if (startedMs < cutoff) {
-                    this.removeSyntheticProcessState(agentId)
-                }
+            for (const id of staleSyntheticAgentIds(this.localState, session.id, this.processStates, cutoff)) {
+                this.removeSyntheticProcessState(id)
             }
         },
 
@@ -4559,37 +4561,23 @@ export const useDataStore = defineStore('data', {
         },
 
         async fetchSubagentsState(projectId, sessionId) {
+            const token = beginAgentFetch(this.localState, sessionId)
             try {
-                const url = `/api/projects/${projectId}/sessions/${sessionId}/subagents/`
-                const response = await apiFetch(url)
+                const response = await apiFetch(`/api/projects/${projectId}/sessions/${sessionId}/subagents/`)
                 if (!response.ok) return
-
                 const agents = await response.json()
-
-                // Cutoff: agents started before this are definitely not running
+                const previous = Object.values(this.localState.agentLinkIndex).filter(link => link.rootSessionId === sessionId)
+                const applied = applyAgentSnapshot(this.localState, sessionId, agents, token)
+                for (const link of previous) {
+                    if (!this.localState.agentLinkIndex[link.agentId]) this.removeSyntheticProcessState(link.agentId)
+                }
                 const cutoff = getSessionCutoffMs(this.sessions[sessionId])
-
-                for (const agent of agents) {
-                    this.setAgentLink(sessionId, agent.tool_use_id, agent.agent_id, agent.is_background, agent.tool_use_line_num, agent.agent_slug ?? null, agent.agent_stopped_at ?? null)
-
-                    // Skip synthetic process state if agent predates the session's last start/stop cycle
-                    const agentStartedMs = agent.started_at ? new Date(agent.started_at).getTime() : 0
-                    if (cutoff && agentStartedMs < cutoff) continue
-
-                    // …or if the subagent's own file already reported it idle. Its
-                    // parent's tool chain may never complete (Codex multi-agent v2:
-                    // a subagent answering through send_message produces no second
-                    // result), so the result count below would resurrect a
-                    // "running" indicator for a subagent that finished long ago.
-                    if (agent.agent_stopped_at) continue
-
-                    // Create synthetic process state if agent is not done yet
-                    const toolState = this.localState.toolStates[sessionId]?.[agent.tool_use_id]
-                    const resultCount = toolState?.resultCount || 0
-                    const requiredCount = agent.is_background ? 2 : 1
-                    if (resultCount < requiredCount) {
-                        const startedAtUnix = agent.started_at ? new Date(agent.started_at).getTime() / 1000 : null
-                        this.setSyntheticProcessState(agent.agent_id, sessionId, projectId, startedAtUnix)
+                for (const link of applied) {
+                    const started = link.startedAt ? Date.parse(link.startedAt) : 0
+                    if (link.running === false || link.stoppedAt || (cutoff && started < cutoff)) {
+                        this.removeSyntheticProcessState(link.agentId)
+                    } else {
+                        this.setSyntheticProcessState(link.agentId, sessionId, projectId, started / 1000 || null)
                     }
                 }
             } catch (error) {

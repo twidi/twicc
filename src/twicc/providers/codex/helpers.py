@@ -122,6 +122,7 @@ async def _broadcast_flagged_session(job) -> None:
 class CodexHelpers(BaseProviderHelpers):
     """Helpers for sessions produced by the Codex CLI."""
 
+    subagent_idle_trusted: ClassVar[bool] = True
     provider: ClassVar[Provider] = Provider.CODEX
     LABEL: ClassVar[str] = "Codex"
     SYSTEM_PROMPT_STATIC_ADDENDUM: ClassVar[str] = _SYSTEM_PROMPT_STATIC_ADDENDUM

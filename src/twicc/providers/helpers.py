@@ -253,6 +253,13 @@ class BaseProviderHelpers:
 
     provider: ClassVar[Provider]
 
+    # Mirror the frontend agentRunEndsOnSubagentIdle provider gate.
+    subagent_idle_trusted: ClassVar[bool] = False
+
+    def get_queue_completions(self, items):
+        """Return persisted (child id, launch tool id, timestamp) completions."""
+        return []
+
     # Human-readable display name of the provider (e.g. "Claude Code",
     # "Codex"). Surfaced by ``twicc info`` and any other discovery
     # surface that needs a label distinct from the wire key. Each

@@ -34,6 +34,7 @@ from twicc.providers.db_writer import (
     UpdateProjectMetadataPayload,
     UpdateSessionPayload,
 )
+from twicc.providers.subagent_roots import resolve_flat_parent_id
 from twicc.sync_helpers import BackpressureSyncQueue, check_file_has_content, read_session_items_from_file
 from .rollout_migration import HistoryMode, history_mode_from_record
 
@@ -255,6 +256,7 @@ def _sync_subagents(
     stats: dict[str, int],
     on_session_progress: Callable[[str, int, int], None] | None = None,
     stop_event: threading.Event | None = None,
+    queued_root_ids: set[str] | None = None,
 ) -> None:
     """Push CreateSessionPayloads for every new Codex subagent, resolved globally.
 
@@ -277,6 +279,10 @@ def _sync_subagents(
     total = len(subagents)
     done = 0
     remaining = list(subagents)
+    # The DB writer can lag this producer. Prove newly queued roots here,
+    # while the original-parent gate below preserves creation order.
+    parent_of = {entry.session_id: entry.parent_session_id for entry in subagents}
+    parent_of.update({root_id: None for root_id in queued_root_ids or ()})
     while remaining:
         progressed = False
         next_remaining: list[_NewEntry] = []
@@ -302,8 +308,12 @@ def _sync_subagents(
                 next_remaining.append(entry)
                 continue
 
+            root_id = resolve_flat_parent_id(entry.parent_session_id, parent_of=parent_of)
+            if root_id is None:
+                next_remaining.append(entry)
+                continue
             payload = _build_create_payload(
-                entry, path_to_project_id(entry.cwd), True, stats
+                entry._replace(parent_session_id=root_id), path_to_project_id(entry.cwd), True, stats
             )
             if payload is None:
                 done += 1
@@ -638,6 +648,12 @@ def sync_all(
     # sessions have been pushed, so a subagent's parent is resolvable even
     # when it belongs to another project.
     if not interrupted:
+        queued_root_ids = {
+            entry.session_id
+            for entries in new_by_project.values()
+            for entry in entries
+            if entry.parent_session_id is None and entry.session_id in resolvable_parent_ids
+        }
         _sync_subagents(
             all_subagents,
             resolvable_parent_ids,
@@ -645,6 +661,7 @@ def sync_all(
             stats,
             on_session_progress=on_session_progress,
             stop_event=stop_event,
+            queued_root_ids=queued_root_ids,
         )
         interrupted = stop_event is not None and stop_event.is_set()
 

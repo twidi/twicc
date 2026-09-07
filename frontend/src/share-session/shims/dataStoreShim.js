@@ -1,3 +1,4 @@
+import { agentLinkState, setAgentLink, markAgentStopped, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine } from '../../utils/agentLinkIndex'
 // Read-only mirror of the SPA data store for the share bundle. Only the surface
 // the reused transcript components actually touch is implemented; anything else
 // throws in dev so drift is caught, and no-ops the write surface (failed sends,
@@ -33,7 +34,7 @@ export const useDataStore = defineStore('shareData', {
         internalExpandedGroups: {},
         detailedBlocks: {},      // id -> [userMessageLineNum]
         openDetails: {},         // id -> { key: bool }
-        agentLinks: {},          // id -> { toolId: { agentId, isBackground, toolUseLineNum, slug } }
+        ...agentLinkState(),          // id -> { toolId: { agentId, isBackground, toolUseLineNum, slug } }
         toolStates: {},          // id -> { toolId: {...} }
         liveTurns: {},           // id -> bool (live share: root session in assistant_turn)
         _cache: {},              // id -> Map for visual-item stabilization
@@ -55,6 +56,8 @@ export const useDataStore = defineStore('shareData', {
         getInternalExpandedGroups: (s) => (id, lineNum) => (s.internalExpandedGroups[id]?.[lineNum]) || [],
         isBlockDetailed: (s) => (id, u) => (s.detailedBlocks[id] || []).includes(u),
         isDetailOpen: (s) => (id, key) => !!s.openDetails[id]?.[key],
+        getAgentLinkInfo: (s) => (id) => s.agentLinkIndex[id] || null,
+        getRootAgentToolUseLineNum: (s) => (root, id) => rootAgentToolLine(s, root, id),
         getAgentLink: (s) => (id, toolId) => s.agentLinks[id]?.[toolId],
         getAgentToolUseLineNum: (s) => (parentId, subId) => {
             const links = s.agentLinks[parentId]
@@ -277,21 +280,26 @@ export const useDataStore = defineStore('shareData', {
 
         // ── Seed helpers used by ShareSessionApp ─────────────────────────
         setSession(session) { this.sessions[session.id] = markRaw(session) },
+        beginAgentFetch(root) { return beginAgentFetch(this, root) },
+        applyAgentSnapshot(root, links, token) { return applyAgentSnapshot(this, root, links, token) },
         setAgentLinks(sessionId, links) {
-            const map = {}
-            for (const l of links) map[l.tool_use_id] = {
-                agentId: l.agent_id, isBackground: l.is_background,
-                toolUseLineNum: l.tool_use_line_num, slug: l.agent_slug || null,
-            }
-            this.agentLinks[sessionId] = map
+            this.applyAgentSnapshot(sessionId, links, this.beginAgentFetch(sessionId))
         },
-        // Live: merge one subagent link so a tool card's "View Agent" resolves it.
-        addAgentLink(sessionId, link) {
-            const map = this.agentLinks[sessionId] || (this.agentLinks[sessionId] = {})
-            map[link.tool_use_id] = {
-                agentId: link.agent_id, isBackground: link.is_background,
-                toolUseLineNum: link.tool_use_line_num, slug: link.agent_slug || null,
-            }
+        markAgentStopped(id, stoppedAt, root) { markAgentStopped(this, id, stoppedAt, root) },
+        markAgentIdle(id, stoppedAt, root) {
+            markAgentIdle(this, id, stoppedAt)
+            this.setSession({ ...this.sessions[id], id, parent_session_id: root,
+                provider: this.sessions[id]?.provider || this.sessions[root]?.provider,
+                last_stopped_at: stoppedAt ?? null,
+            })
+        },
+        addAgentLink(root, link) {
+            setAgentLink(this, link.owner_session_id || root, link.tool_use_id, {
+                agentId: link.agent_id, rootSessionId: root, isBackground: link.is_background,
+                toolUseLineNum: link.tool_use_line_num, slug: link.agent_slug ?? null,
+                startedAt: link.started_at ?? null, stoppedAt: link.stopped_at ?? null,
+                agentStoppedAt: link.agent_stopped_at ?? null, running: link.running,
+            })
         },
         // Live: root session entered/left an assistant turn — drives the reused
         // "<Provider> is thinking" synthetic message via recomputeVisualItems.

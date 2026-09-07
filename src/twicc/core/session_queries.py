@@ -114,40 +114,122 @@ def tool_results_payload(session, line_num, tool_id, max_line=None) -> dict:
     return {"results": results}
 
 
-def serialize_agent_links(links) -> list[dict]:
-    """Shape a list of already-fetched ``AgentLink`` rows into the subagent-link
-    payload, resolving every spawned subagent's slug in one query.
+def visible_tree_agent_ids(root_id, links, allowed_root_ids):
+    """Expand snapshot-visible root spawns through launcher ownership, without a depth cap."""
+    parents = {}
+    for link in links:
+        parents.setdefault(link.agent_id, set()).add(link.session_id)
+    visibility = {}
+    for agent_id in parents:
+        if agent_id == root_id:
+            continue
+        path = []
+        seen = set()
+        node = agent_id
+        allowed = False
+        while node not in visibility and node not in seen:
+            seen.add(node)
+            path.append(node)
+            owners = parents.get(node, set())
+            if len(owners) != 1:
+                break
+            owner = next(iter(owners))
+            if owner == root_id:
+                allowed = node in allowed_root_ids
+                break
+            node = owner
+        else:
+            allowed = visibility.get(node, False)
+        for node_id in path:
+            visibility[node_id] = allowed
+    return {agent_id for agent_id, allowed in visibility.items() if allowed and agent_id != root_id}
 
-    Shared by the owner ``subagents_state`` view and the share equivalent. ``slug``
-    is ``None`` when the subagent file hasn't been parsed yet (race) or the provider
-    carries no slug. Runs a query — async callers wrap it in ``sync_to_async``.
+
+
+def tree_agent_links(root):
+    """Read every launcher's links; flat parenthood includes cross-project agents."""
+    from twicc.core.models import AgentLink, Session
+
+    owners = Session.objects.filter(parent_session_id=root.id).values("id")
+    return list(AgentLink.objects.filter(Q(session_id=root.id) | Q(session_id__in=owners)).exclude(agent_id=root.id).order_by("id"))
+
+
+def build_subagents_state(root, *, frozen_at_line=None):
+    """Build the shared owner/share tree payload with one completion scan."""
+    from twicc.core.models import SessionItem, ToolResultLink
+    from twicc.providers.helpers import get_provider_helpers
+
+    links = tree_agent_links(root)
+    if frozen_at_line is not None:
+        allowed = {link.agent_id for link in links
+                   if link.session_id == root.id and link.tool_use_line_num <= frozen_at_line}
+        visible = visible_tree_agent_ids(root.id, links, allowed)
+        links = [link for link in links if link.agent_id in visible and (
+            (link.session_id in visible) if link.session_id != root.id
+            else link.tool_use_line_num <= frozen_at_line
+        )]
+    owners = {link.session_id for link in links}
+    results = ToolResultLink.objects.filter(session_id__in=owners)
+    if frozen_at_line is not None:
+        results = results.filter(~Q(session_id=root.id) | Q(tool_result_line_num__lte=frozen_at_line))
+    counts = {(row["session_id"], row["tool_use_id"]): row["count"]
+              for row in results.values("session_id", "tool_use_id").annotate(count=Count("id"))}
+    helpers = get_provider_helpers(root.provider)
+    queue_items = SessionItem.objects.filter(session_id=root.id, content__contains="queue-operation")
+    if frozen_at_line is not None:
+        queue_items = queue_items.filter(line_num__lte=frozen_at_line)
+    completions = {}
+    for child_id, tool_id, timestamp in helpers.get_queue_completions(queue_items.only("content", "timestamp")):
+        key = (child_id, tool_id)
+        if timestamp is not None and (key not in completions or timestamp > completions[key]):
+            completions[key] = timestamp
+    return serialize_agent_links(
+        links, completions=completions, result_counts=counts,
+        trust_agent_stopped=helpers.subagent_idle_trusted, root_cutoff=root.cutoff,
+        root_session_id=root.id,
+    )
+
+
+def serialize_agent_links(
+    links, *, completions=None, result_counts=None, trust_agent_stopped=False,
+    root_cutoff=None, root_session_id=None,
+) -> list[dict]:
+    """Serialize links with distinct persisted-completion and provider-idle evidence.
+
+    Child idle may be mtime-derived during recompute. Only providers whose
+    parent result stream cannot conclude opt into that signal. Queue completion
+    is keyed by both child and tool id and never derives from child idle.
     """
     from twicc.core.models import Session
 
+    links = list(links)
+    completions = completions or {}
+    result_counts = result_counts or {}
     subagents = {
         row[0]: row[1:]
-        for row in Session.objects.filter(
-            id__in=[link.agent_id for link in links]
-        ).values_list("id", "slug", "last_stopped_at")
+        for row in Session.objects.filter(id__in=[link.agent_id for link in links])
+        .values_list("id", "slug", "last_stopped_at")
     }
-    return [
-        {
+    result = []
+    for link in links:
+        slug, agent_stopped = subagents.get(link.agent_id, (None, None))
+        stopped = completions.get((link.agent_id, link.tool_use_id))
+        before_cutoff = root_cutoff is not None and (
+            link.started_at is None or link.started_at < root_cutoff
+        )
+        result.append({
             "agent_id": link.agent_id,
-            "agent_slug": subagents.get(link.agent_id, (None, None))[0],
-            # When the subagent's own file says it went idle (see
-            # ``BaseSessionCompute.subagent_turn_boundary``), this is the
-            # moment it did. It lets a page reload decide "still running?"
-            # without waiting for the parent tool chain to complete —
-            # which, on Codex multi-agent v2, may simply never happen.
-            "agent_stopped_at": (
-                stopped.isoformat()
-                if (stopped := subagents.get(link.agent_id, (None, None))[1])
-                else None
-            ),
+            "agent_slug": slug,
+            "owner_session_id": link.session_id,
+            "root_session_id": root_session_id,
+            "agent_stopped_at": agent_stopped.isoformat() if agent_stopped else None,
+            "stopped_at": stopped.isoformat() if stopped else None,
             "tool_use_id": link.tool_use_id,
             "tool_use_line_num": link.tool_use_line_num,
             "is_background": link.is_background,
             "started_at": link.started_at.isoformat() if link.started_at else None,
-        }
-        for link in links
-    ]
+            "running": not before_cutoff and stopped is None
+            and result_counts.get((link.session_id, link.tool_use_id), 0) < (2 if link.is_background else 1)
+            and not (trust_agent_stopped and agent_stopped is not None),
+        })
+    return result

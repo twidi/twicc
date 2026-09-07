@@ -49,6 +49,7 @@ from twicc.projects import (
 )
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
+from twicc.providers.subagent_roots import resolve_flat_parent_id
 from twicc.workspaces import auto_add_project_to_workspaces
 
 if TYPE_CHECKING:
@@ -582,6 +583,11 @@ class BaseSessionsWatcher:
         # For subagents, verify parent session exists
         parent_session: Session | None = None
         if is_subagent:
+            root_id = await sync_to_async(resolve_flat_parent_id)(parsed.parent_session_id)
+            if root_id is None:
+                logger.debug("Skipping subagent %s: unresolved root ancestry", parsed.session_id)
+                return
+            parsed.parent_session_id = root_id
             parent_session = await get_session_by_id(parsed.parent_session_id)
             if parent_session is None:
                 # Parent session not yet synced, skip for now
@@ -793,6 +799,7 @@ class BaseSessionsWatcher:
                         await broadcast_message(channel_layer, {
                             "type": "agent_link_created",
                             "parent_session_id": update.parent_session_id,
+                            "root_session_id": session.parent_session_id or session.id,
                             "agent_session_id": update.agent_id,
                             "agent_slug": slugs_by_id.get(update.agent_id),
                             "tool_use_id": update.tool_use_id,
@@ -836,6 +843,12 @@ class BaseSessionsWatcher:
                             "type": "session_updated",
                             "session": serialize_session(stopped_session),
                         })
+                    await broadcast_message(channel_layer, {
+                        "type": "agent_stopped",
+                        "agent_session_id": stopped.agent_session_id,
+                        "stopped_at": stopped.stopped_at.isoformat(),
+                        "root_session_id": session.parent_session_id or session.id,
+                    })
                 if agent_stopped_updates:
                     await self._after_agents_stopped(
                         session.id,

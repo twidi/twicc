@@ -40,7 +40,7 @@ from typing import Any, ClassVar, Literal, NamedTuple
 import orjson
 from django.core.exceptions import MultipleObjectsReturned
 from django.db import connection, transaction
-from django.db.models import F, QuerySet
+from django.db.models import F, Q, QuerySet
 
 from twicc.context_injection import strip_context_blocks_in_place
 from twicc.core.enums import ItemDisplayLevel, ItemKind, Provider
@@ -69,6 +69,12 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Shared NamedTuples — broadcast updates and extraction outputs
 # =============================================================================
+
+
+class SpawnMetaInfo(NamedTuple):
+    """Authoritative launcher and optional spawning tool from provider metadata."""
+    launcher_session_id: str
+    tool_use_id: str | None
 
 
 class AgentLinkUpdate(NamedTuple):
@@ -1926,6 +1932,21 @@ class BaseSessionCompute:
 
         return None
 
+    def get_subagent_spawn_meta(self, session: Session) -> SpawnMetaInfo | None:
+        return None
+
+    def get_spawn_metas_for_tree(self, session: Session) -> dict[str, SpawnMetaInfo]:
+        return {}
+
+    def extract_agent_spawn_ack(self, parsed_json: dict) -> tuple[str, str] | None:
+        return None
+
+    def extract_queue_completion(self, parsed_json: dict):
+        return None
+
+    # Full prompt recovery is opt-in: Codex already derives its links from v2 events.
+    rebuild_agent_prompt_links = False
+
     def create_agent_link_from_tool_result(
         self, session_id: str, item: SessionItem, parsed_json: dict
     ) -> AgentLinkUpdate | None:
@@ -1942,14 +1963,14 @@ class BaseSessionCompute:
         """
         agent_info = self.extract_agent_info_from_tool_result(parsed_json)
         if not agent_info:
-            return None
+            ack = self.extract_agent_spawn_ack(parsed_json)
+            if ack is None:
+                return None
+            agent_info = (*ack, True)
 
         tool_use_id, agent_id, is_async = agent_info
 
-        if is_agent_link_done(session_id, agent_id) or AgentLink.objects.filter(
-            session_id=session_id,
-            agent_id=agent_id,
-        ).exists():
+        if AgentLink.objects.filter(session_id=session_id, agent_id=agent_id).exists():
             mark_agent_link_done(session_id, agent_id)
             # The link may pre-exist via the prompt-matching paths, which
             # only see the tool_use input — and the async-by-default CLI
@@ -2062,6 +2083,182 @@ class BaseSessionCompute:
             run_id=run_id,
         )
 
+    def _spawn_items(self, owner_id: str):
+        """Yield actual spawn blocks in transcript order, including uncomputed history."""
+        for item in SessionItem.objects.filter(session_id=owner_id).order_by("line_num").iterator(chunk_size=200):
+            try:
+                parsed = orjson.loads(item.content)
+            except orjson.JSONDecodeError:
+                continue
+            for tool_id, prompt, background in self.extract_task_tool_use_prompts(parsed):
+                yield item, tool_id, prompt.strip(), background
+
+    def _create_recovered_agent_link(self, link: AgentLink) -> AgentLinkUpdate | None:
+        """Create one deterministic spawn identity; callers run under the live transaction."""
+        existing = AgentLink.objects.filter(agent_id=link.agent_id).first()
+        if existing is not None:
+            if (link.is_background and not existing.is_background
+                    and existing.session_id == link.session_id and existing.tool_use_id == link.tool_use_id):
+                existing.is_background = True
+                existing.save(update_fields=["is_background"])
+                return AgentLinkUpdate(existing.session_id, existing.agent_id, existing.tool_use_id,
+                                       existing.tool_use_line_num, True, existing.started_at)
+            return None
+        _obj, created = AgentLink.objects.get_or_create(
+            session_id=link.session_id, agent_id=link.agent_id, tool_use_id=link.tool_use_id,
+            defaults={"tool_use_line_num": link.tool_use_line_num,
+                      "is_background": link.is_background, "started_at": link.started_at},
+        )
+        mark_agent_link_done(link.session_id, link.agent_id)
+        if created:
+            return AgentLinkUpdate(link.session_id, link.agent_id, link.tool_use_id,
+                                   link.tool_use_line_num, link.is_background, link.started_at)
+        return None
+
+    def create_agent_link_from_meta(self, launcher_session_id, agent_id, tool_use_id):
+        child = Session.objects.filter(id=agent_id).first()
+        owner = Session.objects.filter(id=launcher_session_id).first()
+        if child is None or owner is None:
+            return None
+        if (owner.parent_session_id or owner.id) != child.parent_session_id:
+            return None
+        for item, tool_id, _prompt, background in self._spawn_items(owner.id):
+            if tool_id == tool_use_id:
+                return self._create_recovered_agent_link(AgentLink(
+                    session_id=owner.id, agent_id=agent_id, tool_use_id=tool_id,
+                    tool_use_line_num=item.line_num, is_background=background, started_at=item.timestamp,
+                ))
+        return None
+
+    def _recover_owned_agent_links(self, owner, tasks, claimed=(), pending_prompts=None):
+        """Resolve remaining tool ids by metadata, then unique prompt evidence.
+
+        ``tasks`` maps tool id to (line, background, timestamp, prompt).
+        The same matching policy serves live child/launcher recovery and full replay.
+        ``pending_prompts`` supplies child messages not yet inserted by live sync.
+        """
+        root_id = owner.parent_session_id or owner.id
+        metas = self.get_spawn_metas_for_tree(owner)
+        excluded = set(claimed) | set(AgentLink.objects.filter(
+            agent_id__in=Session.objects.filter(parent_session_id=root_id).values("id"),
+        ).exclude(session_id=owner.id).values_list("agent_id", flat=True))
+        remaining = dict(tasks)
+        links = []
+
+        def add(agent_id, tool_id):
+            line, background, timestamp, _prompt = remaining.pop(tool_id)
+            excluded.add(agent_id)
+            links.append(AgentLink(session_id=owner.id, agent_id=agent_id, tool_use_id=tool_id,
+                tool_use_line_num=line, is_background=background, started_at=timestamp))
+
+        existing_parents = dict(Session.objects.filter(id__in=metas).values_list("id", "parent_session_id"))
+        for agent_id, info in metas.items():
+            if agent_id in existing_parents and existing_parents[agent_id] != root_id:
+                continue
+            if agent_id in excluded or agent_id == owner.id or info.launcher_session_id != owner.id:
+                continue
+            if info.tool_use_id in remaining:
+                add(agent_id, info.tool_use_id)
+        if not remaining:
+            return links
+        # Keep the earliest real user message, independent of compute ordering.
+        candidates = Session.objects.filter(parent_session_id=root_id, type=SessionType.SUBAGENT).exclude(
+            id=owner.id).exclude(id__in=excluded)
+        prompts = {}
+        # A metadata-free prompt must also be unique across possible launchers.
+        other_owner_ids = [root_id, *Session.objects.filter(parent_session_id=root_id).values_list("id", flat=True)]
+        foreign_prompts = {prompt for other in other_owner_ids if other != owner.id
+                           for _item, _tool, prompt, _background in self._spawn_items(other)}
+        for child in candidates:
+            info = metas.get(child.id)
+            if info and (info.launcher_session_id != owner.id or info.tool_use_id is not None):
+                continue
+            for item in child.items.order_by("line_num").iterator(chunk_size=100):
+                try:
+                    parsed = orjson.loads(item.content)
+                except orjson.JSONDecodeError:
+                    continue
+                prompt = self.extract_user_message_text(parsed)
+                if prompt:
+                    prompts[child.id] = prompt.strip()
+                    break
+            if child.id not in prompts and pending_prompts and child.id in pending_prompts:
+                prompts[child.id] = pending_prompts[child.id].strip()
+        # Live callers may supply only one new item. Count the whole launcher
+        # transcript, including other spawn blocks inserted in the same batch.
+        owner_prompts = {tool_id: prompt for _item, tool_id, prompt, _background in self._spawn_items(owner.id)}
+        # Both directions must be unique. Equal prompts do not establish filiation.
+        for tool_id, (_line, _background, _timestamp, prompt) in list(remaining.items()):
+            prompt = prompt.strip()
+            matches = [agent_id for agent_id, text in prompts.items() if text == prompt]
+            same_tools = [tu for tu, text in owner_prompts.items() if text == prompt]
+            info = metas.get(matches[0]) if len(matches) == 1 else None
+            if prompt and len(matches) == len(same_tools) == 1 and (info or prompt not in foreign_prompts):
+                add(matches[0], tool_id)
+                prompts.pop(matches[0])
+        return links
+
+    def _resolve_queue_spawn(self, root, completion):
+        """Resolve terminal evidence inside one tree, without changing database state."""
+        child = Session.objects.filter(id=completion.task_id).first()
+        if child is not None and child.parent_session_id != root.id:
+            return None
+        owners = [root.id, *Session.objects.filter(parent_session_id=root.id).values_list("id", flat=True)]
+        info = self.get_spawn_metas_for_tree(root).get(completion.task_id)
+        if info is not None:
+            if info.launcher_session_id not in owners:
+                return None
+            if info.tool_use_id is not None and info.tool_use_id != completion.tool_use_id:
+                return None
+            owners = [info.launcher_session_id]
+        matches = []
+        for item in SessionItem.objects.filter(
+            Q(kind__in=(ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS)) | Q(kind__isnull=True),
+            session_id__in=owners, content__contains=completion.tool_use_id).order_by("session_id", "line_num").iterator(chunk_size=100):
+            try:
+                parsed = orjson.loads(item.content)
+            except orjson.JSONDecodeError:
+                continue
+            if any(tu == completion.tool_use_id for tu, _bg in self.extract_task_tool_uses(parsed)):
+                matches.append(item)
+        owner_ids = {item.session_id for item in matches}
+        if len(owner_ids) != 1:
+            return None
+        item = matches[0]
+        return AgentLink(session_id=item.session_id, agent_id=completion.task_id,
+            tool_use_id=completion.tool_use_id, tool_use_line_num=item.line_num,
+            is_background=True, started_at=item.timestamp)
+
+    def apply_queue_completion(self, root_session_id, item, completion):
+        root = Session.objects.get(id=root_session_id)
+        child = Session.objects.filter(id=completion.task_id).first()
+        link = self._resolve_queue_spawn(root, completion)
+        if child is not None and child.parent_session_id != root.id:
+            return None, None
+        # A child may not be ingested yet. Its proven spawn is sufficient for
+        # delivering completion evidence; no unrelated session is stamped.
+        if child is None and link is None:
+            return None, None
+        update = self._create_recovered_agent_link(link) if link is not None else None
+        if item.timestamp is None:
+            return update, None
+        if child is not None:
+            changed = Session.objects.filter(id=child.id).exclude(last_updated_at__gt=item.timestamp).update(
+                last_stopped_at=item.timestamp, last_updated_at=item.timestamp)
+            if not changed:
+                return update, None
+        return update, AgentStoppedUpdate(completion.task_id, item.timestamp)
+
+    def _tree_queue_completions(self, root_id):
+        for item in SessionItem.objects.filter(session_id=root_id, content__contains="queue-operation").order_by("line_num"):
+            try:
+                parsed = orjson.loads(item.content)
+            except orjson.JSONDecodeError:
+                continue
+            completion = self.extract_queue_completion(parsed)
+            if completion is not None:
+                yield item, completion
+
     def create_agent_link_from_subagent(
         self,
         parent_session_id: str,
@@ -2082,53 +2279,24 @@ class BaseSessionCompute:
         - :meth:`extract_task_tool_use_prompts` for the per-candidate
           extraction of ``(tool_use_id, prompt, is_background)`` triples.
         """
-        if is_agent_link_done(parent_session_id, agent_id):
+        child = Session.objects.filter(id=agent_id).first()
+        owner = Session.objects.filter(id=parent_session_id).first()
+        if child is None or owner is None or AgentLink.objects.filter(agent_id=agent_id).exists():
             return None
-
-        # Check if we already have this agent link
-        if AgentLink.objects.filter(
-            session_id=parent_session_id,
-            agent_id=agent_id,
-        ).exists():
-            mark_agent_link_done(parent_session_id, agent_id)
+        info = self.get_subagent_spawn_meta(child)
+        if info and info.tool_use_id:
+            return self.create_agent_link_from_meta(info.launcher_session_id, agent_id, info.tool_use_id)
+        if info and info.launcher_session_id != owner.id:
             return None
-
-        agent_prompt = agent_prompt.strip()
-
-        candidates = self.agent_tool_candidates_query(parent_session_id)
-
-        for candidate in candidates.iterator(chunk_size=20):
-            try:
-                candidate_parsed = orjson.loads(candidate.content)
-            except orjson.JSONDecodeError:
-                continue
-
-            for tu_id, prompt, is_background in self.extract_task_tool_use_prompts(candidate_parsed):
-                if prompt.strip() == agent_prompt:
-                    try:
-                        obj, created = AgentLink.objects.get_or_create(
-                            session_id=parent_session_id,
-                            tool_use_line_num=candidate.line_num,
-                            tool_use_id=tu_id,
-                            defaults={
-                                "agent_id": agent_id,
-                                "is_background": is_background,
-                                "started_at": candidate.timestamp,
-                            },
-                        )
-                        if created:
-                            mark_agent_link_done(parent_session_id, agent_id)
-                            return AgentLinkUpdate(
-                                parent_session_id=parent_session_id,
-                                agent_id=agent_id,
-                                tool_use_id=tu_id,
-                                tool_use_line_num=candidate.line_num,
-                                is_background=is_background,
-                                started_at=candidate.timestamp,
-                            )
-                    except MultipleObjectsReturned:  # defensive mode
-                        continue
-
+        root_id = owner.parent_session_id or owner.id
+        if child.parent_session_id != root_id:
+            return None
+        tasks = {tool_id: (item.line_num, background, item.timestamp, prompt)
+                 for item, tool_id, prompt, background in self._spawn_items(owner.id)}
+        links = self._recover_owned_agent_links(owner, tasks, pending_prompts={agent_id: agent_prompt})
+        for link in links:
+            if link.agent_id == agent_id:
+                return self._create_recovered_agent_link(link)
         return None
 
     def create_agent_link_from_tool_use(
@@ -2150,84 +2318,16 @@ class BaseSessionCompute:
         - :meth:`extract_user_message_text` to read the subagent's first
           user message for prompt comparison.
         """
-        # Collect all (tool_use_id, prompt, is_background) triples from the new item
         task_prompts = self.extract_task_tool_use_prompts(parsed_json)
-        # Normalize prompts for matching
-        task_prompts = [(tu_id, prompt.strip(), is_bg) for tu_id, prompt, is_bg in task_prompts]
-
         if not task_prompts:
             return []
-
-        updates: list[AgentLinkUpdate] = []
-
-        # Get all subagents for this session that don't have a link yet
-        subagents = Session.objects.filter(
-            parent_session_id=session_id,
-            type=SessionType.SUBAGENT,
-        )
-
-        # For each subagent, check if its prompt matches one of the new task prompts
-        for subagent in subagents:
-            if is_agent_link_done(session_id, subagent.id):
-                continue
-
-            # Check if link already exists
-            if AgentLink.objects.filter(
-                session_id=session_id,
-                agent_id=subagent.id,
-            ).exists():
-                mark_agent_link_done(session_id, subagent.id)
-                continue
-
-            # Get the subagent's prompt from cache or DB
-            subagent_prompt = get_cached_agent_prompt(session_id, subagent.id)
-            if not subagent_prompt:
-                # Try to get from the subagent's first user message
-                first_user_message = SessionItem.objects.filter(
-                    session_id=subagent.id,
-                    kind=ItemKind.USER_MESSAGE,
-                ).first()
-                if first_user_message is None:
-                    continue
-                try:
-                    first_parsed = orjson.loads(first_user_message.content)
-                except orjson.JSONDecodeError:
-                    continue
-                subagent_prompt = self.extract_user_message_text(first_parsed)
-                if not subagent_prompt:
-                    continue
-                subagent_prompt = subagent_prompt.strip()
-                cache_agent_prompt(session_id, subagent.id, subagent_prompt)
-
-            # Check if the subagent's prompt matches any task prompt
-            for tu_id, prompt, is_background in task_prompts:
-                if prompt == subagent_prompt:
-                    try:
-                        _, created = AgentLink.objects.get_or_create(
-                            session_id=session_id,
-                            tool_use_line_num=item.line_num,
-                            tool_use_id=tu_id,
-                            defaults={
-                                "agent_id": subagent.id,
-                                "is_background": is_background,
-                                "started_at": item.timestamp,
-                            },
-                        )
-                        if created:
-                            mark_agent_link_done(session_id, subagent.id)
-                            updates.append(AgentLinkUpdate(
-                                parent_session_id=session_id,
-                                agent_id=subagent.id,
-                                tool_use_id=tu_id,
-                                tool_use_line_num=item.line_num,
-                                is_background=is_background,
-                                started_at=item.timestamp,
-                            ))
-                    except MultipleObjectsReturned:
-                        pass
-                    break
-
-        return updates
+        owner = Session.objects.filter(id=session_id).first()
+        if owner is None:
+            return []
+        tasks = {tu: (item.line_num, background, item.timestamp, prompt)
+                 for tu, prompt, background in task_prompts}
+        links = self._recover_owned_agent_links(owner, tasks)
+        return [update for link in links if (update := self._create_recovered_agent_link(link)) is not None]
 
     # ------------------------------------------------------------------
     # Batch orchestration — concrete in later steps
@@ -2622,8 +2722,13 @@ class BaseSessionCompute:
                 ):
                     prev_count, _ = agent_tool_result_counts.get(tool_result_ref, (0, None))
                     agent_tool_result_counts[tool_result_ref] = (prev_count + 1, item.timestamp)
-            if analysis.tool_result_agent_info:
-                tu_id, agent_id, is_async = analysis.tool_result_agent_info
+            agent_info = analysis.tool_result_agent_info
+            if agent_info is None:
+                ack = self.extract_agent_spawn_ack(parsed)
+                if ack is not None:
+                    agent_info = (*ack, True)
+            if agent_info:
+                tu_id, agent_id, is_async = agent_info
                 if tu_id in task_tool_use_map:
                     line_num, is_background, started_at = task_tool_use_map[tu_id]
                     all_agent_links[(agent_id, tu_id)] = serialize_agent_link(AgentLink(
@@ -2693,6 +2798,41 @@ class BaseSessionCompute:
         trl_to_delete: list[int] = [
             pk for key, pk in original_tool_result_links_ids.items() if key not in all_tool_result_links
         ]
+
+        agent_links_backfill = []
+        if self.rebuild_agent_prompt_links:
+            root_id = session.parent_session_id or session.id
+            root = Session.objects.get(id=root_id)
+            # Completion evidence identifies historical agents even when their
+            # ack/sidecar is missing. Replaying the launcher must retain backfills.
+            for queue_item, completion in self._tree_queue_completions(root_id):
+                recovered = self._resolve_queue_spawn(root, completion)
+                child_in_tree = Session.objects.filter(id=completion.task_id, parent_session_id=root_id).exists()
+                if is_main_session and queue_item.timestamp and (child_in_tree or recovered is not None):
+                    agent_stopped_list.append({"agent_session_id": completion.task_id,
+                                               "stopped_at": queue_item.timestamp.isoformat()})
+                if recovered is None:
+                    continue
+                if recovered.session_id == session_id:
+                    key = (recovered.agent_id, recovered.tool_use_id)
+                    # Direct transcript evidence has priority. A matching queue
+                    # completion can only upgrade the original launch to async.
+                    if key in all_agent_links:
+                        all_agent_links[key]["is_background"] = True
+                    else:
+                        all_agent_links[key] = serialize_agent_link(recovered)
+                    task_tool_use_map.pop(recovered.tool_use_id, None)
+                elif is_main_session:
+                    agent_links_backfill.append(serialize_agent_link(recovered))
+            tasks = {}
+            for tool_id, (line, background, timestamp) in task_tool_use_map.items():
+                entry = tool_use_map.get(tool_id)
+                if entry is None:
+                    continue
+                prompts = {tu: prompt for tu, prompt, _bg in self.extract_task_tool_use_prompts(entry.parsed_json)}
+                tasks[tool_id] = (line, background, timestamp, prompts.get(tool_id, ""))
+            for recovered in self._recover_owned_agent_links(session, tasks, {key[0] for key in all_agent_links}):
+                all_agent_links[(recovered.agent_id, recovered.tool_use_id)] = serialize_agent_link(recovered)
 
         # Diff agent links: create / update / delete
         agent_links_to_create: list[dict] = []
@@ -2827,6 +2967,7 @@ class BaseSessionCompute:
             'titles': session_titles,
             'project_directory': project_directory,
             'affected_days': sorted(affected_days) if affected_days else None,
+            'agent_links_backfill': agent_links_backfill or None,
             'agent_stopped': agent_stopped_list or None,
             # Subagent-detected plan-doc events, folded into the top-level
             # ancestor's plan_paths by apply_session_complete (None for main
@@ -3018,19 +3159,19 @@ class BaseSessionCompute:
 
         # 4. Sync agent links (diff-based: create/update/delete)
         agent_links_to_create = msg.get('agent_links_to_create', [])
-        if agent_links_to_create:
-            links = [
-                AgentLink(
-                    session_id=d['session_id'],
-                    tool_use_line_num=d['tool_use_line_num'],
-                    tool_use_id=d['tool_use_id'],
-                    agent_id=d['agent_id'],
-                    is_background=d['is_background'],
-                    started_at=datetime.fromisoformat(d['started_at']) if d.get('started_at') else None,
-                )
-                for d in agent_links_to_create
-            ]
-            AgentLink.objects.bulk_create(links, ignore_conflicts=True, batch_size=50)
+        # Another tree owner's backfill may have inserted a link after the
+        # compute snapshot. The transcript revision guard cannot detect that.
+        for d in [*agent_links_to_create, *(msg.get("agent_links_backfill") or [])]:
+            existing = AgentLink.objects.filter(session_id=d["session_id"],
+                agent_id=d["agent_id"], tool_use_id=d["tool_use_id"]).first()
+            if existing is None:
+                AgentLink.objects.create(session_id=d["session_id"], agent_id=d["agent_id"],
+                    tool_use_id=d["tool_use_id"], tool_use_line_num=d["tool_use_line_num"],
+                    is_background=d["is_background"],
+                    started_at=datetime.fromisoformat(d["started_at"]) if d.get("started_at") else None)
+            elif d["is_background"] and not existing.is_background:
+                existing.is_background = True
+                existing.save(update_fields=["is_background"])
 
         agent_links_to_update = msg.get('agent_links_to_update', [])
         if agent_links_to_update:
@@ -3339,10 +3480,11 @@ class BaseSessionCompute:
 
         # For subagents: track if we need to create the link between the agent
         # and the parent session tool use
+        spawn_meta = self.get_subagent_spawn_meta(session)
+        launcher_id = spawn_meta.launcher_session_id if spawn_meta else session.parent_session_id
         subagent_needs_link = (
-            session.type == SessionType.SUBAGENT
-            and session.parent_session_id
-            and not is_agent_link_done(session.parent_session_id, session.id)
+            session.type == SessionType.SUBAGENT and launcher_id
+            and not AgentLink.objects.filter(agent_id=session.id).exists()
         )
 
         # Load existing message_ids for deduplication of cost computation
@@ -3497,8 +3639,13 @@ class BaseSessionCompute:
             # carries a subagent marker.
             if subagent_needs_link:
                 agent_id = self.extract_subagent_marker(parsed)
-                if agent_id:
-                    prompt = get_cached_agent_prompt(session.parent_session_id, agent_id)
+                if agent_id and spawn_meta and spawn_meta.tool_use_id:
+                    agent_update = self.create_agent_link_from_meta(launcher_id, agent_id, spawn_meta.tool_use_id)
+                    if agent_update:
+                        agent_link_updates.append(agent_update)
+                        subagent_needs_link = False
+                elif agent_id:
+                    prompt = get_cached_agent_prompt(launcher_id, agent_id)
                     if not prompt:
                         # Try to read it from the subagent's first user message in DB
                         first_user_message = (
@@ -3516,9 +3663,9 @@ class BaseSessionCompute:
                             prompt = self.extract_user_message_text(parsed)
 
                         if prompt:
-                            cache_agent_prompt(session.parent_session_id, agent_id, prompt)
+                            cache_agent_prompt(launcher_id, agent_id, prompt)
                             agent_update = self.create_agent_link_from_subagent(
-                                parent_session_id=session.parent_session_id,
+                                parent_session_id=launcher_id,
                                 agent_id=agent_id,
                                 agent_prompt=prompt,
                             )
@@ -3598,9 +3745,16 @@ class BaseSessionCompute:
             # For parent sessions: check if this item contains agent-spawning tool_use(s)
             # and try to link them to existing subagents (race condition: subagent file
             # synced before the parent's tool_use line).
-            if session.type == SessionType.SESSION and item.kind in (
-                ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS,
-            ):
+            if session.type == SessionType.SESSION:
+                completion = self.extract_queue_completion(parsed)
+                if completion is not None:
+                    link_update, stopped_update = self.apply_queue_completion(session.id, item, completion)
+                    if link_update:
+                        agent_link_updates.append(link_update)
+                    if stopped_update:
+                        agent_stopped_updates.append(stopped_update)
+
+            if item.kind in (ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
                 agent_link_updates.extend(
                     self.create_agent_link_from_tool_use(session.id, item, parsed)
                 )

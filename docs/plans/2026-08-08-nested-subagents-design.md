@@ -3,7 +3,7 @@
 **Date:** 2026-08-08 (revised 2026-08-15 for Codex multi-agent v2; revised
 2026-09-05 against code state `7b53b36e` — resumable-subagent support,
 provider homes, Codex canonical rollouts)
-**Status:** approved after independent adversarial reviews; ready for implementation
+**Status:** implemented and independently reviewed; see [validation evidence](2026-09-07-nested-subagents-validation.md)
 **Provider scope:** both providers. Claude Code: link creation + display.
 Codex: parenthood flattening + display (its v2 protocol already creates the
 links, see §2.6/§10).

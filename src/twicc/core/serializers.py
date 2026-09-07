@@ -454,6 +454,9 @@ def serialize_share_public_meta(share):
             "compacted": bool(sess.compacted) if sess else False,
             "created_at": sess.created_at.isoformat() if sess and sess.created_at else None,
             "last_updated_at": sess.last_updated_at.isoformat() if sess and sess.last_updated_at else None,
+            # Root lifecycle ends every nested agent, including in an open live share.
+            "last_started_at": sess.last_started_at.isoformat() if sess and sess.last_started_at else None,
+            "last_stopped_at": sess.last_stopped_at.isoformat() if sess and sess.last_stopped_at else None,
         }
         # Public title: show_title is the master switch — off ⇒ no title at all (the
         # viewer sees the generic label). On ⇒ the owner's display_title override,

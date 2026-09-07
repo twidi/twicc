@@ -1,3 +1,4 @@
+import { handleAgentEvent } from '../utils/agentLinkIndex'
 import { isLaunchedEphemeral } from '../utils/ephemeralSessions'
 // frontend/src/composables/useWebSocket.js
 
@@ -1540,15 +1541,9 @@ export function useWebSocket() {
                 store.recomputeVisualItems(msg.session_id)
                 break
             }
-            case 'agent_link_created': {
-                // New agent link created — populate cache and create synthetic process state
-                const agentSessionId = msg.agent_session_id
-                if (msg.tool_use_id && msg.parent_session_id) {
-                    store.setAgentLink(msg.parent_session_id, msg.tool_use_id, agentSessionId, msg.is_background, msg.tool_use_line_num, msg.agent_slug ?? null)
-                }
-                // Agent just linked → create synthetic process state
-                const startedAtUnix = msg.started_at ? new Date(msg.started_at).getTime() / 1000 : null
-                store.setSyntheticProcessState(agentSessionId, msg.parent_session_id, msg.project_id, startedAtUnix)
+            case 'agent_link_created':
+            case 'agent_stopped': {
+                handleAgentEvent(store, msg)
                 break
             }
             case 'workflow_link_created': {
@@ -1572,7 +1567,7 @@ export function useWebSocket() {
                 if (agentLink) {
                     const requiredCount = agentLink.isBackground ? 2 : 1
                     if (msg.result_count >= requiredCount) {
-                        store.removeSyntheticProcessState(agentLink.agentId)
+                        store.markAgentStopped(agentLink.agentId, msg.completed_at || null, agentLink.rootSessionId)
                     }
                 }
                 break

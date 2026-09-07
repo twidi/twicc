@@ -23,7 +23,7 @@ import orjson
 from twicc import search
 from twicc.agent.registry import get_agent_manager_registry
 from twicc.core.enums import ItemKind, Provider
-from twicc.core.models import AgentLink, ArtifactBookmark, ArtifactNetworkDenial, Command, DailyActivity, ModelBenchmark, PinMode, Project, Session, SessionItem, SessionType, ToolResultLink, UsageSnapshot, WeeklyActivity, Workflow
+from twicc.core.models import ArtifactBookmark, ArtifactNetworkDenial, Command, DailyActivity, ModelBenchmark, PinMode, Project, Session, SessionItem, SessionType, ToolResultLink, UsageSnapshot, WeeklyActivity, Workflow
 from twicc.core.serializers import (
     serialize_artifact_bookmark,
     serialize_benchmark_row,
@@ -36,7 +36,7 @@ from twicc.core.serializers import (
 from twicc.core.session_queries import (
     aggregate_tool_states,
     parse_line_ranges,
-    serialize_agent_links,
+    build_subagents_state,
     tool_results_payload,
 )
 from twicc.core.text_filter import match_text_query
@@ -1505,10 +1505,7 @@ async def subagents_state(request, project_id, session_id):
     if session.parent_session_id is not None:
         raise Http404("Session not found")
 
-    links = await sync_to_async(list)(
-        AgentLink.objects.filter(session=session).order_by("id")
-    )
-    result = await sync_to_async(serialize_agent_links)(links)
+    result = await sync_to_async(build_subagents_state)(session)
     return JsonResponse(result, safe=False)
 
 

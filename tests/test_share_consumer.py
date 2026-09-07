@@ -232,6 +232,7 @@ def test_agent_link_forwarded_for_live_spawned_subagent(session):
         msg = await comm.receive_json_from(timeout=2)
         assert msg["type"] == "share_agent_link"
         assert msg["link"] == {
+            "owner_session_id": sid, "root_session_id": sid,
             "agent_id": "sub-1", "agent_slug": "explorer", "tool_use_id": "tu-agent",
             "tool_use_line_num": 3, "is_background": False, "started_at": None,
         }

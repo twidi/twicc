@@ -167,6 +167,19 @@ you: when the user asks, re-invoke `Workflow` with `resumeFromRunId`.
 class ClaudeCodeHelpers(BaseProviderHelpers):
     """Helpers for sessions produced by the Claude Code CLI / SDK."""
 
+    def get_queue_completions(self, items):
+        from .notifications import parse_queue_completion
+
+        completions = []
+        for item in items:
+            try:
+                parsed = orjson.loads(item.content)
+            except orjson.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict) and (completion := parse_queue_completion(parsed)) is not None:
+                completions.append((completion.task_id, completion.tool_use_id, item.timestamp))
+        return completions
+
     provider: ClassVar[Provider] = Provider.CLAUDE_CODE
     LABEL: ClassVar[str] = "Claude Code"
     SYSTEM_PROMPT_STATIC_ADDENDUM: ClassVar[str] = _SYSTEM_PROMPT_STATIC_ADDENDUM
