@@ -1747,17 +1747,30 @@ def test_owner_message_list_searches_title_and_complete_text(client, transaction
         payload={"text": "beta", "images": [], "documents": []},
     )
 
-    fuzzy = _run(client.get("/api/peer-messages/", {"q": "rlspln"}))
-    literal = _run(client.get("/api/peer-messages/", {"q": '"deep archive phrase"'}))
+    title_hit = _run(client.get("/api/peer-messages/", {"q": "release plan"}))
+    quoted = _run(client.get("/api/peer-messages/", {"q": '"deep archive phrase"'}))
+    unordered = _run(client.get("/api/peer-messages/", {"q": "phrase archive"}))
+    cross_field = _run(client.get("/api/peer-messages/", {"q": "ordinary phrase"}))
+    partial = _run(client.get("/api/peer-messages/", {"q": "archive absent"}))
+    subsequence = _run(client.get("/api/peer-messages/", {"q": "rlspln"}))
     split = _run(client.get("/api/peer-messages/", {"q": "abt"}))
 
-    assert fuzzy.status_code == 200
-    assert [row["id"] for row in orjson.loads(fuzzy.content)["messages"]] == [title_match.pk]
-    assert [row["id"] for row in orjson.loads(literal.content)["messages"]] == [body_match.pk]
+    assert title_hit.status_code == 200
+    assert [row["id"] for row in orjson.loads(title_hit.content)["messages"]] == [title_match.pk]
+    assert [row["id"] for row in orjson.loads(quoted.content)["messages"]] == [body_match.pk]
+    # Terms match in any order, and one may come from the title while another
+    # comes from the body — the two are one haystack.
+    assert [row["id"] for row in orjson.loads(unordered.content)["messages"]] == [body_match.pk]
+    assert [row["id"] for row in orjson.loads(cross_field.content)["messages"]] == [body_match.pk]
+    # Every term is required: one miss drops the row.
+    assert orjson.loads(partial.content)["messages"] == []
+    # The inbox filter is literal, never a subsequence: a body match by chance
+    # would make the filter useless.
+    assert orjson.loads(subsequence.content)["messages"] == []
     assert orjson.loads(split.content)["messages"] == []
     assert split_only.pk not in [row["id"] for row in orjson.loads(split.content)["messages"]]
-    assert b"attachment-search-sentinel" not in literal.content
-    assert all("payload" not in row for row in orjson.loads(literal.content)["messages"])
+    assert b"attachment-search-sentinel" not in quoted.content
+    assert all("payload" not in row for row in orjson.loads(quoted.content)["messages"])
 
 
 def test_owner_message_list_combines_peer_and_text_filters(client, transactional_db):
@@ -1810,7 +1823,7 @@ def test_owner_message_list_keeps_all_matching_pending_and_caps_history(client, 
         for index in range(201)
     ])
 
-    response = _run(client.get("/api/peer-messages/", {"q": "capmatch", "limit": 200}))
+    response = _run(client.get("/api/peer-messages/", {"q": "cap match", "limit": 200}))
 
     assert response.status_code == 200
     body = orjson.loads(response.content)

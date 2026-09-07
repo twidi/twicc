@@ -10,8 +10,12 @@
  *   optional trailing matching quote is stripped, so both `"foo` and `"foo"`
  *   look for the substring `foo`); anything else uses `matchSubsequence`.
  *
- * The backend mirrors `matchQuery` in `_match_session_query` (views.py) so the
- * bulk-archive scope matches the sidebar exactly.
+ * The backend mirrors `matchQuery` in `match_text_query`
+ * (`twicc/core/text_filter.py`) so the bulk-archive scope matches the sidebar
+ * exactly. The peer inbox deliberately does NOT use this grammar: it searches
+ * message bodies, where a subsequence match accepts nearly any short query. It
+ * calls `match_all_terms_query` instead — every word must appear as a
+ * substring, in any order.
  */
 
 /**

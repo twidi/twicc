@@ -13,7 +13,7 @@ from django.http import Http404, HttpResponseNotAllowed, JsonResponse
 
 from twicc.core.serializers import serialize_peer, serialize_peer_message
 from twicc.core.services import peer_messages, peer_mutation
-from twicc.core.text_filter import match_text_query
+from twicc.core.text_filter import match_all_terms_query
 
 
 def _err_response(errors) -> JsonResponse:
@@ -254,6 +254,12 @@ async def peer_messages_list(request):
     ``peer_messages.resolve_peer_message_projects``) is the project or one
     of its git worktrees (``project_scope_ids``: a worktree scopes to
     itself).
+
+    ``q`` requires every one of its whitespace-separated terms as a
+    case-insensitive substring of the title and body taken together, in any
+    order. A leading quote makes the whole query one exact phrase. It is never
+    fuzzy, unlike the sidebar filters: a subsequence match over a whole message
+    body accepts nearly any short query, so it would filter nothing.
     """
     from twicc.core.models import PeerMessage, PeerMessageDirection, PeerMessageStatus, PeerState
     from twicc.projects import project_scope_ids
@@ -293,10 +299,10 @@ async def peer_messages_list(request):
                 "pk", "title", "payload__text", "direction", "status",
             )
             for pk, title, text, direction, status in candidates.iterator():
-                if not (
-                    match_text_query(query, title or "")
-                    or match_text_query(query, text or "")
-                ):
+                # Title and body form a single haystack, so a two-word query
+                # can take one word from each. The newline stops a term from
+                # straddling the boundary between them.
+                if not match_all_terms_query(query, f"{title or ''}\n{text or ''}"):
                     continue
                 if direction == PeerMessageDirection.IN and status == PeerMessageStatus.PENDING:
                     pending_ids.append(pk)
