@@ -2136,7 +2136,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                     :aria-pressed="session?.ephemeral === true"
                     @click="toggleEphemeral"
                 >
-                    <wa-icon name="ghost" label="Ephemeral session"></wa-icon>
+                    <wa-icon name="ghost" label="Ephemeral session" class="ephemeral-icon" :class="{ active: session?.ephemeral }"></wa-icon>
                 </wa-button>
                 <AppTooltip v-if="isDraft" :for="ephemeralButtonId">
                     {{ session?.ephemeral ? 'Ephemeral mode on — click to turn off' : 'Start as an ephemeral session' }}
@@ -2270,6 +2270,9 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
 </template>
 
 <style scoped>
+.ephemeral-icon { color: var(--wa-color-neutral-60); }
+.ephemeral-icon.active { color: var(--wa-color-warning-60); }
+
 .message-input {
     display: flex;
     flex-direction: column;
