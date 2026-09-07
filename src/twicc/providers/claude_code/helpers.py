@@ -29,6 +29,7 @@ from twicc.providers.helpers import (
     ModelVersion,
     StatuspageConfig,
     UserMessage,
+    humanize_identifier,
 )
 
 from twicc.provider_homes import claude_plans_dir
@@ -179,6 +180,44 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
             if isinstance(parsed, dict) and (completion := parse_queue_completion(parsed)) is not None:
                 completions.append((completion.task_id, completion.tool_use_id, item.timestamp))
         return completions
+
+    def get_spawn_display_name(self, item, tool_use_id) -> str | None:
+        """``Explore — Map session pinning system`` from the ``Task``/``Agent`` call.
+
+        ``description`` is what the launcher wrote to tell its agents apart, so
+        it carries the name. ``subagent_type`` qualifies it, except
+        ``general-purpose`` which says nothing; a namespaced type keeps only its
+        last segment (``superpowers:brainstorming`` → ``Brainstorming``).
+
+        A launcher often writes the description as a machine identifier
+        (``backend-reader``) rather than a sentence, so an identifier-shaped one
+        is sentence-cased like a Codex task name — never a real sentence, which
+        already reads as written.
+        """
+        from .compute import AGENT_TOOL_NAMES
+
+        try:
+            parsed = orjson.loads(item.content)
+        except (orjson.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        for block in (parsed.get("message") or {}).get("content") or []:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            if block.get("id") != tool_use_id or block.get("name") not in AGENT_TOOL_NAMES:
+                continue
+            data = block.get("input") or {}
+            description = (data.get("description") or "").strip()
+            if description and " " not in description and ("-" in description or "_" in description):
+                description = humanize_identifier(description)
+            raw_type = (data.get("subagent_type") or "").strip()
+            agent_type = raw_type.rsplit(":", 1)[-1] if raw_type != "general-purpose" else ""
+            agent_type = humanize_identifier(agent_type)
+            if description and agent_type:
+                return f"{agent_type} — {description}"
+            return description or agent_type or None
+        return None
 
     provider: ClassVar[Provider] = Provider.CLAUDE_CODE
     LABEL: ClassVar[str] = "Claude Code"

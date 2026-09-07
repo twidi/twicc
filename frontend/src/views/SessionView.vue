@@ -54,7 +54,7 @@ import {
     parseRouteString,
     parseRouteTermIndex,
 } from '../utils/granularRoutes'
-import { getAgentDisplayLabel } from '../utils/agentLabel'
+import { getAgentDisplay } from '../utils/agentLabel'
 import { focusChatPrimary, gotoChatFooterPanel, runOnChatTab } from '../utils/focusChat'
 import { toggleSessionMute } from '../composables/useSessionMute'
 import { fileRootsFromStore } from '../utils/projectRoots'
@@ -1605,14 +1605,14 @@ function openSubagentTab(agentId) {
 }
 
 /**
- * Label rendered in the subagent tab buttons (compact dropdown, tab
- * bar, wa-tabs nav). Prefers ``Session.slug`` when the provider exposes
- * one (Codex stores the agent_nickname there); falls back to the first
- * 8 characters of the agent id otherwise (Claude Code, where slug
- * is currently unset).
+ * How a subagent tab names its agent: the name the launcher gave it (see
+ * utils/agentLabel.js), or ``Agent "<short id>"`` when nothing named it. A real
+ * name stands on its own — the robot icon already says it is an agent — and the
+ * tab clips it, with the full name in the title attribute.
  */
 function getAgentTabLabel(agentId) {
-    return getAgentDisplayLabel(agentId, store)
+    const { name, isFallback } = getAgentDisplay(agentId, store)
+    return isFallback ? `Agent "${name}"` : name
 }
 
 // Watch subagentId to open tab when navigating to a subagent URL.
@@ -2311,7 +2311,7 @@ onBeforeUnmount(() => {
                     <span class="subagent-tab-content">
                         <SessionTabLink :href="sessionTabHref(tab.id)">
                             <wa-icon name="robot"></wa-icon>
-                            <span>Agent "{{ getAgentTabLabel(tab.agentId) }}"</span>
+                            <span class="subagent-tab-label" :title="getAgentTabLabel(tab.agentId)">{{ getAgentTabLabel(tab.agentId) }}</span>
                             <ProcessIndicator
                                 v-if="store.getProcessState(tab.agentId)"
                                 :state="store.getProcessState(tab.agentId).state"
@@ -2740,6 +2740,18 @@ onBeforeUnmount(() => {
     display: inline-flex;
     align-items: center;
     gap: var(--wa-space-2xs);
+}
+
+/* An agent's name is a sentence ("Explore — Map session pinning system"), so the
+   tab clips it rather than pushing every other tab off the strip. The full name
+   stays available in the title attribute. */
+.subagent-tab-label {
+    display: inline-block;
+    max-width: 14em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
 }
 
 .tab-close-icon {

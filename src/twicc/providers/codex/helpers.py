@@ -25,6 +25,7 @@ from twicc.providers.helpers import (
     ModelVersion,
     StatuspageConfig,
     UserMessage,
+    humanize_identifier,
 )
 
 from .constants import (
@@ -121,6 +122,37 @@ async def _broadcast_flagged_session(job) -> None:
 
 class CodexHelpers(BaseProviderHelpers):
     """Helpers for sessions produced by the Codex CLI."""
+
+    def get_spawn_display_name(self, item, tool_use_id) -> str | None:
+        """``Frontend reader`` from the ``spawn_agent`` call's ``task_name``.
+
+        Multi-agent v2 only: the parent names each delegation, and that name is
+        unique where the nickname is not (three agents of one session all
+        answer to ``Epicurus``). A v1 spawn carries no name at all — only its
+        ``message``, which is the whole prompt — so it falls back to the
+        nickname downstream.
+        """
+        from .compute import _SPAWN_AGENT_FUNCTION_NAME
+
+        try:
+            parsed = orjson.loads(item.content)
+        except (orjson.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        payload = parsed.get("payload") if isinstance(parsed.get("payload"), dict) else parsed
+        if payload.get("name") != _SPAWN_AGENT_FUNCTION_NAME or payload.get("call_id") != tool_use_id:
+            return None
+        arguments = payload.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = orjson.loads(arguments)
+            except orjson.JSONDecodeError:
+                return None
+        if not isinstance(arguments, dict):
+            return None
+        task_name = arguments.get("task_name")
+        return humanize_identifier(task_name) or None if isinstance(task_name, str) else None
 
     subagent_idle_trusted: ClassVar[bool] = True
     provider: ClassVar[Provider] = Provider.CODEX

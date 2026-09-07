@@ -248,6 +248,18 @@ class StatuspageConfig(NamedTuple):
     component_name: str
 
 
+def humanize_identifier(raw: str) -> str:
+    """Sentence-case a machine identifier: ``tweak_display_test`` → ``Tweak display test``.
+
+    Mirrors the frontend's ``humanizeToolSegment`` so a name reads the same
+    wherever it is written. Shared by the providers: Codex names a delegation
+    with an identifier (``task_name``), and Claude Code launchers often write
+    one as the agent's description (``backend-reader``).
+    """
+    spaced = raw.replace("_", " ").replace("-", " ").strip()
+    return spaced[:1].upper() + spaced[1:] if spaced else ""
+
+
 class BaseProviderHelpers:
     """Abstract per-provider helpers."""
 
@@ -259,6 +271,19 @@ class BaseProviderHelpers:
     def get_queue_completions(self, items):
         """Return persisted (child id, launch tool id, timestamp) completions."""
         return []
+
+    def get_spawn_display_name(self, item, tool_use_id) -> str | None:
+        """Name the agent a spawn call created, read from that call's own input.
+
+        ``item`` is the launcher's ``SessionItem`` holding the spawning
+        tool_use. This is the only agent-naming source that survives: the
+        providers' own names are unreliable (Claude repeats the session slug
+        on every agent and stopped writing it; Codex recycles nicknames and
+        hands the parent's down to nested agents), and Claude's spawn sidecar
+        disappears with the session folder. The launcher's transcript stays in
+        the DB, at every depth. ``None`` when the call carries no usable name.
+        """
+        return None
 
     # Human-readable display name of the provider (e.g. "Claude Code",
     # "Codex"). Surfaced by ``twicc info`` and any other discovery

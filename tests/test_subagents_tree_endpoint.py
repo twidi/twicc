@@ -105,3 +105,58 @@ def test_cross_project_owner_and_missing_child_row(tree):
     assert entry["owner_session_id"] == launcher.id
     assert entry["agent_slug"] is None
     assert entry["running"] is True
+
+
+class _SpawnItem:
+    """Minimal stand-in for the launcher's ``SessionItem`` (only ``content`` is read)."""
+
+    def __init__(self, content):
+        self.content = content
+
+
+def spawn_call(owner, line, tool, **input_fields):
+    """Turn a fixture placeholder item into the real spawning tool_use."""
+    SessionItem.objects.filter(session=owner, line_num=line).update(
+        content=orjson.dumps({"message": {"content": [
+            {"type": "tool_use", "id": tool, "name": "Agent", "input": input_fields},
+        ]}}).decode()
+    )
+
+
+def test_display_name_reads_the_launchers_spawn_call(tree):
+    root, launcher, child = tree
+    spawn_call(root, 115, "spawn-launcher", subagent_type="Explore", description="Map the sidebar")
+    spawn_call(launcher, 60, "spawn-child", subagent_type="general-purpose", description="Verify the claims")
+    rows = {row["agent_id"]: row for row in build_subagents_state(root)}
+    assert rows[launcher.id]["display_name"] == "Explore — Map the sidebar"
+    # ``general-purpose`` names nothing, so the description carries alone —
+    # and the nested agent resolves from its own launcher's transcript.
+    assert rows[child.id]["display_name"] == "Verify the claims"
+
+
+def test_display_name_sentence_cases_an_identifier_description(tree):
+    root, launcher, child = tree
+    spawn_call(root, 115, "spawn-launcher", subagent_type="general-purpose", description="backend-reader")
+    spawn_call(launcher, 60, "spawn-child", subagent_type="code-reviewer", description="Launcher: spawn two readers")
+    rows = {row["agent_id"]: row for row in build_subagents_state(root)}
+    # An identifier-shaped description reads like a Codex task name...
+    assert rows[launcher.id]["display_name"] == "Backend reader"
+    # ...but a real sentence stays as written, and the type is cased too.
+    assert rows[child.id]["display_name"] == "Code reviewer — Launcher: spawn two readers"
+
+
+def test_display_name_stays_none_without_a_usable_call(tree):
+    root, _, _ = tree
+    assert build_subagents_state(root)[0]["display_name"] is None
+
+
+def test_codex_display_name_reads_the_v2_task_name():
+    helpers = get_provider_helpers("codex")
+    call = lambda tool, args: _SpawnItem(orjson.dumps({"payload": {  # noqa: E731
+        "name": "spawn_agent", "call_id": tool, "arguments": orjson.dumps(args).decode(),
+    }}).decode())
+    assert helpers.get_spawn_display_name(call("call_1", {"task_name": "frontend_reader"}), "call_1") == "Frontend reader"
+    # A v1 spawn carries only its prompt, so nothing names the agent.
+    assert helpers.get_spawn_display_name(call("call_2", {"fork_context": True}), "call_2") is None
+    # Another call's item never names this one.
+    assert helpers.get_spawn_display_name(call("call_3", {"task_name": "other"}), "call_1") is None

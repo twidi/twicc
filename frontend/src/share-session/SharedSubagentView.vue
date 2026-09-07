@@ -2,14 +2,17 @@
 import { computed } from 'vue'
 import ShareItemsList from './ShareItemsList.vue'
 import { useDataStore } from '../stores/data'
-import { getAgentDisplayLabel } from '../utils/agentLabel'
+import { getAgentDisplay } from '../utils/agentLabel'
 
 const props = defineProps({ stack: { type: Array, required: true } })
 const emit = defineEmits(['close', 'clear'])
 const store = useDataStore()
 const current = computed(() => props.stack[props.stack.length - 1])
 // Same label as the owner's subagent tabs: the session slug, else the short id.
-const agentLabel = (id) => getAgentDisplayLabel(id, store)
+const agentLabel = (id) => {
+    const { name, isFallback } = getAgentDisplay(id, store)
+    return isFallback ? `Agent "${name}"` : name
+}
 </script>
 
 <template>

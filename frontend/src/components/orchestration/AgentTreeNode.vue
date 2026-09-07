@@ -19,7 +19,7 @@ import CostDisplay from '../ui/CostDisplay.vue'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { getProviderHelpers } from '../../providers'
-import { getAgentDisplayLabel } from '../../utils/agentLabel'
+import { getAgentDisplay } from '../../utils/agentLabel'
 import { agentCost, agentSubtreeCost } from '../../utils/agentTreeMetrics'
 import { formatDate, formatDuration } from '../../utils/date'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
@@ -42,8 +42,13 @@ const props = defineProps({
 const entry = computed(() => props.node.entry)
 const hasChildren = computed(() => (props.node.children?.length ?? 0) > 0)
 
-// Provider slug when there is one (Codex's agent nickname), short id otherwise.
-const label = computed(() => getAgentDisplayLabel(props.node.id, store))
+// The name the launcher gave this agent (see utils/agentLabel.js); ``Subagent
+// "<short id>"`` when nothing named it — this tab says "subagent" throughout,
+// to tell these apart from the sessions in the other tree.
+const label = computed(() => {
+    const { name, isFallback } = getAgentDisplay(props.node.id, store)
+    return isFallback ? `Subagent "${name}"` : name
+})
 
 // A running agent carries a process state — real, or the synthetic one the
 // agent-link cache maintains. Same signal as the subagent tab's indicator.
@@ -146,7 +151,7 @@ const expanded = ref(true)
             </div>
             <div class="onode-body">
                 <div class="onode-head">
-                    <router-link :to="agentRoute" class="orch-title orch-title-link">Agent "{{ label }}"</router-link>
+                    <router-link :to="agentRoute" class="orch-title orch-title-link">{{ label }}</router-link>
                     <wa-icon
                         :name="status.icon"
                         :style="{ color: status.color }"

@@ -91,8 +91,8 @@ if (ready.value && meta.include_subagents) {
     const linkFetch = store.beginAgentFetch(meta.session_id)
     api.fetchSubagents().then((links) => {
         store.applyAgentSnapshot(meta.session_id, links, linkFetch)
-        // Seed each subagent's slug so the drawer labels them like the owner UI
-        // (Agent <slug>, else Agent <shortId>) via getAgentDisplayLabel.
+        // Seed each subagent's slug so the drawer names them like the owner UI
+        // (see utils/agentLabel.js — the snapshot's own display name wins).
         for (const l of links) if (l.agent_id) seedAgentSession(l.agent_id, l.agent_slug)
     }).catch(() => {})
 }

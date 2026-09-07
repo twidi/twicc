@@ -299,6 +299,7 @@ export const useDataStore = defineStore('shareData', {
                 toolUseLineNum: link.tool_use_line_num, slug: link.agent_slug ?? null,
                 startedAt: link.started_at ?? null, stoppedAt: link.stopped_at ?? null,
                 agentStoppedAt: link.agent_stopped_at ?? null, running: link.running,
+                displayName: link.display_name ?? null,
             })
         },
         // Live: root session entered/left an assistant turn — drives the reused

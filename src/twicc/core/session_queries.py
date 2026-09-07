@@ -10,6 +10,8 @@ must wrap them in ``sync_to_async``.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from django.db.models import Count, Max, Q
 
 # The four aggregates that define a tool call's completion state. Kept as a single
@@ -154,6 +156,47 @@ def tree_agent_links(root):
     return list(AgentLink.objects.filter(Q(session_id=root.id) | Q(session_id__in=owners)).exclude(agent_id=root.id).order_by("id"))
 
 
+class SpawnRef(NamedTuple):
+    """The three fields :func:`spawn_display_names` needs of a link.
+
+    ``AgentLink`` rows already have them; the watcher's live updates carry the
+    same data under different names and wrap themselves in this.
+    """
+
+    session_id: str
+    tool_use_line_num: int
+    tool_use_id: str
+
+
+def spawn_display_names(links, helpers) -> dict[tuple[str, str], str]:
+    """Resolve every link's agent name from the call that spawned it.
+
+    One query for the launchers' spawning items — the launcher may be the root
+    or any agent below it, and its rows stay in the DB even after the provider
+    prunes the transcript on disk. Keyed by ``(owner session, tool_use id)``.
+    """
+    from twicc.core.models import SessionItem
+
+    if not links:
+        return {}
+    condition = Q()
+    for link in links:
+        condition |= Q(session_id=link.session_id, line_num=link.tool_use_line_num)
+    items = {
+        (item.session_id, item.line_num): item
+        for item in SessionItem.objects.filter(condition).only("session_id", "line_num", "content")
+    }
+    names = {}
+    for link in links:
+        item = items.get((link.session_id, link.tool_use_line_num))
+        if item is None:
+            continue
+        name = helpers.get_spawn_display_name(item, link.tool_use_id)
+        if name:
+            names[(link.session_id, link.tool_use_id)] = name
+    return names
+
+
 def build_subagents_state(root, *, frozen_at_line=None, include_metrics=False):
     """Build the shared owner/share tree payload with one completion scan.
 
@@ -191,12 +234,13 @@ def build_subagents_state(root, *, frozen_at_line=None, include_metrics=False):
         links, completions=completions, result_counts=counts,
         trust_agent_stopped=helpers.subagent_idle_trusted, root_cutoff=root.cutoff,
         root_session_id=root.id, include_metrics=include_metrics,
+        display_names=spawn_display_names(links, helpers),
     )
 
 
 def serialize_agent_links(
     links, *, completions=None, result_counts=None, trust_agent_stopped=False,
-    root_cutoff=None, root_session_id=None, include_metrics=False,
+    root_cutoff=None, root_session_id=None, include_metrics=False, display_names=None,
 ) -> list[dict]:
     """Serialize links with distinct persisted-completion and provider-idle evidence.
 
@@ -213,6 +257,7 @@ def serialize_agent_links(
     links = list(links)
     completions = completions or {}
     result_counts = result_counts or {}
+    display_names = display_names or {}
     subagents = {
         row[0]: row[1:]
         for row in Session.objects.filter(id__in=[link.agent_id for link in links])
@@ -236,6 +281,9 @@ def serialize_agent_links(
             **metrics,
             "agent_id": link.agent_id,
             "agent_slug": slug,
+            # What the launcher called this agent. Not sensitive — the spawn
+            # card already shows it — so a share carries it too.
+            "display_name": display_names.get((link.session_id, link.tool_use_id)),
             "owner_session_id": link.session_id,
             "root_session_id": root_session_id,
             "agent_stopped_at": agent_stopped.isoformat() if agent_stopped else None,

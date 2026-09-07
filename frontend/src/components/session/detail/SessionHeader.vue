@@ -7,7 +7,7 @@ import { formatDate } from '../../../utils/date'
 import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES, DISPLAY_MODE } from '../../../constants'
 import { getProviderHelpers, getProviderLabel, getProviderIcon } from '../../../providers'
 import ProviderIcon from '../../ui/ProviderIcon.vue'
-import { getAgentDisplayLabel } from '../../../utils/agentLabel'
+import { getAgentDisplay } from '../../../utils/agentLabel'
 import { stopSubagent, interruptSession } from '../../../composables/useWebSocket'
 import { stopSessionProcess, hardKillSessionProcess } from '../../../composables/useStopSessionProcess'
 import ProjectBadge from '../../project/ProjectBadge.vue'
@@ -83,11 +83,12 @@ const isProviderEnabled = computed(() => {
 
 // Get display name for header
 // - Session mode: title if available, "New session" for drafts without title, otherwise session ID
-// - Subagent mode: ``Agent <slug>`` when the provider exposes a slug
-//   (Codex's agent_nickname); ``Agent <shortId>`` otherwise
+// - Subagent mode: the name the launcher gave the agent (see
+//   utils/agentLabel.js), or ``Agent "<shortId>"`` when nothing named it
 const displayName = computed(() => {
     if (props.mode === 'subagent') {
-        return `Agent ${getAgentDisplayLabel(props.sessionId, store)}`
+        const { name, isFallback } = getAgentDisplay(props.sessionId, store)
+        return isFallback ? `Agent "${name}"` : name
     }
     // For draft sessions without a title, show "New session"
     if (session.value?.draft && !session.value?.title) {

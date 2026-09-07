@@ -32,6 +32,7 @@ from watchfiles import Change, awatch
 from twicc import search
 from twicc.core.enums import ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
+from twicc.core.session_queries import SpawnRef, spawn_display_names
 from twicc.core.serializers import (
     serialize_project,
     serialize_session,
@@ -795,6 +796,17 @@ class BaseSessionsWatcher:
                             Session.objects.filter(id__in=ids).values_list("id", "slug")
                         )
                     )([update.agent_id for update in agent_link_updates])
+                    # ``display_name`` is the launcher's own name for the agent
+                    # (see utils/agentLabel.js). Resolved here too, so a live
+                    # agent's tab and tree node read the same as after a reload
+                    # instead of falling back to its id until the next fetch.
+                    display_names = await sync_to_async(spawn_display_names)(
+                        [
+                            SpawnRef(update.parent_session_id, update.tool_use_line_num, update.tool_use_id)
+                            for update in agent_link_updates
+                        ],
+                        get_provider_helpers(session.provider),
+                    )
                     for update in agent_link_updates:
                         await broadcast_message(channel_layer, {
                             "type": "agent_link_created",
@@ -802,6 +814,9 @@ class BaseSessionsWatcher:
                             "root_session_id": session.parent_session_id or session.id,
                             "agent_session_id": update.agent_id,
                             "agent_slug": slugs_by_id.get(update.agent_id),
+                            "display_name": display_names.get(
+                                (update.parent_session_id, update.tool_use_id)
+                            ),
                             "tool_use_id": update.tool_use_id,
                             "tool_use_line_num": update.tool_use_line_num,
                             "is_background": update.is_background,

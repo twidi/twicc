@@ -19,10 +19,11 @@ export function setAgentLink(state, owner, tool, entry, live = true) {
     if (live && prior?.agentId === entry.agentId) {
         entry = { ...entry, agentStoppedAt: prior.agentStoppedAt, running: prior.running }
     }
-    // ``metrics`` (cost / turns / context) only ever arrives with a snapshot;
-    // a live event carries identity, so it must not erase them.
-    if (entry.metrics === undefined && prior?.agentId === entry.agentId) {
-        entry = { ...entry, metrics: prior.metrics }
+    // ``metrics`` (cost / turns / context) and ``displayName`` only ever arrive
+    // with a snapshot; a live event carries identity, so it must not erase them.
+    if (prior?.agentId === entry.agentId) {
+        if (entry.metrics === undefined) entry = { ...entry, metrics: prior.metrics }
+        if (entry.displayName === undefined) entry = { ...entry, displayName: prior.displayName }
     }
     const idle = state.agentIdle[entry.agentId]
     if (idle) entry = { ...entry, agentStoppedAt: idle.stoppedAt, running: undefined }
@@ -85,6 +86,9 @@ export function applyAgentSnapshot(state, root, agents, token) {
             toolUseLineNum: agent.tool_use_line_num, slug: agent.agent_slug ?? null,
             startedAt: agent.started_at ?? null, stoppedAt: agent.stopped_at ?? null,
             agentStoppedAt: agent.agent_stopped_at ?? null, running: agent.running,
+            // What the launcher called this agent, resolved from the spawn call
+            // (see utils/agentLabel.js). Shared payloads carry it too.
+            displayName: agent.display_name ?? null,
             // Owner payload only (never shared): the agent's own numbers, for a
             // tree node that has no Session row loaded.
             metrics: Object.hasOwn(agent, 'total_cost')
@@ -153,7 +157,7 @@ export function handleAgentEvent(store, msg) {
     const root = msg.root_session_id || msg.parent_session_id
     store.setAgentLink(msg.parent_session_id, msg.tool_use_id, msg.agent_session_id,
         msg.is_background, msg.tool_use_line_num, msg.agent_slug ?? null, null,
-        msg.started_at ?? null, null, root)
+        msg.started_at ?? null, null, root, msg.display_name ?? undefined)
     const link = store.getAgentLink(msg.parent_session_id, msg.tool_use_id)
     if (!link?.stoppedAt && link?.running !== false) store.setSyntheticProcessState(msg.agent_session_id, root, msg.project_id,
         msg.started_at ? time(msg.started_at) / 1000 : null)

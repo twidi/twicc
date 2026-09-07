@@ -4347,10 +4347,14 @@ export const useDataStore = defineStore('data', {
          *   into the AgentLink payload at the API / WS boundary so
          *   downstream code can label tab headers / tool-card summaries
          *   without separately hydrating the subagent Session row.
+         * @param {?string} displayName - What the launcher called this agent,
+         *   resolved from the spawn call (see utils/agentLabel.js). Left
+         *   ``undefined`` by callers that don't know it, which preserves a
+         *   name a previous snapshot already learned.
          */
-        setAgentLink(sessionId, toolId, agentId, isBackground = false, toolUseLineNum = null, slug = null, stoppedAt = null, startedAt = null, agentStoppedAt = null, rootSessionId = null) {
+        setAgentLink(sessionId, toolId, agentId, isBackground = false, toolUseLineNum = null, slug = null, stoppedAt = null, startedAt = null, agentStoppedAt = null, rootSessionId = null, displayName = undefined) {
             return cacheAgentLink(this.localState, sessionId, toolId, {
-                agentId, isBackground, toolUseLineNum, slug, stoppedAt, startedAt, agentStoppedAt,
+                agentId, isBackground, toolUseLineNum, slug, stoppedAt, startedAt, agentStoppedAt, displayName,
                 rootSessionId: rootSessionId || this.sessions[sessionId]?.parent_session_id || sessionId,
             })
         },

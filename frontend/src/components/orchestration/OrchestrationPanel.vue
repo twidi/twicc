@@ -5,7 +5,8 @@
 //   - "sessions": the spawned-session tree, described here;
 //   - "agents": the subagents this session launched, at any depth. Live off the
 //     agent-link cache, so nothing below (fetch, poll, error state) applies to
-//     it — see AgentTreeNode.
+//     it — see AgentTreeNode. Called "subagent" throughout the UI, never just
+//     "agent": next to a tree of sessions, "agent" alone reads as ambiguous.
 //
 // The sessions tree: the full spawned-session tree (``spawned_by``
 // links) rooted at the session's top-level ancestor, fetched from
@@ -234,9 +235,9 @@ onUnmounted(() => {
         <div class="orch-header">
             <div class="orch-toolbar">
                 <div class="orch-toolbar-meta">
-                    <span class="orch-toolbar-title">{{ view === 'agents' ? 'Agent tree' : 'Orchestration tree' }}</span>
+                    <span class="orch-toolbar-title">{{ view === 'agents' ? 'Subagent tree' : 'Orchestration tree' }}</span>
                     <template v-if="view === 'agents'">
-                        <span class="orch-meta-item">{{ agentCount }} agent{{ agentCount > 1 ? 's' : '' }}<template v-if="agentActivitySummary"> ({{ agentActivitySummary }})</template></span>
+                        <span class="orch-meta-item">{{ agentCount }} subagent{{ agentCount > 1 ? 's' : '' }}<template v-if="agentActivitySummary"> ({{ agentActivitySummary }})</template></span>
                         <span v-if="showCosts && agentTotalCost != null" class="orch-meta-item">
                             <CostDisplay :cost="agentTotalCost" /> total
                         </span>
@@ -266,7 +267,7 @@ onUnmounted(() => {
                             @click="selectedView = 'agents'"
                         >
                             <wa-icon slot="start" name="robot"></wa-icon>
-                            Agents
+                            Subagents
                         </wa-button>
                     </wa-button-group>
                     <span
@@ -311,7 +312,7 @@ onUnmounted(() => {
                 </div>
                 <div v-else class="orch-state orch-state-empty">
                     <wa-icon name="robot"></wa-icon>
-                    <span>No agent.</span>
+                    <span>No subagent.</span>
                 </div>
             </template>
             <template v-else>

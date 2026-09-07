@@ -190,6 +190,7 @@ from twicc.core.models import SessionItem
 from twicc.paths import get_artifacts_dir
 from twicc.pricing import calculate_line_context_usage
 from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalEvent
+from twicc.providers.helpers import humanize_identifier
 from twicc.providers.plan_docs import DocEditEvent, extract_shell_write_targets, is_plan_doc_path
 from twicc.providers.compute_base import (
     _EMPTY_ANALYSIS,
@@ -1708,17 +1709,6 @@ def _parse_agent_final_answer(parsed_json: dict) -> tuple[str, str] | None:
     if message.sender is None:
         return None
     return message.sender, message.payload
-
-
-def _humanize_identifier(raw: str) -> str:
-    """Sentence-case a machine identifier: ``tweak_display_test`` → ``Tweak display test``.
-
-    Mirrors the frontend's ``humanizeToolSegment`` so a task name reads
-    the same in the session title (written here) and on the parent's
-    spawn card (rendered there).
-    """
-    spaced = raw.replace("_", " ").replace("-", " ").strip()
-    return spaced[:1].upper() + spaced[1:] if spaced else ""
 
 
 def _parse_agent_new_task(parsed_json: dict) -> _InterAgentMessage | None:
@@ -3396,7 +3386,7 @@ class CodexSessionCompute(BaseSessionCompute):
         if task is not None:
             if task.payload:
                 return task.payload
-            return _humanize_identifier(task.task_name) if task.task_name else None
+            return humanize_identifier(task.task_name) if task.task_name else None
         return user_message_text(parsed_json)
 
     # ------------------------------------------------------------------
