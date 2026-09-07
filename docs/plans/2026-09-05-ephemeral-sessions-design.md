@@ -151,6 +151,10 @@ requested provider differs. The manager repeats the check under its lock.
 
 When `ephemeral` is true:
 
+- A persistent Session id is refused with `ephemeral_existing_session`. Release
+  that provisional reservation completely after the DB proves the row exists.
+  Do not retain a readonly tombstone that would block ordinary later sends.
+
 - Preserve this early refusal (`manager.is_ephemeral_id(session_id)`, §4.2). `_handle_send_message` resolves `exists` from the DB
   only, so a second send on an ephemeral id (alive or dead) always lands in
   this create path; without this early check the three `set_pending_*` calls
@@ -353,7 +357,10 @@ counts (a held turn may see several).
   session id to announce.
 - `attach_stderr_logging`, `log_stream_event`, `log_approval_request`, and
   `log_approval_response` are all skipped. Debug mode must not create an SDK
-  log for the ephemeral id.
+  log for the ephemeral id. Suppress payload-bearing error and approval
+  exception logs too, including startup errors propagated through manager,
+  service and WS handling. Keep diagnostics limited to technical status.
+  Quote literal MCP server names in dotted TOML override keys.
 - `CodexAgent(..., ephemeral=True, work_dirs=[])`.
 
 In `_handle_stream_event`, after the parent-thread filter, on `item/completed`
