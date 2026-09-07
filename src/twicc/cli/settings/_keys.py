@@ -25,6 +25,7 @@ GENERIC_KEY_DESCRIPTIONS: dict[str, str] = {
     "titleSuggestionModel": "Model used for title suggestions: provider, haiku, or luna.",
     "titleSystemPrompt": "System prompt used to generate titles ('{text}' = the message); unset restores the default.",
     "autoUnpinOnArchive": "Unpin a session automatically when it is archived.",
+    "ephemeralExplainerSeen": "Skip the ephemeral-session explainer after it has been acknowledged.",
     "worktreeDirectoryTemplate": "Template for the base dir of new git worktrees; placeholders {git_root} {project_name} {project_basedir} (empty = none).",
     "terminalUseTmux": "Wrap terminal sessions in tmux by default.",
     "terminalTmuxConfigPath": "Path to a custom tmux config for terminal sessions (empty = default).",

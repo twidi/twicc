@@ -22,6 +22,7 @@ from twicc.logging_context import provider_log_context
 from twicc.providers.db_writer import run_under_db_write_lock
 
 from .base_agent import BaseAgent
+from . import ephemeral as ephemeral_runs
 from .states import AgentInfo, AgentState
 
 if TYPE_CHECKING:
@@ -58,6 +59,7 @@ class BaseAgentManager:
 
     def __init__(self) -> None:
         self._agents: dict[str, BaseAgent] = {}
+        self._ephemeral_cleanup_tasks: set[asyncio.Task] = set()
         self._lock = asyncio.Lock()
         self._broadcast_callback: BroadcastCallback | None = None
         self._timeout_monitor_task: asyncio.Task[None] | None = None
@@ -81,6 +83,12 @@ class BaseAgentManager:
     # ------------------------------------------------------------------
     # Public API — generic for every provider
     # ------------------------------------------------------------------
+
+    def is_ephemeral_id(self, session_id: str) -> bool:
+        return ephemeral_runs.is_known(session_id)
+
+    def _check_ephemeral_readonly(self, session_id: str, ephemeral_admission=None) -> None:
+        ephemeral_runs.check_readonly(session_id, ephemeral_admission)
 
     def set_broadcast_callback(self, callback: BroadcastCallback) -> None:
         """Register the callback used to broadcast agent state changes."""
@@ -350,6 +358,12 @@ class BaseAgentManager:
                     self._agents.clear()
                     logger.info("All agents shut down")
 
+            # Kill tasks acquire the manager lock: drain only after releasing it.
+            tasks = list(self._ephemeral_cleanup_tasks)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            ephemeral_runs.clear(self.provider.value)
+
             # Clear the stop event last so a future `_ensure_timeout_monitor_running`
             # creates a fresh one tied to the new lifecycle.
             self._stop_event = None
@@ -359,6 +373,29 @@ class BaseAgentManager:
     # ------------------------------------------------------------------
 
     async def _start_agent(
+        self, session_id: str, project_id: str, cwd: str, text: str, resume: bool,
+        *, settings: AgentSettings, ephemeral: bool = False, ephemeral_admission=None,
+        **start_kwargs: Any,
+    ) -> str:
+        self._check_ephemeral_readonly(session_id, ephemeral_admission)
+        if not resume and ephemeral_admission is None:
+            ephemeral_admission = ephemeral_runs.reserve(session_id, self.provider.value, project_id, ephemeral=ephemeral)
+        ids = [session_id]
+        succeeded = False
+        try:
+            canonical_id = await self._start_agent_with_admission(
+                session_id, project_id, cwd, text, resume, settings=settings,
+                ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
+                ephemeral_ids=ids, **start_kwargs,
+            )
+            succeeded = True
+            return canonical_id
+        finally:
+            if ephemeral:
+                ephemeral_runs.drain_buffers(*ids)
+            await ephemeral_runs.finish(ephemeral_admission, failed=not succeeded)
+
+    async def _start_agent_with_admission(
         self,
         session_id: str,
         project_id: str,
@@ -367,6 +404,9 @@ class BaseAgentManager:
         resume: bool,
         *,
         settings: AgentSettings,
+        ephemeral: bool = False,
+        ephemeral_admission=None,
+        ephemeral_ids: list[str],
         **start_kwargs: Any,
     ) -> str:
         """Build a provider agent, bind it to its canonical id, register and start.
@@ -399,6 +439,7 @@ class BaseAgentManager:
             )
             agent = await self._create_agent(
                 session_id, project_id, cwd, resume=resume, settings=settings,
+                **({"ephemeral": True} if ephemeral else {}),
             )
 
             # Once ``_create_agent`` returns, the agent owns external resources
@@ -411,6 +452,14 @@ class BaseAgentManager:
             # ``interrupt_or_kill`` (which is required to be safe on a not-yet-
             # started agent — see the docstring of ``_create_agent``).
             try:
+                if ephemeral_admission is not None:
+                    ephemeral_ids.append(agent.session_id)
+                    ephemeral_runs.bind(ephemeral_admission, agent.session_id)
+                if ephemeral:
+                    agent.ephemeral_draft_id = session_id
+                    from twicc.pending_titles import pop_pending_title
+                    pop_pending_title(session_id)
+                    pop_pending_title(agent.session_id)
                 # Brand-new sessions: tell the frontend which canonical id is bound
                 # to its local draft, so it can reconcile (redirect or discard).
                 # On resume the frontend already knows the canonical id — skip it.
@@ -471,6 +520,7 @@ class BaseAgentManager:
                                 system_prompt_addendum=pending_attrs.system_prompt_addendum,
                                 hybrid=pending_attrs.hybrid,
                                 layout=pending_attrs.layout,
+                                ephemeral=pending_attrs.ephemeral,
                             )
 
                     await self.notify_session_bound(
@@ -480,15 +530,20 @@ class BaseAgentManager:
 
                 await self._register_and_start(agent, text, resume=resume, **start_kwargs)
                 return agent.session_id
-            except Exception:
+            except BaseException:
                 try:
                     await agent.interrupt_or_kill(reason="startup-failed")
-                except Exception:
-                    logger.exception(
-                        "Cleanup interrupt_or_kill failed for session %s after start-up error",
-                        agent.session_id,
-                    )
-                self._agents.pop(agent.session_id, None)
+                except Exception as cleanup_error:
+                    if ephemeral:
+                        logger.error("Ephemeral startup cleanup failed (%s)", type(cleanup_error).__name__)
+                    else:
+                        logger.exception(
+                            "Cleanup interrupt_or_kill failed for session %s after start-up error",
+                            agent.session_id,
+                        )
+                if self._agents.get(agent.session_id) is agent:
+                    self._agents.pop(agent.session_id, None)
+                    ephemeral_runs.agent_ended(agent.session_id)
                 raise
 
     async def _register_and_start(
@@ -513,6 +568,7 @@ class BaseAgentManager:
 
         session_id = agent.session_id
         self._agents[session_id] = agent
+        ephemeral_runs.mark_registered(session_id)
 
         now = timezone.now()
 
@@ -551,8 +607,9 @@ class BaseAgentManager:
                 )
             )
 
-        await run_under_db_write_lock(_persist_run_and_start_timestamps)
-        await self._broadcast_session_updated(session_id)
+        if not getattr(agent, "ephemeral", False):
+            await run_under_db_write_lock(_persist_run_and_start_timestamps)
+            await self._broadcast_session_updated(session_id)
 
         # Initial STARTING broadcast (state was set to STARTING in __init__).
         await self._on_state_change(agent)
@@ -586,7 +643,8 @@ class BaseAgentManager:
         share the same draft-title bridge (:mod:`twicc.pending_titles`).
         """
         info = agent.get_info()
-        await self._persist_process_run_transition(agent, info.state)
+        if not getattr(agent, "ephemeral", False):
+            await self._persist_process_run_transition(agent, info.state)
         await self._broadcast_info(info)
         if info.state == AgentState.DEAD:
             # Cancel any background pending-title work, if any: once the
@@ -596,7 +654,8 @@ class BaseAgentManager:
             # already lost regardless of the verify).
             self._cancel_pending_title_retry(agent.session_id)
             self._cancel_pending_title_verify(agent.session_id)
-            await self._update_session_stopped_at(agent)
+            if not getattr(agent, "ephemeral", False):
+                await self._update_session_stopped_at(agent)
             self._cleanup_dead(agent)
         elif info.state == AgentState.ASSISTANT_TURN:
             # Wake the paused usage sync loops: an agent starting real work may
@@ -604,7 +663,48 @@ class BaseAgentManager:
             # with no human present. No-op when the loops aren't paused.
             from twicc.usage_task import note_activity
             note_activity()
-            await self._flush_pending_title(agent)
+            if not getattr(agent, "ephemeral", False):
+                await self._flush_pending_title(agent)
+        if getattr(agent, "ephemeral", False):
+            await self._complete_ephemeral(agent, info.state)
+
+    async def _complete_ephemeral(self, agent: BaseAgent, state: AgentState) -> None:
+        if agent.ephemeral_result_emitted or state not in (AgentState.USER_TURN, AgentState.DEAD):
+            return
+        if state == AgentState.DEAD and agent.kill_reason == "shutdown":
+            return
+        from datetime import datetime, UTC
+        from channels.layers import get_channel_layer
+        from .states import DELIBERATE_STOP_REASONS
+
+        agent.ephemeral_result_emitted = True
+        if state == AgentState.USER_TURN:
+            status = "stopped" if agent.ephemeral_soft_interrupted else "done"
+        else:
+            status = "stopped" if agent.kill_reason in DELIBERATE_STOP_REASONS else "error"
+        frame = {
+            "type": "ephemeral_result", "session_id": agent.session_id,
+            "project_id": agent.project_id, "provider": agent.provider.value,
+            "status": status, "text": agent.ephemeral_final_text or "",
+            "error": (agent.error or agent.kill_reason) if status == "error" else None,
+            "cost_usd": agent.ephemeral_usage.get("cost_usd"),
+            "duration_ms": agent.ephemeral_usage.get("duration_ms"),
+            "finished_at": datetime.now(UTC).isoformat(),
+        }
+        try:
+            layer = get_channel_layer()
+            if layer is not None:
+                await layer.group_send("updates", {"type": "broadcast", "data": frame})
+        finally:
+            if state == AgentState.USER_TURN:
+                task = asyncio.create_task(self.kill_agent(agent.session_id, reason="ephemeral-done"))
+                self._ephemeral_cleanup_tasks.add(task)
+                task.add_done_callback(self._ephemeral_cleanup_done)
+
+    def _ephemeral_cleanup_done(self, task: asyncio.Task) -> None:
+        self._ephemeral_cleanup_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Ephemeral agent cleanup failed (%s)", type(task.exception()).__name__)
 
     async def _flush_pending_title(self, agent: BaseAgent) -> None:
         """Persist any pending session title once the agent reaches ASSISTANT_TURN.
@@ -852,7 +952,7 @@ class BaseAgentManager:
         try:
             await self._broadcast_callback(info)
         except Exception as e:
-            logger.error("Error broadcasting state change: %s", e)
+            logger.error("Error broadcasting state change: %s", type(e).__name__ if info.extra and info.extra.get("ephemeral") else e)
 
     async def _persist_process_run_transition(
         self, agent: BaseAgent, state: AgentState,
@@ -1019,6 +1119,7 @@ class BaseAgentManager:
                 "Cleaning up dead agent for session %s", agent.session_id,
             )
             del self._agents[agent.session_id]
+            ephemeral_runs.agent_ended(agent.session_id)
 
     async def _broadcast_session_updated(self, session_id: str) -> None:
         """Push a ``session_updated`` message via WebSocket.
@@ -1258,6 +1359,7 @@ class BaseAgentManager:
         *,
         resume: bool,
         settings: AgentSettings,
+        ephemeral: bool = False,
         **kwargs: Any,
     ) -> BaseAgent:
         """Factory hook: build a provider-specific agent instance.

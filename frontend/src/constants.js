@@ -100,6 +100,7 @@ export const SYNTHETIC_ITEM = {
     // Streaming blocks use baseLineNum - blockIndex as their lineNum (e.g., -1000, -1001, ...)
     STREAMING_BLOCK: { baseLineNum: -1000, kind: 'streaming-block' },
     WORKING_ASSISTANT_MESSAGE: { lineNum: -500, kind: 'working-assistant-message' },
+    EPHEMERAL_RESULT: { lineNum: -400, kind: 'ephemeral-result' },
 }
 
 /**
@@ -215,6 +216,7 @@ export const SYNCED_SETTINGS_KEYS = new Set([
     // the user has seen the hybrid-mode explainer dialog (so it stops gating
     // the toggle). Written only via the dialog's "don't show again" switch.
     'claudeHybridExplainerSeen',
+    'ephemeralExplainerSeen',
     // Start new Claude Code sessions in hybrid mode by default (drafts only;
     // never enforced on existing sessions). Shown in the Claude settings section.
     'claudeHybridDefault',

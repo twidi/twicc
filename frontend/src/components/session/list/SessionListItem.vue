@@ -203,7 +203,7 @@ const hasUnread = computed(() => {
  * Session Actions menu. Active session is allowed (mark-unread will deselect it).
  */
 const canToggleReadState = computed(() => {
-    if (props.session.draft || props.session.archived) return false
+    if (props.session.draft || props.session.ephemeral || props.session.archived) return false
     if (processState.value && processState.value.state !== PROCESS_STATE.USER_TURN) return false
     return true
 })
@@ -302,6 +302,7 @@ function timestampToDate(timestamp) {
  * @returns {boolean}
  */
 const canStop = computed(() => {
+    if (props.session.ephemeral && !props.session.draft) return props.session.ephemeralPhase === 'running'
     const state = processState.value?.state
     return state && state !== PROCESS_STATE.DEAD
 })
@@ -370,6 +371,11 @@ const openRenameDialog = inject('openRenameDialog')
 function handleMenuSelect(event) {
     const action = event.detail.item.value
     const session = props.session
+    if (session.ephemeral && !session.draft) {
+        if (action === 'stop') store.stopEphemeralSession(session.id)
+        if (action === 'delete-draft') store.discardEphemeralSession(session.id)
+        return
+    }
     if (action === 'rename') {
         openRenameDialog(session)
     } else if (action === 'share') {
@@ -456,6 +462,7 @@ function handleMenuSelect(event) {
                 </AppTooltip>
                 <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
                 <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
+                <wa-tag v-else-if="session.ephemeral && !session.draft" size="small" variant="neutral"><span class="ephemeral-phase-dot" :class="session.ephemeralPhase"></span>Ephemeral</wa-tag>
                 <wa-tag v-else-if="session.draft && !processState" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                 <ProviderIcon v-if="providerIcon" :provider="session.provider" :colored="false" class="provider-icon" />
                 <wa-icon
@@ -494,7 +501,7 @@ function handleMenuSelect(event) {
                 <AppTooltip v-if="compactView && !hasUnread && pendingRequest" :for="`compact-pending-request-${session.id}`">Waiting for your response</AppTooltip>
                 <!-- Compact mode: process indicator (hidden when unread or pending request is shown) -->
                 <ProcessIndicator
-                    v-if="compactView && processState && !hasUnread && !pendingRequest"
+                    v-if="compactView && processState && !session.ephemeral && !hasUnread && !pendingRequest"
                     :id="`compact-process-indicator-${session.id}`"
                     :state="processState.state"
                     :has-active-crons="hasActiveCrons"
@@ -502,7 +509,7 @@ function handleMenuSelect(event) {
                     :animate-states="animateStates"
                     class="compact-process-indicator"
                 />
-                <AppTooltip v-if="compactView && processState && !hasUnread && !pendingRequest" :for="`compact-process-indicator-${session.id}`">{{ providerLabel }} state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
+                <AppTooltip v-if="compactView && processState && !session.ephemeral && !hasUnread && !pendingRequest" :for="`compact-process-indicator-${session.id}`">{{ providerLabel }} state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
             </div>
             <!-- Project badge line (hidden in compact mode, dot is shown inline instead) -->
             <!-- When unread + no process: show unread indicator on the project line (right-aligned) -->
@@ -525,7 +532,7 @@ function handleMenuSelect(event) {
             </div>
             <!-- Process info row (only shown when process is active, hidden in compact mode) -->
             <div
-                v-if="!compactView && processState"
+                v-if="!compactView && processState && !session.ephemeral"
                 class="process-info"
                 :style="{ color: getProcessColor(processState.state) }"
             >
@@ -572,7 +579,7 @@ function handleMenuSelect(event) {
                 </span>
             </div>
             <!-- Meta row (not shown for draft sessions, hidden in compact mode) -->
-            <div v-if="!compactView && !session.draft" class="session-meta" :class="{ 'session-meta--no-cost': !showCosts }">
+            <div v-if="!compactView && !session.draft && !session.ephemeral" class="session-meta" :class="{ 'session-meta--no-cost': !showCosts }">
                 <span :id="`session-messages-${session.id}`" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.user_message_count ?? '??' }}</span>
                 <AppTooltip :for="`session-messages-${session.id}`">Number of message turns</AppTooltip>
 
@@ -607,15 +614,15 @@ function handleMenuSelect(event) {
                 <wa-icon name="ellipsis-v" label="Session menu"></wa-icon>
             </wa-button>
             <!-- Standard actions -->
-            <wa-dropdown-item value="rename">
+            <wa-dropdown-item v-if="!session.ephemeral || session.draft" value="rename">
                 <wa-icon slot="icon" name="pencil"></wa-icon>
                 Rename
             </wa-dropdown-item>
-            <wa-dropdown-item v-if="!session.draft && sharingEnabled" value="share">
+            <wa-dropdown-item v-if="!session.draft && !session.ephemeral && sharingEnabled" value="share">
                 <wa-icon slot="icon" name="share-nodes"></wa-icon>
                 Share…
             </wa-dropdown-item>
-            <template v-if="!session.draft">
+            <template v-if="!session.draft && !session.ephemeral">
                 <wa-divider></wa-divider>
                 <wa-dropdown-item type="checkbox" :checked="!session.pinned" value="pin-none">
                     Not pinned
@@ -639,7 +646,7 @@ function handleMenuSelect(event) {
                 <wa-icon slot="icon" name="eye"></wa-icon>
                 Mark as unread
             </wa-dropdown-item>
-            <wa-dropdown-item v-if="!session.draft && !session.archived" value="archive">
+            <wa-dropdown-item v-if="!session.draft && !session.ephemeral && !session.archived" value="archive">
                 <wa-icon slot="icon" name="box-archive"></wa-icon>
                 {{ canStop ? `Archive (it will stop the ${providerLabel} process)` : 'Archive' }}
             </wa-dropdown-item>
@@ -648,15 +655,15 @@ function handleMenuSelect(event) {
                 Unarchive
             </wa-dropdown-item>
             <!-- Danger actions -->
-            <template v-if="canStop || session.draft">
+            <template v-if="canStop || session.draft || session.ephemeral">
                 <wa-divider></wa-divider>
                 <wa-dropdown-item v-if="canStop" value="stop" :disabled="stoppingProcess">
                     <wa-icon slot="icon" name="ban"></wa-icon>
                     {{ stoppingProcess ? 'Stopping…' : `Stop the ${providerLabel} process` }}
                 </wa-dropdown-item>
-                <wa-dropdown-item v-if="session.draft" value="delete-draft" variant="danger">
+                <wa-dropdown-item v-if="session.draft || session.ephemeral" value="delete-draft" variant="danger">
                     <wa-icon slot="icon" name="trash"></wa-icon>
-                    Delete draft
+                    Discard
                 </wa-dropdown-item>
             </template>
         </wa-dropdown>
@@ -665,6 +672,12 @@ function handleMenuSelect(event) {
 </template>
 
 <style scoped>
+.ephemeral-phase-dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; margin-right: 0.35rem; background: var(--wa-color-neutral-fill-normal); }
+.ephemeral-phase-dot.running { background: var(--wa-color-brand-fill-loud); }
+.ephemeral-phase-dot.done { background: var(--wa-color-success-fill-loud); }
+.ephemeral-phase-dot.error { background: var(--wa-color-danger-fill-loud); }
+.ephemeral-phase-dot.lost { background: var(--wa-color-warning-fill-loud); }
+
 .session-item-wrapper {
     position: relative;
     width: 100%;

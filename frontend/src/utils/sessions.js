@@ -38,7 +38,7 @@ export function getSessionCutoffMs(session) {
 export function isSessionUnread(session, processState) {
     if (!session) return false
     if (session.hidden) return false
-    if (session.draft || session.archived || session.parent_session_id) return false
+    if (session.draft || session.ephemeral || session.archived || session.parent_session_id) return false
     if (!session.last_new_content_at) return false
     if (session.last_viewed_at && session.last_new_content_at <= session.last_viewed_at) return false
     if (processState && processState.state !== 'user_turn') return false

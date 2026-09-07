@@ -1,3 +1,4 @@
+import { isLaunchedEphemeral } from '../utils/ephemeralSessions'
 // frontend/src/composables/useWebSocket.js
 
 import { ref, watch, defineAsyncComponent } from 'vue'
@@ -775,6 +776,11 @@ function notifyProcessStateChange(msg, previousState, route) {
     const sessionId = msg.session_id
     const settings = useSettingsStore()
     const providerLabel = getProviderLabel(msg.provider)
+    const ephemeral = msg.extra?.ephemeral === true
+    const localSession = ephemeral ? useDataStore().getSession(sessionId) : null
+    const finishedTitle = ephemeral ? 'Ephemeral session finished' : `${providerLabel} finished working`
+    if (ephemeral && !localSession) return
+    if (localSession) msg = { ...msg, session_title: localSession.title || 'Ephemeral session' }
     const isViewingSession = route?.params?.sessionId === sessionId
     const effects = getProcessStateNotificationEffects(msg, previousState, {
         isViewingSession,
@@ -788,7 +794,7 @@ function notifyProcessStateChange(msg, previousState, route) {
     // This prevents stale state if the user locks their phone or switches
     // apps before the trailing throttle call fires. requirePresence: a
     // desktop left open+focused but unattended must not auto-mark read here.
-    if (effects.markViewed) {
+    if (effects.markViewed && !ephemeral) {
         forceNotifySessionViewed(sessionId, 'process-user-turn', { requirePresence: true })
     }
     // In-app toast when the user is on TwiCC but not viewing this session
@@ -796,10 +802,10 @@ function notifyProcessStateChange(msg, previousState, route) {
         __hmrState.activeUserTurnToasts.add(sessionId)
         toast.session(sessionId, {
             type: 'info',
-            title: `${providerLabel} finished working`,
+            title: finishedTitle,
             duration: 15000,
             autoDismiss: true,
-            showActions: true,
+            showActions: !ephemeral,
         })
     }
     // Sound notification
@@ -809,7 +815,7 @@ function notifyProcessStateChange(msg, previousState, route) {
     // Browser notification
     if (effects.sendUserTurnBrowser) {
         sendBrowserNotification(
-            `${providerLabel} finished working`,
+            finishedTitle,
             buildNotificationBody(msg),
         )
     }
@@ -839,7 +845,7 @@ function notifyProcessStateChange(msg, previousState, route) {
     }
 
     // --- Process death notifications (toast only, unchanged) ---
-    if (msg.state === 'dead') {
+    if (msg.state === 'dead' && !ephemeral) {
         // Only notify for errors and timeouts, not for normal lifecycle
         if (msg.kill_reason === 'error') {
             toast.session(sessionId, {
@@ -1080,6 +1086,12 @@ export function useWebSocket() {
             case 'project_updated':
                 store.updateProject(msg.project)
                 break
+            case 'ephemeral_result':
+                store.receiveEphemeralResult(msg)
+                break
+            case 'ephemeral_admission_failed':
+                store.failEphemeralAdmission(msg)
+                break
             case 'session_bound': {
                 // The backend has confirmed the provider-side canonical id
                 // bound to a local draft. If the canonical session is already
@@ -1091,15 +1103,19 @@ export function useWebSocket() {
                 // bindDraftSession is a no-op.
                 const draftId = msg.draft_session_id
                 const sessionId = msg.session_id
-                if (store.getSession(sessionId)) {
+                if (isLaunchedEphemeral(store.getSession(draftId)) || store.localState.ephemeralControls[draftId] || store.getSession(sessionId)) {
                     store.bindDraftSession(draftId, sessionId)
-                } else {
+                } else if (!store.isEphemeralSessionId(draftId)) {
                     store.localState.pendingDraftBindings[draftId] = sessionId
                 }
                 break
             }
             case 'session_updated': {
                 const existingSession = store.getSession(msg.session.id)
+                if (isLaunchedEphemeral(existingSession)) {
+                    console.warn('Unexpected server update for ephemeral session', msg.session.id)
+                    break
+                }
                 if (existingSession?.draft) {
                     // Draft session confirmed by the backend — update with real data.
                     // Preserve locally-set title if it differs from what the backend has.
@@ -1421,6 +1437,16 @@ export function useWebSocket() {
                 }
                 break
             case 'process_state': {
+                if (msg.extra?.ephemeral) {
+                    store.localState.ephemeralIds[msg.session_id] = true
+                    if (msg.extra.ephemeral_draft_id) store.localState.ephemeralIds[msg.extra.ephemeral_draft_id] = true
+                    store.bindEphemeralSession(msg.extra.ephemeral_draft_id || msg.session_id, msg.session_id)
+                    if (msg.state === 'dead') store.clearEphemeralControl(msg.session_id)
+                    if (!store.getSession(msg.session_id)) {
+                        if (msg.state === 'dead') delete store.processStates[msg.session_id]
+                        break
+                    }
+                }
                 // Capture previous state before updating (needed for transition detection)
                 const previousProcessState = store.processStates[msg.session_id] || null
                 // When leaving assistant_turn, optimistically set last_new_content_at
@@ -1432,7 +1458,7 @@ export function useWebSocket() {
                 // timestamp, which is also after last_viewed_at, so the session stays unread.
                 if (previousProcessState?.state === 'assistant_turn' && msg.state !== 'assistant_turn') {
                     const session = store.getSession(msg.session_id)
-                    if (session) {
+                    if (session && !isLaunchedEphemeral(session)) {
                         store.updateSession({ ...session, last_new_content_at: new Date().toISOString() })
                     }
                 }
@@ -1466,6 +1492,7 @@ export function useWebSocket() {
                 break
             }
             case 'process_label': {
+                if (isLaunchedEphemeral(store.getSession(msg.session_id))) break
                 // Transient label override for WorkingAssistantMessage (e.g. "compacting")
                 const ps = store.processStates[msg.session_id]
                 if (ps) {
@@ -1504,6 +1531,7 @@ export function useWebSocket() {
                 break
             }
             case 'process_tools': {
+                if (isLaunchedEphemeral(store.getSession(msg.session_id))) break
                 // Active-tool list for the WorkingAssistantMessage status line.
                 const ps = store.processStates[msg.session_id]
                 if (!ps) break
@@ -1550,8 +1578,9 @@ export function useWebSocket() {
                 break
             }
             case 'active_processes':
-                // Initialize process states from server on connection
+                // Bind synchronously before any later live frames can target canonical ids.
                 store.setActiveProcesses(msg.processes)
+                store.reconcileEphemeralProcesses(msg.processes, msg.ephemeral_starting || [])
                 break
             case 'invalid_title':
                 // Show error toast for invalid session title
@@ -1801,15 +1830,19 @@ export function useWebSocket() {
                 })
                 break
             case 'stream_block_start':
+                if (store.isEphemeralSessionId(msg.session_id) || store.processStates[msg.session_id]?.extra?.ephemeral) break
                 store.streamBlockStart(msg.session_id, msg.message_id, msg.block_index, msg.block_type)
                 break
             case 'stream_block_delta':
+                if (store.isEphemeralSessionId(msg.session_id) || store.processStates[msg.session_id]?.extra?.ephemeral) break
                 store.streamBlockDelta(msg.session_id, msg.message_id, msg.block_index, msg.text)
                 break
             case 'stream_block_stop':
+                if (store.isEphemeralSessionId(msg.session_id) || store.processStates[msg.session_id]?.extra?.ephemeral) break
                 store.streamBlockStop(msg.session_id, msg.message_id, msg.block_index)
                 break
             case 'stream_block_end':
+                if (store.isEphemeralSessionId(msg.session_id) || store.processStates[msg.session_id]?.extra?.ephemeral) break
                 store.streamBlockEnd(msg.session_id, msg.message_id, msg.block_index, msg.uuid)
                 break
             case 'startup_progress':

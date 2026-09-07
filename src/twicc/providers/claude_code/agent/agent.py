@@ -165,6 +165,8 @@ class ClaudeCodeAgent(BaseAgent):
         get_session_slug: Callable[[str], Coroutine[Any, Any, str | None]],
         on_cron_created: CronCreatedCallback,
         on_cron_deleted: CronDeletedCallback,
+        *,
+        ephemeral: bool = False,
     ) -> None:
         """Initialize a Claude Code agent wrapper.
 
@@ -184,7 +186,7 @@ class ClaudeCodeAgent(BaseAgent):
             on_cron_deleted: Async callback fired when a CronDelete PostToolUse event occurs.
                 Receives (session_id, cron_id).
         """
-        super().__init__(session_id, project_id, cwd, agent_settings=settings)
+        super().__init__(session_id, project_id, cwd, agent_settings=settings, ephemeral=ephemeral)
 
         self._client: ClaudeSDKClient | None = None
         # Effective trust of the project, resolved once per process start (trust
@@ -250,7 +252,7 @@ class ClaudeCodeAgent(BaseAgent):
         self._first_user_turn_reached = False           # True only if USER_TURN was reached (not DEAD)
         self._old_runs_purged = False                   # True after old ProcessRuns are purged at first USER_TURN
 
-        logger.debug(
+        self._logger.debug(
             "ClaudeCodeAgent created for session %s, project %s, cwd=%s, settings=%s",
             session_id,
             project_id,
@@ -263,7 +265,9 @@ class ClaudeCodeAgent(BaseAgent):
 
         This callback is passed to the SDK to capture stderr lines.
         """
-        logger.warning(
+        if getattr(self, "ephemeral", False):
+            return
+        self._logger.warning(
             "Claude Code stderr for session %s: %s",
             self.session_id,
             line.rstrip(),
@@ -326,6 +330,8 @@ class ClaudeCodeAgent(BaseAgent):
             input_data: The PostToolUseHookInput dict from the SDK, containing
                 tool_name, tool_input, and tool_response.
         """
+        if getattr(self, "ephemeral", False):
+            return
         tool_name = input_data.get("tool_name")
         tool_input = input_data.get("tool_input", {})
         tool_response = input_data.get("tool_response")
@@ -350,7 +356,7 @@ class ClaudeCodeAgent(BaseAgent):
                 it = cron_occurrences(cron_expr, created_at)
                 next_fire = next(it)
             except Exception:
-                logger.warning(
+                self._logger.warning(
                     "Failed to parse cron expression '%s' for session %s, skipping persistence",
                     cron_expr,
                     self.session_id,
@@ -359,7 +365,7 @@ class ClaudeCodeAgent(BaseAgent):
 
             # For one-shot crons, skip if next_fire is already in the past
             if not recurring and next_fire <= created_at:
-                logger.warning(
+                self._logger.warning(
                     "One-shot cron '%s' for session %s has next_fire in the past (%s), skipping persistence",
                     cron_expr,
                     self.session_id,
@@ -367,7 +373,7 @@ class ClaudeCodeAgent(BaseAgent):
                 )
                 return
 
-            logger.info(
+            self._logger.info(
                 "Cron job created for session %s: id=%s, cron=%s, recurring=%s, next_fire=%s",
                 self.session_id,
                 job_id,
@@ -382,19 +388,19 @@ class ClaudeCodeAgent(BaseAgent):
                     prompt, created_at, next_fire,
                 )
             except Exception as e:
-                logger.error("Error in on_cron_created callback for session %s: %s", self.session_id, e)
+                self._logger.error("Error in on_cron_created callback for session %s: %s", self.session_id, e)
 
         elif tool_name == "CronDelete" and isinstance(tool_response, dict):
             job_id = tool_response.get("id") or tool_input.get("id")
             if not job_id:
                 return
 
-            logger.info("Cron job deleted for session %s: id=%s", self.session_id, job_id)
+            self._logger.info("Cron job deleted for session %s: id=%s", self.session_id, job_id)
 
             try:
                 await self._on_cron_deleted(self.session_id, job_id)
             except Exception as e:
-                logger.error("Error in on_cron_deleted callback for session %s: %s", self.session_id, e)
+                self._logger.error("Error in on_cron_deleted callback for session %s: %s", self.session_id, e)
 
     def _serialize_active_tools(self) -> list[dict]:
         """Return ``_active_tools`` as a list of dicts ready for transport."""
@@ -706,7 +712,7 @@ class ClaudeCodeAgent(BaseAgent):
                 tool_name, input_data, getattr(context, "blocked_path", None),
             )
             if self._targets_only_work_dirs(paths, fully_known):
-                logger.info(
+                self._logger.info(
                     "Auto-approving %s for session %s — targets only system "
                     "work dirs", tool_name, self.session_id,
                 )
@@ -728,7 +734,7 @@ class ClaudeCodeAgent(BaseAgent):
         try:
             response = await self._await_pending_request(request)
         except asyncio.CancelledError:
-            logger.warning(
+            self._logger.warning(
                 "[session %s] [permission %s] Future cancelled while awaiting (tool=%r)",
                 self.session_id, request_id, tool_name,
             )
@@ -764,7 +770,7 @@ class ClaudeCodeAgent(BaseAgent):
         SDK's own cancel semantics.
         """
         request = make_elicitation_pending_request(params)
-        logger.info(
+        self._logger.info(
             "MCP elicitation for session %s: server=%r mode=%r",
             self.session_id, request.tool_input.get("serverName"),
             request.tool_input.get("mode"),
@@ -863,7 +869,7 @@ class ClaudeCodeAgent(BaseAgent):
 
         self._state_change_callback = on_state_change
 
-        logger.debug(
+        self._logger.debug(
             "Starting process for session %s (resume=%s)", self.session_id, resume
         )
 
@@ -932,7 +938,7 @@ class ClaudeCodeAgent(BaseAgent):
                 # Subagent tools carry an "agent_id" field; the parent session must
                 # ignore them so its working-status feed stays scoped to its own work.
                 is_subagent_tool = "agent_id" in input_data
-                if tool_name in ("Edit", "Write") and not is_subagent_tool:
+                if tool_name in ("Edit", "Write") and not is_subagent_tool and not self.ephemeral:
                     _capture_original_file(input_data, tool_use_id)
                 # Streaming registered the tool with streaming=True so the frontend
                 # always shows its summary while input chunks were arriving. By the
@@ -970,6 +976,8 @@ class ClaudeCodeAgent(BaseAgent):
             # ``bypassPermissions`` once the project is trusted mid-run — without
             # it, the CLI could never honor the mode for the process lifetime.
             extra_args["allow-dangerously-skip-permissions"] = None
+            if getattr(self, "ephemeral", False):
+                extra_args["no-session-persistence"] = None
 
             # Always pass ``fastMode`` explicitly (true or false) via the
             # flag-settings layer so the per-session choice overrides any
@@ -990,6 +998,9 @@ class ClaudeCodeAgent(BaseAgent):
                 if self.agent_settings.question_widget is False
                 else []
             )
+
+            if getattr(self, "ephemeral", False):
+                disallowed_tools.extend(["CronCreate", "CronDelete", "CronList"])
 
             # TwiCC's system-prompt addendum: read the frozen value from
             # the Session row (resume case) or from the pending buffer
@@ -1030,7 +1041,7 @@ class ClaudeCodeAgent(BaseAgent):
             # under plan — harmless either way. ``add_dirs`` needs existing
             # dirs (Claude silently ignores a missing target), hence the
             # pre-creation inside the helper.
-            work_dirs = await self._resolve_and_create_work_dirs()
+            work_dirs = [] if self.ephemeral else await self._resolve_and_create_work_dirs()
 
             # TwiCC's own MCP server (/mcp): pass its per-session config as a
             # FILE path (never the inline dict form, which the SDK serialises
@@ -1048,7 +1059,7 @@ class ClaudeCodeAgent(BaseAgent):
             from twicc.mcp import mcp_enabled
             from twicc.mcp.wiring import write_claude_mcp_config
 
-            _mcp_on = mcp_enabled()
+            _mcp_on = not self.ephemeral and mcp_enabled()
             mcp_servers_option = str(write_claude_mcp_config(self.session_id)) if _mcp_on else {}
             mcp_allowed_option = ["mcp__twicc"] if _mcp_on else []
 
@@ -1080,7 +1091,8 @@ class ClaudeCodeAgent(BaseAgent):
                 # repo-controlled and must not shape the session (trust §13.4).
                 setting_sources=["user"] if self._untrusted else ["user", "project", "local"],
                 settings=fast_mode_settings,
-                plugins=[{"type": "local", "path": str(get_plugin_dir())}],
+                plugins=[] if self.ephemeral else [{"type": "local", "path": str(get_plugin_dir())}],
+                strict_mcp_config=self.ephemeral,
                 can_use_tool=self._handle_pending_request,
                 allowed_tools=mcp_allowed_option,
                 disallowed_tools=disallowed_tools,
@@ -1088,7 +1100,9 @@ class ClaudeCodeAgent(BaseAgent):
                     "PreToolUse": [HookMatcher(matcher=None, hooks=[_pre_tool_use])],
                     "PostToolUse": [
                         HookMatcher(matcher=None, hooks=[_post_tool_use]),
-                        HookMatcher(matcher="CronCreate|CronDelete", hooks=[_on_cron_tool]),
+                        *([] if self.ephemeral else [
+                            HookMatcher(matcher="CronCreate|CronDelete", hooks=[_on_cron_tool]),
+                        ]),
                     ],
                     # PostToolUseFailure fires instead of PostToolUse when a tool
                     # errors out (or is interrupted) — without it, the entry would
@@ -1120,7 +1134,8 @@ class ClaudeCodeAgent(BaseAgent):
                 await self._seed_context_baseline()
 
             self._client = ClaudeSDKClient(options=options)
-            patch_client_for_logging(self._client, self.session_id)
+            if not getattr(self, "ephemeral", False):
+                patch_client_for_logging(self._client, self.session_id)
 
             # Connect without prompt to enter streaming mode, then send the message
             # via query(). The SDK's connect(prompt) with a string puts the transport
@@ -1139,7 +1154,7 @@ class ClaudeCodeAgent(BaseAgent):
             query_prompt = await self._build_query_prompt(prompt, images, documents)
             await self._client.query(query_prompt)
 
-            logger.debug(
+            self._logger.debug(
                 "Connection established for session %s",
                 self.session_id,
             )
@@ -1155,7 +1170,7 @@ class ClaudeCodeAgent(BaseAgent):
                 name=f"claude_code-process-{self.session_id}",
             )
 
-            logger.debug(
+            self._logger.debug(
                 "Message loop task created for session %s",
                 self.session_id,
             )
@@ -1206,7 +1221,7 @@ class ClaudeCodeAgent(BaseAgent):
                 Provider.CLAUDE_CODE, mode,
             )
 
-        logger.debug(
+        self._logger.debug(
             "Setting permission mode to '%s' for session %s",
             mode,
             self.session_id,
@@ -1231,7 +1246,7 @@ class ClaudeCodeAgent(BaseAgent):
         if self._client is None:
             raise RuntimeError("Process not started")
 
-        logger.info(
+        self._logger.info(
             "Stopping subagent %s in session %s",
             subagent_id,
             self.session_id,
@@ -1256,7 +1271,7 @@ class ClaudeCodeAgent(BaseAgent):
             raise RuntimeError("Process not started")
 
         self._interrupting = True
-        logger.info("Interrupting session %s", self.session_id)
+        self._logger.info("Interrupting session %s", self.session_id)
         await self._client.interrupt()
 
     async def soft_interrupt(self) -> bool:
@@ -1277,7 +1292,7 @@ class ClaudeCodeAgent(BaseAgent):
             raise RuntimeError("Process not started")
 
         self._soft_interrupting = True
-        logger.info("Soft-interrupting session %s", self.session_id)
+        self._logger.info("Soft-interrupting session %s", self.session_id)
         await self._client.interrupt()
         return True
 
@@ -1302,12 +1317,12 @@ class ClaudeCodeAgent(BaseAgent):
                 # Wait for the clean DEAD, but bail early on a force-kill.
                 if await self._race_force(self.wait_for_dead(), timeout=30.0):
                     return
-                logger.debug(
+                self._logger.debug(
                     "Interrupt timeout/forced for session %s, falling back to kill",
                     self.session_id,
                 )
             except Exception:
-                logger.debug(
+                self._logger.debug(
                     "Interrupt failed for session %s, falling back to kill",
                     self.session_id,
                 )
@@ -1328,7 +1343,7 @@ class ClaudeCodeAgent(BaseAgent):
         if self._client is None:
             raise RuntimeError("Process not started")
 
-        logger.debug(
+        self._logger.debug(
             "Setting SDK model to '%s' for session %s",
             sdk_model,
             self.session_id,
@@ -1441,7 +1456,7 @@ class ClaudeCodeAgent(BaseAgent):
         if msg.subtype == "task_started":
             if data.get("task_type") == "local_agent":
                 self._live_background_tasks[task_id] = data.get("description") or ""
-                logger.debug(
+                self._logger.debug(
                     "Session %s: background agent %s started (%d live)",
                     self.session_id, task_id, len(self._live_background_tasks),
                 )
@@ -1460,14 +1475,14 @@ class ClaudeCodeAgent(BaseAgent):
 
         released = self._live_background_tasks.pop(task_id, None) is not None
         if released:
-            logger.debug(
+            self._logger.debug(
                 "Session %s: background agent %s stopped (%d live)",
                 self.session_id, task_id, len(self._live_background_tasks),
             )
         if task_id in self._live_monitor_tasks:
             self._live_monitor_tasks.discard(task_id)
             released = True
-            logger.debug(
+            self._logger.debug(
                 "Session %s: Monitor %s stopped (%d live)",
                 self.session_id, task_id, len(self._live_monitor_tasks),
             )
@@ -1510,7 +1525,7 @@ class ClaudeCodeAgent(BaseAgent):
             task_id = tool_use_result.get("taskId")
             if isinstance(task_id, str) and _MONITOR_STARTED_RE.search(text):
                 self._live_monitor_tasks.add(task_id)
-                logger.debug(
+                self._logger.debug(
                     "Session %s: Monitor %s started (%d live)",
                     self.session_id, task_id, len(self._live_monitor_tasks),
                 )
@@ -1527,7 +1542,7 @@ class ClaudeCodeAgent(BaseAgent):
 
         if isinstance(stopped_task_id, str) and stopped_task_id in self._live_monitor_tasks:
             self._live_monitor_tasks.remove(stopped_task_id)
-            logger.debug(
+            self._logger.debug(
                 "Session %s: Monitor %s stopped by TaskStop (%d live)",
                 self.session_id, stopped_task_id, len(self._live_monitor_tasks),
             )
@@ -1611,7 +1626,7 @@ class ClaudeCodeAgent(BaseAgent):
         # ``scheduledFor`` from the stop result.
         if tool_use_result.get("stopped"):
             if self._pending_wakeup_at is not None:
-                logger.debug(
+                self._logger.debug(
                     "Session %s: ScheduleWakeup stopped — pending wake-up cleared",
                     self.session_id,
                 )
@@ -1628,7 +1643,7 @@ class ClaudeCodeAgent(BaseAgent):
             self._pending_wakeup_at = None
             return
         self._pending_wakeup_at = scheduled_for_ms / 1000.0
-        logger.debug(
+        self._logger.debug(
             "Session %s: ScheduleWakeup noted — holding until %s",
             self.session_id, self._format_wakeup_time(),
         )
@@ -1697,7 +1712,7 @@ class ClaudeCodeAgent(BaseAgent):
         if self.state not in (AgentState.USER_TURN, AgentState.ASSISTANT_TURN):
             raise RuntimeError(f"Cannot send message in state {self.state}")
 
-        logger.debug("Sending message to session %s", self.session_id)
+        self._logger.debug("Sending message to session %s", self.session_id)
 
         try:
             # Only transition and notify if we're not already in ASSISTANT_TURN
@@ -1733,12 +1748,12 @@ class ClaudeCodeAgent(BaseAgent):
         Args:
             reason: Reason for killing the process (e.g., "manual", "shutdown")
         """
-        logger.debug(
+        self._logger.debug(
             "Kill requested for session %s (reason: %s)", self.session_id, reason
         )
 
         if self.state == AgentState.DEAD:
-            logger.debug("Session %s already dead, skipping kill", self.session_id)
+            self._logger.debug("Session %s already dead, skipping kill", self.session_id)
             return
 
         self.kill_reason = reason
@@ -1773,7 +1788,7 @@ class ClaudeCodeAgent(BaseAgent):
         if self._client is None:
             return
 
-        logger.debug("Entering message loop for session %s", self.session_id)
+        self._logger.debug("Entering message loop for session %s", self.session_id)
 
         # State variables when streaming is about assistant messages and thinking
         current_stream_message_id: str | None = None
@@ -1928,7 +1943,7 @@ class ClaudeCodeAgent(BaseAgent):
                             try:
                                 parsed_input = json_repair.loads(current_stream_tool_input_raw)
                             except Exception as exc:
-                                logger.exception(f"Failed to parse tool input: {exc}")
+                                self._logger.exception(f"Failed to parse tool input: {exc}")
                             else:
                                 if isinstance(parsed_input, dict):
                                     cleaned = filter_tool_input(current_stream_tool_name, parsed_input)
@@ -1984,7 +1999,7 @@ class ClaudeCodeAgent(BaseAgent):
                     last_finished_block_type = None
 
                 elif isinstance(msg, AssistantMessage) and msg.error == "authentication_failed":
-                    logger.error(
+                    self._logger.error(
                         "Authentication failed for session %s — Claude Code CLI is not logged in",
                         self.session_id,
                     )
@@ -2002,6 +2017,11 @@ class ClaudeCodeAgent(BaseAgent):
                     return
 
                 if isinstance(msg, ResultMessage):
+                    if getattr(self, "ephemeral", False):
+                        self.ephemeral_final_text = msg.result or ""
+                        self.ephemeral_usage = {
+                            "cost_usd": msg.total_cost_usd, "duration_ms": msg.duration_ms, "usage": msg.usage,
+                        }
                     # Claude finished responding, ready for user input
                     was_soft_interrupt = False
                     if msg.is_error:
@@ -2009,7 +2029,7 @@ class ClaudeCodeAgent(BaseAgent):
                             # Expected error after interrupt — clean shutdown.
                             # kill_reason is already set by interrupt_or_kill().
                             # No self.error = avoids the error toast on the frontend.
-                            logger.info(
+                            self._logger.info(
                                 "Session %s interrupted cleanly (subtype=%s)",
                                 self.session_id,
                                 msg.subtype,
@@ -2032,23 +2052,26 @@ class ClaudeCodeAgent(BaseAgent):
                             # so an interrupt-to-kill still wins over a soft one.
                             self._soft_interrupting = False
                             was_soft_interrupt = True
-                            logger.info(
+                            if getattr(self, "ephemeral", False):
+                                self.ephemeral_soft_interrupted = True
+                            self._logger.info(
                                 "Session %s soft-interrupted; back to USER_TURN (subtype=%s)",
                                 self.session_id,
                                 msg.subtype,
                             )
                             self._cancel_all_pending_futures()
                         else:
-                            # Log full ResultMessage details for debugging
-                            logger.error(
-                                "Claude Code error for session %s: result=%r, subtype=%s, "
-                                "num_turns=%s, duration_ms=%s",
-                                self.session_id,
-                                msg.result,
-                                msg.subtype,
-                                msg.num_turns,
-                                msg.duration_ms,
-                            )
+                            if not getattr(self, "ephemeral", False):
+                                # Log full ResultMessage details for debugging
+                                self._logger.error(
+                                    "Claude Code error for session %s: result=%r, subtype=%s, "
+                                    "num_turns=%s, duration_ms=%s",
+                                    self.session_id,
+                                    msg.result,
+                                    msg.subtype,
+                                    msg.num_turns,
+                                    msg.duration_ms,
+                                )
                             await self._handle_error(
                                 f"Claude reported error: {msg.result or 'Unknown error'}"
                             )
@@ -2083,7 +2106,7 @@ class ClaudeCodeAgent(BaseAgent):
                         # on. A deliberate soft interrupt bypasses the hold: the
                         # user asked for control, show the session as theirs.
                         if hold_for_background:
-                            logger.info(
+                            self._logger.info(
                                 "Session %s: turn ended with %d background agent(s) still "
                                 "running — holding ASSISTANT_TURN (%s)",
                                 self.session_id,
@@ -2094,7 +2117,7 @@ class ClaudeCodeAgent(BaseAgent):
                                 ),
                             )
                         elif hold_for_monitor:
-                            logger.info(
+                            self._logger.info(
                                 "Session %s: turn ended with %d live Monitor task(s) — "
                                 "holding ASSISTANT_TURN (%s)",
                                 self.session_id,
@@ -2102,7 +2125,7 @@ class ClaudeCodeAgent(BaseAgent):
                                 ", ".join(sorted(self._live_monitor_tasks)),
                             )
                         else:
-                            logger.info(
+                            self._logger.info(
                                 "Session %s: turn ended with a pending scheduled wake-up "
                                 "(~%ds out) — holding ASSISTANT_TURN",
                                 self.session_id,
@@ -2137,7 +2160,7 @@ class ClaudeCodeAgent(BaseAgent):
             # If the process was already killed intentionally (apply-settings, manual, shutdown),
             # the message loop error is expected (CLI exiting) — don't treat it as an error.
             if self.state == AgentState.DEAD and self.kill_reason and self.kill_reason != "error":
-                logger.debug(
+                self._logger.debug(
                     "Message loop ended after intentional kill for session %s (kill_reason=%s): %s",
                     self.session_id, self.kill_reason, e,
                 )
@@ -2152,13 +2175,16 @@ class ClaudeCodeAgent(BaseAgent):
             error_message: Description of what went wrong
             exc: Optional exception that caused the error (logged with full traceback)
         """
-        logger.error(
-            "Process %s for session %s died: %s",
-            self.project_id,
-            self.session_id,
-            error_message,
-            exc_info=exc,
-        )
+        if getattr(self, "ephemeral", False):
+            self._logger.error("Ephemeral agent for session %s failed", self.session_id)
+        else:
+            self._logger.error(
+                "Process %s for session %s died: %s",
+                self.project_id,
+                self.session_id,
+                error_message,
+                exc_info=exc,
+            )
 
         # Cancel any pending request Future to avoid asyncio warnings
         self._cancel_all_pending_futures()
@@ -2211,12 +2237,12 @@ class ClaudeCodeAgent(BaseAgent):
             )
             return
         except TimeoutError:
-            logger.warning(
+            self._logger.warning(
                 "SDK disconnect() timed out for session %s — falling back to psutil kill",
                 self.session_id,
             )
         except Exception:
-            logger.exception(
+            self._logger.exception(
                 "SDK disconnect() failed for session %s — falling back to psutil kill",
                 self.session_id,
             )

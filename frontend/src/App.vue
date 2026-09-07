@@ -465,6 +465,7 @@ function handleGlobalKeydown(e) {
         const toggleable = sess
             && settingsStore.isClaudeHybridEnabled
             && sess.provider === 'claude_code'
+            && !(sess.ephemeral && !sess.draft)
             && !sess.hidden
             && !sess.parent_session_id
             && !(!sess.draft && sess.hybrid === true)  // not committed-permanent
@@ -572,7 +573,8 @@ function handleGlobalKeydown(e) {
             // wa-dialog would catch the still-bubbling Escape and close itself
             // immediately (only visible in the crons-confirmation path).
             setTimeout(() => {
-                if (force) hardKillSessionProcess(sessionId)
+                if (dataStore.getSession(sessionId)?.ephemeral) dataStore.stopEphemeralSession(sessionId)
+                else if (force) hardKillSessionProcess(sessionId)
                 else stopSessionProcess(sessionId)
             }, 0)
         }

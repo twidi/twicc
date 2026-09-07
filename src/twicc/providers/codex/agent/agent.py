@@ -339,8 +339,11 @@ class CodexAgent(BaseAgent):
         thread: TwiccAsyncThread,
         untrusted: bool = False,
         work_dirs: list[str] | None = None,
+        *,
+        ephemeral: bool = False,
     ) -> None:
-        super().__init__(session_id, project_id, cwd, agent_settings=settings)
+        super().__init__(session_id, project_id, cwd, agent_settings=settings, ephemeral=ephemeral)
+        self._ephemeral_has_final_answer = False
         self._codex = codex
         self._thread = thread
         # Effective trust of the project, resolved once by the manager at
@@ -439,6 +442,7 @@ class CodexAgent(BaseAgent):
         # it once the last child finishes. A new real turn always clears
         # the flag at its top and re-decides at its tail.
         self._subagent_hold_active = False
+        self._ephemeral_subagent_task: asyncio.Task | None = None
 
         # Set when a user approves an Auto-review denial after Codex has already
         # closed the originating turn. ``_run_turn`` consumes it by immediately
@@ -663,7 +667,7 @@ class CodexAgent(BaseAgent):
             except TransportClosedError:
                 raise
             except Exception as e:
-                logger.warning(
+                self._logger.warning(
                     "Codex steer failed for session %s: %s",
                     self.session_id, e,
                 )
@@ -862,7 +866,7 @@ class CodexAgent(BaseAgent):
         if self._auto_review_retry_after_turn:
             self._auto_review_retry_after_turn = False
             self._auto_review_retry_action = None
-            logger.info(
+            self._logger.info(
                 "Starting Codex continuation after manual Auto-review approval "
                 "for session %s",
                 self.session_id,
@@ -1006,6 +1010,28 @@ class CodexAgent(BaseAgent):
         self._subagent_wait_label_active = False
         await self._broadcast_process_label("")
 
+    async def _ephemeral_finished_subagents(self) -> list[str]:
+        """Read child runtime state; ephemeral children have no watcher rows."""
+        stopped = []
+        for child_id in tuple(self._live_subagents):
+            response = await self._codex._client.thread_read(child_id)
+            status = _enum_value(response.thread.status.root.type)
+            if status in {"idle", "systemError", "notLoaded"}:
+                stopped.append(child_id)
+        return stopped
+
+    async def _watch_ephemeral_subagents(self) -> None:
+        """Release a held ephemeral run after its in-memory children settle."""
+        try:
+            while self._live_subagents and self.state != AgentState.DEAD:
+                await asyncio.sleep(0.25)
+                stopped = await self._ephemeral_finished_subagents()
+                await self.notify_subagents_stopped(stopped)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self._handle_error("Could not observe ephemeral subagents", exc=exc)
+
     async def _prune_finished_subagents(self) -> None:
         """Forget the children the watcher already saw finish.
 
@@ -1015,10 +1041,15 @@ class CodexAgent(BaseAgent):
         """
         if not self._live_subagents:
             return
+        if getattr(self, "ephemeral", False):
+            stopped = await self._ephemeral_finished_subagents()
+            for child_id in stopped:
+                self._live_subagents.pop(child_id, None)
+            return
         try:
             stopped = await sync_to_async(_stopped_subagent_ids)(list(self._live_subagents))
         except Exception:
-            logger.warning(
+            self._logger.warning(
                 "Codex: failed to prune finished subagents for session %s",
                 self.session_id, exc_info=True,
             )
@@ -1046,7 +1077,13 @@ class CodexAgent(BaseAgent):
             self._subagent_hold_active = False
             return False
         self._subagent_hold_active = True
-        logger.info(
+        if getattr(self, "ephemeral", False):
+            task = self._ephemeral_subagent_task
+            if task is None or task.done():
+                self._ephemeral_subagent_task = asyncio.create_task(
+                    self._watch_ephemeral_subagents(), name=f"ephemeral-children-{self.session_id}",
+                )
+        self._logger.info(
             "Codex session %s: idle boundary with %d subagent(s) still running "
             "— holding ASSISTANT_TURN (%s)",
             self.session_id,
@@ -1117,7 +1154,7 @@ class CodexAgent(BaseAgent):
                 await self._broadcast_process_label(label)
             return
 
-        logger.info(
+        self._logger.info(
             "Codex session %s: last held subagent finished — back to USER_TURN",
             self.session_id,
         )
@@ -1146,7 +1183,7 @@ class CodexAgent(BaseAgent):
         only re-renders the new label thanks to ``workingStatusKey`` (see
         ``recomputeVisualItems``), since the stabilizer ignores ``_parsedContent``.
         """
-        logger.info(
+        self._logger.info(
             "Codex /compact: starting manual compaction for session %s", self.session_id,
         )
         self._manual_compaction = True
@@ -1165,7 +1202,7 @@ class CodexAgent(BaseAgent):
         try:
             await self._thread.inject_user_message("/compact")
         except Exception:
-            logger.warning(
+            self._logger.warning(
                 "Codex /compact: failed to inject the transcript line for session %s",
                 self.session_id, exc_info=True,
             )
@@ -1179,7 +1216,7 @@ class CodexAgent(BaseAgent):
             # frame (its except clause only catches RuntimeError). Never
             # swallowed. The timeout task isn't armed yet, so there's nothing
             # to cancel.
-            logger.warning(
+            self._logger.warning(
                 "Codex compact failed to start for session %s: %s",
                 self.session_id, e,
             )
@@ -1206,7 +1243,7 @@ class CodexAgent(BaseAgent):
             return
         self._manual_compaction = False
         self._cancel_compaction_timeout()
-        logger.info(
+        self._logger.info(
             "Codex /compact: compaction finished for session %s — back to USER_TURN",
             self.session_id,
         )
@@ -1236,7 +1273,7 @@ class CodexAgent(BaseAgent):
         except asyncio.CancelledError:
             return
         if self._manual_compaction:
-            logger.warning(
+            self._logger.warning(
                 "Codex /compact: no 'compacted' line after %ds for session %s — "
                 "forcing USER_TURN",
                 COMPACTION_SAFETY_TIMEOUT_S, self.session_id,
@@ -1324,7 +1361,7 @@ class CodexAgent(BaseAgent):
                 try:
                     await self._thread.inject_user_message("/goal clear")
                 except Exception as e:
-                    logger.warning(
+                    self._logger.warning(
                         "Codex /goal clear: failed to inject transcript line "
                         "for session %s: %s",
                         self.session_id, e,
@@ -1336,7 +1373,7 @@ class CodexAgent(BaseAgent):
                 self._goal_continuation_active = True
                 settle_state = AgentState.ASSISTANT_TURN
         except Exception as e:
-            logger.warning(
+            self._logger.warning(
                 "Codex /goal failed for session %s: %s", self.session_id, e,
             )
             self._goal_continuation_active = self._goal_monitor is not None
@@ -1463,7 +1500,7 @@ class CodexAgent(BaseAgent):
         if self._current_turn is not None or self._goal_monitor is not None:
             # The wire stream owns completion while a monitor is attached.
             return
-        logger.info(
+        self._logger.info(
             "Codex /goal: continuation ended for session %s — back to USER_TURN",
             self.session_id,
         )
@@ -1546,7 +1583,7 @@ class CodexAgent(BaseAgent):
                 collaboration_mode=self._build_collaboration_mode(ModeKind.plan),
             )
         except Exception as e:
-            logger.warning(
+            self._logger.warning(
                 "Codex /plan failed for session %s: %s", self.session_id, e,
             )
             await self._settle_after_command(AgentState.USER_TURN, "plan_command_done")
@@ -1554,7 +1591,7 @@ class CodexAgent(BaseAgent):
                 raise
             raise RuntimeError(f"/plan failed: {e}") from e
 
-        logger.info(
+        self._logger.info(
             "Codex /plan: session %s switched to Plan collaboration mode",
             self.session_id,
         )
@@ -1578,7 +1615,7 @@ class CodexAgent(BaseAgent):
         try:
             await self._thread.inject_user_message("/plan")
         except Exception:
-            logger.warning(
+            self._logger.warning(
                 "Codex /plan: failed to inject the transcript line for session %s",
                 self.session_id, exc_info=True,
             )
@@ -1615,7 +1652,7 @@ class CodexAgent(BaseAgent):
             tool_input={},
             created_at=time.time(),
         )
-        logger.info(
+        self._logger.info(
             "Codex plan prompt: asking whether to implement the plan for session %s",
             self.session_id,
         )
@@ -1631,7 +1668,7 @@ class CodexAgent(BaseAgent):
                 # Do NOT run the implement turn while still in Plan mode —
                 # mutating actions are blocked there, the turn would just
                 # produce another plan. Settle idle; the user can retry.
-                logger.warning(
+                self._logger.warning(
                     "Codex plan prompt: failed to switch session %s back to "
                     "Default mode — not starting the implement turn",
                     self.session_id, exc_info=True,
@@ -1641,7 +1678,7 @@ class CodexAgent(BaseAgent):
                     self.last_activity = time.time()
                     await self._notify_state_change()
                 return
-            logger.info(
+            self._logger.info(
                 "Codex plan prompt: session %s back to Default mode — "
                 "starting the implement turn",
                 self.session_id,
@@ -1694,17 +1731,19 @@ class CodexAgent(BaseAgent):
         marked = self._mark_inflight_tools_user_terminated("User interrupted the turn")
         try:
             await turn_handle.interrupt()
+            if getattr(self, "ephemeral", False):
+                self.ephemeral_soft_interrupted = True
         except Exception as e:
             # Interrupt failed → the turn keeps running and those tools may
             # still complete normally; undo the marks so a later genuine
             # completion isn't mislabelled as interrupted.
             for item_id in marked:
                 self._user_terminated_tool_ids.pop(item_id, None)
-            logger.warning(
+            self._logger.warning(
                 "Codex soft interrupt failed for session %s: %s", self.session_id, e,
             )
             return False
-        logger.info(
+        self._logger.info(
             "Soft-interrupting Codex session %s (marked %d in-flight tool(s))",
             self.session_id, len(marked),
         )
@@ -1727,7 +1766,7 @@ class CodexAgent(BaseAgent):
             if payload.get("type") in self._CANCELLABLE_ITEM_TYPES:
                 self._user_terminated_tool_ids[item_id] = reason
                 marked.append(item_id)
-                logger.debug(
+                self._logger.debug(
                     "Codex interrupt: marking in-flight tool session=%s "
                     "itemId=%r type=%r",
                     self.session_id, item_id, payload.get("type"),
@@ -1745,6 +1784,10 @@ class CodexAgent(BaseAgent):
         if self.state == AgentState.DEAD:
             return
 
+        observer = getattr(self, "_ephemeral_subagent_task", None)
+        if observer is not None and observer is not asyncio.current_task() and not observer.done():
+            observer.cancel()
+            await asyncio.gather(observer, return_exceptions=True)
         self.kill_reason = reason
         # Capture the CLI subprocess pid up front: ``codex.close()`` clears the
         # SDK's ``_proc`` handle, so ``get_pid`` returns None afterwards.
@@ -1782,7 +1825,7 @@ class CodexAgent(BaseAgent):
             try:
                 await turn_handle.interrupt()
             except Exception as e:
-                logger.debug(
+                self._logger.debug(
                     "turn_handle.interrupt() failed for session %s: %s — "
                     "falling back to transport close",
                     self.session_id, e,
@@ -1809,7 +1852,7 @@ class CodexAgent(BaseAgent):
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if self._turn_task not in done:
-                    logger.debug(
+                    self._logger.debug(
                         "Turn didn't unwind (timeout/forced) for session %s — "
                         "closing transport",
                         self.session_id,
@@ -1833,12 +1876,12 @@ class CodexAgent(BaseAgent):
             await asyncio.wait_for(self._codex.close(), timeout=5.0)
             close_ok = True
         except TimeoutError:
-            logger.warning(
+            self._logger.warning(
                 "codex.close() timed out for session %s — forcing process kill",
                 self.session_id,
             )
         except Exception as e:
-            logger.warning(
+            self._logger.warning(
                 "codex.close() failed for session %s: %s", self.session_id, e,
             )
 
@@ -1852,7 +1895,7 @@ class CodexAgent(BaseAgent):
             except asyncio.CancelledError:
                 pass
             except Exception:
-                logger.debug(
+                self._logger.debug(
                     "Turn task raised on cancellation for session %s",
                     self.session_id, exc_info=True,
                 )
@@ -1893,18 +1936,21 @@ class CodexAgent(BaseAgent):
         self, error_message: str, exc: Exception | None = None,
     ) -> None:
         """Surface a runtime error as a clean DEAD transition."""
-        logger.error(
-            "Codex agent for session %s died: %s",
-            self.session_id, error_message,
-            exc_info=exc,
-        )
+        if getattr(self, "ephemeral", False):
+            self._logger.error("Ephemeral agent for session %s failed", self.session_id)
+        else:
+            self._logger.error(
+                "Codex agent for session %s died: %s",
+                self.session_id, error_message,
+                exc_info=exc,
+            )
         self.error = error_message
         self.kill_reason = "error"
         try:
             await self._codex.close()
         except Exception:
             # Already broken — don't pile more errors on top.
-            logger.debug(
+            self._logger.debug(
                 "codex.close() during error handling failed for session %s",
                 self.session_id, exc_info=True,
             )
@@ -2025,7 +2071,8 @@ class CodexAgent(BaseAgent):
         """
         # Mirror the raw SDK notification into the per-session debug log
         # before any local processing. No-op when TWICC_DEBUG is unset.
-        log_stream_event(self.session_id, event)
+        if not getattr(self, "ephemeral", False):
+            log_stream_event(self.session_id, event)
 
         # Refresh last_activity on every stream event so the
         # ASSISTANT_TURN inactivity timeout only fires on a truly silent
@@ -2091,12 +2138,12 @@ class CodexAgent(BaseAgent):
 
             is_auth_error = self._is_unauthorized_error(payload)
             if is_auth_error:
-                logger.error(
+                self._logger.error(
                     "Codex auth error for session %s: %s",
                     self.session_id, payload.error.message,
                 )
             else:
-                logger.error(
+                self._logger.error(
                     "Codex terminal error for session %s: %s (codex_error_info=%r)",
                     self.session_id,
                     payload.error.message,
@@ -2127,7 +2174,7 @@ class CodexAgent(BaseAgent):
                         timeout=5,
                     )
                 except Exception:
-                    logger.warning(
+                    self._logger.warning(
                         "Could not persist terminal Codex error for session %s",
                         self.session_id,
                         exc_info=True,
@@ -2163,7 +2210,7 @@ class CodexAgent(BaseAgent):
             try:
                 await self._codex.close()
             except Exception:
-                logger.debug(
+                self._logger.debug(
                     "codex.close() after error notification failed for session %s",
                     self.session_id, exc_info=True,
                 )
@@ -2187,7 +2234,7 @@ class CodexAgent(BaseAgent):
                 # for full-file diffs on the frontend. See
                 # :func:`_capture_original_files_for_apply_patch` for the
                 # timing rationale.
-                if getattr(inner, "type", None) == "fileChange":
+                if getattr(inner, "type", None) == "fileChange" and not getattr(self, "ephemeral", False):
                     _capture_original_files_for_apply_patch(inner, self.session_id)
                 # Multi-agent v2 bookkeeping: ``subAgentActivity`` tracks
                 # which children are alive, a starting ``wait``
@@ -2312,6 +2359,15 @@ class CodexAgent(BaseAgent):
                 return
 
             if item_type == "agentMessage":
+                if getattr(self, "ephemeral", False):
+                    phase = getattr(inner, "phase", None)
+                    phase = getattr(phase, "value", phase)
+                    if phase == "final_answer":
+                        self._ephemeral_has_final_answer = True
+                        self.ephemeral_final_text = inner.text
+                    elif phase is None and not self._ephemeral_has_final_answer:
+                        self.ephemeral_final_text = inner.text
+                    return
                 item_id = inner.id
                 await self._broadcast_stream_event({
                     "type": "stream_block_stop",
@@ -2398,14 +2454,14 @@ class CodexAgent(BaseAgent):
         )
         response = await self._await_pending_request(request)
         if response.get("decision") != "accept":
-            logger.info(
+            self._logger.info(
                 "User kept Codex Auto-review denial %s for session %s",
                 payload.review_id, self.session_id,
             )
             return
 
         await self._thread.approve_guardian_denied_action(event)
-        logger.info(
+        self._logger.info(
             "User manually approved Codex Auto-review denial %s for session %s",
             payload.review_id, self.session_id,
         )
@@ -2428,7 +2484,7 @@ class CodexAgent(BaseAgent):
                 # even though our stream loop has not consumed that notification
                 # yet. Continue below rather than treating this expected race as
                 # a provider failure.
-                logger.info(
+                self._logger.info(
                     "Could not steer completed Codex turn after Auto-review "
                     "approval for session %s (%s); scheduling a continuation",
                     self.session_id, exc,
@@ -2452,9 +2508,11 @@ class CodexAgent(BaseAgent):
         bridge crash, etc. Those failure-mode responses are exactly what
         debug logs need to surface.
         """
-        log_approval_request(self.session_id, method, params)
+        if not getattr(self, "ephemeral", False):
+            log_approval_request(self.session_id, method, params)
         response = self._sync_approval_handler_impl(method, params)
-        log_approval_response(self.session_id, method, response)
+        if not getattr(self, "ephemeral", False):
+            log_approval_response(self.session_id, method, response)
         return response
 
     def _sync_approval_handler_impl(self, method: str, params: dict | None) -> dict:
@@ -2476,7 +2534,7 @@ class CodexAgent(BaseAgent):
             # which is safer than crashing the read loop. PR2a does not
             # naturally exercise this path — the warning is here to flag
             # an unsupported server request the day it shows up.
-            logger.warning(
+            self._logger.warning(
                 "Unhandled Codex server request method=%r (delegating to SDK default)",
                 method,
             )
@@ -2486,7 +2544,7 @@ class CodexAgent(BaseAgent):
             # Approval before ``start()`` ran, or after the loop was torn
             # down. Either way we can't bridge to async; return a safe
             # wire default so the SDK doesn't hang.
-            logger.error(
+            self._logger.error(
                 "Codex approval received before loop init or after close: method=%r",
                 method,
             )
@@ -2513,7 +2571,7 @@ class CodexAgent(BaseAgent):
             # a safe default. Re-raising would leak the exception into the
             # SDK's worker thread which would then crash the entire read
             # loop.
-            logger.error(
+            self._logger.error(
                 "Codex approval bridge failed for method=%r: %s",
                 method, exc, exc_info=True,
             )
@@ -2534,7 +2592,7 @@ class CodexAgent(BaseAgent):
         — at this point we just pass it through.
         """
         item_id_for_log = params.get("itemId") if params else None
-        logger.debug(
+        self._logger.debug(
             "Codex approval request: session=%s method=%s itemId=%s",
             self.session_id, method, item_id_for_log,
         )
@@ -2551,13 +2609,13 @@ class CodexAgent(BaseAgent):
             is_mcp_tool_call_approval(method, enriched_params)
             and await self._effective_permission_mode() == "yolo"
         ):
-            logger.info(
+            self._logger.info(
                 "Auto-approving Codex MCP tool-call for session %s (yolo — no "
                 "prompt for tool execution)", self.session_id,
             )
             return approve_mcp_tool_call_response()
         if await self._should_auto_approve_work_dir(method, enriched_params):
-            logger.info(
+            self._logger.info(
                 "Auto-approving Codex %s for session %s — targets only system "
                 "work dirs", method, self.session_id,
             )
@@ -2690,13 +2748,13 @@ class CodexAgent(BaseAgent):
             if not granted:
                 # Empty granted profile = user refused permissions.
                 self._user_terminated_tool_ids[item_id] = "User refused permissions"
-                logger.debug(
+                self._logger.debug(
                     "Codex decision recorded: session=%s itemId=%s "
                     "outcome=permissions_denied reason=%r",
                     self.session_id, item_id, "User refused permissions",
                 )
             else:
-                logger.debug(
+                self._logger.debug(
                     "Codex decision recorded: session=%s itemId=%s "
                     "outcome=permissions_granted (no marking)",
                     self.session_id, item_id,
@@ -2707,7 +2765,7 @@ class CodexAgent(BaseAgent):
         decision = response.get("decision")
         if decision == "decline":
             self._user_terminated_tool_ids[item_id] = "User denied this action"
-            logger.debug(
+            self._logger.debug(
                 "Codex decision recorded: session=%s itemId=%s "
                 "outcome=decline reason=%r",
                 self.session_id, item_id, "User denied this action",
@@ -2726,11 +2784,11 @@ class CodexAgent(BaseAgent):
                 if payload.get("type") in self._CANCELLABLE_ITEM_TYPES:
                     self._user_terminated_tool_ids[other_id] = "User cancelled this turn"
                     siblings_marked.append(other_id)
-                    logger.debug(
+                    self._logger.debug(
                         "Codex cancel: marking sibling session=%s itemId=%r type=%r",
                         self.session_id, other_id, payload.get("type"),
                     )
-            logger.debug(
+            self._logger.debug(
                 "Codex decision recorded: session=%s itemId=%s "
                 "outcome=cancel reason=%r siblings_marked=%s",
                 self.session_id, item_id,
@@ -2740,7 +2798,7 @@ class CodexAgent(BaseAgent):
         # Anything else (notably "approve" on command/file) is a pass-through
         # with no map entry — trace it so the smoke-test grep shows the
         # full approve/deny picture for each itemId.
-        logger.debug(
+        self._logger.debug(
             "Codex decision recorded: session=%s itemId=%s "
             "outcome=%s (no marking)",
             self.session_id, item_id, decision,

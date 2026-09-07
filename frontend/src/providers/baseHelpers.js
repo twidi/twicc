@@ -1,3 +1,4 @@
+import { ephemeralPromptText } from './ephemeralContent.js'
 import { effortIconSrc } from '../utils/effortIcon'
 
 /**
@@ -141,6 +142,10 @@ export class BaseProviderHelpers {
      *        Attachment blocks in SDK format. Providers that don't support
      *        attachments may safely ignore the argument.
      */
+    buildEphemeralUserMessageContent(text, attachments = []) {
+        return this.buildOptimisticUserMessageContent(ephemeralPromptText(text, attachments))
+    }
+
     buildOptimisticUserMessageContent(/* text, attachments */) {
         throw new Error(
             `buildOptimisticUserMessageContent() not implemented for provider ${this.constructor.provider}`,

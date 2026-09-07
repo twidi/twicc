@@ -245,7 +245,7 @@ const canStopProcess = computed(() => {
 const canStopAgent = computed(() => {
     if (props.mode !== 'subagent') return false
     const ps = processState.value
-    if (!ps || !ps.synthetic || !ps.state || ps.state === PROCESS_STATE.DEAD) return false
+    if (session.value?.ephemeral || !ps || !ps.synthetic || !ps.state || ps.state === PROCESS_STATE.DEAD) return false
     const parentId = session.value?.parent_session_id
     if (!parentId) return false
     const link = store.getAgentLinkByAgentId(parentId, props.sessionId)
@@ -273,6 +273,10 @@ watch(canStopAgent, (canStop) => {
  * the process tree now — no grace window, no confirmation.
  */
 function handleStopProcess(event) {
+    if (session.value?.ephemeral && !session.value?.draft) {
+        store.stopEphemeralSession(props.sessionId)
+        return
+    }
     if (event?.shiftKey || stoppingProcess.value) {
         hardKillSessionProcess(props.sessionId)
         return
@@ -299,7 +303,7 @@ function handleStopAgent() {
 // ASSISTANT_TURN).
 const canInterruptTurn = computed(() => {
     const ps = processState.value
-    if (!ps || ps.synthetic || ps.state !== PROCESS_STATE.ASSISTANT_TURN) return false
+    if (session.value?.ephemeral || !ps || ps.synthetic || ps.state !== PROCESS_STATE.ASSISTANT_TURN) return false
     return !!getProviderHelpers(session.value?.provider)?.canInterruptTurn()
 })
 
@@ -405,7 +409,7 @@ function openRenameDialog({ showHint = false } = {}) {
  * If the process has active crons, the composable shows the confirmation dialog.
  */
 function handleArchive() {
-    if (!session.value || session.value.archived || session.value.draft) return
+    if (!session.value || session.value.archived || (session.value.draft || session.value.ephemeral)) return
     stopSessionProcess(props.sessionId, { archive: true })
 }
 
@@ -469,7 +473,7 @@ function handleMuteToggle() {
  * @param {CustomEvent} event - The wa-select event (event.detail.item.value)
  */
 function handlePinSelect(event) {
-    if (!session.value || session.value.draft) return
+    if (!session.value || (session.value.draft || session.value.ephemeral)) return
     const value = event.detail.item.value
     const requested = value === 'none' ? null : value
     // Re-selecting the currently active mode toggles it off.
@@ -495,6 +499,7 @@ defineExpose({
             <div class="session-title-tags">
                 <wa-tag v-if="session.archived" :id="`session-header-${sessionId}-archived-tag`" size="small" variant="neutral" class="archived-tag" @click="handleUnarchive">Archived</wa-tag>
                 <AppTooltip v-if="session.archived" :for="`session-header-${sessionId}-archived-tag`">Click to unarchive</AppTooltip>
+                <wa-tag v-else-if="session.ephemeral && !session.draft" size="small" variant="neutral">Ephemeral</wa-tag>
                 <wa-tag v-else-if="session.draft && !processState" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
                 <wa-tag v-if="session.stale" :id="`session-header-${sessionId}-stale-tag`" size="small" variant="warning" class="stale-tag">Stale</wa-tag>
                 <AppTooltip v-if="session.stale" :for="`session-header-${sessionId}-stale-tag`">Session files were deleted from disk</AppTooltip>
@@ -529,7 +534,7 @@ defineExpose({
             >
                 <!-- In-session search trigger: clickable equivalent of Ctrl+F (not for drafts) -->
                 <wa-button
-                    v-if="!session.draft"
+                    v-if="!session.draft && !session.ephemeral"
                     :id="`session-header-${sessionId}-search-button`"
                     variant="neutral"
                     appearance="plain"
@@ -539,11 +544,11 @@ defineExpose({
                 >
                     <wa-icon name="magnifying-glass" label="Search"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="!session.draft" :for="`session-header-${sessionId}-search-button`">{{ searchTooltip }}</AppTooltip>
+                <AppTooltip v-if="!session.draft && !session.ephemeral" :for="`session-header-${sessionId}-search-button`">{{ searchTooltip }}</AppTooltip>
 
                 <!-- Pin mode dropdown (not for drafts) -->
                 <wa-dropdown
-                    v-if="!session.draft"
+                    v-if="!session.draft && !session.ephemeral"
                     class="pin-dropdown"
                     placement="bottom-start"
                     @wa-select="handlePinSelect"
@@ -571,10 +576,10 @@ defineExpose({
                         Pin everywhere
                     </wa-dropdown-item>
                 </wa-dropdown>
-                <AppTooltip v-if="!session.draft" :for="`session-header-${sessionId}-pin-button`">{{ pinTooltip }}</AppTooltip>
+                <AppTooltip v-if="!session.draft && !session.ephemeral" :for="`session-header-${sessionId}-pin-button`">{{ pinTooltip }}</AppTooltip>
 
                 <wa-button
-                    v-if="!session.draft"
+                    v-if="!session.draft && !session.ephemeral"
                     :id="`session-header-${sessionId}-mute-button`"
                     :variant="session.mute_on_user_turn ? 'warning' : 'neutral'"
                     appearance="plain"
@@ -590,13 +595,13 @@ defineExpose({
                     ></wa-icon>
                 </wa-button>
                 <AppTooltip
-                    v-if="!session.draft"
+                    v-if="!session.draft && !session.ephemeral"
                     :for="`session-header-${sessionId}-mute-button`"
                 >{{ muteTooltip }}</AppTooltip>
 
                 <!-- Archive button (not for drafts or already archived) -->
                 <wa-button
-                    v-if="!session.archived && !session.draft"
+                    v-if="!session.archived && !session.draft && !session.ephemeral"
                     :id="`session-header-${sessionId}-archive-button`"
                     variant="neutral"
                     appearance="plain"
@@ -606,7 +611,7 @@ defineExpose({
                 >
                     <wa-icon name="box-archive" label="Archive"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="!session.archived && !session.draft" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? `Archive session (it will stop the ${providerLabel} process)` : 'Archive session' }}</AppTooltip>
+                <AppTooltip v-if="!session.archived && !session.draft && !session.ephemeral" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? `Archive session (it will stop the ${providerLabel} process)` : 'Archive session' }}</AppTooltip>
 
                 <!-- Rename button (only for main session) -->
                 <wa-button
@@ -626,7 +631,7 @@ defineExpose({
                 <!-- Debug view toggle (dev mode only, main session): forces the debug
                      display mode for this session without touching the global setting -->
                 <wa-button
-                    v-if="mode === 'session' && settingsStore.isDevMode"
+                    v-if="mode === 'session' && !session.ephemeral && settingsStore.isDevMode"
                     :id="`session-header-${sessionId}-debug-button`"
                     :variant="isSessionDebugForced ? 'brand' : 'neutral'"
                     appearance="plain"
@@ -636,11 +641,11 @@ defineExpose({
                 >
                     <wa-icon name="bug" label="Debug view"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="mode === 'session' && settingsStore.isDevMode" :for="`session-header-${sessionId}-debug-button`">{{ isSessionDebugForced ? 'Debug view forced for this session — click to restore the global mode' : 'Force the debug view for this session only' }}</AppTooltip>
+                <AppTooltip v-if="mode === 'session' && !session.ephemeral && settingsStore.isDevMode" :for="`session-header-${sessionId}-debug-button`">{{ isSessionDebugForced ? 'Debug view forced for this session — click to restore the global mode' : 'Force the debug view for this session only' }}</AppTooltip>
 
                 <!-- Share button (main session only) -->
                 <wa-button
-                    v-if="mode === 'session' && !session.draft"
+                    v-if="mode === 'session' && !session.draft && !session.ephemeral"
                     :id="`session-header-${sessionId}-share-button`"
                     :variant="activeShareCount > 0 ? 'brand' : 'neutral'"
                     appearance="plain"
@@ -739,7 +744,7 @@ defineExpose({
 
                 <!-- Compact mode: expand/collapse chevron (only visible on small viewports via CSS) -->
                 <wa-icon
-                    v-if="!session.draft"
+                    v-if="!session.draft && !session.ephemeral"
                     class="compact-toggle-chevron"
                     :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'"
                     label="Toggle details"
@@ -768,7 +773,7 @@ defineExpose({
             </div>
 
             <!-- Meta row (not shown for draft sessions) -->
-            <div v-if="!session.draft" class="session-meta">
+            <div v-if="!session.draft && !session.ephemeral" class="session-meta">
 
                 <span :id="`session-header-${sessionId}-messages`" class="meta-item">
                     <wa-icon auto-width name="comment" variant="regular"></wa-icon>

@@ -18,8 +18,10 @@ import asyncio
 import logging
 from typing import Any, ClassVar
 
+import orjson
+
 from asgiref.sync import sync_to_async
-from openai_codex.generated.v2_all import ApprovalsReviewer, SandboxMode
+from openai_codex.generated.v2_all import ApprovalsReviewer, ConfigReadResponse, SandboxMode
 
 from twicc.agent import AgentState, BaseAgent, BaseAgentManager, SendDeliveryError
 from twicc.agent.work_dirs import resolve_and_create_work_dirs
@@ -81,6 +83,9 @@ class CodexAgentManager(BaseAgentManager):
         first user message on the first turn (see that method and
         :mod:`twicc.providers.codex.titles`).
         """
+        if getattr(agent, "ephemeral", False):
+            await super()._on_state_change(agent)
+            return
         await super()._on_state_change(agent)
         state = agent.get_info().state
         if state == AgentState.DEAD:
@@ -207,6 +212,7 @@ class CodexAgentManager(BaseAgentManager):
     ) -> bool:
         """Serialize every existing-session send with rollout migration."""
 
+        self._check_ephemeral_readonly(session_id)
         async with gate_for(session_id):
             return await self._send_to_session_under_gate(
                 session_id,
@@ -263,6 +269,7 @@ class CodexAgentManager(BaseAgentManager):
         command = parse_hardcoded_command(text)
 
         async with self._lock:
+            self._check_ephemeral_readonly(session_id)
             if command is not None:
                 await self._dispatch_hardcoded_command(
                     session_id, project_id, cwd, command, settings,
@@ -484,6 +491,8 @@ class CodexAgentManager(BaseAgentManager):
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
+        ephemeral: bool = False,
+        ephemeral_admission=None,
     ) -> str:
         """Create a brand-new Codex thread for the draft ``session_id``.
 
@@ -508,8 +517,11 @@ class CodexAgentManager(BaseAgentManager):
         # the model as ordinary turn text. Parsed before the lock (cheap pure
         # check), same as ``send_to_session``.
         command = parse_hardcoded_command(text)
+        if ephemeral and command is not None:
+            raise SendDeliveryError("Commands are unavailable for ephemeral runs", code="ephemeral_command_unsupported")
 
         async with self._lock:
+            self._check_ephemeral_readonly(session_id, ephemeral_admission)
             # No "session already exists" guard: by construction the draft id
             # is fresh per attempt; even if the frontend reuses one, Codex
             # mints a new canonical id and the (now-orphan) draft-keyed entry
@@ -522,11 +534,12 @@ class CodexAgentManager(BaseAgentManager):
                 # resume flag differs (``False`` here: a brand-new thread).
                 return await self._start_agent(
                     session_id, project_id, cwd, "", resume=False,
-                    settings=settings, command=command,
+                    settings=settings, command=command, ephemeral_admission=ephemeral_admission,
                 )
             return await self._start_agent(
                 session_id, project_id, cwd, text, resume=False,
                 settings=settings, images=images,
+                ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
             )
 
     def get_user_terminated_tool_reason(
@@ -573,6 +586,7 @@ class CodexAgentManager(BaseAgentManager):
         *,
         resume: bool,
         settings: AgentSettings,
+        ephemeral: bool = False,
         **kwargs: Any,
     ) -> CodexAgent:
         """Spin up the AsyncCodex client + thread, wrap them in a CodexAgent.
@@ -596,13 +610,15 @@ class CodexAgentManager(BaseAgentManager):
         Codex-owned continuations that do not pass through TwiCC's turn path.
         """
         config = await make_codex_config(cwd=cwd)
+        if ephemeral:
+            config.config_overrides = (*config.config_overrides, "features.plugins=false")
         codex = TwiccAsyncCodex(config=config)
         # Debug-only: persist the app-server's stderr (RUST_LOG tracing) per
         # session. Must be attached before the first RPC lazily spawns the
         # subprocess and its drain thread — so it only knows the draft id here.
         # The returned callback re-homes the log onto the canonical thread id
         # once thread_start mints it (see below); None in production.
-        rebind_stderr_log = attach_stderr_logging(session_id, codex)
+        rebind_stderr_log = None if ephemeral else attach_stderr_logging(session_id, codex)
 
         # ``thread_start`` / ``thread_resume`` lazy-init the transport via
         # ``_ensure_initialized`` on first call — no need to start it
@@ -668,7 +684,15 @@ class CodexAgentManager(BaseAgentManager):
             # resolve correctly. Gated on the TWICC_NO_MCP kill switch.
             from twicc.mcp import mcp_enabled
 
-            if mcp_enabled():
+            if ephemeral:
+                await codex._ensure_initialized()
+                inherited = await codex._client.request(
+                    "config/read", {"includeLayers": False, "cwd": cwd}, response_model=ConfigReadResponse,
+                )
+                for name in inherited.config.model_dump().get("mcp_servers", {}):
+                    quoted_name = orjson.dumps(name).decode()
+                    thread_config[f"mcp_servers.{quoted_name}.enabled"] = False
+            elif mcp_enabled():
                 thread_config["mcp_servers"] = {"twicc": _twicc_mcp_server_config(session_id)}
                 _apply_codex_mcp_context_mode(thread_config)
             # Offer request_user_input (the AskUserQuestion-equivalent) in every
@@ -736,13 +760,14 @@ class CodexAgentManager(BaseAgentManager):
                     config=thread_config,
                     developer_instructions=developer_instructions,
                     service_tier=service_tier,
+                    **({"ephemeral": True} if ephemeral else {}),
                 )
 
                 # The canonical id only exists after thread/start, while the
                 # work directories are deliberately scoped to that id. Create
                 # them now. ``pending_id`` preserves access to the draft-keyed
                 # orchestration metadata until the watcher creates the row.
-                work_dirs = await resolve_and_create_work_dirs(
+                work_dirs = [] if ephemeral else await resolve_and_create_work_dirs(
                     thread.id,
                     pending_id=session_id,
                 )
@@ -754,7 +779,7 @@ class CodexAgentManager(BaseAgentManager):
                 # in place. An immediate thread/resume is invalid here because
                 # Codex has not indexed the brand-new rollout yet ("no rollout
                 # found"). Other sandbox modes do not carry writable roots.
-                if sandbox is SandboxMode.workspace_write:
+                if not ephemeral and sandbox is SandboxMode.workspace_write:
                     sandbox_policy, _, _ = resolve_codex_turn_overrides(
                         settings.permission_mode,
                         writable_roots=work_dirs,
@@ -770,14 +795,16 @@ class CodexAgentManager(BaseAgentManager):
                 # own id; it is consumed once at the first turn and scrubbed
                 # from the stored copy by ``compute_base``. Never on resume:
                 # the original block already lives in the replayed rollout.
-                inject_context(thread.id, session_id=thread.id)
+                if not ephemeral:
+                    inject_context(thread.id, session_id=thread.id)
 
                 # The MCP token in thread_config was minted against the DRAFT
                 # session_id; map it to the canonical id Codex just minted so
                 # /mcp resolves the caller correctly (harmless no-op if equal).
                 from twicc.mcp.identity import register_draft_alias
 
-                register_draft_alias(session_id, thread.id)
+                if not ephemeral:
+                    register_draft_alias(session_id, thread.id)
 
             # Re-home the debug stderr log from the draft id (all we had before
             # thread_start) onto the canonical id, so it matches the JSONL
@@ -799,6 +826,7 @@ class CodexAgentManager(BaseAgentManager):
                 thread=thread,
                 untrusted=untrusted,
                 work_dirs=work_dirs,
+                ephemeral=ephemeral,
             )
 
             # Prime the environment-reconciliation baseline (best-effort; the
@@ -815,13 +843,13 @@ class CodexAgentManager(BaseAgentManager):
             else:
                 await agent._seed_context_baseline(pending_id=session_id)
             return agent
-        except Exception:
+        except BaseException:
             try:
                 await codex.close()
             except Exception:
                 logger.debug(
                     "codex.close() failed while unwinding _create_agent",
-                    exc_info=True,
+                    exc_info=not ephemeral,
                 )
             raise
 

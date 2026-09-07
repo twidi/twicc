@@ -56,7 +56,7 @@ const count = computed(() => selectedSessions.value.length)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** Drafts can't be pinned. */
-const pinnableSessions = computed(() => selectedSessions.value.filter(s => !s.draft))
+const pinnableSessions = computed(() => selectedSessions.value.filter(s => !s.draft && !s.ephemeral))
 
 /** Sessions whose pin mode differs from the target mode. */
 function pinTargets(mode) {
@@ -75,7 +75,7 @@ function isPinModeChecked(mode) {
 
 /** Mirrors SessionListItem's canToggleReadState (draft/archived/non-user_turn excluded). */
 function canToggleRead(session) {
-    if (session.draft || session.archived) return false
+    if (session.draft || session.ephemeral || session.archived) return false
     const ps = store.getProcessState(session.id)
     if (ps && ps.state !== PROCESS_STATE.USER_TURN) return false
     return true
@@ -89,7 +89,7 @@ const markUnreadCandidates = computed(() =>
 )
 
 const archiveTargets = computed(() =>
-    selectedSessions.value.filter(s => !s.archived && !s.draft)
+    selectedSessions.value.filter(s => !s.archived && !s.draft && !s.ephemeral)
 )
 const unarchiveTargets = computed(() =>
     selectedSessions.value.filter(s => s.archived)
@@ -98,7 +98,7 @@ const stopTargets = computed(() =>
     selectedSessions.value.filter(s => isStoppable(store.getProcessState(s.id)))
 )
 const draftTargets = computed(() =>
-    selectedSessions.value.filter(s => s.draft)
+    selectedSessions.value.filter(s => s.draft || s.ephemeral)
 )
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -115,7 +115,7 @@ const confirmLabel = computed(() => {
     const n = sessionIds.length
     if (mode === 'archive') return `Archive ${n} session${n > 1 ? 's' : ''}?`
     if (mode === 'stop') return `Stop ${n} process${n > 1 ? 'es' : ''}?`
-    return `Delete ${n} draft${n > 1 ? 's' : ''}?`
+    return `Discard ${n} local session${n > 1 ? 's' : ''}?`
 })
 
 const confirmMessage = computed(() => {
@@ -162,13 +162,19 @@ function runConfirmed() {
     if (mode === 'archive') {
         for (const id of sessionIds) stopSessionProcessUnconfirmed(id, { archive: true })
     } else if (mode === 'stop') {
-        for (const id of sessionIds) stopSessionProcessUnconfirmed(id)
+        for (const id of sessionIds) {
+            if (store.getSession(id)?.ephemeral) store.stopEphemeralSession(id)
+            else stopSessionProcessUnconfirmed(id)
+        }
     } else if (mode === 'delete-drafts') {
         if (sessionIds.includes(props.activeSessionId)) {
             const active = store.getSession(props.activeSessionId)
             if (active) emit('deselect-session', active)
         }
-        for (const id of sessionIds) store.deleteDraftSession(id)
+        for (const id of sessionIds) {
+            if (store.getSession(id)?.ephemeral && !store.getSession(id)?.draft) store.discardEphemeralSession(id)
+            else store.deleteDraftSession(id)
+        }
     }
 }
 
@@ -315,7 +321,7 @@ function handleActionSelect(event) {
             </wa-dropdown-item>
             <wa-dropdown-item :disabled="draftTargets.length === 0" value="delete-drafts" variant="danger">
                 <wa-icon slot="icon" name="trash"></wa-icon>
-                Delete draft{{ draftTargets.length > 1 ? 's' : '' }}
+                Discard
                 <span slot="details" class="affected-count">{{ draftTargets.length }}</span>
             </wa-dropdown-item>
         </wa-dropdown>

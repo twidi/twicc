@@ -135,7 +135,7 @@ export function computeSidebarSessionBlocks({
         const processStates = data.processStates
         crossFilterActive = Object.values(data.sessions).filter(s => {
             if (s.parent_session_id) return false
-            if (s.draft) return false
+            if (s.draft || s.ephemeral) return false
             if (s.archived) return false
             if (naturalIds.has(s.id) || crossFilterPinnedIds.has(s.id)) return false
             const ps = processStates[s.id]

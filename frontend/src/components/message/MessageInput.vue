@@ -138,6 +138,26 @@ const isDraft = computed(() => session.value?.draft === true)
 const providerLabel = computed(() => getProviderLabel(session.value?.provider))
 const providerIcon = computed(() => getProviderIcon(session.value?.provider))
 
+const ephemeralDialogRef = ref(null)
+const ephemeralConfirmRef = ref(null)
+const ephemeralDontShowAgain = ref(false)
+const ephemeralButtonId = useId()
+
+function toggleEphemeral() {
+    if (session.value?.ephemeral || settingsStore.isEphemeralExplainerSeen) {
+        store.setDraftEphemeral(props.sessionId, !session.value?.ephemeral)
+    } else {
+        ephemeralDontShowAgain.value = false
+        ephemeralDialogRef.value.open = true
+    }
+}
+
+function confirmEphemeral() {
+    if (ephemeralDontShowAgain.value) settingsStore.setEphemeralExplainerSeen(true)
+    store.setDraftEphemeral(props.sessionId, true)
+    ephemeralDialogRef.value.open = false
+}
+
 // ── Hybrid CLI mode toggle ──────────────────────────────────────────────────
 // Claude Code only, never for hidden/orchestrated sessions or subagents.
 //
@@ -1532,14 +1552,7 @@ async function handleSend() {
         payload.title = session.value.title
     }
 
-    // Hybrid CLI mode: only meaningful at creation time (drafts). Existing
-    // sessions switch through the one-way `set_session_hybrid` WS command.
-    if (isDraft.value) {
-        payload.hybrid = session.value?.hybrid === true
-        // Dockable layout seeded on the draft (resolved project → global default) — frozen onto
-        // Session.layout at creation. {} = single pane.
-        payload.layout = session.value?.layout || {}
-    }
+    store.applyCreationSendMode(payload)
 
     // For draft sessions without a title, open the rename dialog (non-blocking)
     // The message is still sent, allowing the agent to start working
@@ -2114,6 +2127,21 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                     :sending-locked="sendingLocked"
                 />
 
+                <wa-button
+                    v-if="isDraft"
+                    :id="ephemeralButtonId"
+                    appearance="plain"
+                    size="small"
+                    :variant="session?.ephemeral ? 'warning' : 'neutral'"
+                    :aria-pressed="session?.ephemeral === true"
+                    @click="toggleEphemeral"
+                >
+                    <wa-icon name="ghost" label="Ephemeral session"></wa-icon>
+                </wa-button>
+                <AppTooltip v-if="isDraft" :for="ephemeralButtonId">
+                    {{ session?.ephemeral ? 'Ephemeral mode on — click to turn off' : 'Start as an ephemeral session' }}
+                </AppTooltip>
+
                 <!-- Hybrid CLI mode toggle (Claude Code, visible sessions only).
                      Always clickable: committed sessions open the info dialog so a
                      click is never a no-op the user reads as a bug. Green =
@@ -2184,6 +2212,20 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                 <AppTooltip v-if="sendingLocked" :for="sendingLockedId">{{ sendingLockedReason }}</AppTooltip>
             </div>
         </div>
+
+        <wa-dialog
+            ref="ephemeralDialogRef"
+            label="Start this session as ephemeral?"
+            style="--width: min(520px, calc(100vw - 2rem))"
+            @wa-after-show.self="ephemeralConfirmRef?.focus()"
+        >
+            <p>TwiCC and the provider do not save a local session transcript. Only the final answer appears.</p>
+            <p>This browser saves your prompt and answer until Discard. You cannot resume the run. A connection loss can lose its answer.</p>
+            <p>Inherited MCP servers are off. Codex plugins are also off for this run.</p>
+            <wa-switch :checked="ephemeralDontShowAgain" @change="ephemeralDontShowAgain = $event.target.checked">Don't show again</wa-switch>
+            <wa-button slot="footer" @click="ephemeralDialogRef.open = false">Cancel</wa-button>
+            <wa-button ref="ephemeralConfirmRef" slot="footer" variant="brand" @click="confirmEphemeral">Start as ephemeral</wa-button>
+        </wa-dialog>
 
         <!-- Hybrid CLI mode dialog — one dialog, four variants (see script).
              The explanation lives in a <wa-details>, always present; only the

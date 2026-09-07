@@ -1,3 +1,4 @@
+import { buildEphemeralResultContent } from '../ephemeralContent.js'
 import { BaseProviderHelpers, formatRetirementDate } from '../baseHelpers'
 import { PROVIDER, SYNTHETIC_ITEM } from '../../constants'
 import { CONTEXT_MAX, EFFORT, PERMISSION_MODE, UNTRUSTED_PERMISSION_MODES } from './constants'
@@ -214,6 +215,10 @@ export class ClaudeCodeHelpers extends BaseProviderHelpers {
 
     getBuiltInCommands(activationChar) {
         return activationChar === '/' ? BUILTIN_COMMANDS : []
+    }
+
+    buildEphemeralResultContent(text) {
+        return buildEphemeralResultContent('claude_code', text)
     }
 
     buildOptimisticUserMessageContent(text, attachments) {

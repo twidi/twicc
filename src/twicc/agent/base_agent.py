@@ -56,6 +56,8 @@ class BaseAgent:
         project_id: str,
         cwd: str,
         agent_settings: AgentSettings,
+        *,
+        ephemeral: bool = False,
     ) -> None:
         # Fail fast if the subclass forgot to set its provider key. Without
         # this guard, the missing attribute would only surface deep inside
@@ -69,6 +71,12 @@ class BaseAgent:
         self.session_id = session_id
         self.project_id = project_id
         self.cwd = cwd
+        self.ephemeral = ephemeral
+        self.ephemeral_draft_id = session_id
+        self.ephemeral_final_text: str = ""
+        self.ephemeral_usage: dict = {}
+        self.ephemeral_result_emitted = False
+        self.ephemeral_soft_interrupted = False
 
         # Per-session agent settings as a single typed bundle. Mutate via
         # ``_replace`` so the assignment site is the only place a setting
@@ -148,6 +156,15 @@ class BaseAgent:
     # State machine
     # ------------------------------------------------------------------
 
+    @property
+    def _logger(self) -> logging.Logger:
+        """Suppress provider payload diagnostics for non-persistent runs."""
+        if not getattr(self, "ephemeral", False):
+            return logging.getLogger(type(self).__module__)
+        suppressed = logging.getLogger("twicc.ephemeral.suppressed")
+        suppressed.disabled = True
+        return suppressed
+
     def _set_state(self, new_state: AgentState) -> None:
         """Transition into ``new_state`` and trigger the DEAD-event side-effect."""
         old_state = self.state
@@ -178,7 +195,7 @@ class BaseAgent:
             try:
                 await self._state_change_callback(self)
             except Exception as e:
-                logger.error(
+                self._logger.error(
                     "Error in state change callback for session %s: %s",
                     self.session_id, e, exc_info=True,
                 )
@@ -346,7 +363,7 @@ class BaseAgent:
         except Exception as inner_exc:
             if captured_outer_cancel is not None:
                 with provider_log_context(self.provider):
-                    logger.error(
+                    self._logger.error(
                         "DEAD callback for session %s raised while the "
                         "transition was being cancelled; suppressing inner: %s",
                         self.session_id, inner_exc, exc_info=inner_exc,
@@ -463,7 +480,7 @@ class BaseAgent:
         future = self._pending_futures.get(request_id)
         if future is None or future.done():
             with provider_log_context(self.provider):
-                logger.warning(
+                self._logger.warning(
                     "[session %s] resolve_pending_request: no in-flight Future "
                     "for request_id=%s (known=%s)",
                     self.session_id,
@@ -525,6 +542,7 @@ class BaseAgent:
             pending_requests=self.pending_requests,
             stopping=self._stop_requested,
             label=self.current_status_label(),
+            extra={"ephemeral": True, "ephemeral_draft_id": self.ephemeral_draft_id} if getattr(self, "ephemeral", False) else {},
         )
 
     def current_status_label(self) -> str | None:
@@ -625,7 +643,7 @@ class BaseAgent:
             reconcile(self.session_id, current)
         except Exception:
             with provider_log_context(self.provider):
-                logger.warning(
+                self._logger.warning(
                     "Context reconciliation failed for session %s; "
                     "skipping this turn.",
                     self.session_id, exc_info=True,
@@ -664,7 +682,7 @@ class BaseAgent:
             )
         except Exception:
             with provider_log_context(self.provider):
-                logger.warning(
+                self._logger.warning(
                     "Failed to seed context baseline for session %s; the first "
                     "turn will re-state the full Context block instead.",
                     self.session_id, exc_info=True,
@@ -755,6 +773,8 @@ class BaseAgent:
         Provider-agnostic — ``hidden`` is a cross-provider ``Session`` column —
         so it lives here and every provider's agent inherits it.
         """
+        if getattr(self, "ephemeral", False):
+            return False
         if self._hidden is not None:
             return self._hidden
 
@@ -927,7 +947,7 @@ class BaseAgent:
             # SIGKILL any survivors
             for proc in alive:
                 try:
-                    logger.warning(
+                    self._logger.warning(
                         "Process %d did not terminate after SIGTERM, sending SIGKILL",
                         proc.pid,
                     )

@@ -363,6 +363,7 @@ def build_dynamic_block(
     spawned_by_project_id: str | None = None,
     hidden: bool = False,
     annotations: dict | None = None,
+    ephemeral: bool = False,
 ) -> str:
     """Compose the per-session context block from primitives.
 
@@ -382,19 +383,23 @@ def build_dynamic_block(
 
     lines.extend(["", "### Context", ""])
 
-    if session_id:
+    if session_id and not ephemeral:
         lines.append(f"- session_id: {session_id}")
 
     # Absolute, resolved root for session-scoped artifacts. Per-session
     # files live at ``<artifacts_base_dir>/<session_id>/<artifact_file_name>``;
     # the static addendum above references this base via ``{artifacts_base_dir}``.
-    lines.append(f"- artifacts_base_dir: {get_artifacts_dir()}")
+    if not ephemeral:
+        lines.append(f"- artifacts_base_dir: {get_artifacts_dir()}")
 
     # Absolute, resolved root for scratch files (throwaway work space, or a
     # shared folder for an orchestration tree). The per-session subdir is
     # pre-created at agent start; the static addendum above references this
     # base via ``{scratch_base_dir}``.
-    lines.append(f"- scratch_base_dir: {get_scratch_dir()}")
+    if not ephemeral:
+        lines.append(f"- scratch_base_dir: {get_scratch_dir()}")
+    else:
+        lines.append("- ephemeral: true")
 
     lines.append(f"- project: {_project_descriptor(project_id)}")
 
@@ -461,6 +466,7 @@ def compose_addendum(
     spawned_by_project_id: str | None = None,
     hidden: bool = False,
     annotations: dict | None = None,
+    ephemeral: bool = False,
 ) -> str:
     """Concatenate the static and dynamic blocks.
 
@@ -479,7 +485,18 @@ def compose_addendum(
         spawned_by_project_id=spawned_by_project_id,
         hidden=hidden,
         annotations=annotations,
+        ephemeral=ephemeral,
     )
+    if ephemeral:
+        return (
+            "This run is ephemeral. TwiCC and the provider do not write a local session transcript.\n"
+            "There is no TwiCC session id, artifact directory, scratch directory, or TwiCC tool access.\n"
+            "Deliver the result in your final answer or through requested changes in the project directory.\n"
+            "Inherited MCP servers are disabled. Codex plugins are disabled for this run.\n\n"
+            + ("For Codex subagents, set fork_turns to 'none'; ephemeral threads cannot fork stored history.\n"
+               if provider == Provider.CODEX.value else "")
+            + dynamic + "\n"
+        )
     parts: list[str] = [STATIC_ADDENDUM]
     helpers = get_provider_helpers(Provider(provider))
     provider_static = helpers.SYSTEM_PROMPT_STATIC_ADDENDUM

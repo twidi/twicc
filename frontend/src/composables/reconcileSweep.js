@@ -22,7 +22,7 @@
  */
 export async function sweepLoadedSessions(store) {
     const sessionIds = Object.entries(store.localState.sessions)
-        .filter(([sessionId, local]) => local?.itemsFetched && store.sessions[sessionId])
+        .filter(([sessionId, local]) => local?.itemsFetched && store.sessions[sessionId] && !store.sessions[sessionId].ephemeral)
         .map(([sessionId]) => sessionId)
 
     const failed = []

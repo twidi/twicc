@@ -1,3 +1,4 @@
+import { buildEphemeralResultContent } from '../ephemeralContent.js'
 import { BaseProviderHelpers, formatRetirementDate } from '../baseHelpers'
 import { PROVIDER, SYNTHETIC_ITEM } from '../../constants'
 import { getTwiccLaunchPrefix } from '../../utils/twiccLaunch'
@@ -226,6 +227,10 @@ export class CodexHelpers extends BaseProviderHelpers {
         // constant). See ``BUILTIN_COMMANDS`` above and the backend
         // ``agent/hardcoded_commands.py``.
         return activationChar === '/' ? BUILTIN_COMMANDS : []
+    }
+
+    buildEphemeralResultContent(text) {
+        return buildEphemeralResultContent('codex', text)
     }
 
     buildOptimisticUserMessageContent(text, attachments) {

@@ -63,7 +63,10 @@ export function startAutoApplyTitleWatcher() {
             // the pending entry. ``renameSession`` does its own optimistic
             // update + PATCH and propagates the protect-title machinery on
             // the backend.
-            if (!session.draft) {
+            if (session.ephemeral) {
+                store.setDraftTitle(sid, session.title || suggestion)
+                store.clearPendingTitleAutoApply(sid)
+            } else if (!session.draft) {
                 store.clearPendingTitleAutoApply(sid)
                 store.renameSession(meta.projectId, sid, suggestion)
             }

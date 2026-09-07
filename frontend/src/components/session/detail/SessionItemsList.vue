@@ -21,6 +21,8 @@ import FetchErrorPanel from '../../ui/FetchErrorPanel.vue'
 import GroupToggle from './GroupToggle.vue'
 import { useCodeCommentsStore } from '../../../stores/codeComments'
 import MessageInput from '../../message/MessageInput.vue'
+import EphemeralActionsBar from './EphemeralActionsBar.vue'
+import { isLaunchedEphemeral } from '../../../utils/ephemeralSessions.js'
 import PendingRequestForm from '../../message/PendingRequestForm.vue'
 import HybridTerminalBlock from '../../message/HybridTerminalBlock.vue'
 import GoalBlock from '../../message/GoalBlock.vue'
@@ -148,6 +150,18 @@ function onHybridTerminalState(state) {
 
 // Session data
 const session = computed(() => store.getSession(props.sessionId))
+const isEphemeral = computed(() => isLaunchedEphemeral(session.value))
+watch(isEphemeral, (active) => { if (active) showSessionSearch.value = false })
+const ephemeralNotice = computed(() => {
+    const result = session.value?.ephemeralResult
+    switch (session.value?.ephemeralPhase) {
+        case 'done': return { variant: 'success', text: 'Ephemeral session finished.' }
+        case 'error': return { variant: 'danger', text: `Ephemeral session failed. ${result?.error || ''}` }
+        case 'stopped': return { variant: 'neutral', text: 'Ephemeral session stopped.' }
+        case 'lost': return { variant: 'warning', text: 'This ephemeral run is no longer available. Its answer was not received.' }
+        default: return { variant: 'brand', text: `Ephemeral session running. TwiCC and ${providerLabel.value} do not save a local session transcript. This browser keeps your prompt and final answer until you discard them.` }
+    }
+})
 const project = computed(() => store.getProject(props.projectId))
 const providerLabel = computed(() => getProviderLabel(session.value?.provider))
 const settingsStore = useSettingsStore()
@@ -672,7 +686,7 @@ watch([() => props.sessionId, session], async ([newSessionId, newSession], [oldS
     if (!newSession) return
 
     // Don't load data for draft sessions (they have no items yet)
-    if (newSession.draft) {
+    if (newSession.draft || isLaunchedEphemeral(newSession)) {
         return
     }
 
@@ -1566,6 +1580,7 @@ function isSelectionInSessionContent(selection) {
  * When closing: leaves handled = false so the native Ctrl+F passes through to the browser.
  */
 function handleToggleSessionSearch(e) {
+    if (isEphemeral.value) return
     // Only respond for the main chat tab (not subagent views)
     if (props.parentSessionId) return
     // Only respond when this session is active (KeepAlive)
@@ -1936,6 +1951,13 @@ defineExpose({
         @dragover="onDragOver"
         @drop="onDrop"
     >
+        <wa-callout v-if="isEphemeral" :variant="ephemeralNotice.variant" class="ephemeral-notice">
+            <wa-spinner v-if="session.ephemeralPhase === 'running'" slot="icon"></wa-spinner>
+            <span>{{ ephemeralNotice.text }}</span>
+            <span v-if="session.ephemeralResult?.cost_usd != null"> · ${{ Number(session.ephemeralResult.cost_usd).toFixed(4) }}</span>
+            <span v-if="session.ephemeralResult?.duration_ms != null"> · {{ (session.ephemeralResult.duration_ms / 1000).toFixed(1) }} s</span>
+        </wa-callout>
+
         <!-- In-session search bar (Ctrl+F) -->
         <SessionSearchBar
             v-if="showSessionSearch"
@@ -2115,8 +2137,20 @@ defineExpose({
         </div>
 
         <div class="session-footer">
+            <template v-if="isEphemeral">
+                <PendingRequestForm
+                    v-if="hasAnswerablePendingRequest"
+                    ref="pendingFormRef"
+                    :session-id="sessionId"
+                    :pending-request="pendingRequest"
+                    :pending-count="pendingRequests.length"
+                    @request-open="setOpenBlock('pending', { focus: true })"
+                    @request-collapse="collapsePendingRequest"
+                />
+                <EphemeralActionsBar :session-id="sessionId" />
+            </template>
             <!-- Stale session banner (replaces message input for stale main sessions) -->
-            <div v-if="isStale && !parentSessionId" class="stale-banner">
+            <div v-else-if="isStale && !parentSessionId" class="stale-banner">
                 <wa-callout variant="warning" appearance="outlined">
                     <wa-icon slot="icon" name="clock-rotate-left"></wa-icon>
                     <div class="stale-banner-content">
@@ -2206,7 +2240,7 @@ defineExpose({
                      the degraded badge-only state (no form, answer happens inside the TUI) keeps
                      sending possible: it would steer or queue in the TUI. -->
                 <MessageInput
-                    v-if="!parentSessionId"
+                    v-if="!parentSessionId && !isEphemeral"
                     ref="messageInputRef"
                     :session-id="sessionId"
                     :project-id="projectId"
@@ -2248,6 +2282,7 @@ defineExpose({
 </template>
 
 <style scoped>
+.ephemeral-notice { margin: 0.75rem; flex-shrink: 0; }
 .session-items-list {
     display: flex;
     flex-direction: column;

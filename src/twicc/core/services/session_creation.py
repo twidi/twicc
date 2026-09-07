@@ -22,6 +22,8 @@ import orjson
 from asgiref.sync import sync_to_async
 
 from twicc.agent.system_prompt import compose_addendum
+from twicc.agent import ephemeral as ephemeral_runs
+from twicc.agent.exceptions import SendDeliveryError
 from twicc.core.enums import Provider
 from twicc.pending_agent_settings import set_pending_agent_settings
 from twicc.pending_session_attributes import set_pending_session_attributes
@@ -49,7 +51,50 @@ class SessionCreationResult(NamedTuple):
     errors: list[SessionCreationError] | None
 
 
-async def create_session_from_payload(payload: dict, *, allow_hybrid: bool = False) -> SessionCreationResult:
+async def create_session_from_payload(
+    payload: dict, *, allow_hybrid: bool = False, allow_ephemeral: bool = False,
+    ephemeral_admission=None,
+) -> SessionCreationResult:
+    """Admit ephemeral creation before any asynchronous operation or buffer write."""
+    session_id = payload.get("session_id")
+    ephemeral = allow_ephemeral and bool(payload.get("ephemeral"))
+    try:
+        ephemeral_runs.check_readonly(session_id, ephemeral_admission, creation=True)
+    except SendDeliveryError as exc:
+        return SessionCreationResult(False, None, None, None, [SessionCreationError("session", exc.code, str(exc))])
+    if ephemeral_admission is None and isinstance(session_id, str) and session_id:
+        ephemeral_admission = ephemeral_runs.reserve(
+            session_id, str(payload.get("provider") or ""), str(payload.get("project_id") or ""), ephemeral=ephemeral,
+        )
+    result = None
+    try:
+        if ephemeral and session_id:
+            from twicc.core.models import Session
+            if await sync_to_async(Session.objects.filter(pk=session_id).exists)():
+                if ephemeral_admission is not None:
+                    try:
+                        await ephemeral_runs.finish(ephemeral_admission, failed=True)
+                    finally:
+                        ephemeral_runs.release(ephemeral_admission)
+                return SessionCreationResult(False, None, None, None, [SessionCreationError(
+                    "session", "ephemeral_existing_session", "An existing session cannot become ephemeral.",
+                )])
+        result = await _create_session_from_payload(
+            payload, allow_hybrid=allow_hybrid, ephemeral=ephemeral,
+            ephemeral_admission=ephemeral_admission,
+        )
+        return result
+    finally:
+        if ephemeral:
+            if isinstance(session_id, str):
+                ephemeral_runs.drain_buffers(session_id)
+        await ephemeral_runs.finish(ephemeral_admission, failed=result is None or not result.success)
+
+
+async def _create_session_from_payload(
+    payload: dict, *, allow_hybrid: bool = False, ephemeral: bool = False,
+    ephemeral_admission=None,
+) -> SessionCreationResult:
     """Create a new session from a normalised payload.
 
     ``allow_hybrid`` is a TRUSTED keyword-only switch: only the WS handler
@@ -94,6 +139,20 @@ async def create_session_from_payload(payload: dict, *, allow_hybrid: bool = Fal
     hidden = bool(payload.get("hidden", False))
     mute_on_user_turn = payload.get("mute_on_user_turn") is True
     hybrid = bool(payload.get("hybrid")) if allow_hybrid else False
+    if ephemeral:
+        conflict = None
+        if payload.get("hybrid"):
+            conflict = ("ephemeral_hybrid_conflict", "Ephemeral sessions cannot use hybrid mode.")
+        elif payload.get("worktree_branch") or payload.get("worktree_path"):
+            conflict = ("ephemeral_worktree_unsupported", "Create the project worktree before starting an ephemeral session.")
+        elif payload.get("spawned_by_session_id") is not None:
+            conflict = ("ephemeral_spawn_unsupported", "Ephemeral sessions cannot be spawned sessions.")
+        elif provider_str == Provider.CODEX.value:
+            from twicc.providers.codex.agent.hardcoded_commands import parse_hardcoded_command
+            if parse_hardcoded_command(text) is not None:
+                conflict = ("ephemeral_command_unsupported", "An ephemeral Codex session requires a plain prompt.")
+        if conflict is not None:
+            return SessionCreationResult(False, None, None, None, [SessionCreationError("ephemeral", *conflict)])
     if hybrid:
         # Hybrid mode is a feature-flagged capability (default OFF). Refuse to
         # mint a new already-hybrid session when the flag is unset — the agent
@@ -273,7 +332,8 @@ async def create_session_from_payload(payload: dict, *, allow_hybrid: bool = Fal
             return SessionCreationResult(False, None, None, None, [
                 SessionCreationError("title", "invalid_title", title_result.error)
             ])
-        set_pending_title(session_id, title_result.title)
+        if not ephemeral:
+            set_pending_title(session_id, title_result.title)
 
     # --- stash agent settings (consumed by the watcher when it creates
     #     the Session row from the JSONL) ---------------------------
@@ -336,12 +396,15 @@ async def create_session_from_payload(payload: dict, *, allow_hybrid: bool = Fal
             spawned_by_project_id=spawned_by_project_id,
             hidden=hidden,
             annotations=annotations,
+            **({"ephemeral": True} if ephemeral else {}),
         )
 
     system_prompt_addendum = await sync_to_async(_build_addendum)()
 
     # No layout in the payload (CLI path) → resolve the inherited project/global default to freeze.
-    if not isinstance(layout, dict):
+    if ephemeral:
+        layout = {}
+    elif not isinstance(layout, dict):
         from twicc.project_layout_default import resolve_project_layout_default
         layout = await sync_to_async(resolve_project_layout_default)(project_id, directory=directory_hint)
 
@@ -355,6 +418,7 @@ async def create_session_from_payload(payload: dict, *, allow_hybrid: bool = Fal
         system_prompt_addendum=system_prompt_addendum,
         hybrid=hybrid,
         layout=layout,
+        ephemeral=ephemeral,
     )
 
     # --- invoke the agent manager --------------------------------
@@ -364,10 +428,12 @@ async def create_session_from_payload(payload: dict, *, allow_hybrid: bool = Fal
         canonical_id = await manager.create_session(
             session_id, project_id, cwd, text,
             settings=effective, images=images, documents=documents,
+            ephemeral_admission=ephemeral_admission,
+            **({"ephemeral": True} if ephemeral else {}),
         )
     except RuntimeError as e:
         return SessionCreationResult(False, None, None, None, [
-            SessionCreationError("session", "manager_busy", str(e))
+            SessionCreationError("session", getattr(e, "code", "manager_busy"), str(e))
         ])
 
     return SessionCreationResult(

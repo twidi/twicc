@@ -1,6 +1,6 @@
 # Ephemeral Sessions Implementation Plan
 
-**Status:** validated by independent internal reviewers (backend round 2, frontend round 1, provider round 2)
+**Status:** implemented and independently reviewed; see [validation results](2026-09-07-ephemeral-sessions-validation.md)
 **Design:** [Ephemeral Sessions Design](2026-09-05-ephemeral-sessions-design.md)
 **Design commit:** `3e51e740`
 **Date:** 2026-09-07
@@ -164,7 +164,10 @@ Quote MCP server names as TOML key segments, including dots and quotes; do
 not split a literal server name into nested keys.
 Capture only parent-thread agent messages. Prefer the latest final_answer
 phase; fall back to the latest unphased message. Ignore commentary-only and
-child-thread messages. No Codex cost is invented.
+child-thread messages. No Codex cost is invented. Native child creation uses
+`fork_turns="none"` (inheriting a non-persisted parent fails). State this in the
+addendum. Ephemeral holds poll child in-memory `thread/read` state rather than
+waiting for watcher updates; cancel polling at hold completion or shutdown.
 
 ### Addendum
 
@@ -316,4 +319,5 @@ runtime gate. Do not declare completion with missing runtime evidence.
 All three reviewers return PASS. The review adds provisional reservation
 release for existing persistent sessions, payload-safe Codex exception logs,
 quoted MCP keys, and offline-send rollback. These details also clarify the
-approved design. No implementation acceptance gate is claimed complete yet.
+approved design. Implementation acceptance and correction records appear in the
+[validation report](2026-09-07-ephemeral-sessions-validation.md).

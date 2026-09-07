@@ -2,7 +2,7 @@
 // IndexedDB wrapper for draft messages, draft sessions, and draft medias persistence
 
 const DB_NAME = 'twicc'
-const DB_VERSION = 7
+const DB_VERSION = 8
 const DRAFT_MESSAGES_STORE = 'draftMessages'
 const DRAFT_SESSIONS_STORE = 'draftSessions'
 const DRAFT_MEDIAS_STORE = 'draftMedias'
@@ -26,6 +26,9 @@ export function getDb() {
 
             request.onupgradeneeded = (event) => {
                 const db = event.target.result
+                if (!db.objectStoreNames.contains('ephemeralControls')) {
+                    db.createObjectStore('ephemeralControls')
+                }
                 // Create draftMessages store if not exists (v1)
                 if (!db.objectStoreNames.contains(DRAFT_MESSAGES_STORE)) {
                     db.createObjectStore(DRAFT_MESSAGES_STORE)
@@ -354,3 +357,17 @@ export async function getAllDraftMedias() {
 }
 
 export { CODE_COMMENTS_STORE, INFLIGHT_SENDS_STORE, PENDING_REQUEST_DRAFTS_STORE }
+
+/** Move a local session entry without a crash window between delete and save. */
+export async function rekeyDraftSession(oldId, newId, record) {
+    const db = await getDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(DRAFT_SESSIONS_STORE, 'readwrite')
+        const store = tx.objectStore(DRAFT_SESSIONS_STORE)
+        store.put(record, newId)
+        if (oldId !== newId) store.delete(oldId)
+        tx.oncomplete = resolve
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+    })
+}

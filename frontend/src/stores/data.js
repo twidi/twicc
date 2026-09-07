@@ -1,5 +1,7 @@
 // frontend/src/stores/data.js
 
+import { createEphemeralActions, createSendFailureActions, ephemeralFields, serializeDraftSession, isLaunchedEphemeral } from '../utils/ephemeralSessions'
+import { saveEphemeralControl, deleteEphemeralControl, loadEphemeralControls } from '../utils/ephemeralStorage'
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { toRaw } from 'vue'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
@@ -23,6 +25,7 @@ import {
     deleteDraftMessage,
     getAllDraftMessages,
     saveDraftSession,
+    rekeyDraftSession,
     getDraftSession,
     deleteDraftSession as deleteDraftSessionFromDb,
     getAllDraftSessions,
@@ -284,6 +287,10 @@ function hasActiveStartupPhase(startupProgress) {
  */
 export function sessionSortComparator(processStates) {
     return (a, b) => {
+        const aEphemeral = isLaunchedEphemeral(a)
+        const bEphemeral = isLaunchedEphemeral(b)
+        if (aEphemeral !== bEphemeral) return aEphemeral ? -1 : 1
+        if (aEphemeral) return (Date.parse(b.ephemeralStartedAt) || 0) - (Date.parse(a.ephemeralStartedAt) || 0)
         // 1. Pinned sessions first (regardless of mode).
         //    `pinned` is a string ('project'/'workspace'/'all') or null — any truthy
         //    value means pinned.
@@ -504,6 +511,8 @@ export const useDataStore = defineStore('data', {
 
         // Local UI state (separate from server data to avoid being overwritten)
         localState: {
+            ephemeralControls: {},
+            ephemeralIds: {},
             projectsList: {
                 loading: false,
                 loadingError: false
@@ -1372,6 +1381,60 @@ export const useDataStore = defineStore('data', {
     },
 
     actions: {
+        ...createSendFailureActions(inflightSends),
+        ...createEphemeralActions({
+            uuid: generateUUID,
+            rekeySession: rekeyDraftSession,
+            saveControl: saveEphemeralControl,
+            deleteControl: deleteEphemeralControl,
+            deleteSession: deleteDraftSessionFromDb,
+            clearContent: id => {
+                debouncedSaves.get(id)?.cancel()
+                debouncedSaves.delete(id)
+                layoutPersistDebouncers.get(id)?.cancel()
+                layoutPersistDebouncers.delete(id)
+                layoutPersistPending.delete(id)
+                destroySessionBuffers(id)
+                return Promise.all([deleteDraftMessage(id), deleteAllDraftMediasForSession(id), sweepPendingRequestDrafts(new Set(), Infinity, id)])
+            },
+            stop: async id => {
+                const { killProcess } = await import('../composables/useWebSocket')
+                return killProcess(id)
+            },
+            navigate: async (oldId, newId, projectId) => {
+                const { router } = await import('../router')
+                const route = router.currentRoute.value
+                if (route.params.sessionId !== oldId) return
+                if (newId) await router.replace({ name: route.name, params: { ...route.params, sessionId: newId }, query: route.query })
+                else await router.replace({ name: 'project', params: { projectId }, query: route.query })
+            },
+            buildPrompt: (session, prompt) => {
+                const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE
+                const item = { line_num: lineNum, content: null, kind: 'user_message', syntheticKind,
+                    display_level: DISPLAY_LEVEL.ALWAYS, group_head: null, group_tail: null }
+                setParsedContent(item, getProviderHelpers(session.provider).buildEphemeralUserMessageContent(prompt.text, prompt.attachments))
+                return item
+            },
+        }),
+        _rekeyEphemeralInflight(oldId, newId) {
+            for (const [requestId, entry] of inflightSends) {
+                if (entry.sessionId !== oldId) continue
+                entry.sessionId = newId
+                saveInflightSend(requestId, entry).catch(console.warn)
+            }
+            const failed = this.localState.failedSends[newId]
+            for (const entry of Object.values(failed || {})) {
+                entry.sessionId = newId
+                entry.item = this._materializeFailedSendItem(entry)
+            }
+        },
+        _clearEphemeralInflight(id) {
+            for (const [requestId, entry] of inflightSends) {
+                if (entry.sessionId === id) this._dropInflightSend(requestId)
+            }
+            for (const requestId of Object.keys(this.localState.failedSends[id] || {})) this._dropInflightSend(requestId)
+        },
+
         // Provider lifecycle state — written from bootstrap (snapshot) and
         // from `provider_state_changed` WS pushes (live transitions).
         applyProviderStates(providerStates) {
@@ -1612,23 +1675,8 @@ export const useDataStore = defineStore('data', {
          *  source of truth. No-op for non-draft sessions. */
         _saveDraftToIndexedDB(sessionId) {
             const s = this.sessions[sessionId]
-            if (!s?.draft) return
-            saveDraftSession(sessionId, {
-                projectId: s.project_id,
-                title: s.title,
-                provider: s.provider,
-                hybrid: s.hybrid,
-                // Deep-clone to a plain object: ``s.layout`` lives in Pinia state, so reading it back
-                // yields a Vue reactive Proxy, which IndexedDB's structured clone rejects. The layout is
-                // pure JSON data (it round-trips to the backend as JSON), so this is exact. null /
-                // undefined (legacy / single-pane drafts) pass through untouched.
-                layout: s.layout == null ? s.layout : JSON.parse(JSON.stringify(s.layout)),
-                // Peer message this draft was created to answer, if any (see
-                // `setDraftPeerMessage`): persisted so a reload before the
-                // first send does not lose the link.
-                peerMessageId: s.peerMessageId,
-                ...this._pickAgentSettings(s),
-            }).catch((err) =>
+            if (!s?.draft && !isLaunchedEphemeral(s)) return
+            saveDraftSession(sessionId, serializeDraftSession(s)).catch((err) =>
                 console.warn('Failed to save draft session to IndexedDB:', err),
             )
         },
@@ -1721,7 +1769,7 @@ export const useDataStore = defineStore('data', {
          * @param {Object} session - The session that just landed in the store.
          */
         _tryLinkPeerDelivery(session) {
-            if (!session || session.draft) return
+            if (!session || session.draft || isLaunchedEphemeral(session)) return
             const messageId = this.localState.pendingPeerDeliveries[session.id]
             if (messageId == null) return
             delete this.localState.pendingPeerDeliveries[session.id]
@@ -1746,6 +1794,7 @@ export const useDataStore = defineStore('data', {
             const session = this.sessions[sessionId]
             if (!session?.draft) return
             session.hybrid = !!value
+            if (value) session.ephemeral = false
             this._saveDraftToIndexedDB(sessionId)
         },
 
@@ -1841,6 +1890,9 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId - The provider's canonical session id.
          */
         async bindDraftSession(draftId, sessionId) {
+            if (isLaunchedEphemeral(this.sessions[draftId]) || this.localState.ephemeralControls[draftId]) {
+                return this.bindEphemeralSession(draftId, sessionId)
+            }
             delete this.localState.pendingDraftBindings[draftId]
 
             // A peer delivery waiting on this draft follows it to the canonical
@@ -2557,6 +2609,7 @@ export const useDataStore = defineStore('data', {
          * @param {boolean} options.isInitialLoading - If true, enables UI feedback (loading states, error handling)
          */
         async loadSessionItems(projectId, sessionId, { isInitialLoading = false } = {}) {
+            if (isLaunchedEphemeral(this.sessions[sessionId])) return
             // Skip if already fetched
             if (this.localState.sessions[sessionId]?.itemsFetched) {
                 return
@@ -2612,6 +2665,7 @@ export const useDataStore = defineStore('data', {
          *   callers like the reconciliation need to know the lines are still missing.
          */
         async loadSessionItemsRanges(projectId, sessionId, ranges, parentSessionId = null) {
+            if (isLaunchedEphemeral(this.sessions[sessionId])) return
             if (!ranges?.length) return true
 
             // Initialize localState for this session if needed
@@ -2707,7 +2761,7 @@ export const useDataStore = defineStore('data', {
         async ensureSessionItemsCoverage(sessionId) {
             const session = this.sessions[sessionId]
             // Only meaningful for sessions whose items are (supposedly) loaded.
-            if (!session || !this.localState.sessions[sessionId]?.itemsFetched) return true
+            if (!session || isLaunchedEphemeral(session) || !this.localState.sessions[sessionId]?.itemsFetched) return true
             const serverLastLine = session.last_line || 0
             if (!serverLastLine) return true
 
@@ -3124,17 +3178,17 @@ export const useDataStore = defineStore('data', {
                 // cached placeholder and never re-render. This signature
                 // forces re-stabilization when the visible state changes.
                 workingMessage.workingStatusKey = JSON.stringify([
-                    processState?.label || null,
-                    processState?.tools || [],
-                    processState?.lastStartedToolId || null,
+                    isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.label || null,
+                    isLaunchedEphemeral(this.sessions[sessionId]) ? [] : processState?.tools || [],
+                    isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.lastStartedToolId || null,
                     lastToolVisible,
                 ])
                 setParsedContent(workingMessage, {
                     type: 'assistant',
                     syntheticKind,
-                    label: processState?.label || null,
-                    tools: processState?.tools || [],
-                    lastStartedToolId: processState?.lastStartedToolId || null,
+                    label: isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.label || null,
+                    tools: isLaunchedEphemeral(this.sessions[sessionId]) ? [] : processState?.tools || [],
+                    lastStartedToolId: isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.lastStartedToolId || null,
                     lastToolVisible,
                     message: {
                         role: 'assistant',
@@ -3144,6 +3198,14 @@ export const useDataStore = defineStore('data', {
                 allItems = allItems === items ? [...items, workingMessage] : [...allItems, workingMessage]
             }
 
+            const ephemeralSession = this.sessions[sessionId]
+            if (isLaunchedEphemeral(ephemeralSession) && ephemeralSession.ephemeralResult?.text) {
+                const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.EPHEMERAL_RESULT
+                const resultItem = { line_num: lineNum, content: null, kind: 'assistant_message', syntheticKind,
+                    display_level: DISPLAY_LEVEL.ALWAYS, group_head: null, group_tail: null }
+                setParsedContent(resultItem, getProviderHelpers(ephemeralSession.provider).buildEphemeralResultContent(ephemeralSession.ephemeralResult.text))
+                allItems = [...allItems, resultItem]
+            }
             const visualItems = computeVisualItems(allItems, mode, expandedGroups, isAssistantTurn, detailedBlocks)
 
             // Reorder /compact command before its compact_summary.
@@ -3173,7 +3235,9 @@ export const useDataStore = defineStore('data', {
                 : null
             for (let i = visualItems.length - 1; i >= 0; i--) {
                 const vi = visualItems[i]
-                if (vi.lineNum <= SYNTHETIC_ITEM.FAILED_USER_MESSAGE.baseLineNum) {
+                if (vi.lineNum === SYNTHETIC_ITEM.EPHEMERAL_RESULT.lineNum) {
+                    vi.syntheticKind = SYNTHETIC_ITEM.EPHEMERAL_RESULT.kind
+                } else if (vi.lineNum <= SYNTHETIC_ITEM.FAILED_USER_MESSAGE.baseLineNum) {
                     vi.syntheticKind = SYNTHETIC_ITEM.FAILED_USER_MESSAGE.kind
                 } else if (vi.lineNum === SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE.lineNum && optimistic) {
                     vi.syntheticKind = optimistic.syntheticKind
@@ -3377,6 +3441,7 @@ export const useDataStore = defineStore('data', {
          *   in SDK format (for the optimistic bubble)
          */
         registerOutgoingSend(sessionId, projectId, requestId, { text, medias, images, documents }) {
+            const ephemeralSend = this.promoteEphemeralSession(sessionId, { text, medias })
             const state = this.processStates[sessionId]?.state
             const optimisticShown = state !== PROCESS_STATE.ASSISTANT_TURN
             const startingSet = optimisticShown && !state
@@ -3386,7 +3451,7 @@ export const useDataStore = defineStore('data', {
             // evidence of non-delivery: only the backend send_ack confirms
             // these, so the audit must never flag them as undelivered.
             const session = this.getSession(sessionId)
-            const noLineExpected = session?.provider === 'claude_code'
+            const noLineExpected = ephemeralSend || session?.provider === 'claude_code'
                 && !session?.hybrid
                 && state === PROCESS_STATE.ASSISTANT_TURN
             this.registerInflightSend(requestId, {
@@ -3396,12 +3461,13 @@ export const useDataStore = defineStore('data', {
                 optimisticShown,
                 startingSet,
                 noLineExpected,
+                ephemeral: ephemeralSend,
             })
             if (optimisticShown) {
                 const attachments = (images?.length || documents?.length)
                     ? { images, documents }
                     : undefined
-                this.setOptimisticMessage(sessionId, text, attachments)
+                if (!ephemeralSend) this.setOptimisticMessage(sessionId, text, attachments)
                 // The backend broadcasts STARTING before spawning the
                 // subprocess, but the SDK connect() blocks the event loop so
                 // the frame only lands seconds later — this gives immediate
@@ -3454,13 +3520,6 @@ export const useDataStore = defineStore('data', {
          * @param {Object} info - { code, message } from the error frame
          * @returns {boolean} true when a snapshot was found and handled
          */
-        failInflightSend(requestId, info) {
-            const entry = inflightSends.get(requestId)
-            if (!entry) return false
-            inflightSends.delete(requestId)
-            this._applySendFailure(requestId, entry, info)
-            return true
-        },
 
         /**
          * Positive delivery acknowledgement from the backend (``send_ack``
@@ -3504,7 +3563,12 @@ export const useDataStore = defineStore('data', {
         // reason — survives a page reload. The persisted copy is deleted on
         // retry/edit/delete (and on resolution).
         _applySendFailure(requestId, entry, info) {
-            const { sessionId } = entry
+            let { sessionId } = entry
+            sessionId = this.localState.draftAliases[sessionId] || sessionId
+            const session = this.sessions[sessionId]
+            if (this.dropDiscardedSendFailure(requestId, entry)) return
+            if (isLaunchedEphemeral(session)) sessionId = this.recoverEphemeralDraft(sessionId)
+            entry.sessionId = sessionId
             // Undo what the optimistic send did to the chat: the ghost user
             // message, and the optimistic "starting" process state (only if
             // no real broadcast replaced it in the meantime).
@@ -3626,7 +3690,12 @@ export const useDataStore = defineStore('data', {
             }
             const now = Date.now()
             for (const [requestId, entry] of Object.entries(stored)) {
-                if (!entry?.sessionId || !entry.text || now - (entry.sentAt || 0) > INFLIGHT_SEND_TTL_MS) {
+                if (entry?.sessionId) entry.sessionId = this.localState.draftAliases[entry.sessionId] || entry.sessionId
+                if (entry?.sessionId && this.isEphemeralDiscarded(entry.sessionId)) {
+                    deleteInflightSend(requestId).catch(() => {})
+                    continue
+                }
+                if (!entry?.sessionId || (!entry.text && !entry.medias?.length) || now - (entry.sentAt || 0) > INFLIGHT_SEND_TTL_MS) {
                     deleteInflightSend(requestId).catch(() => {})
                     continue
                 }
@@ -3662,6 +3731,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         async auditInflightSends(sessionId) {
+            if (this.sessions[sessionId]?.ephemeral) return
             const items = this.sessionItems[sessionId]
             if (items?.length) this.resolveInflightSends(sessionId, items)
             // Without the full item list, absence of a match proves nothing.
@@ -3918,6 +3988,7 @@ export const useDataStore = defineStore('data', {
          * @returns {Promise<Array|null>} Array of metadata objects or null on error
          */
         async loadSessionMetadata(projectId, sessionId, parentSessionId = null) {
+            if (isLaunchedEphemeral(this.sessions[sessionId])) return
             // Build URL (handle subagent case)
             const baseUrl = parentSessionId
                 ? `/api/projects/${projectId}/sessions/${parentSessionId}/subagent/${sessionId}`
@@ -4148,7 +4219,7 @@ export const useDataStore = defineStore('data', {
          *  The slower IndexedDB snapshot (reload durability) rides the debounced flush below. */
         persistSessionLayoutDebounced(sessionId) {
             const session = this.sessions[sessionId]
-            if (!session) return
+            if (!session || isLaunchedEphemeral(session)) return
             if (session.draft) {
                 const intention = this.localState.sessionLayout[sessionId]
                 if (intention) session.layout = stripLayoutForPersist(intention)
@@ -4169,7 +4240,7 @@ export const useDataStore = defineStore('data', {
         async persistSessionLayout(sessionId) {
             const session = this.sessions[sessionId]
             const intention = this.localState.sessionLayout[sessionId]
-            if (!session || !intention) {
+            if (!session || isLaunchedEphemeral(session) || !intention) {
                 layoutPersistPending.delete(sessionId)
                 return
             }
@@ -4570,7 +4641,7 @@ export const useDataStore = defineStore('data', {
         async refreshAllLoadedToolStates() {
             const refs = []
             for (const [sessionId, local] of Object.entries(this.localState.sessions)) {
-                if (!local?.itemsFetched) continue
+                if (!local?.itemsFetched || isLaunchedEphemeral(this.sessions[sessionId])) continue
                 const projectId = this.sessions[sessionId]?.project_id
                 if (projectId) refs.push({ projectId, sessionId })
             }
@@ -5736,7 +5807,7 @@ export const useDataStore = defineStore('data', {
          */
         setDraftTitle(sessionId, title) {
             const session = this.sessions[sessionId]
-            if (!session?.draft) return
+            if (!session?.draft && !isLaunchedEphemeral(session)) return
 
             // Mirror the title in-memory, then snapshot the whole draft (settings, hybrid, layout) so a
             // rename doesn't drop the other fields from the IndexedDB record. Fire and forget.
@@ -5787,10 +5858,19 @@ export const useDataStore = defineStore('data', {
          */
         async hydrateDraftSessions() {
             try {
+                this.localState.ephemeralControls = await loadEphemeralControls()
+                for (const [draftId, control] of Object.entries(this.localState.ephemeralControls)) {
+                    if (control.discard) await this.purgeEphemeralContent([draftId, control.canonicalId])
+                }
                 const draftSessions = await getAllDraftSessions()
                 const now = Date.now() / 1000
                 const defaultProvider = useSettingsStore().defaultProvider
                 for (const [sessionId, draft] of Object.entries(draftSessions)) {
+                    const control = this.localState.ephemeralControls[draft.ephemeralDraftId || sessionId]
+                    if (control?.discard) {
+                        await this.purgeEphemeralContent([sessionId, draft.ephemeralDraftId, control.canonicalId])
+                        continue
+                    }
                     const { projectId, title } = draft
                     // Stored provider wins; else the project's inherited default
                     // (legacy drafts saved without one), else global.
@@ -5810,7 +5890,7 @@ export const useDataStore = defineStore('data', {
                         title: title || null,  // null = user hasn't set a title yet
                         mtime: now,
                         last_line: 0,
-                        draft: true,
+                        ...ephemeralFields(draft),
                         // Gated by the server hybrid feature flag: a persisted
                         // hybrid draft hydrates as a normal (sendable) draft while
                         // hybrid mode is off, rather than a stuck hybrid one.
@@ -5821,6 +5901,17 @@ export const useDataStore = defineStore('data', {
                         layout: draft.layout,
                         peerMessageId: draft.peerMessageId,
                         ...settings,
+                    }
+                    const restored = this.sessions[sessionId]
+                    if (isLaunchedEphemeral(restored)) {
+                        this.localState.ephemeralIds[sessionId] = true
+                        if (restored.ephemeralDraftId) this.localState.draftAliases[restored.ephemeralDraftId] = sessionId
+                        if (restored.ephemeralPrompt) {
+                            const prompt = restored.ephemeralPrompt
+                            this.setOptimisticMessage(sessionId, prompt.text)
+                            setParsedContent(this.localState.optimisticMessages[sessionId], getProviderHelpers(provider).buildEphemeralUserMessageContent(prompt.text, prompt.attachments))
+                        }
+                        this.recomputeVisualItems(sessionId)
                     }
                     // Re-arm the peer delivery this draft was created for, so a
                     // reload between the delivery and the first send does not
@@ -5855,6 +5946,7 @@ export const useDataStore = defineStore('data', {
             if (entries.length === 0) return
 
             for (const [sessionId, data] of entries) {
+                if (data?.ephemeral) continue
                 const projectId = data?.projectId
                 if (!projectId) {
                     // Corrupted entry — no project ID means we can't check the API, just remove it

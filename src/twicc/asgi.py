@@ -36,6 +36,8 @@ from twicc.agent_settings_presets import (
 )
 from twicc.core.enums import Provider
 from twicc.core.services.session_creation import create_session_from_payload
+from twicc.agent import ephemeral as ephemeral_runs
+from twicc.agent.exceptions import SendDeliveryError
 from twicc.share.consumer import ShareConsumer
 from twicc.providers.claude_code.ws import ClaudeCodeWSHandler
 from twicc.providers.codex.ws import CodexWSHandler
@@ -228,6 +230,13 @@ async def broadcast_process_state(info: AgentInfo) -> None:
     """
     # if info.previous_state == AgentState.ASSISTANT_TURN and info.state != AgentState.ASSISTANT_TURN:
     #     await asyncio.sleep(1)
+
+    if info.extra and info.extra.get("ephemeral"):
+        message = serialize_agent_info(info)
+        message["type"] = "process_state"
+        message["mute_on_user_turn"] = False
+        await get_channel_layer().group_send("updates", {"type": "broadcast", "data": message})
+        return
 
     # Hidden sessions never produce a process_state event. This is the
     # broadcast that drives toast / sound / browser notifications on the
@@ -526,15 +535,27 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     if project_parent_name is not None:
                         proc["project_parent_name"] = project_parent_name
                     # Let the provider attach any state it owns
-                    await get_provider_helpers(
-                        Provider(proc["provider"])
-                    ).enrich_agent_state(proc, proc["session_id"])
-            await self.send_json(
-                {
-                    "type": "active_processes",
-                    "processes": serialized,
-                }
-            )
+                    if not proc.get("extra", {}).get("ephemeral"):
+                        await get_provider_helpers(
+                            Provider(proc["provider"])
+                        ).enrich_agent_state(proc, proc["session_id"])
+            enriched = {proc["session_id"]: proc for proc in serialized}
+            current = registry.get_active_agents()
+            starting = ephemeral_runs.pending_snapshot()
+            serialized = []
+            for info in current:
+                if info.session_id in hidden_session_ids:
+                    continue
+                proc = serialize_agent_info(info)
+                old = enriched.get(info.session_id, {})
+                for key in ("session_title", "project_name", "project_parent_name", "active_crons"):
+                    if key in old:
+                        proc[key] = old[key]
+                serialized.append(proc)
+            await self.send_json({
+                "type": "active_processes", "processes": serialized,
+                "ephemeral_starting": starting,
+            })
 
         # Tell the client which sessions it must drop.
         #
@@ -885,6 +906,31 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             logger.exception("Error sending JSON message: %s", exc)
 
     async def _handle_send_message(self, content: dict) -> None:
+        """Reserve ephemeral admission before the first asynchronous lookup."""
+        admission = None
+        session_id = content.get("session_id")
+        try:
+            ephemeral_runs.check_readonly(session_id)
+            if isinstance(session_id, str) and session_id and (
+                content.get("ephemeral") or not ephemeral_runs.is_active_normal(session_id)
+            ):
+                admission = ephemeral_runs.reserve(
+                    session_id, str(content.get("provider") or ""), str(content.get("project_id") or ""),
+                    ephemeral=bool(content.get("ephemeral")),
+                )
+        except SendDeliveryError as exc:
+            await self.send_json({
+                "type": "error", "code": exc.code, "message": str(exc),
+                "session_id": session_id, "request_id": content.get("request_id"),
+            })
+            return
+        delivered = False
+        try:
+            delivered = await self._handle_send_message_admitted(content, ephemeral_admission=admission)
+        finally:
+            await ephemeral_runs.finish(admission, failed=not delivered)
+
+    async def _handle_send_message_admitted(self, content: dict, *, ephemeral_admission=None) -> bool | None:
         """Handle send_message request from client.
 
         Expected content format:
@@ -948,7 +994,16 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         # tell us via the ``provider`` field in the payload.
         existing_provider = await get_session_provider(session_id)
         exists = existing_provider is not None
+        if exists and ephemeral_admission is not None and ephemeral_admission.ephemeral:
+            try:
+                await ephemeral_runs.finish(ephemeral_admission, failed=True)
+            finally:
+                ephemeral_runs.release(ephemeral_admission)
+            await send_error("An existing session cannot become ephemeral.", code="ephemeral_existing_session")
+            return
         if exists:
+            if ephemeral_admission is not None:
+                ephemeral_runs.release(ephemeral_admission)
             try:
                 provider = Provider(existing_provider)
             except ValueError:
@@ -1107,10 +1162,13 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     # what lets the service read it — every other caller
                     # (drop-request files, CLI) keeps the default False.
                     "hybrid": bool(content.get("hybrid")),
+                    "ephemeral": bool(content.get("ephemeral")),
                     **agent_settings_kwargs_from_frontend_payload(content),
                 }
 
-                result = await create_session_from_payload(payload, allow_hybrid=True)
+                result = await create_session_from_payload(
+                    payload, allow_hybrid=True, allow_ephemeral=True, ephemeral_admission=ephemeral_admission,
+                )
                 if not result.success:
                     # Translate the first error to the WS-specific error frame shape.
                     # The frontend already understands the error codes the service emits
@@ -1127,11 +1185,14 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             # Process busy or other expected delivery errors. SendDeliveryError
             # carries a specific code (agent_starting, hybrid_composer_busy, …);
             # plain RuntimeErrors fall back to the generic send_failed.
-            logger.warning("send_message failed: %s", e)
+            logger.warning("send_message failed: %s", type(e).__name__ if ephemeral_admission and ephemeral_admission.ephemeral else e)
             await send_error(str(e), code=getattr(e, "code", None) or "send_failed")
         except Exception as e:
             # Unexpected errors - log full traceback
-            logger.exception("Unexpected error in send_message")
+            if ephemeral_admission and ephemeral_admission.ephemeral:
+                logger.error("Unexpected error in ephemeral send_message (%s)", type(e).__name__)
+            else:
+                logger.exception("Unexpected error in send_message")
             await send_error(
                 f"Failed to send message: {e}",
                 code="send_failed",
@@ -1148,6 +1209,8 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 "request_id": request_id,
                 "session_id": session_id,
             })
+
+        return delivered
 
     async def _handle_set_session_hybrid(self, content: dict) -> None:
         """Switch an existing session to hybrid CLI mode (one-way).

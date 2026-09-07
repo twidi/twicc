@@ -108,6 +108,7 @@ export const SETTINGS_SCHEMA = {
     // Whether the user has seen the hybrid-mode explainer dialog (never shown
     // in the settings panel; gates the hybrid toggle's explainer).
     claudeHybridExplainerSeen: null,
+    ephemeralExplainerSeen: null,
     // Start new Claude Code sessions in hybrid mode by default (drafts only).
     claudeHybridDefault: null,
     // Anonymous telemetry opt-in/out (default-on when unset).
@@ -156,6 +157,7 @@ const SETTINGS_VALIDATORS = {
     maxCachedSessions: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 50,
     autoUnpinOnArchive: (v) => typeof v === 'boolean',
     claudeHybridExplainerSeen: (v) => typeof v === 'boolean',
+    ephemeralExplainerSeen: (v) => typeof v === 'boolean',
     claudeHybridDefault: (v) => typeof v === 'boolean',
     telemetryEnabled: (v) => typeof v === 'boolean',
     telemetryNoticeSeen: (v) => typeof v === 'boolean',
@@ -354,6 +356,7 @@ export const useSettingsStore = defineStore('settings', {
         isAllowAgentSessionShares: (state) => state.allowAgentSessionShares === true,
         isAllowAgentArtifactShares: (state) => state.allowAgentArtifactShares === true,
         // null (not yet loaded / never set) reads as "not seen".
+        isEphemeralExplainerSeen: (state) => state.ephemeralExplainerSeen === true,
         isClaudeHybridExplainerSeen: (state) => state.claudeHybridExplainerSeen === true,
         // Whether new Claude Code sessions should start in hybrid mode.
         isClaudeHybridDefault: (state) => state.claudeHybridDefault === true,
@@ -624,6 +627,10 @@ export const useSettingsStore = defineStore('settings', {
          * switch.
          * @param {boolean} seen
          */
+        setEphemeralExplainerSeen(seen) {
+            if (SETTINGS_VALIDATORS.ephemeralExplainerSeen(seen)) this.ephemeralExplainerSeen = seen
+        },
+
         setClaudeHybridExplainerSeen(seen) {
             if (SETTINGS_VALIDATORS.claudeHybridExplainerSeen(seen)) {
                 this.claudeHybridExplainerSeen = seen
@@ -1216,6 +1223,7 @@ export function initSettings() {
             maxCachedSessions: store.maxCachedSessions,
             autoUnpinOnArchive: store.autoUnpinOnArchive,
             claudeHybridExplainerSeen: store.claudeHybridExplainerSeen,
+            ephemeralExplainerSeen: store.ephemeralExplainerSeen,
             claudeHybridDefault: store.claudeHybridDefault,
             telemetryEnabled: store.telemetryEnabled,
             telemetryNoticeSeen: store.telemetryNoticeSeen,

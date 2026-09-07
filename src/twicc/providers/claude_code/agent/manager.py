@@ -155,6 +155,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         provider_helpers = get_provider_helpers(Provider.CLAUDE_CODE)
 
         async with self._lock:
+            self._check_ephemeral_readonly(session_id)
             # Cancel any running cron restart task — user is taking over this session.
             # Callers that ARE the cron restart task pass cancel_cron_restart=False
             # to avoid cancelling themselves.
@@ -272,6 +273,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
+        ephemeral: bool = False,
+        ephemeral_admission=None,
     ) -> str:
         """Create a new session with a client-provided session ID.
 
@@ -287,6 +290,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             RuntimeError: If an agent already exists for this session_id
         """
         async with self._lock:
+            self._check_ephemeral_readonly(session_id, ephemeral_admission)
             if session_id in self._agents:
                 agent = self._agents[session_id]
                 if agent.state != AgentState.DEAD:
@@ -305,6 +309,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 session_id, project_id, cwd, text, resume=False,
                 settings=settings,
                 images=images, documents=documents,
+                ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
             )
 
     async def discard_active_tool(self, session_id: str, tool_use_id: str) -> bool:
@@ -579,6 +584,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         *,
         resume: bool,
         settings: AgentSettings,
+        ephemeral: bool = False,
         **kwargs: Any,
     ) -> BaseAgent:
         """Build the right agent flavor for the session (SDK or hybrid CLI).
@@ -594,7 +600,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         through the SDK: the CLI-era messages would be invisible to it
         (one-way switch, see ``Session.hybrid``).
         """
-        if await self._session_is_hybrid(session_id):
+        if not ephemeral and await self._session_is_hybrid(session_id):
             # ``settings`` is the AgentSettings parameter here; reach Django
             # settings under an alias to honor the hybrid feature flag.
             from django.conf import settings as django_settings
@@ -617,6 +623,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             get_session_slug=get_session_slug,
             on_cron_created=self._on_cron_created,
             on_cron_deleted=self._on_cron_deleted,
+            ephemeral=ephemeral,
         )
 
     # ------------------------------------------------------------------
@@ -667,6 +674,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         lives in :meth:`BaseAgentManager._state_based_timeout` and is shared
         with every provider that calls into it.
         """
+        if getattr(agent, "ephemeral", False):
+            return self._state_based_timeout(agent, current_time)
         # Don't timeout agents with active cron jobs.
         try:
             from twicc.core.models import SessionCron
@@ -695,6 +704,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         :func:`provider_log_context` so records carry the Claude Code
         provider tag (agent message loops do not set it themselves).
         """
+        if getattr(agent, "ephemeral", False):
+            return
         from django.utils import timezone
 
         from twicc.core.models import Session
@@ -772,6 +783,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         "helper kept the row" signal — equivalent to "agent died with crons
         attached and is eligible for cron restart".
         """
+        if getattr(agent, "ephemeral", False):
+            await super()._on_state_change(agent)
+            return
         # Snapshot the state at entry. This is critical because _apply_pending_settings
         # may kill() the agent (changing agent.state to DEAD) while we're handling
         # a USER_TURN callback. Using the snapshot ensures each callback invocation only
@@ -1071,6 +1085,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
 
         # Associate cron with the current process run (if any)
         agent = self._agents.get(session_id)
+        if agent is not None and agent.ephemeral:
+            return
         process_run = agent.process_run if agent else None
 
         await run_under_db_write_lock(
@@ -1098,6 +1114,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         """Delete a cron job from the database and broadcast the update."""
         from twicc.core.models import SessionCron
 
+        agent = self._agents.get(session_id)
+        if agent is not None and agent.ephemeral:
+            return
         deleted, _ = await run_under_db_write_lock(
             lambda: asyncio.to_thread(
                 lambda: SessionCron.objects.filter(cron_id=cron_id).delete()

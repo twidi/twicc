@@ -92,6 +92,7 @@ function retry() {
     }
     if (images.length) payload.images = images
     if (documents.length) payload.documents = documents
+    store.applyCreationSendMode(payload)
     // WebSocket down: keep the failed bubble, the user can retry later
     if (!sendWsMessage(payload)) return
     store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {

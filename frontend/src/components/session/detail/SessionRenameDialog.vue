@@ -106,9 +106,9 @@ function open({ showHint = false, session = null } = {}) {
     const existingSuggestion = store.getTitleSuggestion(sessionId)
     const systemPrompt = titleSystemPrompt.value
 
-    if (currentSession.draft) {
+    if (currentSession.draft || currentSession.ephemeral) {
         // DRAFT: use message from store, redo if message changed
-        const currentPrompt = store.getDraftMessage(sessionId)?.message?.trim()
+        const currentPrompt = (currentSession.ephemeralPrompt?.text || store.getDraftMessage(sessionId)?.message)?.trim()
         const previousPrompt = store.getTitleSuggestionSourcePrompt(sessionId)
 
         if (!currentPrompt) return  // No message, no suggestion
@@ -188,7 +188,7 @@ async function handleSave() {
     }
 
     // For draft sessions, just update locally (no API call)
-    if (props.session.draft) {
+    if (props.session.draft || props.session.ephemeral) {
         store.updateSession({ ...props.session, title: trimmedTitle })
         // Also persist to IndexedDB for page refresh recovery
         store.setDraftTitle(props.session.id, trimmedTitle)

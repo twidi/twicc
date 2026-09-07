@@ -13,6 +13,7 @@ import { useDragHover } from '../composables/useDragHover'
 import { useSessionLayout } from '../composables/useSessionLayout'
 import { PROCESS_STATE } from '../constants'
 import SessionHeader from '../components/session/detail/SessionHeader.vue'
+import { isLaunchedEphemeral } from '../utils/ephemeralSessions.js'
 import SessionItemsList from '../components/session/detail/SessionItemsList.vue'
 import SessionContent from '../components/session/detail/SessionContent.vue'
 import FilesPanel from '../components/files/FilesPanel.vue'
@@ -100,7 +101,7 @@ const isActive = ref(true)
 
 onMounted(() => {
     // Mark session as viewed on first render
-    notifySessionViewed(sessionId.value, 'mounted')
+    !isLaunchedEphemeral(store.getSession(sessionId.value)) && notifySessionViewed(sessionId.value, 'mounted')
     // Listen for tab keyboard shortcuts (dispatched by App.vue)
     window.addEventListener('twicc:tab-shortcut', handleTabShortcut)
     // Listen for layout keyboard shortcuts (maximize / minimize / restore the focused pane)
@@ -165,7 +166,7 @@ onActivated(() => {
     registerSessionCommands()
 
     // Mark session as viewed when re-activated (KeepAlive navigation back)
-    notifySessionViewed(sessionId.value, 'activated')
+    !isLaunchedEphemeral(store.getSession(sessionId.value)) && notifySessionViewed(sessionId.value, 'activated')
 
     // Re-resolve if the session disappeared from the store while this cached
     // instance was inactive — typically a draft we created was rebound to a
@@ -190,7 +191,7 @@ onDeactivated(() => {
     // Force-send session_viewed to ensure last_viewed_at is fresh before leaving.
     // Without this, the throttle can cause last_viewed_at to be stale (set at navigation time)
     // while last_new_content_at was updated during viewing — making the session appear unread.
-    forceNotifySessionViewed(sessionId.value, 'deactivated')
+    !isLaunchedEphemeral(store.getSession(sessionId.value)) && forceNotifySessionViewed(sessionId.value, 'deactivated')
 
     // Unregister contextual session commands from the command palette
     unregisterCommands([...SESSION_COMMAND_IDS, ...LAYOUT_COMMAND_IDS])
@@ -1446,6 +1447,7 @@ const DIRECT_TAB_MAP = { 1: 'main', 2: 'files', 3: 'git', 4: 'terminal', 5: 'tas
  * Only the active SessionView instance processes the event (KeepAlive guard).
  */
 function handleTabShortcut(event) {
+    if (isLaunchedEphemeral(session.value)) return
     if (!isActive.value) return
 
     const { type, index } = event.detail
@@ -1708,7 +1710,7 @@ const LAYOUT_COMMAND_IDS = [
 // unread, so both palette commands are dropped for them.
 function currentSessionReadState() {
     const s = store.getSession(sessionId.value)
-    if (!s || s.draft || s.archived) return null
+    if (!s || s.draft || s.ephemeral || s.archived) return null
     const ps = store.getProcessState(sessionId.value)
     if (ps && ps.state !== PROCESS_STATE.USER_TURN) return null
     const unread = !!s.last_new_content_at
@@ -1729,7 +1731,7 @@ function registerSessionCommands() {
             category: 'session',
             when: () => {
                 const s = store.getSession(sessionId.value)
-                return !!s && !s.draft
+                return !!s && !s.draft && !s.ephemeral
             },
             action: () => sessionHeaderRef.value?.openRenameDialog(),
         },
@@ -1740,7 +1742,7 @@ function registerSessionCommands() {
             category: 'session',
             when: () => {
                 const s = store.getSession(sessionId.value)
-                return !!s && !s.draft && !s.archived
+                return !!s && !s.draft && !s.ephemeral && !s.archived
             },
             action: () => stopSessionProcess(sessionId.value, { archive: true }),
         },
@@ -1762,7 +1764,7 @@ function registerSessionCommands() {
             category: 'session',
             when: () => {
                 const s = store.getSession(sessionId.value)
-                return !!s && !s.draft
+                return !!s && !s.draft && !s.ephemeral
             },
             items: () => {
                 const s = store.getSession(sessionId.value)
@@ -1787,7 +1789,7 @@ function registerSessionCommands() {
             // is a durable preference, and the toggle says so itself.
             when: () => {
                 const s = store.getSession(sessionId.value)
-                return !!s && !s.draft
+                return !!s && !s.draft && !s.ephemeral
             },
             toggled: () => !!store.getSession(sessionId.value)?.mute_on_user_turn,
             action: () => toggleSessionMute(sessionId.value),
@@ -1829,7 +1831,8 @@ function registerSessionCommands() {
                 const ps = store.getProcessState(sessionId.value)
                 return !!ps && ps.state !== PROCESS_STATE.DEAD && !ps.synthetic
             },
-            action: () => stopSessionProcess(sessionId.value),
+            action: () => isLaunchedEphemeral(store.getSession(sessionId.value))
+                ? store.stopEphemeralSession(sessionId.value) : stopSessionProcess(sessionId.value),
         },
         {
             id: 'session.force-stop',
@@ -1844,14 +1847,18 @@ function registerSessionCommands() {
         },
         {
             id: 'session.delete-draft',
-            label: 'Delete Draft',
+            label: 'Discard',
             icon: 'trash',
             category: 'session',
             when: () => {
                 const s = store.getSession(sessionId.value)
-                return !!s && !!s.draft
+                return !!s && (!!s.draft || isLaunchedEphemeral(s))
             },
             action: () => {
+                if (isLaunchedEphemeral(store.getSession(sessionId.value))) {
+                    store.discardEphemeralSession(sessionId.value)
+                    return
+                }
                 store.deleteDraftSession(sessionId.value)
                 if (isAllProjectsMode.value) {
                     router.push({ name: 'projects-all', query: route.query.workspace ? { workspace: route.query.workspace } : {} })
@@ -1913,6 +1920,7 @@ function registerSessionCommands() {
                     && s.provider === 'claude_code'
                     && !s.hidden
                     && !s.parent_session_id
+                    && !isLaunchedEphemeral(s)
                     && !(!s.draft && s.hybrid === true)
             },
             // Same as clicking the composer's hybrid button (enable/disable a
@@ -2116,7 +2124,7 @@ function buildSessionSettingsCommands() {
 function buildLayoutCommands() {
     // Shared guard: only the active session view, and never the mobile tab strip
     // (no dock regions there, so layout actions are meaningless / absent).
-    const ready = () => isActive.value && !layoutTabsMode.value
+    const ready = () => isActive.value && !isLaunchedEphemeral(session.value) && !layoutTabsMode.value
     // The focused tab can move to a dock unless it's center-only (chat / a subagent).
     const movableTab = (id) => id !== 'main' && !id.startsWith('agent-')
     return [
@@ -2229,8 +2237,15 @@ onBeforeUnmount(() => {
             mode="session"
         />
 
+        <SessionItemsList
+            v-if="isLaunchedEphemeral(session)"
+            ref="sessionItemsListRef"
+            :session-id="sessionId"
+            :project-id="projectId"
+            @needs-title="handleNeedsTitle"
+        />
         <SessionLayout
-            v-if="session"
+            v-else-if="session"
             ref="sessionLayoutRef"
             :layout="layout"
             :tab-href="sessionTabHref"
@@ -2433,14 +2448,14 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- Save-layout dialog (opened from the tab nav's Save button) -->
-        <LayoutSaveDialog v-if="session" ref="layoutSaveDialogRef" :intention="currentLayoutTemplate" :scopes="layoutSaveScopes" />
+        <LayoutSaveDialog v-if="session && !isLaunchedEphemeral(session)" ref="layoutSaveDialogRef" :intention="currentLayoutTemplate" :scopes="layoutSaveScopes" />
 
         <!-- Catalog manager (rename / delete + reassignment), opened from the layout menu's "Manage…" -->
-        <LayoutManagerDialog v-if="session" ref="layoutManagerDialogRef" />
+        <LayoutManagerDialog v-if="session && !isLaunchedEphemeral(session)" ref="layoutManagerDialogRef" />
 
         <!-- Tool panels: mounted once here, teleported to their center slot, dock region, or overlay.
              Moving a tab between docks just retargets its Teleport — the instance is never re-mounted. -->
-        <div v-if="session" class="layout-panel-host" aria-hidden="true">
+        <div v-if="session && !isLaunchedEphemeral(session)" class="layout-panel-host" aria-hidden="true">
             <Teleport :to="toolTarget('files')" :disabled="!toolTarget('files')">
                 <div class="layout-tool-wrap" v-show="layout.isToolPanelVisible('files')">
                     <FilesPanel

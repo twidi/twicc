@@ -169,7 +169,10 @@ const separatorBeforeIds = computed(() => {
     }
     for (const s of natural) {
         let sectionKey, entry
-        if (s.pinned) {
+        if (s.ephemeral && !s.draft) {
+            sectionKey = 'n-ephemeral'
+            entry = { label: 'Ephemeral' }
+        } else if (s.pinned) {
             sectionKey = 'n-pinned'
             entry = { label: 'Pinned' }
         } else if (processStates[s.id] != null) {

@@ -46,6 +46,7 @@ class PendingSessionAttributes(NamedTuple):
     # (resolved global/project default, or the web UI draft's seeded layout).
     # ``{}`` = single pane; falls through to the model default.
     layout: dict
+    ephemeral: bool = False
 
 
 # session_id -> PendingSessionAttributes
@@ -63,6 +64,7 @@ def set_pending_session_attributes(
     system_prompt_addendum: str | None = None,
     hybrid: bool = False,
     layout: dict | None = None,
+    ephemeral: bool = False,
 ) -> None:
     """Store pending structural attributes to be applied at row creation."""
     _pending[session_id] = PendingSessionAttributes(
@@ -74,12 +76,13 @@ def set_pending_session_attributes(
         system_prompt_addendum=system_prompt_addendum,
         hybrid=hybrid,
         layout=layout or {},
+        ephemeral=ephemeral,
     )
     logger.debug(
         "Set pending session attributes for %s: hidden=%s mute_on_user_turn=%s spawned_by_id=%s "
         "spawn_root_id=%s annotations_keys=%s addendum_len=%s hybrid=%s",
         session_id, hidden, mute_on_user_turn, spawned_by_id, spawn_root_id,
-        sorted((annotations or {}).keys()),
+        [] if ephemeral else sorted((annotations or {}).keys()),
         len(system_prompt_addendum) if system_prompt_addendum else 0,
         hybrid,
     )

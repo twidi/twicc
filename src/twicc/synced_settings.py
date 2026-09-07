@@ -65,6 +65,7 @@ _GENERIC_SYNCED_SETTINGS_DEFAULTS: dict = {
         "User message:\n{text}"
     ),
     "autoUnpinOnArchive": True,
+    "ephemeralExplainerSeen": False,
     # Template for the base directory of new git worktrees, resolved per project
     # on the frontend. Supported placeholders: ``{git_root}`` (the project's git
     # root), ``{project_name}`` (its name, or its directory leaf when unnamed),

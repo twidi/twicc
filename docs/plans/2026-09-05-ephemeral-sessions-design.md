@@ -362,6 +362,12 @@ counts (a held turn may see several).
   service and WS handling. Keep diagnostics limited to technical status.
   Quote literal MCP server names in dotted TOML override keys.
 - `CodexAgent(..., ephemeral=True, work_dirs=[])`.
+- Native Codex subagents must use `fork_turns="none"`; inheriting the parent
+  requires a persisted thread and fails for ephemeral parents. State this in
+  the addendum. Child threads still inherit ephemeral persistence.
+- During an ephemeral subagent hold, poll the runtime's in-memory
+  `thread/read` status. The JSONL watcher cannot signal child completion.
+  Cancel this polling when the hold ends or the parent stops.
 
 In `_handle_stream_event`, after the parent-thread filter, on `item/completed`
 for an `agentMessage`, retain the last `phase="final_answer"` text. Use the

@@ -244,7 +244,7 @@ if (!authStore.needsLogin) {
     useHelpStore().applySeenHelp(bootstrapData.seen_help)
     useBenchmarksStore().applyBenchmarks(bootstrapData.benchmarks)
 
-    // Hydrate drafts from IndexedDB (async, non-blocking)
+    // Hydrate drafts from IndexedDB before mounting the WebSocket consumer
     // Order matters: sessions first so draft messages have their session available
     const dataStore = useDataStore()
 
@@ -261,11 +261,13 @@ if (!authStore.needsLogin) {
         }
     }
 
-    dataStore.hydrateDraftSessions().then(() => {
-        dataStore.hydrateDraftMessages()
-        dataStore.hydrateAttachments()
-        dataStore.hydrateInflightSends()
-    })
+    // Restore local runs and control intentions before the first WS snapshot.
+    await dataStore.hydrateDraftSessions()
+    await Promise.all([
+        dataStore.hydrateDraftMessages(),
+        dataStore.hydrateAttachments(),
+        dataStore.hydrateInflightSends(),
+    ])
 
     // Wire the global auto-apply title watcher. Module-level watchEffect that
     // survives router.replace (which would otherwise tear down a watcher held
