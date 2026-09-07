@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **Ephemeral sessions** — Run a one-shot session with Claude or Codex. Keep its prompt and final answer in this browser until you discard them.
+- **Nested subagents** — Follow subagents created by other subagents, at every level, in Claude and Codex sessions.
 
 ## [1.94.1] - 2026-09-06
 
