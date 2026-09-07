@@ -674,7 +674,7 @@ function handleMenuSelect(event) {
 <style scoped>
 .ephemeral-icon { flex-shrink: 0; color: var(--wa-color-neutral-on-normal); }
 .ephemeral-icon.running { color: var(--wa-color-brand-on-normal); }
-.ephemeral-icon.done { color: var(--wa-color-success-on-normal); }
+.ephemeral-icon.done { color: var(--wa-color-success-60); }
 .ephemeral-icon.error { color: var(--wa-color-danger-on-normal); }
 .ephemeral-icon.lost { color: var(--wa-color-warning-on-normal); }
 
