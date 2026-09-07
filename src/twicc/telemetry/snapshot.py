@@ -10,6 +10,7 @@ import platform
 import sys
 from datetime import date, datetime, time, timedelta, UTC
 from decimal import Decimal
+from functools import cache
 
 from django.conf import settings
 from django.db.models import Sum
@@ -17,6 +18,8 @@ from django.db.models import Sum
 from twicc.core.models import (
     ArtifactBookmark,
     DailyActivity,
+    McpConnection,
+    McpOperation,
     Peer,
     PeerMessage,
     PeerState,
@@ -29,6 +32,7 @@ from twicc.core.models import (
 )
 from twicc.core.services.peer_messages import PEER_MESSAGE_AUTHORS
 from twicc.core.services.peer_tokens import peer_base_url
+from twicc.mcp.oauth.config import base_url as external_mcp_base_url
 from twicc.providers.helpers import get_provider_helpers
 from twicc.providers.state import get_enabled_providers
 from twicc.telemetry.install_method import detect_install_method
@@ -77,6 +81,67 @@ PRESENCE_BUCKETS: tuple[tuple[int | None, str], ...] = (
     (720, "360-720"),
     (None, "720+"),
 )
+
+# External MCP calls are reported per family, not per tool: the surface is 73
+# tools over 29 registry roots, which no daily block can carry readably, and
+# the family is what maps to a development decision — do they only read, do
+# they really drive agents, do they organise, publish, or relay to peers.
+#
+# Keys are RPC registry roots (the tool name is the root plus a subcommand),
+# so classifying is a one-line edit. `test_every_mcp_root_has_a_telemetry_group`
+# fails as soon as a new command adds an unclassified root, which is what keeps
+# the "other" catch-all empty instead of silently swallowing new surface.
+MCP_TOOL_GROUPS: dict[str, str] = {
+    # Consulting TwiCC from the outside.
+    "session": "read",
+    "sessions": "read",
+    "project": "read",
+    "projects": "read",
+    "workspace": "read",
+    "workspaces": "read",
+    "topology": "read",
+    "search": "read",
+    "status": "read",
+    "info": "read",
+    "usage": "read",
+    "whoami": "read",
+    # Driving agents — the promise of the external surface.
+    "create-session": "drive",
+    "send-message": "drive",
+    "send-messages": "drive",
+    "process": "drive",
+    "processes": "drive",
+    # Organising what already exists.
+    "update-session": "manage",
+    "update-sessions": "manage",
+    "update-project": "manage",
+    "update-workspace": "manage",
+    "create-project": "manage",
+    "create-workspace": "manage",
+    "delete-workspace": "manage",
+    # Publishing (public links and the artifacts they point at).
+    "share": "publish",
+    "artifacts": "publish",
+    # Cross-instance messaging.
+    "peers": "peer",
+    "peer-send": "peer",
+    "peer-message": "peer",
+}
+
+
+@cache
+def mcp_group_by_tool() -> dict[str, str]:
+    """MCP tool name -> telemetry group, derived from the RPC registry.
+
+    Imported lazily: the registry walks the whole Click tree, and telemetry
+    must not pay for that at import time.
+    """
+    from twicc.mcp.tools import build_mcp_registry, tool_name_for
+
+    return {
+        tool_name_for(path): MCP_TOOL_GROUPS.get(path.split("/")[0], "other")
+        for path in build_mcp_registry()
+    }
 
 
 def bucket(value: int | Decimal, edges: tuple[tuple[int | None, str], ...]) -> str:
@@ -153,6 +218,19 @@ def build_instance_block() -> dict:
         "peers_active_bucket": bucket(
             Peer.objects.filter(state=PeerState.ACTIVE).count(), WORKSPACE_BUCKETS
         ),
+        # External MCP adoption, same two steps. `base_url()` is the honest
+        # gate: it returns "" unless the whole surface is really live (MCP not
+        # killed, a password set, the setting on, a valid dedicated HTTPS
+        # origin), so a half-configured instance is not counted as adoption.
+        # Only connections that completed the OAuth exchange and are not
+        # revoked count — an approved-but-never-established grant is not usage.
+        "external_mcp": bool(external_mcp_base_url()),
+        "mcp_connections_bucket": bucket(
+            McpConnection.objects.filter(
+                established_at__isnull=False, revoked_at__isnull=True
+            ).count(),
+            WORKSPACE_BUCKETS,
+        ),
     }
 
 
@@ -224,6 +302,22 @@ def build_day_block(day: date, day_state: dict) -> dict:
         authors = peer_messages.setdefault(direction, {}).setdefault("reply" if reply_to else "new", {})
         authors[author] = authors.get(author, 0) + 1
 
+    # External MCP traffic, grouped (see MCP_TOOL_GROUPS). `McpOperation` holds
+    # one row per external tool call for provenance, so this is a plain range
+    # count — no instrumentation. Sparse like the peer counts: an instance with
+    # no external client sends {}. A batch counts its children, not the batch.
+    # Nothing but the group name reaches the payload: never the tool arguments,
+    # the operation targets, or the connection name.
+    mcp_calls_by_group: dict[str, int] = {}
+    groups = mcp_group_by_tool()
+    mcp_tools = McpOperation.objects.filter(
+        created_at__gte=start, created_at__lt=end,
+    ).values_list("tool", flat=True)
+
+    for tool in mcp_tools:
+        group = groups.get(tool, "other")
+        mcp_calls_by_group[group] = mcp_calls_by_group.get(group, 0) + 1
+
     return {
         "date": day.isoformat(),
         "sessions_by_model_effort": sessions_by_model_effort,
@@ -236,6 +330,7 @@ def build_day_block(day: date, day_state: dict) -> dict:
         "shares_created": shares_created,
         "bookmarks_created": bookmarks_created,
         "peer_messages_by_direction_kind_author": peer_messages,
+        "mcp_calls_by_group": mcp_calls_by_group,
         "cost_bucket": bucket(total_cost, COST_BUCKETS),
         "presence_bucket": bucket(day_state.get("presence_minutes", 0), PRESENCE_BUCKETS),
         "peak_agents": day_state.get("peak_agents", 0),

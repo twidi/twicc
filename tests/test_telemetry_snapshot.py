@@ -7,6 +7,9 @@ import pytest
 from twicc.core.models import (
     ArtifactBookmark,
     DailyActivity,
+    McpConnection,
+    McpOAuthClient,
+    McpOperation,
     Peer,
     PeerMessage,
     PeerMessageDirection,
@@ -72,6 +75,32 @@ def _make_peer_message(peer, *, direction, author=None, reply_to="", origin=None
     )
     PeerMessage.objects.filter(pk=message.pk).update(created_at=created_at or _at(9))
     return message
+
+
+_mcp_seq = iter(range(1, 10_000))
+
+
+def _make_mcp_connection(*, established=True, revoked=False):
+    index = next(_mcp_seq)
+    client = McpOAuthClient.objects.create(id=f"client-{index}")
+    return McpConnection.objects.create(
+        id=f"conn-{index}",
+        client=client,
+        name="A connector name",
+        resource="https://mcp.example/mcp",
+        established_at=_at(9) if established else None,
+        revoked_at=_at(10) if revoked else None,
+    )
+
+
+def _make_mcp_operation(connection, tool, *, created_at=None):
+    """One external tool call, backdated to ``DAY`` (``created_at`` is auto_now_add)."""
+    operation = McpOperation.objects.create(
+        connection=connection, name=connection.name, tool=tool,
+        targets={"session_id": "target-session-abc789"},
+    )
+    McpOperation.objects.filter(pk=operation.pk).update(created_at=created_at or _at(9))
+    return operation
 
 
 def test_build_day_block(project):
@@ -199,6 +228,72 @@ def test_instance_block_reports_peer_messaging_gate(project, monkeypatch):
 
     monkeypatch.setattr(snapshot, "peer_base_url", lambda: "https://peer.example")
     assert snapshot.build_instance_block()["peer_messaging"] is True
+
+
+def test_build_day_block_groups_mcp_calls(project):
+    connection = _make_mcp_connection()
+    _make_mcp_operation(connection, "sessions")
+    _make_mcp_operation(connection, "session_content")
+    _make_mcp_operation(connection, "send_message")
+    _make_mcp_operation(connection, "update_session_pin")
+    _make_mcp_operation(connection, "share_create_session")
+    _make_mcp_operation(connection, "peer_send")
+    # Another day: never counted here.
+    _make_mcp_operation(connection, "sessions", created_at=_at(9) - timedelta(days=1))
+
+    block = snapshot.build_day_block(DAY, {})
+
+    assert block["mcp_calls_by_group"] == {
+        "read": 2, "drive": 1, "manage": 1, "publish": 1, "peer": 1,
+    }
+
+
+def test_build_day_block_omits_mcp_calls_without_traffic(project):
+    _make_mcp_connection()
+    assert snapshot.build_day_block(DAY, {})["mcp_calls_by_group"] == {}
+
+
+def test_build_day_block_groups_unknown_mcp_tool_as_other(project):
+    # A tool absent from the registry must never become a payload key itself,
+    # and neither the connection name nor the operation targets may leak (§3.3).
+    connection = _make_mcp_connection()
+    _make_mcp_operation(connection, "some-removed-tool-xyz789")
+
+    block = snapshot.build_day_block(DAY, {})
+    serialized = orjson.dumps(block).decode()
+
+    assert block["mcp_calls_by_group"] == {"other": 1}
+    assert "some-removed-tool-xyz789" not in serialized
+    assert "A connector name" not in serialized
+    assert "target-session-abc789" not in serialized
+
+
+def test_every_mcp_root_has_a_telemetry_group():
+    # A new CLI command adds a registry root; unclassified, it would silently
+    # land in "other". This test is what makes the hand-written map safe.
+    from twicc.mcp.tools import build_mcp_registry
+
+    roots = {path.split("/")[0] for path in build_mcp_registry()}
+    assert roots <= set(snapshot.MCP_TOOL_GROUPS)
+    assert "other" not in set(snapshot.mcp_group_by_tool().values())
+
+
+def test_instance_block_counts_established_and_unrevoked_connections_only(project):
+    _make_mcp_connection()
+    _make_mcp_connection()
+    _make_mcp_connection(established=False)
+    _make_mcp_connection(revoked=True)
+
+    assert snapshot.build_instance_block()["mcp_connections_bucket"] == "2-5"
+
+
+def test_instance_block_reports_external_mcp_gate(project, monkeypatch):
+    # An unusable MCP base URL keeps the whole surface off; the boolean is that gate.
+    monkeypatch.setattr(snapshot, "external_mcp_base_url", lambda: "")
+    assert snapshot.build_instance_block()["external_mcp"] is False
+
+    monkeypatch.setattr(snapshot, "external_mcp_base_url", lambda: "https://mcp.example")
+    assert snapshot.build_instance_block()["external_mcp"] is True
 
 
 def test_build_day_block_defaults_missing_day_state_to_zero(project):

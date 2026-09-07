@@ -1986,5 +1986,7 @@ class McpOperation(models.Model):
     connection = models.ForeignKey(McpConnection, on_delete=models.PROTECT)
     name = models.CharField(max_length=80, blank=True)
     tool = models.CharField(max_length=120)
-    created_at = models.DateTimeField(auto_now_add=True)
+    # Indexed: the table only ever grows, and the daily telemetry snapshot
+    # counts one UTC day of it.
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     targets = models.JSONField(default=dict)
