@@ -22,6 +22,8 @@ import logging
 import re
 import time
 import uuid
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -44,6 +46,7 @@ from openai_codex.generated.v2_all import (
     ResponseStreamConnectionFailedCodexErrorInfo,
     Settings as CollaborationModeSettings,  # the SDK name is too generic here
     ThreadGoalStatus,
+    ThreadTokenUsageUpdatedNotification,
 )
 
 from asgiref.sync import sync_to_async
@@ -344,6 +347,9 @@ class CodexAgent(BaseAgent):
     ) -> None:
         super().__init__(session_id, project_id, cwd, agent_settings=settings, ephemeral=ephemeral)
         self._ephemeral_has_final_answer = False
+        self._ephemeral_usage_total = 0
+        self._ephemeral_cost = Decimal(0)
+        self._ephemeral_cost_unavailable = False
         self._codex = codex
         self._thread = thread
         # Effective trust of the project, resolved once by the manager at
@@ -2031,6 +2037,33 @@ class CodexAgent(BaseAgent):
                     return True
         return bool(_AUTH_STATUS_IN_MESSAGE.search(payload.error.message))
 
+    async def _record_ephemeral_cost(self, payload: ThreadTokenUsageUpdatedNotification) -> None:
+        """Price each new parent-thread usage report using the normal Codex calculator."""
+        total = payload.token_usage.total.total_tokens
+        if total == self._ephemeral_usage_total:
+            return
+        self._ephemeral_usage_total = total
+        if self._ephemeral_cost_unavailable:
+            return
+        from ..pricing import to_token_usage
+
+        helpers = get_provider_helpers(Provider.CODEX)
+        model = helpers.resolve_sdk_model(self.agent_settings.selected_model) or self._thread.initial_model
+        if not model:
+            self._ephemeral_cost_unavailable = True
+            self.ephemeral_usage.pop("cost_usd", None)
+            return
+        usage = to_token_usage(payload.token_usage.last.model_dump())
+        cost = await sync_to_async(helpers.calculate_line_cost)(
+            usage, f"{helpers.OPENROUTER_MODEL_PREFIX}{model}", datetime.now(UTC).date(),
+        )
+        if cost is None:
+            self._ephemeral_cost_unavailable = True
+            self.ephemeral_usage.pop("cost_usd", None)
+            return
+        self._ephemeral_cost += cost
+        self.ephemeral_usage["cost_usd"] = float(self._ephemeral_cost)
+
     async def _handle_stream_event(self, event: Any) -> None:
         """Translate one Codex SDK stream notification into TwiCC's WS protocol.
 
@@ -2108,6 +2141,11 @@ class CodexAgent(BaseAgent):
         # through unchanged.
         payload_thread_id = getattr(payload, "thread_id", None)
         if payload_thread_id is not None and payload_thread_id != self.session_id:
+            return
+
+        if method == "thread/tokenUsage/updated":
+            if self.ephemeral and isinstance(payload, ThreadTokenUsageUpdatedNotification):
+                await self._record_ephemeral_cost(payload)
             return
 
         if (

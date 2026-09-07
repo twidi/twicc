@@ -116,3 +116,19 @@ files. The unchanged `test_runtime_ephemeral_transcript_and_final_answer[True]`
 fails on subagent tracking/hold assertions in both runs. That test starts the
 runtime directly and does not use the modified factory. This separate failure
 remains open; the inherited-MCP regression cases both pass. Ruff and diff checks pass.
+
+## Follow-up: live Codex cost estimate
+
+Ephemeral Codex agents price `thread/tokenUsage/updated` notifications in memory
+with the existing Codex token converter and shared price calculator. Duplicate
+cumulative totals and child-thread notifications do not add cost. Each new
+report prices `last` usage, preserving cache-read discounts without counting
+reasoning output twice. Missing prices leave the displayed cost unavailable.
+The SDK wrapper retains the model selected at thread creation for sessions
+that use the runtime default. The result frame carries the accumulated estimate.
+
+Verification: 57 targeted tests pass, including seven real-runtime cases and
+a positive cost assertion on a completed ephemeral response. The previously
+reported child-hold runtime case is excluded from this run. SDK wrapper tests
+also pass. Estimates cover the parent thread and inherit the normal Codex
+calculator's pricing and usage-field limitations.

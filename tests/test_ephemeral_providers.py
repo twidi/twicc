@@ -330,3 +330,51 @@ def test_codex_ephemeral_file_change_does_not_capture_transcript_diff(monkeypatc
         )
     )
     capture.assert_not_called()
+
+
+@pytest.mark.parametrize("price_available", [True, False])
+def test_codex_ephemeral_cost_uses_live_usage_without_duplicates(monkeypatch, price_available):
+    from decimal import Decimal
+    from openai_codex.generated.v2_all import ThreadTokenUsageUpdatedNotification
+    from twicc.providers.codex.agent.agent import CodexAgent
+    from twicc.providers.helpers import get_provider_helpers
+    from twicc.core.enums import Provider
+
+    helpers = get_provider_helpers(Provider.CODEX)
+    calculate = MagicMock(return_value=Decimal("0.012345") if price_available else None)
+    monkeypatch.setattr(helpers, "calculate_line_cost", calculate)
+    agent = CodexAgent(
+        "parent", "p", "/tmp", AgentSettings(selected_model="gpt-5.4"),
+        MagicMock(), MagicMock(), ephemeral=True, work_dirs=[],
+    )
+
+    async def send(total, thread_id="parent"):
+        payload = ThreadTokenUsageUpdatedNotification.model_validate({
+            "threadId": thread_id, "turnId": "turn",
+            "tokenUsage": {
+                "total": {"inputTokens": total - 20, "cachedInputTokens": 0,
+                          "outputTokens": 20, "reasoningOutputTokens": 0, "totalTokens": total},
+                "last": {"inputTokens": 100, "cachedInputTokens": 30,
+                         "outputTokens": 20, "reasoningOutputTokens": 5, "totalTokens": 120},
+            },
+        })
+        await agent._handle_stream_event(SimpleNamespace(method="thread/tokenUsage/updated", payload=payload))
+
+    async def run():
+        await send(0)
+        await send(120, "child")
+        calculate.assert_not_called()
+        await send(120)
+        await send(120)
+        assert calculate.call_count == 1
+        await send(240)
+        assert calculate.call_count == (2 if price_available else 1)
+        usage, model, date = calculate.call_args.args
+        assert usage.input_tokens == 70
+        assert usage.cache_read_input_tokens == 30
+        assert usage.output_tokens == 20  # Reasoning is already included.
+        assert model == f"openai/{helpers.resolve_sdk_model(agent.agent_settings.selected_model)}"
+        assert date is not None
+        assert agent.ephemeral_usage.get("cost_usd") == (0.02469 if price_available else None)
+
+    asyncio.run(run())

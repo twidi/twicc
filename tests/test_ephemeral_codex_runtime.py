@@ -15,10 +15,10 @@ from twicc.providers.codex.sdk_wrappers import TwiccAsyncCodex
 from twicc.providers.codex.agent.agent import CodexAgent
 from twicc.providers.helpers import AgentSettings
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.skipif(
     os.environ.get("TWICC_CODEX_INTEGRATION") != "1" or not is_runtime_ready(),
     reason="requires downloaded Codex runtime and explicit local integration opt-in",
-)
+)]
 
 
 @pytest.mark.parametrize("spawn_child", [False, True])
@@ -118,6 +118,7 @@ supports_websockets=false
                 events.append(event)
                 await agent._handle_stream_event(event)
             assert agent.ephemeral_final_text == "Verified final answer."
+            assert agent.ephemeral_usage.get("cost_usd", 0) > 0, [(e.method, type(e.payload).__name__) for e in events]
             if spawn_child:
                 assert agent._live_subagents, "No actual provider-created subagent"
                 assert await agent._try_arm_subagent_hold() is True

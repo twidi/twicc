@@ -89,6 +89,8 @@ class _ThreadSettingsUpdateResponse(BaseModel):
 class TwiccAsyncThread(AsyncThread):
     """``AsyncThread`` with ``turn_with_policy`` for fine-grained per-turn overrides."""
 
+    initial_model: str | None = None
+
     async def turn_with_policy(
         self,
         input: RunInput,
@@ -328,7 +330,9 @@ class TwiccAsyncCodex(AsyncCodex):
             service_tier=service_tier,
         )
         started = await self._client.thread_start(params)
-        return TwiccAsyncThread(self, started.thread.id)
+        thread = TwiccAsyncThread(self, started.thread.id)
+        thread.initial_model = getattr(started, "model", None)
+        return thread
 
     async def thread_resume_with_policy(
         self,
