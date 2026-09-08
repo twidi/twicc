@@ -327,3 +327,62 @@ def test_a_django_free_command_is_still_covered_by_stderr(before, capsysbinary, 
     cli_workspaces.main()
     _, err = read(capsysbinary)
     assert "`workspaces`" in err
+
+
+# --- the help texts flip themselves ----------------------------------------
+
+
+def test_the_help_builders_track_the_cutover(before):
+    """Click help becomes the MCP tool schema, so a string that outlives its
+    behaviour misinforms every agent. Deriving it from the constant removes the
+    follow-up edit — and the release that would have to be cut to carry it."""
+    assert _output.cutover_help("old", "new") == "old"
+
+
+def test_the_help_builders_flip_past_the_cutover(after):
+    assert _output.cutover_help("old", "new") == "new"
+
+
+def test_the_limit_help_names_both_page_sizes_before(before):
+    assert _output.limit_help("sessions", 20) == (
+        "Max number of sessions to return (default: 20; 50 with --paginated)."
+    )
+
+
+def test_the_limit_help_collapses_after(after):
+    assert _output.limit_help("sessions", 20) == (
+        "Max number of sessions to return (default: 50)."
+    )
+
+
+def test_a_command_already_at_fifty_never_mentions_the_flag(before):
+    """`share` pages at 50 on both sides, so the clause would be noise."""
+    assert "--paginated" not in _output.limit_help("shares", 50)
+
+
+def test_the_mcp_descriptions_match_the_side_of_the_cutover_we_are_on():
+    """The notice reaches agents through the schema, which is the reason they
+    need no runtime warning.
+
+    No clock fixture here, deliberately: the descriptions are built from
+    import-time constants, so monkeypatching after import cannot move them. The
+    assertion is therefore two-sided — every listing carries the notice while
+    the cutover is ahead, and none does once it has passed.
+    """
+    from twicc.mcp.tools import iter_mcp_tools
+
+    listings = {
+        "projects", "workspaces", "sessions", "artifacts", "share", "processes",
+        "search", "session_content", "session_messages", "session_agents",
+        "session_workflows",
+    }
+    described = {
+        t.name: t.description for t in iter_mcp_tools() if t.name in listings
+    }
+    assert set(described) == listings
+
+    announced = {n for n, d in described.items() if d.startswith("DEPRECATION")}
+    if _output.pagination_is_default():
+        assert announced == set(), "the migration is over; the notice should be gone"
+    else:
+        assert announced == listings, f"no notice in: {sorted(listings - announced)}"

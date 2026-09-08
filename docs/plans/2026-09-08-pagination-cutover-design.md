@@ -1,6 +1,6 @@
 # Pagination cutover — making `--paginated` the only shape
 
-**Status:** design, not implemented
+**Status:** implemented (`0f8363b4`, plus the self-flipping help texts)
 **Date:** 2026-09-08
 **Cutover instant:** `2026-09-15T00:00:00`, local time on the machine running TwiCC
 
@@ -337,16 +337,28 @@ deleting the flag.
 
 No notice fires after the cutover: there is nothing left to announce.
 
-**Only the flip is automatic.** It needs no release — the date does it. Every
-other item in this section is a static edit that would be *false* during the
-overlap week, so the help strings below, and the phase-2 docs pass in Not in
-scope, must ship in a release cut on or after 2026-09-15.
+**Nothing here needs a release cut on the date.** The flip is date-driven, and
+so are the help texts below. Only the prose in `SKILLS-AND-CLI.md` and the eight
+`SKILL.md` files stays static — see Not in scope.
 
-**The help texts become false and must change with the behaviour.** They are not
-documentation — Click help becomes the JSON-Schema `description`
-(`src/twicc/rpc/schema.py:88`) and then the MCP `Tool.input_schema`
-(`src/twicc/mcp/tools.py:89`), so a stale string actively misinforms every
-agent. Eleven strings in two places:
+**The help texts flip themselves.** They are not documentation — Click help
+becomes the JSON-Schema `description` (`src/twicc/rpc/schema.py:88`) and then
+the MCP `Tool.input_schema` (`src/twicc/mcp/tools.py:89`), so a stale string
+actively misinforms every agent.
+
+Rather than schedule a manual rewrite for the day, they are derived from the
+constant through `cutover_help(before, after)`: `CUTOVER_NOTICE` prefixes each
+listing's own help and empties itself past the date, `PAGINATED_HELP` swaps to
+"accepted and ignored", and `limit_help()` collapses "(default: 20; 50 with
+--paginated)" to "(default: 50)". No second edit, and no release to cut on or
+after the cutover just to correct a sentence.
+
+They are evaluated at import: a CLI process is short-lived and always reads
+true; the backend builds its MCP schema at startup and carries the old wording
+until the first restart past the date — a description one restart stale, with no
+effect on behaviour.
+
+The strings this replaced, for the record:
 
 - `PAGINATED_HELP` (`src/twicc/cli/_output.py:104`), which currently ends "Off
   by default: the bare shape is unchanged".
@@ -355,9 +367,9 @@ agent. Eleven strings in two places:
   Eight read "(default: 20; 50 with --paginated)"; the two `session` ones at 394
   and 420 read "(default: no limit; 50 with --paginated)".
 
-`share`'s `--limit` (`src/twicc/cli/__init__.py:661`) is deliberately **not**
-touched: it reads "(default: 50)", never mentions the flag, and stays true
-because `src/twicc/cli/share.py:61` already passes `default=50`.
+`share` is the one command whose `--limit` never mentions the flag: it already
+passes `default=50` (`src/twicc/cli/share.py:61`), so `limit_help("shares", 50)`
+omits the clause on both sides of the date.
 
 **`content` and `messages` lose data, not just shape.** Seven of the ten array
 listings widen at the cutover, 20 → 50; `share` already pages at 50 and does not
@@ -606,10 +618,9 @@ argument stops being *emitted* — but the dict it carries is built by
 `src/twicc/cli/search.py:102`, passed as `plain=` at `:126` **and** reused
 through `extra=` at `:130`. Only the parameter is dead, not the value. Deleting it is a separate cleanup once the date has passed.
 
-**Docs and skills.** `SKILLS-AND-CLI.md` and the eight `SKILL.md` files describe
-the flag as opt-in with an unchanged default. They need a phase-1 pass
-announcing the date and a phase-2 pass rewriting the default, each with a
-`plugin.json` bump. Ordinary doc work, not design decisions — unlike the help
-strings above, which are code.
+**Docs and skills.** `SKILLS-AND-CLI.md` and the eight `SKILL.md` files now
+announce the date (phase-1 pass, `plugin.json` 0.76.0). They still need a
+phase-2 pass rewriting the default once it has passed — the only part of this
+migration that does not flip itself, since prose cannot read the constant.
 
 **The CHANGELOG entry**, which is the user's call.

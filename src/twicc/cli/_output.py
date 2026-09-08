@@ -202,12 +202,69 @@ def pagination_notice(command: str, paginated: bool, *, default_limit: int | Non
     return paginated
 
 
-PAGINATED_HELP = (
+def cutover_help(before: str, after: str) -> str:
+    """Pick the help text that is true right now.
+
+    Every help string here is also data: Click's help becomes the JSON-Schema
+    ``description`` (``twicc/rpc/schema.py``) and then the MCP tool schema, so a
+    string that outlives its behaviour actively misinforms agents. Deriving it
+    from :data:`PAGINATION_CUTOVER` means it flips itself on the date — no
+    second edit, and no release to cut on or after the cutover just to correct a
+    sentence.
+
+    Evaluated at import: a CLI process is short-lived, so it always reads true;
+    the backend builds its MCP schema at startup and carries the old wording
+    until the first restart past the date. A description one restart stale, with
+    no effect on behaviour.
+    """
+    return after if pagination_is_default() else before
+
+
+_CUTOVER_DATE = PAGINATION_CUTOVER.strftime("%Y-%m-%d")
+
+#: Prepended to each listing's own help while the bare shape is still emitted.
+#: Empty afterwards, so the notice disappears from ``--help`` and from the MCP
+#: tool descriptions the day the migration is over.
+CUTOVER_NOTICE = cutover_help(
+    f"DEPRECATION: from {_CUTOVER_DATE} this returns {{items, pagination}} instead "
+    f"of a bare array, and pages at {PAGINATED_DEFAULT_LIMIT} by default. Pass "
+    "--paginated now to get that shape today. ",
+    "",
+)
+
+#: Same, for the one listing whose current shape is already an object.
+CUTOVER_NOTICE_OBJECT = cutover_help(
+    f"DEPRECATION: from {_CUTOVER_DATE} this renames `hits` to `items` and "
+    "`total_hits` to `pagination.total`, moves `limit`/`offset` under "
+    f"`pagination`, and pages at {PAGINATED_DEFAULT_LIMIT} by default. Pass "
+    "--paginated now to get that shape today. ",
+    "",
+)
+
+PAGINATED_HELP = cutover_help(
     "Wrap the result in {items, pagination} with limit/offset/total/has_more, "
     "so a caller knows whether another page follows. Without an explicit --limit "
     f"the page size becomes {PAGINATED_DEFAULT_LIMIT}, so the answer always describes a "
-    "real page. Off by default: the bare shape is unchanged."
+    f"real page. Off by default until {_CUTOVER_DATE}, when the envelope becomes "
+    "the only shape and this flag turns into an accepted no-op.",
+    "Accepted and ignored: the envelope is the default. Kept so scripts that "
+    "migrated during the deprecation window keep working untouched.",
 )
+
+
+def limit_help(noun: str, default: int | None, *, suffix: str = "") -> str:
+    """Help for a listing's ``--limit``, true on both sides of the cutover.
+
+    ``default`` is what the command passes to :func:`resolve_limit` — the page
+    size without ``--paginated``. Past the cutover every listing pages at
+    :data:`PAGINATED_DEFAULT_LIMIT`, so the second form drops the distinction.
+    """
+    shown = "no limit" if default is None else str(default)
+    before = f"Max number of {noun} to return (default: {shown}"
+    # `share` already pages at 50, so the flag changes nothing for it.
+    before += ")." if default == PAGINATED_DEFAULT_LIMIT else f"; {PAGINATED_DEFAULT_LIMIT} with --paginated)."
+    after = f"Max number of {noun} to return (default: {PAGINATED_DEFAULT_LIMIT})."
+    return cutover_help(before + suffix, after + suffix)
 
 
 def emit_list(
