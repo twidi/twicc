@@ -135,7 +135,12 @@ async def dispatch(request: HttpRequest, command_path: str) -> HttpResponse:
         return _json({"error": "Internal error while executing the command."}, status=500)
     finally:
         transport.backend_loop.reset(token)
-    return _json({"exit_code": result.exit_code, "result": result.result, "error": result.error})
+    envelope = {"exit_code": result.exit_code, "result": result.result, "error": result.error}
+    if result.warnings:
+        # Omitted when empty, so the steady-state envelope keeps exactly the three
+        # keys it has always had once the deprecation window closes.
+        envelope["warnings"] = list(result.warnings)
+    return _json(envelope)
 
 
 async def index(request: HttpRequest) -> HttpResponse:

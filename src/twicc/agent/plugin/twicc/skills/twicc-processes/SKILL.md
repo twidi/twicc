@@ -40,7 +40,7 @@ $TWICC processes [OPTIONS]
 - `--state STATE` — filter by state: `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`. (`dead` is rejected — never returned.)
 - `--limit N` — max results (default: 20; 50 with `--paginated`).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. Without the flag, shape and default page size are unchanged.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. Without the flag, shape and default page size are unchanged — **until 2026-09-15**, when the envelope becomes the only shape and the flag turns into an accepted no-op. Pass it now and nothing breaks on that date.
 - `--include-hidden` — include processes for hidden sessions (excluded by default).
 - `--only-hidden` — only processes for hidden sessions. Mutually exclusive with `--include-hidden`.
 - `--spawned-by <ID|self|parent>` — filter to direct child sessions spawned by the given session ID. `self` is the current session (= my children); `parent` is the session that spawned the current one (= my siblings, myself included). Implies `--include-hidden`. Mutually exclusive with `--spawn-tree` and `--descendants`.

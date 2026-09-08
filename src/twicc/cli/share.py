@@ -3,7 +3,7 @@ down). ``url`` uses the backend Share URL builder. With ``shareBaseUrl`` unset
 or unusable, unredacted rows use the relative ``/share/<token>/`` path. Links
 only resolve on the dedicated Share origin."""
 
-from twicc.cli._output import emit_error, emit_json, emit_list, resolve_limit
+from twicc.cli._output import emit_error, emit_json, emit_list, pagination_notice, resolve_limit
 
 
 def _base_url(current: dict) -> str:
@@ -32,6 +32,9 @@ def list_main(*, kind: str | None = None, session: str | None = None,
               limit: int | None = None, offset: int = 0, paginated: bool = False) -> None:
     import django
     django.setup()
+    # default_limit=50 → the page size is not changing, so the notice announces
+    # the shape alone.
+    paginated = pagination_notice("share", paginated, default_limit=50)
 
     from django.db.models import Q
 

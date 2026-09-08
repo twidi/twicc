@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import orjson
@@ -12,6 +12,20 @@ from django.utils import timezone
 
 from twicc.agent.states import AgentState
 from twicc.core.models import ProcessRun, Project, Session, SessionType
+
+
+@pytest.fixture(autouse=True)
+def _before_the_pagination_cutover(monkeypatch):
+    """Pin the clock below ``PAGINATION_CUTOVER``.
+
+    These tests assert the pre-cutover shape (a bare array, and the per-command
+    default page size). Past the date both change, so without this they would go
+    red on 2026-09-15 for a reason that has nothing to do with what they cover.
+    The pinned value is naive, like the constant it replaces.
+    """
+    from twicc.cli import _output
+
+    monkeypatch.setattr(_output, "PAGINATION_CUTOVER", datetime(2200, 1, 1))  # noqa: DTZ001
 
 
 @pytest.fixture

@@ -73,6 +73,13 @@ class ExternalCaller(NamedTuple):
     name: str
 
 
+#: True while a command runs under ``execute_prepared``. Read by the CLI's
+#: deprecation notices, which are for humans: an agent reads the flag off the
+#: tool schema and adapts without being told. Deliberately its own variable —
+#: ``forced_session_id`` is MCP-only but is ``None`` for a token-less caller, so
+#: reading it as "is this MCP?" would fail open and warn agents.
+mcp_call: ContextVar[bool] = ContextVar("mcp_call", default=False)
+
 external_caller: ContextVar[ExternalCaller | None] = ContextVar("mcp_external_caller", default=None)
 
 

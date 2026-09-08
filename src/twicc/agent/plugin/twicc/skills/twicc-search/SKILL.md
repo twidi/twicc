@@ -36,7 +36,7 @@ $TWICC search '<query>' [OPTIONS]
 
 - `--limit N` — max hits (default: 20; 50 with `--paginated`).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. Without the flag, shape and default page size are unchanged.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. Without the flag, shape and default page size are unchanged — **until 2026-09-15**, when the envelope becomes the only shape and the flag turns into an accepted no-op. Pass it now and nothing breaks on that date.
 - `--project <PROJECT>` — scope hits to a project (path or id; **drop the leading dash** on ids). A normal project also includes its git worktrees' sessions (a worktree's sessions belong to its main repository); a worktree project is scoped to its own only. Mutually exclusive with `--workspace`. Combines (AND) with the query and every other filter. For an arbitrary set of unrelated projects, use `project_id:` query terms instead.
 - `--workspace ID` — scope hits to all projects in the given workspace, each member project's git worktrees included. Mutually exclusive with `--project`.
 - `--include-hidden` — include hits from hidden sessions (excluded by default).

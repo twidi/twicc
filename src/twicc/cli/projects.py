@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc projects`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list, resolve_limit
+from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit
 
 
 def main(
@@ -15,6 +15,7 @@ def main(
     import django
 
     django.setup()
+    paginated = pagination_notice("projects", paginated, default_limit=20)
 
     from twicc.core.models import Project
     from twicc.core.serializers import serialize_project

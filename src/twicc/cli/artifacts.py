@@ -8,7 +8,7 @@ never drift; ``--scope`` filters on each bookmark's own visibility scope
 (project / workspace / all), e.g. ``--scope all`` for the "everywhere" ones.
 """
 
-from twicc.cli._output import emit_error, emit_list, resolve_limit
+from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit
 
 
 def main(
@@ -24,6 +24,7 @@ def main(
     import django
 
     django.setup()
+    paginated = pagination_notice("artifacts", paginated, default_limit=20)
 
     from twicc.core.models import ArtifactBookmark, PinMode
     from twicc.core.serializers import serialize_artifact_bookmark

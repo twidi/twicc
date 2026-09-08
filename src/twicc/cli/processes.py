@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc processes`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list, resolve_limit
+from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit
 
 
 def main(
@@ -43,6 +43,7 @@ def main(
     import django
 
     django.setup()
+    paginated = pagination_notice("processes", paginated, default_limit=20)
 
     filiation_scope = any((spawned_by, spawn_tree, descendants, siblings))
     if annotation and not filiation_scope:

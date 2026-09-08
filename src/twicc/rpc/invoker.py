@@ -16,13 +16,17 @@ import click
 import typer
 
 from twicc.cli import app
-from twicc.cli._output import _Sink, _capture
+from twicc.cli._output import _notices, _Sink, _capture
 
 
 class InvocationResult(NamedTuple):
     exit_code: int
     result: object | None
     error: str | None
+    #: Deprecation notices the command recorded. Last and defaulted so the
+    #: positional construction sites keep working; a tuple because NamedTuple
+    #: defaults are shared across instances.
+    warnings: tuple[str, ...] = ()
 
 
 # Build the Click command once: this registers the whole Typer tree.
@@ -37,7 +41,9 @@ def get_command() -> click.Command:
 def invoke(argv: list[str]) -> InvocationResult:
     """Execute ``twicc <argv>`` in-process; capture result, error, exit code."""
     sink = _Sink()
+    notices: list[str] = []
     tok = _capture.set(sink)
+    tok_notices = _notices.set(notices)
     try:
         # With ``standalone_mode=False`` Click never re-raises a ``typer.Exit``
         # / ``click.exceptions.Exit`` out of ``.main()``: it converts it to the
@@ -58,5 +64,11 @@ def invoke(argv: list[str]) -> InvocationResult:
         if sink.error is None:
             sink.error = exc.format_message()
     finally:
+        _notices.reset(tok_notices)
         _capture.reset(tok)
-    return InvocationResult(exit_code=code, result=sink.result, error=sink.error)
+    # Read through the local ``notices`` name, not ``_notices.get()``: the
+    # ``finally`` above has already run by the time this line does. Same reason
+    # ``sink`` is a local.
+    return InvocationResult(
+        exit_code=code, result=sink.result, error=sink.error, warnings=tuple(notices),
+    )

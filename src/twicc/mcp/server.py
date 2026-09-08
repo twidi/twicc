@@ -33,7 +33,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from twicc.cli._drop_request import transport
 from twicc.cli._drop_request.whoami import forced_session_id
-from twicc.mcp.identity import resolve_session_token, external_caller, batch_correlation
+from twicc.mcp.identity import resolve_session_token, external_caller, batch_correlation, mcp_call
 from twicc.mcp.batch import BatchRuntime
 from twicc.mcp.batch_contract import BATCH_NAMES, validate_batch, fit_result, rejected_batch
 from twicc.mcp.dispatch import PreparedTool, UnknownToolError, check_caller_arguments, prepare_tool
@@ -88,11 +88,13 @@ async def execute_prepared(prepared: PreparedTool, *, session_id: str | None,
     loop = asyncio.get_running_loop()
     tok_sid = forced_session_id.set(session_id)
     tok_loop = transport.backend_loop.set(loop)
+    tok_mcp = mcp_call.set(True)
     try:
         if on_start is not None:
             on_start()
         result = await asyncio.to_thread(_run_invoke, argv)
     finally:
+        mcp_call.reset(tok_mcp)
         transport.backend_loop.reset(tok_loop)
         forced_session_id.reset(tok_sid)
     if external is not None:
@@ -105,11 +107,17 @@ async def execute_prepared(prepared: PreparedTool, *, session_id: str | None,
             if k in {"session_id", "session_ids", "project", "project_id", "bookmark_id", "share_id", "peer"}
         }
         if isinstance(result.result, dict):
-            targets["result"] = {
+            # Only when something was actually identified. A listing's paginated
+            # envelope is a dict carrying none of these keys, so without the
+            # emptiness check every list call would file a bare ``"result": {}``
+            # into the audit row.
+            identified = {
                 k: v
                 for k, v in result.result.items()
                 if k in {"id", "session_id", "project_id", "share_id", "bookmark_id", "message_id"}
             }
+            if identified:
+                targets["result"] = identified
         correlation = batch_correlation.get()
         if correlation is not None:
             targets["_batch"] = {

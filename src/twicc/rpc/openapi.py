@@ -10,6 +10,11 @@ _ENVELOPE_SCHEMA = {
         "exit_code": {"type": "integer", "description": "CLI exit code (0 = success)."},
         "result": {"description": "The command's structured result, or null."},
         "error": {"type": ["string", "null"], "description": "Failure message, or null."},
+        "warnings": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Deprecation notices, absent when there are none.",
+        },
     },
     "required": ["exit_code"],
 }

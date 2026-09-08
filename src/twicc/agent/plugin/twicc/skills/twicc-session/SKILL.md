@@ -131,7 +131,7 @@ The range and the window answer different questions and stack. The range is an a
 
 **To reach the end of a filtered result, use `--tail`.** A filtered result has no line address, so without it you would need a first call to learn `total`, and the session can grow in between. Under `--tail N` the reported window is the range it covers (`offset = total - N`) and `has_more` means matches remain **before** it.
 
-`--paginated` adds the `{items, pagination}` envelope and caps the page at **50** when no `--limit` is given, so `total` tells you how many items match before you pull them all. It also counts as a selector on its own — `content --paginated` is a valid browse entry point, since a bounded page cannot dump the session.
+`--paginated` adds the `{items, pagination}` envelope and caps the page at **50** when no `--limit` is given, so `total` tells you how many items match before you pull them all. **From 2026-09-15 that is the only behaviour**: a call with no `--limit` returns a page, not every item in the session. It also counts as a selector on its own — `content --paginated` is a valid browse entry point, since a bounded page cannot dump the session.
 
 `--contains` is **case-insensitive** and matches the **raw JSONL string** (the verbatim line as stored). Consequences: it also matches JSON keys (e.g. `"role"`, `"type"`), and embedded newlines are escaped (`\n`), so a query spanning a line break won't match. This is the only way to substring-search across all raw items (tool_use/tool_result included).
 
@@ -168,7 +168,7 @@ User + assistant messages only, uniform shape across providers. No tool calls, n
 - `--limit N` — cap results (default: no cap; 50 with `--paginated`).
 - `--offset N` — skip first N messages (default: 0).
 - `--tail N` — return the last N messages. Mutually exclusive with `--limit`/`--offset`.
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. Without an explicit `--limit` the page size becomes **50** instead of "everything". With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. Without `--contains`, `total` counts raw items — a few extract to nothing and are dropped — so `has_more` can be a rare false positive, never a false negative.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. Without an explicit `--limit` the page size becomes **50** instead of "everything" — and **from 2026-09-15 that is the only behaviour**, so an unfiltered call returns a page rather than the whole session. With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. Without `--contains`, `total` counts raw items — a few extract to nothing and are dropped — so `has_more` can be a rare false positive, never a false negative.
 
 ```json
 [

@@ -2,7 +2,7 @@
 
 import orjson
 
-from twicc.cli._output import emit_error, emit_json, emit_list, resolve_limit
+from twicc.cli._output import emit_error, emit_json, emit_list, pagination_notice, resolve_limit
 
 
 def _get_session(session_id: str):
@@ -114,6 +114,12 @@ def content(
 
     from twicc.core.models import SessionItem
 
+    # Above the selector guard below, which counts ``paginated`` as one: past the
+    # cutover the flag is always set, so the guard stops firing and a bare
+    # ``content`` call returns the first page instead of an error. Bounded, which
+    # is all the guard ever protected against.
+    paginated = pagination_notice("session content", paginated, default_limit=None)
+
     contains = contains or []
     if (
         range_str is None and not contains and limit is None and not offset
@@ -211,6 +217,8 @@ def messages(
     from twicc.core.models import SessionItem
     from twicc.providers.helpers import get_provider_helpers
 
+    paginated = pagination_notice("session messages", paginated, default_limit=None)
+
     session = _get_session(session_id)
 
     contains = contains or []
@@ -291,6 +299,7 @@ def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
     import django
 
     django.setup()
+    paginated = pagination_notice("session agents", paginated, default_limit=20)
 
     from twicc.core.models import Session
     from twicc.core.serializers import serialize_session
@@ -411,6 +420,7 @@ def workflows(session_id: str, *, limit: int | None = None, offset: int = 0,
     import django
 
     django.setup()
+    paginated = pagination_notice("session workflows", paginated, default_limit=20)
 
     from twicc.core.models import Workflow
 

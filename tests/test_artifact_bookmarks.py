@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from pathlib import Path
 
 import orjson
@@ -10,6 +11,20 @@ from django.utils import timezone
 from twicc import paths
 from twicc.core.models import ArtifactBookmark, PinMode, Project, Session, SessionType
 from twicc.core.services import artifact_bookmark_mutation as abm
+
+
+@pytest.fixture(autouse=True)
+def _before_the_pagination_cutover(monkeypatch):
+    """Pin the clock below ``PAGINATION_CUTOVER``.
+
+    These tests assert the pre-cutover shape (a bare array, and the per-command
+    default page size). Past the date both change, so without this they would go
+    red on 2026-09-15 for a reason that has nothing to do with what they cover.
+    The pinned value is naive, like the constant it replaces.
+    """
+    from twicc.cli import _output
+
+    monkeypatch.setattr(_output, "PAGINATION_CUTOVER", datetime(2200, 1, 1))  # noqa: DTZ001
 
 
 @pytest.fixture

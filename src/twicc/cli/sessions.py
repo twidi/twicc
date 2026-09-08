@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc sessions`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list, resolve_limit
+from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit
 
 
 def main(
@@ -31,6 +31,7 @@ def main(
     import django
 
     django.setup()
+    paginated = pagination_notice("sessions", paginated, default_limit=20)
 
     from twicc.cli._drop_request.whoami import (
         resolve_descendants_filter,

@@ -20,7 +20,9 @@ Human-only commands (``password``, the ``claude`` / ``codex`` passthroughs,
 from __future__ import annotations
 
 import contextvars
+import logging
 import sys
+from datetime import datetime
 
 import orjson
 import typer
@@ -99,6 +101,105 @@ def resolve_limit(limit: int | None, *, paginated: bool, default: int | None) ->
     if limit is not None:
         return limit
     return PAGINATED_DEFAULT_LIMIT if paginated else default
+
+
+#: Local wall-clock instant at which the bare listing shape stops being emitted.
+#: Naive on purpose: "midnight on the 15th" means midnight where the instance
+#: runs, not in UTC — the announcement and the code then say the same thing on
+#: every host. Changing the date is a one-line edit here; nothing else in the
+#: codebase encodes it. Design: docs/plans/2026-09-08-pagination-cutover-design.md
+PAGINATION_CUTOVER = datetime(2026, 9, 15)  # noqa: DTZ001 — local time, as announced
+
+
+def pagination_is_default(now: datetime | None = None) -> bool:
+    """True once the envelope is the only shape and ``--paginated`` is a no-op.
+
+    ``now`` is injectable for tests and **must be naive**: it is compared against
+    a naive constant, and mixing the two raises ``TypeError``.
+    """
+    if now is not None and now.tzinfo is not None:
+        raise ValueError(
+            "pagination_is_default() compares local wall-clock times: pass a naive "
+            "datetime (datetime.now(), not timezone.now())."
+        )
+    return (now or datetime.now()) >= PAGINATION_CUTOVER  # noqa: DTZ005 — local time
+
+
+#: One notice per invocation, drained by the RPC invoker into its result. A
+#: ContextVar rather than a field on ``_Sink``: the terminal path has no sink.
+_notices: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "pagination_notices", default=None
+)
+
+_NOTICE_LOGGER = logging.getLogger("twicc.cli.pagination")
+
+
+def _in_mcp_call() -> bool:
+    """True when the running command was dispatched by the MCP server.
+
+    Agents read ``paginated`` off the tool schema and get the new shape without
+    being told, so they are the one caller that is never notified. The import is
+    lazy and reached only in API mode: ``twicc.mcp.identity`` pulls in
+    ``django.utils.crypto``, and this module is imported by every command.
+    """
+    from twicc.mcp.identity import mcp_call
+
+    return mcp_call.get()
+
+
+def pagination_notice(command: str, paginated: bool, *, default_limit: int | None,
+                      shape: str = "array") -> bool:
+    """Resolve the pagination mode, announcing the cutover while it is still ahead.
+
+    Returns what ``paginated`` should be from here on: always ``True`` past the
+    cutover, where the flag is accepted but means nothing. Before it, the
+    caller's own value — and when the caller passed nothing, a notice is
+    recorded so the migration does not arrive unannounced.
+
+    ``command`` is the full CLI path (``"session content"``, not ``"content"``)
+    so the message names something the reader can paste back. ``default_limit``
+    is what the command already hands to :func:`resolve_limit`; ``50`` means its
+    page size is not changing, which exempts ``share`` from that clause without
+    a special case. ``shape`` is ``"object"`` for the one listing whose current
+    output is not a bare array.
+    """
+    if pagination_is_default():
+        return True
+    if paginated:
+        return paginated  # already migrated: nothing to say
+    if _capture.get() is not None and _in_mcp_call():
+        return paginated
+
+    when = PAGINATION_CUTOVER.strftime("%Y-%m-%d")
+    if shape == "object":
+        change = (
+            f"`{command}` renames `hits` to `items` and `total_hits` to "
+            "`pagination.total`, moves `limit`/`offset` under `pagination`"
+        )
+    else:
+        change = (
+            f"`{command}` returns {{\"items\": [...], \"pagination\": {{...}}}} "
+            "instead of a bare array"
+        )
+    if default_limit != PAGINATED_DEFAULT_LIMIT:
+        change += f", and pages at {PAGINATED_DEFAULT_LIMIT} by default"
+    message = (
+        f"twicc: from {when}, {change}. Pass --paginated now to get that shape "
+        "today; after that date the flag is accepted but does nothing."
+    )
+
+    recorded = _notices.get()
+    if recorded is not None:
+        # In-process (RPC): the caller reads it off the envelope.
+        recorded.append(message)
+    else:
+        # Terminal: typer.echo, never print(file=sys.stderr) — a closed fd 2
+        # makes sys.stderr None, and print() would then fall back to stdout and
+        # corrupt the JSON payload. click.echo drops the write instead.
+        typer.echo(message, err=True)
+    if _NOTICE_LOGGER.hasHandlers():
+        _NOTICE_LOGGER.warning("%s", message)
+    return paginated
 
 
 PAGINATED_HELP = (

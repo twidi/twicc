@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc search`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list, resolve_limit
+from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit
 
 
 def main(
@@ -36,6 +36,12 @@ def main(
     ``django.setup()`` so an ordinary full-text query stays Django-free. The
     typer wrapper guarantees the filiation filters are mutually exclusive.
     """
+    # Above the conditional django.setup() below: the notice must fire for every
+    # search, not only the ones that touch the DB. shape="object" selects the
+    # text naming the key renames — search is the one listing whose current
+    # output is not a bare array.
+    paginated = pagination_notice("search", paginated, default_limit=20, shape="object")
+
     if (
         spawned_by in ("self", "parent")
         or spawn_tree is not None

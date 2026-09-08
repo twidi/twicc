@@ -37,6 +37,7 @@ from typing import NamedTuple
 import click
 import httpx
 import orjson
+import typer
 
 from twicc.cli._drop_request.attachments import _sniff_mime
 from twicc.cli._drop_request.prompt import (
@@ -774,6 +775,11 @@ def forward(url: str, token: str | None, argv: list[str]) -> int:
     error = envelope.get("error")
     if error is not None:
         print(error, file=sys.stderr)
+    # typer.echo rather than the print() above: a closed fd 2 makes sys.stderr
+    # None, and print() would then fall back to stdout and corrupt the JSON the
+    # caller is parsing. click.echo drops the write instead.
+    for warning in envelope.get("warnings") or ():
+        typer.echo(warning, err=True)
 
     return envelope["exit_code"]
 

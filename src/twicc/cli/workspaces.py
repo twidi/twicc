@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc workspaces`` subcommand."""
 
-from twicc.cli._output import emit_list, resolve_limit
+from twicc.cli._output import emit_list, pagination_notice, resolve_limit
 
 
 def main(*, limit: int | None = None, offset: int = 0, archived: bool = False,
@@ -10,6 +10,10 @@ def main(*, limit: int | None = None, offset: int = 0, archived: bool = False,
     Workspaces are stored in ``<data_dir>/workspaces.json`` and managed via the
     TwiCC UI; this command is read-only.
     """
+    # No django.setup() in this command — it reads workspaces.json from disk — so
+    # the notice reaches stderr but writes no log line on the terminal path.
+    paginated = pagination_notice("workspaces", paginated, default_limit=20)
+
     from twicc.workspaces import read_workspaces
 
     workspaces = read_workspaces().get("workspaces", [])
