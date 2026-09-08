@@ -431,3 +431,227 @@ def test_processes_empty_scope_reports_the_same_window(project, capsysbinary):
     assert payload["pagination"] == {
         "limit": 50, "offset": 0, "total": 0, "has_more": False,
     }
+
+
+# --- --slim: the reduced listing projection ---------------------------------
+
+
+def test_slim_keeps_only_the_listing_projection(project, capsysbinary):
+    from twicc.core.serializers import SESSION_LISTING_FIELDS
+
+    make_sessions(project, 1)
+    cli_sessions.main(project=project.id, slim=True)
+    row = read(capsysbinary)[0]
+    assert set(row) == set(SESSION_LISTING_FIELDS)
+
+
+def test_slim_is_off_by_default(project, capsysbinary):
+    make_sessions(project, 1)
+    cli_sessions.main(project=project.id)
+    row = read(capsysbinary)[0]
+    assert "layout" in row and "tasks" in row, "the full payload is untouched"
+
+
+def test_slim_drops_the_payloads_a_caller_can_fetch(project, capsysbinary):
+    """Each dropped blob leaves a `has_*` flag behind, so nothing becomes
+    invisible — only deferred."""
+    make_sessions(project, 1)
+    cli_sessions.main(project=project.id, slim=True)
+    row = read(capsysbinary)[0]
+    for dropped, flag in (("tasks", "has_tasks"), ("goals", "has_goals"),
+                          ("plan_paths", "has_plan")):
+        assert dropped not in row
+        assert flag in row
+    assert "layout" not in row
+
+
+def test_slim_keeps_the_state_a_caller_filtered_on(project, capsysbinary):
+    """`--include-archived` would be useless if the rows could not say which
+    ones are archived."""
+    sessions = make_sessions(project, 2)
+    sessions[0].archived = True
+    sessions[0].save(update_fields=["archived"])
+    cli_sessions.main(project=project.id, archived=True, slim=True)
+    rows = read(capsysbinary)
+    assert {r["archived"] for r in rows} == {True, False}
+
+
+def test_slim_combines_with_the_envelope(project, capsysbinary):
+    make_sessions(project, 3)
+    cli_sessions.main(project=project.id, limit=2, slim=True, paginated=True)
+    payload = read(capsysbinary)
+    assert payload["pagination"]["total"] == 3
+    assert all("layout" not in item for item in payload["items"])
+
+
+def test_slim_applies_to_the_subagent_listing(project, capsysbinary):
+    parent, child = make_sessions(project, 2)
+    child.parent_session = parent
+    child.type = SessionType.SUBAGENT
+    child.save(update_fields=["parent_session", "type"])
+    cli_session.agents(parent.id, slim=True)
+    rows = read(capsysbinary)
+    assert len(rows) == 1
+    assert "layout" not in rows[0]
+
+
+def test_the_has_flags_report_the_blobs_they_stand_for(project, capsysbinary):
+    session = make_sessions(project, 1)[0]
+    session.tasks = {"provider": "claude_code", "items": [{"status": "pending"}]}
+    session.goals = [{"text": "ship it"}]
+    session.save(update_fields=["tasks", "goals"])
+    cli_sessions.main(project=project.id, slim=True)
+    row = read(capsysbinary)[0]
+    assert row["has_tasks"] is True
+    assert row["has_goals"] is True
+
+
+def test_the_has_flags_are_present_in_the_full_payload_too(project, capsysbinary):
+    """They are serializer fields, not a slim-mode invention."""
+    make_sessions(project, 1)
+    cli_sessions.main(project=project.id)
+    row = read(capsysbinary)[0]
+    assert row["has_tasks"] is False
+    assert row["has_goals"] is False
+
+
+# --- session workflows: the trace is opt-in ---------------------------------
+
+
+def make_workflow(session, run_id, *, agents=40):
+    """A run whose envelope carries the runtime's full shape, trace included."""
+    from twicc.core.models import Workflow
+
+    raw = {
+        "runId": run_id,
+        "workflowName": "probe",
+        "summary": "a probe run",
+        "status": "completed",
+        "statusKind": "completed",
+        "timestamp": "2026-06-28T21:47:53.744Z",
+        "startTime": 1782683197579,
+        "durationMs": 76164,
+        "agentCount": agents,
+        "totalTokens": 192319,
+        "totalToolCalls": 18,
+        "defaultModel": "claude-opus-5",
+        "scriptPath": "/tmp/probe.js",
+        "taskId": "wcb46mokl",
+        "phases": [{"title": "One", "detail": "d"}],
+        "phaseCompletion": {"total": 1, "completed": 1, "allCompleted": True},
+        "error": None,
+        # The five heavy ones.
+        "result": {"answer": "x" * 2000},
+        "script": "y" * 4000,
+        "logs": ["z" * 100] * 20,
+        "args": "a" * 500,
+        "workflowProgress": [
+            {"type": "workflow_agent", "agentId": f"a{i}", "state": "completed",
+             "promptPreview": "p" * 1500, "resultPreview": {"out": "r" * 2500}}
+            for i in range(agents)
+        ],
+    }
+    return Workflow.objects.create(
+        session=session, run_id=run_id, raw_json=orjson.dumps(raw).decode(),
+    )
+
+
+def test_workflows_omit_the_trace_by_default(project, capsysbinary):
+    session = make_sessions(project, 1)[0]
+    make_workflow(session, "wf_probe")
+    cli_session.workflows(session.id)
+    row = read(capsysbinary)[0]
+    for heavy in ("workflowProgress", "script", "logs", "args", "result"):
+        assert heavy not in row
+
+
+def test_workflows_keep_everything_needed_to_choose_a_run(project, capsysbinary):
+    session = make_sessions(project, 1)[0]
+    make_workflow(session, "wf_probe")
+    cli_session.workflows(session.id)
+    row = read(capsysbinary)[0]
+    for kept in ("id", "workflowName", "summary", "status", "statusKind", "durationMs",
+                 "agentCount", "totalTokens", "totalToolCalls", "phases",
+                 "phaseCompletion", "scriptPath", "defaultModel"):
+        assert kept in row, kept
+
+
+def test_workflows_keep_an_unknown_key_by_default(project, capsysbinary):
+    """A denylist, not an allowlist: the envelope's shape is the Claude Code
+    runtime's, so a key it adds later is most likely general info and belongs in
+    the listing rather than silently disappearing from it."""
+    from twicc.core.models import Workflow
+
+    session = make_sessions(project, 1)[0]
+    Workflow.objects.create(
+        session=session, run_id="wf_new",
+        raw_json=orjson.dumps({"runId": "wf_new", "retryCount": 3}).decode(),
+    )
+    cli_session.workflows(session.id)
+    row = read(capsysbinary)[0]
+    assert row["retryCount"] == 3
+
+
+def test_workflows_result_flag_adds_only_the_result(project, capsysbinary):
+    session = make_sessions(project, 1)[0]
+    make_workflow(session, "wf_probe")
+    cli_session.workflows(session.id, result=True)
+    row = read(capsysbinary)[0]
+    assert "result" in row
+    assert "workflowProgress" not in row
+
+
+def test_workflows_full_flag_reproduces_the_envelope_verbatim(project, capsysbinary):
+    """`--full` is also the compatibility path for anyone reading the old shape."""
+    session = make_sessions(project, 1)[0]
+    make_workflow(session, "wf_probe")
+    cli_session.workflows(session.id, full=True)
+    row = read(capsysbinary)[0]
+    for heavy in ("workflowProgress", "script", "logs", "args", "result"):
+        assert heavy in row
+    assert len(row["workflowProgress"]) == 40
+
+
+def test_the_default_listing_stays_small(project, capsysbinary):
+    """The guard the denylist needs: if a future runtime key is a blob, this
+    fails instead of the default quietly growing back to megabytes."""
+    session = make_sessions(project, 1)[0]
+    for i in range(20):
+        make_workflow(session, f"wf_{i}")
+    cli_session.workflows(session.id, limit=20)
+    payload = capsysbinary.readouterr().out
+    assert len(payload) < 20 * 4096, f"{len(payload)} bytes for 20 runs"
+
+
+# --- sessions get: the same projection, placeholders included ---------------
+
+
+def test_batch_lookup_takes_the_same_projection(project, capsysbinary):
+    from twicc.cli import sessions_get as cli_sessions_get
+    from twicc.core.serializers import SESSION_LISTING_FIELDS
+
+    session = make_sessions(project, 1)[0]
+    cli_sessions_get.main([session.id], slim=True)
+    row = read(capsysbinary)[0]
+    assert set(row) == set(SESSION_LISTING_FIELDS) | {"known"}
+
+
+def test_batch_lookup_projects_its_placeholders_too(project, capsysbinary):
+    """A batch whose rows changed shape depending on whether the id resolved
+    would be worse than no projection at all."""
+    from twicc.cli import sessions_get as cli_sessions_get
+
+    session = make_sessions(project, 1)[0]
+    cli_sessions_get.main([session.id, "no-such-session"], slim=True)
+    found, missing = read(capsysbinary)
+    assert found["known"] is True and missing["known"] is False
+    assert set(found) == set(missing)
+    assert missing["id"] == "no-such-session"
+
+
+def test_batch_lookup_is_full_by_default(project, capsysbinary):
+    from twicc.cli import sessions_get as cli_sessions_get
+
+    session = make_sessions(project, 1)[0]
+    cli_sessions_get.main([session.id])
+    assert "layout" in read(capsysbinary)[0]

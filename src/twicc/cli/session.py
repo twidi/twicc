@@ -294,7 +294,7 @@ def messages(
 
 
 def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
-          paginated: bool = False) -> None:
+          paginated: bool = False, slim: bool = False) -> None:
     """List subagents of a session as JSON to stdout."""
     import django
 
@@ -302,7 +302,7 @@ def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
     paginated = pagination_notice("session agents", paginated, default_limit=20)
 
     from twicc.core.models import Session
-    from twicc.core.serializers import serialize_session
+    from twicc.core.serializers import serialize_session, slim_session
 
     session = _get_session(session_id)
 
@@ -313,6 +313,8 @@ def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
     limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None
     data = [serialize_session(s) for s in qs[offset : offset + limit]]
+    if slim:
+        data = [slim_session(row) for row in data]
 
     emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
 
@@ -395,6 +397,20 @@ def plan(session_id: str, *, list_docs: bool = False, doc_path: str | None = Non
     emit_json({"path": entry["path"], "abs_path": entry["abs_path"], "content": content})
 
 
+#: The envelope keys a listing drops unless asked for. A denylist, not an
+#: allowlist: the ``wf_*.json`` schema is fixed by the Claude Code runtime — 20
+#: keys present in every run observed, plus ``args`` when the workflow took some
+#: and ``error`` when it failed — and TwiCC's own synthesis emits the same shape.
+#: A future key would therefore come from the runtime, most likely a scalar that
+#: belongs in the general view; naming what is heavy keeps the default honest
+#: instead of freezing today's field list and silently going stale.
+#:
+#: ``result`` is separated from the rest because "what did it produce" is a
+#: different question from "how did it run".
+WORKFLOW_RESULT_FIELDS = ("result",)
+WORKFLOW_DETAIL_FIELDS = ("workflowProgress", "script", "logs", "args")
+
+
 def _workflow_envelope(run, session_cutoff=None) -> dict:
     """The run's parsed ``raw_json`` with its ``runId`` key renamed ``id`` (first).
 
@@ -415,8 +431,19 @@ def _workflow_envelope(run, session_cutoff=None) -> dict:
 
 
 def workflows(session_id: str, *, limit: int | None = None, offset: int = 0,
-             paginated: bool = False) -> None:
-    """List a session's workflows as JSON to stdout (newest first)."""
+             paginated: bool = False, result: bool = False, full: bool = False) -> None:
+    """List a session's workflows as JSON to stdout (newest first).
+
+    A run's execution trace is the bulk of its envelope — on the heaviest run
+    measured, ``workflowProgress`` alone was 94% of 774 KB, because it carries a
+    prompt and a result preview for each of its 99 agents. Listing twenty of
+    those returned megabytes to answer "which runs are there".
+
+    So the listing answers that question and no more: name, summary, status,
+    timing, counts and phase progress. ``result`` adds what each run produced;
+    ``full`` adds everything and reproduces the envelope verbatim, which is also
+    what ``session workflow <id>`` gives for a single run.
+    """
     import django
 
     django.setup()
@@ -430,6 +457,12 @@ def workflows(session_id: str, *, limit: int | None = None, offset: int = 0,
     limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None
     data = [_workflow_envelope(w, session.cutoff) for w in qs[offset : offset + limit]]
+
+    if not full:
+        dropped = set(WORKFLOW_DETAIL_FIELDS)
+        if not result:
+            dropped |= set(WORKFLOW_RESULT_FIELDS)
+        data = [{k: v for k, v in run.items() if k not in dropped} for run in data]
 
     emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
 

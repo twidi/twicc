@@ -22,7 +22,7 @@ ensure_env_loaded()
 
 from twicc.cli._drop_request.project import derive_project_id  # noqa: E402
 from twicc.cli._output import (  # noqa: E402
-    CUTOVER_NOTICE, CUTOVER_NOTICE_OBJECT, PAGINATED_HELP, emit_error, limit_help,
+    CUTOVER_NOTICE, CUTOVER_NOTICE_OBJECT, PAGINATED_HELP, SLIM_HELP, emit_error, limit_help,
 )
 from twicc.version import get_version  # noqa: E402
 
@@ -224,6 +224,7 @@ def _sessions_default(
     ),
     workspace: str = typer.Option(None, "--workspace", help="Filter by workspace ID (only sessions of projects in that workspace, worktrees included). Mutually exclusive with --project."),
     limit: int = typer.Option(None, help=limit_help("sessions", 20)),
+    slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
     offset: int = typer.Option(0, help="Skip first N sessions."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived sessions."),
@@ -326,6 +327,7 @@ def _sessions_default(
         siblings=siblings,
         annotation=annotation,
         paginated=paginated,
+        slim=slim,
     )
 
 
@@ -344,6 +346,7 @@ def _sessions_get(
             "explicit ids."
         ),
     ),
+    slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
 ) -> None:
     """Look up sessions by id (placeholder for missing, includes subagents).
 
@@ -354,7 +357,7 @@ def _sessions_get(
     """
     from twicc.cli.sessions_get import main as sessions_get_main
 
-    sessions_get_main(session_ids)
+    sessions_get_main(session_ids, slim=slim)
 
 
 session_app = typer.Typer(
@@ -435,13 +438,14 @@ def messages(
 def agents(
     ctx: typer.Context,
     limit: int = typer.Option(None, help=limit_help("subagents", 20)),
+    slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
     offset: int = typer.Option(0, help="Skip first N subagents."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """List subagents of a session as JSON."""
     from twicc.cli.session import agents as session_agents
 
-    session_agents(ctx.obj, limit=limit, offset=offset, paginated=paginated)
+    session_agents(ctx.obj, limit=limit, offset=offset, paginated=paginated, slim=slim)
 
 
 @session_app.command()
@@ -465,11 +469,26 @@ def workflows(
     limit: int = typer.Option(None, help=limit_help("workflows", 20)),
     offset: int = typer.Option(0, help="Skip first N workflows."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    result: bool = typer.Option(
+        False,
+        "--result",
+        help="Include each run's `result` — what it produced. Omitted by default: it is the run's full output.",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help=(
+            "Return each run's envelope verbatim, execution trace included "
+            "(`workflowProgress`, `script`, `logs`, `args`, `result`). Megabytes on a "
+            "long run; prefer `session workflow <id>` for one run."
+        ),
+    ),
 ) -> None:
     """List the session's workflows as JSON (Claude Code only)."""
     from twicc.cli.session import workflows as session_workflows
 
-    session_workflows(ctx.obj, limit=limit, offset=offset, paginated=paginated)
+    session_workflows(ctx.obj, limit=limit, offset=offset, paginated=paginated,
+                      result=result, full=full)
 
 
 @session_app.command()

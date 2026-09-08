@@ -267,6 +267,11 @@ def limit_help(noun: str, default: int | None, *, suffix: str = "") -> str:
     return cutover_help(before + suffix, after + suffix)
 
 
+SLIM_HELP = (
+    "Return a reduced projection of each session: identity, state, cost, and the has_* flags telling you what else is there. Drops the payloads you can fetch per session (tasks, plan, goals, layout), the redundant timestamps and paths, and the agent-settings bundle. About 60% lighter."
+)
+
+
 def emit_list(
     items: list,
     *,

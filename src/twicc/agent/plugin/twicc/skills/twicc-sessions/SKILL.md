@@ -40,6 +40,7 @@ Results are ordered by most recently active.
 - `--workspace ID` — filter to sessions of projects in the given workspace, including each member project's git worktrees. Mutually exclusive with `--project`.
 - `--limit N` — max results (default: 20; 50 with `--paginated`).
 - `--offset N` — skip first N for pagination (default: 0).
+- `--slim` — reduced projection: identity, state, cost, and the `has_*` flags (`has_tasks`, `has_goals`, `has_plan`, `has_artifacts`, `has_workflows`) saying what else there is to fetch. Drops the per-session payloads (`tasks`, `plan_paths`, `goals`, `layout`), the redundant timestamps and paths, and the agent-settings bundle. **About 80% lighter** — prefer it whenever you are scanning rather than inspecting one session. `sessions get` takes it too, placeholders included, so a batch lookup keeps one shape.
 - `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. **Before 2026-09-15 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
 - `--include-archived` — include archived sessions (excluded by default).
 - `--include-hidden` — include hidden sessions (excluded by default).

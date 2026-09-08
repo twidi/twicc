@@ -18,6 +18,7 @@ def main(
     siblings: str | None = None,
     annotation: list[str] | None = None,
     paginated: bool = False,
+    slim: bool = False,
 ) -> None:
     """List sessions as JSON to stdout.
 
@@ -51,7 +52,7 @@ def main(
     from django.db.models import Q
 
     from twicc.core.models import Session
-    from twicc.core.serializers import serialize_session
+    from twicc.core.serializers import serialize_session, slim_session
 
     qs = Session.objects.filter(
         type="session",
@@ -133,5 +134,7 @@ def main(
     total = qs.count() if paginated else None
     sessions = qs[offset : offset + limit]
     data = [serialize_session(s) for s in sessions]
+    if slim:
+        data = [slim_session(row) for row in data]
 
     emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)

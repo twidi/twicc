@@ -11,9 +11,9 @@ Inspect a single session. Seven sub-commands:
 - Default — full session metadata.
 - `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
-- `agents` — list subagents spawned by this session.
+- `agents` — list subagents spawned by this session. `--slim` returns the reduced projection (see the `twicc-sessions` skill), about 80% lighter.
 - `plan [PATH] [--list]` — the session's tracked plan documents (both providers): most recently updated one by default, a specific one by path, `--list` to enumerate.
-- `workflows [--limit N] [--offset N] [--paginated]` — list this session's workflows (Claude Code only).
+- `workflows [--limit N] [--offset N] [--paginated] [--result] [--full]` — list this session's workflows (Claude Code only).
 - `workflow <ID>` — show one (Claude Code only).
 
 ## When to use
@@ -187,7 +187,7 @@ Common patterns:
 ### Agents — list subagents
 
 ```bash
-$TWICC session <SESSION_ID> agents [--limit N] [--offset N] [--paginated]
+$TWICC session <SESSION_ID> agents [--limit N] [--offset N] [--paginated] [--slim]
 ```
 
 Only valid on parent sessions (errors on subagents). Returns provider-internal subagents, not sessions created via `create-session`; use `$TWICC topology <ID|self>` for the `spawned_by` tree (skill: `twicc-topology`). Ordered by most recently active.
@@ -219,10 +219,15 @@ With a `PATH` argument: the content of that document. Matched against the tracke
 ### Workflows — list runs
 
 ```bash
-$TWICC session <SESSION_ID> workflows [--limit N] [--offset N] [--paginated]
+$TWICC session <SESSION_ID> workflows [--limit N] [--offset N] [--paginated] [--result] [--full]
 ```
 
-This session's workflows, newest first (**Claude Code** only). The default view's `has_workflows` boolean says whether any exist.
+This session's workflows, newest first (**Claude Code** only). The session's `has_workflows` boolean says whether any exist.
+
+The listing answers *which runs are there*: `id`, `workflowName`, `summary`, `status`, `statusKind`, `startTime`, `durationMs`, `agentCount`, `totalTokens`, `totalToolCalls`, `phases`, `phaseCompletion`, `scriptPath`, `defaultModel`.
+
+- `--result` — add each run's `result`, what it produced. Use it when you are reading conclusions, not choosing a run.
+- `--full` — the envelope verbatim, execution trace included (`workflowProgress`, `script`, `logs`, `args`, `result`). **Can be megabytes**: `workflowProgress` carries a prompt and a result preview per agent, and a long run has hundreds. For one run, `session workflow <ID>` gives the same thing without listing the others.
 
 ### Workflow — one run
 

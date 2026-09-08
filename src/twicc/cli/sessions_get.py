@@ -43,8 +43,13 @@ def _build_placeholder_template() -> dict:
     return {k: None for k in serialize_session(sample)}
 
 
-def main(session_ids: list[str]) -> None:
-    """Emit one JSON entry per session_id (placeholder when missing)."""
+def main(session_ids: list[str], *, slim: bool = False) -> None:
+    """Emit one JSON entry per session_id (placeholder when missing).
+
+    ``slim`` applies the same projection as ``twicc sessions --slim``, on the
+    placeholders too: a batch whose rows changed shape depending on whether the
+    id resolved would be worse than no projection at all.
+    """
     import django
 
     django.setup()
@@ -74,15 +79,19 @@ def main(session_ids: list[str]) -> None:
     if _PLACEHOLDER_TEMPLATE is None:
         _PLACEHOLDER_TEMPLATE = _build_placeholder_template()
 
+    from twicc.core.serializers import slim_session
+
+    project = slim_session if slim else (lambda entry: entry)
+
     results = []
     for sid in unique_ids:
         session = sessions_by_id.get(sid)
         if session is None:
-            entry = dict(_PLACEHOLDER_TEMPLATE)
+            entry = project(dict(_PLACEHOLDER_TEMPLATE))
             entry["id"] = sid
             entry["known"] = False
         else:
-            entry = serialize_session(session)
+            entry = project(serialize_session(session))
             entry["known"] = True
         results.append(entry)
 

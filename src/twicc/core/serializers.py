@@ -110,6 +110,42 @@ def serialize_network_denial(denial):
     }
 
 
+#: What a listing keeps under ``--slim``. Lives next to the serializer on
+#: purpose: a new field gets classified the moment it is added, instead of
+#: silently landing in the full payload and never being reconsidered.
+#:
+#: The rule for what stays: identity, the state a caller filtered on, and the
+#: ``has_*`` flags that say where to look next. What goes: the blobs a caller
+#: can fetch per session (``tasks``, ``plan_paths``, ``goals``, ``layout``), the
+#: four extra timestamps ``last_new_content_at`` already answers for, the paths
+#: ``project_id`` already encodes, and the agent-settings bundle, which only
+#: matters when you are about to act on one session.
+#:
+#: Distinct from ``TOPOLOGY_SESSION_FIELDS`` (``twicc/cli/topology.py``) and
+#: deliberately so: a tree needs filiation and no visibility state, a flat
+#: listing needs the reverse. Merging them would make a 332-node topology 17%
+#: heavier to serve a listing concern.
+SESSION_LISTING_FIELDS = (
+    # Identity
+    "id", "project_id", "provider", "title", "annotations",
+    "spawned_by", "spawn_root",
+    # Position in time and budget
+    "created_at", "last_new_content_at",
+    "context_usage", "context_max", "total_cost",
+    "user_message_count", "model", "git_branch",
+    # State a caller may have filtered on, and needs to read back
+    "archived", "hidden", "pinned", "stale", "unavailable_reason",
+    "mute_on_user_turn",
+    # "there is more here" — each replaces a payload the caller can fetch
+    "has_artifacts", "has_plan", "has_workflows", "has_tasks", "has_goals",
+)
+
+
+def slim_session(serialized: dict) -> dict:
+    """Project a serialized session down to :data:`SESSION_LISTING_FIELDS`."""
+    return {field: serialized[field] for field in SESSION_LISTING_FIELDS if field in serialized}
+
+
 def serialize_session(session):
     """
     Serialize a Session model to a dictionary.
@@ -208,6 +244,13 @@ def serialize_session(session):
         # one-way; latched live by the watcher and backfilled by the background
         # compute. See ``Session.has_workflows``.
         "has_workflows": session.has_workflows,
+        # Companion flags to the ``tasks`` / ``goals`` blobs above, in the same
+        # family as ``has_workflows`` / ``has_artifacts`` / ``has_plan``: they
+        # say whether there is anything to fetch without carrying the payload,
+        # which is what makes the slim listing projection usable — drop the blob,
+        # keep the signal.
+        "has_tasks": bool(session.tasks),
+        "has_goals": bool(session.goals),
         # Per-session artifacts (files under <data_dir>/artifacts/<id>/). The
         # frontend shows an Artifacts tab when ``has_artifacts`` is true and
         # mounts it on ``artifacts_dir``. ``has_artifacts`` is monotonic and
