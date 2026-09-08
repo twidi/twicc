@@ -41,6 +41,7 @@ Results are ordered by most recently updated. Read-only: works without the serve
 - `--scope <project|workspace|all>` — filter by each bookmark's own visibility scope (independent of `--project` / `--workspace`). `--scope all` lists only the ones bookmarked everywhere.
 - `--limit N` — max results (default: 20).
 - `--offset N` — skip first N for pagination (default: 0).
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without it the output shape is unchanged.
 
 ### Bookmark
 
@@ -148,5 +149,5 @@ $TWICC artifacts unbookmark self report.md
 ## How to present results
 
 1. Show each bookmark's name, scope, and `relative_path`; group by session or project when listing many.
-2. If there are more results, offer to paginate with `--offset`.
+2. If `--paginated` reports `has_more: true`, offer to fetch the next page with `--offset`.
 3. You are in TwiCC — link to a bookmarked artifact: `[link text](/project/{project_id}/artifacts/{id})`.

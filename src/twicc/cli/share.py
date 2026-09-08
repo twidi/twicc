@@ -3,7 +3,7 @@ down). ``url`` uses the backend Share URL builder. With ``shareBaseUrl`` unset
 or unusable, unredacted rows use the relative ``/share/<token>/`` path. Links
 only resolve on the dedicated Share origin."""
 
-from twicc.cli._output import emit_error, emit_json
+from twicc.cli._output import emit_error, emit_json, emit_list
 
 
 def _base_url(current: dict) -> str:
@@ -29,7 +29,7 @@ def _redacted_kinds(current: dict) -> set[str]:
 
 def list_main(*, kind: str | None = None, session: str | None = None,
               project: str | None = None, include_revoked: bool = False,
-              limit: int = 50, offset: int = 0) -> None:
+              limit: int = 50, offset: int = 0, paginated: bool = False) -> None:
     import django
     django.setup()
 
@@ -53,23 +53,28 @@ def list_main(*, kind: str | None = None, session: str | None = None,
         # Both kinds: an artifact share has session NULL (CheckConstraint), its
         # project comes from the bookmark's denormalised raw project FK.
         qs = qs.filter(Q(session__project_id__in=ids) | Q(artifact_bookmark__project_id__in=ids))
+    if not include_revoked:
+        # ``status() == "revoked"`` is exactly ``revoked_at IS NOT NULL``, so the
+        # filter belongs in the query rather than in a post-slice loop: a page is
+        # then full, and the row count the window sees is the one the caller gets.
+        qs = qs.filter(revoked_at__isnull=True)
+    total = qs.count() if paginated else None
     rows = list(qs[offset:offset + limit])
     current = read_synced_settings()
     base = _base_url(current)
     redacted_kinds = _redacted_kinds(current)
     out = []
     for s in rows:
-        if include_revoked or s.status() != "revoked":
-            data = serialize_share(s)
-            if s.kind in redacted_kinds:
-                data["token"] = None
-                data["url_path"] = None
-                data["url"] = None
-                data["redacted"] = True
-            else:
-                data["url"] = build_share_url(base, data["url_path"]) if base else data["url_path"]
-            out.append(data)
-    emit_json(out)
+        data = serialize_share(s)
+        if s.kind in redacted_kinds:
+            data["token"] = None
+            data["url_path"] = None
+            data["url"] = None
+            data["redacted"] = True
+        else:
+            data["url"] = build_share_url(base, data["url_path"]) if base else data["url_path"]
+        out.append(data)
+    emit_list(out, paginated=paginated, limit=limit, offset=offset, total=total)
 
 
 def show_main(share_id: str) -> None:

@@ -9,11 +9,11 @@ argument-hint: <session_id> [content|messages|agents|plan|workflows|workflow]
 Inspect a single session. Seven sub-commands:
 
 - Default — full session metadata.
-- `content [LINE_OR_RANGE] [--contains TEXT ...]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
+- `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
 - `agents` — list subagents spawned by this session.
 - `plan [PATH] [--list]` — the session's tracked plan documents (both providers): most recently updated one by default, a specific one by path, `--list` to enumerate.
-- `workflows [--limit N] [--offset N]` — list this session's workflows (Claude Code only).
+- `workflows [--limit N] [--offset N] [--paginated]` — list this session's workflows (Claude Code only).
 - `workflow <ID>` — show one (Claude Code only).
 
 ## When to use
@@ -110,7 +110,7 @@ Works for regular sessions and subagents.
 ### Content — raw items
 
 ```bash
-$TWICC session <SESSION_ID> content [LINE_OR_RANGE] [--contains TEXT ...]
+$TWICC session <SESSION_ID> content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--paginated]
 ```
 
 The lowest-level view: **every** raw item, including tool calls and results — unlike `messages` and `search`, which only ever see user/assistant text.
@@ -122,12 +122,17 @@ Filter by line/range, by substring, or both:
 - Substring: `content --contains "some text"` — every item whose raw content contains the text.
 - Multiple substrings: `content --contains foo --contains bar` — repeatable, **AND-combined** (an item must contain every term).
 - Combined: `content 10-20 --contains "some text"` — the line/range scopes the substring search.
+- Windowed: `content --contains foo --limit 20 --offset 20` — `--limit`/`--offset` apply **last**, after the range and `--contains`.
 
-At least one of `LINE_OR_RANGE` / `--contains` is required.
+At least one selector (`LINE_OR_RANGE`, `--contains`, `--limit`/`--offset`) is required: a bare call would return every raw item, **the heaviest payload the CLI can produce** — hundreds of megabytes on a long session.
+
+The range and the window answer different questions and stack. The range is an absolute address in the JSONL (a `line_num` span); the window is a rank in what the filters kept. They only coincide when nothing else filters. To page through a substring search, use `--limit`/`--offset`, not the range.
+
+`--paginated` adds the `{items, pagination}` envelope, so `total` tells you how many items match before you pull them all.
 
 `--contains` is **case-insensitive** and matches the **raw JSONL string** (the verbatim line as stored). Consequences: it also matches JSON keys (e.g. `"role"`, `"type"`), and embedded newlines are escaped (`\n`), so a query spanning a line break won't match. This is the only way to substring-search across all raw items (tool_use/tool_result included).
 
-Returns a JSON array. Each entry is `{line_num, content}`, where `content` is the raw JSONL object. Schema of `content` depends on provider:
+Returns a JSON array — empty when nothing matches, which is not an error. Each entry is `{line_num, content}`, where `content` is the raw JSONL object. Schema of `content` depends on provider:
 - `claude_code` — Claude API objects (user/assistant messages, tool_use, tool_result, …).
 - `codex` — Codex schema (user/assistant messages, function_call, function_call_output, …).
 
@@ -160,6 +165,7 @@ User + assistant messages only, uniform shape across providers. No tool calls, n
 - `--limit N` — cap results (default: no cap).
 - `--offset N` — skip first N messages (default: 0).
 - `--tail N` — return the last N messages. Mutually exclusive with `--limit`/`--offset`.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. Without `--contains`, `total` counts raw items — a few extract to nothing and are dropped — so `has_more` can be a rare false positive, never a false negative.
 
 ```json
 [
@@ -178,7 +184,7 @@ Common patterns:
 ### Agents — list subagents
 
 ```bash
-$TWICC session <SESSION_ID> agents [--limit N] [--offset N]
+$TWICC session <SESSION_ID> agents [--limit N] [--offset N] [--paginated]
 ```
 
 Only valid on parent sessions (errors on subagents). Returns provider-internal subagents, not sessions created via `create-session`; use `$TWICC topology <ID|self>` for the `spawned_by` tree (skill: `twicc-topology`). Ordered by most recently active.
@@ -210,7 +216,7 @@ With a `PATH` argument: the content of that document. Matched against the tracke
 ### Workflows — list runs
 
 ```bash
-$TWICC session <SESSION_ID> workflows [--limit N] [--offset N]
+$TWICC session <SESSION_ID> workflows [--limit N] [--offset N] [--paginated]
 ```
 
 This session's workflows, newest first (**Claude Code** only). The default view's `has_workflows` boolean says whether any exist.

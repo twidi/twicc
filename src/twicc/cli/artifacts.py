@@ -8,7 +8,7 @@ never drift; ``--scope`` filters on each bookmark's own visibility scope
 (project / workspace / all), e.g. ``--scope all`` for the "everywhere" ones.
 """
 
-from twicc.cli._output import emit_error, emit_json
+from twicc.cli._output import emit_error, emit_list
 
 
 def main(
@@ -18,6 +18,7 @@ def main(
     scope: str | None = None,
     limit: int = 20,
     offset: int = 0,
+    paginated: bool = False,
 ) -> None:
     """List bookmarked artifacts as JSON to stdout (most recently updated first)."""
     import django
@@ -60,5 +61,9 @@ def main(
 
         qs = qs.filter(project_id__in=project_scope_ids(project))
 
+    total = qs.count() if paginated else None
     rows = qs[offset : offset + limit]
-    emit_json([serialize_artifact_bookmark(b) for b in rows])
+    emit_list(
+        [serialize_artifact_bookmark(b) for b in rows],
+        paginated=paginated, limit=limit, offset=offset, total=total,
+    )

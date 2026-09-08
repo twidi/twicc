@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc processes`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_json
+from twicc.cli._output import emit_error, emit_list
 
 
 def main(
@@ -16,6 +16,7 @@ def main(
     descendants: str | None = None,
     siblings: str | None = None,
     annotation: list[str] | None = None,
+    paginated: bool = False,
 ) -> None:
     """List currently running processes (live ProcessRuns) of the running TwiCC.
 
@@ -109,7 +110,7 @@ def main(
 
     if scoped_session_ids is not None:
         if not scoped_session_ids:
-            emit_json([])
+            emit_list([], paginated=paginated, limit=limit, offset=offset, total=0)
             return
         qs = qs.filter(session_id__in=scoped_session_ids)
 
@@ -119,6 +120,7 @@ def main(
     elif not include_hidden and not filiation_scope:
         qs = qs.exclude(session_id__in=hidden_session_ids)
 
+    total = qs.count() if paginated else None
     rows = list(qs[offset : offset + limit])
 
     # Enrich with the matching Session's title and project_id when the session
@@ -138,4 +140,4 @@ def main(
         for row in rows
     ]
 
-    emit_json(data)
+    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)

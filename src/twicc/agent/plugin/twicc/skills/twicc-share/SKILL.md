@@ -40,7 +40,7 @@ You may share **your own session or any session in your spawn subtree** — sess
 ### List
 
 ```bash
-$TWICC share [--kind session|artifact] [--session ID|self|parent] [--project PROJECT] [--include-revoked] [--limit N] [--offset N]
+$TWICC share [--kind session|artifact] [--session ID|self|parent] [--project PROJECT] [--include-revoked] [--limit N] [--offset N] [--paginated]
 ```
 
 - `--kind session|artifact` — filter by share kind.
@@ -49,6 +49,7 @@ $TWICC share [--kind session|artifact] [--session ID|self|parent] [--project PRO
 - `--include-revoked` — include revoked rows.
 - `--limit N` — maximum rows, default 50.
 - `--offset N` — rows to skip, default 0.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without it the output shape is unchanged.
 
 ### Show
 

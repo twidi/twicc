@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc sessions`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_json
+from twicc.cli._output import emit_error, emit_list
 
 
 def main(
@@ -17,6 +17,7 @@ def main(
     descendants: str | None = None,
     siblings: str | None = None,
     annotation: list[str] | None = None,
+    paginated: bool = False,
 ) -> None:
     """List sessions as JSON to stdout.
 
@@ -127,7 +128,8 @@ def main(
 
         qs = qs.filter(project_id__in=project_scope_ids(project))
 
+    total = qs.count() if paginated else None
     sessions = qs[offset : offset + limit]
     data = [serialize_session(s) for s in sessions]
 
-    emit_json(data)
+    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)

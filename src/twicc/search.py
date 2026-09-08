@@ -720,6 +720,52 @@ def _init_read_only() -> tuple[tantivy.Index, tantivy.Schema]:
     return index, schema
 
 
+class AnnotationScope(NamedTuple):
+    """Which session-id side to hand Tantivy for an annotation filter.
+
+    Exactly one of the two is set. ``include`` is OR-ed on ``session_id``;
+    ``exclude`` becomes ``MustNot`` clauses. An empty ``include`` means the
+    filter matches no session at all.
+    """
+
+    include: set[str] | None
+    exclude: set[str] | None
+
+
+def resolve_annotation_scope(annotation_filters: list) -> AnnotationScope:
+    """Turn annotation filters into the session-id set that is cheapest to inject.
+
+    The filters live on ``Session.annotations``, a JSONField Tantivy knows
+    nothing about, so the DB resolves them first and the resulting ids scope the
+    index query. That makes ``result.count`` the real number of matching hits —
+    the previous oversample-and-post-filter loop could only report the count
+    *before* filtering, which read as "494 hits" next to seven returned rows.
+
+    Which side to inject matters. Most sessions carry no annotation at all, so
+    the positive operators (``=``, ``:exists``, ``:in:``) resolve to a handful of
+    ids while the negative ones (``!=``, ``:not-exists``) resolve to nearly the
+    whole table. Injecting the smaller side — the complement as ``MustNot`` when
+    the match set is the majority — keeps the boolean query small either way:
+    measured on an 11.5k-session instance, a ``:not-exists`` filter drops from
+    342 ms as a 11 210-term OR to 4 ms as a 334-term ``MustNot``.
+
+    One consequence of the complement form: a document whose session row no
+    longer exists is kept rather than dropped, since it is not in the excluded
+    set. That is stale-index residue, not a semantic choice.
+    """
+    from twicc.cli._annotation_filters import apply_annotation_filters
+    from twicc.core.models import Session
+
+    matching = set(
+        apply_annotation_filters(Session.objects.all(), annotation_filters)
+        .values_list("id", flat=True)
+    )
+    if len(matching) * 2 <= Session.objects.count():
+        return AnnotationScope(include=matching, exclude=None)
+    all_ids = set(Session.objects.values_list("id", flat=True))
+    return AnnotationScope(include=None, exclude=all_ids - matching)
+
+
 def raw_search(
     query_str: str,
     *,
@@ -767,10 +813,12 @@ def raw_search(
             project (plus its git worktrees) or a whole workspace's projects, resolved by the
             caller. An empty list returns no results (e.g. an empty workspace). Combines (AND)
             with every other filter, including the filiation ones.
-        annotation_filters: If set (non-empty list), run an oversample-and-post-filter loop:
-            Tantivy ranks the corpus, then Django ORM filters on ``Session.annotations``.
-            The result dict gains ``annotation_filtered``, ``exhausted``, and ``partial`` keys.
-            When ``None`` (default), the existing single-shot path runs unchanged.
+        annotation_filters: If set (non-empty list), the DB resolves the filters to a
+            session-id scope which is injected as an index clause (see
+            :func:`resolve_annotation_scope`), so ``total_hits`` counts the hits that
+            actually match. The result dict gains ``annotation_filtered``,
+            ``exhausted``, and ``partial`` keys; the last two are kept for shape
+            compatibility and no longer report an early stop, since there is none.
 
     Returns:
         If ``to_json`` is True: a JSON string (pretty-printed, sorted keys).
@@ -783,15 +831,20 @@ def raw_search(
             "raw_search(): spawned_by, spawn_tree, descendants and siblings are mutually exclusive"
         )
 
+    annotation_scope = (
+        resolve_annotation_scope(annotation_filters) if annotation_filters else None
+    )
+
     if (
         (descendants is not None and not descendants)
         or (siblings is not None and not siblings)
         or (project_ids is not None and not project_ids)
+        or (annotation_scope is not None and annotation_scope.include == set())
     ):
         # An empty explicit id/project set means "no candidates" — return
         # nothing without touching the index. For ``project_ids`` this covers an
         # empty workspace scope; a non-empty list falls through to the filter
-        # clause below.
+        # clause below. An annotation filter matching no session lands here too.
         result_dict = {
             "query": query_str,
             "total_hits": 0,
@@ -799,6 +852,12 @@ def raw_search(
             "offset": offset,
             "hits": [],
         }
+        if annotation_filters:
+            result_dict |= {
+                "annotation_filtered": True,
+                "exhausted": True,
+                "partial": False,
+            }
         if to_json:
             import orjson
 
@@ -885,6 +944,23 @@ def raw_search(
         ]
         clauses.append((Occur.Must, Query.boolean_query(project_clauses)))
 
+    if annotation_scope is not None:
+        # Same shape as descendants/siblings — an explicit id set matched on
+        # session_id — except the set may be handed over as its complement when
+        # that is the smaller side (see resolve_annotation_scope).
+        if annotation_scope.include is not None:
+            annotation_clauses = [
+                (Occur.Should, Query.term_query(schema, "session_id", sid))
+                for sid in annotation_scope.include
+            ]
+            clauses.append((Occur.Must, Query.boolean_query(annotation_clauses)))
+        else:
+            # An empty exclude set restricts nothing: every session matches.
+            clauses.extend(
+                (Occur.MustNot, Query.term_query(schema, "session_id", sid))
+                for sid in annotation_scope.exclude
+            )
+
     if len(clauses) == 1:
         parsed_query = clauses[0][1]
     else:
@@ -922,90 +998,30 @@ def raw_search(
             "snippet": snippet.to_html(),
         }
 
+    # Single-shot path. Annotation filters used to run an oversample loop here;
+    # they are now an index clause like every other scope, so one search answers
+    # both the page and its exact count.
+    raw_limit = offset + limit
+    result = searcher.search(parsed_query, limit=raw_limit)
+
+    hits = [_hit_to_dict(score, doc_addr) for score, doc_addr in result.hits[offset:]]
+
+    result_dict = {
+        "query": query_str,
+        "total_hits": result.count,
+        "limit": limit,
+        "offset": offset,
+        "hits": hits,
+    }
+
     if annotation_filters:
-        # Oversample-and-post-filter loop.
-        # Tantivy's Python binding does not expose a native offset parameter: the existing
-        # code works by pre-fetching `offset + limit` hits and slicing in Python.  We keep
-        # one `tantivy_consumed` counter (how many Tantivy hits we have already examined)
-        # and fetch progressively larger batches until we have enough post-filter matches
-        # or Tantivy is exhausted.
-        from twicc.cli._annotation_filters import apply_annotation_filters
-        from twicc.core.models import Session
-
-        # Score-ordered (session_id, (score, doc_addr)) tuples that passed the ORM filter.
-        matched_pairs: list[tuple[str, tuple[float, object]]] = []
-        tantivy_consumed = offset
-        batch_size = max(limit, 20)
-        max_iterations = 50
-        iteration = 0
-        exhausted = False
-        result = None  # set on first loop iteration; may stay None if limit == 0
-
-        while len(matched_pairs) < limit and iteration < max_iterations:
-            # Fetch enough hits to cover what we have already consumed plus the next batch.
-            fetch_limit = tantivy_consumed + batch_size
-            result = searcher.search(parsed_query, limit=fetch_limit)
-            all_hits = result.hits
-            # The slice we haven't examined yet.
-            batch_hits = all_hits[tantivy_consumed:]
-            if not batch_hits:
-                exhausted = True
-                break
-            # Build (session_id, hit_pair) tuples preserving Tantivy score order.
-            ordered_pairs = [
-                (searcher.doc(doc_addr).get_first("session_id"), (score, doc_addr))
-                for (score, doc_addr) in batch_hits
-            ]
-            ids_in_score_order = [sid for sid, _ in ordered_pairs]
-            matching_ids = set(
-                apply_annotation_filters(
-                    Session.objects.filter(id__in=ids_in_score_order),
-                    annotation_filters,
-                ).values_list("id", flat=True)
-            )
-            for sid, hit in ordered_pairs:
-                if sid in matching_ids:
-                    matched_pairs.append((sid, hit))
-                    if len(matched_pairs) >= limit:
-                        break
-            tantivy_consumed += len(batch_hits)
-            # If Tantivy returned fewer hits than we asked for it is exhausted.
-            if len(all_hits) < fetch_limit:
-                exhausted = True
-                break
-            iteration += 1
-
-        partial = (not exhausted) and len(matched_pairs) < limit
-
-        # Re-use `result` from the last Tantivy query to report total_hits.
-        # `result` stays None only when limit == 0 (loop never entered).
-        total_hits = result.count if result is not None else 0
-
-        hits = [_hit_to_dict(score, doc_addr) for _, (score, doc_addr) in matched_pairs]
-
-        result_dict = {
-            "query": query_str,
-            "total_hits": total_hits,
-            "limit": limit,
-            "offset": offset,
-            "hits": hits,
+        # Kept for shape compatibility with the oversample loop that used to run
+        # here. There is no early stop to report any more: the count is exact, so
+        # ``exhausted`` simply says whether this page reaches the end.
+        result_dict |= {
             "annotation_filtered": True,
-            "exhausted": exhausted,
-            "partial": partial,
-        }
-    else:
-        # Existing single-shot path — behaviour is byte-identical to before this change.
-        raw_limit = offset + limit
-        result = searcher.search(parsed_query, limit=raw_limit)
-
-        hits = [_hit_to_dict(score, doc_addr) for score, doc_addr in result.hits[offset:]]
-
-        result_dict = {
-            "query": query_str,
-            "total_hits": result.count,
-            "limit": limit,
-            "offset": offset,
-            "hits": hits,
+            "exhausted": offset + len(hits) >= result.count,
+            "partial": False,
         }
 
     if to_json:

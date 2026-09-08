@@ -36,6 +36,7 @@ $TWICC projects [OPTIONS]
 
 - `--limit N` — max results (default: 20).
 - `--offset N` — skip first N for pagination (default: 0).
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without it the output shape is unchanged.
 - `--include-archived` — include archived projects (excluded by default).
 - `--workspace ID` — only projects belonging to this workspace.
 
@@ -127,7 +128,7 @@ $TWICC projects get home-twidi-dev-myproj  # by id, dash dropped
 ## How to present results
 
 1. Show project name (or directory if no name) and session count.
-2. If there are more results than shown, offer to paginate with `--offset`.
+2. If `--paginated` reports `has_more: true`, offer to fetch the next page with `--offset`.
 3. You are in TwiCC — link to a project: `[link text](/project/{project_id})`.
 4. Only include cost information if explicitly asked.
 5. For `get` output: flag `known: false` entries as unknown (typo or never existed).

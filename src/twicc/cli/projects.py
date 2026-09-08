@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc projects`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_json
+from twicc.cli._output import emit_error, emit_list
 
 
 def main(
@@ -9,6 +9,7 @@ def main(
     offset: int = 0,
     archived: bool = False,
     workspace: str | None = None,
+    paginated: bool = False,
 ) -> None:
     """List all projects as JSON to stdout."""
     import django
@@ -36,6 +37,7 @@ def main(
             emit_error(f"Error: workspace '{workspace}' not found.", code=1)
         qs = qs.filter(id__in=ws.get("projectIds", []))
 
+    total = qs.count() if paginated else None
     projects = list(qs[offset : offset + limit])
 
     # Build project_id -> [workspace_id] index for the listing.
@@ -60,4 +62,4 @@ def main(
         serialized["worktrees"] = worktrees_by_main.get(p.id, [])
         data.append(serialized)
 
-    emit_json(data)
+    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)

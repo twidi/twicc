@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc search`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_json
+from twicc.cli._output import emit_error, emit_list
 
 
 def main(
@@ -17,6 +17,7 @@ def main(
     project: str | None = None,
     workspace: str | None = None,
     annotation: list[str] | None = None,
+    paginated: bool = False,
 ) -> None:
     """Execute a raw Tantivy search and print JSON results to stdout.
 
@@ -113,4 +114,16 @@ def main(
     except RuntimeError as exc:
         emit_error(f"Error: {exc}", code=1)
 
-    emit_json(result)
+    # ``search`` is the one listing whose historical shape is already an object,
+    # so the unpaginated branch emits it untouched; ``--paginated`` maps it onto
+    # the envelope every other listing uses. Whatever is not a pagination fact
+    # (the echoed query, the annotation flags, a parse error) stays top-level.
+    emit_list(
+        result["hits"],
+        paginated=paginated,
+        plain=result,  # untouched, key order included
+        limit=limit,
+        offset=offset,
+        total=result["total_hits"],
+        extra={k: v for k, v in result.items() if k not in ("hits", "total_hits", "limit", "offset")},
+    )

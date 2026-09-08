@@ -36,6 +36,7 @@ $TWICC workspaces [OPTIONS]
 
 - `--limit N` — max results (default: 20).
 - `--offset N` — skip first N for pagination (default: 0).
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without it the output shape is unchanged.
 - `--include-archived` — include archived workspaces (excluded by default).
 
 ### Batch lookup
@@ -104,5 +105,5 @@ $TWICC workspaces get backend frontend devops
 1. Show workspace name and project count (length of `projectIds`).
 2. If `autoProjectPatterns` is set, mention the workspace auto-grows for matching directories.
 3. You are in TwiCC — link to a workspace: `[link text](/projects?workspace={workspace_id})`.
-4. If there are more results than shown, offer to paginate with `--offset`.
+4. If `--paginated` reports `has_more: true`, offer to fetch the next page with `--offset`.
 5. For `get` output: flag `known: false` entries as unknown (typo or never existed).

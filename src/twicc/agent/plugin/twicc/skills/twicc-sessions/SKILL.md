@@ -40,6 +40,7 @@ Results are ordered by most recently active.
 - `--workspace ID` — filter to sessions of projects in the given workspace, including each member project's git worktrees. Mutually exclusive with `--project`.
 - `--limit N` — max results (default: 20).
 - `--offset N` — skip first N for pagination (default: 0).
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without it the output shape is unchanged.
 - `--include-archived` — include archived sessions (excluded by default).
 - `--include-hidden` — include hidden sessions (excluded by default).
 - `--only-hidden` — only hidden sessions. Mutually exclusive with `--include-hidden`.
@@ -172,7 +173,7 @@ $TWICC sessions get abc123 def456 ghi789
 ## How to present results
 
 1. Show session title, date, and message count.
-2. If there are more results, offer to paginate with `--offset`.
+2. If `--paginated` reports `has_more: true`, offer to fetch the next page with `--offset`.
 3. You are in TwiCC — link to a session: `[link text](/project/{project_id}/session/{session_id})`.
 4. Only include cost and model info if explicitly asked.
 5. For `get` output: flag `known: false` entries as unknown (typo or already cleaned up).

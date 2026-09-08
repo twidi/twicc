@@ -2,7 +2,7 @@
 
 import orjson
 
-from twicc.cli._output import emit_error, emit_json
+from twicc.cli._output import emit_error, emit_json, emit_list
 
 
 def _get_session(session_id: str):
@@ -73,15 +73,33 @@ def main(session_id: str) -> None:
     emit_json(data)
 
 
-def content(session_id: str, *, range_str: str | None = None, contains: list[str] | None = None) -> None:
+def content(
+    session_id: str,
+    *,
+    range_str: str | None = None,
+    contains: list[str] | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    paginated: bool = False,
+) -> None:
     """Fetch session item(s) by line/range and/or content substring(s), print as JSON to stdout.
 
-    ``range_str`` and ``contains`` are both optional but at least one must be
-    given; when both are present they are combined (the line/range scopes the
-    substring search). ``contains`` is a list of case-insensitive substrings
+    Every selector is optional but at least one must be given — a bare call
+    would dump the whole session, and raw items are the heaviest payload the CLI
+    can produce. Combined, they apply in this order: ``range_str`` scopes the
+    lines, ``contains`` filters within that scope, then ``limit``/``offset``
+    window the matches. ``contains`` is a list of case-insensitive substrings
     AND-combined (an item must contain every term) matched against the raw JSONL
     string stored in ``SessionItem.content`` (so it also matches JSON keys and
     sees escaped sequences like ``\\n``).
+
+    ``range_str`` and ``limit``/``offset`` answer different questions and are
+    meant to be combined: the range is an absolute address in the JSONL (a
+    ``line_num`` span), the window is a rank in the filtered result. They only
+    coincide when nothing else filters, since items map one-to-one onto lines.
+
+    No match is an empty result, not an error: with a window, running past the
+    end is ordinary paging rather than a failure.
     """
     import django
 
@@ -90,8 +108,11 @@ def content(session_id: str, *, range_str: str | None = None, contains: list[str
     from twicc.core.models import SessionItem
 
     contains = contains or []
-    if range_str is None and not contains:
-        emit_error("Error: provide a line/range argument or --contains.", code=1)
+    if range_str is None and not contains and limit is None and not offset:
+        emit_error(
+            "Error: provide a line/range argument, --contains, or --limit/--offset.",
+            code=1,
+        )
 
     _get_session(session_id)
 
@@ -103,13 +124,13 @@ def content(session_id: str, *, range_str: str | None = None, contains: list[str
         items = items.filter(content__icontains=term)
     items = items.order_by("line_num")
 
+    total = items.count() if paginated else None
+    selected = _slice_window(items, total or 0, limit=limit, offset=offset, tail=None)
+
     # Wrap each item with its line number; parse the raw content string into a real JSON object.
-    data = [{"line_num": item.line_num, "content": orjson.loads(item.content)} for item in items]
+    data = [{"line_num": item.line_num, "content": orjson.loads(item.content)} for item in selected]
 
-    if not data:
-        emit_error("Error: no items found for the given filter.", code=1)
-
-    emit_json(data)
+    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
 
 
 def messages(
@@ -121,6 +142,7 @@ def messages(
     limit: int | None = None,
     offset: int = 0,
     tail: int | None = None,
+    paginated: bool = False,
 ) -> None:
     """Fetch user/assistant messages of a session and print as JSON to stdout.
 
@@ -139,6 +161,16 @@ def messages(
     never matches JSON keys or tool noise. Because that text is produced in
     Python, the filter (and, with it, the ``tail``/``limit``/``offset`` window)
     is applied after extraction, on the matching messages.
+
+    ``paginated`` adds the shared envelope. ``total`` counts what the window was
+    applied to, which differs per branch: with ``contains`` the window sits on
+    the extracted messages, so the count is exact; without it the window sits on
+    the raw items, so the count includes the few that extract to an empty string
+    and are dropped. ``has_more`` can therefore be a (rare) false positive on
+    that branch — never a false negative, so no message is ever hidden behind a
+    ``has_more: false``. Under ``--tail`` the window is reported as the range it
+    actually covers (``offset = total - tail``) and ``has_more`` says whether
+    messages remain *before* it — the only direction that means anything there.
     """
     import django
 
@@ -184,11 +216,14 @@ def messages(
             for msg in helpers.get_indexable_messages(list(qs))
             if all(term in msg.text.lower() for term in terms)
         ]
-        selected = _slice_window(matched, len(matched), limit=limit, offset=offset, tail=tail)
+        # The window sits on the extracted messages, already in memory: the total
+        # is exact and free, no query and no over-fetch.
+        total = len(matched)
+        selected = _slice_window(matched, total, limit=limit, offset=offset, tail=tail)
     else:
         # No text filter: window at the DB level, then extract (existing behaviour —
         # the window counts raw items, so dropped-empty extractions may shrink the result).
-        total = qs.count() if tail is not None else 0
+        total = qs.count() if (tail is not None or paginated) else 0
         items = list(_slice_window(qs, total, limit=limit, offset=offset, tail=tail))
         selected = list(helpers.get_indexable_messages(items))
 
@@ -202,10 +237,20 @@ def messages(
         for msg in selected
     ]
 
-    emit_json(data)
+    if tail is not None:
+        # ``--tail`` is a window pinned to the end: report the range it really
+        # covers, and let ``has_more`` mean "there are messages before it".
+        window_offset = max(0, total - tail)
+        emit_list(
+            data, paginated=paginated, limit=tail, offset=window_offset,
+            total=total, has_more=window_offset > 0,
+        )
+        return
+
+    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
 
 
-def agents(session_id: str, *, limit: int = 20, offset: int = 0) -> None:
+def agents(session_id: str, *, limit: int = 20, offset: int = 0, paginated: bool = False) -> None:
     """List subagents of a session as JSON to stdout."""
     import django
 
@@ -219,10 +264,11 @@ def agents(session_id: str, *, limit: int = 20, offset: int = 0) -> None:
     if session.parent_session_id is not None:
         emit_error(f"Error: session '{session_id}' is a subagent, not a parent session.", code=1)
 
-    subagents = Session.objects.filter(parent_session_id=session_id).order_by("-mtime")[offset : offset + limit]
-    data = [serialize_session(s) for s in subagents]
+    qs = Session.objects.filter(parent_session_id=session_id).order_by("-mtime")
+    total = qs.count() if paginated else None
+    data = [serialize_session(s) for s in qs[offset : offset + limit]]
 
-    emit_json(data)
+    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
 
 
 def plan(session_id: str, *, list_docs: bool = False, doc_path: str | None = None) -> None:
@@ -322,7 +368,7 @@ def _workflow_envelope(run, session_cutoff=None) -> dict:
     return {"id": raw.pop("runId", run.run_id), **raw}
 
 
-def workflows(session_id: str, *, limit: int = 20, offset: int = 0) -> None:
+def workflows(session_id: str, *, limit: int = 20, offset: int = 0, paginated: bool = False) -> None:
     """List a session's workflows as JSON to stdout (newest first)."""
     import django
 
@@ -332,10 +378,11 @@ def workflows(session_id: str, *, limit: int = 20, offset: int = 0) -> None:
 
     session = _get_session(session_id)
 
-    runs = Workflow.objects.filter(session_id=session_id).order_by("-updated_at")[offset : offset + limit]
-    data = [_workflow_envelope(w, session.cutoff) for w in runs]
+    qs = Workflow.objects.filter(session_id=session_id).order_by("-updated_at")
+    total = qs.count() if paginated else None
+    data = [_workflow_envelope(w, session.cutoff) for w in qs[offset : offset + limit]]
 
-    emit_json(data)
+    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
 
 
 def workflow(session_id: str, workflow_id: str) -> None:

@@ -61,15 +61,17 @@ def one_share_each(session, bookmark, tmp_path, monkeypatch):
 
 
 def _list(**kwargs):
+    """Rows of ``share list``. The listing emits through ``emit_list`` (the
+    pagination-aware wrapper); ``show`` still goes through ``emit_json``."""
     from twicc.cli import share as cli_share
     captured = []
     import twicc.cli.share
-    orig = twicc.cli.share.emit_json
-    twicc.cli.share.emit_json = captured.append
+    orig = twicc.cli.share.emit_list
+    twicc.cli.share.emit_list = lambda items, **_: captured.append(items)
     try:
         cli_share.list_main(**kwargs)
     finally:
-        twicc.cli.share.emit_json = orig
+        twicc.cli.share.emit_list = orig
     return captured[0]
 
 
@@ -264,7 +266,9 @@ def test_session_self_finds_artifact_created_by_caller(
     )
     settings_state["allowAgentArtifactShares"] = True
     captured = []
-    monkeypatch.setattr("twicc.cli.share.emit_json", captured.append)
+    monkeypatch.setattr(
+        "twicc.cli.share.emit_list", lambda items, **_: captured.append(items),
+    )
     result = CliRunner().invoke(app, ["share", "--session", "self"])
     assert result.exit_code == 0
     assert any(row["id"] == artifact_share_id for row in captured[0])

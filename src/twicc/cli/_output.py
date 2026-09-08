@@ -77,3 +77,66 @@ def emit_error(message: str, *, code: int = 1) -> None:
         raise typer.Exit(code)
     typer.echo(message, err=True)
     raise typer.Exit(code)
+
+
+PAGINATED_HELP = (
+    "Wrap the result in {items, pagination} with limit/offset/total/has_more, "
+    "so a caller knows whether another page follows. Off by default: the bare "
+    "shape is unchanged."
+)
+
+
+def emit_list(
+    items: list,
+    *,
+    paginated: bool,
+    plain=None,
+    limit: int | None = None,
+    offset: int = 0,
+    total: int | None = None,
+    has_more: bool | None = None,
+    extra: dict | None = None,
+) -> None:
+    """Emit a listing, optionally wrapped in the shared pagination envelope.
+
+    Without ``paginated`` the payload is emitted exactly as it always was —
+    ``items`` for the nine array-returning commands, or ``plain`` for the one
+    (``search``) whose historical shape is already an object. That branch is
+    the compatibility contract: existing scripts must keep parsing what they
+    parse today.
+
+    With ``paginated`` the payload becomes ``{"items": [...], "pagination":
+    {...}}``. ``pagination`` always carries the same four keys, on every
+    command, so a caller never has to test for their presence:
+
+    - ``limit`` / ``offset`` — the window that was applied (``limit`` is
+      ``None`` when the command has no default limit and none was asked for,
+      meaning everything was returned).
+    - ``total`` — the number of rows the filters match, or ``None`` when it
+      cannot be known without an unreasonable amount of work.
+    - ``has_more`` — whether another page follows.
+
+    ``has_more`` is derived from ``offset + limit < total`` unless the caller
+    passes it explicitly, which the windowing modes that do not read forward
+    (``--tail``) must do. ``extra`` carries command-specific top-level keys
+    (``search``'s ``query``, ...) that are not pagination facts.
+    """
+    if not paginated:
+        emit_json(items if plain is None else plain)
+        return
+
+    if has_more is None:
+        has_more = limit is not None and total is not None and offset + limit < total
+
+    payload: dict = {
+        "items": items,
+        "pagination": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "has_more": has_more,
+        },
+    }
+    if extra:
+        payload |= extra
+    emit_json(payload)

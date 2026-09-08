@@ -36,6 +36,7 @@ $TWICC search '<query>' [OPTIONS]
 
 - `--limit N` — max hits (default: 20).
 - `--offset N` — skip first N for pagination (default: 0).
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without it the output shape is unchanged.
 - `--project <PROJECT>` — scope hits to a project (path or id; **drop the leading dash** on ids). A normal project also includes its git worktrees' sessions (a worktree's sessions belong to its main repository); a worktree project is scoped to its own only. Mutually exclusive with `--workspace`. Combines (AND) with the query and every other filter. For an arbitrary set of unrelated projects, use `project_id:` query terms instead.
 - `--workspace ID` — scope hits to all projects in the given workspace, each member project's git worktrees included. Mutually exclusive with `--project`.
 - `--include-hidden` — include hits from hidden sessions (excluded by default).
@@ -52,10 +53,11 @@ $TWICC search '<query>' [OPTIONS]
   - `KEY:in:V1,V2,...` — annotation key equals one of the listed values; escape a literal comma with `\,`.
   - Values are inferred as typed: `true`/`false` → boolean, `null` → null, integers and floats parsed numerically, everything else → string (same rules as `create-session --annotation`).
   - Example: `--spawn-tree self --annotation role=implementer`
+  - The filter is resolved against the database first, then scopes the index query, so `total_hits` counts the hits that really match — no over-report, no missing page.
   - When `--annotation` is set, three extra keys appear in the output (absent on the unfiltered path):
     - `annotation_filtered: true` — signals that annotation filtering was active.
-    - `exhausted: bool` — `true` if Tantivy had no more hits in the last batch (corpus exhausted); when `true` and result count < limit, the result is complete.
-    - `partial: bool` — `true` if the 50-batch guardrail tripped before filling the page (results may be missing; re-paginate with a higher `--offset`).
+    - `exhausted: bool` — `true` when this page reaches the end of the results.
+    - `partial: bool` — always `false`. Kept so the output shape does not change; there is no early stop to report any more.
 
 ### Query syntax
 
@@ -131,5 +133,5 @@ $TWICC search 'bug' --annotation priority:in:high,critical --annotation status:e
 
 1. Summarize total hits (`total_hits`).
 2. Show snippets stripped of HTML tags, with session ID and role for context.
-3. If there are more results, offer to paginate with `--offset`.
+3. If `--paginated` reports `has_more: true`, offer to fetch the next page with `--offset`.
 4. You are in TwiCC — link to a session: `[link text](/project/{project_id}/session/{session_id})`.

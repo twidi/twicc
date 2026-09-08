@@ -21,7 +21,7 @@ from twicc.paths import ensure_env_loaded, get_env_load_warnings
 ensure_env_loaded()
 
 from twicc.cli._drop_request.project import derive_project_id  # noqa: E402
-from twicc.cli._output import emit_error  # noqa: E402
+from twicc.cli._output import PAGINATED_HELP, emit_error  # noqa: E402
 from twicc.version import get_version  # noqa: E402
 
 # Ensure Django settings are discoverable for all subcommands that call django.setup().
@@ -80,6 +80,7 @@ def _projects_default(
     ctx: typer.Context,
     limit: int = typer.Option(20, help="Max number of projects to return."),
     offset: int = typer.Option(0, help="Skip first N projects."),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived projects."),
     workspace: str = typer.Option(None, "--workspace", help="Filter by workspace ID (only projects belonging to that workspace)."),
 ) -> None:
@@ -89,7 +90,8 @@ def _projects_default(
 
     from twicc.cli.projects import main as projects_main
 
-    projects_main(limit=limit, offset=offset, archived=include_archived, workspace=workspace)
+    projects_main(limit=limit, offset=offset, archived=include_archived, workspace=workspace,
+                  paginated=paginated)
 
 
 @projects_app.command(name="get")
@@ -151,6 +153,7 @@ def _workspaces_default(
     ctx: typer.Context,
     limit: int = typer.Option(20, help="Max number of workspaces to return."),
     offset: int = typer.Option(0, help="Skip first N workspaces."),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived workspaces."),
 ) -> None:
     """List all workspaces as JSON (in their stored order, default action)."""
@@ -159,7 +162,7 @@ def _workspaces_default(
 
     from twicc.cli.workspaces import main as workspaces_main
 
-    workspaces_main(limit=limit, offset=offset, archived=include_archived)
+    workspaces_main(limit=limit, offset=offset, archived=include_archived, paginated=paginated)
 
 
 @workspaces_app.command(name="get")
@@ -220,6 +223,7 @@ def _sessions_default(
     workspace: str = typer.Option(None, "--workspace", help="Filter by workspace ID (only sessions of projects in that workspace, worktrees included). Mutually exclusive with --project."),
     limit: int = typer.Option(20, help="Max number of sessions to return."),
     offset: int = typer.Option(0, help="Skip first N sessions."),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived sessions."),
     include_hidden: bool = typer.Option(False, "--include-hidden", help="Include hidden sessions in the listing."),
     only_hidden: bool = typer.Option(False, "--only-hidden", help="Show ONLY hidden sessions (mutually exclusive with --include-hidden)."),
@@ -319,6 +323,7 @@ def _sessions_default(
         descendants=descendants,
         siblings=siblings,
         annotation=annotation,
+        paginated=paginated,
     )
 
 
@@ -376,7 +381,7 @@ def _session_default(
 @session_app.command()
 def content(
     ctx: typer.Context,
-    range: str = typer.Argument(None, help="Line number or range (e.g. '5' or '10-20'). Optional when --contains is given."),
+    range: str = typer.Argument(None, help="Line number or range (e.g. '5' or '10-20'). Optional when --contains or --limit/--offset is given."),
     contains: list[str] = typer.Option(
         [],
         "--contains",
@@ -386,11 +391,15 @@ def content(
             "Combinable with a line/range to scope the search."
         ),
     ),
+    limit: int = typer.Option(None, "--limit", help="Max number of items to return (default: no limit). Applied after the range and --contains."),
+    offset: int = typer.Option(0, "--offset", help="Skip first N matching items."),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """Show session item(s) content as JSON."""
     from twicc.cli.session import content as session_content
 
-    session_content(ctx.obj, range_str=range, contains=contains)
+    session_content(ctx.obj, range_str=range, contains=contains, limit=limit, offset=offset,
+                    paginated=paginated)
 
 
 @session_app.command()
@@ -409,12 +418,14 @@ def messages(
     ),
     limit: int = typer.Option(None, "--limit", help="Max number of messages to return (default: no limit)."),
     offset: int = typer.Option(0, "--offset", help="Skip first N messages."),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     tail: int = typer.Option(None, "--tail", help="Return the last N messages (mutually exclusive with --limit/--offset)."),
 ) -> None:
     """Show all user/assistant messages of a session as JSON (cross-provider)."""
     from twicc.cli.session import messages as session_messages
 
-    session_messages(ctx.obj, range_str=range, role=role, contains=contains, limit=limit, offset=offset, tail=tail)
+    session_messages(ctx.obj, range_str=range, role=role, contains=contains, limit=limit, offset=offset,
+                     tail=tail, paginated=paginated)
 
 
 @session_app.command()
@@ -422,11 +433,12 @@ def agents(
     ctx: typer.Context,
     limit: int = typer.Option(20, help="Max number of subagents to return."),
     offset: int = typer.Option(0, help="Skip first N subagents."),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """List subagents of a session as JSON."""
     from twicc.cli.session import agents as session_agents
 
-    session_agents(ctx.obj, limit=limit, offset=offset)
+    session_agents(ctx.obj, limit=limit, offset=offset, paginated=paginated)
 
 
 @session_app.command()
@@ -449,11 +461,12 @@ def workflows(
     ctx: typer.Context,
     limit: int = typer.Option(20, help="Max number of workflows to return."),
     offset: int = typer.Option(0, help="Skip first N workflows."),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """List the session's workflows as JSON (Claude Code only)."""
     from twicc.cli.session import workflows as session_workflows
 
-    session_workflows(ctx.obj, limit=limit, offset=offset)
+    session_workflows(ctx.obj, limit=limit, offset=offset, paginated=paginated)
 
 
 @session_app.command()
@@ -524,6 +537,7 @@ def _artifacts_default(
     ),
     limit: int = typer.Option(20, help="Max number of bookmarks to return."),
     offset: int = typer.Option(0, help="Skip first N bookmarks."),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """List bookmarked artifacts as JSON (most recently updated first, default action)."""
     if ctx.invoked_subcommand is not None:
@@ -540,6 +554,7 @@ def _artifacts_default(
         scope=scope,
         limit=limit,
         offset=offset,
+        paginated=paginated,
     )
 
 
@@ -643,6 +658,7 @@ def _share_default(
     project: str = typer.Option(None, "--project", help="Filter by project (worktrees included)."),
     include_revoked: bool = typer.Option(False, "--include-revoked", help="Include revoked shares."),
     limit: int = typer.Option(50), offset: int = typer.Option(0),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """List shares as JSON (default action; read-only, direct DB)."""
     if ctx.invoked_subcommand is not None:
@@ -659,7 +675,8 @@ def _share_default(
     from twicc.cli.share import list_main
     list_main(kind=kind, session=session,
               project=derive_project_id(project)[0] if project else None,
-              include_revoked=include_revoked, limit=limit, offset=offset)
+              include_revoked=include_revoked, limit=limit, offset=offset,
+              paginated=paginated)
 
 
 @share_app.command(name="show")
@@ -867,6 +884,7 @@ def _processes_default(
     ),
     limit: int = typer.Option(20, help="Max number of processes to return."),
     offset: int = typer.Option(0, help="Skip first N processes."),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_hidden: bool = typer.Option(False, "--include-hidden", help="Include processes of hidden sessions."),
     only_hidden: bool = typer.Option(False, "--only-hidden", help="Show ONLY processes of hidden sessions (mutually exclusive with --include-hidden)."),
     spawned_by: str = typer.Option(
@@ -963,6 +981,7 @@ def _processes_default(
         descendants=descendants,
         siblings=siblings,
         annotation=annotation,
+        paginated=paginated,
     )
 
 
@@ -1324,6 +1343,7 @@ def search(
     ),
     limit: int = typer.Option(20, help="Max number of session groups to return."),
     offset: int = typer.Option(0, help="Skip first N session groups."),
+    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_hidden: bool = typer.Option(False, "--include-hidden", help="Include hidden sessions in search results."),
     only_hidden: bool = typer.Option(False, "--only-hidden", help="Search ONLY hidden sessions (mutually exclusive with --include-hidden)."),
     spawned_by: str = typer.Option(
@@ -1416,6 +1436,7 @@ def search(
         project=derive_project_id(project)[0] if project is not None else None,
         workspace=workspace,
         annotation=annotation,
+        paginated=paginated,
     )
 
 
