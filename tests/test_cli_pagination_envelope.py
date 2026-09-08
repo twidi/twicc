@@ -126,15 +126,11 @@ def make_messages(session, count, *, empty_from=None):
         )
 
 
-def test_messages_without_a_limit_returns_everything_and_says_so(project, capsysbinary):
+def test_messages_without_a_limit_still_returns_everything_unpaginated(project, capsysbinary):
     session = make_sessions(project, 1)[0]
     make_messages(session, 4)
-    cli_session.messages(session.id, paginated=True)
-    payload = read(capsysbinary)
-    assert len(payload["items"]) == 4
-    assert payload["pagination"] == {
-        "limit": None, "offset": 0, "total": 4, "has_more": False,
-    }
+    cli_session.messages(session.id)
+    assert len(read(capsysbinary)) == 4
 
 
 def test_messages_tail_reports_its_window_and_points_backwards(project, capsysbinary):
@@ -292,3 +288,120 @@ def test_content_envelope_past_the_end_is_an_empty_page(project, capsysbinary):
     payload = read(capsysbinary)
     assert payload["items"] == []
     assert payload["pagination"]["has_more"] is False
+
+
+# --- the paginated mode supplies its own page size ---------------------------
+
+
+def test_the_flag_forces_a_page_size_where_there_was_none(project, capsysbinary):
+    """``messages`` and ``content`` return everything by default; a page that is
+    not bounded would make ``has_more`` a vacuous ``false``."""
+    session = make_sessions(project, 1)[0]
+    make_messages(session, 60)
+    cli_session.messages(session.id, paginated=True)
+    payload = read(capsysbinary)
+    assert len(payload["items"]) == 50
+    assert payload["pagination"] == {
+        "limit": 50, "offset": 0, "total": 60, "has_more": True,
+    }
+
+
+def test_the_flag_overrides_a_command_s_own_default(project, capsysbinary):
+    """``sessions`` defaults to 20 without the flag and 50 with it."""
+    make_sessions(project, 60)
+    cli_sessions.main(project=project.id)
+    assert len(read(capsysbinary)) == 20
+
+    cli_sessions.main(project=project.id, paginated=True)
+    payload = read(capsysbinary)
+    assert len(payload["items"]) == 50
+    assert payload["pagination"]["limit"] == 50
+
+
+def test_an_explicit_limit_always_wins(project, capsysbinary):
+    make_sessions(project, 60)
+    cli_sessions.main(project=project.id, limit=3, paginated=True)
+    payload = read(capsysbinary)
+    assert len(payload["items"]) == 3
+    assert payload["pagination"]["limit"] == 3
+
+
+def test_tail_keeps_its_own_window(project, capsysbinary):
+    """``--tail`` sizes the window itself; the paginated default must not replace it."""
+    session = make_sessions(project, 1)[0]
+    make_messages(session, 60)
+    cli_session.messages(session.id, tail=3, paginated=True)
+    assert read(capsysbinary)["pagination"]["limit"] == 3
+
+
+def test_tail_and_limit_stay_mutually_exclusive_under_the_flag(project):
+    session = make_sessions(project, 1)[0]
+    make_messages(session, 10)
+    with pytest.raises(typer.Exit):
+        cli_session.messages(session.id, tail=3, limit=5, paginated=True)
+
+
+def test_content_accepts_the_flag_as_its_only_selector(project, capsysbinary):
+    """The bare-call guard exists to prevent a full dump; a bounded page cannot."""
+    session = make_sessions(project, 1)[0]
+    make_items(session, 60)
+    cli_session.content(session.id, paginated=True)
+    payload = read(capsysbinary)
+    assert len(payload["items"]) == 50
+    assert payload["pagination"]["total"] == 60
+
+
+# --- session content: --tail reaches the end without knowing where it is -----
+
+
+def test_content_tail_returns_the_last_matches(project, capsysbinary):
+    session = make_sessions(project, 1)[0]
+    make_items(session, 20)
+    cli_session.content(session.id, tail=3)
+    assert [r["line_num"] for r in read(capsysbinary)] == [18, 19, 20]
+
+
+def test_content_tail_works_on_a_filtered_result(project, capsysbinary):
+    """The point of --tail: the end of a filtered result has no line address."""
+    session = make_sessions(project, 1)[0]
+    make_items(session, 20)
+    cli_session.content(session.id, contains=["django"], tail=3, paginated=True)
+    payload = read(capsysbinary)
+    # Every other item matches, so the last three matches are lines 15, 17, 19.
+    assert [r["line_num"] for r in payload["items"]] == [15, 17, 19]
+    assert payload["pagination"] == {
+        "limit": 3, "offset": 7, "total": 10, "has_more": True,
+    }
+
+
+def test_content_tail_covering_everything_has_nothing_before_it(project, capsysbinary):
+    session = make_sessions(project, 1)[0]
+    make_items(session, 4)
+    cli_session.content(session.id, tail=50, paginated=True)
+    payload = read(capsysbinary)
+    assert len(payload["items"]) == 4
+    assert payload["pagination"]["offset"] == 0
+    assert payload["pagination"]["has_more"] is False
+
+
+def test_content_tail_is_exclusive_with_the_window(project):
+    session = make_sessions(project, 1)[0]
+    make_items(session, 10)
+    with pytest.raises(typer.Exit):
+        cli_session.content(session.id, tail=3, limit=5)
+    with pytest.raises(typer.Exit):
+        cli_session.content(session.id, tail=3, offset=2)
+
+
+def test_content_tail_must_be_positive(project):
+    session = make_sessions(project, 1)[0]
+    make_items(session, 10)
+    with pytest.raises(typer.Exit):
+        cli_session.content(session.id, tail=0)
+
+
+def test_content_tail_is_a_selector_on_its_own(project, capsysbinary):
+    session = make_sessions(project, 1)[0]
+    make_items(session, 10)
+    cli_session.content(session.id, tail=2)
+    assert len(read(capsysbinary)) == 2

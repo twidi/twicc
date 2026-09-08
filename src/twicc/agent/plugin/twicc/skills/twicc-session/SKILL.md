@@ -9,7 +9,7 @@ argument-hint: <session_id> [content|messages|agents|plan|workflows|workflow]
 Inspect a single session. Seven sub-commands:
 
 - Default — full session metadata.
-- `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
+- `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
 - `agents` — list subagents spawned by this session.
 - `plan [PATH] [--list]` — the session's tracked plan documents (both providers): most recently updated one by default, a specific one by path, `--list` to enumerate.
@@ -110,7 +110,7 @@ Works for regular sessions and subagents.
 ### Content — raw items
 
 ```bash
-$TWICC session <SESSION_ID> content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--paginated]
+$TWICC session <SESSION_ID> content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]
 ```
 
 The lowest-level view: **every** raw item, including tool calls and results — unlike `messages` and `search`, which only ever see user/assistant text.
@@ -123,12 +123,15 @@ Filter by line/range, by substring, or both:
 - Multiple substrings: `content --contains foo --contains bar` — repeatable, **AND-combined** (an item must contain every term).
 - Combined: `content 10-20 --contains "some text"` — the line/range scopes the substring search.
 - Windowed: `content --contains foo --limit 20 --offset 20` — `--limit`/`--offset` apply **last**, after the range and `--contains`.
+- Last N: `content --contains foo --tail 10` — the last 10 **matches**. Mutually exclusive with `--limit`/`--offset`.
 
-At least one selector (`LINE_OR_RANGE`, `--contains`, `--limit`/`--offset`) is required: a bare call would return every raw item, **the heaviest payload the CLI can produce** — hundreds of megabytes on a long session.
+At least one selector (`LINE_OR_RANGE`, `--contains`, `--limit`/`--offset`, `--tail`, `--paginated`) is required: a bare call would return every raw item, **the heaviest payload the CLI can produce** — hundreds of megabytes on a long session.
 
 The range and the window answer different questions and stack. The range is an absolute address in the JSONL (a `line_num` span); the window is a rank in what the filters kept. They only coincide when nothing else filters. To page through a substring search, use `--limit`/`--offset`, not the range.
 
-`--paginated` adds the `{items, pagination}` envelope, so `total` tells you how many items match before you pull them all.
+**To reach the end of a filtered result, use `--tail`.** A filtered result has no line address, so without it you would need a first call to learn `total`, and the session can grow in between. Under `--tail N` the reported window is the range it covers (`offset = total - N`) and `has_more` means matches remain **before** it.
+
+`--paginated` adds the `{items, pagination}` envelope and caps the page at **50** when no `--limit` is given, so `total` tells you how many items match before you pull them all. It also counts as a selector on its own — `content --paginated` is a valid browse entry point, since a bounded page cannot dump the session.
 
 `--contains` is **case-insensitive** and matches the **raw JSONL string** (the verbatim line as stored). Consequences: it also matches JSON keys (e.g. `"role"`, `"type"`), and embedded newlines are escaped (`\n`), so a query spanning a line break won't match. This is the only way to substring-search across all raw items (tool_use/tool_result included).
 
@@ -162,10 +165,10 @@ User + assistant messages only, uniform shape across providers. No tool calls, n
 - `--range N` or `--range N-M` — filter by JSONL line number (same numbering as `content`). Only user/assistant messages whose `line_num` falls within the range are returned — not the Nth message in the list.
 - `--role user|assistant` — keep only one side.
 - `--contains TEXT` — keep only messages whose text contains the substring. Repeatable and **AND-combined** (a message must contain every term). **Case-insensitive.** Unlike `content`'s `--contains` (which matches the raw JSONL), this matches the extracted `text` shown below — no JSON keys, no tool noise. Applied **before** `--tail`/`--limit`/`--offset`, so paging windows the matching messages.
-- `--limit N` — cap results (default: no cap).
+- `--limit N` — cap results (default: no cap; 50 with `--paginated`).
 - `--offset N` — skip first N messages (default: 0).
 - `--tail N` — return the last N messages. Mutually exclusive with `--limit`/`--offset`.
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. Without `--contains`, `total` counts raw items — a few extract to nothing and are dropped — so `has_more` can be a rare false positive, never a false negative.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. Without an explicit `--limit` the page size becomes **50** instead of "everything". With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. Without `--contains`, `total` counts raw items — a few extract to nothing and are dropped — so `has_more` can be a rare false positive, never a false negative.
 
 ```json
 [

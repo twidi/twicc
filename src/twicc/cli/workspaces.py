@@ -1,9 +1,10 @@
 """CLI implementation for the ``twicc workspaces`` subcommand."""
 
-from twicc.cli._output import emit_list
+from twicc.cli._output import emit_list, resolve_limit
 
 
-def main(*, limit: int = 20, offset: int = 0, archived: bool = False, paginated: bool = False) -> None:
+def main(*, limit: int | None = None, offset: int = 0, archived: bool = False,
+         paginated: bool = False) -> None:
     """List workspaces as JSON to stdout.
 
     Workspaces are stored in ``<data_dir>/workspaces.json`` and managed via the
@@ -18,6 +19,7 @@ def main(*, limit: int = 20, offset: int = 0, archived: bool = False, paginated:
 
     # The catalogue is a plain in-memory list read from workspaces.json, so the
     # total costs nothing — no query to weigh, unlike the DB-backed listings.
+    limit = resolve_limit(limit, paginated=paginated, default=20)
     total = len(workspaces)
     workspaces = workspaces[offset : offset + limit]
 

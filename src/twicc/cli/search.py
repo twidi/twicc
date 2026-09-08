@@ -1,12 +1,12 @@
 """CLI implementation for the ``twicc search`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list
+from twicc.cli._output import emit_error, emit_list, resolve_limit
 
 
 def main(
     query: str,
     *,
-    limit: int = 20,
+    limit: int | None = None,
     offset: int = 0,
     include_hidden: bool = False,
     only_hidden: bool = False,
@@ -63,6 +63,8 @@ def main(
         siblings_ids = resolve_siblings_filter(siblings)
     except RuntimeError as e:
         emit_error(str(e), code=1)
+
+    limit = resolve_limit(limit, paginated=paginated, default=20)
 
     annotation_filters = None
     if annotation:

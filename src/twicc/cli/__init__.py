@@ -78,7 +78,7 @@ app.add_typer(projects_app)
 @projects_app.callback(invoke_without_command=True)
 def _projects_default(
     ctx: typer.Context,
-    limit: int = typer.Option(20, help="Max number of projects to return."),
+    limit: int = typer.Option(None, help="Max number of projects to return (default: 20; 50 with --paginated)."),
     offset: int = typer.Option(0, help="Skip first N projects."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived projects."),
@@ -151,7 +151,7 @@ app.add_typer(workspaces_app)
 @workspaces_app.callback(invoke_without_command=True)
 def _workspaces_default(
     ctx: typer.Context,
-    limit: int = typer.Option(20, help="Max number of workspaces to return."),
+    limit: int = typer.Option(None, help="Max number of workspaces to return (default: 20; 50 with --paginated)."),
     offset: int = typer.Option(0, help="Skip first N workspaces."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived workspaces."),
@@ -221,7 +221,7 @@ def _sessions_default(
         ),
     ),
     workspace: str = typer.Option(None, "--workspace", help="Filter by workspace ID (only sessions of projects in that workspace, worktrees included). Mutually exclusive with --project."),
-    limit: int = typer.Option(20, help="Max number of sessions to return."),
+    limit: int = typer.Option(None, help="Max number of sessions to return (default: 20; 50 with --paginated)."),
     offset: int = typer.Option(0, help="Skip first N sessions."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived sessions."),
@@ -381,7 +381,7 @@ def _session_default(
 @session_app.command()
 def content(
     ctx: typer.Context,
-    range: str = typer.Argument(None, help="Line number or range (e.g. '5' or '10-20'). Optional when --contains or --limit/--offset is given."),
+    range: str = typer.Argument(None, help="Line number or range (e.g. '5' or '10-20'). Optional when --contains, --limit/--offset or --tail is given."),
     contains: list[str] = typer.Option(
         [],
         "--contains",
@@ -391,15 +391,16 @@ def content(
             "Combinable with a line/range to scope the search."
         ),
     ),
-    limit: int = typer.Option(None, "--limit", help="Max number of items to return (default: no limit). Applied after the range and --contains."),
+    limit: int = typer.Option(None, "--limit", help="Max number of items to return (default: no limit; 50 with --paginated). Applied after the range and --contains."),
     offset: int = typer.Option(0, "--offset", help="Skip first N matching items."),
+    tail: int = typer.Option(None, "--tail", help="Return the last N matching items (mutually exclusive with --limit/--offset)."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """Show session item(s) content as JSON."""
     from twicc.cli.session import content as session_content
 
     session_content(ctx.obj, range_str=range, contains=contains, limit=limit, offset=offset,
-                    paginated=paginated)
+                    tail=tail, paginated=paginated)
 
 
 @session_app.command()
@@ -416,7 +417,7 @@ def messages(
             "Applied before --tail/--limit/--offset."
         ),
     ),
-    limit: int = typer.Option(None, "--limit", help="Max number of messages to return (default: no limit)."),
+    limit: int = typer.Option(None, "--limit", help="Max number of messages to return (default: no limit; 50 with --paginated)."),
     offset: int = typer.Option(0, "--offset", help="Skip first N messages."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     tail: int = typer.Option(None, "--tail", help="Return the last N messages (mutually exclusive with --limit/--offset)."),
@@ -431,7 +432,7 @@ def messages(
 @session_app.command()
 def agents(
     ctx: typer.Context,
-    limit: int = typer.Option(20, help="Max number of subagents to return."),
+    limit: int = typer.Option(None, help="Max number of subagents to return (default: 20; 50 with --paginated)."),
     offset: int = typer.Option(0, help="Skip first N subagents."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
@@ -459,7 +460,7 @@ def plan(
 @session_app.command()
 def workflows(
     ctx: typer.Context,
-    limit: int = typer.Option(20, help="Max number of workflows to return."),
+    limit: int = typer.Option(None, help="Max number of workflows to return (default: 20; 50 with --paginated)."),
     offset: int = typer.Option(0, help="Skip first N workflows."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
@@ -535,7 +536,7 @@ def _artifacts_default(
             "everywhere. Independent of --project / --workspace."
         ),
     ),
-    limit: int = typer.Option(20, help="Max number of bookmarks to return."),
+    limit: int = typer.Option(None, help="Max number of bookmarks to return (default: 20; 50 with --paginated)."),
     offset: int = typer.Option(0, help="Skip first N bookmarks."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
@@ -657,7 +658,7 @@ def _share_default(
     session: str = typer.Option(None, "--session", help="Filter by session id; accepts 'self' and 'parent'."),
     project: str = typer.Option(None, "--project", help="Filter by project (worktrees included)."),
     include_revoked: bool = typer.Option(False, "--include-revoked", help="Include revoked shares."),
-    limit: int = typer.Option(50), offset: int = typer.Option(0),
+    limit: int = typer.Option(None, help="Max number of shares to return (default: 50)."), offset: int = typer.Option(0),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """List shares as JSON (default action; read-only, direct DB)."""
@@ -882,7 +883,7 @@ def _processes_default(
             "(turn finished, awaiting next user message). 'dead' is never returned."
         ),
     ),
-    limit: int = typer.Option(20, help="Max number of processes to return."),
+    limit: int = typer.Option(None, help="Max number of processes to return (default: 20; 50 with --paginated)."),
     offset: int = typer.Option(0, help="Skip first N processes."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_hidden: bool = typer.Option(False, "--include-hidden", help="Include processes of hidden sessions."),
@@ -1341,7 +1342,7 @@ def search(
             "member's git worktrees included. Mutually exclusive with --project."
         ),
     ),
-    limit: int = typer.Option(20, help="Max number of session groups to return."),
+    limit: int = typer.Option(None, help="Max number of session groups to return (default: 20; 50 with --paginated)."),
     offset: int = typer.Option(0, help="Skip first N session groups."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_hidden: bool = typer.Option(False, "--include-hidden", help="Include hidden sessions in search results."),

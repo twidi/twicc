@@ -1,13 +1,13 @@
 """CLI implementation for the ``twicc processes`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list
+from twicc.cli._output import emit_error, emit_list, resolve_limit
 
 
 def main(
     *,
     provider: str | None = None,
     state: str | None = None,
-    limit: int = 20,
+    limit: int | None = None,
     offset: int = 0,
     include_hidden: bool = False,
     only_hidden: bool = False,
@@ -120,6 +120,7 @@ def main(
     elif not include_hidden and not filiation_scope:
         qs = qs.exclude(session_id__in=hidden_session_ids)
 
+    limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None
     rows = list(qs[offset : offset + limit])
 

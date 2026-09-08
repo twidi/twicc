@@ -39,9 +39,9 @@ Results are ordered by most recently updated. Read-only: works without the serve
 - `--project <PROJECT>` — filter by project (path or id; **drop the leading dash** on ids). A normal project also returns its git worktrees' bookmarks; a worktree project returns only its own. Mutually exclusive with `--workspace`.
 - `--workspace ID` — filter to bookmarks of projects in the given workspace, each member's git worktrees included. Mutually exclusive with `--project`.
 - `--scope <project|workspace|all>` — filter by each bookmark's own visibility scope (independent of `--project` / `--workspace`). `--scope all` lists only the ones bookmarked everywhere.
-- `--limit N` — max results (default: 20).
+- `--limit N` — max results (default: 20; 50 with `--paginated`).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without it the output shape is unchanged.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. Without the flag, shape and default page size are unchanged.
 
 ### Bookmark
 

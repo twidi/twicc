@@ -34,9 +34,9 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 $TWICC projects [OPTIONS]
 ```
 
-- `--limit N` — max results (default: 20).
+- `--limit N` — max results (default: 20; 50 with `--paginated`).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without it the output shape is unchanged.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. Without the flag, shape and default page size are unchanged.
 - `--include-archived` — include archived projects (excluded by default).
 - `--workspace ID` — only projects belonging to this workspace.
 

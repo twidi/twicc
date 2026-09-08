@@ -1,11 +1,11 @@
 """CLI implementation for the ``twicc projects`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list
+from twicc.cli._output import emit_error, emit_list, resolve_limit
 
 
 def main(
     *,
-    limit: int = 20,
+    limit: int | None = None,
     offset: int = 0,
     archived: bool = False,
     workspace: str | None = None,
@@ -37,6 +37,7 @@ def main(
             emit_error(f"Error: workspace '{workspace}' not found.", code=1)
         qs = qs.filter(id__in=ws.get("projectIds", []))
 
+    limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None
     projects = list(qs[offset : offset + limit])
 

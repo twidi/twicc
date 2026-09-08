@@ -49,7 +49,7 @@ $TWICC share [--kind session|artifact] [--session ID|self|parent] [--project PRO
 - `--include-revoked` — include revoked rows.
 - `--limit N` — maximum rows, default 50.
 - `--offset N` — rows to skip, default 0.
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without it the output shape is unchanged.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. Without the flag, shape and default page size are unchanged.
 
 ### Show
 

@@ -8,7 +8,7 @@ never drift; ``--scope`` filters on each bookmark's own visibility scope
 (project / workspace / all), e.g. ``--scope all`` for the "everywhere" ones.
 """
 
-from twicc.cli._output import emit_error, emit_list
+from twicc.cli._output import emit_error, emit_list, resolve_limit
 
 
 def main(
@@ -16,7 +16,7 @@ def main(
     project: str | None = None,
     workspace: str | None = None,
     scope: str | None = None,
-    limit: int = 20,
+    limit: int | None = None,
     offset: int = 0,
     paginated: bool = False,
 ) -> None:
@@ -61,6 +61,7 @@ def main(
 
         qs = qs.filter(project_id__in=project_scope_ids(project))
 
+    limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None
     rows = qs[offset : offset + limit]
     emit_list(

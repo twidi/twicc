@@ -2,7 +2,7 @@
 
 import orjson
 
-from twicc.cli._output import emit_error, emit_json, emit_list
+from twicc.cli._output import emit_error, emit_json, emit_list, resolve_limit
 
 
 def _get_session(session_id: str):
@@ -80,23 +80,30 @@ def content(
     contains: list[str] | None = None,
     limit: int | None = None,
     offset: int = 0,
+    tail: int | None = None,
     paginated: bool = False,
 ) -> None:
     """Fetch session item(s) by line/range and/or content substring(s), print as JSON to stdout.
 
     Every selector is optional but at least one must be given — a bare call
     would dump the whole session, and raw items are the heaviest payload the CLI
-    can produce. Combined, they apply in this order: ``range_str`` scopes the
-    lines, ``contains`` filters within that scope, then ``limit``/``offset``
-    window the matches. ``contains`` is a list of case-insensitive substrings
-    AND-combined (an item must contain every term) matched against the raw JSONL
-    string stored in ``SessionItem.content`` (so it also matches JSON keys and
-    sees escaped sequences like ``\\n``).
+    can produce. ``paginated`` counts as one: it supplies its own page size, so
+    it cannot dump anything either. Combined, they apply in this order:
+    ``range_str`` scopes the lines, ``contains`` filters within that scope, then
+    ``limit``/``offset`` (or ``tail``) window the matches. ``contains`` is a list
+    of case-insensitive substrings AND-combined (an item must contain every term)
+    matched against the raw JSONL string stored in ``SessionItem.content`` (so it
+    also matches JSON keys and sees escaped sequences like ``\\n``).
 
     ``range_str`` and ``limit``/``offset`` answer different questions and are
     meant to be combined: the range is an absolute address in the JSONL (a
     ``line_num`` span), the window is a rank in the filtered result. They only
     coincide when nothing else filters, since items map one-to-one onto lines.
+
+    ``tail`` is the last N matches, mutually exclusive with ``limit``/``offset``.
+    It exists because the end of a filtered result has no address: without it,
+    reaching the last N takes a first call to learn ``last_line`` or ``total``,
+    and the session may grow between the two.
 
     No match is an empty result, not an error: with a window, running past the
     end is ordinary paging rather than a failure.
@@ -108,11 +115,23 @@ def content(
     from twicc.core.models import SessionItem
 
     contains = contains or []
-    if range_str is None and not contains and limit is None and not offset:
+    if (
+        range_str is None and not contains and limit is None and not offset
+        and tail is None and not paginated
+    ):
         emit_error(
-            "Error: provide a line/range argument, --contains, or --limit/--offset.",
+            "Error: provide a line/range argument, --contains, --limit/--offset, "
+            "--tail, or --paginated.",
             code=1,
         )
+
+    if tail is not None:
+        if limit is not None or offset:
+            emit_error("Error: --tail is mutually exclusive with --limit and --offset.", code=1)
+        if tail <= 0:
+            emit_error(f"Error: --tail must be a positive integer (got {tail}).", code=1)
+    else:
+        limit = resolve_limit(limit, paginated=paginated, default=None)
 
     _get_session(session_id)
 
@@ -124,11 +143,23 @@ def content(
         items = items.filter(content__icontains=term)
     items = items.order_by("line_num")
 
-    total = items.count() if paginated else None
-    selected = _slice_window(items, total or 0, limit=limit, offset=offset, tail=None)
+    # ``tail`` needs the count to place its window, whether or not the envelope
+    # is asked for; ``paginated`` needs it for ``total``.
+    total = items.count() if (tail is not None or paginated) else None
+    selected = _slice_window(items, total or 0, limit=limit, offset=offset, tail=tail)
 
     # Wrap each item with its line number; parse the raw content string into a real JSON object.
     data = [{"line_num": item.line_num, "content": orjson.loads(item.content)} for item in selected]
+
+    if tail is not None:
+        # Same reading as ``messages``: report the range the window really covers,
+        # and let ``has_more`` mean "there are matches before it".
+        window_offset = max(0, total - tail)
+        emit_list(
+            data, paginated=paginated, limit=tail, offset=window_offset,
+            total=total, has_more=window_offset > 0,
+        )
+        return
 
     emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
 
@@ -192,6 +223,10 @@ def messages(
             emit_error("Error: --tail is mutually exclusive with --limit and --offset.", code=1)
         if tail <= 0:
             emit_error(f"Error: --tail must be a positive integer (got {tail}).", code=1)
+    else:
+        # After the exclusivity check, so an explicit --limit alongside --tail is
+        # still rejected rather than silently replaced by the paginated default.
+        limit = resolve_limit(limit, paginated=paginated, default=None)
 
     if role == "user":
         kinds = [ItemKind.USER_MESSAGE]
@@ -250,7 +285,8 @@ def messages(
     emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
 
 
-def agents(session_id: str, *, limit: int = 20, offset: int = 0, paginated: bool = False) -> None:
+def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
+          paginated: bool = False) -> None:
     """List subagents of a session as JSON to stdout."""
     import django
 
@@ -265,6 +301,7 @@ def agents(session_id: str, *, limit: int = 20, offset: int = 0, paginated: bool
         emit_error(f"Error: session '{session_id}' is a subagent, not a parent session.", code=1)
 
     qs = Session.objects.filter(parent_session_id=session_id).order_by("-mtime")
+    limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None
     data = [serialize_session(s) for s in qs[offset : offset + limit]]
 
@@ -368,7 +405,8 @@ def _workflow_envelope(run, session_cutoff=None) -> dict:
     return {"id": raw.pop("runId", run.run_id), **raw}
 
 
-def workflows(session_id: str, *, limit: int = 20, offset: int = 0, paginated: bool = False) -> None:
+def workflows(session_id: str, *, limit: int | None = None, offset: int = 0,
+             paginated: bool = False) -> None:
     """List a session's workflows as JSON to stdout (newest first)."""
     import django
 
@@ -379,6 +417,7 @@ def workflows(session_id: str, *, limit: int = 20, offset: int = 0, paginated: b
     session = _get_session(session_id)
 
     qs = Workflow.objects.filter(session_id=session_id).order_by("-updated_at")
+    limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None
     data = [_workflow_envelope(w, session.cutoff) for w in qs[offset : offset + limit]]
 

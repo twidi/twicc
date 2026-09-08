@@ -3,7 +3,7 @@ down). ``url`` uses the backend Share URL builder. With ``shareBaseUrl`` unset
 or unusable, unredacted rows use the relative ``/share/<token>/`` path. Links
 only resolve on the dedicated Share origin."""
 
-from twicc.cli._output import emit_error, emit_json, emit_list
+from twicc.cli._output import emit_error, emit_json, emit_list, resolve_limit
 
 
 def _base_url(current: dict) -> str:
@@ -29,7 +29,7 @@ def _redacted_kinds(current: dict) -> set[str]:
 
 def list_main(*, kind: str | None = None, session: str | None = None,
               project: str | None = None, include_revoked: bool = False,
-              limit: int = 50, offset: int = 0, paginated: bool = False) -> None:
+              limit: int | None = None, offset: int = 0, paginated: bool = False) -> None:
     import django
     django.setup()
 
@@ -58,6 +58,7 @@ def list_main(*, kind: str | None = None, session: str | None = None,
         # filter belongs in the query rather than in a post-slice loop: a page is
         # then full, and the row count the window sees is the one the caller gets.
         qs = qs.filter(revoked_at__isnull=True)
+    limit = resolve_limit(limit, paginated=paginated, default=50)
     total = qs.count() if paginated else None
     rows = list(qs[offset:offset + limit])
     current = read_synced_settings()

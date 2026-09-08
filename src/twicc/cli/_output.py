@@ -79,10 +79,33 @@ def emit_error(message: str, *, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
+#: Page size ``--paginated`` falls back to when the caller passes no ``--limit``.
+#: The flag promises a page and a "does another follow?" answer, which only means
+#: something if the page is actually bounded — so it supplies its own bound rather
+#: than inheriting a per-command default (or, on ``session messages`` / ``content``,
+#: no default at all).
+PAGINATED_DEFAULT_LIMIT = 50
+
+
+def resolve_limit(limit: int | None, *, paginated: bool, default: int | None) -> int | None:
+    """Page size to apply: the caller's, else the mode's.
+
+    ``limit`` is ``None`` when the option was not passed — every paginated
+    command declares it that way so an explicit ``--limit 20`` stays
+    distinguishable from the default. ``default`` is what the command uses
+    without ``--paginated`` (``None`` on the two commands that return
+    everything by default).
+    """
+    if limit is not None:
+        return limit
+    return PAGINATED_DEFAULT_LIMIT if paginated else default
+
+
 PAGINATED_HELP = (
     "Wrap the result in {items, pagination} with limit/offset/total/has_more, "
-    "so a caller knows whether another page follows. Off by default: the bare "
-    "shape is unchanged."
+    "so a caller knows whether another page follows. Without an explicit --limit "
+    f"the page size becomes {PAGINATED_DEFAULT_LIMIT}, so the answer always describes a "
+    "real page. Off by default: the bare shape is unchanged."
 )
 
 

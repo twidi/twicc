@@ -38,9 +38,9 @@ Results are ordered by most recently active.
 
 - `--project <PROJECT>` — filter by project (path or id; **drop the leading dash** on ids). A normal project also returns its git worktrees' sessions (a worktree's sessions belong to its main repository); a worktree project returns only its own. Non-existent project returns empty, no error.
 - `--workspace ID` — filter to sessions of projects in the given workspace, including each member project's git worktrees. Mutually exclusive with `--project`.
-- `--limit N` — max results (default: 20).
+- `--limit N` — max results (default: 20; 50 with `--paginated`).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without it the output shape is unchanged.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. Without the flag, shape and default page size are unchanged.
 - `--include-archived` — include archived sessions (excluded by default).
 - `--include-hidden` — include hidden sessions (excluded by default).
 - `--only-hidden` — only hidden sessions. Mutually exclusive with `--include-hidden`.

@@ -1,13 +1,13 @@
 """CLI implementation for the ``twicc sessions`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list
+from twicc.cli._output import emit_error, emit_list, resolve_limit
 
 
 def main(
     *,
     project: str | None = None,
     workspace: str | None = None,
-    limit: int = 20,
+    limit: int | None = None,
     offset: int = 0,
     archived: bool = False,
     include_hidden: bool = False,
@@ -128,6 +128,7 @@ def main(
 
         qs = qs.filter(project_id__in=project_scope_ids(project))
 
+    limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None
     sessions = qs[offset : offset + limit]
     data = [serialize_session(s) for s in sessions]
