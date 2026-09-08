@@ -41,7 +41,7 @@ Results are ordered by most recently updated. Read-only: works without the serve
 - `--scope <project|workspace|all>` — filter by each bookmark's own visibility scope (independent of `--project` / `--workspace`). `--scope all` lists only the ones bookmarked everywhere.
 - `--limit N` — max results (default: 20; 50 with `--paginated`).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. Without the flag, shape and default page size are unchanged — **until 2026-09-15**, when the envelope becomes the only shape and the flag turns into an accepted no-op. Pass it now and nothing breaks on that date.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. **Before 2026-09-15 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
 
 ### Bookmark
 
