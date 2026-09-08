@@ -157,6 +157,16 @@ ignore = [
     "RUF100",   # unused-noqa
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Importing a pytest fixture into another test module is how a fixture is shared
+# without moving it: `config` is `autouse=True`, so it must stay scoped to the
+# modules that want it rather than land in `tests/conftest.py`, where it would
+# patch the MCP internals for the whole suite. Ruff reads the import as unused
+# (pytest resolves it by name) and every `def test_x(config)` as a redefinition
+# of it. Both are false here, and only here.
+"tests/test_mcp_abuse.py" = ["F401", "F811"]
+"tests/test_mcp_oauth_compatibility.py" = ["F401", "F811"]
+
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "twicc.settings_test"
 python_files = ["test_*.py"]

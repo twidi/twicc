@@ -413,7 +413,7 @@ def test_register_thread_keeps_the_rollout_model_provider(tmp_path, monkeypatch)
 
     monkeypatch.setattr("openai_codex.AsyncCodex", FakeCodex)
     monkeypatch.setattr("twicc.providers.codex.rollout_migration.make_codex_config", fake_config)
-    monkeypatch.setattr("twicc.providers.codex.rollout_migration.configured_mcp_server_names", lambda: [])
+    monkeypatch.setattr("twicc.providers.codex.rollout_migration.configured_mcp_server_names", list)
 
     asyncio.run(register_thread_with_codex("thread-1", rollout))
 

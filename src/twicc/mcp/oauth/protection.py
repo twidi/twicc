@@ -13,7 +13,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from django.conf import settings
 
@@ -69,7 +69,7 @@ class Protection:
         self.pause_until = now + PAUSE_SECONDS
         self.was_paused = True
         self.incident = {
-            "detectedAt": datetime.now(timezone.utc).isoformat(),
+            "detectedAt": datetime.now(UTC).isoformat(),
             "reason": reason,
         }
         self.notice = True
