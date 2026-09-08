@@ -405,3 +405,15 @@ def test_content_tail_is_a_selector_on_its_own(project, capsysbinary):
     make_items(session, 10)
     cli_session.content(session.id, tail=2)
     assert len(read(capsysbinary)) == 2
+
+
+def test_processes_empty_scope_reports_the_same_window(project, capsysbinary):
+    """The empty-scope early exit must not report a bare `limit: null`."""
+    from twicc.cli import processes as cli_processes
+
+    cli_processes.main(spawned_by="pg-missing-session", paginated=True)
+    payload = read(capsysbinary)
+    assert payload["items"] == []
+    assert payload["pagination"] == {
+        "limit": 50, "offset": 0, "total": 0, "has_more": False,
+    }

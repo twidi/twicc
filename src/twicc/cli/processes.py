@@ -108,6 +108,10 @@ def main(
     if provider is not None:
         qs = qs.filter(provider=provider)
 
+    # Resolved before the empty-scope exit below, so that early return reports the
+    # same window as every other path rather than a bare ``limit: null``.
+    limit = resolve_limit(limit, paginated=paginated, default=20)
+
     if scoped_session_ids is not None:
         if not scoped_session_ids:
             emit_list([], paginated=paginated, limit=limit, offset=offset, total=0)
@@ -120,7 +124,6 @@ def main(
     elif not include_hidden and not filiation_scope:
         qs = qs.exclude(session_id__in=hidden_session_ids)
 
-    limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None
     rows = list(qs[offset : offset + limit])
 
