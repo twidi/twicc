@@ -39,6 +39,7 @@ from twicc.core.services.session_creation import create_session_from_payload
 from twicc.agent import ephemeral as ephemeral_runs
 from twicc.agent.exceptions import SendDeliveryError
 from twicc.share.consumer import ShareConsumer
+from twicc.paths import is_first_run
 from twicc.providers.claude_code.ws import ClaudeCodeWSHandler
 from twicc.providers.codex.ws import CodexWSHandler
 from twicc.providers.db_writer import run_under_db_write_lock
@@ -308,6 +309,14 @@ def _resolve_changelog_versions() -> tuple[str, str, bool]:
     Normalizes ``lastChangelogVersionSeen`` and ``previousLastChangelogVersionSeen`` in
     settings.json, handles migration from older installs, and detects upgrades.
 
+    Both keys absent means one of two things, and they need opposite answers: a
+    first install (announce nothing) or an install from ≤ 1.2.1, before the keys
+    existed (announce everything since). ``paths.is_first_run()`` tells them
+    apart — the launch-time absence of the database. Nothing in settings.json
+    can: the file always reads back non-empty (``SYNCED_SETTINGS_DEFAULTS`` is
+    merged in), and ``disabledProviders`` post-dates 1.2.1, so a genuine 1.2.1
+    upgrader lacks it too.
+
     Returns:
         A tuple of (previous_last_changelog_version_seen, last_changelog_version_seen, show_forced).
         ``show_forced`` is True when the user should be presented with the changelog dialog.
@@ -319,18 +328,15 @@ def _resolve_changelog_versions() -> tuple[str, str, bool]:
 
         # --- Step 1: Normalize / initialize the two variables ---
 
-        if not all_settings:
-            # No settings or empty → first install
-            all_settings["lastChangelogVersionSeen"] = settings.APP_VERSION
-            all_settings["previousLastChangelogVersionSeen"] = settings.APP_VERSION
-            all_settings["_version"] = all_settings.get("_version", 0) + 1
-            write_synced_settings(all_settings)
-            return settings.APP_VERSION, settings.APP_VERSION, False
-
         if last is None and previous is None:
-            # Settings exist but no changelog tracking → user was on ≤ 1.2.1
-            last = VERSION_BEFORE_LAST_CHANGELOG_VERSION_SEEN
-            previous = VERSION_BEFORE_LAST_CHANGELOG_VERSION_SEEN
+            if is_first_run():
+                # First install ever → nothing happened before this version.
+                last = settings.APP_VERSION
+                previous = settings.APP_VERSION
+            else:
+                # Existing install with no changelog tracking → user was on ≤ 1.2.1
+                last = VERSION_BEFORE_LAST_CHANGELOG_VERSION_SEEN
+                previous = VERSION_BEFORE_LAST_CHANGELOG_VERSION_SEEN
         elif last is not None and previous is None:
             # last exists but no previous → user was on 1.3.0 (first version with lastChangelogVersionSeen)
             previous = VERSION_BEFORE_PREVIOUS_LAST_CHANGELOG_VERSION_SEEN
@@ -341,7 +347,7 @@ def _resolve_changelog_versions() -> tuple[str, str, bool]:
         # --- Step 2: Update previous based on upgrade detection ---
 
         if last == previous:
-            # Historical / fresh-install case → no change to previous
+            # Historical / first-install case → no change to previous
             pass
         elif last == settings.APP_VERSION:
             # No upgrade → no change to previous

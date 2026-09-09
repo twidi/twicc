@@ -156,6 +156,42 @@ def get_db_path() -> Path:
     return get_db_dir() / "data.sqlite"
 
 
+# Verdict of the launch-time first-run probe below. ``None`` = never probed,
+# which is every process that does not go through the server startup path
+# (a CLI one-liner, a test, the background compute worker).
+_first_run: bool | None = None
+
+
+def probe_first_run() -> bool:
+    """Record whether this data dir had no database yet, and return the verdict.
+
+    MUST be called before anything can create ``db/data.sqlite`` — i.e. before
+    the startup ``migrate`` — since Django creates the file on its first
+    connection. Idempotent: later calls return the first verdict, so a
+    hot-restart inside the same process keeps the launch-time answer.
+
+    The absence of the database is the only reliable "first install ever"
+    signal. ``settings.json`` is not: it is missing on an old install whose
+    user never changed a setting, and it can be created before the first
+    client connects (``TWICC_AUTO_ENABLE_PROVIDERS``, a model retirement).
+    See :func:`twicc.asgi._resolve_changelog_versions`.
+    """
+    global _first_run
+    if _first_run is None:
+        _first_run = not get_db_path().exists()
+    return _first_run
+
+
+def is_first_run() -> bool:
+    """Return whether this process started on a data dir with no database.
+
+    False when the probe never ran: such a caller cannot tell, and treating an
+    unknown state as a first install would silently suppress what existing
+    installs are meant to see.
+    """
+    return bool(_first_run)
+
+
 def get_logs_dir() -> Path:
     """Return the logs directory (<data_dir>/logs/)."""
     return get_data_dir() / "logs"

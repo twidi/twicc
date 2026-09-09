@@ -551,6 +551,13 @@ def main():
         from django.conf import settings
         logger.info("TwiCC launch prefix: %s", settings.TWICC_LAUNCH_PREFIX)
 
+        # Capture the "first install ever" verdict BEFORE migrate: the signal
+        # is the absence of the database file, and migrate creates it. Read
+        # back anywhere in the process through ``paths.is_first_run()``.
+        from twicc.paths import probe_first_run
+        if probe_first_run():
+            logger.info("First run in this data dir: no database yet")
+
         # Migrations auto
         call_command("migrate", verbosity=0)
         logger.info("Migrations applied")

@@ -1,10 +1,12 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import { useDataStore } from '../../stores/data'
 import { getRegisteredProviders, getProviderLabel, getProviderOptions } from '../../providers'
 import ProviderIcon from '../ui/ProviderIcon.vue'
 
 const settings = useSettingsStore()
+const dataStore = useDataStore()
 
 const choices = ref({})
 const defaultChoice = ref('')
@@ -29,7 +31,16 @@ const open = computed(() =>
     !settings.disabledProvidersPresent ||
     (settings.disabledProviders || []).length >= getRegisteredProviders().length
 )
-watch(open, (now) => { if (now) syncChoicesFromStore() }, { immediate: true })
+// Mirror our own visibility into the store: the changelog auto-open waits for
+// this flag to clear, so it never stacks on top of a modal the user cannot
+// dismiss. Immediate, so the flag is up before any WS message can arrive.
+watch(open, (now) => {
+    dataStore.setProviderActivationActive(now)
+    if (now) syncChoicesFromStore()
+}, { immediate: true })
+
+// Never leave the changelog gated if we go away while open.
+onBeforeUnmount(() => dataStore.setProviderActivationActive(false))
 
 const atLeastOneChecked = computed(() =>
     Object.values(choices.value).some(v => v === true)

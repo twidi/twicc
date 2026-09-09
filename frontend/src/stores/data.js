@@ -508,6 +508,13 @@ export const useDataStore = defineStore('data', {
         // then releases into a still-pending telemetry notice) and a shared name
         // would read as hybrid-specific everywhere else it's referenced.
         telemetryNoticeActive: false,
+        // Same purpose again, for the initial provider-activation dialog
+        // (App.vue). That dialog is modal and refuses to close until the user
+        // picks providers, so it must hold the floor. A first install no longer
+        // gets a forced changelog at all, but the dialog also serves as recovery
+        // when disabledProviders is empty or corrupted — which can happen on an
+        // upgrade, where a forced changelog IS pending.
+        providerActivationActive: false,
         latestVersion: null,            // { version, releaseUrl } or null, from update_available message
 
         // Local UI state (separate from server data to avoid being overwritten)
@@ -1475,6 +1482,9 @@ export const useDataStore = defineStore('data', {
         },
         setTelemetryNoticeActive(active) {
             this.telemetryNoticeActive = active
+        },
+        setProviderActivationActive(active) {
+            this.providerActivationActive = active
         },
         setLatestVersion(version, releaseUrl) {
             this.latestVersion = { version, releaseUrl }
