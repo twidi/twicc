@@ -48,16 +48,8 @@ export const useTipsStore = defineStore('tips', () => {
     function markSeen(key) {
         if (!manifest.value[key]) return
         // Refresh timestamp on every call : a user re-opening an already-seen tip
-        // with checkbox unchecked legitimately updates the "Seen X ago" ordering.
+        // from the settings list legitimately updates the "Seen X ago" ordering.
         seenTips.value = { ...seenTips.value, [key]: new Date().toISOString() }
-        _sendSeenTips()
-    }
-
-    function unmarkSeen(key) {
-        if (!(key in seenTips.value)) return
-        const next = { ...seenTips.value }
-        delete next[key]
-        seenTips.value = next
         _sendSeenTips()
     }
 
@@ -86,7 +78,7 @@ export const useTipsStore = defineStore('tips', () => {
     return {
         manifest, seenTips, currentToastTipKey, nextEligibleTime, enabled,
         applyManifest, applySeenTips, setEnabled,
-        markSeen, unmarkSeen, resetAllSeen,
+        markSeen, resetAllSeen,
         getAvailableTips, getCandidates, pickRandom,
     }
 })

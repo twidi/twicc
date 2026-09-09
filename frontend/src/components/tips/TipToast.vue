@@ -27,7 +27,6 @@ const tip = computed(() => {
 const bodyHtml = ref('')
 const loading = ref(false)
 const errored = ref(false)
-const showAgainLater = ref(false)
 const bodyCache = new Map()
 
 const env = computed(() => ({
@@ -71,26 +70,22 @@ async function loadBody(key) {
     }
 }
 
-// Commit the current tip's seen-state based on the checkbox.
-// Called only on voluntary close / Next tip, never on display.
-function commitState(key) {
+// Mark the current tip as seen. Called only on voluntary close / Next tip,
+// never on display. A tip the user really wants back is re-openable from the
+// Settings > Tips list, which also offers "Reset all seen tips".
+function commitSeen(key) {
     if (!key) return
-    if (showAgainLater.value) {
-        tipsStore.unmarkSeen(key)
-    } else {
-        tipsStore.markSeen(key)
-    }
+    tipsStore.markSeen(key)
 }
 
-// React to currentToastTipKey changes : load new body, reset checkbox.
-// No mark/unmark here — commit happens only on voluntary close / Next.
+// React to currentToastTipKey changes : load new body.
+// No markSeen here — commit happens only on voluntary close / Next.
 watch(() => tipsStore.currentToastTipKey, async (newKey) => {
     if (!newKey) return
-    showAgainLater.value = false
     await loadBody(newKey)
 }, { immediate: true })
 
-// Tear down without re-committing (used after commitState has already run).
+// Tear down without re-committing (used after commitSeen has already run).
 function teardown() {
     tipsStore.nextEligibleTime = Date.now() + TIP_COOLDOWN_MS
     tipsStore.currentToastTipKey = null
@@ -98,7 +93,7 @@ function teardown() {
 }
 
 function onClose() {
-    commitState(tipsStore.currentToastTipKey)
+    commitSeen(tipsStore.currentToastTipKey)
     teardown()
 }
 
@@ -111,7 +106,7 @@ function onClose() {
 onBeforeUnmount(() => {
     const key = tipsStore.currentToastTipKey
     if (key === null) return   // dismissed via our own teardown() — nothing to do
-    commitState(key)
+    commitSeen(key)
     tipsStore.nextEligibleTime = Date.now() + TIP_COOLDOWN_MS
     tipsStore.currentToastTipKey = null
     // Do NOT call props.item.clear() here — the toast is already being
@@ -121,8 +116,7 @@ onBeforeUnmount(() => {
 
 function onNextTip() {
     const key = tipsStore.currentToastTipKey
-    commitState(key)
-    showAgainLater.value = false
+    commitSeen(key)
     const candidates = tipsStore.getCandidates(env.value)
     const next = tipsStore.pickRandom(candidates, [key])
     if (!next) {
@@ -149,28 +143,23 @@ function onNextTip() {
         <div v-else-if="errored" class="tip-error">Failed to load tip content.</div>
         <div v-else class="tip-body" v-html="bodyHtml" @click="handleHelpLinkClick" />
 
-        <wa-divider></wa-divider>
+        <template v-if="hasMoreCandidates">
+            <wa-divider></wa-divider>
 
-        <footer class="tip-footer">
-            <wa-switch
-                :checked="showAgainLater"
-                @change="showAgainLater = $event.target.checked"
-                size="small"
-            >
-                Show again later
-            </wa-switch>
-            <wa-button v-if="hasMoreCandidates" size="small" @click="onNextTip">
-                Next tip
-                <wa-icon slot="end" name="chevron-right" />
-            </wa-button>
-        </footer>
+            <footer class="tip-footer">
+                <wa-button size="small" @click="onNextTip">
+                    Next tip
+                    <wa-icon slot="end" name="chevron-right" />
+                </wa-button>
+            </footer>
+        </template>
     </div>
 </template>
 
 <style>
 /* Notivue's .Notivue__content-message has a hardcoded max-height of 250px
    (notivue/dist/Notifications/notifications.css) which clips our toast's
-   footer (checkbox + Next tip) on any tip whose body exceeds ~200px.
+   footer (Next tip) on any tip whose body exceeds ~200px.
    Override for tip toasts only. The :has() selector targets the wrapper
    that contains our component root. The body keeps its own max-height so
    very long tips still scroll internally below the footer threshold. */
@@ -229,7 +218,7 @@ function onNextTip() {
 .tip-footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
 }
 
 wa-divider {

@@ -140,13 +140,13 @@ The scheduler skips its tick if:
   screen is auto-discarded when an app toast appears (without being
   marked seen, so it can come back later).
 
-## Seen state and "Show again later"
+## Seen state
 
-When the user dismisses a tip with the **Show again later** switch
-**off** (default), the tip is marked seen and won't reappear
-automatically until they reset from Settings. With the switch **on**,
-the tip is kept in (or returned to) the rotation. Seen state is synced
-across devices via `seen-tips.json` in the TwiCC data directory.
+Dismissing a tip (Close, Escape, ×, or "Next tip") marks it seen: it
+won't reappear automatically. The user re-opens it on demand from the
+Settings → Tips list, or puts every tip back in the rotation with
+"Reset all seen tips". Seen state is synced across devices via
+`seen-tips.json` in the TwiCC data directory.
 
 Two ways a tip is **not** marked seen:
 
