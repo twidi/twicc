@@ -17,6 +17,32 @@ def pytest_configure():
     django.setup()
 
 
+@pytest.fixture(autouse=True)
+def no_real_notification_delivery(monkeypatch):
+    """Cut the wire at Apprise: no test may reach a real notification service.
+
+    ``settings_test`` isolates the DB and the provider homes, but not the data
+    dir: ``read_synced_settings()`` reads the developer's real
+    ``<data_dir>/settings.json``, so any test exercising a genuine dispatch
+    path picks up their live targets. On 2026-09-09 a full-suite run pushed
+    several "Message from alice" events from ``test_peer_messages.py`` to the
+    developer's ntfy phone.
+
+    ``async_notify`` is the single network boundary — the only Apprise call
+    either send path makes. Stubbing it there leaves every layer above it
+    real: the target filters, the presence deferral, ``_spawn``/``_send``, URL
+    validation and privacy masking all still run, so tests keep asserting that
+    a notification *is* dispatched, and what it contains. Only the delivery is
+    dropped, which is exactly what a real success returns (``True``).
+    """
+    import apprise
+
+    async def _swallow(self, *args, **kwargs):
+        return True
+
+    monkeypatch.setattr(apprise.Apprise, "async_notify", _swallow)
+
+
 @pytest.fixture
 def db_setup(db):
     """Fixture that provides database access and creates test data helpers."""
