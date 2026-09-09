@@ -7,6 +7,7 @@ synced settings file.
 """
 
 import asyncio
+from datetime import datetime, timedelta, UTC
 
 import httpx
 import pytest
@@ -23,6 +24,16 @@ def temp_settings(tmp_path, monkeypatch):
     ss._cache.clear()
     yield path
     ss._cache.clear()
+
+
+@pytest.fixture
+def notice_acknowledged(temp_settings):
+    """Mark the telemetry notice as seen — the precondition for any activity.
+
+    Tests about the OTHER conditions need it explicitly, so the gate stays
+    visible instead of being buried in ``temp_settings``.
+    """
+    ss.write_synced_settings({**ss.read_synced_settings(), "telemetryNoticeSeen": True})
 
 
 @pytest.fixture
@@ -45,13 +56,13 @@ class TestIsTelemetryActive:
         ss.write_synced_settings({**ss.read_synced_settings(), "telemetryEnabled": False})
         assert task.is_telemetry_active() is False
 
-    def test_true_otherwise(self, temp_settings, monkeypatch):
+    def test_true_otherwise(self, temp_settings, notice_acknowledged, monkeypatch):
         monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
         # Isolated synced settings with no override -> the default
         # telemetryEnabled (True) applies, so telemetry is active.
         assert task.is_telemetry_active() is True
 
-    def test_true_when_synced_setting_is_null(self, temp_settings, monkeypatch):
+    def test_true_when_synced_setting_is_null(self, temp_settings, notice_acknowledged, monkeypatch):
         # The frontend syncs a `null` placeholder for unset synced keys; a
         # present null must read as enabled (default-on), matching the frontend
         # getter `telemetryEnabled !== false` -- never silently disabled.
@@ -202,7 +213,7 @@ class TestSendCycle:
 
 @pytest.mark.django_db
 class TestTickOnceGating:
-    def test_tick_once_noop_when_inactive(self, temp_state, temp_settings, monkeypatch):
+    def test_tick_once_noop_when_inactive(self, temp_state, temp_settings, notice_acknowledged, monkeypatch):
         # First tick while active: records a real day entry. temp_settings
         # isolates the synced settings so is_telemetry_active() sees the default
         # (telemetryEnabled unset -> True) instead of the real machine's file.
@@ -327,3 +338,88 @@ class TestStartTelemetryTaskLoop:
         asyncio.run(_run())
 
         assert tick_calls == []
+
+
+class TestNoticeGate:
+    """Nothing at all before the user has acknowledged the notice dialog."""
+
+    def test_false_when_notice_never_seen(self, temp_settings, monkeypatch):
+        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
+
+        # Isolated settings, notice untouched -> the default (False) applies.
+        assert task.is_telemetry_active() is False
+
+    def test_false_when_notice_seen_is_null(self, temp_settings, monkeypatch):
+        """A synced null placeholder is NOT an acknowledgement.
+
+        Asymmetric with ``telemetryEnabled`` on purpose: that one is opt-out
+        (null reads as enabled), this one is an explicit user act.
+        """
+        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
+        ss.write_synced_settings({**ss.read_synced_settings(), "telemetryNoticeSeen": None})
+
+        assert task.is_telemetry_active() is False
+
+    def test_notice_alone_is_not_enough(self, temp_settings, notice_acknowledged, monkeypatch):
+        """Acknowledging the notice does not re-enable a setting turned off."""
+        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
+        ss.write_synced_settings({**ss.read_synced_settings(), "telemetryEnabled": False})
+
+        assert task.is_telemetry_active() is False
+
+
+class TestActivationGrace:
+    """No send within GRACE_AFTER_ACTIVATION of telemetry becoming active."""
+
+    def test_no_grace_when_never_observed_becoming_active(self):
+        """Enabled all along, including every install predating the field."""
+        assert task.within_activation_grace({}) is False
+        assert task.within_activation_grace({"active_since": None}) is False
+
+    def test_grace_holds_just_after_activation(self):
+        now = datetime.now(UTC).isoformat()
+
+        assert task.within_activation_grace({"active_since": now}) is True
+
+    def test_grace_holds_one_minute_before_expiry(self):
+        almost = datetime.now(UTC) - timedelta(seconds=task.GRACE_AFTER_ACTIVATION - 60)
+
+        assert task.within_activation_grace({"active_since": almost.isoformat()}) is True
+
+    def test_grace_over_once_the_window_has_passed(self):
+        past = datetime.now(UTC) - timedelta(seconds=task.GRACE_AFTER_ACTIVATION + 1)
+
+        assert task.within_activation_grace({"active_since": past.isoformat()}) is False
+
+    def test_unparseable_value_never_blocks_forever(self):
+        assert task.within_activation_grace({"active_since": "not-a-timestamp"}) is False
+
+    def test_build_pending_payload_returns_nothing_during_grace(
+        self, temp_state, temp_settings, notice_acknowledged, monkeypatch
+    ):
+        """The end-to-end gate: an acknowledgement is never followed by a send."""
+        import twicc.telemetry.state as state_mod
+
+        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
+        # A complete unsent day exists, so only the grace can hold the payload back.
+        with state_mod.state_txn() as txn:
+            txn.data["last_sent_date"] = (utc_today() - timedelta(days=3)).isoformat()
+            txn.data["active_since"] = datetime.now(UTC).isoformat()
+            txn.write()
+
+        assert task.build_pending_payload() is None
+
+    def test_build_pending_payload_resumes_after_the_grace(
+        self, temp_state, temp_settings, notice_acknowledged, monkeypatch, db
+    ):
+        import twicc.telemetry.state as state_mod
+
+        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
+        with state_mod.state_txn() as txn:
+            txn.data["last_sent_date"] = (utc_today() - timedelta(days=3)).isoformat()
+            txn.data["active_since"] = (
+                datetime.now(UTC) - timedelta(seconds=task.GRACE_AFTER_ACTIVATION + 1)
+            ).isoformat()
+            txn.write()
+
+        assert task.build_pending_payload() is not None

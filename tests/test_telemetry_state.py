@@ -1,3 +1,5 @@
+from datetime import datetime, UTC
+
 import orjson
 import pytest
 
@@ -106,3 +108,28 @@ def test_prune_keeps_newest_max_day_entries(data_dir):
     assert "2026-06-03" in st["days"]
     assert "2026-06-31" in st["days"]
     assert today in st["days"]
+
+
+def test_off_to_on_stamps_active_since(data_dir):
+    """The sender's grace window starts at the transition, not at install."""
+    state.ensure_state()
+
+    state.note_active_transition(False)
+    assert state.ensure_state()["active_since"] is None
+
+    state.note_active_transition(True)
+
+    stamped = state.ensure_state()["active_since"]
+    assert stamped is not None
+    # Parseable and recent: within_activation_grace() compares against it.
+    assert (datetime.now(UTC) - datetime.fromisoformat(stamped)).total_seconds() < 60
+
+
+def test_continuous_on_leaves_active_since_unset(data_dir):
+    """Enabled all along means no grace: its behaviour must not change."""
+    state.ensure_state()
+
+    state.note_active_transition(True)
+    state.note_active_transition(True)
+
+    assert state.ensure_state()["active_since"] is None

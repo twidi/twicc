@@ -30,6 +30,12 @@ _DEFAULT_STATE = {
     "last_payload": None,
     "last_sent_at": None,
     "was_active": None,
+    # When telemetry last became active (off->on), so the sender can hold a
+    # grace window: the user has just acknowledged the notice (or re-enabled
+    # the setting) and may still want to go and turn it off. ``None`` = never
+    # observed becoming active, i.e. an instance enabled all along — no grace
+    # applies, its behaviour is unchanged. See ``twicc.telemetry.task``.
+    "active_since": None,
 }
 
 
@@ -101,6 +107,9 @@ def note_active_transition(active: bool) -> None:
     re-enabled period). A missing stored state (first observation, or installs
     predating this field) records the state without advancing, which preserves
     the offline catch-up: enabled-all-along instances keep their old marker.
+
+    The same transition stamps ``active_since``, which the sender uses as the
+    start of its grace window.
     """
     with state_txn() as txn:
         was_active = txn.data.get("was_active")
@@ -108,6 +117,8 @@ def note_active_transition(active: bool) -> None:
             today = utc_today().isoformat()
             txn.data["last_sent_date"] = max(txn.data["last_sent_date"], today)
             txn.data["days"] = {d: v for d, v in txn.data["days"].items() if d >= today}
+            # Start the sender's grace window from this instant.
+            txn.data["active_since"] = datetime.now(UTC).isoformat()
             txn.write()
         if was_active != active:
             txn.data["was_active"] = active
