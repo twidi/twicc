@@ -354,6 +354,22 @@ def save_fresh_provider_homes_env(claude_home: Path, codex_home: Path) -> None:
         f.write("\n".join(lines_to_add))
 
 
+def save_worktree_catalog_env(values: dict[str, str], origins: dict[str, str]) -> None:
+    """Append catalogue values to the data dir's .env (see :func:`apply_worktree_env_catalog`).
+
+    ``origins`` maps a key to the catalogue file it came from, so the .env says
+    where a surprising line was picked up. On its own comment line: an inline
+    ``#`` on a provider-home line is what ``provider_home_line_warnings`` flags.
+    """
+    lines_to_add = ["", f"# Auto-configured by devctl from {WORKTREE_ENV_DIR_NAME}/"]
+    for key in sorted(values):
+        lines_to_add.append(f"# from {origins[key]}")
+        lines_to_add.append(f"{key}={values[key]}")
+    lines_to_add.append("")
+    with open(ENV_FILE, "a") as f:
+        f.write("\n".join(lines_to_add))
+
+
 # User preference files carried into a worktree's data dir alongside the DB.
 # Infra (.env), logs/, and drop-requests/ are deliberately excluded.
 SYNCED_CONFIG_FILENAMES = (
@@ -381,6 +397,26 @@ PROVIDER_HOMES_DIR_NAME = "provider-homes"
 # Codex files carried into a fresh CODEX_HOME. Never sessions/ — not re-scanning
 # that history is the whole point. Codex creates everything else on first run.
 CODEX_SEED_FILENAMES = ("auth.json", "config.toml")
+
+# Catalogue of .env values to pre-fill in a worktree, kept in the MAIN repo next
+# to .worktrees/ (and gitignored with it) so it survives every worktree.
+# ``default.env`` holds what every worktree shares (typically the password
+# hash); ``<vite port>.env`` holds what follows one tunnel (its hostname).
+WORKTREE_ENV_DIR_NAME = ".worktrees-env"
+WORKTREE_ENV_DEFAULT_FILE = "default.env"
+
+# Keys the catalogue may not set. Each has a concrete failure mode, so this is
+# a deny-list, not a taste call — everything else passes, with no maintenance
+# when a new key becomes worth pre-filling:
+#   • TWICC_PORT / VITE_PORT — devctl writes them from the port search, which
+#     runs BEFORE the catalogue (the port IS the index). A catalogue line would
+#     only contradict them, and devctl reads the FIRST occurrence of a key while
+#     the backend's python-dotenv reads the LAST: the two would disagree on the
+#     port.
+#   • TWICC_NO_LOG_TRIM — devctl writes it too.
+#   • TWICC_DATA_DIR — read ONLY from the environment by design (it locates the
+#     .env), so in a .env it is inert and misleading.
+WORKTREE_ENV_REFUSED_KEYS = ("TWICC_PORT", "VITE_PORT", "TWICC_NO_LOG_TRIM", TWICC_DATA_DIR_ENV)
 
 
 def synced_config_files(base_dir: Path) -> list[Path]:
@@ -585,6 +621,84 @@ def clear_local_data() -> None:
         if target.is_symlink():
             target.unlink()
             print(f"  Unlinked {name}/ (was shared with main)")
+
+
+def main_repo_root() -> Path | None:
+    """Root of the MAIN working tree, resolved from this (possibly worktree) checkout.
+
+    ``git rev-parse --git-common-dir`` points at the ``.git`` shared by every
+    worktree — i.e. the main working tree's — whatever checkout asks; its parent
+    is that tree's root. ``None`` when git is unavailable or this is not a
+    repository. Resolved rather than assumed: a worktree need not live under
+    ``.worktrees/``, so no relative path can be hardcoded.
+    """
+    try:
+        common_dir = subprocess.check_output(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=PROJECT_ROOT,
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    return Path(os.path.realpath(os.path.join(str(PROJECT_ROOT), common_dir))).parent
+
+
+def apply_worktree_env_catalog(frontend_port: int) -> None:
+    """Pre-fill this worktree's .env from the main repo's ``.worktrees-env/``.
+
+    Reads ``default.env``, then ``<frontend_port>.env`` which wins, and appends
+    every key the worktree's .env does not already define. Typical content: the
+    password hash in ``default.env`` (portable as-is — the stored string carries
+    its own salt and iterations), the tunnel's ``TWICC_DEV_HOSTNAME`` in the
+    per-port file.
+
+    Indexed on the VITE port because that is how a worktree is reached — through
+    the dev server, so HMR works — and because it is the port devctl actually
+    retained: a worktree pushed to 5175 by a busy 5174 gets 5175's tunnel, which
+    is what a tunnel bound to a port should do.
+
+    Never overwrites: a value already in the .env wins, as with
+    :func:`setup_fresh_provider_homes`. A no-op when the directory is absent.
+    """
+    repo_root = main_repo_root()
+    if repo_root is None:
+        return
+    catalog_dir = repo_root / WORKTREE_ENV_DIR_NAME
+    if not catalog_dir.is_dir():
+        return
+
+    # Per-port last so it wins; ``origins`` keeps the provenance for the .env
+    # comments and the summary line below.
+    values: dict[str, str] = {}
+    origins: dict[str, str] = {}
+    for name in (WORKTREE_ENV_DEFAULT_FILE, f"{frontend_port}.env"):
+        source = catalog_dir / name
+        if not source.is_file():
+            continue
+        for key, value in load_env_file(source).items():
+            values[key] = value
+            origins[key] = f"{WORKTREE_ENV_DIR_NAME}/{name}"
+
+    refused = sorted(set(values) & set(WORKTREE_ENV_REFUSED_KEYS))
+    for key in refused:
+        print(f"  Ignored {key} from {origins[key]}: devctl owns this key")
+        del values[key]
+
+    # Report only a real divergence. Every key applied on a past start is now in
+    # the .env with the very same value, so reporting equality would print a
+    # line on every restart forever.
+    existing = load_env_file()
+    diverging = sorted(k for k in set(values) & set(existing) if existing[k] != values[k])
+    for key in set(values) & set(existing):
+        del values[key]
+
+    if diverging:
+        print(f"  Kept the .env's own {', '.join(diverging)} over {WORKTREE_ENV_DIR_NAME}/")
+    if not values:
+        return
+
+    save_worktree_catalog_env(values, origins)
+    print(f"  Applied {', '.join(sorted(values))} from {WORKTREE_ENV_DIR_NAME}/ (vite port {frontend_port})")
 
 
 def main_instance_codex_home() -> Path:
@@ -1235,6 +1349,22 @@ DEV HOSTNAME:
     This adds the hostname to Vite's allowedHosts so it accepts requests
     for that host. Without this, Vite rejects requests from unknown hosts.
 
+    Worktrees never inherit the main .env, so a recurring tunnel would mean
+    retyping its hostname (and a password) on every new one. Put those values
+    in the MAIN repo's .worktrees-env/ instead, keyed by the FRONTEND port:
+
+        .worktrees-env/default.env   every worktree (e.g. TWICC_PASSWORD_HASH)
+        .worktrees-env/5174.env      the tunnel bound to that port
+        .worktrees-env/5175.env      the next one
+
+    Plain KEY=VALUE lines, same syntax as a .env — copy one over as is. On a
+    worktree start devctl merges default.env then <chosen vite port>.env and
+    appends the keys the worktree's .env does not already define; a value
+    already there always wins. It refuses the keys it owns itself
+    (TWICC_PORT, VITE_PORT, TWICC_NO_LOG_TRIM, TWICC_DATA_DIR) and prints
+    what it applied. The directory is gitignored; no directory, no behaviour
+    change.
+
 DATABASE, SEARCH INDEX & CONFIG (WORKTREE MODE):
     On start/restart in a worktree, devctl automatically copies the
     database, search index, project icons, and user config (settings.json, workspaces.json,
@@ -1323,10 +1453,15 @@ def main():
     auto_find = command in ("start", "restart")
     backend_port, frontend_port = get_ports(auto_find=auto_find)
 
-    # Write the fresh provider homes to .env BEFORE get_process_config reads it:
-    # that is where TWICC_NO_CODEX_PLUGIN is decided from CODEX_HOME's presence.
+    # Both of these write to .env, and both MUST land before get_process_config
+    # reads it: that is where TWICC_NO_CODEX_PLUGIN is decided from CODEX_HOME's
+    # presence, and where TWICC_DEV_HOSTNAME becomes Vite's allowedHosts — a
+    # catalogue applied later would leave the dev server rejecting the tunnel
+    # until the next restart.
     if fresh_providers:
         setup_fresh_provider_homes()
+    if auto_find and is_git_worktree():
+        apply_worktree_env_catalog(frontend_port)
 
     processes = get_process_config(backend_port, frontend_port)
 

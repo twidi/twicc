@@ -293,6 +293,11 @@ drop-requests/
 # root itself is gitignored.
 /.worktrees/
 
+# Per-port .env values devctl pre-fills a worktree with (`devctl help`, DEV
+# HOSTNAME): a password hash and tunnel hostnames, so never committed.
+# Root-anchored for the same hatchling reason as above.
+/.worktrees-env/
+
 # TwiCC config files (synced settings, stored in data dir — appear in worktrees)
 settings.json
 terminal-config.json
