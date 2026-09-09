@@ -15,12 +15,9 @@ from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 
 from twicc.artifacts import NOT_AUTHENTICATED_SVG
 from twicc.auth import tokens as api_tokens
+from twicc.auth.access import request_allowed
 from twicc.auth.local_access import remote_access_blocked
-from twicc.auth.session_auth import (
-    SESSION_AUTH_KEY,
-    SESSION_FINGERPRINT_KEY,
-    is_session_authenticated,
-)
+from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
 from twicc.rpc.permissions import RPC_SCOPE_FULL, RPC_SCOPE_READ
 
 logger = logging.getLogger(__name__)
@@ -116,18 +113,14 @@ class PasswordAuthMiddleware:
         if not request.path.startswith("/api/") and not is_protected_non_api:
             return await self.get_response(request)
 
-        # Check session authentication for API requests. A session that was
-        # logged in against an older password hash (rotated since) is treated
-        # as unauthenticated, and its server-side row is dropped so it can't
-        # be re-used by a parallel request.
+        # Check authentication for API requests. A session that was logged in
+        # against an older password hash (rotated since) is treated as
+        # unauthenticated, and its server-side row is dropped so it can't be
+        # re-used by a parallel request.
         session = request.session
         auth_value = await session.aget(SESSION_AUTH_KEY)
         fingerprint = await session.aget(SESSION_FINGERPRINT_KEY)
-        if not is_session_authenticated(
-            auth_value,
-            fingerprint,
-            settings.TWICC_PASSWORD_HASH,
-        ):
+        if not request_allowed(request, auth_value, fingerprint):
             if auth_value:
                 await session.aflush()
             if is_protected_non_api:
@@ -218,7 +211,7 @@ class RpcTokenAuthMiddleware:
         # No valid token: fall back to the SPA's session cookie. A logged-in
         # user's same-origin artifact page reaches /rpc/ without a token, but at
         # read-only scope — the dispatch view enforces the command allowlist.
-        if await self._session_authenticated(request):
+        if await self._request_allowed(request):
             request.rpc_scope = RPC_SCOPE_READ
             return await self.get_response(request)
 
@@ -230,19 +223,20 @@ class RpcTokenAuthMiddleware:
         return JsonResponse({"error": msg}, status=401)
 
     @staticmethod
-    async def _session_authenticated(request) -> bool:
-        """Whether the request carries a session bound to the current password hash.
+    async def _request_allowed(request) -> bool:
+        """Whether ambient authority lets this request through, at read scope.
 
-        Mirrors ``PasswordAuthMiddleware``: read the auth markers async (works on
-        the event loop) and validate them against the live ``TWICC_PASSWORD_HASH``
-        (a rotated hash invalidates the session). Returns ``False`` when no
-        password is configured — there is then no authenticated-session concept,
-        so a token is the only way in.
+        Mirrors ``PasswordAuthMiddleware``: read the auth markers async (works
+        on the event loop) and hand them to ``twicc.auth.access``, which
+        validates them against the live ``TWICC_PASSWORD_HASH`` (a rotated hash
+        invalidates the session) and also grants the dev-worktree local bypass.
+        With no password configured there is no authenticated-session concept,
+        so outside a bypassing worktree a token is the only way in.
         """
         session = request.session
         auth_value = await session.aget(SESSION_AUTH_KEY)
         fingerprint = await session.aget(SESSION_FINGERPRINT_KEY)
-        return is_session_authenticated(auth_value, fingerprint, settings.TWICC_PASSWORD_HASH)
+        return request_allowed(request, auth_value, fingerprint)
 
     @staticmethod
     def _bearer(request):

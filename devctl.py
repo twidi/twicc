@@ -768,8 +768,16 @@ def get_process_config(backend_port: int, frontend_port: int) -> dict:
                 # - Never prune old Codex runtimes: ~/.cache/twicc/codex-runtime/ is shared
                 #   with the main instance, and a worktree bumping CODEX_VERSION would delete
                 #   the version that instance is running on. It still downloads its own.
+                # - Let a DIRECT LOOPBACK request past the instance password: a worktree's
+                #   database dies with the checkout, so its login session never survives a
+                #   re-creation, and an agent that starts one has no reason to know the
+                #   user's password. Remote access is untouched — the backend only grants
+                #   this when the data dir really is a git worktree AND the request carries
+                #   no forwarding header, so the same instance reached through its tunnel
+                #   keeps asking (see twicc.auth.access).
                 **({
                     "TWICC_SESSION_COOKIE": f"sessionid_{backend_port}",
+                    "TWICC_DEV_LOCAL_BYPASS": "1",
                     "TWICC_NO_CRON_RESTART": "1",
                     "TWICC_AUTO_ENABLE_PROVIDERS": "1",
                     **({"TWICC_NO_CODEX_PLUGIN": "1"} if "CODEX_HOME" not in load_env_file() else {}),

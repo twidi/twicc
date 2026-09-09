@@ -23,11 +23,8 @@ from django.urls import path
 
 from twicc.agent import AgentInfo, serialize_agent_info
 from twicc.auth.local_access import scope_remote_access_blocked
-from twicc.auth.session_auth import (
-    SESSION_AUTH_KEY,
-    SESSION_FINGERPRINT_KEY,
-    is_session_authenticated,
-)
+from twicc.auth.access import scope_allowed
+from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
 from twicc.agent.registry import get_agent_manager_registry
 from twicc.agent_settings_presets import (
     RESERVED_PRESET_NAMES,
@@ -470,7 +467,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             session_auth, session_fp = await sync_to_async(
                 lambda: (session.get(SESSION_AUTH_KEY), session.get(SESSION_FINGERPRINT_KEY))
             )()
-            if not is_session_authenticated(session_auth, session_fp, settings.TWICC_PASSWORD_HASH):
+            if not scope_allowed(self.scope, session_auth, session_fp):
                 logger.warning("WebSocket connection rejected: not authenticated")
                 # Accept first so we can send a message and a close code.
                 # Closing before accept causes the close code to be lost

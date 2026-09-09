@@ -207,6 +207,16 @@ TWICC_PASSWORD_HASH = os.environ.get("TWICC_PASSWORD_HASH", "")
 # not surfaced in the UI or the access-blocked screen.
 TWICC_ALLOW_INSECURE_REMOTE = os.environ.get("TWICC_ALLOW_INSECURE_REMOTE", "").strip().lower() in ("1", "true", "yes")
 
+# Dev worktrees only: treat a DIRECT LOOPBACK request as authenticated, so an
+# agent that starts a worktree instance can reach its own UI without knowing
+# the user's password (a worktree's database is thrown away with the checkout,
+# so its login session never survives a re-creation). Set by devctl in worktree
+# mode; asserting it is NOT enough — twicc.auth.access also requires the data
+# dir to really be a git worktree, and a request the fail-safe classifier of
+# twicc.auth.local_access calls local (loopback peer, no forwarding header), so
+# a tunnel keeps asking for the password. Never set this in a .env.
+TWICC_DEV_LOCAL_BYPASS = os.environ.get("TWICC_DEV_LOCAL_BYPASS", "").strip().lower() in ("1", "true", "yes")
+
 # Session settings
 # Prefixed default (not Django's bare "sessionid"): TwiCC and a user's own dev
 # app often both run on localhost, and cookies ignore the port — a shared

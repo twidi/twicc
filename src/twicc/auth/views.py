@@ -19,13 +19,13 @@ from django.conf import settings
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 
+from twicc.auth.access import request_allowed
 from twicc.auth.hashers import verify_password
 from twicc.auth.local_access import remote_access_blocked
 from twicc.auth.session_auth import (
     SESSION_AUTH_KEY,
     SESSION_FINGERPRINT_KEY,
     bind_session,
-    is_session_authenticated,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,11 +128,7 @@ async def auth_check(request):
     session = request.session
     auth_value = await session.aget(SESSION_AUTH_KEY)
     fingerprint = await session.aget(SESSION_FINGERPRINT_KEY)
-    authenticated = is_session_authenticated(
-        auth_value,
-        fingerprint,
-        stored_hash,
-    )
+    authenticated = request_allowed(request, auth_value, fingerprint)
     # Drop a stale session so the next request doesn't keep retrying it.
     if not authenticated and auth_value:
         await session.aflush()

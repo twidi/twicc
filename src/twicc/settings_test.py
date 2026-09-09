@@ -50,6 +50,11 @@ SECRET_KEY = "test-secret-key"
 # every test that hits the HTTP stack require an authenticated session.
 TWICC_PASSWORD_HASH = ""
 
+# Same reasoning for the dev-worktree bypass: a suite run from a worktree
+# inherits devctl's variable, and a test asserting a refusal would silently
+# pass through instead. Tests that want it opt in explicitly.
+TWICC_DEV_LOCAL_BYPASS = False
+
 # Disable logging during tests
 LOGGING = {
     "version": 1,

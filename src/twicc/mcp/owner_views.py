@@ -6,8 +6,9 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.utils import timezone
 
+from twicc.auth.access import request_allowed
 from twicc.auth.local_access import request_is_local
-from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY, is_session_authenticated
+from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
 from twicc.core.models import McpConnection
 from twicc.synced_settings import read_synced_settings
 from .oauth.storage import changed, decide, snapshot, write
@@ -18,7 +19,7 @@ async def management(request):
         auth, fingerprint = await sync_to_async(
             lambda: (request.session.get(SESSION_AUTH_KEY), request.session.get(SESSION_FINGERPRINT_KEY))
         )()
-        authorized = is_session_authenticated(auth, fingerprint, settings.TWICC_PASSWORD_HASH)
+        authorized = request_allowed(request, auth, fingerprint)
     else:
         authorized = request_is_local(request)
     if not authorized:

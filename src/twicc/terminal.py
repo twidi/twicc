@@ -42,12 +42,9 @@ from urllib.parse import parse_qs
 from asgiref.sync import sync_to_async
 from django.conf import settings
 
+from twicc.auth.access import scope_allowed
 from twicc.auth.local_access import scope_remote_access_blocked
-from twicc.auth.session_auth import (
-    SESSION_AUTH_KEY,
-    SESSION_FINGERPRINT_KEY,
-    is_session_authenticated,
-)
+from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
 from twicc.paths import tmux_socket_suffix
 from twicc.provider_homes import provider_env_overlay
 from twicc.providers.helpers import get_provider_helpers_registry
@@ -931,7 +928,7 @@ async def terminal_application(scope, receive, send):
         session_auth, session_fp = await sync_to_async(
             lambda: (session.get(SESSION_AUTH_KEY), session.get(SESSION_FINGERPRINT_KEY))
         )()
-        if not is_session_authenticated(session_auth, session_fp, settings.TWICC_PASSWORD_HASH):
+        if not scope_allowed(scope, session_auth, session_fp):
             logger.warning("Terminal WebSocket rejected: not authenticated")
             await send({"type": "websocket.accept"})
             await send({"type": "websocket.send", "text": json.dumps({"type": "auth_failure"})})
