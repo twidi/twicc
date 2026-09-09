@@ -2452,8 +2452,8 @@ function updateSidebarClosedClass(closed) {
                             <div class="quota-tooltip-note" v-if="!quotaFiveHour.resetsAt"><wa-icon name="info-circle"></wa-icon> Period not started yet</div>
                             <div class="quota-tooltip-row" v-if="quotaFiveHour.timePct != null"><span class="quota-tooltip-label">Time elapsed</span><span>{{ quotaFiveHour.timePct.toFixed(1) }}%</span></div>
                             <div class="quota-tooltip-row" v-if="quotaFiveHour.burnRate != null"><span class="quota-tooltip-label">Burn rate</span><span>{{ (quotaFiveHour.burnRate * 100).toFixed(0) }}%</span></div>
-                            <div class="quota-tooltip-row quota-tooltip-row-danger" v-if="quotaFiveHourCost?.cutoffAt"><span class="quota-tooltip-label"><wa-icon name="triangle-exclamation"></wa-icon> Cutoff</span><span>{{ formatResetTime(quotaFiveHourCost.cutoffAt) }}</span></div>
-                            <div class="quota-tooltip-note quota-tooltip-row-danger" v-if="quotaFiveHourCost?.cutoffAt"><wa-icon name="triangle-exclamation"></wa-icon> Quota will be exhausted at current pace</div>
+                            <div class="quota-tooltip-row quota-tooltip-row-cutoff" v-if="quotaFiveHourCost?.cutoffAt"><span class="quota-tooltip-label"><wa-icon name="triangle-exclamation"></wa-icon> Cutoff</span><span>{{ formatResetTime(quotaFiveHourCost.cutoffAt) }}</span></div>
+                            <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaFiveHourCost?.cutoffAt"><wa-icon name="triangle-exclamation"></wa-icon> Quota will be exhausted at current pace</div>
                             <div class="quota-tooltip-row" v-if="quotaFiveHour.recentLong.rate != null && !quotaFiveHour.recentLong.isFallback"><span class="quota-tooltip-label" style="margin-left: .5rem;"> - last {{ formatRecentDelta(quotaFiveHour.recentLong.deltaMs, false) }}</span><span>{{ (quotaFiveHour.recentLong.rate * 100).toFixed(0) }}%</span></div>
                             <div class="quota-tooltip-row" v-if="quotaFiveHour.recentShort.rate != null && !quotaFiveHour.recentShort.isFallback && formatRecentDelta(quotaFiveHour.recentShort.deltaMs, false) !== formatRecentDelta(quotaFiveHour.recentLong.deltaMs, false)"><span class="quota-tooltip-label" style="margin-left: .5rem;"> - last {{ formatRecentDelta(quotaFiveHour.recentShort.deltaMs, false) }}</span><span>{{ (quotaFiveHour.recentShort.rate * 100).toFixed(0) }}%</span></div>
                             <div class="quota-tooltip-row" v-if="quotaFiveHour.resetsAt"><span class="quota-tooltip-label">Reset</span><span>{{ formatResetTime(quotaFiveHour.resetsAt) }}</span></div>
@@ -2461,9 +2461,9 @@ function updateSidebarClosedClass(closed) {
                                 <wa-divider class="quota-tooltip-divider"></wa-divider>
                                 <div class="quota-tooltip-row"><span class="quota-tooltip-label">Spent</span><CostDisplay :cost="quotaFiveHourCost.spent" /></div>
                                 <div class="quota-tooltip-row" v-if="quotaFiveHourCost.estimatedPeriod != null"><span class="quota-tooltip-label">Est. 5h</span><CostDisplay :cost="quotaFiveHourCost.estimatedPeriod" /></div>
-                                <div class="quota-tooltip-note quota-tooltip-row-danger" v-if="quotaFiveHourCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Capped — burn rate exceeds 100%</div>
+                                <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaFiveHourCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Capped — burn rate exceeds 100%</div>
                                 <div class="quota-tooltip-row" v-if="quotaFiveHourCost.estimatedMonthly != null"><span class="quota-tooltip-label">Est. 30 days</span><CostDisplay :cost="quotaFiveHourCost.estimatedMonthly" /></div>
-                                <div class="quota-tooltip-note quota-tooltip-row-danger" v-if="quotaFiveHourCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Based on capped 5h estimate</div>
+                                <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaFiveHourCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Based on capped 5h estimate</div>
                             </template>
                             <div class="quota-tooltip-buttons">
                                 <wa-button v-if="usageExternalLink" size="small" variant="brand" appearance="outlined" :href="usageExternalLink.url" target="_blank" rel="noopener"><wa-icon slot="start" name="up-right-from-square"></wa-icon>{{ usageExternalLink.label }}</wa-button>
@@ -2500,8 +2500,8 @@ function updateSidebarClosedClass(closed) {
                             <div class="quota-tooltip-note" v-if="!quotaSevenDay.resetsAt"><wa-icon name="info-circle"></wa-icon> Period not started yet</div>
                             <div class="quota-tooltip-row" v-if="quotaSevenDay.timePct != null"><span class="quota-tooltip-label">Time elapsed</span><span>{{ quotaSevenDay.timePct.toFixed(1) }}%</span></div>
                             <div class="quota-tooltip-row" v-if="quotaSevenDay.burnRate != null"><span class="quota-tooltip-label">Burn rate</span><span>{{ (quotaSevenDay.burnRate * 100).toFixed(0) }}%</span></div>
-                            <div class="quota-tooltip-row quota-tooltip-row-danger" v-if="quotaSevenDayCost?.cutoffAt"><span class="quota-tooltip-label"><wa-icon name="triangle-exclamation"></wa-icon> Cutoff</span><span>{{ formatResetTime(quotaSevenDayCost.cutoffAt) }}</span></div>
-                            <div class="quota-tooltip-note quota-tooltip-row-danger" v-if="quotaSevenDayCost?.cutoffAt"><wa-icon name="triangle-exclamation"></wa-icon> Quota will be exhausted at current pace</div>
+                            <div class="quota-tooltip-row quota-tooltip-row-cutoff" v-if="quotaSevenDayCost?.cutoffAt"><span class="quota-tooltip-label"><wa-icon name="triangle-exclamation"></wa-icon> Cutoff</span><span>{{ formatResetTime(quotaSevenDayCost.cutoffAt) }}</span></div>
+                            <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaSevenDayCost?.cutoffAt"><wa-icon name="triangle-exclamation"></wa-icon> Quota will be exhausted at current pace</div>
                             <div class="quota-tooltip-row" v-if="quotaSevenDay.recentLong.rate != null && !quotaSevenDay.recentLong.isFallback"><span class="quota-tooltip-label" style="margin-left: .5rem;"> - last {{ formatRecentDelta(quotaSevenDay.recentLong.deltaMs, true) }}</span><span>{{ (quotaSevenDay.recentLong.rate * 100).toFixed(0) }}%</span></div>
                             <div class="quota-tooltip-row" v-if="quotaSevenDay.recentShort.rate != null && !quotaSevenDay.recentShort.isFallback && formatRecentDelta(quotaSevenDay.recentShort.deltaMs, true) !== formatRecentDelta(quotaSevenDay.recentLong.deltaMs, true)"><span class="quota-tooltip-label" style="margin-left: .5rem;"> - last {{ formatRecentDelta(quotaSevenDay.recentShort.deltaMs, true) }}</span><span>{{ (quotaSevenDay.recentShort.rate * 100).toFixed(0) }}%</span></div>
                             <div class="quota-tooltip-row" v-if="quotaSevenDay.resetsAt"><span class="quota-tooltip-label">Reset</span><span :title="formatResetTimePrecise(quotaSevenDay.resetsAt)">{{ formatResetTime(quotaSevenDay.resetsAt) }}</span></div>
@@ -2509,9 +2509,9 @@ function updateSidebarClosedClass(closed) {
                                 <wa-divider class="quota-tooltip-divider"></wa-divider>
                                 <div class="quota-tooltip-row"><span class="quota-tooltip-label">Spent</span><CostDisplay :cost="quotaSevenDayCost.spent" /></div>
                                 <div class="quota-tooltip-row" v-if="quotaSevenDayCost.estimatedPeriod != null"><span class="quota-tooltip-label">Est. 7d</span><CostDisplay :cost="quotaSevenDayCost.estimatedPeriod" /></div>
-                                <div class="quota-tooltip-note quota-tooltip-row-danger" v-if="quotaSevenDayCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Capped — burn rate exceeds 100%</div>
+                                <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaSevenDayCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Capped — burn rate exceeds 100%</div>
                                 <div class="quota-tooltip-row" v-if="quotaSevenDayCost.estimatedMonthly != null"><span class="quota-tooltip-label">Est. 30 days</span><CostDisplay :cost="quotaSevenDayCost.estimatedMonthly" /></div>
-                                <div class="quota-tooltip-note quota-tooltip-row-danger" v-if="quotaSevenDayCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Based on capped 7d estimate</div>
+                                <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaSevenDayCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Based on capped 7d estimate</div>
                             </template>
                             <div class="quota-tooltip-buttons">
                                 <wa-button v-if="usageExternalLink" size="small" variant="brand" appearance="outlined" :href="usageExternalLink.url" target="_blank" rel="noopener"><wa-icon slot="start" name="up-right-from-square"></wa-icon>{{ usageExternalLink.label }}</wa-button>
@@ -3531,8 +3531,8 @@ html.wa-dark .usage-lane-time {
     gap: var(--wa-space-2xs);
 }
 
-.quota-tooltip-row-danger {
-    color: var(--wa-color-danger);
+.quota-tooltip-row-cutoff {
+    color: var(--wa-color-warning-60);
 }
 
 .quota-stale-icon {
