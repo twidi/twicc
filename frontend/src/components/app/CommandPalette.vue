@@ -7,10 +7,18 @@
  * by category (root mode), filtered by fuzzy search (search mode), or
  * showing sub-items for a parent command (nested mode).
  *
+ * Search mode drills down: the query filters the root commands AND, for
+ * every parent command whose label consumes a prefix of the query, the
+ * remainder filters that parent's sub-items (see utils/paletteDrillDown.js
+ * for the split rule). Matching children are listed after the root results,
+ * one capped section per parent, each headed by the parent's label.
+ *
  * Keyboard navigation:
  *   ArrowUp/Down — move selection
  *   Enter — execute or enter sub-level
- *   Escape — go back (nested → root) or close
+ *   ArrowRight — enter sub-level (on a drilled child: the parent's, with
+ *     the remainder of the query pre-filled)
+ *   Escape — go back (nested → the search you came from) or close
  *   Home/End — first/last item
  *   PageUp/PageDown — jump ~8 items
  */
@@ -18,6 +26,7 @@
 import { ref, computed, watch, nextTick, shallowRef } from 'vue'
 import { useCommandRegistry } from '../../composables/useCommandRegistry'
 import { fuzzyMatch } from '../../utils/fuzzyMatch'
+import { splitDrillDownQuery } from '../../utils/paletteDrillDown'
 import ProcessIndicator from '../ui/ProcessIndicator.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import PermissionModeIcon from '../ui/PermissionModeIcon.vue'
@@ -30,10 +39,20 @@ const searchInputRef = ref(null)
 const listRef = ref(null)
 
 const query = ref('')
-const activeId = ref(null)
+// Key of the highlighted row. Root commands and nested items are keyed by
+// their own id; drilled children (search mode) by `<parentId>::<itemId>`,
+// since the same item id can live under several parents (a project id under
+// "Go to Project…", "New Session in…", …).
+const activeKey = ref(null)
 const parentCommand = shallowRef(null)
+// The search query to restore when leaving nested mode, so Esc/← returns to
+// the search the user came from instead of an empty root.
+let returnQuery = ''
 
 const PAGE_SIZE = 8
+// Drill-down: children listed per parent before the "+N more" row.
+const CHILD_RESULTS_PER_PARENT = 8
+const CHILD_KEY_SEP = '::'
 
 // ─── Dialog open/close driven by registry state ─────────────────────────
 
@@ -66,67 +85,152 @@ const searchResults = computed(() => {
     return results
 })
 
+// ─── Sub-item matching (shared by nested mode and drill-down search) ──────
+
+/**
+ * Match one sub-item against a query and decorate it for rendering, or
+ * return null when it does not match. With an empty query every item
+ * passes (score 0) — always with escaped HTML for safe v-html rendering.
+ *
+ * The fuzzy match runs against the label and, when present, the item's
+ * absolute path and (for worktree sub-items) its parent project name. An
+ * item passes if any of them matches; the kept score is the best of them.
+ */
+function matchSubItem(item, subQuery) {
+    const parentName = item.worktree?.parentName || ''
+    if (!subQuery) {
+        return {
+            ...item,
+            score: 0,
+            highlighted: escapeHtml(item.label),
+            ...(item.path ? { pathHighlighted: escapeHtml(item.path) } : {}),
+            ...(item.worktree ? {
+                worktree: { ...item.worktree, parentHighlighted: escapeHtml(parentName) },
+            } : {}),
+        }
+    }
+    const labelResult = fuzzyMatch(subQuery, item.label)
+    const pathResult = item.path ? fuzzyMatch(subQuery, item.path) : null
+    const parentResult = parentName ? fuzzyMatch(subQuery, parentName) : null
+    if (!labelResult.match && !pathResult?.match && !parentResult?.match) return null
+    return {
+        ...item,
+        score: Math.max(labelResult.score, pathResult?.score ?? 0, parentResult?.score ?? 0),
+        highlighted: labelResult.match
+            ? highlightMatches(item.label, labelResult.ranges)
+            : escapeHtml(item.label),
+        ...(item.path ? {
+            pathHighlighted: pathResult?.match
+                ? highlightMatches(item.path, pathResult.ranges)
+                : escapeHtml(item.path),
+        } : {}),
+        ...(item.worktree ? {
+            worktree: {
+                ...item.worktree,
+                parentHighlighted: parentResult?.match
+                    ? highlightMatches(parentName, parentResult.ranges)
+                    : escapeHtml(parentName),
+            },
+        } : {}),
+    }
+}
+
 // ─── Nested items (when parentCommand is set) ────────────────────────────
 
 const nestedResults = computed(() => {
     if (!parentCommand.value?.items) return []
-    const items = parentCommand.value.items()
-    if (!query.value) {
-        // Always produce escaped HTML for safe v-html rendering
-        return items.map((item) => ({
-            ...item,
-            highlighted: escapeHtml(item.label),
-            ...(item.path ? { pathHighlighted: escapeHtml(item.path) } : {}),
-            ...(item.worktree ? {
-                worktree: { ...item.worktree, parentHighlighted: escapeHtml(item.worktree.parentName) },
-            } : {}),
-        }))
-    }
-    // Filter by fuzzy match against the label and, when present, the item's
-    // absolute path and (for worktree sub-items) its parent project name. An
-    // item passes if any of them matches; the kept score is the best of them.
     const results = []
-    for (const item of items) {
-        const parentName = item.worktree?.parentName || ''
-        const labelResult = fuzzyMatch(query.value, item.label)
-        const pathResult = item.path ? fuzzyMatch(query.value, item.path) : null
-        const parentResult = parentName ? fuzzyMatch(query.value, parentName) : null
-        if (!labelResult.match && !pathResult?.match && !parentResult?.match) continue
-        results.push({
-            ...item,
-            score: Math.max(labelResult.score, pathResult?.score ?? 0, parentResult?.score ?? 0),
-            highlighted: labelResult.match
-                ? highlightMatches(item.label, labelResult.ranges)
-                : escapeHtml(item.label),
-            ...(item.path ? {
-                pathHighlighted: pathResult?.match
-                    ? highlightMatches(item.path, pathResult.ranges)
-                    : escapeHtml(item.path),
-            } : {}),
-            ...(item.worktree ? {
-                worktree: {
-                    ...item.worktree,
-                    parentHighlighted: parentResult?.match
-                        ? highlightMatches(parentName, parentResult.ranges)
-                        : escapeHtml(parentName),
-                },
-            } : {}),
-        })
+    for (const item of parentCommand.value.items()) {
+        const matched = matchSubItem(item, query.value)
+        if (matched) results.push({ ...matched, key: item.id })
     }
-    results.sort((a, b) => b.score - a.score)
+    if (query.value) results.sort((a, b) => b.score - a.score)
     return results
 })
 
-// ─── Flat list of all currently visible items (for keyboard nav) ─────────
+// ─── Drill-down: children of parent commands matched by a query prefix ───
+
+// Every available parent's sub-items, built independently of the query so
+// keystrokes never re-run the `items()` builders: Pinia tracks the reactive
+// reads they make, so this only recomputes when the underlying data moves.
+// Lazy — nothing is built until search mode actually reads it.
+const subItemsByParent = computed(() => {
+    const map = new Map()
+    for (const cmd of availableCommands.value) {
+        if (cmd.items) map.set(cmd.id, cmd.items())
+    }
+    return map
+})
+
+/**
+ * One section per parent command whose label consumes a prefix of the
+ * query and whose sub-items match the remainder. Sections are ordered by
+ * the parent's match score; items inside by their own score, capped at
+ * CHILD_RESULTS_PER_PARENT with the overflow count kept for a "+N more" row.
+ */
+const drillDownSections = computed(() => {
+    if (!query.value || parentCommand.value) return []
+    const sections = []
+    for (const cmd of availableCommands.value) {
+        if (!cmd.items) continue
+        const split = splitDrillDownQuery(query.value, cmd.label)
+        // No tail = the parent itself matches the whole query; it already
+        // shows as a root result, its children stay behind it.
+        if (!split?.tail) continue
+        const matched = []
+        for (const item of subItemsByParent.value.get(cmd.id) ?? []) {
+            const m = matchSubItem(item, split.tail)
+            if (m) matched.push({ ...m, key: cmd.id + CHILD_KEY_SEP + item.id })
+        }
+        if (!matched.length) continue
+        matched.sort((a, b) => b.score - a.score)
+        sections.push({
+            key: cmd.id,
+            parent: cmd,
+            tail: split.tail,
+            parentScore: split.headMatch.score,
+            parentHighlighted: highlightMatches(cmd.label, split.headMatch.ranges),
+            items: matched.slice(0, CHILD_RESULTS_PER_PARENT),
+            moreCount: Math.max(0, matched.length - CHILD_RESULTS_PER_PARENT),
+            moreKey: cmd.id + CHILD_KEY_SEP + CHILD_KEY_SEP + 'more',
+        })
+    }
+    sections.sort((a, b) => b.parentScore - a.parentScore)
+    return sections
+})
+
+// Sections rendered with the sub-item row markup: the drilled parents in
+// search mode, or the single current parent in nested mode (no header).
+const subItemSections = computed(() => {
+    if (parentCommand.value) {
+        return [{ key: parentCommand.value.id, parent: null, items: nestedResults.value, moreCount: 0 }]
+    }
+    return drillDownSections.value
+})
+
+// ─── Flat list of all currently visible entries (for keyboard nav) ───────
+//
+// Each entry is `{ key, kind, … }` — kind `command` (root command, `cmd`),
+// `child` (sub-item, `item` + `section`), or `more` (overflow row of a
+// drill-down section, `section`).
 
 const visibleItems = computed(() => {
-    if (parentCommand.value) return nestedResults.value
-    if (query.value) return searchResults.value.map((r) => r.cmd)
+    if (parentCommand.value) {
+        return nestedResults.value.map((item) => ({ key: item.key, kind: 'child', item, section: null }))
+    }
+    if (query.value) {
+        const entries = searchResults.value.map((r) => ({ key: r.cmd.id, kind: 'command', cmd: r.cmd }))
+        for (const section of drillDownSections.value) {
+            for (const item of section.items) entries.push({ key: item.key, kind: 'child', item, section })
+            if (section.moreCount) entries.push({ key: section.moreKey, kind: 'more', section })
+        }
+        return entries
+    }
     // Category mode: flat list of all commands
     const flat = []
     for (const group of commandsByCategory.value) {
         for (const cmd of group.commands) {
-            flat.push(cmd)
+            flat.push({ key: cmd.id, kind: 'command', cmd })
         }
     }
     return flat
@@ -136,7 +240,7 @@ const visibleItems = computed(() => {
 
 function selectFirstItem() {
     const items = visibleItems.value
-    activeId.value = items.length > 0 ? items[0].id : null
+    activeKey.value = items.length > 0 ? items[0].key : null
 }
 
 watch(visibleItems, selectFirstItem)
@@ -151,8 +255,9 @@ function onAfterShow() {
 function onHide() {
     // Reset state when dialog actually closes
     query.value = ''
-    activeId.value = null
+    activeKey.value = null
     parentCommand.value = null
+    returnQuery = ''
     closePalette()
 }
 
@@ -189,13 +294,21 @@ function onAfterHide() {
     }
 }
 
+/**
+ * Enter nested mode for `cmd`. `initialQuery` pre-fills the filter — the
+ * drill-down remainder when coming from a drilled child or "+N more" row.
+ */
+function enterNested(cmd, initialQuery = '') {
+    returnQuery = query.value
+    parentCommand.value = cmd
+    query.value = initialQuery
+    // activeKey will be set by the visibleItems watcher
+    nextTick(() => searchInputRef.value?.focus())
+}
+
 function selectCommand(cmd) {
     if (cmd.items) {
-        // Enter nested mode
-        parentCommand.value = cmd
-        query.value = ''
-        // activeId will be set by the visibleItems watcher
-        nextTick(() => searchInputRef.value?.focus())
+        enterNested(cmd)
     } else {
         executeAfterClose(() => cmd.action?.())
     }
@@ -203,6 +316,11 @@ function selectCommand(cmd) {
 
 function selectNestedItem(item) {
     executeAfterClose(() => item.action?.())
+}
+
+// Enter the drilled parent's nested mode with the remainder pre-filled.
+function selectMore(section) {
+    enterNested(section.parent, section.tail)
 }
 
 // ─── Open / close ────────────────────────────────────────────────────────
@@ -225,10 +343,17 @@ function goBack() {
     if (parentCommand.value) {
         const parentId = parentCommand.value.id
         parentCommand.value = null
-        query.value = ''
+        // Restore the search the user drilled from. Its results may no longer
+        // list the parent as a root command (e.g. "sess tw" does not match
+        // "Go to Session…" as a whole): only re-highlight it when it's there,
+        // otherwise the visibleItems watcher's first-item default stands.
+        query.value = returnQuery
+        returnQuery = ''
         nextTick(() => {
-            activeId.value = parentId
-            scrollIntoView(parentId)
+            if (visibleItems.value.some((entry) => entry.key === parentId)) {
+                activeKey.value = parentId
+                scrollIntoView(parentId)
+            }
             searchInputRef.value?.focus()
         })
     } else {
@@ -242,58 +367,55 @@ function handleKeydown(e) {
     const items = visibleItems.value
     if (!items.length && !['Escape', 'ArrowLeft', 'Backspace'].includes(e.key)) return
 
+    const activate = (entry) => {
+        activeKey.value = entry.key
+        scrollIntoView(entry.key)
+    }
+    const activeIndex = () => items.findIndex((i) => i.key === activeKey.value)
+
     switch (e.key) {
         case 'ArrowDown': {
             e.preventDefault()
-            const idx = items.findIndex((i) => i.id === activeId.value)
-            const next = Math.min(idx + 1, items.length - 1)
-            activeId.value = items[next].id
-            scrollIntoView(items[next].id)
+            activate(items[Math.min(activeIndex() + 1, items.length - 1)])
             break
         }
         case 'ArrowUp': {
             e.preventDefault()
-            const idx = items.findIndex((i) => i.id === activeId.value)
-            const prev = Math.max(idx - 1, 0)
-            activeId.value = items[prev].id
-            scrollIntoView(items[prev].id)
+            activate(items[Math.max(activeIndex() - 1, 0)])
             break
         }
         case 'Home': {
             e.preventDefault()
-            activeId.value = items[0].id
-            scrollIntoView(items[0].id)
+            activate(items[0])
             break
         }
         case 'End': {
             e.preventDefault()
-            activeId.value = items[items.length - 1].id
-            scrollIntoView(items[items.length - 1].id)
+            activate(items[items.length - 1])
             break
         }
         case 'PageDown': {
             e.preventDefault()
-            const idx = items.findIndex((i) => i.id === activeId.value)
-            const next = Math.min(idx + PAGE_SIZE, items.length - 1)
-            activeId.value = items[next].id
-            scrollIntoView(items[next].id)
+            activate(items[Math.min(activeIndex() + PAGE_SIZE, items.length - 1)])
             break
         }
         case 'PageUp': {
             e.preventDefault()
-            const idx = items.findIndex((i) => i.id === activeId.value)
-            const prev = Math.max(idx - PAGE_SIZE, 0)
-            activeId.value = items[prev].id
-            scrollIntoView(items[prev].id)
+            activate(items[Math.max(activeIndex() - PAGE_SIZE, 0)])
             break
         }
         case 'ArrowRight': {
-            // Enter sub-menu if command has items (like Enter)
+            // Enter a sub-level (like Enter on a parent command): the active
+            // command's own items, or — on a drilled child / "+N more" row —
+            // its parent's, pre-filtered with the drill-down remainder.
             if (parentCommand.value) break // already in nested mode
-            const activeCmd = items.find((i) => i.id === activeId.value)
-            if (activeCmd?.items) {
+            const active = items[activeIndex()]
+            if (active?.kind === 'command' && active.cmd.items) {
                 e.preventDefault()
-                selectCommand(activeCmd)
+                selectCommand(active.cmd)
+            } else if (active?.section) {
+                e.preventDefault()
+                selectMore(active.section)
             }
             break
         }
@@ -308,13 +430,11 @@ function handleKeydown(e) {
         }
         case 'Enter': {
             e.preventDefault()
-            const active = items.find((i) => i.id === activeId.value)
+            const active = items[activeIndex()]
             if (!active) break
-            if (parentCommand.value) {
-                selectNestedItem(active)
-            } else {
-                selectCommand(active)
-            }
+            if (active.kind === 'command') selectCommand(active.cmd)
+            else if (active.kind === 'child') selectNestedItem(active.item)
+            else if (active.kind === 'more') selectMore(active.section)
             break
         }
         case 'Escape': {
@@ -408,10 +528,10 @@ defineExpose({ open, close })
                             v-for="cmd in group.commands"
                             :key="cmd.id"
                             class="command-item"
-                            :class="{ active: cmd.id === activeId }"
+                            :class="{ active: cmd.id === activeKey }"
                             :data-id="cmd.id"
                             @click="selectCommand(cmd)"
-                            @pointerenter="activeId = cmd.id"
+                            @pointerenter="activeKey = cmd.id"
                         >
                             <wa-icon
                                 :name="cmd.icon || undefined"
@@ -452,162 +572,192 @@ defineExpose({ open, close })
                         </div>
                     </template>
                 </template>
-                <!-- Search results mode -->
-                <template v-else-if="!parentCommand">
-                    <div
-                        v-for="result in searchResults"
-                        :key="result.cmd.id"
-                        class="command-item"
-                        :class="{ active: result.cmd.id === activeId }"
-                        :data-id="result.cmd.id"
-                        @click="selectCommand(result.cmd)"
-                        @pointerenter="activeId = result.cmd.id"
-                    >
-                        <wa-icon
-                            :name="result.cmd.icon || undefined"
-                            :src="result.cmd.iconSrc || undefined"
-                            :family="result.cmd.iconFamily || undefined"
-                            :style="result.cmd.iconColor ? { color: result.cmd.iconColor } : null"
-                            class="command-icon"
-                        />
-                        <template v-if="result.cmd.target">
-                            <template v-for="t in [result.cmd.target()]" :key="result.cmd.id + '-target'">
-                                <span v-if="t" class="command-text-col">
-                                    <span class="command-label command-target-line">
-                                        <span v-if="t.prefix" class="command-target-prefix">{{ t.prefix }}</span>
-                                        <ProjectMark :icon-url="t.project?.icon_url || null" :color="t.project?.color || null" />
-                                        <template v-if="t.worktree?.parentName">
-                                            <span class="command-wt-parent">{{ t.worktree.parentName }}</span>
+                <template v-else>
+                    <!-- Search results mode: root commands first -->
+                    <template v-if="!parentCommand">
+                        <div
+                            v-for="result in searchResults"
+                            :key="result.cmd.id"
+                            class="command-item"
+                            :class="{ active: result.cmd.id === activeKey }"
+                            :data-id="result.cmd.id"
+                            @click="selectCommand(result.cmd)"
+                            @pointerenter="activeKey = result.cmd.id"
+                        >
+                            <wa-icon
+                                :name="result.cmd.icon || undefined"
+                                :src="result.cmd.iconSrc || undefined"
+                                :family="result.cmd.iconFamily || undefined"
+                                :style="result.cmd.iconColor ? { color: result.cmd.iconColor } : null"
+                                class="command-icon"
+                            />
+                            <template v-if="result.cmd.target">
+                                <template v-for="t in [result.cmd.target()]" :key="result.cmd.id + '-target'">
+                                    <span v-if="t" class="command-text-col">
+                                        <span class="command-label command-target-line">
+                                            <span v-if="t.prefix" class="command-target-prefix">{{ t.prefix }}</span>
+                                            <ProjectMark :icon-url="t.project?.icon_url || null" :color="t.project?.color || null" />
+                                            <template v-if="t.worktree?.parentName">
+                                                <span class="command-wt-parent">{{ t.worktree.parentName }}</span>
+                                                <wa-icon name="code-branch" auto-width class="command-wt-sep"></wa-icon>
+                                            </template>
+                                            <span class="command-wt-folder">{{ t.label }}</span>
+                                        </span>
+                                        <span v-if="t.path" class="command-path">{{ t.path }}</span>
+                                    </span>
+                                    <span v-else class="command-label" v-html="result.highlighted" />
+                                </template>
+                            </template>
+                            <span v-else class="command-label" v-html="result.highlighted" />
+                            <span v-if="result.categoryLabel" class="command-category">{{ result.categoryLabel }}</span>
+                            <span v-if="result.cmd.toggled" class="command-toggle">
+                                <wa-icon v-if="result.cmd.toggled()" name="check" />
+                            </span>
+                            <span v-if="result.cmd.items" class="command-chevron"><wa-icon name="chevron-right" /></span>
+                        </div>
+                    </template>
+                    <!-- Sub-item sections: the drilled parents' children in search
+                         mode (each under a sticky header naming the parent), or the
+                         current parent's items in nested mode (no header). -->
+                    <template v-for="section in subItemSections" :key="section.key">
+                        <div v-if="section.parent" class="category-sticky">
+                            <div class="category-label drill-label">
+                                <wa-icon
+                                    :name="section.parent.icon || undefined"
+                                    :src="section.parent.iconSrc || undefined"
+                                    :family="section.parent.iconFamily || undefined"
+                                    :style="section.parent.iconColor ? { color: section.parent.iconColor } : null"
+                                />
+                                <span v-html="section.parentHighlighted"></span>
+                                <wa-icon name="chevron-right" />
+                            </div>
+                        </div>
+                        <template v-for="(item, i) in section.items" :key="item.key">
+                            <!-- Inter-group divider (e.g. between cross-filter pinned and natural sessions) -->
+                            <wa-divider
+                                v-if="i > 0 && item.group && item.group !== section.items[i - 1].group"
+                                class="palette-group-divider"
+                            ></wa-divider>
+                            <div
+                                class="command-item"
+                                :class="{ active: item.key === activeKey, 'command-item--session': !!item.session, 'command-item--workspace': !!item.workspace, 'command-item--project': !!item.project }"
+                                :data-id="item.key"
+                                @click="selectNestedItem(item)"
+                                @pointerenter="activeKey = item.key"
+                            >
+                                <!-- Session row: project color dot + pin icon on the left (mirrors sidebar);
+                                     a code-branch marker is added when the session lives in a git worktree. -->
+                                <template v-if="item.session">
+                                    <ProjectMark
+                                        :icon-url="item.session.projectIconUrl || null"
+                                        :color="item.session.projectColor || null"
+                                    />
+                                    <wa-icon
+                                        v-if="item.session.pinned"
+                                        name="thumbtack"
+                                        class="palette-pin-icon"
+                                    ></wa-icon>
+                                    <wa-icon
+                                        v-if="item.session.isWorktree"
+                                        name="code-branch"
+                                        class="palette-session-wt-icon"
+                                    ></wa-icon>
+                                </template>
+                                <!-- Workspace row: layer-group icon tinted with the workspace color -->
+                                <template v-else-if="item.workspace">
+                                    <wa-icon
+                                        name="layer-group"
+                                        class="palette-workspace-icon"
+                                        :style="item.workspace.color ? { color: item.workspace.color } : null"
+                                    ></wa-icon>
+                                </template>
+                                <!-- Project row: colored dot mirroring the sidebar -->
+                                <template v-else-if="item.project">
+                                    <ProjectMark
+                                        :icon-url="item.project.icon_url || null"
+                                        :color="item.project.color || null"
+                                    />
+                                </template>
+                                <!-- Regular sub-item: active check wins; otherwise the value's
+                                     own icon (permission glyph, on/off flag, custom src, FA name)
+                                     or a spacer. Component icons are wrapped in a .command-icon
+                                     span so they keep the shared 1.25em column alignment. -->
+                                <template v-else>
+                                    <wa-icon v-if="item.active" name="check" class="command-icon active-check" />
+                                    <span v-else-if="item.permIcon" class="command-icon">
+                                        <PermissionModeIcon :icon="item.permIcon" :color="item.permColor" />
+                                    </span>
+                                    <span v-else-if="item.flagField" class="command-icon">
+                                        <SettingFlagIcon :field="item.flagField" :on="item.flagOn" />
+                                    </span>
+                                    <wa-icon v-else-if="item.iconSrc" :src="item.iconSrc" class="command-icon" />
+                                    <wa-icon v-else-if="item.icon" :name="item.icon" class="command-icon" />
+                                    <span v-else class="command-icon-spacer" />
+                                </template>
+    
+                                <!-- Project / worktree sub-item: name on top (a worktree
+                                     prefixes it with its parent name + a code-branch
+                                     icon), absolute path below (muted). -->
+                                <span v-if="item.path || item.worktree" class="command-text-col">
+                                    <span v-if="item.worktree" class="command-label command-wt-line">
+                                        <template v-if="item.worktree.parentName">
+                                            <span class="command-wt-parent" v-html="item.worktree.parentHighlighted"></span>
                                             <wa-icon name="code-branch" auto-width class="command-wt-sep"></wa-icon>
                                         </template>
-                                        <span class="command-wt-folder">{{ t.label }}</span>
+                                        <span class="command-wt-folder" v-html="item.highlighted"></span>
+                                        <wa-icon
+                                            v-if="item.project?.untrusted"
+                                            name="lock"
+                                            label="Untrusted project"
+                                            title="This project is not trusted"
+                                            class="palette-trust-icon"
+                                        ></wa-icon>
                                     </span>
-                                    <span v-if="t.path" class="command-path">{{ t.path }}</span>
+                                    <span v-else class="command-label command-name-line">
+                                        <span class="command-name-text" v-html="item.highlighted"></span>
+                                        <wa-icon
+                                            v-if="item.project?.untrusted"
+                                            name="lock"
+                                            label="Untrusted project"
+                                            title="This project is not trusted"
+                                            class="palette-trust-icon"
+                                        ></wa-icon>
+                                    </span>
+                                    <span v-if="item.path" class="command-path" v-html="item.pathHighlighted" />
                                 </span>
-                                <span v-else class="command-label" v-html="result.highlighted" />
-                            </template>
+                                <span v-else class="command-label" v-html="item.highlighted" />
+    
+                                <!-- Session / workspace / project (or worktree) row: aggregated
+                                     process state or unread flag on the right -->
+                                <template v-if="itemActivity(item)">
+                                    <ProcessIndicator
+                                        v-if="itemActivity(item).processState"
+                                        :state="itemActivity(item).processState.state"
+                                        :has-active-crons="((itemActivity(item).processState.active_crons?.length) || 0) > 0"
+                                        size="small"
+                                        class="palette-process-indicator"
+                                    />
+                                    <wa-icon
+                                        v-else-if="itemActivity(item).hasUnread"
+                                        name="eye"
+                                        class="palette-unread-icon"
+                                    ></wa-icon>
+                                </template>
+                            </div>
                         </template>
-                        <span v-else class="command-label" v-html="result.highlighted" />
-                        <span v-if="result.categoryLabel" class="command-category">{{ result.categoryLabel }}</span>
-                        <span v-if="result.cmd.toggled" class="command-toggle">
-                            <wa-icon v-if="result.cmd.toggled()" name="check" />
-                        </span>
-                        <span v-if="result.cmd.items" class="command-chevron"><wa-icon name="chevron-right" /></span>
-                    </div>
-                </template>
-                <!-- Nested mode -->
-                <template v-else>
-                    <template v-for="(item, i) in nestedResults" :key="item.id">
-                        <!-- Inter-group divider (e.g. between cross-filter pinned and natural sessions) -->
-                        <wa-divider
-                            v-if="i > 0 && item.group && item.group !== nestedResults[i - 1].group"
-                            class="palette-group-divider"
-                        ></wa-divider>
+                        <!-- Overflow row: opens the parent's nested mode with the
+                             drill-down remainder pre-filled, listing every match. -->
                         <div
-                            class="command-item"
-                            :class="{ active: item.id === activeId, 'command-item--session': !!item.session, 'command-item--workspace': !!item.workspace, 'command-item--project': !!item.project }"
-                            :data-id="item.id"
-                            @click="selectNestedItem(item)"
-                            @pointerenter="activeId = item.id"
+                            v-if="section.moreCount"
+                            class="command-item drill-more"
+                            :class="{ active: section.moreKey === activeKey }"
+                            :data-id="section.moreKey"
+                            @click="selectMore(section)"
+                            @pointerenter="activeKey = section.moreKey"
                         >
-                            <!-- Session row: project color dot + pin icon on the left (mirrors sidebar);
-                                 a code-branch marker is added when the session lives in a git worktree. -->
-                            <template v-if="item.session">
-                                <ProjectMark
-                                    :icon-url="item.session.projectIconUrl || null"
-                                    :color="item.session.projectColor || null"
-                                />
-                                <wa-icon
-                                    v-if="item.session.pinned"
-                                    name="thumbtack"
-                                    class="palette-pin-icon"
-                                ></wa-icon>
-                                <wa-icon
-                                    v-if="item.session.isWorktree"
-                                    name="code-branch"
-                                    class="palette-session-wt-icon"
-                                ></wa-icon>
-                            </template>
-                            <!-- Workspace row: layer-group icon tinted with the workspace color -->
-                            <template v-else-if="item.workspace">
-                                <wa-icon
-                                    name="layer-group"
-                                    class="palette-workspace-icon"
-                                    :style="item.workspace.color ? { color: item.workspace.color } : null"
-                                ></wa-icon>
-                            </template>
-                            <!-- Project row: colored dot mirroring the sidebar -->
-                            <template v-else-if="item.project">
-                                <ProjectMark
-                                    :icon-url="item.project.icon_url || null"
-                                    :color="item.project.color || null"
-                                />
-                            </template>
-                            <!-- Regular sub-item: active check wins; otherwise the value's
-                                 own icon (permission glyph, on/off flag, custom src, FA name)
-                                 or a spacer. Component icons are wrapped in a .command-icon
-                                 span so they keep the shared 1.25em column alignment. -->
-                            <template v-else>
-                                <wa-icon v-if="item.active" name="check" class="command-icon active-check" />
-                                <span v-else-if="item.permIcon" class="command-icon">
-                                    <PermissionModeIcon :icon="item.permIcon" :color="item.permColor" />
-                                </span>
-                                <span v-else-if="item.flagField" class="command-icon">
-                                    <SettingFlagIcon :field="item.flagField" :on="item.flagOn" />
-                                </span>
-                                <wa-icon v-else-if="item.iconSrc" :src="item.iconSrc" class="command-icon" />
-                                <wa-icon v-else-if="item.icon" :name="item.icon" class="command-icon" />
-                                <span v-else class="command-icon-spacer" />
-                            </template>
-
-                            <!-- Project / worktree sub-item: name on top (a worktree
-                                 prefixes it with its parent name + a code-branch
-                                 icon), absolute path below (muted). -->
-                            <span v-if="item.path || item.worktree" class="command-text-col">
-                                <span v-if="item.worktree" class="command-label command-wt-line">
-                                    <template v-if="item.worktree.parentName">
-                                        <span class="command-wt-parent" v-html="item.worktree.parentHighlighted"></span>
-                                        <wa-icon name="code-branch" auto-width class="command-wt-sep"></wa-icon>
-                                    </template>
-                                    <span class="command-wt-folder" v-html="item.highlighted"></span>
-                                    <wa-icon
-                                        v-if="item.project?.untrusted"
-                                        name="lock"
-                                        label="Untrusted project"
-                                        title="This project is not trusted"
-                                        class="palette-trust-icon"
-                                    ></wa-icon>
-                                </span>
-                                <span v-else class="command-label command-name-line">
-                                    <span class="command-name-text" v-html="item.highlighted"></span>
-                                    <wa-icon
-                                        v-if="item.project?.untrusted"
-                                        name="lock"
-                                        label="Untrusted project"
-                                        title="This project is not trusted"
-                                        class="palette-trust-icon"
-                                    ></wa-icon>
-                                </span>
-                                <span v-if="item.path" class="command-path" v-html="item.pathHighlighted" />
-                            </span>
-                            <span v-else class="command-label" v-html="item.highlighted" />
-
-                            <!-- Session / workspace / project (or worktree) row: aggregated
-                                 process state or unread flag on the right -->
-                            <template v-if="itemActivity(item)">
-                                <ProcessIndicator
-                                    v-if="itemActivity(item).processState"
-                                    :state="itemActivity(item).processState.state"
-                                    :has-active-crons="((itemActivity(item).processState.active_crons?.length) || 0) > 0"
-                                    size="small"
-                                    class="palette-process-indicator"
-                                />
-                                <wa-icon
-                                    v-else-if="itemActivity(item).hasUnread"
-                                    name="eye"
-                                    class="palette-unread-icon"
-                                ></wa-icon>
-                            </template>
+                            <wa-icon name="ellipsis" class="command-icon" />
+                            <span class="command-label">{{ section.moreCount }} more</span>
+                            <span class="command-chevron"><wa-icon name="chevron-right" /></span>
                         </div>
                     </template>
                 </template>
@@ -728,6 +878,28 @@ wa-divider {
     .category-label {
         box-shadow: 0 2px 5px -2px color-mix(in srgb, var(--wa-color-text-normal) 18%, transparent);
     }
+}
+/* Drill-down section header: the parent command's icon + label (matched
+   prefix highlighted) + chevron, read as a breadcrumb. It reuses the sticky
+   category header but keeps the label's own casing, since it names a command
+   rather than a group. */
+.drill-label {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 500;
+}
+.drill-label :deep(mark) {
+    background: transparent;
+    color: var(--wa-color-success-60);
+    font-weight: 600;
+    padding: 0;
+}
+.drill-more {
+    color: var(--wa-color-text-muted);
+    font-size: var(--wa-font-size-s);
 }
 
 .command-item {
