@@ -243,6 +243,10 @@ search-index/
 # into it). Root-anchored for the same reason as above.
 /project-icons/
 
+# The worktree's own Claude Code / Codex homes, created by
+# `devctl start --fresh-providers`. Root-anchored like the dirs above.
+/provider-homes/
+
 # Same story for a data-dir file: the anonymous telemetry state. Root-anchored
 # for the same reason as above.
 /telemetry.json

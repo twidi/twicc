@@ -332,6 +332,28 @@ def save_worktree_env(backend_port: int, frontend_port: int) -> None:
         f.write("\n".join(lines_to_add))
 
 
+def save_fresh_provider_homes_env(claude_home: Path, codex_home: Path) -> None:
+    """Append the fresh provider homes to the data dir's .env (``--fresh-providers``).
+
+    ``CLAUDE_SECURESTORAGE_CONFIG_DIR`` is written EMPTY on purpose — the
+    documented way to keep the real credentials next to a relocated
+    ``CLAUDE_CONFIG_DIR``. The rationale goes on its own comment line: an
+    inline ``#`` on a provider-home line is exactly what
+    ``provider_home_line_warnings`` flags.
+    """
+    lines_to_add = [
+        "",
+        "# Auto-configured by devctl (--fresh-providers): empty homes, no history to re-scan",
+        f"CLAUDE_CONFIG_DIR={claude_home}",
+        "# Empty: keep the real ~/.claude credentials (no re-login, no keychain rename)",
+        "CLAUDE_SECURESTORAGE_CONFIG_DIR=",
+        f"CODEX_HOME={codex_home}",
+        "",
+    ]
+    with open(ENV_FILE, "a") as f:
+        f.write("\n".join(lines_to_add))
+
+
 # User preference files carried into a worktree's data dir alongside the DB.
 # Infra (.env), logs/, and drop-requests/ are deliberately excluded.
 SYNCED_CONFIG_FILENAMES = (
@@ -350,6 +372,15 @@ SYNCED_CONFIG_GLOBS = ("*-settings-presets.json",)
 # mode (see link_shared_dirs_from_main): per-session artifacts and scratch live
 # under the main data dir so a worktree instance reads/writes the same files.
 SHARED_LINK_DIRS = ("artifacts", "scratch")
+
+# Where ``--fresh-providers`` puts the worktree's own provider homes: inside its
+# data dir, next to db/ and logs/ (and gitignored with them), so deleting the
+# worktree takes them along.
+PROVIDER_HOMES_DIR_NAME = "provider-homes"
+
+# Codex files carried into a fresh CODEX_HOME. Never sessions/ — not re-scanning
+# that history is the whole point. Codex creates everything else on first run.
+CODEX_SEED_FILENAMES = ("auth.json", "config.toml")
 
 
 def synced_config_files(base_dir: Path) -> list[Path]:
@@ -556,11 +587,77 @@ def clear_local_data() -> None:
             print(f"  Unlinked {name}/ (was shared with main)")
 
 
-def load_env_file() -> dict[str, str]:
-    """Load environment variables from .env file in the data directory."""
+def main_instance_codex_home() -> Path:
+    """Where the developer's real Codex login lives.
+
+    The main data dir's ``.env`` may relocate ``CODEX_HOME``; otherwise it is
+    the CLI's default ``~/.codex``. Claude needs no equivalent: an empty
+    ``CLAUDE_SECURESTORAGE_CONFIG_DIR`` always resolves to ``~/.claude``
+    (``twicc.provider_homes.claude_secure_storage_dir``).
+    """
+    configured = load_env_file(DEFAULT_DATA_DIR / ".env").get("CODEX_HOME")
+    return Path(configured) if configured else Path.home() / ".codex"
+
+
+def setup_fresh_provider_homes() -> None:
+    """Point this worktree at its own provider homes, with no session history.
+
+    The initial sync of a worktree instance otherwise re-scans the developer's
+    real homes — hundreds of MB under ``~/.claude/projects``, GB under
+    ``~/.codex/sessions``. Relocating both homes to empty directories skips
+    that, and keeps the worktree's own sessions out of the real homes.
+
+    Logins are preserved, never re-done:
+
+    - Claude: ``CLAUDE_SECURESTORAGE_CONFIG_DIR`` is written EMPTY, which
+      resolves to ``~/.claude``, so the real ``.credentials.json`` stays
+      shared and the macOS keychain service name is left alone (relocating the
+      credentials dir suffixes it, which would force a re-login).
+    - Codex has no such split — ``auth.json`` lives in ``CODEX_HOME`` — so the
+      login and config files are copied.
+
+    Idempotent and conservative: a ``.env`` that already configures any
+    provider home is left untouched, so a manual value always wins.
+    """
+    configured = provider_home_env(load_env_file())
+    if configured:
+        print(f"  Provider homes already in .env ({', '.join(sorted(configured))}), left as is")
+        return
+
+    homes_dir = DATA_DIR / PROVIDER_HOMES_DIR_NAME
+    claude_home = homes_dir / "claude"
+    codex_home = homes_dir / "codex"
+    for path in (claude_home, codex_home):
+        path.mkdir(parents=True, exist_ok=True)
+        path.chmod(0o700)
+
+    source_codex = main_instance_codex_home()
+    copied, missing = [], []
+    for name in CODEX_SEED_FILENAMES:
+        source = source_codex / name
+        if source.is_file():
+            shutil.copy2(source, codex_home / name)
+            copied.append(name)
+        else:
+            missing.append(name)
+    if copied:
+        print(f"  Seeded Codex home from {source_codex}: {', '.join(copied)}")
+    if missing:
+        print(
+            f'  Warning: no {", ".join(missing)} in {source_codex} — '
+            'run "twicc codex login" from this instance'
+        )
+
+    save_fresh_provider_homes_env(claude_home, codex_home)
+    print(f"  Fresh provider homes under {homes_dir}, saved to {ENV_FILE}")
+
+
+def load_env_file(path: Path | None = None) -> dict[str, str]:
+    """Load environment variables from a .env file (the data directory's by default)."""
     env_vars = {}
-    if ENV_FILE.exists():
-        with open(ENV_FILE) as f:
+    env_file = ENV_FILE if path is None else path
+    if env_file.exists():
+        with open(env_file) as f:
             for line in f:
                 line = line.strip()
                 # Skip empty lines and comments
@@ -1063,6 +1160,9 @@ OPTIONS:
     --empty-db         Start with an empty database and no copied config
                        instead of copying from the main data directory
                        (worktree mode only)
+    --fresh-providers  Give the worktree its own empty provider homes, so the
+                       initial sync has no session history to re-scan. Implies
+                       --empty-db (worktree mode only). See PROVIDER HOMES
     --lines=N          Number of log lines to show (default: 50)
 
 DATA DIRECTORY:
@@ -1090,6 +1190,13 @@ PROVIDER HOMES:
     home looks unused (log in once from a terminal of this instance).
     A worktree with its own CODEX_HOME installs its own copy of the TwiCC
     plugin there (TWICC_NO_CODEX_PLUGIN is only set without one).
+
+    `start --fresh-providers` writes those three lines for you, pointing at
+    provider-homes/{claude,codex} in the worktree's data dir, and copies
+    Codex's auth.json + config.toml so no re-login is needed. Claude keeps
+    the real ~/.claude credentials via the empty securestorage value. The
+    session history is NOT copied — skipping its re-scan is the whole point.
+    Never overwrites a provider home already set in the .env.
 
 TMUX SOCKETS:
     Each instance runs its terminals and hybrid CLIs on its own tmux
@@ -1141,6 +1248,7 @@ EXAMPLES:
     uv run ./devctl.py logs back       # Show last 50 lines of backend logs
     uv run ./devctl.py logs front --lines=100
     uv run ./devctl.py start --empty-db    # Worktree: start with fresh database
+    uv run ./devctl.py start --fresh-providers  # Worktree: fresh DB + own provider homes
     uv run ./devctl.py kill-tmux       # Worktree: kill its tmux servers before deleting it
 
 FILES:
@@ -1177,24 +1285,41 @@ def main():
     # Parse positional target and flags from remaining args
     target = None
     empty_db = False
+    fresh_providers = False
     for arg in sys.argv[2:]:
         if arg == "--empty-db":
             empty_db = True
+        elif arg == "--fresh-providers":
+            fresh_providers = True
         elif not arg.startswith("--") and target is None:
             target = arg
 
-    # Validate --empty-db: only allowed in worktree mode
-    if empty_db:
+    # Validate --empty-db / --fresh-providers: only allowed in worktree mode.
+    # Before the implication below, so an error names the flag actually typed.
+    for flag, given in (("--empty-db", empty_db), ("--fresh-providers", fresh_providers)):
+        if not given:
+            continue
         if not is_git_worktree():
-            print("Error: --empty-db is only supported in git worktree mode")
+            print(f"Error: {flag} is only supported in git worktree mode")
             sys.exit(1)
         if command not in ("start", "restart"):
-            print("Error: --empty-db is only supported with start/restart commands")
+            print(f"Error: {flag} is only supported with start/restart commands")
             sys.exit(1)
+
+    # Fresh provider homes only make sense on a fresh database: the initial sync
+    # would find no JSONL left for the sessions a copied database still lists.
+    if fresh_providers:
+        empty_db = True
 
     # Auto-find ports only on start/restart (may write to .env in worktree mode)
     auto_find = command in ("start", "restart")
     backend_port, frontend_port = get_ports(auto_find=auto_find)
+
+    # Write the fresh provider homes to .env BEFORE get_process_config reads it:
+    # that is where TWICC_NO_CODEX_PLUGIN is decided from CODEX_HOME's presence.
+    if fresh_providers:
+        setup_fresh_provider_homes()
+
     processes = get_process_config(backend_port, frontend_port)
 
     if command == "start":

@@ -88,7 +88,7 @@ uv run ./devctl.py logs [front|back] [--lines=N]
 uv run ./devctl.py kill-tmux   # worktrees only: kill the instance's two tmux servers (terminals + hybrid CLIs)
 ```
 
-Default ports: frontend 5173, backend 3500 (verified after start). `start --empty-db` for a fresh DB in worktrees on user request. Debug via `<data_dir>/logs/{backend,frontend}.log`. PIDs in `.devctl/pids/` (always local to project/worktree root).
+Default ports: frontend 5173, backend 3500 (verified after start). `start --empty-db` for a fresh DB in worktrees on user request, `start --fresh-providers` for that plus the worktree's own empty provider homes. Debug via `<data_dir>/logs/{backend,frontend}.log`. PIDs in `.devctl/pids/` (always local to project/worktree root).
 
 **To start/restart, run the single `start` command and read the logs — devctl does everything:** it rebuilds the editable install (runs `npm ci`), auto-applies pending migrations at startup, on first setup copies db + search index + user config from `~/.twicc/` (never `.env`, `logs/`, `drop-requests/`) and symlinks `artifacts/` + `scratch/` to `~/.twicc/` (shared with the main instance; `--empty-db` drops the symlinks for isolation), finds free ports (default+1: 3501/5174), writes them to `.env` along with `TWICC_NO_LOG_TRIM=1` (no startup log trim in a worktree).
 
@@ -98,7 +98,7 @@ When starting in a worktree, give the user the localhost URLs from devctl's outp
 
 ### Worktrees
 
-devctl auto-detects worktrees and sets `TWICC_DATA_DIR=<worktree root>`, so each worktree has its own backend/frontend, `.env` (ports), `.devctl/`, `db/`, `logs/`, and json data files. Always check your cwd before starting so you know whether you're in a worktree. A worktree `.env` may also define its own provider homes (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, see Data Directory) so a risky change never touches the real `~/.claude` / `~/.codex`; devctl prints the resolved homes at `start`/`status`. tmux sockets are per data dir (`twicc-<sha8>` / `twicc-hybrid-<sha8>`, `paths.tmux_socket_suffix`), so a worktree's terminals, hybrid CLIs, boot adoption and reaper never see the main instance's.
+devctl auto-detects worktrees and sets `TWICC_DATA_DIR=<worktree root>`, so each worktree has its own backend/frontend, `.env` (ports), `.devctl/`, `db/`, `logs/`, and json data files. Always check your cwd before starting so you know whether you're in a worktree. A worktree `.env` may also define its own provider homes (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, see Data Directory) so a risky change never touches the real `~/.claude` / `~/.codex`; devctl prints the resolved homes at `start`/`status`. `start --fresh-providers` writes those keys for you (`provider-homes/{claude,codex}` in the worktree, Codex login copied, Claude credentials kept via the empty securestorage value) so the initial sync has no session history to re-scan; it implies `--empty-db` and never overwrites a home already in the `.env`. tmux sockets are per data dir (`twicc-<sha8>` / `twicc-hybrid-<sha8>`, `paths.tmux_socket_suffix`), so a worktree's terminals, hybrid CLIs, boot adoption and reaper never see the main instance's.
 
 **Prefix every Bash command with `cd <worktree> && `** — never trust the persistent cwd. A wrong cwd on a destructive command (`devctl restart/stop`, manual `migrate`) hits the main project's servers/data dir and kills real work.
 
