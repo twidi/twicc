@@ -17,7 +17,8 @@ async function loadComponent() {
 
     const vueStub = dataModule(`
         export const ref = value => ({ value })
-        export const inject = (_key, fallback) => fallback
+        // Tests that need a real provided value put it in globalThis.__tscProvided.
+        export const inject = (key, fallback) => globalThis.__tscProvided?.[key] ?? fallback
         export const nextTick = callback => Promise.resolve().then(callback)
         export const computed = getter => ({ get value() { return getter() } })
         export const onMounted = () => {}
@@ -292,5 +293,28 @@ test('window resizing re-clamps the panel when VisualViewport is unavailable', a
         assert.deepEqual(bindings.panelOffset.value, { dx: 0, dy: -208 })
     } finally {
         globalThis.window = originalWindow
+    }
+})
+
+// The settings stub above reports a touch device, which is the whole point here:
+// a tap must not steal focus (it pops the on-screen keyboard), but ⌘↵ proves a
+// physical keyboard, so chaining ⌘↵ (add) → ⌘↵ (send) has to keep working.
+test('on touch, the keyboard add focuses the composer while a tap does not', async () => {
+    const originalWindow = globalThis.window
+    const inserts = []
+    globalThis.window = { innerWidth: 800, innerHeight: 600, removeEventListener() {} }
+    globalThis.__tscProvided = { insertTextAtCursor: (_text, options) => inserts.push(options) }
+
+    try {
+        const component = await loadComponent()
+        const bindings = setupComponent(component, { focusComposerOnAdd: true })
+
+        await bindings.addToMessage()
+        await bindings.addToMessage({ fromKeyboard: true })
+
+        assert.deepEqual(inserts, [{ focus: false }, { focus: true }])
+    } finally {
+        globalThis.window = originalWindow
+        delete globalThis.__tscProvided
     }
 })

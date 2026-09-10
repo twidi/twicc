@@ -28,10 +28,17 @@ test('orders settings from general controls through advanced peer settings', () 
     }
 })
 
-test('shows a semantic divider whenever an auxiliary entry is visible', () => {
-    assert.match(source,
-        /const hasUtilitySections = computed\(\(\) => !store\.isTouchDevice \|\| hasTips\.value \|\| hasHelp\.value\)/)
-    assert.match(source,
-        /<wa-divider v-if="hasUtilitySections" class="settings-nav-divider"><\/wa-divider>/)
+test('shows a semantic divider before the auxiliary entries', () => {
+    assert.match(source, /<wa-divider class="settings-nav-divider"><\/wa-divider>/)
     assert.doesNotMatch(source, /shortcuts-nav-divider/)
+    assert.doesNotMatch(source, /hasUtilitySections/)
+})
+
+// A touch device can have a keyboard plugged in at any moment, so the cheat
+// sheet is never gated on the touch flag — neither in the template nor in CSS.
+test('keeps the Shortcuts entry reachable on touch devices', () => {
+    assert.doesNotMatch(source, /\.shortcuts-nav-item\s*\{\s*display:\s*none/)
+    const shortcutsButton = source.match(/<button[^>]*shortcuts-nav-item[^>]*>/)
+    assert.ok(shortcutsButton, 'the Shortcuts nav entry must exist')
+    assert.doesNotMatch(shortcutsButton[0], /v-if/)
 })

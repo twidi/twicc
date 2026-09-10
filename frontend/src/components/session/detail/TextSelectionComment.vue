@@ -47,7 +47,7 @@ const props = defineProps({
      *  text). Only the chat consumer sets it: the composer lives in that same pane,
      *  so it is visible and focusing it chains ⌘↵ (add) → ⌘↵ (send). Panes where
      *  the composer may sit behind an overlay (browser, files, terminal) leave it
-     *  false. Ignored on touch devices — see addToMessage(). */
+     *  false. On touch, honoured for ⌘↵ only, not for a tap — see addToMessage(). */
     focusComposerOnAdd: { type: Boolean, default: false },
 })
 
@@ -262,7 +262,9 @@ function openShotPreview() {
     openMediaPreview([{ type: 'image', src: screenshotDataUrl.value, name: 'Screenshot' }])
 }
 
-async function addToMessage() {
+/** @param {{fromKeyboard?: boolean}} [options] - `fromKeyboard` when ⌘↵ triggered
+ *  the add, as opposed to a tap/click on the button. See the focus rule below. */
+async function addToMessage({ fromKeyboard = false } = {}) {
     if (!canAdd.value || screenshotLoading.value) return
 
     submitting.value = true
@@ -294,12 +296,14 @@ async function addToMessage() {
             lang: props.metadata?.lang ?? null,
         },
     )
-    // Focus only in the chat pane on a pointer device (same condition as the ⌘↵
-    // hint in the placeholder): the composer is right there, and keeping the focus
-    // lets the user send with a second ⌘↵. On touch, focusing pops the virtual
-    // keyboard and gets in the way of a follow-up selection; elsewhere the composer
-    // may sit behind a docked-pane overlay. The text lands in the draft either way.
-    const focusComposer = props.focusComposerOnAdd && !settingsStore.isTouchDevice
+    // Focus only in the chat pane: the composer is right there, and keeping the
+    // focus lets the user send with a second ⌘↵. Elsewhere the composer may sit
+    // behind a docked-pane overlay. The text lands in the draft either way.
+    // On touch, a tap does not focus — that would pop the virtual keyboard and get
+    // in the way of a follow-up selection. A ⌘↵ does, whatever the device: the
+    // keystroke proves a physical keyboard, so chaining ⌘↵ (add) → ⌘↵ (send) is
+    // exactly what the user is doing.
+    const focusComposer = props.focusComposerOnAdd && (fromKeyboard || !settingsStore.isTouchDevice)
     insertTextAtCursor(formatted + '\n', { focus: focusComposer })
     submitting.value = false
     close()
@@ -315,7 +319,7 @@ function copy() {
 function handleKeydown(e) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault()
-        addToMessage()
+        addToMessage({ fromKeyboard: true })
         return
     }
     if (e.key === 'Escape') {
@@ -434,7 +438,7 @@ defineExpose({ isExpanded: expanded })
                     variant="brand"
                     appearance="outlined"
                     :disabled="!canAdd || screenshotLoading || submitting"
-                    @click="addToMessage"
+                    @click="addToMessage()"
                 >
                     Add to message
                 </wa-button>

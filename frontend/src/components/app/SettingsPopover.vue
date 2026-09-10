@@ -76,10 +76,6 @@ const availableHelp = computed(() => helpStore.getAvailableHelp({
 }))
 const hasHelp = computed(() => availableHelp.value.length > 0)
 
-// The divider separates actual settings from utility sections. Shortcuts is
-// unavailable on touch devices, but Tips or Help can still require the divider.
-const hasUtilitySections = computed(() => !store.isTouchDevice || hasTips.value || hasHelp.value)
-
 // Reactive set of currently enabled providers (derived from the settings store).
 const enabledProviders = computed(() => new Set(store.enabledProviders))
 
@@ -1239,7 +1235,11 @@ function onChangelogClose() {
                         <PeerInboxBadge v-if="section.badge" :count="section.badge" inline />
                         <wa-icon v-if="section.synced" name="cloud" class="synced-icon"></wa-icon>
                     </button>
-                    <wa-divider v-if="hasUtilitySections" class="settings-nav-divider"></wa-divider>
+                    <!-- Shortcuts is always present, so the divider is too. A touch device can
+                         have a keyboard plugged in at any moment (and unplugged the next), so
+                         the cheat sheet stays reachable everywhere rather than tracking a flag
+                         that would be stale as soon as it is read. -->
+                    <wa-divider class="settings-nav-divider"></wa-divider>
                     <button
                         class="settings-nav-item shortcuts-nav-item"
                         :class="{ active: activeSection === 'shortcuts' }"
@@ -2558,13 +2558,6 @@ function onChangelogClose() {
 
 .settings-nav-divider {
     --spacing: var(--wa-space-2xs);
-}
-
-/* Hide shortcuts entry on touch devices (no keyboard) */
-@media (pointer: coarse) {
-    .shortcuts-nav-item {
-        display: none;
-    }
 }
 
 /* -- Keyboard shortcuts section -- */
