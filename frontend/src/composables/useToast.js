@@ -179,6 +179,10 @@ function custom(componentOrOptions, options = {}) {
  * @param {string} [options.title] - Toast title (header)
  * @param {string} [options.errorMessage] - Optional error message to display below session title
  * @param {number} [options.duration] - Duration in ms
+ * @param {boolean} [options.dismissOnVisit] - Auto-close once the user views the session
+ * @param {boolean} [options.dismissOnRead] - Auto-close once the session has no unread content
+ * @param {boolean} [options.userTurnToast] - Holds the per-session user_turn toast slot
+ * @param {boolean} [options.showActions] - Show the Archive / Mark as read buttons
  */
 function session(sessionId, options = {}) {
     return custom(SessionToastContent, {
@@ -188,7 +192,9 @@ function session(sessionId, options = {}) {
         props: {
             sessionId,
             ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
-            ...(options.autoDismiss ? { autoDismiss: true } : {}),
+            ...(options.dismissOnVisit ? { dismissOnVisit: true } : {}),
+            ...(options.dismissOnRead ? { dismissOnRead: true } : {}),
+            ...(options.userTurnToast ? { userTurnToast: true } : {}),
             ...(options.showActions ? { showActions: true } : {}),
         },
     })

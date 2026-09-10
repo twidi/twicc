@@ -805,7 +805,9 @@ function notifyProcessStateChange(msg, previousState, route) {
             type: 'info',
             title: finishedTitle,
             duration: 15000,
-            autoDismiss: true,
+            dismissOnVisit: true,
+            dismissOnRead: true,
+            userTurnToast: true,
             showActions: !ephemeral,
         })
     }
@@ -830,7 +832,11 @@ function notifyProcessStateChange(msg, previousState, route) {
         const pendingTitle = latest?.request_type === 'ask_user_question'
             ? `🖐️ ${providerLabel} has a question for you`
             : `🖐️ ${providerLabel} needs your approval`
-        toast.session(sessionId, { type: 'warning', title: pendingTitle })
+        // dismissOnVisit only: reaching the session is enough to drop the toast,
+        // even with the request still unanswered. Not dismissOnRead — a pending
+        // request is not unread content, so that criterion would close the toast
+        // at once whenever the session happens to be read.
+        toast.session(sessionId, { type: 'warning', title: pendingTitle, dismissOnVisit: true })
     }
 
     // Sound notification

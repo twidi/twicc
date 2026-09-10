@@ -5,9 +5,11 @@
  * Displays the project badge and session title inside a CustomNotification,
  * replacing the plain text "Session: <title>" that was used before.
  *
- * When autoDismiss is true (used for user_turn toasts), the toast auto-closes when:
- * - The user navigates to the session
- * - The session becomes read (e.g. viewed on another device)
+ * Two independent auto-close criteria, opted into separately:
+ * - dismissOnVisit: the user navigates to the session (any toast that points at
+ *   a session the user can open)
+ * - dismissOnRead: the session becomes read (e.g. viewed on another device) —
+ *   only meaningful for the user_turn toast, whose whole subject is unread content
  *
  * Usage (via useToast):
  *   toast.session(sessionId, { type: 'success', title: 'Claude Code started' })
@@ -31,8 +33,18 @@ const props = defineProps({
         type: String,
         default: null,
     },
-    /** When true, auto-dismiss when navigating to session or session becomes read */
-    autoDismiss: {
+    /** When true, auto-dismiss once the user is viewing this session */
+    dismissOnVisit: {
+        type: Boolean,
+        default: false,
+    },
+    /** When true, auto-dismiss once the session has no unread content */
+    dismissOnRead: {
+        type: Boolean,
+        default: false,
+    },
+    /** When true, this toast holds the per-session user_turn slot and releases it on destroy */
+    userTurnToast: {
         type: Boolean,
         default: false,
     },
@@ -80,24 +92,31 @@ const isUnread = computed(() => {
     return !s.last_viewed_at || s.last_new_content_at > s.last_viewed_at
 })
 
-// Auto-dismiss watchers (only active when autoDismiss is true)
-if (props.autoDismiss) {
-    // Dismiss when user navigates to this session
+// Dismiss when the user navigates to this session: the toast only exists to
+// bring them there, so reaching it — by the toast button or by hand (sidebar,
+// search, …) — makes it pointless. immediate: true covers a toast pushed while
+// the route already points at the session.
+if (props.dismissOnVisit) {
     watch(isCurrentSession, (current) => {
         if (current) props.item?.clear?.()
     }, { immediate: true })
+}
 
-    // Dismiss when session becomes read (e.g. marked as read on another device,
-    // or viewed on current device). immediate: true handles the case where the
-    // session is already read when the toast appears (e.g. race with session_updated broadcast).
+// Dismiss when session becomes read (e.g. marked as read on another device,
+// or viewed on current device). immediate: true handles the case where the
+// session is already read when the toast appears (e.g. race with session_updated broadcast).
+// Never opt a pending-request toast into this: a request stays worth showing
+// even when the session carries no unread content.
+if (props.dismissOnRead) {
     watch(isUnread, (unread) => {
         if (!unread) props.item?.clear?.()
     }, { immediate: true })
 }
 
-// Clean up tracking when toast is destroyed (by any means: auto-close, manual dismiss, auto-dismiss)
+// Release the per-session user_turn slot when the toast is destroyed (by any
+// means: auto-close, manual dismiss, auto-dismiss)
 onUnmounted(() => {
-    if (props.autoDismiss) {
+    if (props.userTurnToast) {
         clearUserTurnToast(props.sessionId)
     }
 })
