@@ -436,9 +436,10 @@ class BaseAgent:
             # The agent stops being blocked on the user the instant the LAST
             # pending request clears (parallel approvals resolve independently,
             # so only the final one marks "work resumes"). Stamp that instant
-            # so the ASSISTANT_TURN timeout baselines can exclude the user-wait
-            # — without it, the activity-blind 6h absolute cap fires on the very
-            # next monitor tick after a long-delayed validation. See
+            # so the ASSISTANT_TURN inactivity baseline can exclude the
+            # user-wait — without it, a request validated after a long absence
+            # is already over budget on the very next monitor tick, before the
+            # resumed agent emits anything. See
             # ``BaseAgentManager._state_based_timeout``.
             if not self._pending_requests:
                 self.last_pending_resolved_at = time.time()

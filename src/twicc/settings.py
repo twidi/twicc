@@ -414,7 +414,8 @@ CURRENT_SEARCH_VERSION = 4
 PROCESS_TIMEOUT_STARTING = 60  # 1 minute - process stuck during startup
 PROCESS_TIMEOUT_USER_TURN = 3900  # 65 min - idle, waiting for user input. Kept >= the prompt-cache TTL (1h) so a return within the cache window reuses the live process instead of forcing a resume (which regenerates Claude Code's env/gitStatus/date/memory prefix and busts the conversation cache).
 PROCESS_TIMEOUT_ASSISTANT_TURN = 3 * 60 * 60  # 3 hours - no activity from agent
-PROCESS_TIMEOUT_ASSISTANT_TURN_ABSOLUTE = 10 * 60 * 60  # 10 hours - max total duration for a turn
+# No cap on a turn's TOTAL duration: an agent still emitting SDK events is
+# working, and we cannot tell a legitimate long run from a runaway one.
 
 # Cron auto-restart
 # Set TWICC_NO_CRON_RESTART=1 to disable automatic restart of cron jobs,

@@ -1294,8 +1294,11 @@ class BaseAgentManager:
         - ``STARTING``: ``PROCESS_TIMEOUT_STARTING`` (default 60s) — stuck startup.
         - ``USER_TURN``: ``PROCESS_TIMEOUT_USER_TURN`` (default 30min) — idle.
         - ``ASSISTANT_TURN``: ``PROCESS_TIMEOUT_ASSISTANT_TURN`` (default 3h)
-          for inactivity, plus an absolute
-          ``PROCESS_TIMEOUT_ASSISTANT_TURN_ABSOLUTE`` (default 10h) safety cap.
+          of inactivity. There is deliberately NO cap on a turn's total
+          duration: a turn that keeps producing SDK events is working, and
+          nothing here can tell a legitimate long run (an orchestrator
+          waiting on its children, a long review loop) from a runaway one.
+          Only the user ends a working turn.
         """
         from django.conf import settings
 
@@ -1323,27 +1326,18 @@ class BaseAgentManager:
             inactivity_timeout = getattr(
                 settings, "PROCESS_TIMEOUT_ASSISTANT_TURN", 3 * 60 * 60,
             )
-            absolute_timeout = getattr(
-                settings, "PROCESS_TIMEOUT_ASSISTANT_TURN_ABSOLUTE", 10 * 60 * 60,
-            )
 
-            # Floor both baselines on ``last_pending_resolved_at`` so the time
+            # Floor the baseline on ``last_pending_resolved_at`` so the time
             # the agent spent blocked on a user-facing pending request is
-            # excluded from both budgets: the caps restart from the moment the
-            # agent actually resumed work, not the turn's start. The
-            # ``pending_requests`` skip above covers the in-progress wait; this
-            # covers the moment right after resolution, where the
-            # activity-blind absolute cap would otherwise fire immediately for
-            # a request validated after a long absence. Auto-resets per turn —
-            # a fresh ASSISTANT_TURN has a newer ``state_changed_at`` than any
-            # stale ``last_pending_resolved_at`` (0.0 until one ever resolves),
-            # so ``max`` reverts to the real turn start.
+            # excluded from the budget: it restarts from the moment the agent
+            # actually resumed work. The ``pending_requests`` skip above covers
+            # the in-progress wait; this covers the moment right after
+            # resolution, where ``last_activity`` still dates the SDK event
+            # that raised the request — a request validated after a long
+            # absence would otherwise be over budget on the very next monitor
+            # tick, before the resumed agent emits anything.
             inactivity_elapsed = current_time - max(agent.last_activity, agent.last_pending_resolved_at)
-            absolute_elapsed = current_time - max(agent.state_changed_at, agent.last_pending_resolved_at)
 
-            # Absolute takes precedence for the reason.
-            if absolute_elapsed > absolute_timeout:
-                return ("timeout_assistant_turn_absolute", absolute_elapsed, absolute_timeout)
             if inactivity_elapsed > inactivity_timeout:
                 return ("timeout_assistant_turn", inactivity_elapsed, inactivity_timeout)
             return None

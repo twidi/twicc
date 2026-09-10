@@ -862,12 +862,7 @@ function notifyProcessStateChange(msg, previousState, route) {
         } else if (msg.kill_reason === 'timeout_assistant_turn') {
             toast.session(sessionId, {
                 type: 'warning',
-                title: `${providerLabel} stopped: no activity for 2 hours`,
-            })
-        } else if (msg.kill_reason === 'timeout_assistant_turn_absolute') {
-            toast.session(sessionId, {
-                type: 'warning',
-                title: `${providerLabel} stopped: running for over 6 hours`,
+                title: `${providerLabel} stopped: no activity for 3 hours`,
             })
         }
         // No per-session toast for kill_reason === 'auth_required':
