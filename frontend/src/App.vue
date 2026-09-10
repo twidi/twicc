@@ -694,11 +694,24 @@ function onPeerComposeClose() {
     }
 }
 
-// Edit any project (current project, or one picked from a palette list).
-function openEditProjectDialog(e) {
+// Edit any project (current project, one picked from a palette list, or the
+// project of any session in the sidebar list).
+async function openEditProjectDialog(e) {
     const projectId = e.detail?.projectId
-    const project = projectId ? dataStore.getProject(projectId) : null
-    if (!project) return
+    if (!projectId) return
+    let project = dataStore.getProject(projectId)
+    if (!project) {
+        // The store holds every project, so this only happens on a stale id
+        // (project list not landed yet, or created after it). Re-sync once
+        // rather than silently doing nothing.
+        try {
+            await dataStore.loadProjects()
+        } catch {
+            return
+        }
+        project = dataStore.getProject(projectId)
+        if (!project) return
+    }
     globalEditingProject.value = project
     globalProjectEditRef.value?.open()
 }

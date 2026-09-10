@@ -219,6 +219,13 @@ const hasItemsAfterPinBlock = computed(() => {
     return canToggleReadState.value || (!s.draft && !s.archived) || s.archived
 })
 
+/**
+ * Name of the session's own project, for the menu's "Edit project" entry. The
+ * sidebar list mixes projects (all-projects / workspace mode, pinned or
+ * cross-filter sessions), so the entry names it instead of relying on the route.
+ */
+const menuProjectName = computed(() => store.getProjectDisplayName(props.session.project_id))
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Settings
 // ═══════════════════════════════════════════════════════════════════════════
@@ -371,6 +378,16 @@ const openRenameDialog = inject('openRenameDialog')
 function handleMenuSelect(event) {
     const action = event.detail.item.value
     const session = props.session
+    if (action === 'edit-project') {
+        // Opens the globally-mounted ProjectEditDialog (App.vue) for the
+        // session's own project — same event as the command palette's "Edit
+        // Current Project". Handled before the ephemeral branch: the entry is
+        // offered for every session, ephemeral ones included.
+        window.dispatchEvent(new CustomEvent('twicc:open-edit-project-dialog', {
+            detail: { projectId: session.project_id },
+        }))
+        return
+    }
     if (session.ephemeral && !session.draft) {
         if (action === 'stop') store.stopEphemeralSession(session.id)
         if (action === 'delete-draft') store.discardEphemeralSession(session.id)
@@ -666,6 +683,15 @@ function handleMenuSelect(event) {
                     Discard
                 </wa-dropdown-item>
             </template>
+            <!-- Project actions, last: they leave the session untouched. Offered
+                 on every session, whatever its state — and something always
+                 precedes them (Rename, or the danger block for an ephemeral
+                 session), so the divider is unconditional. -->
+            <wa-divider></wa-divider>
+            <wa-dropdown-item value="edit-project">
+                <wa-icon slot="icon" name="pencil"></wa-icon>
+                Edit project “{{ menuProjectName }}”…
+            </wa-dropdown-item>
         </wa-dropdown>
         <AppTooltip :for="`session-menu-trigger-${session.id}`">Session actions</AppTooltip>
     </div>
