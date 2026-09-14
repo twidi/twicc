@@ -52,7 +52,10 @@ def client():
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE)
 
 
-async def authorize(c, name="ChatGPT", method="none"):
+async def authorize(c, name="ChatGPT", method="none", approve_as=None):
+    """Register, authorize, and approve. ``approve_as`` is the owner's name for
+    the connection — distinct from the ``client_name`` the client declares for
+    itself, and by default the same string."""
     r = await c.post(
         "/mcp/oauth/register",
         json={"client_name": name, "redirect_uris": [REDIRECT], "token_endpoint_auth_method": method},
@@ -75,7 +78,7 @@ async def authorize(c, name="ChatGPT", method="none"):
     parts = urlsplit(r.headers["location"]).fragment.split(":")
     assert len(parts) == 3, r.headers
     request_id, handle, code = parts
-    ok, message = await write(lambda: decide(request_id, True, code, name))
+    ok, message = await write(lambda: decide(request_id, True, code, name if approve_as is None else approve_as))
     assert ok, message
     r = await c.post("/mcp/oauth/continue", json={"id": request_id, "handle": handle})
     assert r.status_code == 200, r.text
@@ -362,6 +365,37 @@ def test_external_sender_names_are_escaped_and_internal_context_restored():
         finally:
             external_caller.reset(token)
     assert prefix_sender_header("Hello", None, recipient_id="target", recipient_spawned_by_id=None) == "Hello"
+
+
+def test_declared_client_name_never_names_a_connection_on_its_own():
+    """Only an owner-vouched name reaches a message header.
+
+    The review dialog prefills its name field with the declared `client_name`
+    (McpConnectionDialog.vue), so confirming it is one click. Clearing it is
+    just as valid: the backend keeps that decision and adds no fallback of its
+    own — the two names stay separate all the way to the header.
+    """
+    async def run():
+        async with client() as c:
+            await authorize(c, name="ChatGPT", approve_as="")
+
+    asyncio.run(run())
+
+    from twicc.cli._drop_request.sender_header import prefix_sender_header
+    from twicc.core.models import McpConnection
+    from twicc.mcp.identity import ExternalCaller, external_caller
+
+    connection = McpConnection.objects.select_related("client").get()
+    assert (connection.name, connection.client.metadata["client_name"]) == ("", "ChatGPT")
+    row = snapshot()["connections"][0]
+    assert (row["name"], row["client_name"]) == ("", "ChatGPT")
+
+    token = external_caller.set(ExternalCaller(connection.id, connection.name))
+    try:
+        text = prefix_sender_header("Hello", None, recipient_id="target", recipient_spawned_by_id=None)
+    finally:
+        external_caller.reset(token)
+    assert text == ":: message via external MCP\n\nHello"
 
 
 def test_disabled_origin_never_serves_private_app(config):

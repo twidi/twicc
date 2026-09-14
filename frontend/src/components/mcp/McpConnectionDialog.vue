@@ -25,17 +25,46 @@ import HelpFeatureLink from '../help/HelpFeatureLink.vue'
 const props = defineProps({ entry: { type: Object, required: true }, review: Boolean })
 const emit = defineEmits(['close'])
 
+const NAME_MAX_CHARS = 80  // the cap `mcp/owner_views.py` enforces on the way in
+
+/**
+ * Seed the connection-name field.
+ *
+ * On review, the field starts from the identity the client declared for
+ * itself, so authorizing turns that string into a name the owner vouched for
+ * — the message header then reads `message via ChatGPT` instead of the
+ * anonymous `message via external MCP`. The declared name is NOT trusted on
+ * its own: the owner reads it, edits it, or clears it before authorizing, and
+ * a cleared field keeps the connection unnamed. Nothing downstream ever falls
+ * back to `client_name` (external MCP design §8).
+ *
+ * Whitespace is flattened and the value capped, matching what the backend
+ * accepts — a declared name has no length limit of its own.
+ */
+function initialName() {
+    if (props.entry.name) return props.entry.name
+    if (!props.review) return ''
+    return (props.entry.client_name || '').replace(/\s+/g, ' ').trim().slice(0, NAME_MAX_CHARS)
+}
+
 const store = useMcpStore()
 const dialogRef = ref(null)
 const firstInput = ref(null)
 const submitButton = ref(null)
 const visible = ref(false)
-const name = ref(props.entry.name || '')
+const name = ref(initialName())
 const code = ref('')
 const busy = ref(false)
 const formId = 'mcp-connection-detail-form'
 const title = computed(() => (props.review ? 'Review MCP connection' : 'MCP connection details'))
 const status = computed(() => (props.entry.revoked ? 'Revoked' : props.entry.active ? 'Active' : 'Awaiting OAuth completion'))
+// Say where a prefilled name comes from, so the owner reads it as a claim to
+// confirm rather than as a name TwiCC established.
+const nameHint = computed(() =>
+    props.review && props.entry.client_name
+        ? 'Used in message headers. The client declared this name — confirm, change, or clear it.'
+        : 'Used in message headers. Without a name, they read "message via external MCP".',
+)
 
 function moment(iso) {
     return iso ? new Date(iso).toLocaleString() : ''
@@ -96,14 +125,14 @@ async function act(action) {
                     autocomplete="off" autocapitalize="characters" spellcheck="false"
                 ></wa-input>
                 <wa-input
-                    label="Connection name (optional)" placeholder="ChatGPT"
-                    :value="name" @input="name = $event.target.value" maxlength="80"
+                    label="Connection name (optional)" placeholder="ChatGPT" :hint="nameHint"
+                    :value="name" @input="name = $event.target.value" :maxlength="NAME_MAX_CHARS"
                 ></wa-input>
             </template>
             <wa-input
                 v-else ref="firstInput"
-                label="Connection name (optional)" placeholder="External MCP"
-                :value="name" @input="name = $event.target.value" maxlength="80"
+                label="Connection name (optional)" placeholder="External MCP" :hint="nameHint"
+                :value="name" @input="name = $event.target.value" :maxlength="NAME_MAX_CHARS"
                 :disabled="entry.revoked"
             ></wa-input>
 

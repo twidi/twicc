@@ -103,6 +103,10 @@ again from the client if the request expires.
 You can give each connection an optional name, such as **ChatGPT** or
 **Desktop assistant**. You can change it later in the connection details.
 
+The review starts the name field from the name the client declares for itself.
+Confirm it, change it, or clear it before you authorize. TwiCC uses only the
+name you approved: a client cannot name itself in your conversations.
+
 Messages sent through that connection carry a header such as **Message via
 ChatGPT**. Without a name, the header says **Message via external MCP**.
 The header identifies the connection, not another TwiCC session.
