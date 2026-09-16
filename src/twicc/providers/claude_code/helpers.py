@@ -776,7 +776,8 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
 
         - **A line TwiCC synthesized.** ``compute`` turns a
           ``<local-command-stdout>`` line into an ``assistant_message``
-          (slash-command acks: ``/goal``, ``/plugin``, compaction notices).
+          (slash-command acks such as ``/goal`` or ``/plugin`` — not every
+          one: ``_LOCAL_COMMAND_FILTERED_PREFIXES`` drops the rest).
           The model never wrote it, so there is no ``stop_reason`` to find.
           Common on a session's own transcript, and the reason to measure
           any of this on the stored items rather than the raw JSONL: on

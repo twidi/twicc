@@ -166,7 +166,7 @@ User + assistant messages only, uniform shape across providers. No tool calls, n
 - `--role user|assistant` — keep only one side.
 - `--contains TEXT` — keep only messages whose text contains the substring. Repeatable and **AND-combined** (a message must contain every term). **Case-insensitive.** Unlike `content`'s `--contains` (which matches the raw JSONL), this matches the extracted `text` shown below — no JSON keys, no tool noise. Applied **before** `--tail`/`--limit`/`--offset`, so paging windows the matching messages.
 - `--is-final true|false|null` — keep only messages whose `is_final` field (see below) has one of these values. Repeatable and **OR-combined** — the opposite of `--contains`, because a message carries a single value, so an AND would always be empty. Omit it and nothing is filtered: **`null` is only ever dropped when you ask for a set without it.** Passing all three is the identity — exactly the no-flag answer. Applied **before** `--tail`/`--limit`/`--offset`.
-- `--limit N` — cap results (default: no cap; 50 with `--paginated`).
+- `--limit N` — cap results. Since the 2026-09-15 cutover a call without it pages at **50**, so pass it (or `--tail`) whenever you need more, and read `has_more`.
 - `--offset N` — skip first N messages (default: 0).
 - `--tail N` — return the last N messages. Mutually exclusive with `--limit`/`--offset`.
 - `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. Without an explicit `--limit` the page size becomes **50** instead of "everything". **Before 2026-09-15 that is opt-in; from that date it is the only behaviour**, so an unfiltered call returns a page rather than the whole session. With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. When nothing filters after extraction — no `--contains`, and no `--is-final` (or one listing all three values, which filters nothing) — `total` counts raw items, a few of which extract to nothing and are dropped, so `has_more` can be a rare false positive, never a false negative.
@@ -182,7 +182,7 @@ User + assistant messages only, uniform shape across providers. No tool calls, n
 
 **`true` is reliable; `null` is not "false".** Several things produce a `null`, and only one of them means "an intermediate message":
 
-- a line TwiCC built itself from a slash-command's output (`/goal`, `/plugin`, compaction notices) — the model never wrote it, so there is no marker to find;
+- a line TwiCC built itself from a slash-command's output (a `/goal` or `/plugin` ack) — the model never wrote it, so there is no marker to find;
 - a message Claude Code split across several JSONL lines, writing the marker on the last one only — common on **subagent** transcripts, rare on a session's own. **This is the intermediate case**;
 - a message the user interrupted, or one cut short by an API error — both *do* end their turn;
 - an older transcript format that carried no marker at all.
@@ -213,7 +213,7 @@ $TWICC session <ID> messages --tail 1
 
 Other patterns:
 - The session's answers, without the commentary: `messages --role assistant --is-final true --tail N` (spanning the session is what you want here — but a bare call pages at **50 oldest**, so ask for the end explicitly, or page with `--limit`/`--offset` and read `has_more`)
-- Only the intermediate chatter, for debugging: `messages --role assistant --is-final false`
+- Only the intermediate chatter, for debugging: `messages --role assistant --is-final false --tail N` (same 50-page cap as above)
 - Last N exchanges: `messages --tail N`
 - Focused window from search: `messages --range A-B`
 - Messages mentioning a term: `messages --contains "auth"`
