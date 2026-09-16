@@ -21,10 +21,8 @@ from twicc.providers.helpers import (
     AgentSettingCategory,
     AgentSettings,
     BaseProviderHelpers,
-    IndexableMessage,
     ModelVersion,
     StatuspageConfig,
-    UserMessage,
     humanize_identifier,
 )
 
@@ -38,7 +36,13 @@ from .constants import (
     UNTRUSTED_PERMISSION_MODE_SYNCED_KEY as _UNTRUSTED_PERMISSION_MODE_SYNCED_KEY,
     UNTRUSTED_PERMISSION_MODES as _UNTRUSTED_PERMISSION_MODES,
 )
-from .canonical import agent_message_text, canonical_call_id, canonical_result_item, user_message_text
+from .canonical import (
+    agent_message_phase,
+    agent_message_text,
+    canonical_call_id,
+    canonical_result_item,
+    user_message_text,
+)
 from .pricing import extract_model_info
 from .streaming_registry import get_streamed_item_registry
 
@@ -58,6 +62,13 @@ logger = logging.getLogger(__name__)
 _TYPE_RESPONSE_ITEM = "response_item"
 _TYPE_EVENT_MSG = "event_msg"
 _RESPONSE_TOOL_RESULT_PAYLOAD_TYPES = frozenset({"function_call_output", "custom_tool_call_output"})
+
+# The two ``AgentMessage.phase`` values Codex emits: the message that closes
+# a turn, and everything it says between tool calls. Both are matched
+# explicitly so a third value Codex might add reports "unknown" instead of
+# silently joining one camp — same rule as Claude's ``stop_reason`` sets.
+_FINAL_ANSWER_PHASE = "final_answer"
+_COMMENTARY_PHASE = "commentary"
 
 if TYPE_CHECKING:
     from twicc.core.models import SessionItem
@@ -705,47 +716,18 @@ class CodexHelpers(BaseProviderHelpers):
     # :mod:`.canonical`). We use that single string both as the
     # searchable text and as the title-suggest input.
 
-    def extract_indexable_text(self, item: SessionItem) -> str:
-        try:
-            parsed = orjson.loads(item.content)
-        except (orjson.JSONDecodeError, TypeError):
-            return ""
-        if not isinstance(parsed, dict):
-            return ""
+    def extract_indexable_text_from_parsed(self, parsed: dict) -> str:
         return user_message_text(parsed) or agent_message_text(parsed) or ""
 
-    def get_user_messages(
-        self,
-        items: Iterable[SessionItem],
-        limit: int | None = None,
-    ) -> list[UserMessage]:
-        out: list[UserMessage] = []
-        for item in items:
-            if limit is not None and len(out) >= limit:
-                break
-            text = self.extract_indexable_text(item)
-            if text:
-                out.append(UserMessage(
-                    line_num=item.line_num,
-                    timestamp=item.timestamp,
-                    text=text,
-                ))
-        return out
-
-    def get_indexable_messages(self, items: Iterable[SessionItem]) -> list[IndexableMessage]:
-        out: list[IndexableMessage] = []
-        for item in items:
-            text = self.extract_indexable_text(item)
-            if not text:
-                continue
-            from_role = "user" if item.kind == ItemKind.USER_MESSAGE else "assistant"
-            out.append(IndexableMessage(
-                line_num=item.line_num,
-                text=text,
-                from_role=from_role,
-                timestamp=item.timestamp,
-            ))
-        return out
+    def is_final_assistant_message(self, parsed: dict) -> bool | None:
+        # One ``AgentMessage`` item = one JSONL line = one message, and the
+        # item carries its own role in the turn. No lookahead needed.
+        phase = agent_message_phase(parsed)
+        if phase == _FINAL_ANSWER_PHASE:
+            return True
+        if phase == _COMMENTARY_PHASE:
+            return False
+        return None
 
     # ------------------------------------------------------------------
     # Tool results

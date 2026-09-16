@@ -170,12 +170,17 @@ def content(
     emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
 
 
+TRI_STATE_TOKENS = {"true": True, "false": False, "null": None}
+"""Wire vocabulary of ``--is-final``: the three JSON literals the field emits."""
+
+
 def messages(
     session_id: str,
     *,
     range_str: str | None = None,
     role: str | None = None,
     contains: list[str] | None = None,
+    is_final: list[str] | None = None,
     limit: int | None = None,
     offset: int = 0,
     tail: int | None = None,
@@ -184,13 +189,18 @@ def messages(
     """Fetch user/assistant messages of a session and print as JSON to stdout.
 
     Output is uniform across providers: a list of
-    ``{line_num, text, role, timestamp}`` produced by the same
+    ``{line_num, text, role, timestamp, is_final}`` produced by the same
     ``get_indexable_messages`` helper used by the full-text search
     indexer (the helper's ``from_role`` field is exposed as ``role``
     on the wire — the wider name was an indexing-side concern). Items
     whose provider-specific text extraction yields an empty string are
     silently dropped (same behaviour as the search indexer), so the
     result may contain fewer entries than ``--limit`` or ``--tail``.
+
+    ``is_final`` tells an assistant message that closes its turn from one
+    of the intermediate ones the model emits between tool calls. ``null``
+    means unknown (always so on a user message); see
+    ``BaseProviderHelpers.is_final_assistant_message``.
 
     ``contains`` is a list of case-insensitive substrings AND-combined (a
     message must contain every term). Unlike ``content``'s raw-JSONL filter, it
@@ -199,15 +209,26 @@ def messages(
     Python, the filter (and, with it, the ``tail``/``limit``/``offset`` window)
     is applied after extraction, on the matching messages.
 
+    The ``is_final`` argument is the matching filter on that field: a list of
+    ``"true"`` / ``"false"`` / ``"null"`` tokens, **OR-combined** (a message
+    matches when its own value is any of them). OR, where ``contains`` is AND,
+    because a message carries a single value — an AND would always be empty.
+    Omitting it filters nothing, so ``null`` is only ever dropped when the
+    caller asks for a set that excludes it. Asking for all three values is the
+    identity: byte-for-byte the no-flag answer, not merely the same entries.
+
     ``paginated`` adds the shared envelope. ``total`` counts what the window was
-    applied to, which differs per branch: with ``contains`` the window sits on
-    the extracted messages, so the count is exact; without it the window sits on
-    the raw items, so the count includes the few that extract to an empty string
-    and are dropped. ``has_more`` can therefore be a (rare) false positive on
-    that branch — never a false negative, so no message is ever hidden behind a
-    ``has_more: false``. Under ``--tail`` the window is reported as the range it
-    actually covers (``offset = total - tail``) and ``has_more`` says whether
-    messages remain *before* it — the only direction that means anything there.
+    applied to, which differs per branch: when something actually filters after
+    extraction — ``contains``, or an ``is_final`` set that leaves a value out —
+    the window sits on the extracted messages, so the count is exact. Otherwise
+    it sits on the raw items, so the count includes the few that extract to an
+    empty string and are dropped; ``has_more`` can then be a (rare) false
+    positive — never a false negative, so no message is ever hidden behind a
+    ``has_more: false``. A vacuous ``is_final`` (all three values) stays on that
+    second branch on purpose, being the identity of the no-flag call. Under
+    ``--tail`` the window is reported as the range it actually covers
+    (``offset = total - tail``) and ``has_more`` says whether messages remain
+    *before* it — the only direction that means anything there.
     """
     import django
 
@@ -225,6 +246,29 @@ def messages(
 
     if role is not None and role not in {"user", "assistant"}:
         emit_error(f"Error: invalid --role '{role}'. Use 'user' or 'assistant'.", code=1)
+
+    # ``None`` means "keep everything", and asking for all three values
+    # collapses to it: that is what makes ``--is-final true --is-final false
+    # --is-final null`` return exactly what no flag at all returns — same
+    # entries, same ``total``, same ``has_more``. Routing it through the
+    # filtering branch instead would give a *different* (and, on the ``total``,
+    # more exact) answer than the no-flag call, which is the one thing an
+    # identity must not do. The price is that a vacuous filter keeps the raw
+    # ``total`` of the cheap branch; see this function's docstring.
+    wanted_is_final = None
+    if is_final:
+        for token in is_final:
+            if token not in TRI_STATE_TOKENS:
+                emit_error(
+                    f"Error: invalid --is-final '{token}'. "
+                    "Use 'true', 'false' or 'null'.",
+                    code=1,
+                )
+        wanted = {TRI_STATE_TOKENS[token] for token in is_final}
+        # Compared against the values, not the token count: an alias token
+        # added to the mapping must not silently break the identity case.
+        if wanted != set(TRI_STATE_TOKENS.values()):
+            wanted_is_final = wanted
 
     if tail is not None:
         if limit is not None or offset:
@@ -250,22 +294,25 @@ def messages(
     qs = SessionItem.objects.filter(**filter_kwargs).order_by("line_num")
     helpers = get_provider_helpers(session.provider)
 
-    if contains:
-        # The substring filter targets the extracted text, so we materialise and
-        # extract everything in range first, filter, then window on the matches.
+    if contains or wanted_is_final is not None:
+        # Both filters read what extraction produces — the text for ``contains``,
+        # the ``is_final`` field for the other — so we materialise and extract
+        # everything in range first, filter, then window on the matches.
         terms = [term.lower() for term in contains]
         matched = [
             msg
             for msg in helpers.get_indexable_messages(list(qs))
             if all(term in msg.text.lower() for term in terms)
+            and (wanted_is_final is None or msg.is_final in wanted_is_final)
         ]
         # The window sits on the extracted messages, already in memory: the total
         # is exact and free, no query and no over-fetch.
         total = len(matched)
         selected = _slice_window(matched, total, limit=limit, offset=offset, tail=tail)
     else:
-        # No text filter: window at the DB level, then extract (existing behaviour —
-        # the window counts raw items, so dropped-empty extractions may shrink the result).
+        # No post-extraction filter: window at the DB level, then extract (existing
+        # behaviour — the window counts raw items, so dropped-empty extractions may
+        # shrink the result).
         total = qs.count() if (tail is not None or paginated) else 0
         items = list(_slice_window(qs, total, limit=limit, offset=offset, tail=tail))
         selected = list(helpers.get_indexable_messages(items))
@@ -276,6 +323,7 @@ def messages(
             "text": msg.text,
             "role": msg.from_role,
             "timestamp": msg.timestamp,
+            "is_final": msg.is_final,
         }
         for msg in selected
     ]

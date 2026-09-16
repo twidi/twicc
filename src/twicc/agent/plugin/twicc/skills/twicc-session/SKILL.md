@@ -165,20 +165,55 @@ User + assistant messages only, uniform shape across providers. No tool calls, n
 - `--range N` or `--range N-M` — filter by JSONL line number (same numbering as `content`). Only user/assistant messages whose `line_num` falls within the range are returned — not the Nth message in the list.
 - `--role user|assistant` — keep only one side.
 - `--contains TEXT` — keep only messages whose text contains the substring. Repeatable and **AND-combined** (a message must contain every term). **Case-insensitive.** Unlike `content`'s `--contains` (which matches the raw JSONL), this matches the extracted `text` shown below — no JSON keys, no tool noise. Applied **before** `--tail`/`--limit`/`--offset`, so paging windows the matching messages.
+- `--is-final true|false|null` — keep only messages whose `is_final` field (see below) has one of these values. Repeatable and **OR-combined** — the opposite of `--contains`, because a message carries a single value, so an AND would always be empty. Omit it and nothing is filtered: **`null` is only ever dropped when you ask for a set without it.** Passing all three is the identity — exactly the no-flag answer. Applied **before** `--tail`/`--limit`/`--offset`.
 - `--limit N` — cap results (default: no cap; 50 with `--paginated`).
 - `--offset N` — skip first N messages (default: 0).
 - `--tail N` — return the last N messages. Mutually exclusive with `--limit`/`--offset`.
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. Without an explicit `--limit` the page size becomes **50** instead of "everything". **Before 2026-09-15 that is opt-in; from that date it is the only behaviour**, so an unfiltered call returns a page rather than the whole session. With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. Without `--contains`, `total` counts raw items — a few extract to nothing and are dropped — so `has_more` can be a rare false positive, never a false negative.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. Without an explicit `--limit` the page size becomes **50** instead of "everything". **Before 2026-09-15 that is opt-in; from that date it is the only behaviour**, so an unfiltered call returns a page rather than the whole session. With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. When nothing filters after extraction — no `--contains`, and no `--is-final` (or one listing all three values, which filters nothing) — `total` counts raw items, a few of which extract to nothing and are dropped, so `has_more` can be a rare false positive, never a false negative.
 
 ```json
-[
-  {"line_num": 3, "text": "Hello, can you help me?", "role": "user", "timestamp": "2025-03-10T14:30:00+00:00"},
-  {"line_num": 4, "text": "Sure — what do you need?", "role": "assistant", "timestamp": "2025-03-10T14:30:02+00:00"}
-]
+{"items": [
+  {"line_num": 3, "text": "Hello, can you help me?", "role": "user", "timestamp": "2025-03-10T14:30:00+00:00", "is_final": null},
+  {"line_num": 4, "text": "Sure — what do you need?", "role": "assistant", "timestamp": "2025-03-10T14:30:02+00:00", "is_final": true}
+ ], "pagination": {"limit": 50, "offset": 0, "total": 2, "has_more": false}}
 ```
 
+`is_final` separates the assistant message that **closes a turn** from the ones it emits between tool calls (a long turn usually has several: talk, run a tool, talk, run a tool, then answer). `true` = the closing one, `false` = an intermediate one, `null` = unknown. A user message is always `null`; an assistant message is `null` when the provider left no marker on that line or wrote one TwiCC does not recognise.
+
+**`true` is reliable; `null` is not "false".** Several things produce a `null`, and only one of them means "an intermediate message":
+
+- a line TwiCC built itself from a slash-command's output (`/goal`, `/plugin`, compaction notices) — the model never wrote it, so there is no marker to find;
+- a message Claude Code split across several JSONL lines, writing the marker on the last one only — common on **subagent** transcripts, rare on a session's own. **This is the intermediate case**;
+- a message the user interrupted, or one cut short by an API error — both *do* end their turn;
+- an older transcript format that carried no marker at all.
+
+Expect `null` to be uncommon on a recent session and frequent on a subagent transcript. So: trust a `true`, and read a `null` as "probably, no proof".
+
 Common patterns:
-- Last agent reply: `messages --role assistant --tail 1`
+
+**Reading one session's answer — take the last message, plain, then look at it. No `--role`, no `--is-final`.**
+
+```bash
+$TWICC session <ID> messages --tail 1
+```
+
+| What comes back | Reading |
+|---|---|
+| `role: assistant`, `is_final: true` | That is the answer. |
+| `role: assistant`, `is_final: false` | Still working, or stopped mid-turn. Retry; do not use the text. |
+| `role: assistant`, `is_final: null` | Use it, but it is no proof the turn ended. |
+| `role: user` | Nothing readable has been said since — the agent has not started, it stopped before its first token, or (if you landed here from the row below) its closing message was empty. `$TWICC process <ID>` tells you whether it is still running (skill: `twicc-process`); the transcript cannot. |
+| **empty `items` list** | The last item carries no readable text — an answer whose text was empty, or a Codex inter-agent dispatch record. **Re-read with `--tail 2` and apply this same table to what comes back**, which may well be the `role: user` row: "the closing message was empty" is a real, terminal outcome, not a glitch to dig past. |
+
+**Widen by one, never more.** A longer window walks back into the *previous* turn, and its closing message carries `is_final: true` — the staleness this table exists to prevent. One trailing unreadable item is all that was ever observed, so `--tail 2` is enough.
+
+(`messages` exits 1 with `session not found` while a freshly created session still has no user message — a third non-answer, not an error to report.)
+
+**Why neither filter here.** `--is-final true` spans the **whole session**, not the current turn, so mid-turn it returns the closing message of a *previous* turn — an answer to an older question, which reads as perfectly valid. Measured live: last user message at line 956, agent still writing at line 1228, and `--role assistant --is-final true --tail 1` returned line **953**. And `--role assistant` alone hides a trailing user message, bringing the same staleness back in the window before the agent's first line.
+
+Other patterns:
+- The session's answers, without the commentary: `messages --role assistant --is-final true --tail N` (spanning the session is what you want here — but a bare call pages at **50 oldest**, so ask for the end explicitly, or page with `--limit`/`--offset` and read `has_more`)
+- Only the intermediate chatter, for debugging: `messages --role assistant --is-final false`
 - Last N exchanges: `messages --tail N`
 - Focused window from search: `messages --range A-B`
 - Messages mentioning a term: `messages --contains "auth"`

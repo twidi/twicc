@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Which message is the answer** — `twicc session <id> messages` now says, for each assistant message, whether it is the one that closes the turn or one of those the agent writes between its tool calls. Reading a session no longer means guessing whether "I'll start by looking at the file" was the reply. A new `--is-final true|false|null` filter keeps only the ones you want, repeatable to accept several. `null` means "cannot tell" — on older transcripts, on a message the user interrupted, or on the ones the agent split across several lines — and it is never dropped unless you ask for a set without it.
+
 ### Changed
 
 - **CLI and RPC listings** — BREAKING CHANGE scheduled for 2026-09-15: on that date the commands that return a list stop returning a plain list and return `{"items": …, "pagination": …}` instead, with no way back to the old shape. Any script or integration that reads their result has to be adjusted before then. You can migrate today by passing `--paginated`, which gives you the new shape now and tells you the total and whether another page follows; from the 15th the flag stays accepted but stops doing anything, and every call switches over on its own. Until then nothing changes unless you ask for it, and each command tells you when you call it without the flag. Affected: `projects`, `workspaces`, `sessions`, `artifacts`, `share`, `processes`, `search`, and `session content` / `messages` / `agents` / `workflows` — batch lookups such as `sessions get` or `processes wait` keep returning a plain list. `session content` and `session messages` also start paging at 50 where they used to return everything, so pass an explicit `--limit` if you read them whole.

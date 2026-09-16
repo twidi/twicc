@@ -422,6 +422,19 @@ def messages(
             "Applied before --tail/--limit/--offset."
         ),
     ),
+    is_final: list[str] = typer.Option(
+        [],
+        "--is-final",
+        help=(
+            "Filter on the `is_final` field: 'true' (the message closing a "
+            "turn), 'false' (one the model emits between tool calls) or "
+            "'null' (unknown). Repeatable and OR-combined — a message matches "
+            "when its own value is any of the listed ones, since it carries a "
+            "single value. Omitted, nothing is filtered: 'null' is only ever "
+            "dropped by asking for a set without it. "
+            "Applied before --tail/--limit/--offset."
+        ),
+    ),
     limit: int = typer.Option(None, "--limit", help=limit_help("messages", None)),
     offset: int = typer.Option(0, "--offset", help="Skip first N messages."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
@@ -430,8 +443,8 @@ def messages(
     """Show all user/assistant messages of a session as JSON (cross-provider)."""
     from twicc.cli.session import messages as session_messages
 
-    session_messages(ctx.obj, range_str=range, role=role, contains=contains, limit=limit, offset=offset,
-                     tail=tail, paginated=paginated)
+    session_messages(ctx.obj, range_str=range, role=role, contains=contains, is_final=is_final,
+                     limit=limit, offset=offset, tail=tail, paginated=paginated)
 
 
 @session_app.command(help=CUTOVER_NOTICE + "List subagents of a session as JSON.")

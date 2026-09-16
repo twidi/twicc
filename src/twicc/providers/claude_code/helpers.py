@@ -18,17 +18,15 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import orjson
 from django.conf import settings
 
-from twicc.core.enums import ItemKind, Provider
+from twicc.core.enums import Provider
 from twicc.pricing import FamilyPrices
 from twicc.providers.helpers import (
     MAX_IMAGE_DIMENSION,
     AgentSettingCategory,
     AgentSettings,
     BaseProviderHelpers,
-    IndexableMessage,
     ModelVersion,
     StatuspageConfig,
-    UserMessage,
     humanize_identifier,
 )
 
@@ -59,6 +57,27 @@ if TYPE_CHECKING:
     from twicc.core.models import Session, SessionItem
 
 logger = logging.getLogger(__name__)
+
+# The Messages API's ``stop_reason`` vocabulary, split by what it says about
+# the turn: four values end it (the model has stopped talking, whether it
+# finished, ran out of room, or declined) and two leave it open. Both sets
+# are listed in full rather than one being the complement of the other, so a
+# value added after this was written reports "unknown" instead of silently
+# joining a camp — guessing there is how a consumer ends up waiting for a
+# reply that already came.
+#
+# The sets come from the API's documented vocabulary, not from what has been
+# observed: a scan of the whole local corpus finds only ``tool_use``,
+# ``end_turn`` and ``stop_sequence`` (plus lines carrying none), never
+# ``max_tokens``, ``refusal`` or ``pause_turn``. Those are listed anyway — a
+# value seen for the first time in production has to be classified right,
+# not reported as unknown.
+#
+# Consumed by :meth:`ClaudeCodeHelpers.is_final_assistant_message` only;
+# ``compute.subagent_turn_boundary`` keeps its own narrower ``end_turn``
+# test on purpose — it drives a live state machine, not a display flag.
+_FINAL_STOP_REASONS = frozenset({"end_turn", "max_tokens", "stop_sequence", "refusal"})
+_CONTINUING_STOP_REASONS = frozenset({"tool_use", "pause_turn"})
 
 
 def _extract_text_from_message_content(content: str | list | None) -> str:
@@ -735,11 +754,7 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
         """Expose Claude Code's :class:`ClaudeCodeModelExtra` flags on the wire."""
         return mv.provider_extra._asdict()
 
-    def extract_indexable_text(self, item: SessionItem) -> str:
-        try:
-            parsed = orjson.loads(item.content)
-        except (orjson.JSONDecodeError, TypeError):
-            return ""
+    def extract_indexable_text_from_parsed(self, parsed: dict) -> str:
         text = _extract_text_from_message_content(get_message_content(parsed))
         if not text:
             return ""
@@ -751,37 +766,58 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
             return command.name
         return text
 
-    def get_user_messages(
-        self,
-        items: Iterable[SessionItem],
-        limit: int | None = None,
-    ) -> list[UserMessage]:
-        out: list[UserMessage] = []
-        for item in items:
-            if limit is not None and len(out) >= limit:
-                break
-            text = self.extract_indexable_text(item)
-            if text:
-                out.append(UserMessage(
-                    line_num=item.line_num,
-                    timestamp=item.timestamp,
-                    text=text,
-                ))
-        return out
+    def is_final_assistant_message(self, parsed: dict) -> bool | None:
+        """Read the verdict off ``message.stop_reason``, line by line.
 
-    def get_indexable_messages(self, items: Iterable[SessionItem]) -> list[IndexableMessage]:
-        out: list[IndexableMessage] = []
-        for item in items:
-            text = self.extract_indexable_text(item)
-            if text:
-                from_role = "user" if item.kind == ItemKind.USER_MESSAGE else "assistant"
-                out.append(IndexableMessage(
-                    line_num=item.line_num,
-                    text=text,
-                    from_role=from_role,
-                    timestamp=item.timestamp,
-                ))
-        return out
+        ``stop_reason`` is absent on a fair share of the lines a messages
+        listing returns — hence ``None`` meaning "unknown", which a caller
+        must never read as ``False``. Several causes, and only one of them
+        means "an intermediate message":
+
+        - **A line TwiCC synthesized.** ``compute`` turns a
+          ``<local-command-stdout>`` line into an ``assistant_message``
+          (slash-command acks: ``/goal``, ``/plugin``, compaction notices).
+          The model never wrote it, so there is no ``stop_reason`` to find.
+          Common on a session's own transcript, and the reason to measure
+          any of this on the stored items rather than the raw JSONL: on
+          disk that line is still typed ``system``, and only the rewrite
+          makes it an assistant message.
+        - **A split message.** The CLI writes one JSONL line per content
+          block and may put the real value on the group's **last** line
+          only. Dominant on *subagent* transcripts, where splitting is
+          constant; these lines really are intermediate, but the value sits
+          on the neighbouring ``tool_use`` line that a messages listing
+          never selects — out of this method's reach by construction.
+        - **A user interruption**, or a mid-stream API error: the line is
+          followed by ``[Request interrupted by user]`` or carries
+          ``isAbortedMidStream``. It is the last one of its turn.
+        - **A format that predates the field.** Old transcripts carry no
+          ``stop_reason`` at all. Nothing to recover.
+
+        A ``True`` stays trustworthy throughout: a message that closes a
+        turn has no tool call after it, so it *is* its group's last line
+        and carries the value whenever the model wrote one.
+
+        No frequency is quoted on purpose. The mix depends on how old the
+        transcripts are and on session vs subagent, it drifts with every
+        file written, and nothing here depends on it — only on ``None``
+        being read as "unknown".
+        """
+        if parsed.get("type") != "assistant":
+            return None
+        message = parsed.get("message")
+        if not isinstance(message, dict):
+            return None
+        stop_reason = message.get("stop_reason")
+        # Not cosmetic: a non-string value is unhashable against the
+        # frozensets below and would raise rather than answer.
+        if not isinstance(stop_reason, str):
+            return None
+        if stop_reason in _FINAL_STOP_REASONS:
+            return True
+        if stop_reason in _CONTINUING_STOP_REASONS:
+            return False
+        return None
 
     def get_tool_results(
         self,

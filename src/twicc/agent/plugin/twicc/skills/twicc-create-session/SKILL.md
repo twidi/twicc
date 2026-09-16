@@ -98,7 +98,7 @@ Creates the session invisible in every user-facing listings, search, and broadca
 - therefore **invoke any TwiCC skill** (every skill goes through the `twicc` CLI),
 - therefore **send a message back to its parent** via `twicc-send-message`.
 
-The child's only output channel is the final assistant message of its turn. **The parent is responsible** for fetching it via `$TWICC session <ID> messages --tail 1` (skill: `twicc-session`). Use these modes for pure "analyst" workers (read code, return a synthesis as text); for anything that needs side effects, pick `bypassPermissions` (Claude Code) or `yolo` (Codex) — alias `open` for both — and accept the broader latitude.
+The child's only output channel is the final assistant message of its turn. **The parent is responsible** for fetching it via `$TWICC session <ID> messages --tail 1` (skill: `twicc-session`). Check the entry's `is_final` field before using it: `true` confirms the turn's closing message, `false` means you read an intermediate one and must retry, `null` means unknown — use the entry, but do not treat it as proof the turn ended. Read too early, a `false` is the difference between the child's answer and "I'll start by reading the file". Use these modes for pure "analyst" workers (read code, return a synthesis as text); for anything that needs side effects, pick `bypassPermissions` (Claude Code) or `yolo` (Codex) — alias `open` for both — and accept the broader latitude.
 
 ### `--no-question-widget`
 
@@ -193,7 +193,7 @@ A `created` status only means the session started and the prompt was handed to t
 - `awaiting_user_input` → blocked on a pending UI dialog. Do NOT call `send-message` — the user must click in the TwiCC UI first. Fetch what's being asked with `$TWICC session <ID> messages --tail 1`.
 - `user_turn` → done; fetch the reply with `$TWICC session <ID> messages --tail 1`.
 - `starting` → still booting; retry shortly.
-- Exit 1 (no process row) → the process finished and was cleaned up. Check `messages --tail 1`: if the last message is from the assistant, the turn completed; if still from the user, the agent likely crashed.
+- Exit 1 (no process row) → the process finished and was cleaned up. Check `messages --tail 1`: if the last message is from the assistant **and its `is_final` is `true`**, the turn completed; `is_final: false` means it stopped mid-turn; `is_final: null` leaves it undecided — the text is probably the answer, but nothing here proves the turn ended; a trailing **user** message means nothing readable came back; an **empty list** means the last item carries no readable text — re-read with `--tail 2` and apply the same checks to what comes back, keeping in mind that "the child's closing message was empty" is a real outcome. Do not widen further: a longer window reaches the previous turn, whose closing message also says `is_final: true`. Read the **last** message and check its field, rather than filtering on `--is-final true`: the filter spans the whole session and would hand you a previous turn's answer.
 
 **Continue the conversation:** once at `user_turn`, post a follow-up with `$TWICC send-message <SESSION_ID> '<text>'` (skill: `twicc-send-message`). To change settings mid-session, use `$TWICC update-session <SESSION_ID> settings ...` (skill: `twicc-update-session`).
 

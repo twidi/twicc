@@ -81,6 +81,24 @@ def agent_message_text(record: dict) -> str | None:
     return _joined_text(_content(_item_of_type(record, "AgentMessage")), "Text")
 
 
+def agent_message_phase(record: dict) -> str | None:
+    """Return an ``AgentMessage`` item's ``phase``, or ``None``.
+
+    Codex tags every assistant message it completes with the role it plays
+    in the turn: ``"commentary"`` for the ones it emits between tool calls,
+    ``"final_answer"`` for the one that closes the turn.
+
+    ``None`` covers three cases the caller must not distinguish: the record
+    is not an ``AgentMessage``, it predates the field, or TwiCC built the
+    item itself (:func:`build_twicc_agent_message` sets no phase).
+    """
+    item = _item_of_type(record, "AgentMessage")
+    if item is None:
+        return None
+    phase = item.get("phase")
+    return phase if isinstance(phase, str) and phase else None
+
+
 def canonical_result_item(record: dict) -> dict | None:
     item = completed_item(record)
     if item is None or item.get("type") not in {"FileChange", "McpToolCall"}:

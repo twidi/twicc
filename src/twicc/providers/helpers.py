@@ -24,7 +24,9 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
-from twicc.core.enums import Provider
+import orjson
+
+from twicc.core.enums import ItemKind, Provider
 from twicc.pricing import FamilyPrices, TokenUsage
 
 logger = logging.getLogger(__name__)
@@ -75,14 +77,23 @@ class UserMessage(NamedTuple):
 
 
 class IndexableMessage(NamedTuple):
-    """One indexable message (user or assistant) for full-text search indexing.
+    """One indexable message (user or assistant), uniform across providers.
 
-    Produced by ``get_indexable_messages``; consumed by the search reindex path.
+    Produced by ``get_indexable_messages``; consumed by the search reindex
+    path (which only reads the first four fields) and by the CLI's
+    ``session messages``.
     """
     line_num: int
     text: str
     from_role: str  # "user" or "assistant"
     timestamp: datetime | None
+    # Whether this is the assistant's *final* message of its turn, as
+    # opposed to one of the intermediate ones it emits between tool calls.
+    # ``None`` means "not applicable or unknown": a user message, or an
+    # assistant line whose provider-side marker is absent (legacy formats,
+    # TwiCC-synthesized items). See
+    # :meth:`BaseProviderHelpers.is_final_assistant_message`.
+    is_final: bool | None = None
 
 
 class AgentSettings(NamedTuple):
@@ -732,7 +743,21 @@ class BaseProviderHelpers:
         e.g. to fetch only the first user message for title suggestion
         via ``get_user_messages(items, limit=1)``.
         """
-        raise NotImplementedError
+        out: list[UserMessage] = []
+        for item in items:
+            if limit is not None and len(out) >= limit:
+                break
+            parsed = self.parse_item_content(item)
+            if parsed is None:
+                continue
+            text = self.extract_indexable_text_from_parsed(parsed)
+            if text:
+                out.append(UserMessage(
+                    line_num=item.line_num,
+                    timestamp=item.timestamp,
+                    text=text,
+                ))
+        return out
 
     def get_first_user_message(self, session_id: str) -> str | None:
         """Return the text of the first user message of ``session_id``, or ``None``.
@@ -759,19 +784,89 @@ class BaseProviderHelpers:
 
         ``items`` are session items already filtered to user/assistant
         messages and ordered by line number.
+
+        Each item's ``content`` is deserialized **once** here and the
+        resulting dict is handed to every per-provider extractor, so
+        adding a field to :class:`IndexableMessage` never costs another
+        parse of the same string.
         """
-        raise NotImplementedError
+        out: list[IndexableMessage] = []
+        for item in items:
+            parsed = self.parse_item_content(item)
+            if parsed is None:
+                continue
+            text = self.extract_indexable_text_from_parsed(parsed)
+            if not text:
+                continue
+            from_role = "user" if item.kind == ItemKind.USER_MESSAGE else "assistant"
+            out.append(IndexableMessage(
+                line_num=item.line_num,
+                text=text,
+                from_role=from_role,
+                timestamp=item.timestamp,
+                is_final=self.is_final_assistant_message(parsed),
+            ))
+        return out
+
+    @staticmethod
+    def parse_item_content(item: SessionItem) -> dict | None:
+        """Deserialize one item's raw JSONL ``content``, or ``None``.
+
+        ``None`` covers every unusable shape: unparseable JSON, a
+        non-string column, and a JSON value that is not an object (no
+        provider ever writes one, but the extractors below all assume a
+        dict). Provider-agnostic: every JSONL line of every provider is a
+        single JSON object.
+
+        The one deserialization point for the message-extraction family —
+        callers pass the returned dict to
+        :meth:`extract_indexable_text_from_parsed` and
+        :meth:`is_final_assistant_message` rather than re-parsing.
+        """
+        try:
+            parsed = orjson.loads(item.content)
+        except (orjson.JSONDecodeError, TypeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
 
     def extract_indexable_text(self, item: SessionItem) -> str:
         """Return the plain-text payload of ``item`` for full-text search indexing.
 
         The empty string is returned when the item is not a chat message,
-        cannot be parsed, or carries no extractable text. Each provider
-        parses its own native message shape (the ``content`` layout, the
-        list-of-text-parts vs. plain-string convention, ...) and produces
-        a single concatenated text string. Used both by the watcher's
-        live indexing path and by the building blocks of
-        :meth:`get_user_messages` / :meth:`get_indexable_messages`.
+        cannot be parsed, or carries no extractable text. Kept as the
+        item-level entry point for callers that hold a ``SessionItem`` and
+        want nothing but the text (the watcher's live indexing path); the
+        message builders above parse once and call
+        :meth:`extract_indexable_text_from_parsed` directly.
+        """
+        parsed = self.parse_item_content(item)
+        if parsed is None:
+            return ""
+        return self.extract_indexable_text_from_parsed(parsed)
+
+    def extract_indexable_text_from_parsed(self, parsed: dict) -> str:
+        """Return the plain-text payload of an already-deserialized JSONL line.
+
+        Each provider parses its own native message shape (the ``content``
+        layout, the list-of-text-parts vs. plain-string convention, ...)
+        and produces a single concatenated text string. The empty string
+        means "no extractable text" — the line is not a chat message, or
+        carries none.
+        """
+        raise NotImplementedError
+
+    def is_final_assistant_message(self, parsed: dict) -> bool | None:
+        """Is this line the assistant's *final* message of its turn?
+
+        An assistant turn usually alternates text and tool calls several
+        times before the reply that closes it. ``True`` marks that closing
+        message, ``False`` an intermediate one.
+
+        ``None`` means the question does not apply or cannot be answered
+        from this line alone: a user message, a non-message line, or an
+        assistant message whose provider-side marker is absent (a legacy
+        JSONL format that predates it, or a line TwiCC synthesized itself).
+        Callers must treat ``None`` as "unknown", never as ``False``.
         """
         raise NotImplementedError
 
