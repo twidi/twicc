@@ -169,6 +169,16 @@ This is CRITICAL for conversation integrity: unquoted, the user's text vanishes
 from the visible conversation (no transcript entry, no visual record) and your
 reply looks ungrounded.
 
+## Stay reachable — run long work in the background
+
+A message sent to you while you work — from the user or another session — is
+queued and reaches you only once your current tool call returns. A call that
+blocks for minutes makes you unreachable for minutes, and stalls the
+orchestration around you.
+
+So when a tool offers the choice, take the background one: a long shell command,
+an internal subagent. Short commands stay in the foreground; keep them short.
+
 ## Workflows
 
 The live progress of a `Workflow` you launch — phases, per-agent status, cost —
