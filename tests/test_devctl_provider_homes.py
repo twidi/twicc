@@ -132,7 +132,7 @@ def test_kill_tmux_refuses_on_the_default_data_dir(devctl, monkeypatch):
     assert exc.value.code == 1
 
 
-def test_kill_tmux_targets_both_suffixed_sockets(devctl, monkeypatch):
+def _kill_tmux_calls(devctl, monkeypatch):
     calls = []
 
     class Result:
@@ -141,6 +141,31 @@ def test_kill_tmux_targets_both_suffixed_sockets(devctl, monkeypatch):
     monkeypatch.setattr(devctl.shutil, "which", lambda name: "/usr/bin/tmux")
     monkeypatch.setattr(devctl.subprocess, "run", lambda argv, **kw: calls.append(argv) or Result())
     devctl.kill_tmux()
+    return calls
+
+
+def test_kill_tmux_targets_the_terminals_socket_while_hybrid_is_off(devctl, monkeypatch):
+    """Hybrid mode is gated off by default, and an unused socket has no server."""
+    monkeypatch.delenv("TWICC_CLAUDE_HYBRID_ENABLED", raising=False)
+
+    calls = _kill_tmux_calls(devctl, monkeypatch)
+
+    terminal_socket, _ = devctl.tmux_socket_names()
+    assert terminal_socket != "twicc"
+    assert calls == [["/usr/bin/tmux", "-L", terminal_socket, "kill-server"]]
+
+
+def test_kill_tmux_targets_both_suffixed_sockets_when_hybrid_is_on(devctl, monkeypatch):
+    """Both sockets are suffixed per data dir, so neither can reach another instance.
+
+    The flag is read from the data dir's ``.env``, which wins over the
+    inherited environment — hence the hostile value in the environment here.
+    """
+    monkeypatch.setenv("TWICC_CLAUDE_HYBRID_ENABLED", "0")
+    devctl.ENV_FILE.write_text("TWICC_CLAUDE_HYBRID_ENABLED=1\n")
+
+    calls = _kill_tmux_calls(devctl, monkeypatch)
+
     terminal_socket, hybrid_socket = devctl.tmux_socket_names()
     assert terminal_socket != "twicc"
     assert calls == [
