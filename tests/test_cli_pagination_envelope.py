@@ -442,7 +442,9 @@ def test_slim_keeps_only_the_listing_projection(project, capsysbinary):
     make_sessions(project, 1)
     cli_sessions.main(project=project.id, slim=True)
     row = read(capsysbinary)[0]
-    assert set(row) == set(SESSION_LISTING_FIELDS)
+    # ``process`` is joined on top of the projection, not part of it — it comes
+    # from ProcessRun, which the query-free serializer cannot read.
+    assert set(row) == set(SESSION_LISTING_FIELDS) | {"process"}
 
 
 def test_slim_is_off_by_default(project, capsysbinary):
@@ -633,7 +635,7 @@ def test_batch_lookup_takes_the_same_projection(project, capsysbinary):
     session = make_sessions(project, 1)[0]
     cli_sessions_get.main([session.id], slim=True)
     row = read(capsysbinary)[0]
-    assert set(row) == set(SESSION_LISTING_FIELDS) | {"known"}
+    assert set(row) == set(SESSION_LISTING_FIELDS) | {"known", "process"}
 
 
 def test_batch_lookup_projects_its_placeholders_too(project, capsysbinary):

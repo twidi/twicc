@@ -66,6 +66,7 @@ The shared scratch is internal plumbing of your tree, not a place the user can b
 - `$TWICC create-session <PROMPT>` — spawn a manager or worker. Skill: `twicc-create-session`.
 - `$TWICC topology self` — map and cost your tree. Skill: `twicc-topology`.
 - `$TWICC processes --spawned-by self` — track your direct children. Skill: `twicc-processes`.
+- One call instead of two: `$TWICC sessions --spawned-by self --slim` carries each child's `process` block (`state`, or `null` when no backend is running), so you get the finished ones too — `processes` only lists the live. See `twicc-orchestration` for the asymmetry.
 - `$TWICC processes wait --spawned-by self ...` / `processes stop --spawned-by self ...` — wait on or stop direct child batches. Skill: `twicc-processes`.
 - `$TWICC session <ID> messages` — pull a child's transcript. Skill: `twicc-session`.
 - `$TWICC send-message <ID> <TEXT>` — steer or follow up one child. Skill: `twicc-send-message`.

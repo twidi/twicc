@@ -8,10 +8,14 @@ listing filters on top would only blur the meaning of placeholder
 entries.
 
 Unknown session_ids (no Session row in the DB) get a placeholder entry
-with ``known: false`` and every other field set to ``null`` so the
+with ``known: false`` and every session field set to ``null`` so the
 output shape is uniform with ``known: true`` entries. Callers can then
 ``zip(ids, output)`` and read any field directly, only checking
 ``known`` when they need to disambiguate.
+
+``process`` is the exception: it is joined from ``ProcessRun``, whose row
+is created BEFORE the watcher writes the ``Session`` row, so an unknown id
+can legitimately carry a live process block.
 """
 
 from __future__ import annotations
@@ -43,7 +47,8 @@ def _build_placeholder_template() -> dict:
     return {k: None for k in serialize_session(sample)}
 
 
-def main(session_ids: list[str], *, slim: bool = False) -> None:
+def main(session_ids: list[str], *, slim: bool = False,
+         include_processes: bool = True) -> None:
     """Emit one JSON entry per session_id (placeholder when missing).
 
     ``slim`` applies the same projection as ``twicc sessions --slim``, on the
@@ -94,5 +99,27 @@ def main(session_ids: list[str], *, slim: bool = False) -> None:
             entry = project(serialize_session(session))
             entry["known"] = True
         results.append(entry)
+
+    if include_processes:
+        # Per entry, AFTER the projection — never into _PLACEHOLDER_TEMPLATE,
+        # which is a module global the MCP server keeps alive across tool
+        # calls: one --processes run would then leave the key in every later
+        # --no-processes one.
+        #
+        # An unknown id is looked up like any other. A ProcessRun row is
+        # created before the watcher writes the Session row, so `known: false`
+        # with a live block is a session that just started, not a bug.
+        from twicc.cli._process_state import (
+            attach_process_blocks,
+            load_process_rows,
+            resolve_listing_twicc_pid,
+        )
+
+        twicc_pid = resolve_listing_twicc_pid()
+        attach_process_blocks(
+            results,
+            load_process_rows(unique_ids, twicc_pid),
+            twicc_pid=twicc_pid, slim=slim,
+        )
 
     emit_json(results)

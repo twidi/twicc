@@ -19,6 +19,7 @@ def main(
     annotation: list[str] | None = None,
     paginated: bool = False,
     slim: bool = False,
+    include_processes: bool = True,
 ) -> None:
     """List sessions as JSON to stdout.
 
@@ -136,5 +137,19 @@ def main(
     data = [serialize_session(s) for s in sessions]
     if slim:
         data = [slim_session(row) for row in data]
+
+    if include_processes:
+        from twicc.cli._process_state import (
+            attach_process_blocks,
+            load_process_rows,
+            resolve_listing_twicc_pid,
+        )
+
+        twicc_pid = resolve_listing_twicc_pid()
+        attach_process_blocks(
+            data,
+            load_process_rows([row["id"] for row in data], twicc_pid),
+            twicc_pid=twicc_pid, slim=slim,
+        )
 
     emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)

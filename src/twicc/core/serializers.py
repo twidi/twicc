@@ -122,13 +122,16 @@ def serialize_network_denial(denial):
 #: matters when you are about to act on one session.
 #:
 #: Distinct from ``TOPOLOGY_SESSION_FIELDS`` (``twicc/cli/topology.py``) and
-#: deliberately so: a tree needs filiation and no visibility state, a flat
-#: listing needs the reverse. Merging them would make a 332-node topology 17%
-#: heavier to serve a listing concern.
+#: deliberately so: a tree carries no visibility state, a flat listing needs
+#: it. Merging them would make a 332-node topology 17% heavier to serve a
+#: listing concern.
 SESSION_LISTING_FIELDS = (
-    # Identity
+    # Identity, filiation included: ``parent_session_id`` is what tells a
+    # subagent apart from a session, which a caller needs to read the
+    # ``process`` block the CLI joins on top (a subagent has no process of its
+    # own, so its block is null — as it is when no backend could be read).
     "id", "project_id", "provider", "title", "annotations",
-    "spawned_by", "spawn_root",
+    "parent_session_id", "spawned_by", "spawn_root",
     # Position in time and budget
     "created_at", "last_new_content_at",
     "context_usage", "context_max", "total_cost",

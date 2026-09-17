@@ -157,6 +157,7 @@ A session goes `starting → assistant_turn → user_turn`, then `dead` when its
 Use process controls as scoped operations:
 
 - List your direct children's live work with `$TWICC processes --spawned-by self`, or narrow it with `$TWICC processes --spawned-by self --annotation status=blocked`.
+- **`sessions` now answers the same question in one call.** Every row carries a `process` block (`--no-processes` drops it), so `$TWICC sessions --spawned-by self --slim` gives you each child's metadata *and* its state, where `processes --spawned-by self` gives the state alone and only for children TwiCC is running. Prefer `processes` when you want just the live ones; prefer `sessions` when you want the whole set and need to see which are done — a child with no live process is absent from one and `"state": "dead"` in the other. One asymmetry to know: `sessions` also drops archived children and any child whose first user message is not indexed yet, so a just-spawned worker can show in `processes` and not in `sessions`.
 - Wait on direct children with `$TWICC processes wait --spawned-by self user_turn dead --timeout <N>`, optionally narrowed by `--annotation`.
 - Stop selected children with `$TWICC processes stop --spawned-by self --annotation status=cancelled --timeout <N>`, or pass explicit ids when you know the exact targets.
 - Abort a subtree deliberately with `$TWICC processes stop <manager_id> --descendants <manager_id> --timeout <N>`; `--descendants` excludes the target, so pass the manager id explicitly too.

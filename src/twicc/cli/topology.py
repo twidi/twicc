@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from twicc.cli._output import emit_error, emit_json
+from twicc.cli._process_state import load_process_rows, serialize_compact_process
 
 
 # Fields kept in each ``nodes[].session`` block by default. The caller can opt
@@ -158,7 +159,7 @@ def build_topology(
             twicc_pid = info.pid if info is not None else None
         if twicc_pid is not None:
             processes_available = True
-            process_rows_by_id = _load_process_rows(ordered_ids, twicc_pid)
+            process_rows_by_id = load_process_rows(ordered_ids, twicc_pid)
 
     nodes = [
         _serialize_topology_node(
@@ -355,20 +356,6 @@ def _compute_node_metrics(
     return metrics_by_id
 
 
-def _load_process_rows(session_ids: list[str], twicc_pid: int) -> dict:
-    from twicc.core.models import ProcessRun
-
-    rows_by_id = {}
-    for row in (
-        ProcessRun.objects
-        .filter(twicc_pid=twicc_pid, session_id__in=session_ids)
-        .order_by("session_id", "-started_at")
-    ):
-        if row.session_id not in rows_by_id:
-            rows_by_id[row.session_id] = row
-    return rows_by_id
-
-
 def _serialize_topology_node(
     session,
     process_row,
@@ -387,7 +374,11 @@ def _serialize_topology_node(
     node = {
         "id": session.id,
         "session": session_payload,
-        "process": _serialize_process(process_row, processes_available=processes_available),
+        # ``None`` when processes were not read at all — topology says so in its
+        # own ``processes`` envelope, so the node does not repeat the reason.
+        "process": (
+            serialize_compact_process(process_row) if processes_available else None
+        ),
         **metrics,
     }
     if matching_ids is not None:
@@ -402,34 +393,6 @@ def _slim_session(serialized: dict) -> dict:
     slim = {field: serialized[field] for field in TOPOLOGY_SESSION_FIELDS}
     slim["directory"] = serialized["git_directory"] or serialized["cwd"]
     return slim
-
-
-def _serialize_process(row, *, processes_available: bool) -> dict | None:
-    if not processes_available:
-        return None
-
-    if row is None:
-        return {
-            "id": None,
-            "state": "dead",
-            "started_at": None,
-            "last_state_change_at": None,
-            "pid": None,
-        }
-
-    from twicc.cli._process_state import project_virtual_state
-
-    return {
-        "id": row.pk,
-        "state": project_virtual_state(row),
-        "started_at": row.started_at.isoformat() if row.started_at else None,
-        "last_state_change_at": (
-            row.last_state_change_at.isoformat()
-            if row.last_state_change_at
-            else None
-        ),
-        "pid": row.agent_pid,
-    }
 
 
 def _processes_reason(requested: bool, available: bool) -> str | None:

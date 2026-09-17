@@ -172,3 +172,102 @@ def serialize_get_result(
     data = serialize_process_row(row, session)
     data["session_known"] = session_known
     return data
+
+
+def load_process_rows(session_ids, twicc_pid: int | None) -> dict:
+    """Return the most recent ``ProcessRun`` per session id, keyed by id.
+
+    Scoped to ``twicc_pid`` because rows outlive the instance that wrote them:
+    the boot cleanup only runs at the *next* startup, so after a crash the
+    table still holds the previous backend's rows, frozen mid-turn. Without
+    the filter they would read as live agents.
+
+    ``twicc_pid=None`` (no live backend) returns nothing rather than querying.
+    The column is nullable — "unknown for rows imported from older schemas" —
+    so a ``None`` reaching the ORM would render ``twicc_pid IS NULL`` and match
+    exactly those legacy rows. The guard lives here rather than at each call
+    site because that failure is silent.
+
+    DEAD rows are deliberately kept: :func:`project_virtual_state` collapses
+    them onto ``"dead"``, which is the answer a listing wants.
+    """
+    if twicc_pid is None:
+        return {}
+
+    from twicc.core.models import ProcessRun
+
+    rows_by_id: dict = {}
+    for row in (
+        ProcessRun.objects
+        .filter(twicc_pid=twicc_pid, session_id__in=session_ids)
+        .order_by("session_id", "-started_at")
+    ):
+        if row.session_id not in rows_by_id:
+            rows_by_id[row.session_id] = row
+    return rows_by_id
+
+
+def serialize_compact_process(row, *, slim: bool = False) -> dict:
+    """Serialize one process row for a payload that already identifies the session.
+
+    Five fields instead of :func:`serialize_process_row`'s nine: ``provider``,
+    ``session_id``, ``session_title`` and ``project_id`` are dropped because
+    the session payload this rides on already carries them, in both
+    projections. ``slim`` narrows further to ``state`` alone.
+
+    ``row=None`` means "the table was read and holds nothing for this session"
+    → ``state="dead"`` with the row-bound fields null. It does NOT mean "could
+    not read": that case is the caller's, and it emits no block at all.
+    """
+    state = project_virtual_state(row)
+    if slim:
+        return {"state": state}
+    return {
+        "id": row.pk if row is not None else None,
+        "state": state,
+        "started_at": (
+            row.started_at.isoformat() if row is not None and row.started_at else None
+        ),
+        "last_state_change_at": (
+            row.last_state_change_at.isoformat()
+            if row is not None and row.last_state_change_at
+            else None
+        ),
+        "pid": row.agent_pid if row is not None else None,
+    }
+
+
+def resolve_listing_twicc_pid() -> int | None:
+    """Pid of the live backend, or ``None`` when none is running.
+
+    Imported inside the function on purpose: the process-family tests patch
+    ``twicc.cli._twicc_info.resolve_live_twicc``, and a module-level import
+    would bind past the patch.
+    """
+    from twicc.cli._twicc_info import resolve_live_twicc
+
+    info = resolve_live_twicc()
+    return info.pid if info is not None else None
+
+
+def attach_process_blocks(entries, rows_by_id, *, twicc_pid, slim: bool) -> None:
+    """Add the ``process`` key to already-serialized session entries, in place.
+
+    ``None`` — no state is available for this row — in two cases the caller
+    does not have to tell apart: no live backend (``twicc_pid`` is ``None``),
+    or a subagent, which runs inside its parent's process and never owns a
+    ``ProcessRun`` row. A consumer that needs to distinguish them reads
+    ``parent_session_id``, which both projections carry.
+
+    Anything else gets a block: a row when one exists, else ``state="dead"``,
+    which is the honest answer once the table could be read — it means "no
+    TwiCC-managed process", not "this session is not running" (TwiCC never
+    started most of the sessions it indexes).
+    """
+    for entry in entries:
+        if twicc_pid is None or entry.get("parent_session_id") is not None:
+            entry["process"] = None
+            continue
+        entry["process"] = serialize_compact_process(
+            rows_by_id.get(entry["id"]), slim=slim,
+        )
