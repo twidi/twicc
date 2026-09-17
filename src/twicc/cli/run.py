@@ -451,8 +451,11 @@ async def run_server(port: int):
         logger.info("Stopping artifacts watcher task...")
         await _cancel_task(artifacts_watcher_task, "Artifacts watcher task")
 
-        logger.info("Stopping hybrid-hooks watcher task...")
-        await _cancel_task(hybrid_hooks_watcher_task, "Hybrid-hooks watcher task")
+        # Only when the gated feature actually started it: a disabled feature
+        # must leave no trace in the logs.
+        if hybrid_hooks_watcher_task is not None:
+            logger.info("Stopping hybrid-hooks watcher task...")
+            await _cancel_task(hybrid_hooks_watcher_task, "Hybrid-hooks watcher task")
 
         # Stop the global search-indexing task(s) (if any ever started)
         # and the coordinator that gated them. Order matters: cancel the

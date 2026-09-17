@@ -173,6 +173,18 @@ def tmux_socket_suffix() -> str:
     return "-" + hashlib.sha256(str(data_dir).encode()).hexdigest()[:8]
 
 
+def hybrid_enabled() -> bool:
+    """Whether hybrid Claude CLI mode is on — mirrors ``settings.CLAUDE_HYBRID_ENABLED``.
+
+    Same truthy values as the backend, and the same precedence: the data dir's
+    ``.env`` wins over the inherited environment. While off, the hybrid socket
+    is never used, so devctl neither names it nor kills it.
+    """
+    key = "TWICC_CLAUDE_HYBRID_ENABLED"
+    value = load_env_file().get(key, os.environ.get(key, ""))
+    return value.strip().lower() in ("1", "true", "yes")
+
+
 def tmux_socket_names() -> tuple[str, str]:
     """``(terminal socket, hybrid socket)`` of this instance (``terminal.py`` constants)."""
     suffix = tmux_socket_suffix()
@@ -180,22 +192,23 @@ def tmux_socket_names() -> tuple[str, str]:
 
 
 def kill_tmux() -> None:
-    """``tmux -L <name> kill-server`` on both of this instance's sockets.
+    """``tmux -L <name> kill-server`` on the sockets this instance uses.
 
     A suffixed tmux server outlives a deleted worktree (its terminals, any
     surviving hybrid CLI): this is the cleanup. Refuses on the default data
-    dir, and is deliberately NOT part of ``stop`` — hybrid CLIs must survive a
-    backend restart by design.
+    dir, and is deliberately NOT part of ``stop`` — a tmux server must survive
+    a backend restart by design.
     """
     if tmux_socket_suffix() == "":
         print("Error: kill-tmux refuses to run on the default data dir (~/.twicc): "
-              "it would kill the main instance's terminals and hybrid CLIs")
+              "it would kill the main instance's tmux servers")
         sys.exit(1)
     tmux = shutil.which("tmux")
     if tmux is None:
         print("tmux is not installed, nothing to kill")
         return
-    for socket_name in tmux_socket_names():
+    terminal_socket, hybrid_socket = tmux_socket_names()
+    for socket_name in [terminal_socket] + ([hybrid_socket] if hybrid_enabled() else []):
         result = subprocess.run([tmux, "-L", socket_name, "kill-server"], capture_output=True)
         outcome = "killed" if result.returncode == 0 else "no server running"
         print(f"  tmux -L {socket_name} kill-server: {outcome}")
@@ -1203,7 +1216,10 @@ def status(processes: dict):
     print_provider_homes()
     print()
     terminal_socket, hybrid_socket = tmux_socket_names()
-    print(f"tmux sockets: terminals -L {terminal_socket}, hybrid CLIs -L {hybrid_socket}")
+    if hybrid_enabled():
+        print(f"tmux sockets: terminals -L {terminal_socket}, hybrid CLIs -L {hybrid_socket}")
+    else:
+        print(f"tmux socket: terminals -L {terminal_socket}")
     print()
     print("Process status:")
     for key, config in processes.items():
@@ -1267,10 +1283,9 @@ COMMANDS:
     restart [target]   Stop then start process(es)
     status             Show running status, port configuration, provider homes, tmux sockets
     logs <target>      Show recent log output
-    kill-tmux          Kill this instance's two tmux servers (terminals + hybrid CLIs);
-                       worktrees only, refuses on ~/.twicc. Not part of stop: hybrid
-                       CLIs survive a backend restart by design. Run it before
-                       deleting a worktree.
+    kill-tmux          Kill this instance's tmux server(s); worktrees only, refuses
+                       on ~/.twicc. Not part of stop: a tmux server survives a
+                       backend restart by design. Run it before deleting a worktree.
     help, --help, -h   Show this help message
 
 TARGETS:
@@ -1321,11 +1336,11 @@ PROVIDER HOMES:
     Never overwrites a provider home already set in the .env.
 
 TMUX SOCKETS:
-    Each instance runs its terminals and hybrid CLIs on its own tmux
-    sockets: `twicc` / `twicc-hybrid` on ~/.twicc, `twicc-<sha8>` /
-    `twicc-hybrid-<sha8>` (sha256 of the data dir) elsewhere. `status`
-    prints them. `kill-tmux` kills both servers of a worktree instance
-    (refused on ~/.twicc); run it before deleting a worktree.
+    Each instance runs its terminals on its own tmux socket: `twicc` on
+    ~/.twicc, `twicc-<sha8>` (sha256 of the data dir) elsewhere. `status`
+    prints the sockets in use. `kill-tmux` kills the tmux server(s) of a
+    worktree instance (refused on ~/.twicc); run it before deleting a
+    worktree.
 
 PORT CONFIGURATION:
     Ports are configured via .env file in the data directory.
