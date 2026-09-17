@@ -43,6 +43,9 @@ $TWICC send-message [OPTIONS] '<SESSION_ID|parent>' ['<PROMPT>']
 - `--attach PATH` (repeatable) — attach a file. Accepted types (sniffed by magic bytes): Claude Code: PNG, JPEG, GIF, WebP, PDF, text/plain; Codex: images only. Per-file cap: 5 MB. Per-batch cap: 100 files, 32 MB. Images are auto-resized to the provider/model's long-edge cap. Over `--remote`, prefix an absolute path with `remote:` to read it on the remote server instead.
 - `--no-expand` — disable `@@` include expansion. By default an `@@/abs/path`, `@@~/path` or `@@{/path with spaces}` marker in the message (or in the file it is read from) is replaced by that file's UTF-8 content, recursively (5 levels max). Inside a file, `@@./path` and `@@../path` resolve against that file's own directory (never the cwd), so only the entry point needs an absolute path; in inline text they are an error. A missing file expands to nothing — a marker alone on its line takes the whole line with it, so includes are optional; a directory, unreadable or non-UTF-8 file is an error; `@@@@` escapes a literal `@@`; the final text is capped at 500 KB. Over `--remote`, markers resolve on the client; use `@@remote:/abs/path` for a file on the remote server.
 - `--timeout SECONDS` — seconds to wait for the server's response (default 30). If the CLI times out, the message may still get delivered.
+- `--wait-reply` — keep going after delivery, until the session answers. See **Following up** below.
+- `--reply-timeout N` — caps that wait. Default **300 s**, which is the ceiling MCP callers are asked to respect — and an MCP client may itself give up on a tool silent that long, so over MCP pass a shorter value and come back rather than riding the default to its end. There is no way to disable it. Requires `--wait-reply`.
+- `--no-reply-text` — report that the answer arrived without returning its text. Requires `--wait-reply`.
 
 ### Target discovery
 
@@ -72,6 +75,8 @@ Symmetrically: an incoming message that opens with this header comes from anothe
 - `project_no_directory`
 - `parent_not_found` — `parent` used but no TwiCC session in the ancestry, or the current session has no `spawned_by` link.
 - `missing_prompt` — no `PROMPT` and no `--attach`: the message would be empty.
+- `requires_wait_reply` — `--reply-timeout` or `--no-reply-text` passed without `--wait-reply`.
+- `invalid_value` — `--reply-timeout` is not > 0.
 
 ### Server (exit 3)
 
@@ -85,8 +90,10 @@ Symmetrically: an incoming message that opens with this header comes from anothe
 
 ## Output format
 
+`last_line` is the transcript cursor at the instant the agent took the message. It ships on every `sent` result, with or without `--wait-reply`.
+
 ```json
-{"status":"sent","session_id":"...","provider":"...","project_id":"...","request_uuid":"..."}
+{"status":"sent","session_id":"...","provider":"...","project_id":"...","request_uuid":"...","last_line":124}
 {"status":"validation_error","errors":[{"field":"SESSION_ID","code":"session_stale","message":"..."}]}
 {"status":"rejected","errors":[{"field":"...","code":"...","message":"..."}],"request_uuid":"..."}
 {"status":"failed","error":"...","request_uuid":"..."}
@@ -112,7 +119,7 @@ $TWICC send-message 4a8352fb-1674-41c0-8a85-0a5a3e4e623a --attach /home/twidi/sc
 $TWICC send-message 4a8352fb-1674-41c0-8a85-0a5a3e4e623a --attach /home/twidi/screenshot.png
 # No PROMPT: the attachment alone is the message.
 $TWICC send-message 4a8352fb-1674-41c0-8a85-0a5a3e4e623a 'Hello'
-# → {"status":"sent","session_id":"...","provider":"claude_code","project_id":"...","request_uuid":"..."}
+# → {"status":"sent","session_id":"...","provider":"claude_code","project_id":"...","request_uuid":"...","last_line":124}
 $TWICC send-message parent 'I finished the sub-task you asked for.'
 # From inside an agent: targets the session that spawned it;
 ```
@@ -136,11 +143,13 @@ A `sent` status only means the message was handed to the agent — not that the 
 $TWICC send-message <SESSION_ID> '<TEXT>' --wait-reply [--reply-timeout N] [--no-reply-text]
 ```
 
-It adds a `reply` block: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, and the answer's `text` (drop it with `--no-reply-text` when you only need the go-ahead). `outcome` is `replied` (the message closing the turn), `provider_error` (the provider refused: quota, outage), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `backend_gone`, or `wait_failed`.
+It adds a `reply` block: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (drop it with `--no-reply-text` when you only need the go-ahead), and `error` on `wait_failed`. `outcome` is `replied` (the message closing the turn), `provider_error` (the provider refused: quota, outage), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `backend_gone`, or `wait_failed`.
 
-**Only a line written after your message counts.** `since_line_num` is the transcript cursor, read server-side the instant the agent took it, so the *previous* turn's closing message can never answer for this one — the trap `process wait` has no way to avoid. A timeout is not a failure: the agent keeps working, and that cursor is what you resume from. The exit code only ever says whether the message was sent.
+**Only a line written after your message counts.** `since_line_num` is the transcript cursor, read server-side the instant the agent took it, so the *previous* turn's closing message is not returned in its place — the trap `process wait` has no way to avoid. Chaining `--wait-reply` calls is safe by construction: each one returns only once the answer is indexed, so the next cursor is always past it. A timeout is not a failure: the agent keeps working, and that cursor is what you resume from. The exit code only ever says whether the message was sent.
 
-An agent blocked on a click in the UI does **not** end the wait — a human can still answer — so the result carries `"awaiting_user_input": true` alongside whatever ended it.
+`since_line_num: 0` on a `replied` means no cursor came back (a backend older than the flag). The wait then started from the top of the turn, so check the answer is the one you expected.
+
+An agent that blocks on a click **during** the turn does not end the wait — a human can still answer — so the result carries `"awaiting_user_input": true` alongside whatever ended it. A target already blocked when you send is a different case: it is refused outright (exit 3, above).
 
 Falling back to the state machine, when you want liveness rather than an answer:
 

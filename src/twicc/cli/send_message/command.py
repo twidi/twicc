@@ -56,11 +56,12 @@ def send_message_cmd(
             "(the provider refused: quota, outage), 'ended' (the turn is over "
             "and nothing closed it), 'timeout', 'backend_gone', or "
             "'wait_failed'. Only a line written after this message counts, so "
-            "the previous turn's answer can never be mistaken for this one's. "
-            "An agent blocked on a click in the UI does not end the wait — a "
-            "human can still answer — so the result carries "
-            "`awaiting_user_input: true` instead. The exit code never changes: "
-            "the message was sent either way, so read `outcome`."
+            "the previous turn's answer is not returned in its place. An "
+            "agent that blocks on a click DURING the turn does not end the "
+            "wait — a human can still answer — so the result carries "
+            "`awaiting_user_input: true` instead (a target already blocked "
+            "when you send is refused outright, exit 3). The exit code never "
+            "changes: the message was sent either way, so read `outcome`."
         ),
     ),
     reply_timeout: float = typer.Option(
@@ -68,9 +69,12 @@ def send_message_cmd(
         "--reply-timeout",
         help=(
             "Seconds --wait-reply may spend waiting (default 300, the ceiling "
-            "MCP callers are asked to respect). A timeout is not a failure and "
-            "nothing is lost — the agent keeps working, and the result carries "
-            "`since_line_num` to resume from. Requires --wait-reply."
+            "MCP callers are asked to respect — an MCP client may itself give "
+            "up on a tool silent that long, so over MCP pass a shorter value "
+            "and come back rather than riding the default to its end). A "
+            "timeout is not a failure and nothing is lost — the agent keeps "
+            "working, and the result carries `since_line_num` to resume from. "
+            "Requires --wait-reply."
         ),
     ),
     no_reply_text: bool = typer.Option(
@@ -107,13 +111,16 @@ def send_message_cmd(
     and its spawn-tree relation to the recipient
     (spawned/parent/sibling/another).
 
-    Asynchronous: a "sent" status only means the message was handed to the
-    agent — not that the agent has finished processing it. To block until it
-    reaches a given state, follow up with
-    "twicc process <SESSION_ID> wait <STATE>... --timeout N". To wait for the
-    end of the turn this message triggers, add --transition so it does not
-    match the idle user_turn the session was already in before the message:
-    "wait user_turn --transition --timeout N".
+    Asynchronous by default: a "sent" status only means the message was
+    handed to the agent — not that the agent has finished processing it.
+
+    Pass --wait-reply to keep going until the session answers and get that
+    answer back with the result, in one call. It waits for the turn THIS
+    message triggers: the reply is matched against a cursor the server reads
+    when the agent takes the message, so the previous turn's closing message
+    is not returned in its place. That is the way to collect an answer; reach
+    for "twicc process <SESSION_ID> wait <STATE>..." only to ask whether a
+    session is still running, not what it said.
     """
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import os

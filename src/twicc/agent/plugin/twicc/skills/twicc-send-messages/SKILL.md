@@ -68,7 +68,7 @@ A single object keyed by session_id, plus a summary:
 {
   "summary": {"total": 3, "succeeded": 2, "failed": 1, "all_succeeded": false},
   "results": {
-    "abc123": {"status": "sent", "session_id": "abc123", "provider": "claude_code", "project_id": "...", "request_uuid": "..."},
+    "abc123": {"status": "sent", "session_id": "abc123", "provider": "claude_code", "project_id": "...", "request_uuid": "...", "last_line": 124},
     "def456": {"status": "rejected", "errors": [{"field": "...", "code": "awaiting_user_input", "message": "..."}], "request_uuid": "..."},
     "typo":   {"status": "validation_error", "errors": [{"field": "SESSION_ID", "code": "session_not_found", "message": "..."}]}
   }

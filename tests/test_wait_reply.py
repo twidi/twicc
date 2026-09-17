@@ -1025,8 +1025,9 @@ def test_send_message_refuses_the_wait_flags_without_the_wait(args, flag):
     assert f"{flag} requires --wait-reply" in result.output
 
 
-def test_send_message_rejects_a_deadline_that_cannot_elapse():
-    result = run_send_cli("--wait-reply", "--reply-timeout", "0")
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_send_message_rejects_a_deadline_that_cannot_elapse(value):
+    result = run_send_cli("--wait-reply", "--reply-timeout", value)
 
     assert result.exit_code == 1
     assert "--reply-timeout must be > 0" in result.output
@@ -1059,3 +1060,158 @@ def test_a_command_with_no_cursor_does_not_grow_a_null_one():
     }})()
 
     assert "last_line" not in build_final(outcome, request_uuid="r", timeout=30)
+
+
+# ---------------------------------------------------------------------------
+# Command wiring — the cursor actually reaches the wait
+# ---------------------------------------------------------------------------
+#
+# ``build_final`` carrying ``last_line`` and the loop honouring a cursor are
+# both locked above, but neither pins the one line that joins them. A mutant
+# replacing the command's ``since_line_num=`` argument with a literal ``0``
+# survived every test in this file — and a run with that mutant is exactly the
+# two-turn failure the field exists to prevent, where the previous turn's
+# closing message answers for the new one.
+
+
+def _run_send_message(monkeypatch, status_data: dict) -> dict:
+    """Drive ``send_message_cmd --wait-reply`` over a stubbed transport.
+
+    Everything the command does before the send is real (prompt resolution,
+    attachment validation, the settings lookup on the row); only the two
+    process boundaries are cut — the drop-request round trip, and the wait
+    loop, which is replaced by a probe returning the arguments it received.
+    """
+    import typer
+
+    from twicc.cli import _wait_reply as wait_reply_module
+    from twicc.cli._drop_request import session_lookup, transport, whoami
+    from twicc.cli._drop_request.polling import PollOutcome
+    from twicc.cli.send_message.command import send_message_cmd
+
+    project = Project.objects.create(id="cursor-wiring-project")
+    session = Session.objects.create(
+        id="cursor-wiring-session", project=project, provider="claude_code",
+    )
+
+    monkeypatch.setattr(transport, "ensure_server_available", lambda: None)
+    monkeypatch.setattr(whoami, "resolve_current_session", lambda: None)
+    monkeypatch.setattr(
+        session_lookup, "lookup_session",
+        lambda sid: type("R", (), {
+            "session_id": session.id, "provider": "claude_code",
+            "spawned_by_id": None,
+        })(),
+    )
+
+    class _Submission:
+        request_uuid = "req-cursor-wiring"
+
+        def cleanup(self):
+            pass
+
+    monkeypatch.setattr(transport, "submit", lambda payload, *, kind: _Submission())
+    monkeypatch.setattr(
+        transport, "wait",
+        lambda sub, timeout_seconds: PollOutcome("sent", status_data, True),
+    )
+
+    seen: dict = {}
+
+    def _probe(session_id, *, since_line_num, timeout, want_text):
+        seen["session_id"] = session_id
+        seen["since_line_num"] = since_line_num
+        return {"outcome": REPLIED}
+
+    monkeypatch.setattr(wait_reply_module, "wait_for_reply_or_degrade", _probe)
+
+    with pytest.raises(typer.Exit):
+        send_message_cmd(
+            session_id=session.id, prompt="hello", no_expand=False, attach=[],
+            wait_reply=True, reply_timeout=None, no_reply_text=False, timeout=30,
+        )
+    return seen
+
+
+@pytest.mark.django_db
+def test_send_message_hands_the_server_cursor_to_the_wait(monkeypatch):
+    seen = _run_send_message(monkeypatch, {
+        "session_id": "cursor-wiring-session", "provider": "claude_code",
+        "project_id": "cursor-wiring-project", "last_line": 87,
+    })
+
+    assert seen["since_line_num"] == 87
+
+
+@pytest.mark.django_db
+def test_send_message_starts_from_zero_when_the_server_sent_no_cursor(monkeypatch):
+    """An older backend, or a result kind that carries no cursor.
+
+    Waiting from 0 then risks returning an earlier message, but the command
+    must still wait rather than crash on the missing key.
+    """
+    seen = _run_send_message(monkeypatch, {
+        "session_id": "cursor-wiring-session", "provider": "claude_code",
+        "project_id": "cursor-wiring-project",
+    })
+
+    assert seen["since_line_num"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Service wiring — where the cursor is produced
+# ---------------------------------------------------------------------------
+#
+# The two tests above pin the CLI end of the chain. This one pins its source:
+# the single line in ``send_message_to_session_from_payload`` that reads
+# ``Session.last_line`` once the agent has taken the message. Deleting it left
+# the whole suite green, while every ``--wait-reply`` would have silently
+# restarted from 0 and returned the previous turn's answer.
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_service_reads_the_cursor_after_the_agent_took_the_message(monkeypatch):
+    """The moment matters as much as the value.
+
+    A cursor read *before* the send would sit below lines the new turn is
+    about to write only by luck; read after, every line past it provably
+    belongs to the turn just triggered. The stub moves ``last_line`` while
+    the send is in flight, so a read placed too early returns the old value.
+    """
+    import asyncio
+
+    from asgiref.sync import sync_to_async
+
+    from twicc.core.services.send_message import send_message_to_session_from_payload
+
+    project = Project.objects.create(id="cursor-service-project", directory="/tmp")
+    session = Session.objects.create(
+        id="cursor-service-session", project=project,
+        provider="claude_code", last_line=100,
+    )
+
+    class _Manager:
+        async def send_to_session(self, session_id, *args, **kwargs):
+            # What the watcher does while the agent starts its turn.
+            await sync_to_async(
+                lambda: Session.objects.filter(id=session_id).update(last_line=137),
+            )()
+
+    class _Registry:
+        def get(self, provider):
+            return _Manager()
+
+    import twicc.agent.registry as registry_module
+    import twicc.core.services.send_message as service_module
+
+    monkeypatch.setattr(registry_module, "get_agent_manager_registry", lambda: _Registry())
+    # Unrelated precondition: the runtime provider gate reads process-wide
+    # state no test sets up.
+    monkeypatch.setattr(service_module, "ensure_provider_running", lambda provider: None)
+
+    result = asyncio.run(send_message_to_session_from_payload(
+        {"session_id": session.id, "text": "hello"},
+    ))
+
+    assert result.success is True
+    assert result.status_extra["last_line"] == 137
