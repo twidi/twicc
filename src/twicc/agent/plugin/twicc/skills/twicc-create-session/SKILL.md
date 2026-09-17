@@ -83,6 +83,42 @@ A flag the chosen provider doesn't support (e.g. `--thinking` on Codex) is silen
 
 **Untrusted projects.** In a project whose trust is *untrusted* — or not yet decided (unknown counts as untrusted) — `permission_mode` is restricted to a safe subset: `bypassPermissions` (Claude Code) / `yolo` (Codex) are unavailable. A session created there resolves `--permission-mode` against that subset — `min`/`safe`/`max` still work, with `max` → the most permissive *allowed* mode (Claude Code `acceptEdits`, Codex `auto_review`) — and an out-of-subset value (e.g. `bypass`) is clamped to the project's untrusted default with a note on stderr. When `--permission-mode` is omitted, the session seeds from the project chain's `permission_mode_if_untrusted` default, then the global untrusted default. See `twicc info agent-settings` → `permission_mode_if_untrusted` for the subset + its aliases. Project trust is a human-only decision; agents never set it.
 
+### `--wait-reply` — create, then wait for the answer
+
+```bash
+$TWICC create-session "<PROMPT>" --wait-reply [--reply-timeout N] [--no-reply-text]
+```
+
+Keeps going after the session is created, until it answers, and adds a `reply` block to the result. One command instead of create, poll, read — and no window in which the answer can slip past you.
+
+```json
+{"status": "created", "request_uuid": "…", "session_id": "01a0c4d2-…",
+ "provider": "claude_code", "project_id": "…",
+ "reply": {"outcome": "replied", "line_num": 19, "is_final": true,
+           "since_line_num": 0, "waited_seconds": 4.3, "text": "OK"}}
+```
+
+- `--no-reply-text` drops `text` and keeps `line_num` — use it when you only need the go-ahead, not the payload in your context. The key is **absent**, never `null`.
+- `--reply-timeout N` caps the wait. Default **300 s**, which is the ceiling MCP callers are asked to respect — so over MCP, treat that default as the cap and come back later rather than raising it. From a shell, raise it freely for a long first turn. There is no way to disable it, though nothing caps how high you set it.
+- Both require `--wait-reply` — passing them alone is an error, not a no-op.
+
+`outcome` says what ended the wait:
+
+| `outcome` | Meaning | What `reply` carries |
+|---|---|---|
+| `replied` | the message closing the turn | that message |
+| `provider_error` | the provider refused the turn (quota, outage) — your request was not the problem and retrying now fails the same way | the error line |
+| `ended` | the turn is over and nothing closed it — a crash, an interruption, an answer whose text was empty, or one whose provider marker is missing (`is_final: null`) | the last thing it said, or `line_num: null` |
+| `timeout` | the deadline passed | the last thing it said, if any; resume from `since_line_num` |
+| `backend_gone` | TwiCC stopped or restarted mid-wait | nothing — the session may well be fine, you just cannot see it from here |
+| `wait_failed` | the wait itself broke (a locked DB, a Ctrl-C) — the session is unaffected | nothing, plus an `error` string |
+
+**An agent blocked on a click does not end the wait.** A tool approval or a question can still be answered by a human, so abandoning would not be certain the way every other early ending is. The wait runs to its deadline and the result carries `"awaiting_user_input": true`, telling you why nothing came. Pass `--no-question-widget` to a session you drive yourself — though it does not rule the case out entirely: an MCP server's elicitation reaches that path in every permission mode.
+
+**A timeout is not a failure.** The agent keeps working and the session is intact — only the waiting stopped. Expect it on a worker whose first turn runs long: raise `--reply-timeout`, or take the `session_id` and come back later. **The exit code never reflects the wait**, only whether the session was created, so a script must read `outcome` rather than `$?`.
+
+The wait reads the **transcript**, not the process state. A session held busy by a Monitor, a live subagent or a pending wake-up has already written its answer long before it goes idle — this reports it at once instead of hours later.
+
 ### Session behavior
 
 - `--mute-on-user-turn` — suppress only this session's finished-working notifications (toast, sound, browser notification, and Apprise user-turn event). Choose it when a controlling agent will read and handle the result. Questions and approvals still notify. The option is independent of `--hidden` and does not change global notification settings.
@@ -98,7 +134,7 @@ Creates the session invisible in every user-facing listings, search, and broadca
 - therefore **invoke any TwiCC skill** (every skill goes through the `twicc` CLI),
 - therefore **send a message back to its parent** via `twicc-send-message`.
 
-The child's only output channel is the final assistant message of its turn. **The parent is responsible** for fetching it via `$TWICC session <ID> messages --tail 1` (skill: `twicc-session`). Check the entry's `is_final` field before using it: `true` confirms the turn's closing message, `false` means you read an intermediate one and must retry, `null` means unknown — use the entry, but do not treat it as proof the turn ended. Read too early, a `false` is the difference between the child's answer and "I'll start by reading the file". Use these modes for pure "analyst" workers (read code, return a synthesis as text); for anything that needs side effects, pick `bypassPermissions` (Claude Code) or `yolo` (Codex) — alias `open` for both — and accept the broader latitude.
+The child's only output channel is the final assistant message of its turn. **The simplest way to collect it is `--wait-reply`** (see above), which creates the session and hands back the answer in one call. Failing that, **the parent is responsible** for fetching it via `$TWICC session <ID> messages --tail 1` (skill: `twicc-session`). Check the entry's `is_final` field before using it: `true` confirms the turn's closing message, `false` means you read an intermediate one and must retry, `null` means unknown — use the entry, but do not treat it as proof the turn ended. Read too early, a `false` is the difference between the child's answer and "I'll start by reading the file". Use these modes for pure "analyst" workers (read code, return a synthesis as text); for anything that needs side effects, pick `bypassPermissions` (Claude Code) or `yolo` (Codex) — alias `open` for both — and accept the broader latitude.
 
 ### `--no-question-widget`
 
@@ -147,6 +183,7 @@ Always pass it to a child you drive yourself. A widget answer travels on the UI 
 
 ```json
 {"status":"created","session_id":"...","provider":"...","project_id":"...","request_uuid":"..."}
+{"status":"created","session_id":"...","...":"...","reply":{"outcome":"replied","line_num":19,"is_final":true,"since_line_num":0,"waited_seconds":4.3,"text":"..."}}
 {"status":"validation_error","errors":[{"field":"--effort","code":"invalid_choice","message":"..."}]}
 {"status":"rejected","errors":[{"field":"...","code":"...","message":"..."}],"request_uuid":"..."}
 {"status":"failed","error":"...","request_uuid":"..."}

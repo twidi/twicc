@@ -17,6 +17,10 @@ from twicc.cli._drop_request.help_strings import (
     provider_help,
 )
 
+# Default ceiling for ``--wait-reply``. 300 s is the limit MCP callers are
+# asked to respect, so the default is safe there without anyone opting in.
+DEFAULT_REPLY_TIMEOUT_SECONDS = 300.0
+
 # Load the user's current providers + presets at module import time so the
 # Typer ``help=`` strings can mention them. Cheap (~30 ms, pure file I/O,
 # no Django) and degrades to "no extra info" on missing / malformed files.
@@ -226,6 +230,51 @@ def create_session_cmd(
             "the server side."
         ),
     ),
+    wait_reply: bool = typer.Option(
+        False,
+        "--wait-reply",
+        help=(
+            "Keep going after the session is created, until it answers. Adds a "
+            "`reply` block to the result carrying the answer's text, its "
+            "`line_num`, and an `outcome` saying what ended the wait: "
+            "'replied' (the message closing the turn), "
+            "'provider_error' (the provider refused the turn: quota, outage), "
+            "'ended' (the turn is over and nothing closed it: a crash, an "
+            "interruption, or an answer whose text was empty), 'timeout', "
+            "'backend_gone' (TwiCC stopped or restarted, so nothing could be "
+            "observed), or 'wait_failed' (the wait itself broke; the session is "
+            "unaffected). An agent blocked on a click in the UI does not end "
+            "the wait — a human can still answer — so the result carries "
+            "`awaiting_user_input: true` instead. The exit code never changes: "
+            "the session was created either way, so read `outcome` rather than "
+            "the status code."
+        ),
+    ),
+    reply_timeout: float = typer.Option(
+        # ``None`` rather than the default value: comparing against 300 would
+        # make an explicit ``--reply-timeout 300`` indistinguishable from not
+        # passing it, and MCP clients that echo defaults send exactly that.
+        None,
+        "--reply-timeout",
+        help=(
+            "Seconds --wait-reply may spend waiting (default 300, the ceiling "
+            "MCP callers are asked to respect). A timeout is not a failure and "
+            "nothing is lost — the agent keeps working, and the result carries "
+            "`since_line_num` to resume from. Raise it for a session whose "
+            "first turn is long; there is no way to wait forever on purpose. "
+            "Requires --wait-reply."
+        ),
+    ),
+    no_reply_text: bool = typer.Option(
+        False,
+        "--no-reply-text",
+        help=(
+            "With --wait-reply, report that the answer arrived without "
+            "returning its text — `line_num` is still there to fetch it. Use "
+            "it when you only need the go-ahead and not the payload in your "
+            "context. Requires --wait-reply."
+        ),
+    ),
 ) -> None:
     """Create a new session by dropping a request file the server picks up.
 
@@ -234,12 +283,14 @@ def create_session_cmd(
     to the current directory as the project, and lets the defaults from
     settings drive model / effort / permission mode / etc.
 
-    Asynchronous: a "created" status only means the session was started and
-    the prompt handed to the agent — not that the agent has finished, which
-    can take a while. It keeps working in the background. To block until it
-    reaches a given state, follow up with
-    "twicc process <SESSION_ID> wait <STATE>... --timeout N" (e.g. user_turn
-    once the reply is complete).
+    Asynchronous by default: a "created" status only means the session was
+    started and the prompt handed to the agent — not that the agent has
+    finished, which can take a while. It keeps working in the background.
+
+    Pass --wait-reply to keep going until it answers and get the answer back
+    with the result, in one call. That is the way to collect a worker's
+    output; reach for "twicc process <SESSION_ID> wait <STATE>..." only to ask
+    whether a session is still running, not what it said.
     """
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import os
@@ -268,6 +319,30 @@ def create_session_cmd(
     )
     from twicc.cli._output import emit_error
     from twicc.providers.helpers import get_provider_helpers
+
+    # Refused rather than ignored: a caller who tuned the wait and forgot to
+    # ask for one would otherwise get the pre-wait behaviour back, silently.
+    # Reported through the structured payload like every other local check —
+    # an MCP client echoing the documented default is exactly who trips the
+    # first one, and it parses `errors`, not stderr prose.
+    wait_errors: list[ValidationError] = []
+    if not wait_reply:
+        for flag, given in (("--reply-timeout", reply_timeout is not None),
+                            ("--no-reply-text", no_reply_text)):
+            if given:
+                wait_errors.append(ValidationError(
+                    flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
+                ))
+    if reply_timeout is not None and reply_timeout <= 0:
+        wait_errors.append(ValidationError(
+            "--reply-timeout", "invalid_value",
+            f"--reply-timeout must be > 0 (got {reply_timeout:g}).",
+        ))
+    if wait_errors:
+        emit_validation_errors(wait_errors)
+        raise typer.Exit(1)
+    if reply_timeout is None:
+        reply_timeout = DEFAULT_REPLY_TIMEOUT_SECONDS
 
     try:
         transport.ensure_server_available()
@@ -499,6 +574,24 @@ def create_session_cmd(
     sub = transport.submit(payload, kind="session:create")
     outcome = transport.wait(sub, timeout_seconds=timeout)
     sub.cleanup()
+
+    if wait_reply and outcome.status == "created":
+        # The session is brand new, so its transcript is empty and any final
+        # message is ours: cursor 0, no risk of catching an earlier turn's
+        # answer the way ``send-message`` would.
+        from twicc.cli._output import emit_json
+        from twicc.cli._drop_request.output import build_final
+        from twicc.cli._wait_reply import wait_for_reply_or_degrade
+
+        final = build_final(outcome, request_uuid=sub.request_uuid, timeout=timeout)
+        final["reply"] = wait_for_reply_or_degrade(
+            final.get("session_id"),
+            since_line_num=0,
+            timeout=reply_timeout,
+            want_text=not no_reply_text,
+        )
+        emit_json(final)
+        raise typer.Exit(0)
 
     emit_final(
         outcome,

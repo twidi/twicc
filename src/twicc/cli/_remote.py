@@ -630,6 +630,12 @@ _WAIT_TIMEOUT_MARGIN = 15.0
 # commands and drop-and-poll mutations all complete well within this.
 _DEFAULT_TIMEOUT = 30.0
 
+# Mirror of ``create_session.command.DEFAULT_REPLY_TIMEOUT_SECONDS``, used when
+# ``--wait-reply`` is passed without an explicit ``--reply-timeout``. Duplicated
+# rather than imported: this module is on the ``--help`` path for every command
+# and must not pull a command module in.
+_DEFAULT_REPLY_TIMEOUT = 300.0
+
 # Connection-establishment timeout (seconds). Kept short and constant: it bounds
 # only the TCP/TLS handshake, never the server's processing time. The per-request
 # read timeout (above) is what accommodates a long-poll ``wait``.
@@ -658,6 +664,8 @@ def _request_timeout(resolved: Resolved) -> httpx.Timeout:
     so an omitted flag leaves it ``None`` (the server will reject the missing
     option fast); in that case fall back to :data:`_DEFAULT_TIMEOUT`.
 
+    ``--wait-reply`` gets the same treatment on top of its own ``--timeout``:
+    the server holds the connection for the drop request *and* the wait.
     Every other command uses :data:`_DEFAULT_TIMEOUT` for both connect and read.
     The connect timeout is always the short, constant :data:`_CONNECT_TIMEOUT`.
     """
@@ -666,6 +674,18 @@ def _request_timeout(resolved: Resolved) -> httpx.Timeout:
         command_timeout = resolved.params.get("timeout")
         if isinstance(command_timeout, (int, float)) and command_timeout > 0:
             read = float(command_timeout) + _WAIT_TIMEOUT_MARGIN
+    elif resolved.params.get("wait_reply"):
+        # ``--wait-reply`` turns an ordinary drop-and-poll command into a long
+        # one: the server holds the connection for the drop request *and* the
+        # wait that follows. Without this the client gives up at
+        # ``_DEFAULT_TIMEOUT`` while the session it just created keeps running,
+        # and the caller never learns its id.
+        reply_timeout = resolved.params.get("reply_timeout")
+        if not isinstance(reply_timeout, (int, float)) or reply_timeout <= 0:
+            reply_timeout = _DEFAULT_REPLY_TIMEOUT
+        command_timeout = resolved.params.get("timeout")
+        base = float(command_timeout) if isinstance(command_timeout, (int, float)) else 0.0
+        read = base + float(reply_timeout) + _WAIT_TIMEOUT_MARGIN
     return httpx.Timeout(read, connect=_CONNECT_TIMEOUT)
 
 
