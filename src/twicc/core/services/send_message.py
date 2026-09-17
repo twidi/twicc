@@ -40,6 +40,11 @@ class SendMessageResult(NamedTuple):
     provider: str | None
     project_id: str | None
     errors: list[SendMessageError] | None
+    # Generic passthrough to the CLI's status payload (see the watcher's
+    # ``_RESULT_ID_FIELDS``). Carries ``last_line`` — the transcript cursor a
+    # ``--wait-reply`` measures "strictly past" against. NEVER put a "status"
+    # key in here.
+    status_extra: dict = {}
 
 
 async def send_message_to_session_from_payload(payload: dict) -> SendMessageResult:
@@ -174,10 +179,20 @@ async def send_message_to_session_from_payload(payload: dict) -> SendMessageResu
             SendMessageError("session", "manager_busy", str(e)),
         ])
 
+    # Read **after** the agent has taken the message, and server-side: it is
+    # the highest line the watcher had indexed at that instant, so every line
+    # past it was written afterwards. A caller reading it itself, once the
+    # command has returned, would be racing the reply it is about to wait for.
+    last_line = await sync_to_async(
+        lambda: Session.objects.filter(id=session_id)
+        .values_list("last_line", flat=True).first()
+    )()
+
     return SendMessageResult(
         success=True,
         session_id=session_id,
         provider=provider.value,
         project_id=session.project_id,
         errors=None,
+        status_extra={"last_line": last_line or 0},
     )

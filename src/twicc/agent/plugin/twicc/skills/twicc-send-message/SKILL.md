@@ -130,6 +130,20 @@ The message is delivered immediately. The recipient picks it up based on its cur
 
 A `sent` status only means the message was handed to the agent — not that the agent has finished processing it.
 
+**To wait for the answer, use `--wait-reply`** — one call, and no window in which the reply can slip past:
+
+```bash
+$TWICC send-message <SESSION_ID> '<TEXT>' --wait-reply [--reply-timeout N] [--no-reply-text]
+```
+
+It adds a `reply` block: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, and the answer's `text` (drop it with `--no-reply-text` when you only need the go-ahead). `outcome` is `replied` (the message closing the turn), `provider_error` (the provider refused: quota, outage), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `backend_gone`, or `wait_failed`.
+
+**Only a line written after your message counts.** `since_line_num` is the transcript cursor, read server-side the instant the agent took it, so the *previous* turn's closing message can never answer for this one — the trap `process wait` has no way to avoid. A timeout is not a failure: the agent keeps working, and that cursor is what you resume from. The exit code only ever says whether the message was sent.
+
+An agent blocked on a click in the UI does **not** end the wait — a human can still answer — so the result carries `"awaiting_user_input": true` alongside whatever ended it.
+
+Falling back to the state machine, when you want liveness rather than an answer:
+
 - Wait for a state: `$TWICC process <SESSION_ID> wait <STATE>... --timeout <N>` blocks until the agent reaches one of the listed states (`starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, `dead`). To wait for the end of the turn this message triggers, add `--transition` so it doesn't match the idle `user_turn` the session was already in before the message: `wait user_turn --transition --timeout <N>`. Skill: `twicc-process`.
 - Check state (snapshot): `$TWICC process <SESSION_ID>` — still working, blocked, or done? Skill: `twicc-process`.
 - Read the reply: `$TWICC session <SESSION_ID> messages --tail 1`. Skill: `twicc-session`.

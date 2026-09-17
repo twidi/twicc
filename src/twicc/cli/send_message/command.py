@@ -45,6 +45,43 @@ def send_message_cmd(
             "server instead."
         ),
     ),
+    wait_reply: bool = typer.Option(
+        False,
+        "--wait-reply",
+        help=(
+            "Keep going after the message is delivered, until the session "
+            "answers. Adds a `reply` block to the result carrying the answer's "
+            "text, its `line_num`, and an `outcome` saying what ended the "
+            "wait: 'replied' (the message closing the turn), 'provider_error' "
+            "(the provider refused: quota, outage), 'ended' (the turn is over "
+            "and nothing closed it), 'timeout', 'backend_gone', or "
+            "'wait_failed'. Only a line written after this message counts, so "
+            "the previous turn's answer can never be mistaken for this one's. "
+            "An agent blocked on a click in the UI does not end the wait — a "
+            "human can still answer — so the result carries "
+            "`awaiting_user_input: true` instead. The exit code never changes: "
+            "the message was sent either way, so read `outcome`."
+        ),
+    ),
+    reply_timeout: float = typer.Option(
+        None,
+        "--reply-timeout",
+        help=(
+            "Seconds --wait-reply may spend waiting (default 300, the ceiling "
+            "MCP callers are asked to respect). A timeout is not a failure and "
+            "nothing is lost — the agent keeps working, and the result carries "
+            "`since_line_num` to resume from. Requires --wait-reply."
+        ),
+    ),
+    no_reply_text: bool = typer.Option(
+        False,
+        "--no-reply-text",
+        help=(
+            "With --wait-reply, report that the answer arrived without "
+            "returning its text — `line_num` is still there to fetch it. "
+            "Requires --wait-reply."
+        ),
+    ),
     timeout: int = typer.Option(
         30,
         "--timeout",
@@ -102,9 +139,32 @@ def send_message_cmd(
         lookup_session,
     )
     from twicc.cli._drop_request.validation import ValidationError
+    from twicc.cli.create_session.command import DEFAULT_REPLY_TIMEOUT_SECONDS
     from twicc.cli._drop_request.whoami import resolve_current_session
     from twicc.cli._output import emit_error
     from twicc.providers.helpers import get_provider_helpers
+
+    # Refused rather than ignored, and through the structured payload like
+    # every other local check: an MCP client echoing the documented default is
+    # exactly who trips the first one, and it parses `errors`, not stderr.
+    wait_errors: list[ValidationError] = []
+    if not wait_reply:
+        for flag, given in (("--reply-timeout", reply_timeout is not None),
+                            ("--no-reply-text", no_reply_text)):
+            if given:
+                wait_errors.append(ValidationError(
+                    flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
+                ))
+    if reply_timeout is not None and reply_timeout <= 0:
+        wait_errors.append(ValidationError(
+            "--reply-timeout", "invalid_value",
+            f"--reply-timeout must be > 0 (got {reply_timeout:g}).",
+        ))
+    if wait_errors:
+        emit_validation_errors(wait_errors)
+        raise typer.Exit(1)
+    if reply_timeout is None:
+        reply_timeout = DEFAULT_REPLY_TIMEOUT_SECONDS
 
     try:
         transport.ensure_server_available()
@@ -247,6 +307,24 @@ def send_message_cmd(
     sub = transport.submit(payload, kind="session:send_message")
     outcome = transport.wait(sub, timeout_seconds=timeout)
     sub.cleanup()
+
+    if wait_reply and outcome.status == "sent":
+        # The cursor comes from the server, read the instant the agent took the
+        # message. Anything past it was written afterwards, which is what keeps
+        # the previous turn's closing message from answering for this one.
+        from twicc.cli._output import emit_json
+        from twicc.cli._drop_request.output import build_final
+        from twicc.cli._wait_reply import wait_for_reply_or_degrade
+
+        final = build_final(outcome, request_uuid=sub.request_uuid, timeout=timeout)
+        final["reply"] = wait_for_reply_or_degrade(
+            final.get("session_id"),
+            since_line_num=final.get("last_line") or 0,
+            timeout=reply_timeout,
+            want_text=not no_reply_text,
+        )
+        emit_json(final)
+        raise typer.Exit(0)
 
     emit_final(
         outcome,

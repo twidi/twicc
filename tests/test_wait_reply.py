@@ -996,3 +996,66 @@ def test_the_mirrored_default_cannot_drift():
     from twicc.cli.create_session.command import DEFAULT_REPLY_TIMEOUT_SECONDS
 
     assert _remote._DEFAULT_REPLY_TIMEOUT == DEFAULT_REPLY_TIMEOUT_SECONDS
+
+
+# --- send-message's half ------------------------------------------------------
+#
+# Its cursor is the one thing that differs from create-session's: read
+# server-side the instant the agent takes the message, it is what keeps the
+# previous turn's closing message from answering for this one.
+
+
+def run_send_cli(*args):
+    from typer.testing import CliRunner
+
+    from twicc.cli import app
+
+    return CliRunner().invoke(app, ["send-message", "some-session", "hi", *args])
+
+
+@pytest.mark.parametrize(("args", "flag"), [
+    (["--reply-timeout", "42"], "--reply-timeout"),
+    (["--no-reply-text"], "--no-reply-text"),
+    (["--reply-timeout", "300"], "--reply-timeout"),
+])
+def test_send_message_refuses_the_wait_flags_without_the_wait(args, flag):
+    result = run_send_cli(*args)
+
+    assert result.exit_code == 1
+    assert f"{flag} requires --wait-reply" in result.output
+
+
+def test_send_message_rejects_a_deadline_that_cannot_elapse():
+    result = run_send_cli("--wait-reply", "--reply-timeout", "0")
+
+    assert result.exit_code == 1
+    assert "--reply-timeout must be > 0" in result.output
+
+
+def test_the_cursor_reaches_the_caller_when_the_service_produced_one():
+    """``last_line`` rides the generic ``status_extra`` passthrough.
+
+    Without it the wait restarts from 0 and the previous turn's closing
+    message answers for this one — which is the exact defect the cursor
+    exists to prevent, and what a real two-turn run showed when the backend
+    was still running a build without the field.
+    """
+    from twicc.cli._drop_request.output import build_final
+
+    outcome = type("O", (), {"status": "sent", "data": {
+        "session_id": "s", "provider": "claude_code", "project_id": "p",
+        "last_line": 1243,
+    }})()
+
+    assert build_final(outcome, request_uuid="r", timeout=30)["last_line"] == 1243
+
+
+def test_a_command_with_no_cursor_does_not_grow_a_null_one():
+    """``create-session`` has no use for it; an absent key says so."""
+    from twicc.cli._drop_request.output import build_final
+
+    outcome = type("O", (), {"status": "created", "data": {
+        "session_id": "s", "provider": "claude_code", "project_id": "p",
+    }})()
+
+    assert "last_line" not in build_final(outcome, request_uuid="r", timeout=30)

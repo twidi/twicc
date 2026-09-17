@@ -34,6 +34,9 @@ _ARTIFACT_BOOKMARK_ID_FIELDS = ("bookmark_id", "session_id", "project_id")
 _PEER_SEND_ID_FIELDS = ("message_id", "peer_id", "peer_status")
 _SHARE_ID_FIELDS = ("share_id",)
 
+# Present on some results, absent on others; never invented as ``null``.
+_OPTIONAL_FIELDS = ("last_line",)
+
 
 def build_final(outcome, *, request_uuid: str, timeout: int) -> dict:
     """Return the final JSON dict for one drop-request outcome.
@@ -67,6 +70,12 @@ def build_final(outcome, *, request_uuid: str, timeout: int) -> dict:
         payload = {"status": outcome.status, "request_uuid": request_uuid}
         for field in id_fields:
             payload[field] = d.get(field)
+        for field in _OPTIONAL_FIELDS:
+            # Copied only when the service produced one, so a command that has
+            # no use for it does not grow a null key. ``last_line`` is the
+            # transcript cursor ``send-message`` hands to ``--wait-reply``.
+            if field in d:
+                payload[field] = d[field]
         return payload
     if outcome.status == "rejected":
         d = outcome.data
