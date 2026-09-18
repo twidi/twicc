@@ -1,16 +1,17 @@
 ---
 name: twicc-session
-description: Inspect or stop a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, list/inspect its workflows, or stop its live agent. Use when you or the user want to examine a session, read conversation content, or explore subagent activity.
-argument-hint: <session_id> [content|messages|agents|plan|stop|workflows|workflow]
+description: Inspect, wait on, or stop a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, list/inspect its workflows, or stop its live agent. Use when you or the user want to examine a session, read conversation content, or explore subagent activity.
+argument-hint: <session_id> [content|messages|agents|plan|wait|stop|workflows|workflow]
 ---
 
 # TwiCC Session
 
-Inspect or stop a single session. Eight sub-commands:
+Inspect, wait on, or stop a single session. Nine sub-commands:
 
 - Default — full session metadata.
 - `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
+- `wait [--from N]` — block until this session says something past the cursor. Use it on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. `--from` is the `line_num` or `since_line_num` a previous wait returned, so a wait that timed out can be resumed exactly where it stopped; omitted, it is the session's current last line. An idle session returns `ended` immediately rather than hanging. Also takes `--timeout` (default 300 s), `--wait-blocked` and `--no-reply-text`, with the same meaning as on `send-message`. **Exit code:** `0` answered or blocked, `5` nothing came, `2` TwiCC stopped, `1` the wait broke — so `$TWICC session <ID> wait && …` chains.
 - `stop` — stop this session's live agent (`--timeout`, `--force` for a SIGKILL without the grace window). Idempotent: stopping an already-stopped session still reports `stopped`. Same operation as `process <ID> stop`, which it is meant to replace.
 - `agents` — list subagents spawned by this session. `--slim` returns the reduced projection (see the `twicc-sessions` skill), about 80% lighter. Rows carry the same `process` block as `sessions`, always `null` here: a subagent runs inside its parent's process and never has one of its own.
 - `plan [PATH] [--list]` — the session's tracked plan documents (both providers): most recently updated one by default, a specific one by path, `--list` to enumerate.

@@ -550,6 +550,60 @@ def messages(
                      limit=limit, offset=offset, tail=tail, paginated=paginated)
 
 
+@session_app.command("wait", help="Block until the session says something new.")
+def _session_wait(
+    ctx: typer.Context,
+    from_line: int = typer.Option(
+        None, "--from",
+        help=(
+            "Only a line strictly past this one counts. Pass the `line_num` "
+            "or `since_line_num` a previous wait handed back, which is what "
+            "makes a timed-out wait resumable. Omitted, it is the session's "
+            "current last line — \"tell me the next thing it says\"."
+        ),
+    ),
+    timeout: float = typer.Option(
+        300.0, "--timeout",
+        help=(
+            "Seconds the wait may last, whatever ends it. Default 300, the "
+            "ceiling MCP callers are asked to respect — an MCP client may "
+            "itself give up on a tool silent that long, so over MCP pass a "
+            "shorter value and come back from the `since_line_num` you got."
+        ),
+    ),
+    wait_blocked: bool = typer.Option(
+        False, "--wait-blocked",
+        help=(
+            "Also stop when the session blocks on a human (a tool approval, a "
+            "pending question) instead of waiting through it — the outcome "
+            "becomes `awaiting_user_input`. OR-combined with the answer, "
+            "which wins a tie."
+        ),
+    ),
+    no_reply_text: bool = typer.Option(
+        False, "--no-reply-text",
+        help=(
+            "Report that the answer arrived without returning its text — "
+            "`line_num` is still there to fetch it."
+        ),
+    ),
+) -> None:
+    """Block until this session produces a message past the cursor.
+
+    Unlike --wait-reply, nothing is sent: this waits on a session someone else
+    started, steered from the UI or spawned earlier. Exit 0 when it answered
+    (or blocked, with --wait-blocked), 5 when no answer came, 2 when TwiCC
+    stopped, 1 when the wait itself broke — so a script can chain on it.
+    """
+    from twicc.cli.session import wait as session_wait
+
+    session_wait(
+        ctx.obj, from_line=from_line, timeout=timeout,
+        want_text=not no_reply_text, stop_when_blocked=wait_blocked,
+    )
+
+
+
 @session_app.command("stop", help="Stop the live agent behind this session.")
 def _session_stop(
     ctx: typer.Context,

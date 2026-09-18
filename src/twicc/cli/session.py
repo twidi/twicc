@@ -2,6 +2,8 @@
 
 import orjson
 
+import typer
+
 from twicc.cli._output import emit_error, emit_json, emit_list, pagination_notice, resolve_limit
 
 
@@ -538,3 +540,56 @@ def workflow(session_id: str, workflow_id: str) -> None:
         emit_error(f"Error: workflow '{workflow_id}' not found for session '{session_id}'.", code=1)
 
     emit_json(_workflow_envelope(run, session.cutoff))
+
+
+def wait(session_id: str, *, from_line: int | None = None, timeout: float,
+         want_text: bool = True, stop_when_blocked: bool = False) -> None:
+    """Block until the session says something past ``from_line``.
+
+    The other waits ride on a command that triggered the turn, so their cursor
+    falls out of the send. Here nothing was sent: the caller names the line to
+    start above, which is the ``line_num`` or ``since_line_num`` a previous
+    wait already handed back. That is what makes a timed-out wait resumable.
+
+    Omitted, the cursor is the session's current ``last_line`` — "tell me the
+    next thing it says". The race that killed ``--transition`` does not apply:
+    a marker read too late never moves again, but a session that is simply
+    idle is observable, and reports ``ended`` rather than hanging.
+    """
+    import django
+
+    django.setup()
+
+    from twicc.cli._wait_reply import (
+        AWAITING,
+        BACKEND_GONE,
+        REPLIED,
+        WAIT_FAILED,
+        wait_for_reply_or_degrade,
+    )
+
+    if timeout <= 0:
+        emit_error(f"Error: --timeout must be > 0 (got {timeout:g}).", code=1)
+    if from_line is not None and from_line < 0:
+        emit_error(f"Error: --from must be >= 0 (got {from_line}).", code=1)
+
+    session = _get_session(session_id)
+    cursor = session.last_line if from_line is None else from_line
+
+    reply = wait_for_reply_or_degrade(
+        session.id, since_line_num=cursor, timeout=timeout,
+        want_text=want_text, stop_when_blocked=stop_when_blocked,
+    )
+    emit_json({"session_id": session.id, "reply": reply})
+
+    # Unlike `--wait-reply`, nothing was sent that must not be reported as a
+    # failure: waiting IS the command, so the exit code is allowed to say how
+    # it went, and a script can chain on it.
+    outcome = reply["outcome"]
+    if outcome in (REPLIED, AWAITING):
+        raise typer.Exit(0)
+    if outcome == BACKEND_GONE:
+        raise typer.Exit(2)
+    if outcome == WAIT_FAILED:
+        raise typer.Exit(1)
+    raise typer.Exit(5)  # timeout, ended, provider_error: no answer came
