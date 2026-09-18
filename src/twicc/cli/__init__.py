@@ -580,7 +580,7 @@ def _session_wait(
             "This is what the wait does with no flag at all, and an answer "
             "keeps ending it once --blocked is added, so naming --reply "
             "changes nothing. It reads like --wait-reply on the commands "
-            "that send, which also has to turn the wait on."
+            "that send, where the wait must additionally be turned on."
         ),
     ),
     blocked: bool = typer.Option(
@@ -611,10 +611,11 @@ def _session_wait(
     an answer still wins a tie. That is the combination --wait-reply /
     --wait-blocked give on the commands that send; the only difference is that
     there the wait must be turned on, and here the command is the wait.
-    Exit 0 when it answered
-    (or blocked, with --blocked), 5 when no answer came, 2 when TwiCC
-    stopped, 1 on a local refusal (a bad --from, a non-positive --wait-timeout, an
-    unknown session) or the wait itself breaking — so a script can chain on it.
+
+    Exit 0 when it answered (or blocked, with --blocked), 5 when no answer
+    came, 2 when TwiCC stopped, 1 on a local refusal (a bad --from, a
+    non-positive --wait-timeout, an unknown session) or the wait itself
+    breaking — so a script can chain on it.
 
     --from is the cursor, and only a line strictly past it counts. An ending
     that consumed a line — `replied`, and `provider_error`, which points at

@@ -238,7 +238,7 @@ For a session **you did not just message**: one spawned earlier, steered from th
 | `timeout`, `ended`, `backend_gone`, `wait_failed`, `awaiting_user_input` | its **`since_line_num`** — nothing was consumed |
 | nothing yet (first call) | omit it: the cursor becomes the session's current last line, "tell me the next thing it says" |
 
-Returns `{"session_id": ..., "reply": {...}}`, the `reply` block being the one `--wait-reply` returns: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (dropped by `--no-reply-text`), `error` on `wait_failed`, and `awaiting_user_input: true` when a human was asked for during the turn.
+Returns `{"session_id": ..., "reply": {...}}`, the `reply` block being the one `--wait-reply` returns: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (dropped by `--no-reply-text`), `error` on `wait_failed`, and `awaiting_user_input: true` when a human was asked for during the turn — attached only to the endings that came back with nothing, since on a `replied` or a `provider_error` it would describe a block that was cleared before the ending arrived.
 
 `outcome` is `replied` (the message closing the turn), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `provider_error` (quota, outage), `backend_gone`, `wait_failed`, or `awaiting_user_input` with `--blocked`.
 
