@@ -64,11 +64,11 @@ def send_message_cmd(
             "changes: the message was sent either way, so read `outcome`."
         ),
     ),
-    reply_timeout: float = typer.Option(
+    wait_timeout: float = typer.Option(
         None,
-        "--reply-timeout",
+        "--wait-timeout",
         help=(
-            "Seconds --wait-reply may spend waiting (default 300, the ceiling "
+            "Seconds the wait may last, whatever ends it — an answer, a block on a human with --wait-blocked, a crash (default 300, the ceiling "
             "MCP callers are asked to respect — an MCP client may itself give "
             "up on a tool silent that long, so over MCP pass a shorter value "
             "and come back rather than riding the default to its end). A "
@@ -159,7 +159,7 @@ def send_message_cmd(
         lookup_session,
     )
     from twicc.cli._drop_request.validation import ValidationError
-    from twicc.cli.create_session.command import DEFAULT_REPLY_TIMEOUT_SECONDS
+    from twicc.cli.create_session.command import DEFAULT_WAIT_TIMEOUT_SECONDS
     from twicc.cli._drop_request.whoami import resolve_current_session
     from twicc.cli._output import emit_error
     from twicc.providers.helpers import get_provider_helpers
@@ -169,23 +169,23 @@ def send_message_cmd(
     # exactly who trips the first one, and it parses `errors`, not stderr.
     wait_errors: list[ValidationError] = []
     if not wait_reply:
-        for flag, given in (("--reply-timeout", reply_timeout is not None),
+        for flag, given in (("--wait-timeout", wait_timeout is not None),
                             ("--no-reply-text", no_reply_text),
                             ("--wait-blocked", wait_blocked)):
             if given:
                 wait_errors.append(ValidationError(
                     flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
                 ))
-    if reply_timeout is not None and reply_timeout <= 0:
+    if wait_timeout is not None and wait_timeout <= 0:
         wait_errors.append(ValidationError(
-            "--reply-timeout", "invalid_value",
-            f"--reply-timeout must be > 0 (got {reply_timeout:g}).",
+            "--wait-timeout", "invalid_value",
+            f"--wait-timeout must be > 0 (got {wait_timeout:g}).",
         ))
     if wait_errors:
         emit_validation_errors(wait_errors)
         raise typer.Exit(1)
-    if reply_timeout is None:
-        reply_timeout = DEFAULT_REPLY_TIMEOUT_SECONDS
+    if wait_timeout is None:
+        wait_timeout = DEFAULT_WAIT_TIMEOUT_SECONDS
 
     try:
         transport.ensure_server_available()
@@ -341,7 +341,7 @@ def send_message_cmd(
         final["reply"] = wait_for_reply_or_degrade(
             final.get("session_id"),
             since_line_num=final.get("last_line") or 0,
-            timeout=reply_timeout,
+            timeout=wait_timeout,
             want_text=not no_reply_text,
             stop_when_blocked=wait_blocked,
         )

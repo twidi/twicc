@@ -105,10 +105,21 @@ def project(db):
     return Project.objects.create(id="-tmp-twicc-wait", directory="/tmp/twicc-wait")
 
 
-def make_session(project, provider="claude_code"):
+@pytest.fixture
+def threaded_project(transactional_db):
+    """Same project, but committed.
+
+    The batch wait runs one thread per session, and a thread gets its own
+    connection: rows held inside the test's own transaction are invisible to
+    it, and writing from one deadlocks against it.
+    """
+    return Project.objects.create(id="-tmp-twicc-wait", directory="/tmp/twicc-wait")
+
+
+def make_session(project, provider="claude_code", session_id="wait-sess"):
     return Session.objects.create(
-        id="wait-sess", project=project, provider=provider,
-        file_path="wait-sess.jsonl", type=SessionType.SESSION,
+        id=session_id, project=project, provider=provider,
+        file_path=f"{session_id}.jsonl", type=SessionType.SESSION,
         created_at=timezone.now(), mtime=1000, last_line=0, user_message_count=1,
     )
 
@@ -429,7 +440,7 @@ def test_an_agent_that_died_before_writing_anything_does_not_cost_the_deadline(
     The watcher writes that row when it first sees the JSONL file; an agent
     that died before writing leaves no file, hence no row, hence no
     ``last_offset`` to compare against. Bounded by its own grace so the caller
-    is not left waiting out ``--reply-timeout`` for a session that never
+    is not left waiting out ``--wait-timeout`` for a session that never
     started.
     """
     monkeypatch.setattr(_wait_reply, "AGENT_FLUSH_SECONDS", 0.02)
@@ -942,12 +953,12 @@ def run_cli(*args):
 
 
 @pytest.mark.parametrize(("args", "flag"), [
-    (["--reply-timeout", "42"], "--reply-timeout"),
+    (["--wait-timeout", "42"], "--wait-timeout"),
     (["--no-reply-text"], "--no-reply-text"),
     (["--wait-blocked"], "--wait-blocked"),
     # The documented default, spelled out: comparing against the value instead
     # of "was it passed" would let this one through silently.
-    (["--reply-timeout", "300"], "--reply-timeout"),
+    (["--wait-timeout", "300"], "--wait-timeout"),
 ])
 def test_the_wait_flags_are_refused_without_the_wait(args, flag):
     result = run_cli("hello", *args)
@@ -958,10 +969,10 @@ def test_the_wait_flags_are_refused_without_the_wait(args, flag):
 
 @pytest.mark.parametrize("value", ["0", "-5"])
 def test_a_deadline_that_cannot_elapse_is_refused(value):
-    result = run_cli("hello", "--wait-reply", "--reply-timeout", value)
+    result = run_cli("hello", "--wait-reply", "--wait-timeout", value)
 
     assert result.exit_code == 1
-    assert "--reply-timeout must be > 0" in result.output
+    assert "--wait-timeout must be > 0" in result.output
 
 
 def test_the_remote_read_timeout_outlasts_the_wait():
@@ -978,11 +989,11 @@ def test_the_remote_read_timeout_outlasts_the_wait():
         return _remote._request_timeout(resolved).read
 
     plain = read_timeout(timeout=30)
-    waiting = read_timeout(timeout=30, wait_reply=True, reply_timeout=None)
-    explicit = read_timeout(timeout=30, wait_reply=True, reply_timeout=900)
+    waiting = read_timeout(timeout=30, wait_reply=True, wait_timeout=None)
+    explicit = read_timeout(timeout=30, wait_reply=True, wait_timeout=900)
 
     assert plain == _remote._DEFAULT_TIMEOUT
-    assert waiting > _remote._DEFAULT_REPLY_TIMEOUT
+    assert waiting > _remote._DEFAULT_WAIT_TIMEOUT
     assert explicit > 900
 
 
@@ -994,9 +1005,9 @@ def test_the_mirrored_default_cannot_drift():
     answers, so the copy is pinned here instead.
     """
     from twicc.cli import _remote
-    from twicc.cli.create_session.command import DEFAULT_REPLY_TIMEOUT_SECONDS
+    from twicc.cli.create_session.command import DEFAULT_WAIT_TIMEOUT_SECONDS
 
-    assert _remote._DEFAULT_REPLY_TIMEOUT == DEFAULT_REPLY_TIMEOUT_SECONDS
+    assert _remote._DEFAULT_WAIT_TIMEOUT == DEFAULT_WAIT_TIMEOUT_SECONDS
 
 
 # --- send-message's half ------------------------------------------------------
@@ -1015,10 +1026,10 @@ def run_send_cli(*args):
 
 
 @pytest.mark.parametrize(("args", "flag"), [
-    (["--reply-timeout", "42"], "--reply-timeout"),
+    (["--wait-timeout", "42"], "--wait-timeout"),
     (["--no-reply-text"], "--no-reply-text"),
     (["--wait-blocked"], "--wait-blocked"),
-    (["--reply-timeout", "300"], "--reply-timeout"),
+    (["--wait-timeout", "300"], "--wait-timeout"),
 ])
 def test_send_message_refuses_the_wait_flags_without_the_wait(args, flag):
     result = run_send_cli(*args)
@@ -1029,10 +1040,10 @@ def test_send_message_refuses_the_wait_flags_without_the_wait(args, flag):
 
 @pytest.mark.parametrize("value", ["0", "-5"])
 def test_send_message_rejects_a_deadline_that_cannot_elapse(value):
-    result = run_send_cli("--wait-reply", "--reply-timeout", value)
+    result = run_send_cli("--wait-reply", "--wait-timeout", value)
 
     assert result.exit_code == 1
-    assert "--reply-timeout must be > 0" in result.output
+    assert "--wait-timeout must be > 0" in result.output
 
 
 def test_the_cursor_reaches_the_caller_when_the_service_produced_one():
@@ -1131,7 +1142,7 @@ def _run_send_message(monkeypatch, status_data: dict, *, wait_blocked: bool = Fa
     with pytest.raises(typer.Exit):
         send_message_cmd(
             session_id=session.id, prompt="hello", no_expand=False, attach=[],
-            wait_reply=True, reply_timeout=None, no_reply_text=False,
+            wait_reply=True, wait_timeout=None, no_reply_text=False,
             wait_blocked=wait_blocked, timeout=30,
         )
     return seen
@@ -1352,3 +1363,110 @@ def test_create_session_forwards_the_blocked_flag(monkeypatch, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert seen["stop_when_blocked"] is True
+
+
+# ---------------------------------------------------------------------------
+# Waiting on several sessions at once
+# ---------------------------------------------------------------------------
+#
+# One thread per session rather than one loop polling all of them: the
+# single-session loop carries the delicate parts — the flush window, the
+# watcher-lag check, the confirming pass — and every test above exercises
+# them. A mechanical extraction would have moved that logic out from under
+# its own coverage.
+
+
+def wait_many(sessions_cursors, **kwargs):
+    from twicc.cli._wait_reply import wait_for_replies
+
+    kwargs.setdefault("timeout", 2.0)
+    kwargs.setdefault("want_text", True)
+    return wait_for_replies(sessions_cursors, **kwargs)
+
+
+def test_each_session_gets_its_own_answer(threaded_project):
+    """Cursors are per session, so are the answers: a shared one would let a
+    chatty session's line close a quiet one's wait."""
+    one = make_session(threaded_project, session_id="many-one")
+    two = make_session(threaded_project, session_id="many-two")
+    process(one, AgentState.ASSISTANT_TURN.value)
+    process(two, AgentState.ASSISTANT_TURN.value)
+    assistant(one, 5, "from one", "end_turn")
+    assistant(two, 9, "from two", "end_turn")
+
+    replies = wait_many({one.id: 0, two.id: 0})
+
+    assert replies[one.id]["text"] == "from one"
+    assert replies[two.id]["text"] == "from two"
+    assert replies[one.id]["line_num"] == 5
+    assert replies[two.id]["line_num"] == 9
+
+
+def test_a_cursor_is_honoured_per_session(threaded_project):
+    """The quiet session's answer sits below its own cursor: it must not be
+    returned, even though the other session's cursor would have let it pass.
+    """
+    one = make_session(threaded_project, session_id="cur-one")
+    two = make_session(threaded_project, session_id="cur-two")
+    process(one, AgentState.ASSISTANT_TURN.value)
+    process(two, AgentState.ASSISTANT_TURN.value)
+    assistant(one, 5, "old news", "end_turn")
+    assistant(two, 9, "fresh", "end_turn")
+
+    replies = wait_many({one.id: 7, two.id: 0}, timeout=0.5)
+
+    assert replies[one.id]["outcome"] == TIMEOUT
+    assert replies[two.id]["outcome"] == REPLIED
+
+
+def test_the_first_answer_ends_the_batch_when_asked(threaded_project):
+    """The others are ``pending``, the word ``processes wait`` already uses:
+    they did not fail, the wait simply stopped caring."""
+    fast = make_session(threaded_project, session_id="first-fast")
+    slow = make_session(threaded_project, session_id="first-slow")
+    process(fast, AgentState.ASSISTANT_TURN.value)
+    process(slow, AgentState.ASSISTANT_TURN.value)
+    assistant(fast, 5, "here", "end_turn")
+
+    replies = wait_many({fast.id: 0, slow.id: 0}, timeout=3.0, first=True)
+
+    assert replies[fast.id]["outcome"] == REPLIED
+    assert replies[slow.id]["outcome"] == "pending"
+
+
+def test_wait_all_waits_for_the_slow_one(threaded_project):
+    """The default. Without it the batch would return on the fast session and
+    the caller would read the slow one's silence as an answer."""
+    fast = make_session(threaded_project, session_id="all-fast")
+    slow = make_session(threaded_project, session_id="all-slow")
+    process(fast, AgentState.ASSISTANT_TURN.value)
+    process(slow, AgentState.ASSISTANT_TURN.value)
+    assistant(fast, 5, "here", "end_turn")
+
+    replies = wait_many({fast.id: 0, slow.id: 0}, timeout=0.5)
+
+    assert replies[fast.id]["outcome"] == REPLIED
+    assert replies[slow.id]["outcome"] == TIMEOUT
+
+
+def test_a_crashed_turn_does_not_end_a_first_batch(threaded_project):
+    """``--wait-first`` asks for an answer, and a turn that ended without one
+    has not given it.
+
+    The pairing is what makes this deterministic: the crashed session concludes
+    on its own, the working one never will. If an ending cut the batch, the
+    worker would come back ``pending`` instead of running out its budget — the
+    first one out would have decided for everyone.
+    """
+    crashed = make_session(threaded_project, session_id="crash-one")
+    working = make_session(threaded_project, session_id="crash-two")
+    process(working, AgentState.ASSISTANT_TURN.value)
+
+    replies = wait_many({crashed.id: 0, working.id: 0}, timeout=1.5, first=True)
+
+    assert replies[crashed.id]["outcome"] == ENDED
+    assert replies[working.id]["outcome"] == TIMEOUT
+
+
+def test_an_empty_batch_waits_for_nothing(project):
+    assert wait_many({}) == {}

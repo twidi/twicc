@@ -630,11 +630,11 @@ _WAIT_TIMEOUT_MARGIN = 15.0
 # commands and drop-and-poll mutations all complete well within this.
 _DEFAULT_TIMEOUT = 30.0
 
-# Mirror of ``create_session.command.DEFAULT_REPLY_TIMEOUT_SECONDS``, used when
-# ``--wait-reply`` is passed without an explicit ``--reply-timeout``. Duplicated
+# Mirror of ``create_session.command.DEFAULT_WAIT_TIMEOUT_SECONDS``, used when
+# ``--wait-reply`` is passed without an explicit ``--wait-timeout``. Duplicated
 # rather than imported: this module is on the ``--help`` path for every command
 # and must not pull a command module in.
-_DEFAULT_REPLY_TIMEOUT = 300.0
+_DEFAULT_WAIT_TIMEOUT = 300.0
 
 # Connection-establishment timeout (seconds). Kept short and constant: it bounds
 # only the TCP/TLS handshake, never the server's processing time. The per-request
@@ -680,12 +680,12 @@ def _request_timeout(resolved: Resolved) -> httpx.Timeout:
         # wait that follows. Without this the client gives up at
         # ``_DEFAULT_TIMEOUT`` while the session it just created keeps running,
         # and the caller never learns its id.
-        reply_timeout = resolved.params.get("reply_timeout")
-        if not isinstance(reply_timeout, (int, float)) or reply_timeout <= 0:
-            reply_timeout = _DEFAULT_REPLY_TIMEOUT
+        wait_timeout = resolved.params.get("wait_timeout")
+        if not isinstance(wait_timeout, (int, float)) or wait_timeout <= 0:
+            wait_timeout = _DEFAULT_WAIT_TIMEOUT
         command_timeout = resolved.params.get("timeout")
         base = float(command_timeout) if isinstance(command_timeout, (int, float)) else 0.0
-        read = base + float(reply_timeout) + _WAIT_TIMEOUT_MARGIN
+        read = base + float(wait_timeout) + _WAIT_TIMEOUT_MARGIN
     return httpx.Timeout(read, connect=_CONNECT_TIMEOUT)
 
 

@@ -61,6 +61,7 @@ def run_batch(
     descendants: str | None = None,
     siblings: str | None = None,
     annotation: list[str] | None = None,
+    after_send: Callable[[dict, dict], None] | None = None,
 ) -> None:
     """Drop one ``kind`` request per resolved session and emit the batch result.
 
@@ -268,15 +269,19 @@ def run_batch(
     )
     failed = total - succeeded
 
-    emit_json({
-        "summary": {
-            "total": total,
-            "succeeded": succeeded,
-            "failed": failed,
-            "all_succeeded": total > 0 and failed == 0,
-        },
-        "results": ordered,
-    })
+    summary = {
+        "total": total,
+        "succeeded": succeeded,
+        "failed": failed,
+        "all_succeeded": total > 0 and failed == 0,
+    }
+    if after_send is not None:
+        # Runs before the emission, and may add to both: `send-messages`
+        # uses it to wait for the answers and attach a `reply` per entry.
+        # Keeping the emission and the exit code in one place is the point.
+        after_send(ordered, summary)
+
+    emit_json({"summary": summary, "results": ordered})
 
     # ``total`` is > 0 here (the empty set returned earlier). Zero successes
     # while every argument was valid → distinct exit 6 so a script can detect

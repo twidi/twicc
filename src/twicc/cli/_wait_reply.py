@@ -79,6 +79,7 @@ REPLIED = "replied"                # a final assistant message landed past the c
 PROVIDER_ERROR = "provider_error"  # the provider refused the turn (quota, outage, ...)
 ENDED = "ended"                    # the turn is over and no final message appeared
 AWAITING = "awaiting_user_input"   # the agent is blocked on a human, and the caller asked to be told
+PENDING = "pending"                # batch only: --wait-first ended the wait before this one concluded
 TIMEOUT = "timeout"                # the deadline passed, the session keeps running
 BACKEND_GONE = "backend_gone"      # TwiCC stopped or restarted: nothing can be observed
 WAIT_FAILED = "wait_failed"        # the wait itself broke; the session is unaffected
@@ -263,8 +264,13 @@ def wait_for_reply(
     timeout: float,
     want_text: bool,
     stop_when_blocked: bool = False,
+    stop_event=None,
 ) -> dict:
     """Poll until the session answers, the turn ends, or ``timeout`` elapses.
+
+    ``stop_event`` lets a batch caller cut this wait short — ``--wait-first``
+    has its answer and the rest no longer matter. It is checked once per tick,
+    so a cut costs at most one poll interval.
 
     Returns the ``reply`` block of the command's JSON payload. ``text`` is
     present only when ``want_text`` and a message was found, never ``null``.
@@ -311,6 +317,9 @@ def wait_for_reply(
         return block
 
     while True:
+        if stop_event is not None and stop_event.is_set():
+            return build(PENDING, last_message)
+
         # TwiCC still there? Read every tick, not once: a backend that stops or
         # restarts mid-wait would otherwise make every later poll see no
         # ``ProcessRun`` row, which reads exactly like a finished turn — the
@@ -440,3 +449,67 @@ def wait_for_reply(
             return build(TIMEOUT, last_message)
 
         time.sleep(POLL_INTERVAL_SECONDS)
+
+
+def wait_for_replies(
+    cursors: dict,
+    *,
+    timeout: float,
+    want_text: bool,
+    stop_when_blocked: bool = False,
+    first: bool = False,
+) -> dict:
+    """Wait on several sessions at once; return one reply block per id.
+
+    ``cursors`` maps session_id → the line each wait starts above, which for a
+    broadcast is the ``last_line`` its own send returned. One shared deadline
+    covers the whole batch, as in ``processes wait``: the sessions are waited
+    on in parallel, so it is a wall-clock budget rather than N × timeout.
+
+    ``first`` stops as soon as one session **answers** — or blocks on a human,
+    when that was asked for. A turn that crashed or was refused does not end
+    the batch: the others may still answer, and the caller asked for an answer.
+    Sessions still waiting when that happens get ``outcome: "pending"``, the
+    word ``processes wait`` already uses for the same situation.
+
+    **One thread per session**, rather than one loop polling all of them. The
+    single-session loop has been through six review rounds and its delicate
+    parts — the flush window, the watcher-lag check, the confirming pass — are
+    exactly what a mechanical extraction would break; this keeps them under
+    the tests that already cover them. The cost is N pollers instead of one,
+    which for a broadcast of a few dozen is a small indexed SELECT each, four
+    times a second.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if not cursors:
+        return {}
+
+    from django.db import connection
+
+    stop = threading.Event()
+
+    def one(session_id: str, cursor: int) -> dict:
+        try:
+            return wait_for_reply(
+                session_id, since_line_num=cursor, timeout=timeout,
+                want_text=want_text, stop_when_blocked=stop_when_blocked,
+                stop_event=stop if first else None,
+            )
+        finally:
+            # Django opens a connection per thread; leaving them behind would
+            # leak one file handle per recipient, per batch.
+            connection.close()
+
+    results: dict = {}
+    with ThreadPoolExecutor(max_workers=len(cursors)) as pool:
+        futures = {
+            pool.submit(one, sid, cursor): sid for sid, cursor in cursors.items()
+        }
+        for future in as_completed(futures):
+            sid = futures[future]
+            results[sid] = future.result()
+            if first and results[sid]["outcome"] in (REPLIED, AWAITING):
+                stop.set()
+    return results

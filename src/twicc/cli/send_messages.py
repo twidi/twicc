@@ -127,6 +127,59 @@ def send_messages_cmd(
             'get status="timeout". Must be > 0.'
         ),
     ),
+    wait_reply: bool = typer.Option(
+        False,
+        "--wait-reply",
+        help=(
+            "Keep going after the batch is delivered, until the recipients "
+            "answer. Adds a `reply` block per entry, the same shape "
+            "`send-message --wait-reply` returns, and `replied` / "
+            "`all_replied` to the summary. Only entries that were actually "
+            "sent are waited on. One shared deadline covers the batch (see "
+            "--wait-timeout): the sessions are waited on in parallel, so it "
+            "is a wall-clock budget, not N x timeout."
+        ),
+    ),
+    wait_timeout: float = typer.Option(
+        None,
+        "--wait-timeout",
+        help=(
+            "Seconds the wait may last, whatever ends it — an answer, a block on a human with --wait-blocked, a crash for the whole batch "
+            "(default 300, the ceiling MCP callers are asked to respect). A "
+            "timeout is not a failure and nothing is lost — the agents keep "
+            "working, and each entry carries `since_line_num` to resume from. "
+            "Requires --wait-reply."
+        ),
+    ),
+    no_reply_text: bool = typer.Option(
+        False,
+        "--no-reply-text",
+        help=(
+            "With --wait-reply, report that the answers arrived without "
+            "returning their text. Requires --wait-reply."
+        ),
+    ),
+    wait_blocked: bool = typer.Option(
+        False,
+        "--wait-blocked",
+        help=(
+            "With --wait-reply, a recipient blocking on a human also ends its "
+            "own wait, with `outcome: awaiting_user_input`, instead of waiting "
+            "through it. OR-combined with the answer, which wins a tie. "
+            "Requires --wait-reply."
+        ),
+    ),
+    wait_first: bool = typer.Option(
+        False,
+        "--wait-first/--wait-all",
+        help=(
+            "--wait-all (default): wait until EVERY recipient has answered. "
+            "--wait-first: stop as soon as ONE has, leaving the rest "
+            "`outcome: pending`. A recipient whose turn crashed or was refused "
+            "never ends a --wait-first batch: the others may still answer, and "
+            "an answer is what was asked for. Requires --wait-reply."
+        ),
+    ),
 ) -> None:
     """Send the same message to several sessions at once.
 
@@ -155,6 +208,7 @@ def send_messages_cmd(
     django.setup()
 
     from twicc.cli._batch_runner import run_batch
+    from twicc.cli.create_session.command import DEFAULT_WAIT_TIMEOUT_SECONDS
     from twicc.cli._drop_request.attachments import (
         AttachmentResizeError,
         validate_and_encode,
@@ -162,6 +216,7 @@ def send_messages_cmd(
     from twicc.cli._drop_request.bootstrap_local import load_local_bootstrap
     from twicc.cli._drop_request.prompt import PromptError, resolve_prompt
     from twicc.cli._drop_request.sender_header import prefix_sender_header
+    from twicc.cli._drop_request.output import emit_validation_errors
     from twicc.cli._drop_request.validation import ValidationError
     from twicc.cli._drop_request.whoami import resolve_current_session
     from twicc.cli._output import emit_error
@@ -238,6 +293,53 @@ def send_messages_cmd(
             "documents": attach_result.documents,
         }
 
+    wait_errors: list[ValidationError] = []
+    if not wait_reply:
+        for flag, given in (("--wait-timeout", wait_timeout is not None),
+                            ("--no-reply-text", no_reply_text),
+                            ("--wait-blocked", wait_blocked),
+                            ("--wait-first", wait_first)):
+            if given:
+                wait_errors.append(ValidationError(
+                    flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
+                ))
+    if wait_timeout is not None and wait_timeout <= 0:
+        wait_errors.append(ValidationError(
+            "--wait-timeout", "invalid_value",
+            f"--wait-timeout must be > 0 (got {wait_timeout:g}).",
+        ))
+    if wait_errors:
+        emit_validation_errors(wait_errors)
+        raise typer.Exit(1)
+
+    def _wait(ordered: dict, summary: dict) -> None:
+        """Wait for the answers, once every send has its final status.
+
+        Only entries that actually reached the agent are waited on: a
+        rejected or timed-out send has no turn to answer it, and waiting on
+        one would burn the whole budget for nothing.
+        """
+        from twicc.cli._wait_reply import REPLIED, wait_for_replies
+
+        cursors = {
+            sid: (entry.get("last_line") or 0)
+            for sid, entry in ordered.items()
+            if entry and entry.get("status") == "sent"
+        }
+        replies = wait_for_replies(
+            cursors,
+            timeout=wait_timeout if wait_timeout is not None else DEFAULT_WAIT_TIMEOUT_SECONDS,
+            want_text=not no_reply_text,
+            stop_when_blocked=wait_blocked,
+            first=wait_first,
+        )
+        for sid, block in replies.items():
+            ordered[sid]["reply"] = block
+        summary["replied"] = sum(
+            1 for b in replies.values() if b["outcome"] == REPLIED
+        )
+        summary["all_replied"] = bool(replies) and summary["replied"] == len(replies)
+
     run_batch(
         session_ids or [],
         kind="session:send_message",
@@ -248,4 +350,5 @@ def send_messages_cmd(
         descendants=descendants,
         siblings=siblings,
         annotation=annotation,
+        after_send=_wait if wait_reply else None,
     )

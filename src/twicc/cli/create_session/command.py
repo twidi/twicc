@@ -19,7 +19,7 @@ from twicc.cli._drop_request.help_strings import (
 
 # Default ceiling for ``--wait-reply``. 300 s is the limit MCP callers are
 # asked to respect, so the default is safe there without anyone opting in.
-DEFAULT_REPLY_TIMEOUT_SECONDS = 300.0
+DEFAULT_WAIT_TIMEOUT_SECONDS = 300.0
 
 # Load the user's current providers + presets at module import time so the
 # Typer ``help=`` strings can mention them. Cheap (~30 ms, pure file I/O,
@@ -250,14 +250,14 @@ def create_session_cmd(
             "the status code."
         ),
     ),
-    reply_timeout: float = typer.Option(
+    wait_timeout: float = typer.Option(
         # ``None`` rather than the default value: comparing against 300 would
-        # make an explicit ``--reply-timeout 300`` indistinguishable from not
+        # make an explicit ``--wait-timeout 300`` indistinguishable from not
         # passing it, and MCP clients that echo defaults send exactly that.
         None,
-        "--reply-timeout",
+        "--wait-timeout",
         help=(
-            "Seconds --wait-reply may spend waiting (default 300, the ceiling "
+            "Seconds the wait may last, whatever ends it — an answer, a block on a human with --wait-blocked, a crash (default 300, the ceiling "
             "MCP callers are asked to respect). A timeout is not a failure and "
             "nothing is lost — the agent keeps working, and the result carries "
             "`since_line_num` to resume from. Raise it for a session whose "
@@ -340,23 +340,23 @@ def create_session_cmd(
     # first one, and it parses `errors`, not stderr prose.
     wait_errors: list[ValidationError] = []
     if not wait_reply:
-        for flag, given in (("--reply-timeout", reply_timeout is not None),
+        for flag, given in (("--wait-timeout", wait_timeout is not None),
                             ("--no-reply-text", no_reply_text),
                             ("--wait-blocked", wait_blocked)):
             if given:
                 wait_errors.append(ValidationError(
                     flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
                 ))
-    if reply_timeout is not None and reply_timeout <= 0:
+    if wait_timeout is not None and wait_timeout <= 0:
         wait_errors.append(ValidationError(
-            "--reply-timeout", "invalid_value",
-            f"--reply-timeout must be > 0 (got {reply_timeout:g}).",
+            "--wait-timeout", "invalid_value",
+            f"--wait-timeout must be > 0 (got {wait_timeout:g}).",
         ))
     if wait_errors:
         emit_validation_errors(wait_errors)
         raise typer.Exit(1)
-    if reply_timeout is None:
-        reply_timeout = DEFAULT_REPLY_TIMEOUT_SECONDS
+    if wait_timeout is None:
+        wait_timeout = DEFAULT_WAIT_TIMEOUT_SECONDS
 
     try:
         transport.ensure_server_available()
@@ -601,7 +601,7 @@ def create_session_cmd(
         final["reply"] = wait_for_reply_or_degrade(
             final.get("session_id"),
             since_line_num=0,
-            timeout=reply_timeout,
+            timeout=wait_timeout,
             want_text=not no_reply_text,
             stop_when_blocked=wait_blocked,
         )

@@ -44,7 +44,7 @@ $TWICC send-message [OPTIONS] '<SESSION_ID|parent>' ['<PROMPT>']
 - `--no-expand` — disable `@@` include expansion. By default an `@@/abs/path`, `@@~/path` or `@@{/path with spaces}` marker in the message (or in the file it is read from) is replaced by that file's UTF-8 content, recursively (5 levels max). Inside a file, `@@./path` and `@@../path` resolve against that file's own directory (never the cwd), so only the entry point needs an absolute path; in inline text they are an error. A missing file expands to nothing — a marker alone on its line takes the whole line with it, so includes are optional; a directory, unreadable or non-UTF-8 file is an error; `@@@@` escapes a literal `@@`; the final text is capped at 500 KB. Over `--remote`, markers resolve on the client; use `@@remote:/abs/path` for a file on the remote server.
 - `--timeout SECONDS` — seconds to wait for the server's response (default 30). If the CLI times out, the message may still get delivered.
 - `--wait-reply` — keep going after delivery, until the session answers. See **Following up** below.
-- `--reply-timeout N` — caps that wait. Default **300 s**, which is the ceiling MCP callers are asked to respect — and an MCP client may itself give up on a tool silent that long, so over MCP pass a shorter value and come back rather than riding the default to its end. There is no way to disable it. Requires `--wait-reply`.
+- `--wait-timeout N` — caps that wait, whatever ends it. Default **300 s**, which is the ceiling MCP callers are asked to respect — and an MCP client may itself give up on a tool silent that long, so over MCP pass a shorter value and come back rather than riding the default to its end. There is no way to disable it. Requires `--wait-reply`.
 - `--no-reply-text` — report that the answer arrived without returning its text. Requires `--wait-reply`.
 - `--wait-blocked` — with `--wait-reply`, also stop when the session blocks on a human (a tool approval, a pending question) instead of waiting through it; the outcome becomes `awaiting_user_input`. **OR-combined** with the reply wait — whichever happens first ends it, and an answer wins a tie. Off by default: waiting through a block is right whenever a human is there to clear it, and the case where nobody is (a `--hidden` session) is the case where blocking cannot happen at all.
 
@@ -76,8 +76,8 @@ Symmetrically: an incoming message that opens with this header comes from anothe
 - `project_no_directory`
 - `parent_not_found` — `parent` used but no TwiCC session in the ancestry, or the current session has no `spawned_by` link.
 - `missing_prompt` — no `PROMPT` and no `--attach`: the message would be empty.
-- `requires_wait_reply` — `--reply-timeout` or `--no-reply-text` passed without `--wait-reply`.
-- `invalid_value` — `--reply-timeout` is not > 0.
+- `requires_wait_reply` — `--wait-timeout` or `--no-reply-text` passed without `--wait-reply`.
+- `invalid_value` — `--wait-timeout` is not > 0.
 
 ### Server (exit 3)
 
@@ -141,7 +141,7 @@ A `sent` status only means the message was handed to the agent — not that the 
 **To wait for the answer, use `--wait-reply`** — one call, and no window in which the reply can slip past:
 
 ```bash
-$TWICC send-message <SESSION_ID> '<TEXT>' --wait-reply [--reply-timeout N] [--no-reply-text]
+$TWICC send-message <SESSION_ID> '<TEXT>' --wait-reply [--wait-timeout N] [--no-reply-text]
 ```
 
 It adds a `reply` block: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (drop it with `--no-reply-text` when you only need the go-ahead), and `error` on `wait_failed`. `outcome` is `replied` (the message closing the turn), `provider_error` (the provider refused: quota, outage), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `backend_gone`, or `wait_failed`.
