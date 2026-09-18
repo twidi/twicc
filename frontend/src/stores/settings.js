@@ -16,6 +16,7 @@ import {
     WA_BRAND,
     WA_THEME_DEFAULT_PALETTE,
     resolveTitleSuggestionModel,
+    resolveEffectiveTitleSuggestionModel,
 } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 import { getProviderHelpers, getRegisteredProviders } from '../providers'
@@ -347,6 +348,20 @@ export const useSettingsStore = defineStore('settings', {
         isTitleGenerationEnabled: (state) => state.titleGenerationEnabled,
         isTitleAutoApply: (state) => state.titleAutoApply,
         getTitleSuggestionModel: (state) => resolveTitleSuggestionModel(state.titleSuggestionModel),
+        /**
+         * The title model actually in use: the stored one, unless its provider
+         * is disabled — then the other enabled provider's model.
+         *
+         * The stored value is never rewritten (see
+         * ``resolveEffectiveTitleSuggestionModel``), so this is the getter both
+         * the settings form and the suggestion request must read. Sending the
+         * stored value instead would make the backend fall back on its own and
+         * report a fallback the form is already showing as the normal choice.
+         * A regular function (not an arrow) to reach ``enabledProviders``.
+         */
+        getEffectiveTitleSuggestionModel(state) {
+            return resolveEffectiveTitleSuggestionModel(state.titleSuggestionModel, this.enabledProviders)
+        },
         getTitleSystemPrompt: (state) => state.titleSystemPrompt,
         areCostsShown: (state) => state.showCosts,
         isExtraUsageOnlyWhenNeeded: (state) => state.extraUsageOnlyWhenNeeded,

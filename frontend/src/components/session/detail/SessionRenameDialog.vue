@@ -26,6 +26,9 @@ const isSaving = ref(false)
 const errorMessage = ref('')
 const showContextHint = ref(false)  // Show hint when opened during message send
 const isLoadingSuggestion = ref(false)
+// Set when the request never left the browser (WS down, unknown provider): no
+// reply will ever come, so the spinner must stop on the spot.
+const suggestionSendFailed = ref(false)
 
 // Title generation settings
 const titleGenerationEnabled = computed(() => settingsStore.isTitleGenerationEnabled)
@@ -35,6 +38,61 @@ const titleSystemPrompt = computed(() => settingsStore.getTitleSystemPrompt)
 const suggestion = computed(() => {
     if (!props.session) return null
     return store.getTitleSuggestion(props.session.id)
+})
+
+const suggestionEntry = computed(() => {
+    if (!props.session) return null
+    return store.getTitleSuggestionEntry(props.session.id)
+})
+
+// Why there is no suggestion, when the user can act on it. ``no_prompt`` is
+// excluded on purpose: nothing to summarize is not a failure, and the section
+// stays hidden exactly as it did before.
+const suggestionErrorMessage = computed(() => {
+    if (suggestionSendFailed.value) return 'Could not reach the server.'
+    const error = suggestionEntry.value?.error
+    if (error === 'no_provider_available') return 'No provider is available to generate a title.'
+    if (error === 'generation_failed') return 'Could not generate a title suggestion.'
+    return null
+})
+
+/**
+ * The message a draft would be summarized from: its ephemeral prompt, else the
+ * message kept in the store. Null for a real session, whose source message the
+ * backend reads from the DB.
+ * @param {Object} session
+ * @returns {string|null}
+ */
+function draftPromptFor(session) {
+    if (!session?.draft && !session?.ephemeral) return null
+    return (session.ephemeralPrompt?.text || store.getDraftMessage(session.id)?.message)?.trim() || null
+}
+
+/**
+ * Fire a suggestion request and drive the spinner from its outcome. A request
+ * that never left the browser gets no reply, so it stops the spinner itself
+ * and shows the retry affordance.
+ * @param {string} sessionId
+ * @param {string|null} prompt
+ */
+function startSuggestion(sessionId, prompt) {
+    suggestionSendFailed.value = false
+    isLoadingSuggestion.value = true
+    if (!requestTitleSuggestion(sessionId, prompt, titleSystemPrompt.value)) {
+        isLoadingSuggestion.value = false
+        suggestionSendFailed.value = true
+    }
+}
+
+// The backend generated through another provider than the one the settings
+// asked for: a runtime failure, or a session whose own provider is disabled
+// under "match session provider". A forced choice whose provider is disabled
+// never lands here — it is already resolved before the request leaves.
+const fallbackProviderLabel = computed(() => {
+    const entry = suggestionEntry.value
+    if (!entry?.suggestion || !entry.titleProvider) return null
+    if (!entry.requestedProvider || entry.titleProvider === entry.requestedProvider) return null
+    return getProviderLabel(entry.titleProvider)
 })
 
 const providerLabel = computed(() => getProviderLabel(props.session?.provider))
@@ -84,6 +142,7 @@ function focusTitleInput() {
  */
 function open({ showHint = false, session = null } = {}) {
     errorMessage.value = ''
+    suggestionSendFailed.value = false
     showContextHint.value = showHint
 
     // Use the session passed directly, falling back to props.session
@@ -104,24 +163,21 @@ function open({ showHint = false, session = null } = {}) {
 
     const sessionId = currentSession.id
     const existingSuggestion = store.getTitleSuggestion(sessionId)
-    const systemPrompt = titleSystemPrompt.value
 
     if (currentSession.draft || currentSession.ephemeral) {
         // DRAFT: use message from store, redo if message changed
-        const currentPrompt = (currentSession.ephemeralPrompt?.text || store.getDraftMessage(sessionId)?.message)?.trim()
+        const currentPrompt = draftPromptFor(currentSession)
         const previousPrompt = store.getTitleSuggestionSourcePrompt(sessionId)
 
         if (!currentPrompt) return  // No message, no suggestion
 
         if (!existingSuggestion || previousPrompt !== currentPrompt) {
-            isLoadingSuggestion.value = true
-            requestTitleSuggestion(sessionId, currentPrompt, systemPrompt)
+            startSuggestion(sessionId, currentPrompt)
         }
     } else {
         // EXISTING or NEW SESSION: use first message from DB
         if (!existingSuggestion) {
-            isLoadingSuggestion.value = true
-            requestTitleSuggestion(sessionId, null, systemPrompt)
+            startSuggestion(sessionId, null)
         }
     }
 }
@@ -154,16 +210,26 @@ function applySuggestion() {
 
 /**
  * Request a new title suggestion using the stored prompt.
+ *
+ * Also the "Try again" action of the error state. A send that never reached
+ * the server left no stored prompt, so it falls back to where ``open`` reads
+ * it: the draft's own message, or the session's first message in the DB.
  */
 function regenerateSuggestion() {
     if (!props.session) return
 
     const sessionId = props.session.id
-    const storedPrompt = store.getTitleSuggestionSourcePrompt(sessionId)
+    const prompt = store.getTitleSuggestionSourcePrompt(sessionId) || draftPromptFor(props.session)
+    const isDraft = props.session.draft || props.session.ephemeral
 
-    if (storedPrompt) {
-        isLoadingSuggestion.value = true
-        requestTitleSuggestion(sessionId, storedPrompt, titleSystemPrompt.value)
+    if (prompt) {
+        startSuggestion(sessionId, prompt)
+    } else if (!isDraft) {
+        startSuggestion(sessionId, null)
+    } else {
+        // A draft left with no message: there is nothing to summarize, so drop
+        // the error rather than leaving an inert button on screen.
+        suggestionSendFailed.value = false
     }
 }
 
@@ -237,9 +303,15 @@ defineExpose({
             </p>
 
             <!-- Title suggestion (only if enabled in settings) -->
-            <div v-if="titleGenerationEnabled && (isLoadingSuggestion || suggestion)" class="suggestion-section">
+            <div
+                v-if="titleGenerationEnabled && (isLoadingSuggestion || suggestion || suggestionErrorMessage)"
+                class="suggestion-section"
+            >
                 <div class="suggestion-header">
                     <span class="suggestion-label">Suggestion:</span>
+                    <span v-if="fallbackProviderLabel" class="suggestion-fallback">
+                        via {{ fallbackProviderLabel }}
+                    </span>
                     <wa-button
                         v-if="suggestion"
                         variant="neutral"
@@ -254,6 +326,19 @@ defineExpose({
                 <div v-if="isLoadingSuggestion" class="suggestion-loading">
                     <wa-spinner size="small"></wa-spinner>
                     <span>Generating...</span>
+                </div>
+                <div v-else-if="suggestionErrorMessage" class="suggestion-error">
+                    <span>{{ suggestionErrorMessage }}</span>
+                    <wa-button
+                        variant="neutral"
+                        appearance="plain"
+                        size="small"
+                        class="reduced-height"
+                        @click="regenerateSuggestion"
+                    >
+                        <wa-icon slot="start" name="rotate"></wa-icon>
+                        Try again
+                    </wa-button>
                 </div>
                 <a v-else href="#" class="suggestion-link" @click.prevent="applySuggestion">
                     {{ suggestion }}
@@ -346,6 +431,18 @@ defineExpose({
 }
 
 .suggestion-loading {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    color: var(--wa-color-text-quiet);
+}
+
+.suggestion-fallback {
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-xs);
+}
+
+.suggestion-error {
     display: flex;
     align-items: center;
     gap: var(--wa-space-xs);

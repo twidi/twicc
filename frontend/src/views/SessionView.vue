@@ -1655,7 +1655,11 @@ function handleNeedsTitle() {
         // watcher lives at module scope and survives the router.replace
         // that ``bindDraftSession`` performs for Codex drafts.
         store.registerPendingTitleAutoApply(sid, pid)
-        requestTitleSuggestion(sid, prompt, settingsStore.getTitleSystemPrompt)
+        // A request that never left the browser (WS down, unknown provider)
+        // gets no reply, so the intent would wait forever: drop it right away.
+        if (!requestTitleSuggestion(sid, prompt, settingsStore.getTitleSystemPrompt)) {
+            store.clearPendingTitleAutoApply(sid)
+        }
     } else {
         sessionHeaderRef.value?.openRenameDialog({ showHint: true })
     }

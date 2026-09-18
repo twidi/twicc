@@ -30,7 +30,14 @@ from .sdk_wrappers import TwiccAsyncCodex
 logger = logging.getLogger(__name__)
 
 SUGGESTION_TIMEOUT_SECONDS = 15
-MAX_RETRIES = 5
+# The attempt budget is shared with the other provider: the WS handler falls
+# back to it when this one gives up (``asgi._handle_suggest_title``). Two
+# attempts per provider keeps the worst case (4 × 15s) under the 5-attempt
+# single-provider budget this replaced, and spreading the retries over two
+# models covers a flaky answer better than five shots at the same one. That
+# bound covers the model calls only: building the client can download the Codex
+# runtime on a pruned cache, which is deliberately outside the timeout below.
+MAX_RETRIES = 2
 
 # Fixed SDK model name for Codex title generation. The global title-suggestion
 # setting selects this provider route; this module always uses Luna and bypasses
@@ -125,8 +132,20 @@ async def _call_codex(
 
     full_prompt = system_prompt.replace("{text}", user_message)
 
-    config = await make_codex_config()
-    codex = TwiccAsyncCodex(config=config)
+    # Guarded, and outside the timeout below: resolving the config downloads the
+    # runtime when the cache was pruned. Unguarded, a failure would escape
+    # ``_call_codex`` as an exception instead of the documented ``None``,
+    # skipping both the retry and the WS handler's fallback to the other
+    # provider. Inside the timeout, a cold cache would burn the whole 15s
+    # budget meant for the model call.
+    try:
+        codex = TwiccAsyncCodex(config=await make_codex_config())
+    except Exception as e:
+        logger.exception(
+            "Codex title suggestion: client unavailable (source=%s, attempt=%d/%d): %s",
+            source, attempt, MAX_RETRIES, e,
+        )
+        return None
 
     async def _execute() -> str:
         """Open an ephemeral thread, stream a single turn, collect the assistant text.

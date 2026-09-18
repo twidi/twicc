@@ -236,3 +236,43 @@ const TITLE_SUGGESTION_MODEL_VALUES = new Set(Object.values(TITLE_SUGGESTION_MOD
 export function resolveTitleSuggestionModel(value) {
     return TITLE_SUGGESTION_MODEL_VALUES.has(value) ? value : TITLE_SUGGESTION_MODEL.PROVIDER
 }
+
+/**
+ * The provider each forced title model runs on. Mirrors the backend routing
+ * table (``asgi.TITLE_SUGGESTION_MODEL_PROVIDERS``); the ``provider`` mode is
+ * absent on purpose — it has no fixed provider, it follows the session's.
+ */
+export const TITLE_SUGGESTION_MODEL_PROVIDERS = Object.freeze({
+    [TITLE_SUGGESTION_MODEL.HAIKU]: PROVIDER.CLAUDE_CODE,
+    [TITLE_SUGGESTION_MODEL.LUNA]: PROVIDER.CODEX,
+})
+
+/**
+ * The title model actually in use, given which providers are enabled.
+ *
+ * The stored setting is a preference, never rewritten when its provider is
+ * disabled: that would destroy the choice for good (re-enabling the provider
+ * could not restore it), and the backend falls back at runtime anyway. So the
+ * resolution is display-only, and the settings form shows what will really run.
+ *
+ * ``provider`` (follow the session) is never resolved away: it works whatever
+ * is enabled. A forced model whose provider is disabled resolves to the other
+ * enabled one, and to ``provider`` when there is none — a state the UI cannot
+ * reach (one provider must stay enabled) but the CLI can.
+ *
+ * @param {string} value - The stored ``titleSuggestionModel``.
+ * @param {string[]|Set<string>} enabledProviders - Provider keys currently enabled.
+ * @returns {string} One of the ``TITLE_SUGGESTION_MODEL`` values.
+ */
+export function resolveEffectiveTitleSuggestionModel(value, enabledProviders) {
+    const model = resolveTitleSuggestionModel(value)
+    if (model === TITLE_SUGGESTION_MODEL.PROVIDER) return model
+
+    const enabled = enabledProviders instanceof Set ? enabledProviders : new Set(enabledProviders || [])
+    if (enabled.has(TITLE_SUGGESTION_MODEL_PROVIDERS[model])) return model
+
+    const alternative = Object.keys(TITLE_SUGGESTION_MODEL_PROVIDERS).find(
+        (candidate) => candidate !== model && enabled.has(TITLE_SUGGESTION_MODEL_PROVIDERS[candidate]),
+    )
+    return alternative || TITLE_SUGGESTION_MODEL.PROVIDER
+}

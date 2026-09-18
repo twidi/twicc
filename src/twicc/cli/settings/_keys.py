@@ -22,7 +22,10 @@ NOTIFICATION_KEYS = frozenset({"externalNotificationTargets"})
 GENERIC_KEY_DESCRIPTIONS: dict[str, str] = {
     "titleGenerationEnabled": "Generate a session title from the first user message.",
     "titleAutoApply": "Apply generated titles automatically (vs. only suggesting them).",
-    "titleSuggestionModel": "Model used for title suggestions: provider, haiku, or luna.",
+    "titleSuggestionModel": (
+        "Model used for title suggestions: provider, haiku, or luna. "
+        "A provider that is disabled or failing falls back to the other one."
+    ),
     "titleSystemPrompt": "System prompt used to generate titles ('{text}' = the message); unset restores the default.",
     "autoUnpinOnArchive": "Unpin a session automatically when it is archived.",
     "ephemeralExplainerSeen": "Skip the ephemeral-session explainer after it has been acknowledged.",

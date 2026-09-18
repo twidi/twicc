@@ -280,6 +280,16 @@ def _merge_and_write(patch: dict, base_version: int | None) -> dict:
 
         # Default-provider rebind: if the current default is no longer enabled,
         # pick the first enabled provider in Provider enum order.
+        #
+        # Deliberately NOT applied to ``titleSuggestionModel``, whose value also
+        # points at a provider: that one is a preference the title handler falls
+        # back on at runtime (``asgi._handle_suggest_title``), so a disabled
+        # provider never breaks it, and overwriting it here would destroy the
+        # user's choice for good — re-enabling the provider could not restore
+        # it. ``defaultProvider`` has no such fallback: it is used as-is when a
+        # session is created, hence the rebind. The settings form resolves the
+        # displayed title model for the same reason (``constants.js``
+        # ``resolveEffectiveTitleSuggestionModel``). Do not "fix" the asymmetry.
         registered = {p for p, _ in get_provider_helpers_registry().items()}
         final_disabled_set = set(existing_settings.get("disabledProviders") or [])
         enabled_after = {p.value for p in registered if p.value not in final_disabled_set}

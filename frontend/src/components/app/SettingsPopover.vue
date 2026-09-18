@@ -27,6 +27,7 @@ import {
     WA_BRAND_LABELS,
     SPONSOR_URL,
     TITLE_SUGGESTION_MODEL,
+    TITLE_SUGGESTION_MODEL_PROVIDERS,
 } from '../../constants'
 import NotificationSettings from './NotificationSettings.vue'
 import TipsSettings from '../settings/TipsSettings.vue'
@@ -478,7 +479,30 @@ const allowAgentSessionShares = computed(() => store.isAllowAgentSessionShares)
 const allowAgentArtifactShares = computed(() => store.isAllowAgentArtifactShares)
 const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
 const titleAutoApply = computed(() => store.isTitleAutoApply)
-const titleSuggestionModel = computed(() => store.getTitleSuggestionModel)
+// The radio shows the EFFECTIVE model, not the stored one: a forced choice
+// whose provider is disabled displays as the model that will really run. The
+// stored value is left untouched, so enabling the provider again restores the
+// user's choice by itself (see ``resolveEffectiveTitleSuggestionModel``).
+const titleSuggestionModel = computed(() => store.getEffectiveTitleSuggestionModel)
+
+/**
+ * The forced title models whose provider is disabled, mapped to the reason
+ * shown under the radio. A model in this map is not selectable.
+ */
+const disabledTitleSuggestionModels = computed(() => {
+    const disabled = {}
+    for (const [model, provider] of Object.entries(TITLE_SUGGESTION_MODEL_PROVIDERS)) {
+        if (enabledProviders.value.has(provider)) continue
+        disabled[model] = `${getProviderLabel(provider)} is disabled.`
+    }
+    return disabled
+})
+
+// The user's stored choice is not the one running: a disabled provider moved
+// the selection. Gates the sentence promising the choice comes back.
+const titleSuggestionModelIsDisplaced = computed(
+    () => store.getTitleSuggestionModel !== store.getEffectiveTitleSuggestionModel,
+)
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 const titleSystemPromptInput = ref('')
 const terminalUseTmux = computed(() => store.isTerminalUseTmux)
@@ -1006,6 +1030,34 @@ function onTitleAutoApplyChange(event) {
  */
 function onTitleSuggestionModelChange(event) {
     store.setTitleSuggestionModel(event.target.value)
+}
+
+/**
+ * Adopt the clicked option, even when it is the one already displayed.
+ *
+ * A displaced selection (stored model whose provider is disabled) shows the
+ * fallback as checked, so clicking that fallback changes nothing and
+ * ``wa-radio-group`` emits no ``change`` — the user would have no way to make
+ * it their stored choice. Writing it here covers that click. Mirrors the
+ * group's own guards: a disabled radio, or a disabled group, is ignored.
+ */
+function onTitleSuggestionModelClick(event) {
+    if (!titleGenerationEnabled.value) return
+    const radio = event.target?.closest?.('wa-radio')
+    if (!radio || radio.disabled) return
+    store.setTitleSuggestionModel(radio.value)
+}
+
+/**
+ * The keyboard counterpart of ``onTitleSuggestionModelClick``.
+ *
+ * Space re-selects the focused radio, which Web Awesome turns into no event
+ * when it is already the checked one — the same dead end the click handler
+ * covers. Arrow keys always move the value, so they go through ``change``.
+ */
+function onTitleSuggestionModelKeydown(event) {
+    if (event.key !== ' ') return
+    onTitleSuggestionModelClick(event)
 }
 
 /**
@@ -1837,13 +1889,42 @@ function onChangelogClose() {
                             :value="titleSuggestionModel"
                             :disabled="!titleGenerationEnabled"
                             @change="onTitleSuggestionModelChange"
+                            @click="onTitleSuggestionModelClick"
+                            @keydown="onTitleSuggestionModelKeydown"
                         >
                             <wa-radio :value="TITLE_SUGGESTION_MODEL.PROVIDER">
                                 Match session provider — Haiku for Claude Code, GPT-5.6 Luna for Codex
                             </wa-radio>
-                            <wa-radio :value="TITLE_SUGGESTION_MODEL.HAIKU">Claude Haiku for every session</wa-radio>
-                            <wa-radio :value="TITLE_SUGGESTION_MODEL.LUNA">GPT-5.6 Luna for every session</wa-radio>
+                            <wa-radio
+                                :value="TITLE_SUGGESTION_MODEL.HAIKU"
+                                :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
+                            >
+                                Claude Haiku for every session
+                                <span
+                                    v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
+                                    class="radio-note"
+                                >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU] }}</span>
+                            </wa-radio>
+                            <wa-radio
+                                :value="TITLE_SUGGESTION_MODEL.LUNA"
+                                :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
+                            >
+                                GPT-5.6 Luna for every session
+                                <span
+                                    v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
+                                    class="radio-note"
+                                >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA] }}</span>
+                            </wa-radio>
                         </wa-radio-group>
+                        <span v-if="titleGenerationEnabled" class="setting-group-hint">
+                            If the selected provider cannot be used — disabled, over quota, or
+                            failing — TwiCC generates the title with the other provider, when that
+                            one is enabled.
+                            <template v-if="titleSuggestionModelIsDisplaced">
+                                Your choice is kept, and comes back as soon as you enable its
+                                provider again.
+                            </template>
+                        </span>
                         <div v-if="titleGenerationEnabled" class="title-prompt-section">
                             <label class="setting-group-label">System prompt</label>
                             <wa-textarea
@@ -2874,6 +2955,13 @@ wa-popover > wa-divider {
 /* Inline icon inside a hint (e.g. the layout-menu chevron) — keep it on the text baseline. */
 .settings-sections .setting-group-hint .inline-hint-icon {
     vertical-align: -0.1em;
+}
+
+/* Why a radio option is not selectable (e.g. a title model whose provider is
+   disabled). Slotted into the wa-radio label, so it stays on its line. */
+.settings-sections .radio-note {
+    color: var(--wa-color-text-quiet);
+    font-style: italic;
 }
 
 .usage-file-input-row {

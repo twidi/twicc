@@ -5999,10 +5999,17 @@ export const useDataStore = defineStore('data', {
         /**
          * Handle title_suggested message from WebSocket.
          * Always stores sourcePrompt (for regeneration), and suggestion if available.
-         * @param {Object} data - { sessionId, suggestion, sourcePrompt }
+         *
+         * ``titleProvider`` is the provider that produced the suggestion, null
+         * on failure; it differs from ``requestedProvider`` when the backend
+         * fell back. ``error`` says why there is no suggestion: 'no_prompt'
+         * (nothing to summarize — not a failure), 'no_provider_available' or
+         * 'generation_failed'.
+         * @param {Object} data - { sessionId, suggestion, sourcePrompt,
+         *     requestedProvider, titleProvider, error }
          */
         handleTitleSuggested(data) {
-            const { sessionId, suggestion, sourcePrompt } = data
+            const { sessionId, suggestion, sourcePrompt, requestedProvider, titleProvider, error } = data
             // Resolve the draft alias if the backend echoed the draft id back
             // (the ``suggest_title`` payload was sent under the draft id; for
             // providers that rebind to a canonical id, we want the response
@@ -6013,6 +6020,9 @@ export const useDataStore = defineStore('data', {
             this.localState.titleSuggestions[sid] = {
                 suggestion: suggestion || null,
                 sourcePrompt: sourcePrompt || null,
+                requestedProvider: requestedProvider || null,
+                titleProvider: titleProvider || null,
+                error: error || null,
             }
         },
 

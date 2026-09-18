@@ -9,7 +9,12 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
 logger = logging.getLogger(__name__)
 
 SUGGESTION_TIMEOUT_SECONDS = 15
-MAX_RETRIES = 5
+# The attempt budget is shared with the other provider: the WS handler falls
+# back to it when this one gives up (``asgi._handle_suggest_title``). Two
+# attempts per provider keeps the worst case (4 × 15s) under the 5-attempt
+# single-provider budget this replaced, and spreading the retries over two
+# models covers a flaky answer better than five shots at the same one.
+MAX_RETRIES = 2
 
 
 async def generate_title(user_message: str, system_prompt: str) -> str | None:
@@ -58,17 +63,26 @@ async def _call_haiku(
 
     from twicc.provider_homes import provider_env_overlay
 
-    options = ClaudeAgentOptions(
-        model="haiku",
-        permission_mode="default",
-        extra_args={"no-session-persistence": None},
-        allowed_tools=[],
-        effort='low',
-        # Configured provider homes, explicit (see the SDK agent's env_option).
-        env=provider_env_overlay(),
-    )
-
-    client = ClaudeSDKClient(options=options)
+    # Guarded: resolving the provider homes reads configuration that can raise.
+    # Unguarded, that would escape ``_call_haiku`` as an exception instead of
+    # the documented ``None``, skipping both the retry and the WS handler's
+    # fallback to the other provider.
+    try:
+        client = ClaudeSDKClient(options=ClaudeAgentOptions(
+            model="haiku",
+            permission_mode="default",
+            extra_args={"no-session-persistence": None},
+            allowed_tools=[],
+            effort='low',
+            # Configured provider homes, explicit (see the SDK agent's env_option).
+            env=provider_env_overlay(),
+        ))
+    except Exception as e:
+        logger.exception(
+            "Title suggestion: client unavailable (source=%s, attempt=%d/%d): %s",
+            source, attempt, MAX_RETRIES, e,
+        )
+        return None
 
     async def _execute() -> str:
         """Run the full SDK interaction: connect, query, collect response."""

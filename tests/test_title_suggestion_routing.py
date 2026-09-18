@@ -1,4 +1,4 @@
-"""Title-suggestion model routing at the WebSocket boundary."""
+"""Title-suggestion model routing and provider fallback at the WebSocket boundary."""
 
 from asgiref.sync import async_to_sync
 import pytest
@@ -8,29 +8,70 @@ from twicc.core.enums import Provider
 
 
 class _TitleHelpers:
-    def __init__(self, provider: Provider, first_message: str):
+    """Stand-in for a provider's helpers: a first message and a title model.
+
+    ``outcome`` picks what ``generate_title`` does:
+
+    - ``"ok"`` — return a title;
+    - ``"none"`` — return ``None``, the way the real implementations do once
+      their own attempts are exhausted (quota, timeout, empty or oversized
+      answer — all indistinguishable from here);
+    - ``"empty"`` — return ``""``, which the contract forbids but a future
+      provider could still produce;
+    - ``"raise"`` — raise, as a provider whose client cannot even be built does.
+    """
+
+    def __init__(self, provider: Provider, first_message: str, outcome: str = "ok"):
         self.provider = provider
         self.first_message = first_message
+        self.outcome = outcome
 
     def get_first_user_message(self, _session_id: str) -> str:
         return self.first_message
 
-    async def generate_title(self, prompt: str, _system_prompt: str) -> str:
+    async def generate_title(self, prompt: str, _system_prompt: str) -> str | None:
+        if self.outcome == "none":
+            return None
+        if self.outcome == "empty":
+            return ""
+        if self.outcome == "raise":
+            raise RuntimeError(f"{self.provider.value} is broken")
         return f"{self.provider.value}: {prompt}"
 
 
-def _suggest_title_frames(monkeypatch, *, session_provider: Provider, title_model=None):
-    helpers = {
-        Provider.CLAUDE_CODE: _TitleHelpers(Provider.CLAUDE_CODE, "Claude prompt"),
-        Provider.CODEX: _TitleHelpers(Provider.CODEX, "Codex prompt"),
+def _suggest_title_frames(
+    monkeypatch,
+    *,
+    session_provider: Provider,
+    title_model=None,
+    running=None,
+    outcomes=None,
+    first_messages=None,
+):
+    """Run ``_handle_suggest_title`` against fake providers, return the frames sent.
+
+    ``running`` is the set of providers the state layer reports as running
+    (both by default); ``outcomes`` maps a provider to its ``_TitleHelpers``
+    outcome (all ``"ok"`` by default).
+    """
+    messages = first_messages or {
+        Provider.CLAUDE_CODE: "Claude prompt",
+        Provider.CODEX: "Codex prompt",
     }
+    helpers = {
+        provider: _TitleHelpers(
+            provider, messages[provider], outcome=(outcomes or {}).get(provider, "ok"),
+        )
+        for provider in (Provider.CLAUDE_CODE, Provider.CODEX)
+    }
+    running_set = {Provider.CLAUDE_CODE, Provider.CODEX} if running is None else set(running)
     frames = []
 
     async def send_json(frame):
         frames.append(frame)
 
     monkeypatch.setattr("twicc.asgi.get_provider_helpers", helpers.__getitem__)
-    monkeypatch.setattr("twicc.asgi.ensure_provider_running", lambda _provider: None)
+    monkeypatch.setattr("twicc.asgi.is_provider_running", lambda provider: provider in running_set)
 
     consumer = WSConsumer()
     consumer.send_json = send_json
@@ -54,14 +95,17 @@ def test_missing_title_model_uses_the_session_provider(monkeypatch):
         "sessionId": "session-1",
         "suggestion": "codex: Codex prompt",
         "sourcePrompt": "Codex prompt",
+        "requestedProvider": "codex",
+        "titleProvider": "codex",
+        "error": None,
     }]
 
 
 @pytest.mark.parametrize(
-    ("session_provider", "title_model", "expected_suggestion", "expected_prompt"),
+    ("session_provider", "title_model", "expected_suggestion", "expected_prompt", "expected_provider"),
     [
-        (Provider.CODEX, "haiku", "claude_code: Codex prompt", "Codex prompt"),
-        (Provider.CLAUDE_CODE, "luna", "codex: Claude prompt", "Claude prompt"),
+        (Provider.CODEX, "haiku", "claude_code: Codex prompt", "Codex prompt", "claude_code"),
+        (Provider.CLAUDE_CODE, "luna", "codex: Claude prompt", "Claude prompt", "codex"),
     ],
 )
 def test_fixed_title_model_overrides_generation_without_changing_prompt_source(
@@ -70,6 +114,7 @@ def test_fixed_title_model_overrides_generation_without_changing_prompt_source(
     title_model,
     expected_suggestion,
     expected_prompt,
+    expected_provider,
 ):
     frames = _suggest_title_frames(
         monkeypatch,
@@ -82,4 +127,251 @@ def test_fixed_title_model_overrides_generation_without_changing_prompt_source(
         "sessionId": "session-1",
         "suggestion": expected_suggestion,
         "sourcePrompt": expected_prompt,
+        "requestedProvider": expected_provider,
+        "titleProvider": expected_provider,
+        "error": None,
     }]
+
+
+def test_falls_back_when_the_requested_provider_is_not_running(monkeypatch):
+    """A disabled (or transitioning) provider hands the generation over."""
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CODEX,
+        title_model="haiku",
+        running={Provider.CODEX},
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        # Generated by Codex, from the Codex session's own first message.
+        "suggestion": "codex: Codex prompt",
+        "sourcePrompt": "Codex prompt",
+        "requestedProvider": "claude_code",
+        "titleProvider": "codex",
+        "error": None,
+    }]
+
+
+def test_falls_back_when_the_requested_provider_fails(monkeypatch):
+    """Generation failure (quota, timeout, bad answer) hands it over too."""
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        outcomes={Provider.CLAUDE_CODE: "none"},
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": "codex: Claude prompt",
+        # The prompt still comes from the SESSION's provider, not the fallback.
+        "sourcePrompt": "Claude prompt",
+        "requestedProvider": "claude_code",
+        "titleProvider": "codex",
+        "error": None,
+    }]
+
+
+def test_reports_when_no_provider_is_running(monkeypatch):
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        title_model="haiku",
+        running=set(),
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": None,
+        "sourcePrompt": "Claude prompt",
+        "requestedProvider": "claude_code",
+        "titleProvider": None,
+        "error": "no_provider_available",
+    }]
+
+
+def test_reports_when_every_provider_fails(monkeypatch):
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        outcomes={Provider.CLAUDE_CODE: "none", Provider.CODEX: "none"},
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": None,
+        "sourcePrompt": "Claude prompt",
+        "requestedProvider": "claude_code",
+        "titleProvider": None,
+        "error": "generation_failed",
+    }]
+
+
+def test_reports_a_session_with_no_first_message_without_touching_a_provider(monkeypatch):
+    """Nothing to summarize is not a failure — and needs no running provider."""
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        title_model="haiku",
+        running=set(),
+        first_messages={Provider.CLAUDE_CODE: "", Provider.CODEX: ""},
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": None,
+        "sourcePrompt": "",
+        "requestedProvider": "claude_code",
+        "titleProvider": None,
+        "error": "no_prompt",
+    }]
+
+
+def test_falls_back_when_the_requested_provider_raises(monkeypatch):
+    """A provider that crashes is a provider that failed — the next one runs."""
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CODEX,
+        title_model="haiku",
+        outcomes={Provider.CLAUDE_CODE: "raise"},
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": "codex: Codex prompt",
+        "sourcePrompt": "Codex prompt",
+        "requestedProvider": "claude_code",
+        "titleProvider": "codex",
+        "error": None,
+    }]
+
+
+def test_still_replies_when_every_provider_raises(monkeypatch):
+    """The reply is the invariant: a silent return would hang the dialog."""
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        outcomes={Provider.CLAUDE_CODE: "raise", Provider.CODEX: "raise"},
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": None,
+        "sourcePrompt": "Claude prompt",
+        "requestedProvider": "claude_code",
+        "titleProvider": None,
+        "error": "generation_failed",
+    }]
+
+
+def test_still_replies_when_reading_the_first_message_raises(monkeypatch):
+    """A broken DB read degrades to 'no prompt available', never to silence."""
+    class _Exploding(_TitleHelpers):
+        def get_first_user_message(self, _session_id):
+            raise RuntimeError("db is gone")
+
+    helpers = {
+        Provider.CLAUDE_CODE: _Exploding(Provider.CLAUDE_CODE, ""),
+        Provider.CODEX: _TitleHelpers(Provider.CODEX, "Codex prompt"),
+    }
+    frames = []
+
+    async def send_json(frame):
+        frames.append(frame)
+
+    monkeypatch.setattr("twicc.asgi.get_provider_helpers", helpers.__getitem__)
+    monkeypatch.setattr("twicc.asgi.is_provider_running", lambda _provider: True)
+
+    consumer = WSConsumer()
+    consumer.send_json = send_json
+    async_to_sync(consumer._handle_suggest_title)({
+        "sessionId": "session-1",
+        "provider": Provider.CLAUDE_CODE.value,
+        "systemPrompt": "Summarize: {text}",
+    })
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": None,
+        "sourcePrompt": None,
+        "requestedProvider": "claude_code",
+        "titleProvider": None,
+        "error": "no_prompt",
+    }]
+
+
+def test_treats_a_falsy_answer_as_a_failure(monkeypatch):
+    """An empty answer breaks the ``str | None`` contract without crashing us."""
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        outcomes={Provider.CLAUDE_CODE: "empty", Provider.CODEX: "empty"},
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": None,
+        "sourcePrompt": "Claude prompt",
+        "requestedProvider": "claude_code",
+        "titleProvider": None,
+        "error": "generation_failed",
+    }]
+
+
+def test_a_falsy_answer_still_lets_the_next_provider_win(monkeypatch):
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        outcomes={Provider.CLAUDE_CODE: "empty"},
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": "codex: Claude prompt",
+        "sourcePrompt": "Claude prompt",
+        "requestedProvider": "claude_code",
+        "titleProvider": "codex",
+        "error": None,
+    }]
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        ({"provider": "codex", "systemPrompt": "Summarize: {text}"}, "no sessionId"),
+        ({"sessionId": "session-1", "systemPrompt": "Summarize: {text}"}, "no provider"),
+        ({"sessionId": "session-1", "provider": "codex"}, "no systemPrompt"),
+        (
+            {"sessionId": "session-1", "provider": "codex", "systemPrompt": "Summarize this"},
+            "no {text} placeholder",
+        ),
+        (
+            {"sessionId": "session-1", "provider": "nope", "systemPrompt": "Summarize: {text}"},
+            "unknown provider",
+        ),
+    ],
+)
+def test_a_malformed_payload_answers_nothing(monkeypatch, payload, reason):
+    """The other half of the contract: only a malformed request stays silent."""
+    frames = []
+
+    async def send_json(frame):
+        frames.append(frame)
+
+    monkeypatch.setattr("twicc.asgi.is_provider_running", lambda _provider: True)
+
+    consumer = WSConsumer()
+    consumer.send_json = send_json
+    async_to_sync(consumer._handle_suggest_title)(payload)
+
+    assert frames == [], reason

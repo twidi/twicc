@@ -40,7 +40,12 @@ from twicc.paths import is_first_run
 from twicc.providers.claude_code.ws import ClaudeCodeWSHandler
 from twicc.providers.codex.ws import CodexWSHandler
 from twicc.providers.db_writer import run_under_db_write_lock
-from twicc.providers.state import ProviderDisabledError, ensure_provider_running, is_provider_enabled
+from twicc.providers.state import (
+    ProviderDisabledError,
+    ensure_provider_running,
+    is_provider_enabled,
+    is_provider_running,
+)
 from twicc.providers.helpers import (
     AGENT_SETTINGS_HIDDEN_FROM_FRONTEND,
     AgentSettings,
@@ -67,6 +72,12 @@ TITLE_SUGGESTION_MODEL_PROVIDERS = {
     "haiku": Provider.CLAUDE_CODE,
     "luna": Provider.CODEX,
 }
+
+# Providers that can generate a title, in fallback order. Derived from the
+# routing table above, which already declares exactly that set — a provider
+# without a title route keeps the base ``generate_title`` returning ``None``.
+# ``dict.fromkeys`` deduplicates while preserving the declaration order.
+TITLE_CAPABLE_PROVIDERS = tuple(dict.fromkeys(TITLE_SUGGESTION_MODEL_PROVIDERS.values()))
 
 # WebSocket close code for authentication failure.
 # 4000-4999 range is reserved for application use by the WebSocket spec.
@@ -806,11 +817,17 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_user_draft_updated(content)
 
         elif msg_type == "suggest_title":
-            # Fire-and-forget: title generation involves an SDK call (Haiku) with
-            # retries that can take many seconds. Running it as a background task
-            # avoids blocking the consumer — so send_message (which typically
-            # follows immediately) is processed without delay.
-            asyncio.create_task(self._handle_suggest_title(content))
+            # Detached: title generation involves an SDK call with retries that
+            # can take many seconds. Running it as a background task avoids
+            # blocking the consumer — so send_message (which typically follows
+            # immediately) is processed without delay. Detached and not bare,
+            # because the handler owes the client exactly one reply: a task the
+            # GC could drop mid-flight, or whose failure vanishes unlogged,
+            # would leave the rename dialog spinning with nothing in the log.
+            _spawn_detached(
+                self._handle_suggest_title(content),
+                label=f"suggest_title({content.get('sessionId')})",
+            )
 
         elif msg_type == "update_synced_settings":
             await self._handle_update_synced_settings(content)
@@ -1533,6 +1550,23 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         - prompt provided: Use prompt directly (draft/new session or regenerate)
         - sessionId only (existing session): Fetch first message from DB
 
+        **Provider fallback.** The requested provider is only a preference: when
+        it is not running (disabled, or mid ``starting``/``stopping``) or when
+        its generation fails for any reason (quota, timeout, empty or oversized
+        answer), the other title-capable providers are tried in turn. The UI
+        mirrors this — the settings form greys a forced choice whose provider is
+        disabled and shows the effective one — but the fallback lives here
+        because runtime failures are only visible backend-side, and because
+        non-UI callers must get the same behavior.
+
+        **One request, one reply.** Any well-formed request answers with a
+        single ``title_suggested`` frame, failures included (``error`` says
+        why); only a malformed payload returns silently, which no client can
+        produce. A silent return would leave the rename dialog spinning forever
+        and the auto-apply intent pending for the lifetime of the tab, so
+        provider work is wrapped: a provider that *raises* counts as a provider
+        that failed, and the next one is tried.
+
         Always returns the prompt used for generation, so the frontend can
         regenerate.
         """
@@ -1553,34 +1587,82 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             logger.warning("suggest_title: unknown provider %r", provider_key)
             return
 
-        title_provider = TITLE_SUGGESTION_MODEL_PROVIDERS.get(title_model, provider)
+        requested_provider = TITLE_SUGGESTION_MODEL_PROVIDERS.get(title_model, provider)
 
-        try:
-            ensure_provider_running(title_provider)
-        except ProviderDisabledError as e:
-            await self.send_json({
-                "type": "error",
-                "code": "provider_disabled",
-                "provider": e.provider.value,
-                "message": str(e),
-            })
-            return
-
-        source_helpers = get_provider_helpers(provider)
-        title_helpers = get_provider_helpers(title_provider)
-
+        # The source prompt belongs to the SESSION's provider (a DB read that
+        # needs no running provider), never to the provider that generates the
+        # title. Resolved before any availability check so "this session has no
+        # first message" answers straight away instead of failing on a provider
+        # gate that has nothing to do with it.
         if not prompt:
-            prompt = await sync_to_async(source_helpers.get_first_user_message)(session_id)
+            try:
+                source_helpers = get_provider_helpers(provider)
+                prompt = await sync_to_async(source_helpers.get_first_user_message)(session_id)
+            except Exception:
+                # Degrades to "no prompt available": there is nothing to
+                # summarize and nothing to retry with, which is exactly what
+                # ``no_prompt`` means to the client. The reply still goes out.
+                logger.exception("suggest_title: reading the first message of %s failed", session_id)
+                prompt = None
 
         suggestion = None
-        if prompt:
-            suggestion = await title_helpers.generate_title(prompt, system_prompt)
+        title_provider = None
+        error = None
+
+        if not prompt:
+            error = "no_prompt"
+        else:
+            candidates = [requested_provider] + [
+                p for p in TITLE_CAPABLE_PROVIDERS if p != requested_provider
+            ]
+            available = [p for p in candidates if is_provider_running(p)]
+            if not available:
+                logger.warning(
+                    "suggest_title: no title-capable provider is running (requested=%s)",
+                    requested_provider.value,
+                )
+                error = "no_provider_available"
+            else:
+                for candidate in available:
+                    try:
+                        suggestion = await get_provider_helpers(candidate).generate_title(
+                            prompt, system_prompt,
+                        )
+                    except Exception:
+                        # A provider that raises is a provider that failed: the
+                        # next one still gets its turn, and the reply still goes
+                        # out. ``generate_title`` promises ``str | None``, but a
+                        # crash while building its client escapes that promise.
+                        logger.exception(
+                            "suggest_title: %s raised while generating", candidate.value,
+                        )
+                        suggestion = None
+                    if suggestion:
+                        title_provider = candidate
+                        break
+                    # Normalize a falsy non-None answer, so the checks below and
+                    # the payload agree on a single "no suggestion" value.
+                    suggestion = None
+                if suggestion is None:
+                    logger.warning(
+                        "suggest_title: every provider failed (requested=%s, tried=%s)",
+                        requested_provider.value, [p.value for p in available],
+                    )
+                    error = "generation_failed"
+                elif title_provider != requested_provider:
+                    logger.info(
+                        "suggest_title: fell back from %s to %s",
+                        requested_provider.value, title_provider.value,
+                    )
 
         await self.send_json({
             "type": "title_suggested",
             "sessionId": session_id,
             "suggestion": suggestion,  # Can be None
             "sourcePrompt": prompt,    # Always included for regeneration
+            "requestedProvider": requested_provider.value,
+            "titleProvider": title_provider.value if title_provider else None,
+            "error": error,            # None on success
         })
 
     async def _handle_update_synced_settings(self, content: dict) -> None:

@@ -330,7 +330,12 @@ export function requestTitleSuggestion(sessionId, prompt = null, systemPrompt) {
         provider,
         systemPrompt,
         prompt,
-        titleSuggestionModel: useSettingsStore().getTitleSuggestionModel,
+        // The EFFECTIVE model, not the stored one: a forced choice whose
+        // provider is disabled already displays as the other provider's model
+        // in settings, so asking for it here would make the backend report a
+        // fallback the user was never shown as one. The backend keeps its own
+        // fallback for what only it can see (quota, errors, hot toggles).
+        titleSuggestionModel: useSettingsStore().getEffectiveTitleSuggestionModel,
     })
     return sendWsMessage(message)
 }
