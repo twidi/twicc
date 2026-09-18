@@ -411,21 +411,24 @@ def test_an_answer_ends_the_wait_by_default(session, capsysbinary):
     assert code == 0
 
 
-def test_blocked_alone_lets_an_answer_go_by(session, capsysbinary):
-    """The supervisor's question — "tell me when it needs someone" — and the
-    reason the two flags are selectors rather than one switch plus an extra.
+def test_blocked_is_an_addition_not_a_replacement(session, capsysbinary):
+    """`--blocked` adds a second way to finish; an answer still ends the wait.
 
-    An answer no longer ends the wait; the turn finishing does, as `ended`.
+    The same shape `--wait-blocked` has on the commands that send, so a caller
+    who knows one surface knows the other. An earlier version made the two
+    flags exclusive selectors, which read well on its own and made the same
+    word mean two different things across the CLI.
     """
     running(session)
     answer(session, 20, "here")
 
-    payload, _ = run(capsysbinary, from_line=0, on_blocked=True, timeout=1.0)
+    payload, code = run(capsysbinary, from_line=0, on_blocked=True)
 
-    assert payload["reply"]["outcome"] != "replied"
+    assert payload["reply"]["outcome"] == "replied"
+    assert code == 0
 
 
-def test_both_selectors_take_whichever_comes_first(session, capsysbinary):
+def test_an_answer_wins_a_tie_against_a_block(session, capsysbinary):
     """OR-combined, and the answer wins a tie: the transcript is scanned
     before the agent's state is read."""
     now = timezone.now()

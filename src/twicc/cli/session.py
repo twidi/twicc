@@ -574,13 +574,12 @@ def wait(session_id: str, *, from_line: int | None = None, timeout: float,
     if timeout <= 0:
         emit_error(f"Error: --wait-timeout must be > 0 (got {timeout:g}).", code=1)
 
-    # ``--reply`` when neither is named: "wait" unqualified means "wait for it
-    # to answer", which is what the command did before the selectors existed
-    # and what all but one caller wants. ``--blocked`` alone is a supervisor's
-    # question — "tell me when one of them needs a human" — and deserves to be
-    # asked for, not inherited.
-    if not on_reply and not on_blocked:
-        on_reply = True
+    # ``on_reply`` changes nothing and is not meant to: an answer always ends
+    # the wait, exactly as it does under ``--wait-reply`` on the commands that
+    # send. The flag documents that default rather than switching it, and
+    # ``--blocked`` adds a second way to finish rather than replacing the
+    # first — the same shape the sibling commands have, so a caller who knows
+    # one knows the other.
     if from_line is not None and from_line < 0:
         emit_error(f"Error: --from must be >= 0 (got {from_line}).", code=1)
 
@@ -590,7 +589,6 @@ def wait(session_id: str, *, from_line: int | None = None, timeout: float,
     reply = wait_for_reply_or_degrade(
         session.id, since_line_num=cursor, timeout=timeout,
         want_text=want_text, stop_when_blocked=on_blocked,
-        stop_when_replied=on_reply,
     )
     emit_json({"session_id": session.id, "reply": reply})
 

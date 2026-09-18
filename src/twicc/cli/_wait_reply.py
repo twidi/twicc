@@ -113,7 +113,6 @@ def wait_for_reply_or_degrade(
     timeout: float,
     want_text: bool,
     stop_when_blocked: bool = False,
-    stop_when_replied: bool = True,
 ) -> dict:
     """:func:`wait_for_reply`, unable to take its caller's payload down with it.
 
@@ -133,7 +132,6 @@ def wait_for_reply_or_degrade(
         return wait_for_reply(
             session_id, since_line_num=since_line_num, timeout=timeout,
             want_text=want_text, stop_when_blocked=stop_when_blocked,
-            stop_when_replied=stop_when_replied,
         )
     except BaseException as exc:  # noqa: BLE001 - deliberate, see above
         return degraded_reply(since_line_num, time.monotonic() - started, exc)
@@ -287,8 +285,7 @@ class _SessionWait:
     """
 
     def __init__(self, session_id: str, since_line_num: int, *, started: float,
-                 twicc_pid, want_text: bool, stop_when_blocked: bool,
-                 stop_when_replied: bool = True):
+                 twicc_pid, want_text: bool, stop_when_blocked: bool):
         self.session_id = session_id
         self.since_line_num = since_line_num
         self.scanned_up_to = since_line_num
@@ -296,7 +293,6 @@ class _SessionWait:
         self.twicc_pid = twicc_pid
         self.want_text = want_text
         self.stop_when_blocked = stop_when_blocked
-        self.stop_when_replied = stop_when_replied
         # Read once and kept: ``provider`` and ``file_path`` never change, and
         # ``last_offset`` is refreshed below only where it is actually used.
         self.session = None
@@ -364,7 +360,7 @@ class _SessionWait:
                     # The *first* final message past the cursor is the answer to
                     # what the caller just sent. A later one would belong to a
                     # turn the caller did not trigger.
-                    if message.is_final is True and self.stop_when_replied:
+                    if message.is_final is True:
                         return self.build(REPLIED, message)
                 if messages:
                     self.last_message = messages[-1]
@@ -454,7 +450,6 @@ def wait_for_replies(
     timeout: float,
     want_text: bool,
     stop_when_blocked: bool = False,
-    stop_when_replied: bool = True,
     first: bool = False,
 ) -> dict:
     """Wait on one or more sessions; return one reply block per id.
@@ -489,7 +484,6 @@ def wait_for_replies(
         session_id: _SessionWait(
             session_id, cursor, started=started, twicc_pid=twicc_pid,
             want_text=want_text, stop_when_blocked=stop_when_blocked,
-            stop_when_replied=stop_when_replied,
         )
         for session_id, cursor in cursors.items()
     }
@@ -542,7 +536,6 @@ def wait_for_reply(
     timeout: float,
     want_text: bool,
     stop_when_blocked: bool = False,
-    stop_when_replied: bool = True,
 ) -> dict:
     """Poll until the session answers, the turn ends, or ``timeout`` elapses.
 
@@ -555,5 +548,4 @@ def wait_for_reply(
     return wait_for_replies(
         {session_id: since_line_num},
         timeout=timeout, want_text=want_text, stop_when_blocked=stop_when_blocked,
-        stop_when_replied=stop_when_replied,
     )[session_id]
