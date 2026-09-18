@@ -78,6 +78,7 @@ AGENT_FLUSH_SECONDS = 5.0
 REPLIED = "replied"                # a final assistant message landed past the cursor
 PROVIDER_ERROR = "provider_error"  # the provider refused the turn (quota, outage, ...)
 ENDED = "ended"                    # the turn is over and no final message appeared
+AWAITING = "awaiting_user_input"   # the agent is blocked on a human, and the caller asked to be told
 TIMEOUT = "timeout"                # the deadline passed, the session keeps running
 BACKEND_GONE = "backend_gone"      # TwiCC stopped or restarted: nothing can be observed
 WAIT_FAILED = "wait_failed"        # the wait itself broke; the session is unaffected
@@ -89,6 +90,7 @@ def wait_for_reply_or_degrade(
     since_line_num: int,
     timeout: float,
     want_text: bool,
+    stop_when_blocked: bool = False,
 ) -> dict:
     """:func:`wait_for_reply`, unable to take its caller's payload down with it.
 
@@ -106,7 +108,8 @@ def wait_for_reply_or_degrade(
     started = time.monotonic()
     try:
         return wait_for_reply(
-            session_id, since_line_num=since_line_num, timeout=timeout, want_text=want_text,
+            session_id, since_line_num=since_line_num, timeout=timeout,
+            want_text=want_text, stop_when_blocked=stop_when_blocked,
         )
     except BaseException as exc:  # noqa: BLE001 - deliberate, see above
         return _empty_reply(WAIT_FAILED, since_line_num, time.monotonic() - started) | {
@@ -259,6 +262,7 @@ def wait_for_reply(
     since_line_num: int,
     timeout: float,
     want_text: bool,
+    stop_when_blocked: bool = False,
 ) -> dict:
     """Poll until the session answers, the turn ends, or ``timeout`` elapses.
 
@@ -376,6 +380,15 @@ def wait_for_reply(
 
         working, awaiting = _agent_activity(session_id, twicc_pid)
         awaiting_user_input = awaiting_user_input or awaiting
+
+        if stop_when_blocked and awaiting:
+            # Checked AFTER the transcript scan above, so a turn that both
+            # answered and then blocked reports the answer: an arrived reply is
+            # always the better ending. Opt-in, because waiting through a block
+            # is right whenever a human is there to clear it — and the case
+            # where nobody is (a --hidden worker) is the case where blocking
+            # cannot happen at all.
+            return build(AWAITING)
 
         if working:
             # A fresh turn (a cron, a wake-up, a subagent finishing) restarts

@@ -944,6 +944,7 @@ def run_cli(*args):
 @pytest.mark.parametrize(("args", "flag"), [
     (["--reply-timeout", "42"], "--reply-timeout"),
     (["--no-reply-text"], "--no-reply-text"),
+    (["--wait-blocked"], "--wait-blocked"),
     # The documented default, spelled out: comparing against the value instead
     # of "was it passed" would let this one through silently.
     (["--reply-timeout", "300"], "--reply-timeout"),
@@ -1016,6 +1017,7 @@ def run_send_cli(*args):
 @pytest.mark.parametrize(("args", "flag"), [
     (["--reply-timeout", "42"], "--reply-timeout"),
     (["--no-reply-text"], "--no-reply-text"),
+    (["--wait-blocked"], "--wait-blocked"),
     (["--reply-timeout", "300"], "--reply-timeout"),
 ])
 def test_send_message_refuses_the_wait_flags_without_the_wait(args, flag):
@@ -1074,7 +1076,7 @@ def test_a_command_with_no_cursor_does_not_grow_a_null_one():
 # closing message answers for the new one.
 
 
-def _run_send_message(monkeypatch, status_data: dict) -> dict:
+def _run_send_message(monkeypatch, status_data: dict, *, wait_blocked: bool = False) -> dict:
     """Drive ``send_message_cmd --wait-reply`` over a stubbed transport.
 
     Everything the command does before the send is real (prompt resolution,
@@ -1118,9 +1120,10 @@ def _run_send_message(monkeypatch, status_data: dict) -> dict:
 
     seen: dict = {}
 
-    def _probe(session_id, *, since_line_num, timeout, want_text):
+    def _probe(session_id, *, since_line_num, timeout, want_text, stop_when_blocked):
         seen["session_id"] = session_id
         seen["since_line_num"] = since_line_num
+        seen["stop_when_blocked"] = stop_when_blocked
         return {"outcome": REPLIED}
 
     monkeypatch.setattr(wait_reply_module, "wait_for_reply_or_degrade", _probe)
@@ -1128,7 +1131,8 @@ def _run_send_message(monkeypatch, status_data: dict) -> dict:
     with pytest.raises(typer.Exit):
         send_message_cmd(
             session_id=session.id, prompt="hello", no_expand=False, attach=[],
-            wait_reply=True, reply_timeout=None, no_reply_text=False, timeout=30,
+            wait_reply=True, reply_timeout=None, no_reply_text=False,
+            wait_blocked=wait_blocked, timeout=30,
         )
     return seen
 
@@ -1215,3 +1219,136 @@ def test_the_service_reads_the_cursor_after_the_agent_took_the_message(monkeypat
 
     assert result.success is True
     assert result.status_extra["last_line"] == 137
+
+
+# ---------------------------------------------------------------------------
+# `--wait-blocked` — stop when a human is what is missing
+# ---------------------------------------------------------------------------
+#
+# Off by default, and deliberately so: waiting through a block is right
+# whenever a human is there to clear it, and the case where nobody is —
+# a `--hidden` worker — is the case where blocking cannot happen at all
+# (hidden enforces a non-interactive permission mode). The flag is for a
+# visible session, where a script would otherwise burn its whole timeout
+# waiting on a click nobody is coming to make.
+
+
+def test_a_block_ends_the_wait_when_asked(project):
+    session = make_session(project)
+    process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
+
+    reply = wait(session, timeout=2.0, stop_when_blocked=True)
+
+    assert reply["outcome"] == "awaiting_user_input"
+
+
+def test_a_block_is_waited_through_by_default(project, on_tick):
+    """The shipped behaviour, unchanged: a human clicks, the answer arrives."""
+    session = make_session(project)
+    row = process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
+
+    def clicked_then_answered():
+        ProcessRun.objects.filter(pk=row.pk).update(awaiting_user_input=False)
+        assistant(session, 5, "here it is", "end_turn")
+
+    on_tick({2: clicked_then_answered})
+
+    reply = wait(session, timeout=2.0)
+
+    assert reply["outcome"] == REPLIED
+
+
+def test_an_answer_wins_a_tie_against_a_block(project, on_tick):
+    """Both flags are OR-combined, and the transcript is scanned first.
+
+    A turn that answered and then asked for something has answered — giving
+    back ``awaiting_user_input`` would hide a reply the caller can read.
+    """
+    session = make_session(project)
+    row = process(session, AgentState.ASSISTANT_TURN.value)
+
+    def answered_and_blocked():
+        assistant(session, 5, "done, now approve this", "end_turn")
+        ProcessRun.objects.filter(pk=row.pk).update(awaiting_user_input=True)
+
+    on_tick({2: answered_and_blocked})
+
+    reply = wait(session, timeout=2.0, stop_when_blocked=True)
+
+    assert reply["outcome"] == REPLIED
+    assert reply["line_num"] == 5
+
+
+def test_a_block_that_appears_later_still_ends_the_wait(project, on_tick):
+    """The flag is not only about a session already blocked when the wait
+    starts — the interesting case is the turn that runs, then asks."""
+    session = make_session(project)
+    row = process(session, AgentState.ASSISTANT_TURN.value)
+
+    on_tick({2: lambda: ProcessRun.objects.filter(pk=row.pk).update(awaiting_user_input=True)})
+
+    reply = wait(session, timeout=2.0, stop_when_blocked=True)
+
+    assert reply["outcome"] == "awaiting_user_input"
+
+
+def test_the_degrade_wrapper_forwards_the_flag(project):
+    """``wait_for_reply_or_degrade`` is what the commands actually call; a flag
+    stopping at the wrapper is a flag that does nothing."""
+    from twicc.cli._wait_reply import wait_for_reply_or_degrade
+
+    session = make_session(project)
+    process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
+
+    reply = wait_for_reply_or_degrade(
+        session.id, since_line_num=0, timeout=2.0, want_text=True,
+        stop_when_blocked=True,
+    )
+
+    assert reply["outcome"] == "awaiting_user_input"
+
+
+@pytest.mark.django_db
+def test_send_message_forwards_the_blocked_flag(monkeypatch):
+    """A flag that stops at the command is a flag that does nothing — and the
+    loop's own tests cannot see it, since they call the loop directly."""
+    seen = _run_send_message(monkeypatch, {
+        "session_id": "cursor-wiring-session", "provider": "claude_code",
+        "project_id": "cursor-wiring-project", "last_line": 3,
+    }, wait_blocked=True)
+
+    assert seen["stop_when_blocked"] is True
+
+
+@pytest.mark.django_db
+def test_create_session_forwards_the_blocked_flag(monkeypatch, tmp_path):
+    """Same wiring, the other command. Both were unasserted, and both mutants
+    survived the whole file."""
+    from twicc.cli import _wait_reply as wait_reply_module
+
+    seen: dict = {}
+
+    def _probe(session_id, *, since_line_num, timeout, want_text, stop_when_blocked):
+        seen["stop_when_blocked"] = stop_when_blocked
+        return {"outcome": REPLIED}
+
+    from twicc.cli._drop_request import transport
+    from twicc.cli._drop_request.polling import PollOutcome
+
+    class _Sub:
+        request_uuid = "req-create-blocked"
+
+        def cleanup(self):
+            pass
+
+    monkeypatch.setattr(transport, "ensure_server_available", lambda: None)
+    monkeypatch.setattr(transport, "submit", lambda payload, *, kind: _Sub())
+    monkeypatch.setattr(transport, "wait", lambda sub, timeout_seconds: PollOutcome(
+        "created", {"session_id": "s", "provider": "claude_code", "project_id": "p"}, True,
+    ))
+    monkeypatch.setattr(wait_reply_module, "wait_for_reply_or_degrade", _probe)
+
+    result = run_cli("hello", "--project", str(tmp_path), "--wait-reply", "--wait-blocked")
+
+    assert result.exit_code == 0, result.output
+    assert seen["stop_when_blocked"] is True

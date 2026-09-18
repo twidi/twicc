@@ -46,6 +46,7 @@ $TWICC send-message [OPTIONS] '<SESSION_ID|parent>' ['<PROMPT>']
 - `--wait-reply` — keep going after delivery, until the session answers. See **Following up** below.
 - `--reply-timeout N` — caps that wait. Default **300 s**, which is the ceiling MCP callers are asked to respect — and an MCP client may itself give up on a tool silent that long, so over MCP pass a shorter value and come back rather than riding the default to its end. There is no way to disable it. Requires `--wait-reply`.
 - `--no-reply-text` — report that the answer arrived without returning its text. Requires `--wait-reply`.
+- `--wait-blocked` — with `--wait-reply`, also stop when the session blocks on a human (a tool approval, a pending question) instead of waiting through it; the outcome becomes `awaiting_user_input`. **OR-combined** with the reply wait — whichever happens first ends it, and an answer wins a tie. Off by default: waiting through a block is right whenever a human is there to clear it, and the case where nobody is (a `--hidden` session) is the case where blocking cannot happen at all.
 
 ### Target discovery
 

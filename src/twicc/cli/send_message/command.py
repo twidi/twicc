@@ -77,6 +77,19 @@ def send_message_cmd(
             "Requires --wait-reply."
         ),
     ),
+    wait_blocked: bool = typer.Option(
+        False,
+        "--wait-blocked",
+        help=(
+            "With --wait-reply, also stop when the session blocks on a human "
+            "(a tool approval or a pending question) instead of waiting "
+            "through it — the outcome becomes `awaiting_user_input`. The two "
+            "are OR-combined: whichever happens first ends the wait, and an "
+            "answer wins a tie. Off by default, because waiting through a "
+            "block is right whenever a human is there to clear it; a --hidden "
+            "session cannot block at all. Requires --wait-reply."
+        ),
+    ),
     no_reply_text: bool = typer.Option(
         False,
         "--no-reply-text",
@@ -157,7 +170,8 @@ def send_message_cmd(
     wait_errors: list[ValidationError] = []
     if not wait_reply:
         for flag, given in (("--reply-timeout", reply_timeout is not None),
-                            ("--no-reply-text", no_reply_text)):
+                            ("--no-reply-text", no_reply_text),
+                            ("--wait-blocked", wait_blocked)):
             if given:
                 wait_errors.append(ValidationError(
                     flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
@@ -329,6 +343,7 @@ def send_message_cmd(
             since_line_num=final.get("last_line") or 0,
             timeout=reply_timeout,
             want_text=not no_reply_text,
+            stop_when_blocked=wait_blocked,
         )
         emit_json(final)
         raise typer.Exit(0)
