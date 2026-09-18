@@ -262,7 +262,9 @@ def create_session_cmd(
             "Seconds the wait may last, whatever ends it — an answer, a block on a human with --wait-blocked, a crash (default 300, the ceiling "
             "MCP callers are asked to respect). A timeout is not a failure and "
             "nothing is lost — the agent keeps working, and the result carries "
-            "`since_line_num` to resume from. Raise it for a session whose "
+            "the cursor to resume from — `line_num` when the ending consumed a "
+            "line (`replied`, `provider_error`), `since_line_num` otherwise. "
+            "Raise it for a session whose "
             "first turn is long; there is no way to wait forever on purpose. "
             "Requires --wait-reply."
         ),

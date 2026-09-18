@@ -151,7 +151,9 @@ def send_messages_cmd(
             "the whole batch, since the recipients are waited on together "
             "(default 300, the ceiling MCP callers are asked to respect). A "
             "timeout is not a failure and nothing is lost — the agents keep "
-            "working, and each entry carries `since_line_num` to resume from. "
+            "working, and each entry carries the cursor to resume from — `line_num` "
+            "when its ending consumed a line (`replied`, `provider_error`), "
+            "`since_line_num` otherwise. "
             "Requires --wait-reply."
         ),
     ),

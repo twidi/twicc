@@ -74,7 +74,9 @@ def send_message_cmd(
             "up on a tool silent that long, so over MCP pass a shorter value "
             "and come back rather than riding the default to its end). A "
             "timeout is not a failure and nothing is lost — the agent keeps "
-            "working, and the result carries `since_line_num` to resume from. "
+            "working, and the result carries the cursor to resume from — `line_num` "
+            "when the ending consumed a line (`replied`, `provider_error`), "
+            "`since_line_num` otherwise. "
             "Requires --wait-reply."
         ),
     ),
