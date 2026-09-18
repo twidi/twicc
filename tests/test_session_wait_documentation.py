@@ -85,13 +85,17 @@ def _section(numbered: list[tuple[int, str]], heading_prefix: str) -> list[tuple
     shortest repair is to add that flag to the allowlist — which disarms the
     check for a real one.
     """
-    level = f"{heading_prefix.split(' ')[0]} "
+    # `#{1,N}`, not `#` * N: a *shallower* heading closes a section just as a
+    # sibling does. Matching only its own level let moving the section to the
+    # end of its parent swallow every `##` that followed, and report a dozen
+    # flags belonging to other sub-commands as flags that do not exist.
+    boundary = re.compile(rf"^#{{1,{len(heading_prefix.split(' ')[0])}}} ")
     start = next((i for i, (_, line) in enumerate(numbered) if line.startswith(heading_prefix)), None)
     # A heading someone renamed, reported as itself: the bare lookup raised
     # `StopIteration` from deep inside a generator and named nothing.
     assert start is not None, heading_prefix
     end = next(
-        (i for i, (_, line) in enumerate(numbered[start + 1:], start + 1) if line.startswith(level)),
+        (i for i, (_, line) in enumerate(numbered[start + 1:], start + 1) if boundary.match(line)),
         len(numbered),
     )
     return numbered[start:end]
@@ -114,7 +118,10 @@ def _copyable_spans() -> list[tuple[str, int, str]]:
             if stripped.startswith("$TWICC"):  # a fenced block carries no backticks
                 spans.append(stripped)
             for span in spans:
-                if INVOCATION.search(span) or span.startswith("wait ["):
+                # `wait [--`, not `wait [`: `processes wait [SESSION_ID...]`
+                # is another command with flags of its own, and the CLI
+                # reference documents it in the same shape a few sections down.
+                if INVOCATION.search(span) or span.startswith("wait [--"):
                     found.append((label, number, span))
     return found
 
@@ -129,7 +136,7 @@ def _is_full_signature(label: str, span: str) -> bool:
     """
     if "[--" not in span:
         return False
-    return span.startswith("$TWICC session") or (label == "SKILLS-AND-CLI.md" and span.startswith("wait ["))
+    return span.startswith("$TWICC session") or (label == "SKILLS-AND-CLI.md" and span.startswith("wait [--"))
 
 
 def _numbered(path: Path) -> list[tuple[int, str]]:
@@ -220,12 +227,21 @@ def test_the_prose_names_no_flag_that_does_not_exist():
 
 
 def test_every_mention_of_a_neighbour_s_flag_is_a_sanctioned_one():
-    counted = {}
+    counted, where = {}, []
     for label, lines in _prose_sources():
-        found = [flag for _, line in lines for flag in FLAG.findall(line) if flag in CROSS_REFERENCES]
+        found = [
+            (number, flag)
+            for number, line in lines
+            for flag in FLAG.findall(line)
+            if flag in CROSS_REFERENCES
+        ]
         if found:
-            counted[label] = {flag: found.count(flag) for flag in CROSS_REFERENCES}
-    assert counted == SANCTIONED
+            counted[label] = {flag: [f for _, f in found].count(flag) for flag in CROSS_REFERENCES}
+            where += [(label, number, flag) for number, flag in found]
+    # The count says a mention appeared; `where` says which line to open. This
+    # is the test that fires on the recurring defect, so it is the one that
+    # must not answer "somewhere in these thirty-one lines".
+    assert counted == SANCTIONED, where
 
 
 def test_the_documented_numbers_are_read_from_the_code():
@@ -239,7 +255,12 @@ def test_the_documented_numbers_are_read_from_the_code():
 
     # The flush window is quoted in four places and named in none of them, so
     # halving the constant leaves every one of them wrong and nothing red.
+    # Counting the mentions rather than pinning how many there are: a fifth
+    # sentence is an edit, a fifth sentence quoting a stale number is a defect.
     window = f"~{AGENT_FLUSH_SECONDS:.0f} s flush window"
-    assert SESSION_SKILL.read_text(encoding="utf-8").count(window) == 2
-    assert window in CLI_DOC.read_text(encoding="utf-8")
-    assert window in cli_session.wait.__doc__
+    for label, text in (
+        ("skill", SESSION_SKILL.read_text(encoding="utf-8")),
+        ("CLI reference", CLI_DOC.read_text(encoding="utf-8")),
+        ("docstring", cli_session.wait.__doc__),
+    ):
+        assert text.count("flush window") == text.count(window) >= 1, label
