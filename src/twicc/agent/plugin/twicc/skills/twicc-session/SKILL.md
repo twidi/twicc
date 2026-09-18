@@ -1,6 +1,6 @@
 ---
 name: twicc-session
-description: Inspect, wait on, or stop a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, list/inspect its workflows, or stop its live agent. Use when you or the user want to examine a session, read conversation content, or explore subagent activity.
+description: Inspect, wait on, or stop a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, list/inspect its workflows, or stop its live agent. Use when you or the user want to examine a session, read conversation content, explore subagent activity, block until it answers, or stop its agent.
 argument-hint: <session_id> [content|messages|agents|plan|wait|stop|workflows|workflow]
 ---
 
@@ -11,7 +11,7 @@ Inspect, wait on, or stop a single session. Nine sub-commands:
 - Default — full session metadata.
 - `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
-- `wait [--from N]` — block until this session says something past the cursor. Use it on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. `--from` is the `line_num` or `since_line_num` a previous wait returned, so a wait that timed out can be resumed exactly where it stopped; omitted, it is the session's current last line. An idle session returns `ended` immediately rather than hanging. Also takes `--timeout` (default 300 s), `--wait-blocked` and `--no-reply-text`, with the same meaning as on `send-message`. **Exit code:** `0` answered or blocked, `5` nothing came, `2` TwiCC stopped, `1` the wait broke — so `$TWICC session <ID> wait && …` chains.
+- `wait [--from N]` — block until this session says something past the cursor. Use it on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. `--from` is the `line_num` or `since_line_num` a previous wait returned, so a wait that timed out can be resumed exactly where it stopped; omitted, it is the session's current last line. An idle session concludes with `ended` rather than hanging, but not instantly: the loop waits out a ~5 s flush window before it can tell a finished turn from one about to speak, so a `--timeout` below that always reports `timeout`. Also takes `--timeout` (default 300 s), `--wait-blocked` and `--no-reply-text`, with the same meaning as on `send-message`. **Exit code:** `0` answered or blocked, `5` nothing came, `2` TwiCC stopped, `1` a local refusal — a bad `--from`, a non-positive `--timeout`, an unknown session, or the wait itself breaking. So `$TWICC session <ID> wait && …` chains, and a `1` is worth reading before retrying.
 - `stop` — stop this session's live agent (`--timeout`, `--force` for a SIGKILL without the grace window). Idempotent: stopping an already-stopped session still reports `stopped`. Same operation as `process <ID> stop`, which it is meant to replace.
 - `agents` — list subagents spawned by this session. `--slim` returns the reduced projection (see the `twicc-sessions` skill), about 80% lighter. Rows carry the same `process` block as `sessions`, always `null` here: a subagent runs inside its parent's process and never has one of its own.
 - `plan [PATH] [--list]` — the session's tracked plan documents (both providers): most recently updated one by default, a specific one by path, `--list` to enumerate.
@@ -220,6 +220,35 @@ Other patterns:
 - Focused window from search: `messages --range A-B`
 - Messages mentioning a term: `messages --contains "auth"`
 - Last reply mentioning a term: `messages --role assistant --contains "auth" --tail 1`
+
+### Wait — block until the session speaks again
+
+```bash
+$TWICC session '<SESSION_ID>' wait [--from N] [--timeout N] [--wait-blocked] [--no-reply-text]
+```
+
+For a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. When you sent the message yourself, use `send-message --wait-reply` instead — it reads its own cursor server-side and needs nothing from you.
+
+**`--from` is the cursor**, and choosing it right is the whole of using this command. Only a line strictly past it counts.
+
+| The previous wait ended with | Resume from |
+|---|---|
+| `replied` | its **`line_num`** — its `since_line_num` still points below the answer and would return the same one again |
+| `timeout`, `ended`, `backend_gone`, `wait_failed` | its **`since_line_num`** — nothing was consumed |
+| nothing yet (first call) | omit it: the cursor becomes the session's current last line, "tell me the next thing it says" |
+
+Returns `{"session_id": ..., "reply": {...}}`, the `reply` block being the one `--wait-reply` returns: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (dropped by `--no-reply-text`), `error` on `wait_failed`, and `awaiting_user_input: true` when a human was asked for during the turn.
+
+`outcome` is `replied` (the message closing the turn), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `provider_error` (quota, outage), `backend_gone`, `wait_failed`, or `awaiting_user_input` with `--wait-blocked`.
+
+```bash
+$TWICC session 4a8352fb-... wait --timeout 120
+# → {"session_id":"4a8352fb-...","reply":{"outcome":"replied","line_num":42,...,"text":"done"}}
+$TWICC session 4a8352fb-... wait --from 42 --timeout 60
+# Resumes above the answer just read.
+```
+
+An idle session ends rather than hanging, but only after a ~5 s flush window: below that, `--timeout` can only report `timeout`.
 
 ### Agents — list subagents
 

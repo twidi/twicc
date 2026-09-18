@@ -160,12 +160,27 @@ def test_a_block_can_end_the_wait_and_exits_zero(session, capsysbinary):
 
 
 def test_a_timeout_exits_five(session, capsysbinary):
+    """And the budget it ran on is the one that was asked for.
+
+    Asserting the outcome alone lets any budget through: `timeout` and exit 5
+    are true whether the wait lasted the 0.3 s requested or five seconds. A
+    mutant halving it, or pinning it to a constant, kept the suite green —
+    the same gap the batch wait closed one commit earlier and this file
+    reopened.
+    """
+    import time as _time
+
     running(session)
 
-    payload, code = run(capsysbinary, timeout=0.3)
+    started = _time.monotonic()
+    payload, code = run(capsysbinary, timeout=1.0)
+    elapsed = _time.monotonic() - started
 
     assert payload["reply"]["outcome"] == "timeout"
     assert code == 5
+    # Both bounds. An upper one alone misses a budget that was *shrunk* — a
+    # mutant halving it finishes even sooner and looks like a pass.
+    assert 0.8 <= elapsed < 2.5
 
 
 def test_a_vanished_backend_exits_two(session, capsysbinary, monkeypatch):
@@ -239,8 +254,12 @@ def test_the_flags_travel_from_the_command_line(session, monkeypatch):
     seen: dict = {}
 
     def probe(session_id, *, from_line, timeout, want_text, stop_when_blocked):
-        seen.update(from_line=from_line, timeout=timeout, want_text=want_text,
-                    blocked=stop_when_blocked)
+        # ``session_id`` too: ``ctx.obj`` is the only wiring that carries the
+        # positional id down from the group callback, and the direct-call
+        # tests bypass the wrapper entirely. Recorded but unasserted, a
+        # hardcoded id would wait on the wrong session with the suite green.
+        seen.update(session_id=session_id, from_line=from_line, timeout=timeout,
+                    want_text=want_text, blocked=stop_when_blocked)
         raise typer.Exit(0)
 
     monkeypatch.setattr("twicc.cli.session.wait", probe)
@@ -251,7 +270,8 @@ def test_the_flags_travel_from_the_command_line(session, monkeypatch):
     ])
 
     assert result.exit_code == 0, result.output
-    assert seen == {"from_line": 42, "timeout": 7.0, "want_text": False, "blocked": True}
+    assert seen == {"session_id": "sw-session", "from_line": 42, "timeout": 7.0,
+                    "want_text": False, "blocked": True}
 
 
 def test_the_defaults_are_the_documented_ones(session, monkeypatch):
@@ -262,8 +282,12 @@ def test_the_defaults_are_the_documented_ones(session, monkeypatch):
     seen: dict = {}
 
     def probe(session_id, *, from_line, timeout, want_text, stop_when_blocked):
-        seen.update(from_line=from_line, timeout=timeout, want_text=want_text,
-                    blocked=stop_when_blocked)
+        # ``session_id`` too: ``ctx.obj`` is the only wiring that carries the
+        # positional id down from the group callback, and the direct-call
+        # tests bypass the wrapper entirely. Recorded but unasserted, a
+        # hardcoded id would wait on the wrong session with the suite green.
+        seen.update(session_id=session_id, from_line=from_line, timeout=timeout,
+                    want_text=want_text, blocked=stop_when_blocked)
         raise typer.Exit(0)
 
     monkeypatch.setattr("twicc.cli.session.wait", probe)
@@ -271,4 +295,33 @@ def test_the_defaults_are_the_documented_ones(session, monkeypatch):
     result = CliRunner().invoke(app, ["session", "sw-session", "wait"])
 
     assert result.exit_code == 0, result.output
-    assert seen == {"from_line": None, "timeout": 300.0, "want_text": True, "blocked": False}
+    assert seen == {"session_id": "sw-session", "from_line": None, "timeout": 300.0,
+                    "want_text": True, "blocked": False}
+
+
+def test_the_payload_names_the_session_it_waited_on(session, capsysbinary):
+    """A caller batching several of these calls has only the payload to tell
+    the answers apart — the request order is not something a result carries.
+    """
+    running(session)
+
+    payload, _ = run(capsysbinary, timeout=0.3)
+
+    assert payload["session_id"] == "sw-session"
+
+
+def test_the_wait_is_published_as_a_read():
+    """It polls and never writes, like its two siblings.
+
+    Two things hang on the classification: `readOnlyHint`, which a client uses
+    to decide whether to ask a human, and `batch_read`, which accepts reads
+    only — and `batch_read` is how a caller waits on several sessions at once,
+    since the plural command is deliberately not built.
+    """
+    from twicc.mcp.tools import MCP_READ_ONLY_PATHS, iter_mcp_tools
+
+    assert "session/wait" in MCP_READ_ONLY_PATHS
+
+    hints = {t.name: t.annotations.read_only_hint for t in iter_mcp_tools()}
+    assert hints["session_wait"] is True
+    assert hints["session_stop"] is False

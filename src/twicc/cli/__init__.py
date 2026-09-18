@@ -550,7 +550,7 @@ def messages(
                      limit=limit, offset=offset, tail=tail, paginated=paginated)
 
 
-@session_app.command("wait", help="Block until the session says something new.")
+@session_app.command("wait")
 def _session_wait(
     ctx: typer.Context,
     from_line: int = typer.Option(
@@ -593,7 +593,12 @@ def _session_wait(
     Unlike --wait-reply, nothing is sent: this waits on a session someone else
     started, steered from the UI or spawned earlier. Exit 0 when it answered
     (or blocked, with --wait-blocked), 5 when no answer came, 2 when TwiCC
-    stopped, 1 when the wait itself broke — so a script can chain on it.
+    stopped, 1 on a local refusal (a bad --from, a non-positive --timeout, an
+    unknown session) or the wait itself breaking — so a script can chain on it.
+
+    --from is the cursor, and only a line strictly past it counts. After a
+    `replied`, resume from its `line_num`; after any other ending, from its
+    `since_line_num`. Omitted, it is the session's current last line.
     """
     from twicc.cli.session import wait as session_wait
 
