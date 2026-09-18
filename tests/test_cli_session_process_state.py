@@ -482,11 +482,18 @@ def test_a_provider_filter_is_a_plain_column(project, live_backend, capsysbinary
     ({"state": "dead", "active": True}, "mutually exclusive"),
 ])
 def test_bad_filters_are_refused(project, live_backend, kwargs, message, capsysbinary):
+    """The code matters as much as the raise.
+
+    ``pytest.raises(typer.Exit)`` matches ``Exit(0)`` just as happily, and a
+    typo'd filter exiting 0 with an empty list reads as "nothing matches" —
+    which over MCP is indistinguishable from success.
+    """
     import typer
 
-    with pytest.raises(typer.Exit):
+    with pytest.raises(typer.Exit) as exc:
         cli_sessions.main(project=project.id, **kwargs)
 
+    assert exc.value.exit_code == 1
     assert message in capsysbinary.readouterr().err.decode()
 
 
@@ -506,3 +513,113 @@ def test_a_dead_row_is_not_active(project, live_backend, capsysbinary):
 
     cli_sessions.main(project=project.id, state="dead", slim=True)
     assert _ids(capsysbinary) == {"stopped"}
+
+
+# ---------------------------------------------------------------------------
+# The Typer wiring — an option that never arrives is a silent no-op
+# ---------------------------------------------------------------------------
+#
+# Everything above calls ``main()`` directly, which leaves the whole
+# command-line surface untested: the option spelling, its default, and whether
+# its value is forwarded at all. A previous commit added this harness after
+# four such mutants survived the full suite; this commit deleted it and added
+# three options through the same hole, and twelve mutants survived. Do not
+# remove it again — a `--state` that silently does nothing looks exactly like
+# "nothing is running", which is an answer an orchestrator acts on.
+
+
+@pytest.fixture
+def invoke(project, live_backend):
+    from typer.testing import CliRunner
+
+    from twicc.cli import app
+
+    for sid in ("gen", "gone"):
+        make_session(project, sid)
+    make_run("gen", AgentState.ASSISTANT_TURN)
+    Session.objects.filter(id="gone").update(provider="codex")
+    runner = CliRunner()
+
+    def run(*args, exit_code=0):
+        result = runner.invoke(app, list(args))
+        assert result.exit_code == exit_code, result.output
+        if exit_code:
+            return result.output
+        payload = orjson.loads(result.stdout)
+        items = payload["items"] if isinstance(payload, dict) else payload
+        return {row["id"] for row in items}
+
+    return run
+
+
+def test_the_bare_listing_shows_everything(invoke):
+    """Pins ``--active``'s default: flipped on, every plain call would lie."""
+    assert invoke("sessions", "--slim") == {"gen", "gone"}
+
+
+def test_active_travels_from_the_command_line(invoke):
+    assert invoke("sessions", "--active", "--slim") == {"gen"}
+
+
+def test_state_travels_from_the_command_line(invoke):
+    assert invoke("sessions", "--state", "dead", "--slim") == {"gone"}
+
+
+def test_provider_travels_from_the_command_line(invoke):
+    assert invoke("sessions", "--provider", "codex", "--slim") == {"gone"}
+
+
+def test_a_bad_filter_exits_one_from_the_command_line(invoke):
+    """Exit 1, not 0: over MCP a 0 reads as success and an empty list as truth."""
+    assert "invalid --state" in invoke("sessions", "--state", "bogus", exit_code=1)
+
+
+# ---------------------------------------------------------------------------
+# What `--active` deliberately does NOT do
+# ---------------------------------------------------------------------------
+
+
+def test_active_does_not_lift_the_hidden_default(project, live_backend, capsysbinary):
+    """It answers "what is running", not "who is my descendance".
+
+    Lifting visibility is the filiation scopes' job, and they already do it —
+    which is how an orchestrator reaches its own hidden workers. A flag that
+    silently changes what another flag does is one nobody can predict.
+    """
+    make_session(project, "shy", hidden=True)
+    make_run("shy")
+
+    cli_sessions.main(project=project.id, active=True, slim=True)
+    assert _ids(capsysbinary) == set()
+
+    cli_sessions.main(project=project.id, active=True, include_hidden=True, slim=True)
+    assert _ids(capsysbinary) == {"shy"}
+
+
+def test_active_does_not_lift_the_archived_default(project, live_backend, capsysbinary):
+    """Archiving kills the live agent, so this pairing cannot occur in
+    production — the test pins the filter, not the scenario."""
+    make_session(project, "filed", archived=True)
+    make_run("filed")
+
+    cli_sessions.main(project=project.id, active=True, slim=True)
+    assert _ids(capsysbinary) == set()
+
+    cli_sessions.main(project=project.id, active=True, archived=True, slim=True)
+    assert _ids(capsysbinary) == {"filed"}
+
+
+@pytest.mark.django_db
+def test_the_loader_scopes_to_the_ids_it_is_given(project, live_backend):
+    """``session_ids=None`` means "every row"; a list means that list.
+
+    The decoration path passes the page, the filter passes None. Losing the
+    distinction is invisible in output — same blocks, keyed by id — and only
+    shows up as a table scan per listing.
+    """
+    for sid in ("a", "b"):
+        make_session(project, sid)
+        make_run(sid)
+
+    assert set(load_process_rows(["a"], TWICC_PID)) == {"a"}
+    assert set(load_process_rows(None, TWICC_PID)) == {"a", "b"}

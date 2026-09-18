@@ -19,6 +19,9 @@ Settled with the user on 2026-09-17, then corrected across three review rounds.
 
 1. Follow `topology`'s technique, and **factor out** what the two now share.
 2. On by default (`--processes/--no-processes`), mirroring `topology`'s flag.
+   **Superseded 2026-09-18:** the flag was removed a day later, unreleased.
+   Sessions carry their process unconditionally — opting out of a key that a
+   `--state` filter selects on was two contradictory requests.
 3. **One shape in both modes**: a nested `process` object, carrying only
    `state` under `--slim` and the full block otherwise. The asymmetry first
    proposed (a flat `process_state` string in slim) was rejected as two names
@@ -402,7 +405,6 @@ is not evidence.
 |---|---|
 | Slim carries `process` with `state` alone | Slim emits the full block |
 | Full carries the five fields | A field is dropped or renamed |
-| `--no-processes` omits the key entirely | The key appears as `null` |
 | Live backend, no row → `state: "dead"` + four `null` fields | The block is `null`, or the fields are absent |
 | No live backend → `process: null` on every row | It reports `"dead"` — the wrong-conclusion case |
 | A row in `awaiting_user_input` surfaces as such | It reports `assistant_turn` |
