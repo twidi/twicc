@@ -433,7 +433,6 @@ def _sessions_stop(
     )
 
 
-
 @sessions_app.command(name="get")
 def _sessions_get(
     session_ids: list[str] = typer.Argument(
@@ -556,10 +555,13 @@ def _session_wait(
     from_line: int = typer.Option(
         None, "--from",
         help=(
-            "Only a line strictly past this one counts. Pass the `line_num` "
-            "or `since_line_num` a previous wait handed back, which is what "
-            "makes a timed-out wait resumable. Omitted, it is the session's "
-            "current last line — \"tell me the next thing it says\"."
+            "Only a line strictly past this one counts, which is what makes "
+            "a timed-out wait resumable. Pass the `line_num` of an ending "
+            "that consumed a line (`replied`, `provider_error`) or the "
+            "`since_line_num` of one that did not — resuming a "
+            "`provider_error` from `since_line_num` re-matches the same "
+            "error forever. Omitted, it is the session's current last line — "
+            "\"tell me the next thing it says\"."
         ),
     ),
     timeout: float = typer.Option(
@@ -617,7 +619,6 @@ def _session_wait(
     )
 
 
-
 @session_app.command("stop", help="Stop the live agent behind this session.")
 def _session_stop(
     ctx: typer.Context,
@@ -645,7 +646,6 @@ def _session_stop(
     from twicc.cli.process_stop import stop_cmd
 
     stop_cmd(ctx.obj, timeout=timeout, force=force)
-
 
 
 @session_app.command(help=CUTOVER_NOTICE + "List subagents of a session as JSON.")

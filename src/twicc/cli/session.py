@@ -554,7 +554,9 @@ def wait(session_id: str, *, from_line: int | None = None, timeout: float,
     Omitted, the cursor is the session's current ``last_line`` — "tell me the
     next thing it says". The race that killed ``--transition`` does not apply:
     a marker read too late never moves again, but a session that is simply
-    idle is observable, and reports ``ended`` rather than hanging.
+    idle is observable, and reports ``ended`` rather than hanging — after the
+    loop's ~5 s flush window, which is what lets it tell a finished turn from
+    one about to speak.
     """
     import django
 

@@ -343,10 +343,21 @@ def test_the_mcp_description_carries_the_contract():
     # The exit codes are the answer over MCP, where a non-zero code is
     # business data rather than a failure.
     assert "Exit 0" in description
-    # And the resume rule, which is the difference between a loop and a walk
-    # through a transcript.
-    assert "provider_error" in description
-    assert "since_line_num" in description
+
+    # The resume rule, asserted as a *pairing* rather than as three words.
+    # Checking that `provider_error` and `since_line_num` merely appear let a
+    # mutant through that inverted the rule while keeping both — which is the
+    # exact defect this test was added to guard.
+    assert "`replied`, and `provider_error`" in description
+    assert "resumes from its `line_num`" in description
+    assert "resumes from its `since_line_num`" in description
+
+    # And the vocabulary a caller has to branch on. `pending` is batch-only
+    # and must stay out: it cannot happen here.
+    for outcome in ("replied", "ended", "timeout", "provider_error",
+                    "backend_gone", "wait_failed", "awaiting_user_input"):
+        assert f"`{outcome}`" in description, outcome
+    assert "pending" not in description
 
 
 def test_a_provider_error_consumes_a_line_like_an_answer_does(session, capsysbinary):
