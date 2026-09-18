@@ -64,26 +64,37 @@ def _command():
 
 
 def _real_options() -> set[str]:
-    return {opt for param in _command().params for opt in param.opts}
+    # `secondary_opts` too: the day one of these turns into `--x/--no-x`,
+    # documenting `--no-x` must not read as a flag the command refuses.
+    return {opt for param in _command().params for opt in (*param.opts, *param.secondary_opts)}
 
 
 def _real_default(name: str):
     return next(param.default for param in _command().params if param.name == name)
 
 
-def _section(lines: list[str], heading_prefix: str, stop_prefix: str) -> list[str]:
-    start = next(
-        (i for i, line in enumerate(lines) if line.startswith(heading_prefix)),
-        None,
-    )
+def _real_help(name: str) -> str:
+    return next(param.help for param in _command().params if param.name == name)
+
+
+def _section(numbered: list[tuple[int, str]], heading_prefix: str) -> list[tuple[int, str]]:
+    """One section, ending at the next heading of its own level.
+
+    Naming the *following* section instead would make inserting a sibling
+    swallow it: the `wait` prose would inherit `stop`'s `--timeout`, and the
+    shortest repair is to add that flag to the allowlist — which disarms the
+    check for a real one.
+    """
+    level = f"{heading_prefix.split(' ')[0]} "
+    start = next((i for i, (_, line) in enumerate(numbered) if line.startswith(heading_prefix)), None)
     # A heading someone renamed, reported as itself: the bare lookup raised
     # `StopIteration` from deep inside a generator and named nothing.
     assert start is not None, heading_prefix
     end = next(
-        (i for i, line in enumerate(lines[start + 1:], start + 1) if line.startswith(stop_prefix)),
-        len(lines),
+        (i for i, (_, line) in enumerate(numbered[start + 1:], start + 1) if line.startswith(level)),
+        len(numbered),
     )
-    return lines[start:end]
+    return numbered[start:end]
 
 
 def _copyable_spans() -> list[tuple[str, int, str]]:
@@ -97,7 +108,7 @@ def _copyable_spans() -> list[tuple[str, int, str]]:
     found = []
     for path in [*sorted(SKILLS_DIR.glob("*/SKILL.md")), CLI_DOC]:
         label = f"{path.parent.name}/{path.name}" if path != CLI_DOC else path.name
-        for number, line in enumerate(path.read_text().splitlines(), start=1):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             stripped = line.strip()
             spans = CODE_SPAN.findall(stripped)
             if stripped.startswith("$TWICC"):  # a fenced block carries no backticks
@@ -108,26 +119,44 @@ def _copyable_spans() -> list[tuple[str, int, str]]:
     return found
 
 
-def _prose_sources() -> list[tuple[str, str]]:
-    """The blocks that describe the command, where a neighbour may be named."""
-    skill = SESSION_SKILL.read_text().splitlines()
-    cli = CLI_DOC.read_text().splitlines()
-    cli_section = _section(cli, "### `twicc session <SESSION_ID> <SUBCOMMAND>`", "### `twicc search")
+def _is_full_signature(label: str, span: str) -> bool:
+    """The two spans that claim to list every option, anchored rather than guessed.
+
+    Inferring it from "more than one bracket group" made the shape of a
+    sentence decide: the skill's summary bullet shows `[--from N]` alone on
+    purpose, and giving it a second bracket turned it into a signature that
+    then had to grow the other three.
+    """
+    if "[--" not in span:
+        return False
+    return span.startswith("$TWICC session") or (label == "SKILLS-AND-CLI.md" and span.startswith("wait ["))
+
+
+def _numbered(path: Path) -> list[tuple[int, str]]:
+    return list(enumerate(path.read_text(encoding="utf-8").splitlines(), start=1))
+
+
+def _prose_sources() -> list[tuple[str, list[tuple[int, str]]]]:
+    """The blocks that describe the command, where a neighbour may be named.
+
+    Lines keep their number so a failure names the line to open. A ``help=``
+    string has no line, and carries 0: its label already points at it.
+    """
+    skill = _numbered(SESSION_SKILL)
+    cli_section = _section(_numbered(CLI_DOC), "### `twicc session <SESSION_ID> <SUBCOMMAND>`")
 
     sources = [
         (
             "twicc-session/SKILL.md",
-            "\n".join(
-                [line for line in skill if line.startswith("- `wait ")]
-                + _section(skill, "### Wait — ", "### Agents")
-            ),
+            [(number, line) for number, line in skill if line.startswith("- `wait ")]
+            + _section(skill, "### Wait — "),
         ),
-        ("SKILLS-AND-CLI.md", "\n".join(line for line in cli_section if line.startswith("- `wait "))),
-        ("session wait --help", _command().help or ""),
+        ("SKILLS-AND-CLI.md", [(n, line) for n, line in cli_section if line.startswith("- `wait ")]),
+        ("session wait --help", [(0, _command().help or "")]),
     ]
     for param in _command().params:
         if param.help:
-            sources.append((f"{param.opts[0]} help", param.help))
+            sources.append((f"{param.opts[0]} help", [(0, param.help)]))
     return sources
 
 
@@ -165,9 +194,12 @@ def test_a_full_signature_shows_exactly_the_real_options():
     signatures = [
         (label, number, span)
         for label, number, span in _copyable_spans()
-        if len(BRACKET_GROUP.findall(span)) > 1
+        if _is_full_signature(label, span)
     ]
-    assert len(signatures) == 2, signatures  # the skill's and the CLI reference's
+    # The skill's fenced one and the CLI reference's bullet. A floor, not an
+    # equality: counting them made a summary bullet gaining a second bracket
+    # read as a full signature, and the shortest repair was to bump the number.
+    assert len(signatures) >= 2, signatures
 
     for label, number, span in signatures:
         assert {flag for group in BRACKET_GROUP.findall(span) for flag in FLAG.findall(group)} == real, (
@@ -178,32 +210,36 @@ def test_a_full_signature_shows_exactly_the_real_options():
 def test_the_prose_names_no_flag_that_does_not_exist():
     real = _real_options() | CROSS_REFERENCES
     wrong = [
-        (label, flag)
-        for label, text in _prose_sources()
-        for flag in FLAG.findall(text)
+        (label, number, flag)
+        for label, lines in _prose_sources()
+        for number, line in lines
+        for flag in FLAG.findall(line)
         if flag not in real
     ]
     assert wrong == []
 
 
 def test_every_mention_of_a_neighbour_s_flag_is_a_sanctioned_one():
-    counted = {
-        label: {flag: FLAG.findall(text).count(flag) for flag in CROSS_REFERENCES}
-        for label, text in _prose_sources()
-        if any(flag in text for flag in CROSS_REFERENCES)
-    }
+    counted = {}
+    for label, lines in _prose_sources():
+        found = [flag for _, line in lines for flag in FLAG.findall(line) if flag in CROSS_REFERENCES]
+        if found:
+            counted[label] = {flag: found.count(flag) for flag in CROSS_REFERENCES}
     assert counted == SANCTIONED
 
 
-def test_both_reference_documents_show_every_option():
-    real = _real_options()
-    for label, text in _prose_sources():
-        if label in ("twicc-session/SKILL.md", "SKILLS-AND-CLI.md"):
-            assert real <= set(FLAG.findall(text)), label
+def test_the_documented_numbers_are_read_from_the_code():
+    """Two constants the prose quotes, and a code-only change would strand."""
+    from twicc.cli import session as cli_session
+    from twicc.cli._wait_reply import AGENT_FLUSH_SECONDS
 
-
-def test_the_documented_defaults_are_read_from_the_command():
     default = _real_default("wait_timeout")
-    assert f"`--wait-timeout` (default {default:.0f} s)" in SESSION_SKILL.read_text()
-    timeout_help = next(p.help for p in _command().params if p.name == "wait_timeout")
-    assert f"Default {default:.0f}," in timeout_help
+    assert f"`--wait-timeout` (default {default:.0f} s)" in SESSION_SKILL.read_text(encoding="utf-8")
+    assert f"Default {default:.0f}," in _real_help("wait_timeout")
+
+    # The flush window is quoted in four places and named in none of them, so
+    # halving the constant leaves every one of them wrong and nothing red.
+    window = f"~{AGENT_FLUSH_SECONDS:.0f} s flush window"
+    assert SESSION_SKILL.read_text(encoding="utf-8").count(window) == 2
+    assert window in CLI_DOC.read_text(encoding="utf-8")
+    assert window in cli_session.wait.__doc__
