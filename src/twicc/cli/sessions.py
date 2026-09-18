@@ -9,6 +9,7 @@ def build_filtered_queryset(
     include_hidden=False, only_hidden=False,
     spawned_by=None, spawn_tree=None, descendants=None, siblings=None,
     annotation=None, provider=None, state=None, active=False,
+    require_indexed=True,
 ):
     """Resolve every ``sessions`` filter into a queryset, before any window.
 
@@ -43,11 +44,14 @@ def build_filtered_queryset(
 
     from twicc.core.models import Session
 
-    qs = Session.objects.filter(
-        type="session",
-        created_at__isnull=False,
-        user_message_count__gt=0,
-    ).order_by("-mtime")
+    qs = Session.objects.filter(type="session").order_by("-mtime")
+    if require_indexed:
+        # The listing's notion of a session worth showing: one whose transcript
+        # has been read far enough to have a date and a first user message.
+        # ``sessions stop`` turns it off — an agent that started two seconds
+        # ago has neither yet, and sparing it would make "stop everything
+        # running" false for exactly the session most likely to be running.
+        qs = qs.filter(created_at__isnull=False, user_message_count__gt=0)
 
     if not archived:
         qs = qs.filter(archived=False)
@@ -93,7 +97,9 @@ def build_filtered_queryset(
         try:
             annotation_filters = [parse_annotation_filter(spec) for spec in annotation]
         except ValueError as exc:
-            emit_error(f"Error: {exc}", code=2)
+            # 1, not 2: a malformed spec is the caller's typo, and a script
+            # branching on 2 to wait for the backend would loop on it.
+            emit_error(f"Error: {exc}", code=1)
         qs = apply_annotation_filters(qs, annotation_filters)
 
     if workspace is not None:

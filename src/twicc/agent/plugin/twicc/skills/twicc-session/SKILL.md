@@ -1,16 +1,17 @@
 ---
 name: twicc-session
-description: Inspect a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, or list/inspect its workflows. Use when you or the user want to examine a session, read conversation content, or explore subagent activity.
-argument-hint: <session_id> [content|messages|agents|plan|workflows|workflow]
+description: Inspect or stop a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, list/inspect its workflows, or stop its live agent. Use when you or the user want to examine a session, read conversation content, or explore subagent activity.
+argument-hint: <session_id> [content|messages|agents|plan|stop|workflows|workflow]
 ---
 
 # TwiCC Session
 
-Inspect a single session. Seven sub-commands:
+Inspect or stop a single session. Eight sub-commands:
 
 - Default — full session metadata.
 - `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
+- `stop` — stop this session's live agent (`--timeout`, `--force` for a SIGKILL without the grace window). Idempotent: stopping an already-stopped session still reports `stopped`. Same operation as `process <ID> stop`, which it is meant to replace.
 - `agents` — list subagents spawned by this session. `--slim` returns the reduced projection (see the `twicc-sessions` skill), about 80% lighter. Rows carry the same `process` block as `sessions`, always `null` here: a subagent runs inside its parent's process and never has one of its own.
 - `plan [PATH] [--list]` — the session's tracked plan documents (both providers): most recently updated one by default, a specific one by path, `--list` to enumerate.
 - `workflows [--limit N] [--offset N] [--paginated] [--result] [--full]` — list this session's workflows (Claude Code only).

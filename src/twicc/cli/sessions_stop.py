@@ -45,8 +45,6 @@ def main(
     from twicc.cli._drop_request.discovery import ServerDownError
     from twicc.cli._process_state import (
         DEAD_VIRTUAL_STATE,
-        live_session_ids,
-        load_process_rows,
         resolve_listing_twicc_pid,
     )
     from twicc.cli._stop_batch import stop_session_ids
@@ -64,6 +62,15 @@ def main(
             code=1,
         )
 
+    scopes = [n for n, v in (("--spawned-by", spawned_by), ("--spawn-tree", spawn_tree),
+                             ("--descendants", descendants), ("--siblings", siblings)) if v]
+    if len(scopes) > 1:
+        emit_error(
+            f"Error: {' and '.join(scopes)} are mutually exclusive.", code=1,
+        )
+    if project and workspace:
+        emit_error("Error: --project and --workspace are mutually exclusive.", code=1)
+
     try:
         transport.ensure_server_available()
     except ServerDownError as e:
@@ -77,34 +84,65 @@ def main(
             code=2,
         )
 
-    # Explicit ids bypass the filters entirely, mirroring `sessions get` and
-    # `processes stop`: naming an id is the caller saying they know which one.
-    if session_ids:
-        seen: set = set()
-        targets = [sid for sid in session_ids if not (sid in seen or seen.add(sid))]
-    else:
+    # Explicit ids are UNIONED with the filters, as in `processes stop`,
+    # `processes wait`, `send-messages` and `update-sessions`. An earlier
+    # version replaced them, which silently turned a migrated
+    # `processes stop <id> --descendants self` into a one-agent stop.
+    explicit: list[str] = []
+    seen: set = set()
+    for raw in session_ids:
+        sid = raw
+        if raw in ("self", "parent"):
+            from twicc.cli._drop_request.whoami import resolve_current_session
+
+            current = resolve_current_session()
+            if current is None:
+                emit_error(
+                    f"Error: '{raw}' needs a TwiCC session in the process "
+                    "ancestry. Pass an explicit session_id.",
+                    code=1,
+                )
+            sid = current.id if raw == "self" else current.spawned_by_id
+            if sid is None:
+                emit_error(
+                    "Error: the current session has no spawner, so 'parent' "
+                    "resolves to nothing.",
+                    code=1,
+                )
+        if sid not in seen:
+            seen.add(sid)
+            explicit.append(sid)
+
+    has_filter = any((
+        project, workspace, provider, state,
+        spawned_by, spawn_tree, descendants, siblings, annotation,
+    ))
+    selected: list[str] = []
+    if has_filter or not explicit:
         qs, _ = build_filtered_queryset(
             project=project, workspace=workspace,
             # A running session is never archived (archiving kills the agent)
-            # and may well be hidden, so neither default belongs here.
-            archived=True, include_hidden=True,
+            # and may well be hidden, so neither default belongs here. And its
+            # transcript may not be indexed yet, which must not spare it.
+            archived=True, include_hidden=True, require_indexed=False,
             spawned_by=spawned_by, spawn_tree=spawn_tree,
             descendants=descendants, siblings=siblings,
             annotation=annotation, provider=provider,
             state=state, active=not state,
         )
-        targets = list(qs.values_list("id", flat=True))
+        # Narrowed to what is running, which is what bounds a bare call. The
+        # narrowing happens in SQL (``active=``), not here: the alternative
+        # reads identically and hands every session id to one ``IN`` clause.
+        selected = [
+            sid for sid in qs.values_list("id", flat=True)
+            if sid not in seen
+        ]
 
-    if not targets:
-        emit_json([])
-        return
-
-    # Explicit ids are not filtered by the queryset, so the live check happens
-    # here for both paths: stopping a session that has no process is harmless
-    # (the underlying service is idempotent) but reporting it as "stopped"
-    # when nothing was running is noise.
-    live = live_session_ids(load_process_rows(targets, twicc_pid))
-    targets = [sid for sid in targets if sid in live]
+    # Named ids are NOT narrowed to the live set: naming one is the caller
+    # saying "stop this", and the underlying service is idempotent. Dropping
+    # them would also make the output unalignable with the input, where
+    # `processes stop` reports `skipped_*` per id.
+    targets = explicit + selected
     if not targets:
         emit_json([])
         return

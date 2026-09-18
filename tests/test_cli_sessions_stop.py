@@ -49,8 +49,9 @@ def server(monkeypatch):
     seen: dict = {}
 
     def fake_stop(ids, *, timeout, force, twicc_pid):
-        seen["ids"] = list(ids)
-        seen["force"] = force
+        # Record every argument: recording only `ids` and `force` left
+        # `timeout` and `twicc_pid` unasserted, and two mutants alive.
+        seen.update(ids=list(ids), timeout=timeout, force=force, pid=twicc_pid)
         return [{"session_id": sid, "status": "stopped"} for sid in ids]
 
     monkeypatch.setattr("twicc.cli._stop_batch.stop_session_ids", fake_stop)
@@ -141,12 +142,37 @@ def test_explicit_ids_bypass_the_filters(project, server, capsysbinary):
     assert server["ids"] == ["two"]
 
 
-def test_an_explicit_id_with_no_process_is_dropped(project, server, capsysbinary):
-    """The live check applies to both paths, not only to the filtered one."""
+def test_an_explicit_id_is_stopped_even_with_no_process(project, server, capsysbinary):
+    """Naming an id is the caller saying "stop this", and the service is
+    idempotent. Dropping it would also make the output unalignable with the
+    input, where ``processes stop`` reports a ``skipped_*`` entry per id."""
     make_session(project, "one")
 
-    assert run(capsysbinary, "one") == []
-    assert "ids" not in server
+    run(capsysbinary, "one")
+
+    assert server["ids"] == ["one"]
+
+
+def test_explicit_ids_are_unioned_with_the_filters(project, server, capsysbinary):
+    """Every sibling batch command unions them. Replacing them turned a
+    migrated ``processes stop <id> --descendants self`` into a one-agent stop.
+    """
+    make_session(project, "named")
+    make_session(project, "busy")
+    make_run("busy")
+
+    run(capsysbinary, "named", provider="claude_code")
+
+    assert set(server["ids"]) == {"named", "busy"}
+
+
+def test_a_named_id_is_not_stopped_twice_by_a_filter(project, server, capsysbinary):
+    make_session(project, "busy")
+    make_run("busy")
+
+    run(capsysbinary, "busy", provider="claude_code")
+
+    assert server["ids"] == ["busy"]
 
 
 def test_a_state_filter_narrows_the_batch(project, server, capsysbinary):
@@ -237,33 +263,161 @@ def test_the_flags_travel_from_the_command_line(project, server):
     assert server["force"] is True
 
 
-def test_the_live_set_is_narrowed_in_sql_not_in_python(project, server, monkeypatch, capsysbinary):
+def test_the_live_set_is_narrowed_in_sql_not_in_python(project, server, capsysbinary):
     """The filter must reach the database, not just the result.
 
-    Dropping ``active=True`` from the queryset leaves the outcome identical —
-    the live check downstream removes the same rows — so only the *size* of
-    what crosses the boundary catches it. On a real base that is thousands of
-    ids in one ``IN`` clause, against SQLite's bound-variable ceiling.
+    Dropping ``active=True`` from the queryset would leave the outcome
+    identical once the caller filtered downstream — so only the *size* of what
+    crosses the boundary catches it. On a real base that is thousands of ids
+    in one ``IN`` clause, against SQLite's bound-variable ceiling.
     """
-    from twicc.cli import _process_state
-
     for i in range(6):
         make_session(project, f"gone-{i}")
     make_session(project, "busy")
     make_run("busy")
 
-    seen: dict = {}
-    real = _process_state.load_process_rows
+    run(capsysbinary)
 
-    def spy(ids, pid):
-        # ``ids=None`` is the state filter loading the whole live set; the
-        # call under test is the one that hands over the chosen targets.
-        if ids is not None:
-            seen["n"] = len(list(ids))
-        return real(ids, pid)
+    assert server["ids"] == ["busy"]
 
-    monkeypatch.setattr(_process_state, "load_process_rows", spy)
+
+def test_a_session_whose_transcript_is_not_indexed_yet_is_stopped(project, server, capsysbinary):
+    """The listing skips a session with no date and no counted user message;
+    stopping must not. An agent that started two seconds ago has neither, and
+    it is exactly the one most likely to be running."""
+    Session.objects.create(
+        id="fresh", project=project, provider="claude_code", file_path="fresh.jsonl",
+        created_at=None, user_message_count=0,
+    )
+    make_run("fresh", AgentState.STARTING)
 
     run(capsysbinary)
 
-    assert seen["n"] == 1
+    assert server["ids"] == ["fresh"]
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"project": "stop-project"},
+    {"project": "other-project"},
+    {"provider": "codex"},
+    {"spawned_by": "other"},
+    {"spawn_tree": "other"},
+    {"descendants": "other"},
+    {"siblings": "other"},
+    {"annotation": ["role=none"]},
+])
+def test_every_filter_reaches_the_query(project, server, kwargs, capsysbinary):
+    """Each one deleted from the builder call used to leave the suite green —
+    and for a scope filter, the mutant stops strictly MORE than asked.
+
+    Only one of these selects the session; the rest must select nothing. A
+    filter that is silently dropped turns its case into a bare stop.
+    """
+    make_session(project, "busy")
+    make_run("busy")
+    # A second live session elsewhere: without it, "--project X" selecting
+    # everything is indistinguishable from "--project X" being ignored.
+    other = Project.objects.create(id="other-project", directory="/tmp/other")
+    make_session(other, "elsewhere")
+    make_run("elsewhere")
+
+    result = run(capsysbinary, **kwargs)
+
+    expected = {
+        "stop-project": ["busy"],
+        "other-project": ["elsewhere"],
+    }.get(kwargs.get("project"), [])
+    assert [e["session_id"] for e in result] == expected
+
+
+def test_an_unknown_workspace_is_refused(project, server, capsysbinary):
+    """It exits 1 rather than selecting nothing, so it cannot ride the
+    parametrized table above — and a silently empty stop would read as
+    "nothing was running"."""
+    import typer
+
+    with pytest.raises(typer.Exit) as exc:
+        sessions_stop.main([], timeout=30, workspace="nope")
+
+    assert exc.value.exit_code == 1
+
+
+def test_conflicting_scopes_are_refused(project, server, capsysbinary):
+    """The listing's typer wrapper enforces this; the builder's docstring
+    relies on it, and stop is its second caller."""
+    import typer
+
+    with pytest.raises(typer.Exit) as exc:
+        sessions_stop.main([], timeout=30, spawned_by="a", siblings="b")
+
+    assert exc.value.exit_code == 1
+    assert "mutually exclusive" in capsysbinary.readouterr().err.decode()
+
+
+def test_a_malformed_annotation_is_a_validation_error(project, server, capsysbinary):
+    """Exit 1, not 2: a script branching on 2 to wait for the backend would
+    loop forever on a typo."""
+    import typer
+
+    with pytest.raises(typer.Exit) as exc:
+        sessions_stop.main([], timeout=30, annotation=["!!!bad!!!"])
+
+    assert exc.value.exit_code == 1
+
+
+def test_a_project_directory_is_normalised_like_the_listing(project, server, tmp_path):
+    """The help promises "id or directory path". Passing the path raw matches
+    nothing, exit 0, agents still running — a false negative with no signal.
+    """
+    from typer.testing import CliRunner
+
+    from twicc.cli import app
+    from twicc.cli._drop_request.project import derive_project_id
+
+    directory = str(tmp_path)
+    pid = derive_project_id(directory)[0]
+    Project.objects.filter(id="stop-project").update(id=pid, directory=directory)
+    make_session(Project.objects.get(id=pid), "busy")
+    make_run("busy")
+
+    result = CliRunner().invoke(app, ["sessions", "stop", "--project", directory])
+
+    assert result.exit_code == 0, result.output
+    assert server["ids"] == ["busy"]
+
+
+def test_the_timeout_and_the_pid_reach_the_stopper(project, server, capsysbinary):
+    """Both were unasserted, so nothing anywhere pinned that `--timeout` has
+    any effect at all."""
+    make_session(project, "busy")
+    make_run("busy")
+
+    run(capsysbinary, timeout=7)
+
+    assert server["timeout"] == 7
+    assert server["pid"] == TWICC_PID
+
+
+def test_an_unreachable_server_is_refused_before_anything_is_selected(
+    project, monkeypatch, capsysbinary,
+):
+    """Exit 2 on the transport's own check, not a silent empty batch.
+
+    The other no-backend test neutralises this check to reach the pid guard,
+    so dropping the call entirely was invisible.
+    """
+    import typer
+
+    from twicc.cli._drop_request.discovery import ServerDownError
+
+    def down():
+        raise ServerDownError("TwiCC is not running")
+
+    monkeypatch.setattr(
+        "twicc.cli._drop_request.transport.ensure_server_available", down,
+    )
+
+    with pytest.raises(typer.Exit) as exc:
+        sessions_stop.main([], timeout=30)
+
+    assert exc.value.exit_code == 2

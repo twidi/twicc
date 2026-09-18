@@ -1,6 +1,6 @@
 ---
 name: twicc-sessions
-description: List sessions tracked by TwiCC, or batch-look up specific session_ids. Use when you or the user want to browse sessions, find a session ID, filter by project, or batch-fetch metadata for known ids.
+description: List sessions tracked by TwiCC with each one's live process state, batch-look them up by id, or stop the agents behind them. Use when you or the user want to browse sessions, find a session ID, filter by project, see which are still running, or batch-stop them.
 ---
 
 # TwiCC Sessions

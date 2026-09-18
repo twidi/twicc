@@ -422,7 +422,10 @@ def _sessions_stop(
     sessions_stop_main(
         list(session_ids or []),
         timeout=timeout, force=force,
-        project=project, workspace=workspace, provider=provider,
+        # Same normalisation the listing applies: the help promises a
+        # directory path works, and an un-normalised one matches nothing.
+        project=derive_project_id(project)[0] if project is not None else None,
+        workspace=workspace, provider=provider,
         state=list(state or []),
         spawned_by=spawned_by, spawn_tree=spawn_tree,
         descendants=descendants, siblings=siblings,
