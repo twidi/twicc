@@ -91,6 +91,21 @@ BACKEND_GONE = "backend_gone"      # TwiCC stopped or restarted: nothing can be 
 WAIT_FAILED = "wait_failed"        # the wait itself broke; the session is unaffected
 
 
+def degraded_reply(cursor: int, waited: float, exc: BaseException) -> dict:
+    """The block a wait hands back when the wait itself broke.
+
+    Shared so the singular and the batch cannot drift: the empty-``str(exc)``
+    guard below is easy to lose in a copy, and a ``KeyboardInterrupt`` would
+    then read ``"KeyboardInterrupt: "`` on one side and ``"KeyboardInterrupt"``
+    on the other, while both docs promise the same shape. The guard is
+    conditional rather than a strip: a message may legitimately end in a
+    colon, and trimming it would edit the provider's own words.
+    """
+    return _empty_reply(WAIT_FAILED, cursor, waited) | {
+        "error": f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__,
+    }
+
+
 def wait_for_reply_or_degrade(
     session_id: str,
     *,
@@ -119,11 +134,7 @@ def wait_for_reply_or_degrade(
             want_text=want_text, stop_when_blocked=stop_when_blocked,
         )
     except BaseException as exc:  # noqa: BLE001 - deliberate, see above
-        return _empty_reply(WAIT_FAILED, since_line_num, time.monotonic() - started) | {
-            # Conditional rather than a strip: a message may legitimately end
-            # in a colon, and trimming it would edit the provider's own words.
-            "error": f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__,
-        }
+        return degraded_reply(since_line_num, time.monotonic() - started, exc)
 
 
 def _empty_reply(outcome: str, since_line_num: int, waited: float = 0.0) -> dict:
@@ -486,6 +497,9 @@ def wait_for_replies(
         # Once per tick for the whole batch, not once per session.
         live = resolve_live_twicc()
         if live is None or live.pid != twicc_pid:
+            # ``results |`` and not a bare dict: a session that answered before
+            # the backend went away has answered, and folding it into the
+            # give-up would throw away work the caller can use.
             return results | {
                 session_id: waiter.build(BACKEND_GONE)
                 for session_id, waiter in waiting.items()

@@ -249,3 +249,20 @@ def test_the_batch_result_survives_a_broken_wait(batch, capsysbinary, monkeypatc
     assert payload["results"]["alpha"]["reply"]["outcome"] == "wait_failed"
     assert "database is locked" in payload["results"]["alpha"]["reply"]["error"]
     assert payload["results"]["beta"]["reply"]["since_line_num"] == 9
+
+
+def test_an_empty_wait_is_not_a_success(batch, capsysbinary, monkeypatch):
+    """`all_replied` on a batch where nothing was waited on must be false.
+
+    Reachable when every send was rejected: the summary would otherwise say
+    every recipient answered, on a batch where none was even asked.
+    """
+    from twicc.cli._drop_request.polling import PollOutcome
+
+    rejected = PollOutcome("rejected", {"errors": [{"code": "x", "message": "no"}]}, True)
+    batch["statuses"].update(alpha=rejected, beta=rejected)
+
+    payload = run(capsysbinary)
+
+    assert payload["summary"]["replied"] == 0
+    assert payload["summary"]["all_replied"] is False

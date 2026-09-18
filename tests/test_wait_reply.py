@@ -1076,7 +1076,8 @@ def test_a_command_with_no_cursor_does_not_grow_a_null_one():
 # closing message answers for the new one.
 
 
-def _run_send_message(monkeypatch, status_data: dict, *, wait_blocked: bool = False) -> dict:
+def _run_send_message(monkeypatch, status_data: dict, *, wait_blocked: bool = False,
+                      wait_timeout=None, no_reply_text: bool = False) -> dict:
     """Drive ``send_message_cmd --wait-reply`` over a stubbed transport.
 
     Everything the command does before the send is real (prompt resolution,
@@ -1124,6 +1125,8 @@ def _run_send_message(monkeypatch, status_data: dict, *, wait_blocked: bool = Fa
         seen["session_id"] = session_id
         seen["since_line_num"] = since_line_num
         seen["stop_when_blocked"] = stop_when_blocked
+        seen["timeout"] = timeout
+        seen["want_text"] = want_text
         return {"outcome": REPLIED}
 
     monkeypatch.setattr(wait_reply_module, "wait_for_reply_or_degrade", _probe)
@@ -1131,7 +1134,7 @@ def _run_send_message(monkeypatch, status_data: dict, *, wait_blocked: bool = Fa
     with pytest.raises(typer.Exit):
         send_message_cmd(
             session_id=session.id, prompt="hello", no_expand=False, attach=[],
-            wait_reply=True, wait_timeout=None, no_reply_text=False,
+            wait_reply=True, wait_timeout=wait_timeout, no_reply_text=no_reply_text,
             wait_blocked=wait_blocked, timeout=30,
         )
     return seen
@@ -1472,10 +1475,16 @@ def test_an_answer_returns_at_once_not_at_the_deadline(project):
     process(session, AgentState.ASSISTANT_TURN.value)
     assistant(session, 5, "immediate", "end_turn")
 
+    # Wall clock, not ``waited_seconds``: that field is stamped when the block
+    # is *built*, so a mutant that builds it at once and then loops to the
+    # deadline leaves it at 0.0. The first version of this test asserted the
+    # field and let its own mutant through.
+    started = time.monotonic()
     reply = wait(session, timeout=30.0)
+    elapsed = time.monotonic() - started
 
     assert reply["outcome"] == REPLIED
-    assert reply["waited_seconds"] < 1.0
+    assert elapsed < 1.0
 
 
 def test_a_batch_returns_when_the_last_one_answers(project):
@@ -1488,10 +1497,12 @@ def test_a_batch_returns_when_the_last_one_answers(project):
     assistant(one, 5, "a", "end_turn")
     assistant(two, 5, "b", "end_turn")
 
+    started = time.monotonic()
     replies = wait_many({one.id: 0, two.id: 0}, timeout=30.0)
+    elapsed = time.monotonic() - started
 
     assert {r["outcome"] for r in replies.values()} == {REPLIED}
-    assert all(r["waited_seconds"] < 1.0 for r in replies.values())
+    assert elapsed < 1.0
 
 
 def test_a_block_ends_a_first_batch_when_blocking_was_asked_for(project):
@@ -1530,3 +1541,133 @@ def test_a_cut_wait_still_reports_what_it_had_seen(project):
 
     assert replies[slow.id]["outcome"] == "pending"
     assert replies[slow.id]["line_num"] == 4
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("given, expected", [(None, 300.0), (12.0, 12.0)])
+def test_send_message_hands_the_budget_to_the_wait(monkeypatch, given, expected):
+    """Both halves: the documented default, and an explicit value.
+
+    The `--reply-timeout` → `--wait-timeout` rename touched this line on both
+    singular commands, and nothing asserted either end of it — a rename that
+    forgot one of them would have kept the suite green.
+    """
+    seen = _run_send_message(monkeypatch, {
+        "session_id": "cursor-wiring-session", "provider": "claude_code",
+        "project_id": "cursor-wiring-project", "last_line": 3,
+    }, wait_timeout=given)
+
+    assert seen["timeout"] == expected
+
+
+@pytest.mark.django_db
+def test_send_message_drops_the_text_when_asked(monkeypatch):
+    seen = _run_send_message(monkeypatch, {
+        "session_id": "cursor-wiring-session", "provider": "claude_code",
+        "project_id": "cursor-wiring-project", "last_line": 3,
+    }, no_reply_text=True)
+
+    assert seen["want_text"] is False
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("args, key, expected", [
+    ([], "timeout", 300.0),
+    (["--wait-timeout", "12"], "timeout", 12.0),
+    (["--no-reply-text"], "want_text", False),
+])
+def test_create_session_hands_its_wait_arguments_over(monkeypatch, tmp_path, args, key, expected):
+    """Same wiring on the other singular command, and its cursor with it:
+    a new session's transcript is empty, so the wait must start at 0."""
+    from twicc.cli import _wait_reply as wait_reply_module
+    from twicc.cli._drop_request import transport
+    from twicc.cli._drop_request.polling import PollOutcome
+
+    seen: dict = {}
+
+    def _probe(session_id, *, since_line_num, timeout, want_text, stop_when_blocked):
+        seen.update(since_line_num=since_line_num, timeout=timeout, want_text=want_text)
+        return {"outcome": REPLIED}
+
+    class _Sub:
+        request_uuid = "req-budget"
+
+        def cleanup(self):
+            pass
+
+    monkeypatch.setattr(transport, "ensure_server_available", lambda: None)
+    monkeypatch.setattr(transport, "submit", lambda payload, *, kind: _Sub())
+    monkeypatch.setattr(transport, "wait", lambda sub, timeout_seconds: PollOutcome(
+        "created", {"session_id": "s", "provider": "claude_code", "project_id": "p"}, True,
+    ))
+    monkeypatch.setattr(wait_reply_module, "wait_for_reply_or_degrade", _probe)
+
+    result = run_cli("hello", "--project", str(tmp_path), "--wait-reply", *args)
+
+    assert result.exit_code == 0, result.output
+    assert seen[key] == expected
+    assert seen["since_line_num"] == 0
+
+
+def test_a_degraded_batch_and_a_degraded_single_say_the_same_thing(project):
+    """Both go through one helper, so an exception with no message reads the
+    same on each — a copy would drop the guard and print a trailing colon."""
+    from twicc.cli._wait_reply import degraded_reply, wait_for_reply_or_degrade
+
+    def boom(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    session = make_session(project)
+    import twicc.cli._wait_reply as module
+    original = module.wait_for_reply
+    module.wait_for_reply = boom
+    try:
+        single = wait_for_reply_or_degrade(
+            session.id, since_line_num=3, timeout=1.0, want_text=True,
+        )
+    finally:
+        module.wait_for_reply = original
+
+    batch = degraded_reply(3, single["waited_seconds"], KeyboardInterrupt())
+
+    assert single["error"] == "KeyboardInterrupt"
+    assert single == batch
+
+
+def test_a_backend_that_vanishes_keeps_the_answers_already_in_hand(project, monkeypatch):
+    """The batch stops, it does not forget.
+
+    A session that answered before the backend went away has answered; folding
+    those results into the give-up throws away work the caller can use.
+
+    This test failed three times before it passed, and each time the code was
+    the thing at fault: a mutation harness killed by a timeout had left
+    ``return results | {…}`` as a bare ``return {…}`` in the source. The
+    failure was real and the test was right — worth remembering the next time
+    a new test looks broken.
+    """
+    from twicc.cli._wait_reply import _SessionWait, wait_for_replies
+
+    answered = make_session(project, session_id="gone-answered")
+    pending_one = make_session(project, session_id="gone-pending")
+
+    def fake_step(self):
+        return {"outcome": REPLIED} if self.session_id == answered.id else None
+
+    monkeypatch.setattr(_SessionWait, "step", fake_step)
+
+    calls = {"n": 0}
+
+    def vanishing():
+        calls["n"] += 1
+        # The pid read, then one tick, then gone.
+        return type("I", (), {"pid": TWICC_PID})() if calls["n"] <= 2 else None
+
+    monkeypatch.setattr("twicc.cli._twicc_info.resolve_live_twicc", vanishing)
+
+    replies = wait_for_replies(
+        {answered.id: 0, pending_one.id: 0}, timeout=3.0, want_text=True,
+    )
+
+    assert replies[answered.id]["outcome"] == REPLIED
+    assert replies[pending_one.id]["outcome"] == BACKEND_GONE

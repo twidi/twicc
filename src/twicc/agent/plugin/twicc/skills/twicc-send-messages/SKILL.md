@@ -8,7 +8,7 @@ argument-hint: '[SESSION_ID...] [--message <text>] [--spawned-by X|--descendants
 
 Batch sibling of `send-message`: delivers the SAME message to every targeted session in one call, with the same selection model as `update-sessions`. For a single recipient (or to reply to your `parent`), use `send-message` (skill: `twicc-send-message`).
 
-**Each send starts or resumes an agent** — real work and token spend. A batch can cold-start many stopped sessions at once. And like the singular command it is async: a per-id `sent` means "handed to the agent", not "the agent finished" — chain with `processes wait` (see Following up).
+**Each send starts or resumes an agent** — real work and token spend. A batch can cold-start many stopped sessions at once. And like the singular command it is async by default (`--wait-reply` below makes it wait): a per-id `sent` means "handed to the agent", not "the agent finished" — chain with `--wait-reply` (see Following up).
 
 ## When to use
 
@@ -120,7 +120,7 @@ Each entry gains a `reply` block (`outcome`, `line_num`, `is_final`, `since_line
 
 Falling back to the state machine, when you want liveness rather than answers:
 
-- `$TWICC processes wait --spawned-by self user_turn dead --timeout <N>` — block until every recipient's process is idle or gone. Note this is a weaker signal: a session held busy by a subagent has already answered long before it returns to `user_turn`. Skill: `twicc-processes`.
+- `$TWICC processes wait --spawned-by self user_turn dead --transition --timeout <N>` — block until every recipient's process is idle or gone. **`--transition` is not optional here**: without it the command matches the idle `user_turn` the recipients were still in when the send returned, hands back immediately, and the next `messages --tail 1` reads the *previous* turn's answer. Even with it, this is a weaker signal than `--wait-reply`: a session held busy by a subagent has already answered long before it returns to `user_turn`. Skill: `twicc-processes`.
 - `$TWICC session <SESSION_ID> messages --tail 1` — read a reply by hand. Skill: `twicc-session`.
 
 This closes the orchestration loop: `create-session` → … → `send-messages --wait-reply`.
@@ -136,5 +136,5 @@ This closes the orchestration loop: `create-session` → … → `send-messages 
 
 1. Bucket by per-id `status` and show counts (e.g. "5 sent, 1 rejected").
 2. Surface `rejected` / `validation_error` entries with their `code` (esp. `awaiting_user_input` — that session needs a UI click first).
-3. Remind that `sent` ≠ done — point to `processes wait` to await the work.
+3. Remind that `sent` ≠ done — point to `--wait-reply` to await the answers.
 4. You are in TwiCC — link to a session: `[link text](/project/{project_id}/session/{session_id})`.

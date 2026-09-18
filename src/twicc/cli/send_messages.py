@@ -185,6 +185,17 @@ def send_messages_cmd(
 ) -> None:
     """Send the same message to several sessions at once.
 
+    Asynchronous by default: a per-id "sent" status only means the message was
+    handed to that agent — not that it has finished.
+
+    Pass --wait-reply to keep going until the recipients answer, and get each
+    answer back with the result. Each is waited from its own cursor, read when
+    its agent takes the message, so the previous turn's closing message is not
+    returned in its place. --wait-first stops at the first answer instead of
+    waiting for every one. That is the way to collect answers; reach for
+    "twicc processes wait ..." only to ask whether sessions are still running,
+    not what they said.
+
     `--message` may be omitted when at least one `--attach` is given: both
     providers accept a message made only of attachments.
 
@@ -321,12 +332,7 @@ def send_messages_cmd(
         rejected or timed-out send has no turn to answer it, and waiting on
         one would burn the whole budget for nothing.
         """
-        from twicc.cli._wait_reply import (
-            REPLIED,
-            WAIT_FAILED,
-            _empty_reply,
-            wait_for_replies,
-        )
+        from twicc.cli._wait_reply import REPLIED, degraded_reply, wait_for_replies
 
         cursors = {
             sid: (entry.get("last_line") or 0)
@@ -351,7 +357,7 @@ def send_messages_cmd(
             # ``wait_for_reply_or_degrade``; this is the batch's equivalent.
             waited = round(time.monotonic() - started, 1)
             replies = {
-                sid: _empty_reply(WAIT_FAILED, cursor, waited) | {"error": f"{type(exc).__name__}: {exc}"}
+                sid: degraded_reply(cursor, waited, exc)
                 for sid, cursor in cursors.items()
             }
         for sid, block in replies.items():
