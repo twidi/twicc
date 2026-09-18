@@ -20,7 +20,7 @@ def main(
     paginated: bool = False,
     slim: bool = False,
     provider: str | None = None,
-    state: str | None = None,
+    state: list[str] | None = None,
     active: bool = False,
 ) -> None:
     """List sessions as JSON to stdout.
@@ -159,27 +159,46 @@ def main(
         session_ids_in_state,
     )
 
-    if state is not None and active:
+    if state and active:
         emit_error(
             "Error: --state and --active are mutually exclusive "
             "(--active means 'any state but dead').",
             code=1,
         )
-    if state is not None and state not in VALID_VIRTUAL_STATES:
-        emit_error(
-            f"Error: invalid --state '{state}'. Use one of: "
-            f"{', '.join(sorted(VALID_VIRTUAL_STATES))}.",
-            code=1,
-        )
+    for token in state or ():
+        if token not in VALID_VIRTUAL_STATES:
+            emit_error(
+                f"Error: invalid --state '{token}'. Use one of: "
+                f"{', '.join(sorted(VALID_VIRTUAL_STATES))}.",
+                code=1,
+            )
+
+    # Repeatable and OR-combined, like ``session messages --is-final``: a
+    # session holds ONE state, so repeating the flag can only mean "any of
+    # these". Naming all five selects everything, which is the unfiltered
+    # listing — kept as a cheap branch rather than a union of every bucket.
+    wanted = set(state or ())
+    if wanted == set(VALID_VIRTUAL_STATES):
+        wanted = set()
 
     process_rows = None
-    if state is not None or active:
+    if wanted or active:
         process_rows = load_process_rows(None, resolve_listing_twicc_pid())
-        if active or state == DEAD_VIRTUAL_STATE:
-            live = live_session_ids(process_rows)
-            qs = qs.filter(id__in=live) if active else qs.exclude(id__in=live)
+        live = live_session_ids(process_rows)
+        if active:
+            qs = qs.filter(id__in=live)
         else:
-            qs = qs.filter(id__in=session_ids_in_state(process_rows, state))
+            matched: set = set()
+            for token in wanted - {DEAD_VIRTUAL_STATE}:
+                matched |= session_ids_in_state(process_rows, token)
+            if DEAD_VIRTUAL_STATE in wanted:
+                # "dead" is an absence, so it cannot be enumerated — it is
+                # everything the live set does not hold.
+                from django.db.models import Q
+
+                qs = qs.filter(Q(id__in=matched) | ~Q(id__in=live))
+            else:
+                qs = qs.filter(id__in=matched)
 
     limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None

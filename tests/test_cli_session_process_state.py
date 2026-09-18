@@ -372,7 +372,8 @@ def test_the_filters_reach_the_mcp_schema_and_the_dropped_flag_does_not():
     registry = build_registry()
     listing = {p.name: p for p in registry["sessions"].params}
 
-    assert listing["state"].json_type == "string"
+    assert listing["state"].json_type == "array"
+    assert listing["state"].multiple is True
     assert listing["active"].is_flag is True
     assert "provider" in listing
 
@@ -411,14 +412,14 @@ def test_active_keeps_every_state_but_dead(three_states, capsysbinary):
 
 
 def test_a_state_filter_selects_exactly_its_bucket(three_states, capsysbinary):
-    cli_sessions.main(project=three_states.id, state="assistant_turn", slim=True)
+    cli_sessions.main(project=three_states.id, state=["assistant_turn"], slim=True)
 
     assert _ids(capsysbinary) == {"gen"}
 
 
 def test_dead_is_the_complement_not_a_query(three_states, capsysbinary):
     """`dead` is the absence of a row, so it cannot be read off `ProcessRun`."""
-    cli_sessions.main(project=three_states.id, state="dead", slim=True)
+    cli_sessions.main(project=three_states.id, state=["dead"], slim=True)
 
     assert _ids(capsysbinary) == {"gone"}
 
@@ -428,10 +429,10 @@ def test_awaiting_user_input_is_its_own_bucket(project, live_backend, capsysbina
     make_session(project, "blocked")
     make_run("blocked", AgentState.ASSISTANT_TURN, awaiting_user_input=True)
 
-    cli_sessions.main(project=project.id, state="assistant_turn", slim=True)
+    cli_sessions.main(project=project.id, state=["assistant_turn"], slim=True)
     assert _ids(capsysbinary) == set()
 
-    cli_sessions.main(project=project.id, state="awaiting_user_input", slim=True)
+    cli_sessions.main(project=project.id, state=["awaiting_user_input"], slim=True)
     assert _ids(capsysbinary) == {"blocked"}
 
 
@@ -444,7 +445,7 @@ def test_no_backend_means_nothing_is_active_and_everything_is_dead(
     cli_sessions.main(project=project.id, active=True, slim=True)
     assert _ids(capsysbinary) == set()
 
-    cli_sessions.main(project=project.id, state="dead", slim=True)
+    cli_sessions.main(project=project.id, state=["dead"], slim=True)
     assert _ids(capsysbinary) == {"s1"}
 
 
@@ -477,9 +478,13 @@ def test_a_provider_filter_is_a_plain_column(project, live_backend, capsysbinary
 
 
 @pytest.mark.parametrize("kwargs, message", [
-    ({"state": "bogus"}, "invalid --state"),
+    ({"state": ["bogus"]}, "invalid --state"),
+    # Every token, not just the first: a typo in second position used to sail
+    # through — and a test passing a bare string instead of a list passed for
+    # the wrong reason, rejecting the letter 'b'.
+    ({"state": ["assistant_turn", "bogus"]}, "invalid --state"),
     ({"provider": "gpt"}, "invalid --provider"),
-    ({"state": "dead", "active": True}, "mutually exclusive"),
+    ({"state": ["dead"], "active": True}, "mutually exclusive"),
 ])
 def test_bad_filters_are_refused(project, live_backend, kwargs, message, capsysbinary):
     """The code matters as much as the raise.
@@ -511,7 +516,7 @@ def test_a_dead_row_is_not_active(project, live_backend, capsysbinary):
     cli_sessions.main(project=project.id, active=True, slim=True)
     assert _ids(capsysbinary) == set()
 
-    cli_sessions.main(project=project.id, state="dead", slim=True)
+    cli_sessions.main(project=project.id, state=["dead"], slim=True)
     assert _ids(capsysbinary) == {"stopped"}
 
 
@@ -623,3 +628,43 @@ def test_the_loader_scopes_to_the_ids_it_is_given(project, live_backend):
 
     assert set(load_process_rows(["a"], TWICC_PID)) == {"a"}
     assert set(load_process_rows(None, TWICC_PID)) == {"a", "b"}
+
+
+def test_several_states_are_or_combined(three_states, capsysbinary):
+    """A session holds one state, so repeating can only mean "any of these".
+
+    The subset that motivates it: "busy or blocked on a human" is two of the
+    five buckets, and a single-valued flag cannot ask for it.
+    """
+    cli_sessions.main(
+        project=three_states.id, state=["assistant_turn", "user_turn"], slim=True,
+    )
+
+    assert _ids(capsysbinary) == {"gen", "idle"}
+
+
+def test_dead_unions_with_a_live_bucket(three_states, capsysbinary):
+    """``dead`` is an absence, so it cannot be enumerated alongside the others.
+
+    It has to come out of the query as "not in the live set", which is a
+    different shape from the id list the live buckets produce.
+    """
+    cli_sessions.main(project=three_states.id, state=["assistant_turn", "dead"], slim=True)
+
+    assert _ids(capsysbinary) == {"gen", "gone"}
+
+
+def test_naming_every_state_filters_nothing(three_states, capsysbinary):
+    """The identity case, kept cheap rather than unioning five buckets."""
+    from twicc.cli._process_state import VALID_VIRTUAL_STATES
+
+    cli_sessions.main(project=three_states.id, state=sorted(VALID_VIRTUAL_STATES), slim=True)
+
+    assert _ids(capsysbinary) == {"gen", "idle", "gone"}
+
+
+def test_repeating_the_flag_unions_from_the_command_line(invoke):
+    """Two `--state` used to keep the last one silently; now they add up."""
+    assert invoke("sessions", "--state", "assistant_turn", "--state", "dead", "--slim") == {
+        "gen", "gone",
+    }

@@ -230,16 +230,19 @@ def _sessions_default(
         None, "--provider",
         help="Filter by backend provider (e.g. 'claude_code', 'codex').",
     ),
-    state: str = typer.Option(
-        None, "--state",
+    state: list[str] = typer.Option(
+        [], "--state",
         help=(
             "Filter by the session's live process state: 'starting', "
             "'assistant_turn' (actively generating), 'awaiting_user_input' "
             "(blocked on a user click), 'user_turn' (turn finished, agent "
-            "still loaded) or 'dead'. Unlike `processes --state`, 'dead' is "
-            "accepted here and means no TwiCC-managed process — which is also "
-            "every session when no backend is running. Mutually exclusive "
-            "with --active."
+            "still loaded) or 'dead'. Repeatable, **OR**-combined — a session "
+            "holds one state, so naming several means any of them (e.g. "
+            "--state assistant_turn --state awaiting_user_input for 'busy or "
+            "blocked'); naming all five is the unfiltered listing. Unlike "
+            "`processes --state`, 'dead' is accepted and means no "
+            "TwiCC-managed process — which is also every session when no "
+            "backend is running. Mutually exclusive with --active."
         ),
     ),
     active: bool = typer.Option(
