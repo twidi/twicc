@@ -213,3 +213,39 @@ def test_a_non_positive_wait_budget_is_refused(batch, capsysbinary):
         run(capsysbinary, wait_timeout=0)
 
     assert exc.value.exit_code == 1
+
+
+def test_the_counters_describe_the_answers_not_the_sends(batch, capsysbinary, monkeypatch):
+    """A mixed batch is what separates them: with every entry replying, a
+    counter that counts sends and one that counts answers give the same
+    number, and both mutants live."""
+    def mixed(cursors, **kwargs):
+        outcomes = {"alpha": "replied", "beta": "timeout"}
+        return {sid: {"outcome": outcomes[sid], "line_num": None} for sid in cursors}
+
+    monkeypatch.setattr("twicc.cli._wait_reply.wait_for_replies", mixed)
+    batch["statuses"].update(alpha=sent("alpha", 1), beta=sent("beta", 1))
+
+    payload = run(capsysbinary)
+
+    assert payload["summary"]["replied"] == 1
+    assert payload["summary"]["all_replied"] is False
+
+
+def test_the_batch_result_survives_a_broken_wait(batch, capsysbinary, monkeypatch):
+    """The sends already succeeded. A locked database or a Ctrl-C mid-wait
+    must not swallow which recipients got the message — the singular commands
+    degrade the same way, and a batch has more to lose."""
+    def explode(cursors, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr("twicc.cli._wait_reply.wait_for_replies", explode)
+    batch["statuses"].update(alpha=sent("alpha", 7), beta=sent("beta", 9))
+
+    payload = run(capsysbinary)
+
+    assert payload["summary"]["succeeded"] == 2
+    assert payload["results"]["alpha"]["last_line"] == 7
+    assert payload["results"]["alpha"]["reply"]["outcome"] == "wait_failed"
+    assert "database is locked" in payload["results"]["alpha"]["reply"]["error"]
+    assert payload["results"]["beta"]["reply"]["since_line_num"] == 9

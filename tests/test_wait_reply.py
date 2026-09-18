@@ -105,17 +105,6 @@ def project(db):
     return Project.objects.create(id="-tmp-twicc-wait", directory="/tmp/twicc-wait")
 
 
-@pytest.fixture
-def threaded_project(transactional_db):
-    """Same project, but committed.
-
-    The batch wait runs one thread per session, and a thread gets its own
-    connection: rows held inside the test's own transaction are invisible to
-    it, and writing from one deadlocks against it.
-    """
-    return Project.objects.create(id="-tmp-twicc-wait", directory="/tmp/twicc-wait")
-
-
 def make_session(project, provider="claude_code", session_id="wait-sess"):
     return Session.objects.create(
         id=session_id, project=project, provider=provider,
@@ -1369,11 +1358,9 @@ def test_create_session_forwards_the_blocked_flag(monkeypatch, tmp_path):
 # Waiting on several sessions at once
 # ---------------------------------------------------------------------------
 #
-# One thread per session rather than one loop polling all of them: the
-# single-session loop carries the delicate parts — the flush window, the
-# watcher-lag check, the confirming pass — and every test above exercises
-# them. A mechanical extraction would have moved that logic out from under
-# its own coverage.
+# One loop polls them all, and the single-session wait is its one-session
+# case — so every test above exercises this code too, which is what made the
+# extraction safe to do at all.
 
 
 def wait_many(sessions_cursors, **kwargs):
@@ -1384,11 +1371,11 @@ def wait_many(sessions_cursors, **kwargs):
     return wait_for_replies(sessions_cursors, **kwargs)
 
 
-def test_each_session_gets_its_own_answer(threaded_project):
+def test_each_session_gets_its_own_answer(project):
     """Cursors are per session, so are the answers: a shared one would let a
     chatty session's line close a quiet one's wait."""
-    one = make_session(threaded_project, session_id="many-one")
-    two = make_session(threaded_project, session_id="many-two")
+    one = make_session(project, session_id="many-one")
+    two = make_session(project, session_id="many-two")
     process(one, AgentState.ASSISTANT_TURN.value)
     process(two, AgentState.ASSISTANT_TURN.value)
     assistant(one, 5, "from one", "end_turn")
@@ -1402,12 +1389,12 @@ def test_each_session_gets_its_own_answer(threaded_project):
     assert replies[two.id]["line_num"] == 9
 
 
-def test_a_cursor_is_honoured_per_session(threaded_project):
+def test_a_cursor_is_honoured_per_session(project):
     """The quiet session's answer sits below its own cursor: it must not be
     returned, even though the other session's cursor would have let it pass.
     """
-    one = make_session(threaded_project, session_id="cur-one")
-    two = make_session(threaded_project, session_id="cur-two")
+    one = make_session(project, session_id="cur-one")
+    two = make_session(project, session_id="cur-two")
     process(one, AgentState.ASSISTANT_TURN.value)
     process(two, AgentState.ASSISTANT_TURN.value)
     assistant(one, 5, "old news", "end_turn")
@@ -1419,11 +1406,11 @@ def test_a_cursor_is_honoured_per_session(threaded_project):
     assert replies[two.id]["outcome"] == REPLIED
 
 
-def test_the_first_answer_ends_the_batch_when_asked(threaded_project):
+def test_the_first_answer_ends_the_batch_when_asked(project):
     """The others are ``pending``, the word ``processes wait`` already uses:
     they did not fail, the wait simply stopped caring."""
-    fast = make_session(threaded_project, session_id="first-fast")
-    slow = make_session(threaded_project, session_id="first-slow")
+    fast = make_session(project, session_id="first-fast")
+    slow = make_session(project, session_id="first-slow")
     process(fast, AgentState.ASSISTANT_TURN.value)
     process(slow, AgentState.ASSISTANT_TURN.value)
     assistant(fast, 5, "here", "end_turn")
@@ -1434,11 +1421,11 @@ def test_the_first_answer_ends_the_batch_when_asked(threaded_project):
     assert replies[slow.id]["outcome"] == "pending"
 
 
-def test_wait_all_waits_for_the_slow_one(threaded_project):
+def test_wait_all_waits_for_the_slow_one(project):
     """The default. Without it the batch would return on the fast session and
     the caller would read the slow one's silence as an answer."""
-    fast = make_session(threaded_project, session_id="all-fast")
-    slow = make_session(threaded_project, session_id="all-slow")
+    fast = make_session(project, session_id="all-fast")
+    slow = make_session(project, session_id="all-slow")
     process(fast, AgentState.ASSISTANT_TURN.value)
     process(slow, AgentState.ASSISTANT_TURN.value)
     assistant(fast, 5, "here", "end_turn")
@@ -1449,7 +1436,7 @@ def test_wait_all_waits_for_the_slow_one(threaded_project):
     assert replies[slow.id]["outcome"] == TIMEOUT
 
 
-def test_a_crashed_turn_does_not_end_a_first_batch(threaded_project):
+def test_a_crashed_turn_does_not_end_a_first_batch(project):
     """``--wait-first`` asks for an answer, and a turn that ended without one
     has not given it.
 
@@ -1458,8 +1445,8 @@ def test_a_crashed_turn_does_not_end_a_first_batch(threaded_project):
     worker would come back ``pending`` instead of running out its budget — the
     first one out would have decided for everyone.
     """
-    crashed = make_session(threaded_project, session_id="crash-one")
-    working = make_session(threaded_project, session_id="crash-two")
+    crashed = make_session(project, session_id="crash-one")
+    working = make_session(project, session_id="crash-two")
     process(working, AgentState.ASSISTANT_TURN.value)
 
     replies = wait_many({crashed.id: 0, working.id: 0}, timeout=1.5, first=True)
@@ -1470,3 +1457,76 @@ def test_a_crashed_turn_does_not_end_a_first_batch(threaded_project):
 
 def test_an_empty_batch_waits_for_nothing(project):
     assert wait_many({}) == {}
+
+
+def test_an_answer_returns_at_once_not_at_the_deadline(project):
+    """``if not waiting: return`` is the only normal exit, and it is new.
+
+    Every other test here uses a timeout of a few seconds, so "returned on the
+    answer" and "returned when the budget ran out" look identical to them —
+    a mutant that waits out the deadline before returning keeps the suite
+    green and merely makes it slower. In production that is the right answer
+    delivered five minutes late, with the MCP client long gone.
+    """
+    session = make_session(project)
+    process(session, AgentState.ASSISTANT_TURN.value)
+    assistant(session, 5, "immediate", "end_turn")
+
+    reply = wait(session, timeout=30.0)
+
+    assert reply["outcome"] == REPLIED
+    assert reply["waited_seconds"] < 1.0
+
+
+def test_a_batch_returns_when_the_last_one_answers(project):
+    """The same guard for several: the loop must stop when the set empties,
+    not when the budget does."""
+    one = make_session(project, session_id="quick-one")
+    two = make_session(project, session_id="quick-two")
+    process(one, AgentState.ASSISTANT_TURN.value)
+    process(two, AgentState.ASSISTANT_TURN.value)
+    assistant(one, 5, "a", "end_turn")
+    assistant(two, 5, "b", "end_turn")
+
+    replies = wait_many({one.id: 0, two.id: 0}, timeout=30.0)
+
+    assert {r["outcome"] for r in replies.values()} == {REPLIED}
+    assert all(r["waited_seconds"] < 1.0 for r in replies.values())
+
+
+def test_a_block_ends_a_first_batch_when_blocking_was_asked_for(project):
+    """``--wait-first`` fires on either ending the caller asked for, and the
+    tuple that decides it had only its answer half covered."""
+    blocked = make_session(project, session_id="fb-blocked")
+    other = make_session(project, session_id="fb-other")
+    process(blocked, AgentState.ASSISTANT_TURN.value, awaiting=True)
+    process(other, AgentState.ASSISTANT_TURN.value)
+
+    replies = wait_many(
+        {blocked.id: 0, other.id: 0}, timeout=3.0, first=True, stop_when_blocked=True,
+    )
+
+    assert replies[blocked.id]["outcome"] == "awaiting_user_input"
+    assert replies[other.id]["outcome"] == "pending"
+
+
+def test_a_cut_wait_still_reports_what_it_had_seen(project):
+    """``pending`` is not "nothing happened": the session may have spoken
+    without closing its turn, and reporting that line is what lets a caller
+    see how far it got.
+
+    The order in the map matters and is the point: the slow session is stepped
+    first, so it has been seen once before the fast one's answer cuts the
+    batch. Cut before ever being polled, it would legitimately report nothing.
+    """
+    fast = make_session(project, session_id="cut-fast")
+    slow = make_session(project, session_id="cut-slow")
+    process(fast, AgentState.ASSISTANT_TURN.value)
+    process(slow, AgentState.ASSISTANT_TURN.value)
+    assistant(slow, 4, "thinking out loud", "tool_use")
+    assistant(fast, 5, "done", "end_turn")
+
+    replies = wait_many({slow.id: 0, fast.id: 0}, timeout=3.0, first=True)
+
+    assert replies[slow.id]["outcome"] == "pending"
+    assert replies[slow.id]["line_num"] == 4

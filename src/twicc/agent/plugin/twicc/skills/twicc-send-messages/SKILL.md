@@ -34,7 +34,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 ## Usage
 
 ```bash
-$TWICC send-messages [SESSION_ID...] [--message <TEXT>] [--attach PATH...] [--spawned-by X|--descendants X|--siblings X] [--annotation ...]
+$TWICC send-messages [SESSION_ID...] [--message <TEXT>] [--attach PATH...] [--spawned-by X|--descendants X|--siblings X] [--annotation ...] [--wait-reply [--wait-first] [--wait-blocked] [--wait-timeout N] [--no-reply-text]]
 ```
 
 Selection is identical to `update-sessions` (skill: `twicc-update-sessions`): a positional `SESSION_ID...` list merged (union, explicit first) with the scope filters. `self` means the current session.
@@ -47,6 +47,11 @@ Selection is identical to `update-sessions` (skill: `twicc-update-sessions`): a 
 - `--siblings <ID|self>` — also target the siblings of the given session: the *other* sessions spawned by the same parent, **reference always excluded**. `self` broadcasts to your peers (the canonical worker → worker channel). `parent` is **not** supported. Mutually exclusive with `--spawned-by` / `--descendants`. Note `--spawned-by parent` (the same set but including yourself) is **not** available here, so `--siblings self` is the way to reach your peers from this command.
 - `--annotation KEY[OP]VALUE` — narrow the filiation scope by annotation; repeatable, AND-combined; requires a filiation scope; does not filter explicit ids. Same syntax as `twicc sessions --annotation` (skill: `twicc-sessions`).
 - `--timeout SECONDS` — wall-clock budget for the whole batch (default 30; drops run in parallel server-side).
+- `--wait-reply` — keep going until the recipients answer. Adds a `reply` block per entry, the same shape `send-message --wait-reply` returns, and `replied` / `all_replied` to the summary. Only entries that reached `sent` are waited on: a rejected send has no turn to answer it.
+- `--wait-first` / `--wait-all` — `--wait-all` (default) waits until EVERY recipient answers; `--wait-first` stops at the first one, leaving the rest `outcome: pending`. A recipient whose turn crashed or was refused never ends a `--wait-first` batch: the others may still answer, and an answer is what was asked for. Requires `--wait-reply`.
+- `--wait-blocked` — a recipient blocking on a human also ends its own wait (`outcome: awaiting_user_input`) instead of waiting through it. OR-combined with the answer, which wins a tie. Requires `--wait-reply`.
+- `--wait-timeout N` — caps the wait, whatever ends it. Default **300 s**, a wall-clock budget for the whole batch (they are waited on together, not one after another), which is also the ceiling MCP callers are asked to respect. Requires `--wait-reply`.
+- `--no-reply-text` — report that the answers arrived without returning their text; each `line_num` is still there to fetch one. Requires `--wait-reply`.
 
 If neither ids nor a filiation scope is given, the command errors (exit 1). An empty resolved set is not an error: `results` is `{}` and the command exits 0.
 
@@ -57,6 +62,8 @@ When the caller is itself a TwiCC session, each recipient receives the text unde
 ## Errors
 
 Argument-level problems fail the whole command (exit 1, plain-text on stderr): empty/unreadable `--message`, neither `--message` nor `--attach`, bad `--timeout`, two of `--spawned-by`/`--descendants`/`--siblings` together, `parent` scope (on `--spawned-by`/`--descendants`, or any value on `--siblings`), `--annotation` without a filiation scope, neither ids nor scope.
+
+Local (exit 1), before anything is sent: `requires_wait_reply` (a wait modifier without `--wait-reply`) and `invalid_value` (`--wait-timeout` not > 0).
 
 Per-session problems never fail the batch — reported in `results[<id>]` with `status` `validation_error` (local lookup: `session_not_found`, `is_subagent`, `session_stale`, `project_no_directory`; or an attachment its provider rejects) or `rejected` (server: `awaiting_user_input` — the session has a pending UI dialog a CLI message can't unblock; `manager_busy` — transient, retry; `provider_disabled`). Same vocabulary as `twicc-send-message`.
 
@@ -99,12 +106,24 @@ $TWICC send-messages --spawned-by self --message /home/twidi/prompts/broadcast.m
 
 ## Following up
 
-A per-id `sent` means the message was handed to the agent — not that it finished. Await completion, then read results:
+A per-id `sent` means the message was handed to the agent — not that it finished.
 
-- `$TWICC processes wait --spawned-by self user_turn dead --transition --timeout <N>` — block until every recipient finishes the turn this message triggers (`--transition` avoids matching the idle `user_turn` they were already in). Skill: `twicc-processes`.
-- `$TWICC session <SESSION_ID> messages --tail 1` — read each reply. Skill: `twicc-session`.
+**To wait for the answers, use `--wait-reply`** — one call, and each recipient's cursor is read server-side the instant its agent takes the message, so the previous turn's closing message cannot answer for this one:
 
-This closes the orchestration loop: `create-session` → … → `send-messages` → `processes wait` → `session messages`.
+```bash
+$TWICC send-messages --spawned-by self --message '<TEXT>' --wait-reply
+```
+
+Each entry gains a `reply` block (`outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text`, and `error` on `wait_failed`), and the summary gains `replied` / `all_replied`. `outcome` is `replied`, `provider_error`, `ended`, `timeout`, `backend_gone`, `wait_failed`, `awaiting_user_input` (with `--wait-blocked`) or `pending` (cut short by `--wait-first`).
+
+**A timeout is not a failure** and nothing is lost: the agents keep working, and each entry's `since_line_num` is where to resume from. The exit code never reflects the wait, only whether the sends went out.
+
+Falling back to the state machine, when you want liveness rather than answers:
+
+- `$TWICC processes wait --spawned-by self user_turn dead --timeout <N>` — block until every recipient's process is idle or gone. Note this is a weaker signal: a session held busy by a subagent has already answered long before it returns to `user_turn`. Skill: `twicc-processes`.
+- `$TWICC session <SESSION_ID> messages --tail 1` — read a reply by hand. Skill: `twicc-session`.
+
+This closes the orchestration loop: `create-session` → … → `send-messages --wait-reply`.
 
 ## Related commands
 

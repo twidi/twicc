@@ -1,4 +1,8 @@
-"""Block until a session answers. Used by ``create-session --wait-reply``.
+"""Block until one or more sessions answer.
+
+Behind ``--wait-reply`` on ``create-session``, ``send-message`` and
+``send-messages``. The one-session wait is the one-element case of the batch,
+so there is a single implementation of everything below.
 
 The question "has it answered?" is read off the **transcript**, not off the
 process state machine: a session parked in ``ASSISTANT_TURN`` by a Monitor, a
@@ -21,10 +25,12 @@ well past anything observed; the improbable cases belong to the deadline.
 
 The caller owns the cursor: the wait only ever accepts a line **strictly
 past** it. ``create-session`` passes ``0`` — a new session's transcript is
-empty, so any final message is ours. The contract is written for a second
-caller that does not exist yet: a ``send-message --wait-reply`` would pass
-the session's ``last_line`` read right after the message was handed to the
-agent, which is what keeps it from returning the previous turn's answer.
+empty, so any final message is ours. ``send-message`` and ``send-messages``
+pass the session's ``last_line``, read server-side the instant the message was
+handed to the agent, which is what keeps them from returning the previous
+turn's answer. A batch carries one cursor per recipient: they are not at the
+same line, and a shared one would let a chatty session close a quiet one's
+wait.
 """
 
 from __future__ import annotations
@@ -124,8 +130,8 @@ def _empty_reply(outcome: str, since_line_num: int, waited: float = 0.0) -> dict
     """A ``reply`` block for an ending that never got to look at anything.
 
     Same keys as the loop's own builder, minus what needs a message. Shared so
-    the two shapes cannot drift — the loop's builder is a closure and cannot
-    be reached from here.
+    the two shapes cannot drift — the loop's builder belongs to a
+    ``_SessionWait`` that may not exist yet when this is needed.
     """
     return {
         "outcome": outcome,
@@ -257,56 +263,44 @@ def _session_jsonl_path(session):
     return None if root is None else root() / path
 
 
-def wait_for_reply(
-    session_id: str,
-    *,
-    since_line_num: int,
-    timeout: float,
-    want_text: bool,
-    stop_when_blocked: bool = False,
-    stop_event=None,
-) -> dict:
-    """Poll until the session answers, the turn ends, or ``timeout`` elapses.
+class _SessionWait:
+    """One session's share of a wait: its cursor, and what a tick carries over.
 
-    ``stop_event`` lets a batch caller cut this wait short — ``--wait-first``
-    has its answer and the rest no longer matter. It is checked once per tick,
-    so a cut costs at most one poll interval.
-
-    Returns the ``reply`` block of the command's JSON payload. ``text`` is
-    present only when ``want_text`` and a message was found, never ``null``.
-
-    Never raises for a business outcome: every ending is an ``outcome`` value,
-    because the send or the creation it follows already succeeded and must not
-    be reported as a failure.
+    Everything here used to be locals of a one-session loop. Nothing about the
+    logic changed in the move — the point was only to let one loop drive many
+    sessions, which is what ``--wait-first`` / ``--wait-all`` need. The single
+    session case goes through the same code, so the tests that cover it cover
+    this too.
     """
-    from twicc.cli._twicc_info import resolve_live_twicc
-    from twicc.core.enums import ItemKind
-    from twicc.core.models import Session, SessionItem
-    from twicc.providers.helpers import get_provider_helpers
 
-    info = resolve_live_twicc()
-    twicc_pid = info.pid if info is not None else None
+    def __init__(self, session_id: str, since_line_num: int, *, started: float,
+                 twicc_pid, want_text: bool, stop_when_blocked: bool):
+        self.session_id = session_id
+        self.since_line_num = since_line_num
+        self.scanned_up_to = since_line_num
+        self.started = started
+        self.twicc_pid = twicc_pid
+        self.want_text = want_text
+        self.stop_when_blocked = stop_when_blocked
+        # Read once and kept: ``provider`` and ``file_path`` never change, and
+        # ``last_offset`` is refreshed below only where it is actually used.
+        self.session = None
+        self.stopped_since = None
+        self.confirming = False
+        self.last_message = None
+        self.awaiting_user_input = False
 
-    started = time.monotonic()
-    deadline = started + timeout
-    scanned_up_to = since_line_num
-    session = None       # read once: provider and file_path never change
-    stopped_since = None
-    confirming = False
-    last_message = None
-    awaiting_user_input = False
-
-    def build(outcome: str, message=None, *, line_num=None) -> dict:
+    def build(self, outcome: str, message=None, *, line_num=None) -> dict:
         block = {
             "outcome": outcome,
             "line_num": message.line_num if message is not None else line_num,
             "is_final": message.is_final if message is not None else None,
-            "since_line_num": since_line_num,
-            "waited_seconds": round(time.monotonic() - started, 1),
+            "since_line_num": self.since_line_num,
+            "waited_seconds": round(time.monotonic() - self.started, 1),
         }
-        if want_text and message is not None:
+        if self.want_text and message is not None:
             block["text"] = message.text
-        if awaiting_user_input and outcome not in (REPLIED, PROVIDER_ERROR):
+        if self.awaiting_user_input and outcome not in (REPLIED, PROVIDER_ERROR):
             # Reported, never acted on: a human clicking would unblock the
             # agent and the answer would arrive, so giving up there would not
             # be the safe ending every other one is. It answers "why did my
@@ -316,41 +310,33 @@ def wait_for_reply(
             block["awaiting_user_input"] = True
         return block
 
-    while True:
-        if stop_event is not None and stop_event.is_set():
-            return build(PENDING, last_message)
+    def step(self) -> dict | None:
+        """One poll for this session. Returns its ending, or ``None`` to go on."""
+        from twicc.core.enums import ItemKind
+        from twicc.core.models import Session, SessionItem
+        from twicc.providers.helpers import get_provider_helpers
 
-        # TwiCC still there? Read every tick, not once: a backend that stops or
-        # restarts mid-wait would otherwise make every later poll see no
-        # ``ProcessRun`` row, which reads exactly like a finished turn — the
-        # loop would report ``ended`` for an agent that is alive and working.
-        live = resolve_live_twicc()
-        if live is None or live.pid != twicc_pid:
-            return build(BACKEND_GONE)
-
-        # Read once and kept: ``provider`` and ``file_path`` never change, and
-        # ``last_offset`` is refreshed below only where it is actually used.
         # The row appears when the watcher first sees the JSONL file, which is
         # *after* ``create-session`` returns — until then there is nothing to
         # scan, and that window is "still starting", not "nothing".
-        if session is None:
-            session = (
+        if self.session is None:
+            self.session = (
                 Session.objects
-                .filter(id=session_id)
+                .filter(id=self.session_id)
                 .only("id", "provider", "file_path", "last_offset")
                 .first()
             )
 
-        if session is not None:
+        if self.session is not None:
             new_items = list(
                 SessionItem.objects
-                .filter(session_id=session_id, line_num__gt=scanned_up_to,
+                .filter(session_id=self.session_id, line_num__gt=self.scanned_up_to,
                         kind__in=[ItemKind.ASSISTANT_MESSAGE, ItemKind.API_ERROR])
                 .order_by("line_num")
             )
             if new_items:
-                scanned_up_to = new_items[-1].line_num
-                helpers = get_provider_helpers(session.provider)
+                self.scanned_up_to = new_items[-1].line_num
+                helpers = get_provider_helpers(self.session.provider)
 
                 # An answer is looked for **first**, on purpose: a turn that hit
                 # a retryable error and then recovered writes both, and the
@@ -364,9 +350,9 @@ def wait_for_reply(
                     # what the caller just sent. A later one would belong to a
                     # turn the caller did not trigger.
                     if message.is_final is True:
-                        return build(REPLIED, message)
+                        return self.build(REPLIED, message)
                 if messages:
-                    last_message = messages[-1]
+                    self.last_message = messages[-1]
 
                 for item in new_items:
                     if item.kind != ItemKind.API_ERROR:
@@ -382,73 +368,69 @@ def wait_for_reply(
                     # The provider refused the turn — a quota, an outage. Shaped
                     # like "no answer", but the caller's request was never the
                     # problem and retrying it now would fail the same way.
-                    block = build(PROVIDER_ERROR, line_num=item.line_num)
-                    if want_text:
+                    block = self.build(PROVIDER_ERROR, line_num=item.line_num)
+                    if self.want_text:
                         block["text"] = _error_text(parsed, item, helpers)
                     return block
 
-        working, awaiting = _agent_activity(session_id, twicc_pid)
-        awaiting_user_input = awaiting_user_input or awaiting
+        working, awaiting = _agent_activity(self.session_id, self.twicc_pid)
+        self.awaiting_user_input = self.awaiting_user_input or awaiting
 
-        if stop_when_blocked and awaiting:
+        if self.stop_when_blocked and awaiting:
             # Checked AFTER the transcript scan above, so a turn that both
             # answered and then blocked reports the answer: an arrived reply is
             # always the better ending. Opt-in, because waiting through a block
             # is right whenever a human is there to clear it — and the case
             # where nobody is (a --hidden worker) is the case where blocking
             # cannot happen at all.
-            return build(AWAITING)
+            return self.build(AWAITING)
 
         if working:
             # A fresh turn (a cron, a wake-up, a subagent finishing) restarts
             # the count from zero: whatever was being waited out no longer
             # describes the session.
-            stopped_since = None
-            confirming = False
-        else:
-            if stopped_since is None:
-                stopped_since = time.monotonic()
-            stopped_for = time.monotonic() - stopped_since
+            self.stopped_since = None
+            self.confirming = False
+            return None
 
-            if session is not None:
-                # Only now are ``last_offset`` and the file stat worth their
-                # cost: while the agent works neither can end the wait, and a
-                # session running for an hour would pay 14 400 of each for
-                # nothing.
-                if stopped_for >= AGENT_FLUSH_SECONDS:
-                    session.refresh_from_db(fields=["last_offset"])
-                    if not _watcher_is_behind(session):
-                        if not confirming:
-                            # The scan above ran before this check, and the
-                            # watcher commits items and ``last_offset`` in one
-                            # transaction: a commit landing between the two
-                            # would leave an answer in the DB, unscanned, while
-                            # the offset already says "fully indexed". One more
-                            # tick re-scans before concluding.
-                            confirming = True
-                        else:
-                            # Stopped long enough to have flushed, everything it
-                            # wrote is indexed, and a scan since then found no
-                            # answer: none is coming. A crash, an interruption,
-                            # or a closing message whose text was empty
-                            # (extraction drops those).
-                            return build(ENDED, last_message)
-            elif (
-                stopped_for >= AGENT_FLUSH_SECONDS
-                and time.monotonic() - started >= SESSION_ROW_GRACE_SECONDS
-            ):
-                # No row to check against, and long past the point one should
-                # have appeared: the agent died before writing anything. The
-                # flush window applies here too — without it this branch would
-                # conclude the moment the grace elapsed, however recently the
-                # agent stopped, which is the one thing the window exists to
-                # prevent.
-                return build(ENDED, last_message)
+        if self.stopped_since is None:
+            self.stopped_since = time.monotonic()
+        stopped_for = time.monotonic() - self.stopped_since
 
-        if time.monotonic() >= deadline:
-            return build(TIMEOUT, last_message)
+        if self.session is not None:
+            # Only now are ``last_offset`` and the file stat worth their cost:
+            # while the agent works neither can end the wait, and a session
+            # running for an hour would pay 14 400 of each for nothing.
+            if stopped_for >= AGENT_FLUSH_SECONDS:
+                self.session.refresh_from_db(fields=["last_offset"])
+                if not _watcher_is_behind(self.session):
+                    if not self.confirming:
+                        # The scan above ran before this check, and the watcher
+                        # commits items and ``last_offset`` in one transaction:
+                        # a commit landing between the two would leave an answer
+                        # in the DB, unscanned, while the offset already says
+                        # "fully indexed". One more tick re-scans before
+                        # concluding.
+                        self.confirming = True
+                    else:
+                        # Stopped long enough to have flushed, everything it
+                        # wrote is indexed, and a scan since then found no
+                        # answer: none is coming. A crash, an interruption, or a
+                        # closing message whose text was empty (extraction drops
+                        # those).
+                        return self.build(ENDED, self.last_message)
+        elif (
+            stopped_for >= AGENT_FLUSH_SECONDS
+            and time.monotonic() - self.started >= SESSION_ROW_GRACE_SECONDS
+        ):
+            # No row to check against, and long past the point one should have
+            # appeared: the agent died before writing anything. The flush window
+            # applies here too — without it this branch would conclude the
+            # moment the grace elapsed, however recently the agent stopped,
+            # which is the one thing the window exists to prevent.
+            return self.build(ENDED, self.last_message)
 
-        time.sleep(POLL_INTERVAL_SECONDS)
+        return None
 
 
 def wait_for_replies(
@@ -459,12 +441,13 @@ def wait_for_replies(
     stop_when_blocked: bool = False,
     first: bool = False,
 ) -> dict:
-    """Wait on several sessions at once; return one reply block per id.
+    """Wait on one or more sessions; return one reply block per id.
 
     ``cursors`` maps session_id → the line each wait starts above, which for a
-    broadcast is the ``last_line`` its own send returned. One shared deadline
-    covers the whole batch, as in ``processes wait``: the sessions are waited
-    on in parallel, so it is a wall-clock budget rather than N × timeout.
+    broadcast is the ``last_line`` its own send returned. One loop polls them
+    all every :data:`POLL_INTERVAL_SECONDS`, and one shared deadline covers the
+    batch: the sessions are watched together, so the timeout is a wall-clock
+    budget rather than N × timeout.
 
     ``first`` stops as soon as one session **answers** — or blocks on a human,
     when that was asked for. A turn that crashed or was refused does not end
@@ -472,44 +455,83 @@ def wait_for_replies(
     Sessions still waiting when that happens get ``outcome: "pending"``, the
     word ``processes wait`` already uses for the same situation.
 
-    **One thread per session**, rather than one loop polling all of them. The
-    single-session loop has been through six review rounds and its delicate
-    parts — the flush window, the watcher-lag check, the confirming pass — are
-    exactly what a mechanical extraction would break; this keeps them under
-    the tests that already cover them. The cost is N pollers instead of one,
-    which for a broadcast of a few dozen is a small indexed SELECT each, four
-    times a second.
+    Never raises for a business outcome: every ending is an ``outcome`` value,
+    because the send or the creation it follows already succeeded and must not
+    be reported as a failure.
     """
-    import threading
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from twicc.cli._twicc_info import resolve_live_twicc
 
     if not cursors:
         return {}
 
-    from django.db import connection
+    info = resolve_live_twicc()
+    twicc_pid = info.pid if info is not None else None
+    started = time.monotonic()
+    deadline = started + timeout
 
-    stop = threading.Event()
-
-    def one(session_id: str, cursor: int) -> dict:
-        try:
-            return wait_for_reply(
-                session_id, since_line_num=cursor, timeout=timeout,
-                want_text=want_text, stop_when_blocked=stop_when_blocked,
-                stop_event=stop if first else None,
-            )
-        finally:
-            # Django opens a connection per thread; leaving them behind would
-            # leak one file handle per recipient, per batch.
-            connection.close()
-
+    waiting = {
+        session_id: _SessionWait(
+            session_id, cursor, started=started, twicc_pid=twicc_pid,
+            want_text=want_text, stop_when_blocked=stop_when_blocked,
+        )
+        for session_id, cursor in cursors.items()
+    }
     results: dict = {}
-    with ThreadPoolExecutor(max_workers=len(cursors)) as pool:
-        futures = {
-            pool.submit(one, sid, cursor): sid for sid, cursor in cursors.items()
-        }
-        for future in as_completed(futures):
-            sid = futures[future]
-            results[sid] = future.result()
-            if first and results[sid]["outcome"] in (REPLIED, AWAITING):
-                stop.set()
-    return results
+
+    while True:
+        # TwiCC still there? Read every tick, not once: a backend that stops or
+        # restarts mid-wait would otherwise make every later poll see no
+        # ``ProcessRun`` row, which reads exactly like a finished turn — the
+        # loop would report ``ended`` for an agent that is alive and working.
+        # Once per tick for the whole batch, not once per session.
+        live = resolve_live_twicc()
+        if live is None or live.pid != twicc_pid:
+            return results | {
+                session_id: waiter.build(BACKEND_GONE)
+                for session_id, waiter in waiting.items()
+            }
+
+        for session_id, waiter in list(waiting.items()):
+            block = waiter.step()
+            if block is None:
+                continue
+            results[session_id] = block
+            del waiting[session_id]
+            if first and block["outcome"] in (REPLIED, AWAITING):
+                return results | {
+                    other_id: other.build(PENDING, other.last_message)
+                    for other_id, other in waiting.items()
+                }
+
+        if not waiting:
+            return results
+
+        if time.monotonic() >= deadline:
+            return results | {
+                session_id: waiter.build(TIMEOUT, waiter.last_message)
+                for session_id, waiter in waiting.items()
+            }
+
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+
+def wait_for_reply(
+    session_id: str,
+    *,
+    since_line_num: int,
+    timeout: float,
+    want_text: bool,
+    stop_when_blocked: bool = False,
+) -> dict:
+    """Poll until the session answers, the turn ends, or ``timeout`` elapses.
+
+    The one-session case of :func:`wait_for_replies`, kept as its own name
+    because that is what every singular command asks for.
+
+    Returns the ``reply`` block of the command's JSON payload. ``text`` is
+    present only when ``want_text`` and a message was found, never ``null``.
+    """
+    return wait_for_replies(
+        {session_id: since_line_num},
+        timeout=timeout, want_text=want_text, stop_when_blocked=stop_when_blocked,
+    )[session_id]

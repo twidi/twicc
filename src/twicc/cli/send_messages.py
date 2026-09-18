@@ -32,6 +32,8 @@ the message was handed to the agent, not that the agent finished. Follow up with
 
 from __future__ import annotations
 
+import time
+
 import typer
 
 from twicc.cli._drop_request.help_strings import NO_EXPAND_HELP, PROMPT_INCLUDE_HINT
@@ -319,20 +321,39 @@ def send_messages_cmd(
         rejected or timed-out send has no turn to answer it, and waiting on
         one would burn the whole budget for nothing.
         """
-        from twicc.cli._wait_reply import REPLIED, wait_for_replies
+        from twicc.cli._wait_reply import (
+            REPLIED,
+            WAIT_FAILED,
+            _empty_reply,
+            wait_for_replies,
+        )
 
         cursors = {
             sid: (entry.get("last_line") or 0)
             for sid, entry in ordered.items()
             if entry and entry.get("status") == "sent"
         }
-        replies = wait_for_replies(
-            cursors,
-            timeout=wait_timeout if wait_timeout is not None else DEFAULT_WAIT_TIMEOUT_SECONDS,
-            want_text=not no_reply_text,
-            stop_when_blocked=wait_blocked,
-            first=wait_first,
-        )
+        budget = wait_timeout if wait_timeout is not None else DEFAULT_WAIT_TIMEOUT_SECONDS
+        started = time.monotonic()
+        try:
+            replies = wait_for_replies(
+                cursors,
+                timeout=budget,
+                want_text=not no_reply_text,
+                stop_when_blocked=wait_blocked,
+                first=wait_first,
+            )
+        except BaseException as exc:  # noqa: BLE001 - deliberate
+            # The sends already succeeded. A locked database or a Ctrl-C during
+            # the wait must not swallow the batch result: without this the
+            # caller loses which of N recipients got the message, and their
+            # cursors with it. The singular commands are protected by
+            # ``wait_for_reply_or_degrade``; this is the batch's equivalent.
+            waited = round(time.monotonic() - started, 1)
+            replies = {
+                sid: _empty_reply(WAIT_FAILED, cursor, waited) | {"error": f"{type(exc).__name__}: {exc}"}
+                for sid, cursor in cursors.items()
+            }
         for sid, block in replies.items():
             ordered[sid]["reply"] = block
         summary["replied"] = sum(
