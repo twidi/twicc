@@ -395,13 +395,12 @@ def test_a_provider_error_consumes_a_line_like_an_answer_does(session, capsysbin
 
 
 # ---------------------------------------------------------------------------
-# What ends the wait — `--reply` and `--blocked` select it
+# What ends the wait
 # ---------------------------------------------------------------------------
 
 
 def test_an_answer_ends_the_wait_by_default(session, capsysbinary):
-    """Neither selector named means `--reply`: an unqualified "wait" is a
-    wait for an answer, which is what the command did before they existed."""
+    """An answer always ends the wait, with or without `--reply`."""
     running(session)
     answer(session, 20, "here")
 
@@ -439,7 +438,45 @@ def test_an_answer_wins_a_tie_against_a_block(session, capsysbinary):
     )
     answer(session, 20, "answered then asked")
 
-    payload, code = run(capsysbinary, from_line=0, on_reply=True, on_blocked=True)
+    payload, code = run(capsysbinary, from_line=0, on_blocked=True)
 
     assert payload["reply"]["outcome"] == "replied"
     assert code == 0
+
+
+def test_a_block_is_ignored_unless_asked_for(session, capsysbinary):
+    """`--blocked` is off by default, and that is the half nothing pinned.
+
+    A session blocked on a tool approval must be waited through: a human can
+    still click, and the answer would arrive. Wiring the flag on by default
+    survived the whole suite — the shared loop's own test covers it from
+    `send-message`, not from here.
+    """
+    now = timezone.now()
+    ProcessRun.objects.create(
+        provider=session.provider, session_id=session.id, twicc_pid=TWICC_PID,
+        started_at=now, state=AgentState.ASSISTANT_TURN.value,
+        last_state_change_at=now, awaiting_user_input=True,
+    )
+
+    payload, code = run(capsysbinary, timeout=0.3)
+
+    assert payload["reply"]["outcome"] == "timeout"
+    assert code == 5
+
+
+def test_the_reply_flag_is_accepted(session, monkeypatch):
+    """It changes nothing, so being accepted is its whole contract.
+
+    A typo in the option string makes every documented `--reply` invocation
+    exit 2, and no test ever passed it on a command line.
+    """
+    from typer.testing import CliRunner
+
+    from twicc.cli import app
+
+    monkeypatch.setattr("twicc.cli.session.wait", lambda *a, **k: None)
+
+    result = CliRunner().invoke(app, ["session", "sw-session", "wait", "--reply"])
+
+    assert result.exit_code == 0, result.output

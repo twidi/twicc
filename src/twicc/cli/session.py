@@ -574,6 +574,9 @@ def wait(session_id: str, *, from_line: int | None = None, timeout: float,
     if timeout <= 0:
         emit_error(f"Error: --wait-timeout must be > 0 (got {timeout:g}).", code=1)
 
+    session = _get_session(session_id)
+    cursor = session.last_line if from_line is None else from_line
+
     # ``on_reply`` changes nothing and is not meant to: an answer always ends
     # the wait, exactly as it does under ``--wait-reply`` on the commands that
     # send. The flag documents that default rather than switching it, and
@@ -582,10 +585,6 @@ def wait(session_id: str, *, from_line: int | None = None, timeout: float,
     # one knows the other.
     if from_line is not None and from_line < 0:
         emit_error(f"Error: --from must be >= 0 (got {from_line}).", code=1)
-
-    session = _get_session(session_id)
-    cursor = session.last_line if from_line is None else from_line
-
     reply = wait_for_reply_or_degrade(
         session.id, since_line_num=cursor, timeout=timeout,
         want_text=want_text, stop_when_blocked=on_blocked,

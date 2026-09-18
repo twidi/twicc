@@ -578,8 +578,9 @@ def _session_wait(
         help=(
             "Stop when the session answers — the message closing its turn. "
             "Always true, with or without the flag: it names the default "
-            "rather than switching it, the way --wait-reply does on the "
-            "commands that send."
+            "rather than switching it. It exists so the surface reads like "
+            "--wait-reply on the commands that send, where the wait has to "
+            "be turned on; here the command is already the wait."
         ),
     ),
     blocked: bool = typer.Option(
@@ -609,8 +610,8 @@ def _session_wait(
     switching it. --blocked adds a second way to finish, the session blocking
     on a human, and an answer still wins a tie. Same shape as --wait-reply and
     --wait-blocked on the commands that send. Exit 0 when it answered
-    (or blocked, with --wait-blocked), 5 when no answer came, 2 when TwiCC
-    stopped, 1 on a local refusal (a bad --from, a non-positive --timeout, an
+    (or blocked, with --blocked), 5 when no answer came, 2 when TwiCC
+    stopped, 1 on a local refusal (a bad --from, a non-positive --wait-timeout, an
     unknown session) or the wait itself breaking — so a script can chain on it.
 
     --from is the cursor, and only a line strictly past it counts. An ending
@@ -624,7 +625,7 @@ def _session_wait(
     is over and nothing closed it — a crash, an interruption, an empty
     answer), `timeout`, `provider_error` (the provider refused: quota,
     outage), `backend_gone`, `wait_failed`, or `awaiting_user_input` with
-    --wait-blocked.
+    --blocked.
     """
     from twicc.cli.session import wait as session_wait
 
