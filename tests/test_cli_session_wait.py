@@ -153,7 +153,7 @@ def test_a_block_can_end_the_wait_and_exits_zero(session, capsysbinary):
         last_state_change_at=now, awaiting_user_input=True,
     )
 
-    payload, code = run(capsysbinary, stop_when_blocked=True)
+    payload, code = run(capsysbinary, on_blocked=True)
 
     assert payload["reply"]["outcome"] == "awaiting_user_input"
     assert code == 0
@@ -221,7 +221,7 @@ def test_the_text_can_be_dropped(session, capsysbinary):
 
 
 @pytest.mark.parametrize("kwargs, message", [
-    ({"timeout": 0}, "--timeout must be > 0"),
+    ({"timeout": 0}, "--wait-timeout must be > 0"),
     ({"timeout": 1.0, "from_line": -1}, "--from must be >= 0"),
 ])
 def test_bad_arguments_are_refused(session, capsysbinary, kwargs, message):
@@ -253,25 +253,25 @@ def test_the_flags_travel_from_the_command_line(session, monkeypatch):
 
     seen: dict = {}
 
-    def probe(session_id, *, from_line, timeout, want_text, stop_when_blocked):
+    def probe(session_id, *, from_line, timeout, want_text, on_reply, on_blocked):
         # ``session_id`` too: ``ctx.obj`` is the only wiring that carries the
         # positional id down from the group callback, and the direct-call
         # tests bypass the wrapper entirely. Recorded but unasserted, a
         # hardcoded id would wait on the wrong session with the suite green.
         seen.update(session_id=session_id, from_line=from_line, timeout=timeout,
-                    want_text=want_text, blocked=stop_when_blocked)
+                    want_text=want_text, reply=on_reply, blocked=on_blocked)
         raise typer.Exit(0)
 
     monkeypatch.setattr("twicc.cli.session.wait", probe)
 
     result = CliRunner().invoke(app, [
         "session", "sw-session", "wait",
-        "--from", "42", "--timeout", "7", "--wait-blocked", "--no-reply-text",
+        "--from", "42", "--wait-timeout", "7", "--blocked", "--no-reply-text",
     ])
 
     assert result.exit_code == 0, result.output
     assert seen == {"session_id": "sw-session", "from_line": 42, "timeout": 7.0,
-                    "want_text": False, "blocked": True}
+                    "want_text": False, "reply": False, "blocked": True}
 
 
 def test_the_defaults_are_the_documented_ones(session, monkeypatch):
@@ -281,13 +281,13 @@ def test_the_defaults_are_the_documented_ones(session, monkeypatch):
 
     seen: dict = {}
 
-    def probe(session_id, *, from_line, timeout, want_text, stop_when_blocked):
+    def probe(session_id, *, from_line, timeout, want_text, on_reply, on_blocked):
         # ``session_id`` too: ``ctx.obj`` is the only wiring that carries the
         # positional id down from the group callback, and the direct-call
         # tests bypass the wrapper entirely. Recorded but unasserted, a
         # hardcoded id would wait on the wrong session with the suite green.
         seen.update(session_id=session_id, from_line=from_line, timeout=timeout,
-                    want_text=want_text, blocked=stop_when_blocked)
+                    want_text=want_text, reply=on_reply, blocked=on_blocked)
         raise typer.Exit(0)
 
     monkeypatch.setattr("twicc.cli.session.wait", probe)
@@ -296,7 +296,7 @@ def test_the_defaults_are_the_documented_ones(session, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert seen == {"session_id": "sw-session", "from_line": None, "timeout": 300.0,
-                    "want_text": True, "blocked": False}
+                    "want_text": True, "reply": False, "blocked": False}
 
 
 def test_the_payload_names_the_session_it_waited_on(session, capsysbinary):
@@ -392,3 +392,51 @@ def test_a_provider_error_consumes_a_line_like_an_answer_does(session, capsysbin
     # The rule this ending actually needs.
     past, _ = run(capsysbinary, from_line=first["reply"]["line_num"], timeout=0.3)
     assert past["reply"]["outcome"] != "provider_error"
+
+
+# ---------------------------------------------------------------------------
+# What ends the wait — `--reply` and `--blocked` select it
+# ---------------------------------------------------------------------------
+
+
+def test_an_answer_ends_the_wait_by_default(session, capsysbinary):
+    """Neither selector named means `--reply`: an unqualified "wait" is a
+    wait for an answer, which is what the command did before they existed."""
+    running(session)
+    answer(session, 20, "here")
+
+    payload, code = run(capsysbinary, from_line=0)
+
+    assert payload["reply"]["outcome"] == "replied"
+    assert code == 0
+
+
+def test_blocked_alone_lets_an_answer_go_by(session, capsysbinary):
+    """The supervisor's question — "tell me when it needs someone" — and the
+    reason the two flags are selectors rather than one switch plus an extra.
+
+    An answer no longer ends the wait; the turn finishing does, as `ended`.
+    """
+    running(session)
+    answer(session, 20, "here")
+
+    payload, _ = run(capsysbinary, from_line=0, on_blocked=True, timeout=1.0)
+
+    assert payload["reply"]["outcome"] != "replied"
+
+
+def test_both_selectors_take_whichever_comes_first(session, capsysbinary):
+    """OR-combined, and the answer wins a tie: the transcript is scanned
+    before the agent's state is read."""
+    now = timezone.now()
+    ProcessRun.objects.create(
+        provider=session.provider, session_id=session.id, twicc_pid=TWICC_PID,
+        started_at=now, state=AgentState.ASSISTANT_TURN.value,
+        last_state_change_at=now, awaiting_user_input=True,
+    )
+    answer(session, 20, "answered then asked")
+
+    payload, code = run(capsysbinary, from_line=0, on_reply=True, on_blocked=True)
+
+    assert payload["reply"]["outcome"] == "replied"
+    assert code == 0

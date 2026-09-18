@@ -564,8 +564,8 @@ def _session_wait(
             "\"tell me the next thing it says\"."
         ),
     ),
-    timeout: float = typer.Option(
-        300.0, "--timeout",
+    wait_timeout: float = typer.Option(
+        300.0, "--wait-timeout",
         help=(
             "Seconds the wait may last, whatever ends it. Default 300, the "
             "ceiling MCP callers are asked to respect — an MCP client may "
@@ -573,13 +573,22 @@ def _session_wait(
             "shorter value and come back from the `since_line_num` you got."
         ),
     ),
-    wait_blocked: bool = typer.Option(
-        False, "--wait-blocked",
+    reply: bool = typer.Option(
+        False, "--reply",
         help=(
-            "Also stop when the session blocks on a human (a tool approval, a "
-            "pending question) instead of waiting through it — the outcome "
-            "becomes `awaiting_user_input`. OR-combined with the answer, "
-            "which wins a tie."
+            "Stop when the session answers — the message closing its turn. "
+            "Implied when neither --reply nor --blocked is given, because an "
+            "unqualified wait means waiting for an answer."
+        ),
+    ),
+    blocked: bool = typer.Option(
+        False, "--blocked",
+        help=(
+            "Stop when the session blocks on a human (a tool approval, a "
+            "pending question) — the outcome becomes `awaiting_user_input`. "
+            "Alone, an answer no longer ends the wait, which is how a "
+            "supervisor asks \"tell me when it needs someone\". With "
+            "--reply, whichever comes first ends it and an answer wins a tie."
         ),
     ),
     no_reply_text: bool = typer.Option(
@@ -593,7 +602,12 @@ def _session_wait(
     """Block until this session produces a message past the cursor.
 
     Unlike --wait-reply, nothing is sent: this waits on a session someone else
-    started, steered from the UI or spawned earlier. Exit 0 when it answered
+    started, steered from the UI or spawned earlier.
+
+    --reply and --blocked select what ends the wait, OR-combined, and an
+    answer wins a tie. Neither given means --reply, since an unqualified wait
+    is a wait for an answer. --blocked alone lets an answer go by, which is
+    how a supervisor asks to be told when a session needs a human. Exit 0 when it answered
     (or blocked, with --wait-blocked), 5 when no answer came, 2 when TwiCC
     stopped, 1 on a local refusal (a bad --from, a non-positive --timeout, an
     unknown session) or the wait itself breaking — so a script can chain on it.
@@ -614,8 +628,8 @@ def _session_wait(
     from twicc.cli.session import wait as session_wait
 
     session_wait(
-        ctx.obj, from_line=from_line, timeout=timeout,
-        want_text=not no_reply_text, stop_when_blocked=wait_blocked,
+        ctx.obj, from_line=from_line, timeout=wait_timeout,
+        want_text=not no_reply_text, on_reply=reply, on_blocked=blocked,
     )
 
 
