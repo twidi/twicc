@@ -114,7 +114,7 @@ A per-id `sent` means the message was handed to the agent — not that it finish
 $TWICC send-messages --spawned-by self --message '<TEXT>' --wait-reply
 ```
 
-Each entry gains a `reply` block (`outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text`, and `error` on `wait_failed`), and the summary gains `replied` / `all_replied`. `outcome` is `replied`, `provider_error`, `ended`, `timeout`, `backend_gone`, `wait_failed`, `awaiting_user_input` (with `--wait-blocked`) or `pending` (cut short by `--wait-first`).
+Each entry gains a `reply` block (`outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text`, `error` on `wait_failed`, and `awaiting_user_input: true` when a human was asked for during the turn — which can happen without `--wait-blocked`, since the flag only decides whether it *ends* the wait), and the summary gains `replied` / `all_replied`. `outcome` is `replied`, `provider_error`, `ended`, `timeout`, `backend_gone`, `wait_failed`, `awaiting_user_input` (with `--wait-blocked`) or `pending` (cut short by `--wait-first`).
 
 **A timeout is not a failure** and nothing is lost: the agents keep working, and each entry's `since_line_num` is where to resume from. The exit code never reflects the wait, only whether the sends went out.
 

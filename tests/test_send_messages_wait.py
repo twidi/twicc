@@ -251,6 +251,25 @@ def test_the_batch_result_survives_a_broken_wait(batch, capsysbinary, monkeypatc
     assert payload["results"]["beta"]["reply"]["since_line_num"] == 9
 
 
+def test_a_degraded_batch_entry_keeps_the_singular_shape(batch, capsysbinary, monkeypatch):
+    """The batch goes through ``degraded_reply`` so it cannot drift from the
+    singular — but only a call that exercises the batch's own site proves it.
+
+    An exception with an empty ``str()`` is the one that separates them: a
+    re-inlined copy without the guard prints a trailing colon, and the
+    previous test's ``RuntimeError`` has a message, so it could not see it.
+    """
+    def interrupted(cursors, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("twicc.cli._wait_reply.wait_for_replies", interrupted)
+    batch["statuses"].update(alpha=sent("alpha", 1), beta=sent("beta", 1))
+
+    payload = run(capsysbinary)
+
+    assert payload["results"]["alpha"]["reply"]["error"] == "KeyboardInterrupt"
+
+
 def test_an_empty_wait_is_not_a_success(batch, capsysbinary, monkeypatch):
     """`all_replied` on a batch where nothing was waited on must be false.
 

@@ -76,7 +76,7 @@ Symmetrically: an incoming message that opens with this header comes from anothe
 - `project_no_directory`
 - `parent_not_found` — `parent` used but no TwiCC session in the ancestry, or the current session has no `spawned_by` link.
 - `missing_prompt` — no `PROMPT` and no `--attach`: the message would be empty.
-- `requires_wait_reply` — `--wait-timeout` or `--no-reply-text` passed without `--wait-reply`.
+- `requires_wait_reply` — `--wait-timeout`, `--no-reply-text` or `--wait-blocked` passed without `--wait-reply`.
 - `invalid_value` — `--wait-timeout` is not > 0.
 
 ### Server (exit 3)

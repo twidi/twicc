@@ -146,7 +146,9 @@ def send_messages_cmd(
         None,
         "--wait-timeout",
         help=(
-            "Seconds the wait may last, whatever ends it — an answer, a block on a human with --wait-blocked, a crash for the whole batch "
+            "Seconds the wait may last, whatever ends it — an answer, a "
+            "block on a human with --wait-blocked, a crash. One budget for "
+            "the whole batch, since the recipients are waited on together "
             "(default 300, the ceiling MCP callers are asked to respect). A "
             "timeout is not a failure and nothing is lost — the agents keep "
             "working, and each entry carries `since_line_num` to resume from. "
@@ -328,9 +330,13 @@ def send_messages_cmd(
     def _wait(ordered: dict, summary: dict) -> None:
         """Wait for the answers, once every send has its final status.
 
-        Only entries that actually reached the agent are waited on: a
-        rejected or timed-out send has no turn to answer it, and waiting on
-        one would burn the whole budget for nothing.
+        Only entries whose send reached ``sent`` are waited on. A rejected
+        one has no turn to answer it. A ``timeout`` one is the awkward case —
+        the CLI gave up on the status file, but the message may well have been
+        delivered — and it is left out for a different reason: there is no
+        ``last_line`` for it, so a wait could only start from 0 and hand back
+        the previous turn's answer. The entry keeps its ``timeout`` status for
+        the caller to retry.
         """
         from twicc.cli._wait_reply import REPLIED, degraded_reply, wait_for_replies
 
