@@ -178,9 +178,9 @@ def test_a_timeout_exits_five(session, capsysbinary):
 
     assert payload["reply"]["outcome"] == "timeout"
     assert code == 5
-    # Both bounds. An upper one alone misses a budget that was *shrunk* — a
-    # mutant halving it finishes even sooner and looks like a pass.
-    assert 0.8 <= elapsed < 2.5
+    # Both bounds, and both tight. An upper one alone misses a budget that
+    # was shrunk; 2.5x of headroom missed one that was doubled.
+    assert 0.8 <= elapsed < 1.6
 
 
 def test_a_vanished_backend_exits_two(session, capsysbinary, monkeypatch):
@@ -325,3 +325,59 @@ def test_the_wait_is_published_as_a_read():
     hints = {t.name: t.annotations.read_only_hint for t in iter_mcp_tools()}
     assert hints["session_wait"] is True
     assert hints["session_stop"] is False
+
+
+def test_the_mcp_description_carries_the_contract():
+    """The subcommand's docstring is the tool description an agent reads.
+
+    A one-line `help=` on the decorator silently replaces it, which is how
+    the exit codes went missing the first time. Nothing caught that, so the
+    fix could have been undone by the next person shortening the help.
+    """
+    from twicc.mcp.tools import iter_mcp_tools
+
+    description = next(
+        t.description for t in iter_mcp_tools() if t.name == "session_wait"
+    )
+
+    # The exit codes are the answer over MCP, where a non-zero code is
+    # business data rather than a failure.
+    assert "Exit 0" in description
+    # And the resume rule, which is the difference between a loop and a walk
+    # through a transcript.
+    assert "provider_error" in description
+    assert "since_line_num" in description
+
+
+def test_a_provider_error_consumes_a_line_like_an_answer_does(session, capsysbinary):
+    """Why the resume rule singles it out.
+
+    `provider_error` points at the line the provider wrote, exactly as
+    `replied` points at the answer. Resuming from `since_line_num` — the rule
+    for every *other* ending — hands back the same error forever, and an agent
+    following the documented rule would never get past a quota limit.
+
+    Prose cannot be tested; this is the behaviour the prose describes.
+    """
+    from twicc.core.enums import ItemKind
+
+    running(session)
+    session.items.create(
+        line_num=15, kind=ItemKind.API_ERROR,
+        content=orjson.dumps({
+            "type": "system", "subtype": "api_error", "isApiErrorMessage": True,
+            "result": "You've hit your usage limit.",
+        }).decode(),
+    )
+
+    first, _ = run(capsysbinary, from_line=0)
+    assert first["reply"]["outcome"] == "provider_error"
+    assert first["reply"]["line_num"] == 15
+
+    # The rule for the other endings, applied here: the same error comes back.
+    again, _ = run(capsysbinary, from_line=first["reply"]["since_line_num"])
+    assert again["reply"]["line_num"] == 15
+
+    # The rule this ending actually needs.
+    past, _ = run(capsysbinary, from_line=first["reply"]["line_num"], timeout=0.3)
+    assert past["reply"]["outcome"] != "provider_error"

@@ -596,9 +596,18 @@ def _session_wait(
     stopped, 1 on a local refusal (a bad --from, a non-positive --timeout, an
     unknown session) or the wait itself breaking — so a script can chain on it.
 
-    --from is the cursor, and only a line strictly past it counts. After a
-    `replied`, resume from its `line_num`; after any other ending, from its
-    `since_line_num`. Omitted, it is the session's current last line.
+    --from is the cursor, and only a line strictly past it counts. An ending
+    that consumed a line — `replied`, and `provider_error`, which points at
+    the error the provider wrote — resumes from its `line_num`; every other
+    one resumes from its `since_line_num`, which nothing consumed. Getting
+    this backwards on a `provider_error` re-matches the same error forever.
+    Omitted, the cursor is the session's current last line.
+
+    `outcome` is `replied` (the message closing the turn), `ended` (the turn
+    is over and nothing closed it — a crash, an interruption, an empty
+    answer), `timeout`, `provider_error` (the provider refused: quota,
+    outage), `backend_gone`, `wait_failed`, or `awaiting_user_input` with
+    --wait-blocked.
     """
     from twicc.cli.session import wait as session_wait
 
