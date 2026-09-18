@@ -342,8 +342,7 @@ def messages(
 
 
 def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
-          paginated: bool = False, slim: bool = False,
-          include_processes: bool = True) -> None:
+          paginated: bool = False, slim: bool = False) -> None:
     """List subagents of a session as JSON to stdout."""
     import django
 
@@ -365,13 +364,12 @@ def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
     if slim:
         data = [slim_session(row) for row in data]
 
-    if include_processes:
-        # Every row here is a subagent, which runs inside its parent's process
-        # and never owns a ProcessRun row. The answer is known without asking,
-        # so this resolves no pid and runs no query — but it still emits the
-        # key, so the three listing commands keep one projection.
-        for row in data:
-            row["process"] = None
+    # Every row here is a subagent, which runs inside its parent's process and
+    # never owns a ProcessRun row. The answer is known without asking, so this
+    # resolves no pid and runs no query — but it still emits the key, so the
+    # three listing commands keep one projection.
+    for row in data:
+        row["process"] = None
 
     emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
 

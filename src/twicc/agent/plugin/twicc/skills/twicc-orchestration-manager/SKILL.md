@@ -49,7 +49,7 @@ Everything else mirrors `twicc-orchestration-leader`: how you decompose, brief, 
 - `$TWICC send-messages --spawned-by self --message <TEXT>` — broadcast the same message to several of your children at once. Skill: `twicc-send-messages`.
 - `$TWICC topology self` — map your subtree. Skill: `twicc-topology`.
 - `$TWICC processes --spawned-by self` — track your direct children. Skill: `twicc-processes`.
-- One call instead of two: `$TWICC sessions --spawned-by self --slim` carries each child's `process` block, so you get the finished ones too (`dead`) — `processes` only lists the live. See `twicc-orchestration` for the asymmetry.
+- One call instead of two: `$TWICC sessions --spawned-by self --slim` carries each child's `process` block, so you get the finished ones too (`dead`) — and `--active` narrows to the ones still running — `processes` only lists the live. See `twicc-orchestration` for the asymmetry.
 - `$TWICC processes wait --spawned-by self ...` / `processes stop --spawned-by self ...` — wait on or stop direct child batches. Skill: `twicc-processes`.
 - `$TWICC session <ID> messages` — pull a child's transcript. Skill: `twicc-session`.
 - `$TWICC update-session <ID> annotations` — set tracking annotations on one session. Skill: `twicc-update-session`.

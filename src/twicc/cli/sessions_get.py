@@ -47,8 +47,7 @@ def _build_placeholder_template() -> dict:
     return {k: None for k in serialize_session(sample)}
 
 
-def main(session_ids: list[str], *, slim: bool = False,
-         include_processes: bool = True) -> None:
+def main(session_ids: list[str], *, slim: bool = False) -> None:
     """Emit one JSON entry per session_id (placeholder when missing).
 
     ``slim`` applies the same projection as ``twicc sessions --slim``, on the
@@ -100,25 +99,23 @@ def main(session_ids: list[str], *, slim: bool = False,
             entry["known"] = True
         results.append(entry)
 
-    if include_processes:
-        # Per entry, AFTER the projection — never into _PLACEHOLDER_TEMPLATE,
+    # Per entry, AFTER the projection — never into _PLACEHOLDER_TEMPLATE,
         # which is a module global the MCP server keeps alive across tool
         # calls: one --processes run would then leave the key in every later
-        # --no-processes one.
         #
-        # An unknown id is looked up like any other. A ProcessRun row is
-        # created before the watcher writes the Session row, so `known: false`
-        # with a live block is a session that just started, not a bug.
-        from twicc.cli._process_state import (
-            attach_process_blocks,
-            load_process_rows,
-            resolve_listing_twicc_pid,
-        )
+    # An unknown id is looked up like any other. A ProcessRun row is created
+    # before the watcher writes the Session row, so `known: false` with a live
+    # block is a session that just started, not a bug.
+    from twicc.cli._process_state import (
+        attach_process_blocks,
+        load_process_rows,
+        resolve_listing_twicc_pid,
+    )
 
-        attach_process_blocks(
-            results,
-            load_process_rows(unique_ids, resolve_listing_twicc_pid()),
-            slim=slim,
-        )
+    attach_process_blocks(
+        results,
+        load_process_rows(unique_ids, resolve_listing_twicc_pid()),
+        slim=slim,
+    )
 
     emit_json(results)

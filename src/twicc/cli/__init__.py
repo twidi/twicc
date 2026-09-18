@@ -22,7 +22,7 @@ ensure_env_loaded()
 
 from twicc.cli._drop_request.project import derive_project_id  # noqa: E402
 from twicc.cli._output import (  # noqa: E402
-    CUTOVER_NOTICE, CUTOVER_NOTICE_OBJECT, PAGINATED_HELP, PROCESSES_HELP, SLIM_HELP,
+    CUTOVER_NOTICE, CUTOVER_NOTICE_OBJECT, PAGINATED_HELP, SLIM_HELP,
     emit_error, limit_help,
 )
 from twicc.version import get_version  # noqa: E402
@@ -226,8 +226,31 @@ def _sessions_default(
     workspace: str = typer.Option(None, "--workspace", help="Filter by workspace ID (only sessions of projects in that workspace, worktrees included). Mutually exclusive with --project."),
     limit: int = typer.Option(None, help=limit_help("sessions", 20)),
     slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
-    processes: bool = typer.Option(
-        True, "--processes/--no-processes", help=PROCESSES_HELP,
+    provider: str = typer.Option(
+        None, "--provider",
+        help="Filter by backend provider (e.g. 'claude_code', 'codex').",
+    ),
+    state: str = typer.Option(
+        None, "--state",
+        help=(
+            "Filter by the session's live process state: 'starting', "
+            "'assistant_turn' (actively generating), 'awaiting_user_input' "
+            "(blocked on a user click), 'user_turn' (turn finished, agent "
+            "still loaded) or 'dead'. Unlike `processes --state`, 'dead' is "
+            "accepted here and means no TwiCC-managed process — which is also "
+            "every session when no backend is running. Mutually exclusive "
+            "with --active."
+        ),
+    ),
+    active: bool = typer.Option(
+        False, "--active",
+        help=(
+            "Only sessions TwiCC is currently running — any state but 'dead'. "
+            "'user_turn' counts: the agent is loaded and idle, not gone. "
+            "Shorthand for the four live states; mutually exclusive with "
+            "--state. Hidden sessions stay hidden unless you ask for them "
+            "(--include-hidden, or any filiation scope)."
+        ),
     ),
     offset: int = typer.Option(0, help="Skip first N sessions."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
@@ -332,7 +355,9 @@ def _sessions_default(
         annotation=annotation,
         paginated=paginated,
         slim=slim,
-        include_processes=processes,
+        provider=provider,
+        state=state,
+        active=active,
     )
 
 
@@ -352,9 +377,6 @@ def _sessions_get(
         ),
     ),
     slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
-    processes: bool = typer.Option(
-        True, "--processes/--no-processes", help=PROCESSES_HELP,
-    ),
 ) -> None:
     """Look up sessions by id (placeholder for missing, includes subagents).
 
@@ -365,7 +387,7 @@ def _sessions_get(
     """
     from twicc.cli.sessions_get import main as sessions_get_main
 
-    sessions_get_main(session_ids, slim=slim, include_processes=processes)
+    sessions_get_main(session_ids, slim=slim)
 
 
 session_app = typer.Typer(
@@ -460,16 +482,13 @@ def agents(
     ctx: typer.Context,
     limit: int = typer.Option(None, help=limit_help("subagents", 20)),
     slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
-    processes: bool = typer.Option(
-        True, "--processes/--no-processes", help=PROCESSES_HELP,
-    ),
     offset: int = typer.Option(0, help="Skip first N subagents."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """List subagents of a session as JSON."""
     from twicc.cli.session import agents as session_agents
 
-    session_agents(ctx.obj, limit=limit, offset=offset, paginated=paginated, slim=slim, include_processes=processes)
+    session_agents(ctx.obj, limit=limit, offset=offset, paginated=paginated, slim=slim)
 
 
 @session_app.command()

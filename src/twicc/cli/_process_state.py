@@ -177,6 +177,10 @@ def serialize_get_result(
 def load_process_rows(session_ids, twicc_pid: int | None) -> dict:
     """Return the most recent ``ProcessRun`` per session id, keyed by id.
 
+    ``session_ids=None`` loads every row of the live instance instead of a
+    given page — what a state filter needs, since it must know the whole live
+    set before the listing is paginated, not after.
+
     Scoped to ``twicc_pid`` because rows outlive the instance that wrote them:
     the boot cleanup only runs at the *next* startup, so after a crash the
     table still holds the previous backend's rows, frozen mid-turn. Without
@@ -196,12 +200,12 @@ def load_process_rows(session_ids, twicc_pid: int | None) -> dict:
 
     from twicc.core.models import ProcessRun
 
+    qs = ProcessRun.objects.filter(twicc_pid=twicc_pid)
+    if session_ids is not None:
+        qs = qs.filter(session_id__in=session_ids)
+
     rows_by_id: dict = {}
-    for row in (
-        ProcessRun.objects
-        .filter(twicc_pid=twicc_pid, session_id__in=session_ids)
-        .order_by("session_id", "-started_at")
-    ):
+    for row in qs.order_by("session_id", "-started_at"):
         if row.session_id not in rows_by_id:
             rows_by_id[row.session_id] = row
     return rows_by_id
@@ -274,3 +278,24 @@ def attach_process_blocks(entries, rows_by_id, *, slim: bool) -> None:
         entry["process"] = serialize_compact_process(
             rows_by_id.get(entry["id"]), slim=slim,
         )
+
+
+def live_session_ids(rows_by_id) -> set:
+    """Ids whose row projects to anything but ``dead``.
+
+    The loader keeps DEAD rows on purpose — :func:`project_virtual_state`
+    collapses them — so "has a live process" is decided here rather than in
+    the query.
+    """
+    return {
+        session_id for session_id, row in rows_by_id.items()
+        if project_virtual_state(row) != DEAD_VIRTUAL_STATE
+    }
+
+
+def session_ids_in_state(rows_by_id, state: str) -> set:
+    """Ids whose row projects to exactly ``state`` (never ``dead``)."""
+    return {
+        session_id for session_id, row in rows_by_id.items()
+        if project_virtual_state(row) == state
+    }

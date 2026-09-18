@@ -125,16 +125,6 @@ def test_the_full_block_carries_the_five_non_redundant_fields(project, live_back
     assert block["state"] == "assistant_turn"
 
 
-def test_the_flag_removes_the_key_rather_than_nulling_it(project, live_backend, capsysbinary):
-    """An absent key cannot be mistaken for a fact; ``null`` is a fact here."""
-    make_session(project)
-    make_run("s1")
-
-    cli_sessions.main(project=project.id, include_processes=False)
-
-    assert "process" not in read(capsysbinary)[0]
-
-
 # ---------------------------------------------------------------------------
 # The four answers
 # ---------------------------------------------------------------------------
@@ -255,26 +245,6 @@ def test_a_just_started_session_reports_its_process_before_it_is_known(project, 
     assert entry["process"] == {"state": "assistant_turn"}
 
 
-def test_the_placeholder_template_is_not_poisoned_across_calls(project, live_backend, capsysbinary):
-    """The MCP server runs these commands in-process, so the module global lives on.
-
-    Writing ``process`` into ``_PLACEHOLDER_TEMPLATE`` instead of into each
-    entry would leave the key behind for every later ``--no-processes`` call in
-    the same backend process. Order matters: the poisoning call must come
-    first, the unknown id is what reaches the template at all, and full mode is
-    required because the slim projection would filter the stray key out.
-    """
-    make_session(project)
-
-    cli_sessions_get.main(["unknown-a"])
-    capsysbinary.readouterr()
-    cli_sessions_get.main(["s1", "unknown-b"], include_processes=False)
-
-    known, unknown = read(capsysbinary)
-    assert "process" not in unknown
-    assert set(known) == set(unknown)
-
-
 # ---------------------------------------------------------------------------
 # ``session agents`` — always null, and it costs nothing
 # ---------------------------------------------------------------------------
@@ -341,28 +311,6 @@ def test_the_join_costs_one_query_whatever_the_page_size(project, live_backend, 
 
 
 # ---------------------------------------------------------------------------
-# The MCP surface, which is generated rather than written
-# ---------------------------------------------------------------------------
-
-
-def test_the_flag_reaches_the_mcp_schema_of_all_three_commands():
-    """Adding a CLI option auto-adds the MCP parameter — assert it, don't assume.
-
-    ``--x/--no-x`` needs the generator's ``secondary_opt`` branch to render as
-    one boolean rather than two options or none.
-    """
-    from twicc.rpc.generator import build_registry
-
-    registry = build_registry()
-
-    for path in ("sessions", "sessions/get", "session/agents"):
-        params = {p.name: p for p in registry[path].params}
-        assert "processes" in params, path
-        assert params["processes"].is_flag is True, path
-        assert params["processes"].secondary_opt == "--no-processes", path
-
-
-# ---------------------------------------------------------------------------
 # Several rows for one session — which one answers
 # ---------------------------------------------------------------------------
 
@@ -370,10 +318,9 @@ def test_the_flag_reaches_the_mcp_schema_of_all_three_commands():
 def test_the_newest_row_answers_even_when_it_is_the_dead_one(project, live_backend, capsysbinary):
     """A session started and stopped twice leaves several rows under one pid.
 
-    Both halves matter and both had a surviving mutant. Ordering oldest-first
-    makes a stale row shadow the current one; excluding DEAD rows resurrects an
-    older live one, so a stopped agent reports ``assistant_turn`` — the reading
-    an orchestrator would act on.
+    Ordering oldest-first makes a stale row shadow the current one; excluding
+    DEAD rows resurrects an older live one, so a stopped agent reports
+    ``assistant_turn`` — the reading an orchestrator acts on.
     """
     make_session(project)
     old = make_run("s1", AgentState.ASSISTANT_TURN)
@@ -385,7 +332,7 @@ def test_the_newest_row_answers_even_when_it_is_the_dead_one(project, live_backe
 
 
 def test_an_older_dead_row_does_not_hide_the_live_one(project, live_backend, capsysbinary):
-    """The same guard, the other way round, so neither ordering passes by luck."""
+    """The same guard the other way round, so neither ordering passes by luck."""
     make_session(project)
     old = make_run("s1", AgentState.DEAD)
     make_run("s1", AgentState.USER_TURN, started_at=old.started_at + timedelta(minutes=5))
@@ -407,61 +354,155 @@ def test_a_subagent_is_null_in_full_mode_too(project, live_backend, capsysbinary
     assert read(capsysbinary)[0]["process"] is None
 
 
-def test_subagent_listings_honour_the_flag_too(project, live_backend, capsysbinary):
-    parent = make_session(project)
-    make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
+# ---------------------------------------------------------------------------
+# The MCP surface, which is generated rather than written
+# ---------------------------------------------------------------------------
 
-    cli_session.agents("s1", slim=True, include_processes=False)
 
-    assert "process" not in read(capsysbinary)[0]
+def test_the_filters_reach_the_mcp_schema_and_the_dropped_flag_does_not():
+    """A CLI option auto-becomes an MCP parameter — assert it, do not assume.
+
+    Also pins the removal: `--processes/--no-processes` existed for one day and
+    was dropped rather than deprecated (never released, and `sessions` now
+    carries the block unconditionally). A stale generator would silently bring
+    it back.
+    """
+    from twicc.rpc.generator import build_registry
+
+    registry = build_registry()
+    listing = {p.name: p for p in registry["sessions"].params}
+
+    assert listing["state"].json_type == "string"
+    assert listing["active"].is_flag is True
+    assert "provider" in listing
+
+    for path in ("sessions", "sessions/get", "session/agents"):
+        assert "processes" not in {p.name for p in registry[path].params}, path
 
 
 # ---------------------------------------------------------------------------
-# The Typer wiring — the flag has to actually arrive
+# Filtering on the joined state
 # ---------------------------------------------------------------------------
 #
-# Everything above calls ``main()`` directly, so four mutants survived the whole
-# suite: the option defaulting to False, and each of the three commands
-# forgetting to forward it. The MCP schema test asserts the parameter exists,
-# not that its value travels.
+# The filter runs BEFORE the window: filtering the page afterwards would return
+# fewer rows than --limit and make `total` and `has_more` lie. That is what the
+# pagination assertions below are really pinning.
 
 
 @pytest.fixture
-def invoke(project, live_backend, monkeypatch):
-    from typer.testing import CliRunner
-
-    from twicc.cli import app
-
-    make_session(project)
-    parent = Session.objects.get(id="s1")
-    make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
-    make_run("s1")
-    runner = CliRunner()
-
-    def run(*args):
-        result = runner.invoke(app, list(args))
-        assert result.exit_code == 0, result.output
-        payload = orjson.loads(result.stdout)
-        return payload["items"] if isinstance(payload, dict) else payload
-
-    return run
+def three_states(project, live_backend):
+    """One session per bucket: generating, idle-but-loaded, and nothing."""
+    for sid in ("gen", "idle", "gone"):
+        make_session(project, sid)
+    make_run("gen", AgentState.ASSISTANT_TURN)
+    make_run("idle", AgentState.USER_TURN)
+    return project
 
 
-@pytest.mark.parametrize("argv", [
-    ("sessions",),
-    ("sessions", "get", "s1"),
-    ("session", "s1", "agents"),
+def _ids(capsysbinary):
+    return {row["id"] for row in read(capsysbinary)}
+
+
+def test_active_keeps_every_state_but_dead(three_states, capsysbinary):
+    """`user_turn` counts: the agent is loaded and idle, not gone."""
+    cli_sessions.main(project=three_states.id, active=True, slim=True)
+
+    assert _ids(capsysbinary) == {"gen", "idle"}
+
+
+def test_a_state_filter_selects_exactly_its_bucket(three_states, capsysbinary):
+    cli_sessions.main(project=three_states.id, state="assistant_turn", slim=True)
+
+    assert _ids(capsysbinary) == {"gen"}
+
+
+def test_dead_is_the_complement_not_a_query(three_states, capsysbinary):
+    """`dead` is the absence of a row, so it cannot be read off `ProcessRun`."""
+    cli_sessions.main(project=three_states.id, state="dead", slim=True)
+
+    assert _ids(capsysbinary) == {"gone"}
+
+
+def test_awaiting_user_input_is_its_own_bucket(project, live_backend, capsysbinary):
+    """The stored column stays ASSISTANT_TURN; only the projection separates them."""
+    make_session(project, "blocked")
+    make_run("blocked", AgentState.ASSISTANT_TURN, awaiting_user_input=True)
+
+    cli_sessions.main(project=project.id, state="assistant_turn", slim=True)
+    assert _ids(capsysbinary) == set()
+
+    cli_sessions.main(project=project.id, state="awaiting_user_input", slim=True)
+    assert _ids(capsysbinary) == {"blocked"}
+
+
+def test_no_backend_means_nothing_is_active_and_everything_is_dead(
+    project, no_backend, capsysbinary,
+):
+    make_session(project, "s1")
+    make_run("s1")  # a previous instance's row: no live pid, no match
+
+    cli_sessions.main(project=project.id, active=True, slim=True)
+    assert _ids(capsysbinary) == set()
+
+    cli_sessions.main(project=project.id, state="dead", slim=True)
+    assert _ids(capsysbinary) == {"s1"}
+
+
+def test_the_filter_runs_before_the_window(three_states, capsysbinary):
+    """`total` counts what matches, not what the page happened to hold."""
+    cli_sessions.main(project=three_states.id, active=True, limit=1, paginated=True, slim=True)
+
+    payload = orjson.loads(capsysbinary.readouterr().out)
+    assert len(payload["items"]) == 1
+    assert payload["pagination"]["total"] == 2
+    assert payload["pagination"]["has_more"] is True
+
+
+def test_the_filter_does_not_cost_a_second_query(three_states, capsysbinary):
+    """The rows read to filter are the rows used to decorate."""
+    with CaptureQueriesContext(connection) as queries:
+        cli_sessions.main(project=three_states.id, active=True, slim=True)
+
+    assert len([q for q in queries.captured_queries if "core_processrun" in q["sql"]]) == 1
+
+
+def test_a_provider_filter_is_a_plain_column(project, live_backend, capsysbinary):
+    make_session(project, "claude-one")
+    Session.objects.filter(id="claude-one").update(provider="codex")
+    make_session(project, "claude-two")
+
+    cli_sessions.main(project=project.id, provider="codex", slim=True)
+
+    assert _ids(capsysbinary) == {"claude-one"}
+
+
+@pytest.mark.parametrize("kwargs, message", [
+    ({"state": "bogus"}, "invalid --state"),
+    ({"provider": "gpt"}, "invalid --provider"),
+    ({"state": "dead", "active": True}, "mutually exclusive"),
 ])
-def test_the_block_is_there_without_asking_for_it(invoke, argv):
-    """On by default — the documented behaviour, and a flipped default is silent."""
-    assert "process" in invoke(*argv)[0]
+def test_bad_filters_are_refused(project, live_backend, kwargs, message, capsysbinary):
+    import typer
+
+    with pytest.raises(typer.Exit):
+        cli_sessions.main(project=project.id, **kwargs)
+
+    assert message in capsysbinary.readouterr().err.decode()
 
 
-@pytest.mark.parametrize("argv", [
-    ("sessions", "--no-processes"),
-    ("sessions", "get", "--no-processes", "s1"),
-    ("session", "s1", "agents", "--no-processes"),
-])
-def test_the_flag_travels_from_the_command_line(invoke, argv):
-    """Each command has to forward it; three separate wirings, three mutants."""
-    assert "process" not in invoke(*argv)[0]
+def test_a_dead_row_is_not_active(project, live_backend, capsysbinary):
+    """A stopped agent leaves its row behind, marked DEAD.
+
+    Without this, "active" could mean "has a row" instead of "has a live one",
+    and every session that ever ran would stay active forever. The other
+    filter tests miss it: their inactive session has no row at all, so the
+    distinction never gets exercised.
+    """
+    make_session(project, "stopped")
+    make_run("stopped", AgentState.DEAD)
+
+    cli_sessions.main(project=project.id, active=True, slim=True)
+    assert _ids(capsysbinary) == set()
+
+    cli_sessions.main(project=project.id, state="dead", slim=True)
+    assert _ids(capsysbinary) == {"stopped"}

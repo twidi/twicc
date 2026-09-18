@@ -267,19 +267,6 @@ def limit_help(noun: str, default: int | None, *, suffix: str = "") -> str:
     return cutover_help(before + suffix, after + suffix)
 
 
-PROCESSES_HELP = (
-    "Include the live process state of each session (on by default). Adds a "
-    "`process` block: `{state}` under --slim, plus `id`, `started_at`, "
-    "`last_state_change_at` and `pid` otherwise. `state` is what TwiCC is "
-    "running for the session — `starting`, `assistant_turn`, "
-    "`awaiting_user_input`, `user_turn` or `dead` — so `dead` means no "
-    "TwiCC-managed process, which is also the answer for the many sessions "
-    "TwiCC indexed but never started — and for a TwiCC that is not running "
-    "at all, since an agent does not outlive its backend. The block is null "
-    "for one case only: a subagent, which has no process of its own."
-)
-
-
 SLIM_HELP = (
     "Return a reduced projection of each session: identity, state, cost, and the has_* flags telling you what else is there. Drops the payloads you can fetch per session (tasks, plan, goals, layout), the redundant timestamps and paths, and the agent-settings bundle. About 60% lighter."
 )

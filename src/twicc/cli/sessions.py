@@ -19,7 +19,9 @@ def main(
     annotation: list[str] | None = None,
     paginated: bool = False,
     slim: bool = False,
-    include_processes: bool = True,
+    provider: str | None = None,
+    state: str | None = None,
+    active: bool = False,
 ) -> None:
     """List sessions as JSON to stdout.
 
@@ -131,6 +133,54 @@ def main(
 
         qs = qs.filter(project_id__in=project_scope_ids(project))
 
+    if provider is not None:
+        from twicc.core.enums import Provider
+
+        valid = [p.value for p in Provider]
+        if provider not in valid:
+            emit_error(
+                f"Error: invalid --provider '{provider}'. Use one of: "
+                f"{', '.join(sorted(valid))}.",
+                code=1,
+            )
+        qs = qs.filter(provider=provider)
+
+    # The live set is read BEFORE the window is applied. Filtering the page
+    # afterwards would return fewer rows than --limit and make `total` and
+    # `has_more` lie; and the set is small enough (one row per running agent)
+    # that `id__in` costs nothing.
+    from twicc.cli._process_state import (
+        DEAD_VIRTUAL_STATE,
+        VALID_VIRTUAL_STATES,
+        attach_process_blocks,
+        live_session_ids,
+        load_process_rows,
+        resolve_listing_twicc_pid,
+        session_ids_in_state,
+    )
+
+    if state is not None and active:
+        emit_error(
+            "Error: --state and --active are mutually exclusive "
+            "(--active means 'any state but dead').",
+            code=1,
+        )
+    if state is not None and state not in VALID_VIRTUAL_STATES:
+        emit_error(
+            f"Error: invalid --state '{state}'. Use one of: "
+            f"{', '.join(sorted(VALID_VIRTUAL_STATES))}.",
+            code=1,
+        )
+
+    process_rows = None
+    if state is not None or active:
+        process_rows = load_process_rows(None, resolve_listing_twicc_pid())
+        if active or state == DEAD_VIRTUAL_STATE:
+            live = live_session_ids(process_rows)
+            qs = qs.filter(id__in=live) if active else qs.exclude(id__in=live)
+        else:
+            qs = qs.filter(id__in=session_ids_in_state(process_rows, state))
+
     limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None
     sessions = qs[offset : offset + limit]
@@ -138,19 +188,10 @@ def main(
     if slim:
         data = [slim_session(row) for row in data]
 
-    if include_processes:
-        from twicc.cli._process_state import (
-            attach_process_blocks,
-            load_process_rows,
-            resolve_listing_twicc_pid,
+    if process_rows is None:
+        process_rows = load_process_rows(
+            [row["id"] for row in data], resolve_listing_twicc_pid(),
         )
-
-        attach_process_blocks(
-            data,
-            load_process_rows(
-                [row["id"] for row in data], resolve_listing_twicc_pid(),
-            ),
-            slim=slim,
-        )
+    attach_process_blocks(data, process_rows, slim=slim)
 
     emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
