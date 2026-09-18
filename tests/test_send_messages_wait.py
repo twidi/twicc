@@ -285,3 +285,23 @@ def test_an_empty_wait_is_not_a_success(batch, capsysbinary, monkeypatch):
 
     assert payload["summary"]["replied"] == 0
     assert payload["summary"]["all_replied"] is False
+
+
+@pytest.mark.parametrize("status", ["timeout", "failed"])
+def test_only_a_sent_recipient_is_waited_on(batch, capsysbinary, status):
+    """`rejected` was the only status covered, and it is the easy one.
+
+    A `timeout` send is the awkward case the docstring exists to explain: the
+    message may well have been delivered, but no `last_line` came back, so a
+    wait could only start from 0 and hand back the previous turn's answer.
+    """
+    from twicc.cli._drop_request.polling import PollOutcome
+
+    batch["statuses"].update(
+        alpha=sent("alpha", 11),
+        beta=PollOutcome(status, {"error": "nope"}, True),
+    )
+
+    run(capsysbinary)
+
+    assert list(batch["seen"]["cursors"]) == ["alpha"]

@@ -1671,3 +1671,57 @@ def test_a_backend_that_vanishes_keeps_the_answers_already_in_hand(project, monk
 
     assert replies[answered.id]["outcome"] == REPLIED
     assert replies[pending_one.id]["outcome"] == BACKEND_GONE
+
+
+def test_a_refused_turn_does_not_end_a_first_batch(project):
+    """Four documents say "crashed **or was refused**" never ends a batch, and
+    only the crash half was covered. A provider refusal is not an answer."""
+    refused = make_session(project, session_id="refused-one")
+    working = make_session(project, session_id="refused-two")
+    process(refused, AgentState.ASSISTANT_TURN.value)
+    process(working, AgentState.ASSISTANT_TURN.value)
+    api_error(refused, 4, terminal=True)
+
+    replies = wait_many({refused.id: 0, working.id: 0}, timeout=1.5, first=True)
+
+    assert replies[refused.id]["outcome"] == PROVIDER_ERROR
+    assert replies[working.id]["outcome"] == TIMEOUT
+
+
+def test_the_budget_is_one_for_the_batch_not_one_each(project):
+    """The headline claim of the batch wait, asserted in the help, the skill,
+    SKILLS-AND-CLI and the MCP schema — and timed nowhere.
+
+    Three sessions that never answer must exhaust ONE budget between them, not
+    three in sequence.
+    """
+    ids = {}
+    for name in ("budget-a", "budget-b", "budget-c"):
+        session = make_session(project, session_id=name)
+        process(session, AgentState.ASSISTANT_TURN.value)
+        ids[session.id] = 0
+
+    started = time.monotonic()
+    replies = wait_many(ids, timeout=0.6)
+    elapsed = time.monotonic() - started
+
+    assert {r["outcome"] for r in replies.values()} == {TIMEOUT}
+    assert elapsed < 1.5
+
+
+def test_a_block_that_was_cleared_is_still_reported_on_a_timeout(project, on_tick):
+    """The flag is sticky, and that is the whole point of it.
+
+    A human was asked for during the turn; that the click came before the
+    deadline does not erase it. The existing test pins the opposite half —
+    that it is *not* reported on an answer.
+    """
+    session = make_session(project)
+    row = process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
+
+    on_tick({2: lambda: ProcessRun.objects.filter(pk=row.pk).update(awaiting_user_input=False)})
+
+    reply = wait(session, timeout=0.5)
+
+    assert reply["outcome"] == TIMEOUT
+    assert reply["awaiting_user_input"] is True

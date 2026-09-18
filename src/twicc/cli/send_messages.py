@@ -368,6 +368,10 @@ def send_messages_cmd(
             }
         for sid, block in replies.items():
             ordered[sid]["reply"] = block
+        # Counted over the entries that were *waited on*, not over the
+        # batch: a recipient whose send was rejected never had a turn, and
+        # holding the whole batch short because of it would say the answers
+        # never came when they did.
         summary["replied"] = sum(
             1 for b in replies.values() if b["outcome"] == REPLIED
         )
