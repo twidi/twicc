@@ -480,3 +480,21 @@ def test_the_reply_flag_is_accepted(session, monkeypatch):
     result = CliRunner().invoke(app, ["session", "sw-session", "wait", "--reply"])
 
     assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize("kwargs, message", [
+    ({"timeout": 0}, "--wait-timeout must be > 0"),
+    ({"timeout": 1.0, "from_line": -1}, "--from must be >= 0"),
+])
+def test_a_bad_flag_is_named_before_the_session_is_looked_up(db, capsysbinary, kwargs, message):
+    """Both checks run before the lookup, and the session here does not exist.
+
+    Reordering them behind it makes a typo report "session not found", which
+    sends the caller looking for the wrong problem. Nothing pinned the order,
+    so a refactor moved it without noticing.
+    """
+    with pytest.raises(typer.Exit) as exc:
+        cli_session.wait("no-such-session", **kwargs)
+
+    assert exc.value.exit_code == 1
+    assert message in capsysbinary.readouterr().err.decode()
