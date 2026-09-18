@@ -78,26 +78,33 @@ def _real_help(name: str) -> str:
 
 
 def _section(numbered: list[tuple[int, str]], heading_prefix: str) -> list[tuple[int, str]]:
-    """One section, ending at the next heading of its own level.
+    """One section, ending at the next heading of its level or above.
 
     Naming the *following* section instead would make inserting a sibling
     swallow it: the `wait` prose would inherit `stop`'s `--timeout`, and the
     shortest repair is to add that flag to the allowlist — which disarms the
-    check for a real one.
+    check for a real one. `#{1,N}`, not `#` * N, for the mirror case: a
+    shallower heading closes a section just as a sibling does, and matching
+    only its own level let moving the section to the end of its parent report
+    a dozen flags of other sub-commands as flags that do not exist.
     """
-    # `#{1,N}`, not `#` * N: a *shallower* heading closes a section just as a
-    # sibling does. Matching only its own level let moving the section to the
-    # end of its parent swallow every `##` that followed, and report a dozen
-    # flags belonging to other sub-commands as flags that do not exist.
     boundary = re.compile(rf"^#{{1,{len(heading_prefix.split(' ')[0])}}} ")
     start = next((i for i, (_, line) in enumerate(numbered) if line.startswith(heading_prefix)), None)
     # A heading someone renamed, reported as itself: the bare lookup raised
     # `StopIteration` from deep inside a generator and named nothing.
     assert start is not None, heading_prefix
-    end = next(
-        (i for i, (_, line) in enumerate(numbered[start + 1:], start + 1) if boundary.match(line)),
-        len(numbered),
-    )
+
+    # A fenced block is not markdown. `# → {"session_id": …}` — the output
+    # comment these examples end on — reads as a heading, and closed the `wait`
+    # section seven lines early: the sentence that names `--wait-timeout` fell
+    # outside, and a wrong flag written there stopped being seen at all.
+    fenced, end = False, len(numbered)
+    for i, (_, line) in enumerate(numbered[start + 1:], start + 1):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced and boundary.match(line):
+            end = i
+            break
     return numbered[start:end]
 
 
@@ -109,6 +116,12 @@ def _copyable_spans() -> list[tuple[str, int, str]]:
     it: the three sending skills put theirs mid-paragraph, next to prose that
     names `--wait-reply` on purpose.
     """
+    # `processes wait` is another command with flags of its own, documented in
+    # the same bullet shape a few sections down the CLI reference. An
+    # invocation names the session, so it identifies itself anywhere; a bare
+    # `wait [--…` only counts inside this command's own section.
+    cli_section = {number for number, _ in _session_section_of_the_cli_doc()}
+
     found = []
     for path in [*sorted(SKILLS_DIR.glob("*/SKILL.md")), CLI_DOC]:
         label = f"{path.parent.name}/{path.name}" if path != CLI_DOC else path.name
@@ -117,11 +130,9 @@ def _copyable_spans() -> list[tuple[str, int, str]]:
             spans = CODE_SPAN.findall(stripped)
             if stripped.startswith("$TWICC"):  # a fenced block carries no backticks
                 spans.append(stripped)
+            own_section = path == CLI_DOC and number in cli_section
             for span in spans:
-                # `wait [--`, not `wait [`: `processes wait [SESSION_ID...]`
-                # is another command with flags of its own, and the CLI
-                # reference documents it in the same shape a few sections down.
-                if INVOCATION.search(span) or span.startswith("wait [--"):
+                if INVOCATION.search(span) or (own_section and span.startswith("wait [--")):
                     found.append((label, number, span))
     return found
 
@@ -139,6 +150,10 @@ def _is_full_signature(label: str, span: str) -> bool:
     return span.startswith("$TWICC session") or (label == "SKILLS-AND-CLI.md" and span.startswith("wait [--"))
 
 
+def _session_section_of_the_cli_doc() -> list[tuple[int, str]]:
+    return _section(_numbered(CLI_DOC), "### `twicc session <SESSION_ID> <SUBCOMMAND>`")
+
+
 def _numbered(path: Path) -> list[tuple[int, str]]:
     return list(enumerate(path.read_text(encoding="utf-8").splitlines(), start=1))
 
@@ -150,7 +165,7 @@ def _prose_sources() -> list[tuple[str, list[tuple[int, str]]]]:
     string has no line, and carries 0: its label already points at it.
     """
     skill = _numbered(SESSION_SKILL)
-    cli_section = _section(_numbered(CLI_DOC), "### `twicc session <SESSION_ID> <SUBCOMMAND>`")
+    cli_section = _session_section_of_the_cli_doc()
 
     sources = [
         (
