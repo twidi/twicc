@@ -13,6 +13,22 @@ List sessions, or batch-look up specific ones with `sessions get`. Only returns 
 - You need to find a session ID.
 - You have a list of known session_ids and want to batch-fetch their metadata — use `sessions get <ID>...` (returns subagents, archived, and hidden too since you named them explicitly).
 
+
+## Stopping what is running
+
+```bash
+$TWICC sessions stop [SESSION_ID...] [--force] [--timeout N] [FILTERS]
+```
+
+Stops the agents behind the selected sessions. Only sessions that **currently have a process** are targeted — a stopped one has nothing to stop — so a bare `$TWICC sessions stop` stops everything running, bounded by what is alive rather than by how many sessions exist. Filters narrow it, with the same selection as the listing: `$TWICC sessions stop --spawned-by self` stops your children, `--state awaiting_user_input` stops what is blocked on a human. Naming ids bypasses the filters.
+
+**Hidden sessions are included.** They are hidden when *listing*, but orchestration workers are hidden by convention and sparing them would leave them running. Archived ones never appear: archiving already kills the agent. `--state dead` is refused — there is nothing to stop.
+
+Idempotent, and it never fails as a whole: exit 0, one entry per target carrying `status` (`stopped` / `rejected` / `failed` / `timeout` / `skipped_*`), `session_known` and `error`. `--force` SIGKILLs immediately instead of letting the turn finalize; `--timeout` (default 30 s) is a wall-clock budget for the whole batch, not per session.
+
+For a single session, `$TWICC session <ID> stop` does the same thing.
+
+
 ## How to invoke
 
 **Prefer the `mcp__twicc__*` tools — inside a TwiCC session you normally have all of them.** One per command below (the command with `/` and `-` turned into `_`, e.g. `mcp__twicc__create_session`, `mcp__twicc__update_session_settings`). Use them instead of the `$TWICC` CLI: same arguments, same JSON result, no shell, and your session identity travels with the call so `self`/`parent` resolve on their own. **Most of them are deferred, so a tool missing from your visible tool list is not a missing tool** — search your full tool list for the one you need (`ToolSearch` on Claude Code, `ALL_TOOLS` on Codex), and fall back to the `$TWICC` CLI below only when the search finds nothing (outside a session, or when scripting from a terminal).

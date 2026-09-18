@@ -3,39 +3,26 @@
 from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit
 
 
-def main(
+def build_filtered_queryset(
     *,
-    project: str | None = None,
-    workspace: str | None = None,
-    limit: int | None = None,
-    offset: int = 0,
-    archived: bool = False,
-    include_hidden: bool = False,
-    only_hidden: bool = False,
-    spawned_by: str | None = None,
-    spawn_tree: str | None = None,
-    descendants: str | None = None,
-    siblings: str | None = None,
-    annotation: list[str] | None = None,
-    paginated: bool = False,
-    slim: bool = False,
-    provider: str | None = None,
-    state: list[str] | None = None,
-    active: bool = False,
-) -> None:
-    """List sessions as JSON to stdout.
+    project=None, workspace=None, archived=False,
+    include_hidden=False, only_hidden=False,
+    spawned_by=None, spawn_tree=None, descendants=None, siblings=None,
+    annotation=None, provider=None, state=None, active=False,
+):
+    """Resolve every ``sessions`` filter into a queryset, before any window.
 
-    ``spawned_by`` and ``descendants`` are raw CLI values (``None``, a
-    session_id, or ``"self"`` / ``"parent"``). ``spawn_tree`` accepts
-    ``None``, a session_id, or ``"self"``; ``siblings`` accepts ``None``, a
-    session_id, or ``"self"``. They are resolved here, after
-    ``django.setup()``, so callers don't need to bootstrap Django
-    themselves. The typer wrapper guarantees they are mutually exclusive.
+    Returns ``(queryset, process_rows)``. ``process_rows`` is the live
+    ``ProcessRun`` set when a state filter needed it, else ``None`` — the
+    caller reuses it rather than querying twice.
+
+    Shared with ``sessions stop``, which selects the same way and then acts
+    instead of listing. Keeping one implementation is what stops the two from
+    drifting into answering the same question differently.
     """
     import django
 
     django.setup()
-    paginated = pagination_notice("sessions", paginated, default_limit=20)
 
     from twicc.cli._drop_request.whoami import (
         resolve_descendants_filter,
@@ -55,7 +42,6 @@ def main(
     from django.db.models import Q
 
     from twicc.core.models import Session
-    from twicc.core.serializers import serialize_session, slim_session
 
     qs = Session.objects.filter(
         type="session",
@@ -152,7 +138,6 @@ def main(
     from twicc.cli._process_state import (
         DEAD_VIRTUAL_STATE,
         VALID_VIRTUAL_STATES,
-        attach_process_blocks,
         live_session_ids,
         load_process_rows,
         resolve_listing_twicc_pid,
@@ -199,6 +184,66 @@ def main(
                 qs = qs.filter(Q(id__in=matched) | ~Q(id__in=live))
             else:
                 qs = qs.filter(id__in=matched)
+    return qs, process_rows
+
+
+def main(
+    *,
+    project: str | None = None,
+    workspace: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    archived: bool = False,
+    include_hidden: bool = False,
+    only_hidden: bool = False,
+    spawned_by: str | None = None,
+    spawn_tree: str | None = None,
+    descendants: str | None = None,
+    siblings: str | None = None,
+    annotation: list[str] | None = None,
+    paginated: bool = False,
+    slim: bool = False,
+    provider: str | None = None,
+    state: list[str] | None = None,
+    active: bool = False,
+) -> None:
+    """List sessions as JSON to stdout.
+
+    ``spawned_by`` and ``descendants`` are raw CLI values (``None``, a
+    session_id, or ``"self"`` / ``"parent"``). ``spawn_tree`` accepts
+    ``None``, a session_id, or ``"self"``; ``siblings`` accepts ``None``, a
+    session_id, or ``"self"``. They are resolved here, after
+    ``django.setup()``, so callers don't need to bootstrap Django
+    themselves. The typer wrapper guarantees they are mutually exclusive.
+    """
+    import django
+
+    django.setup()
+    paginated = pagination_notice("sessions", paginated, default_limit=20)
+
+
+    qs, process_rows = build_filtered_queryset(
+        project=project,
+        workspace=workspace,
+        archived=archived,
+        include_hidden=include_hidden,
+        only_hidden=only_hidden,
+        spawned_by=spawned_by,
+        spawn_tree=spawn_tree,
+        descendants=descendants,
+        siblings=siblings,
+        annotation=annotation,
+        provider=provider,
+        state=state,
+        active=active,
+    )
+
+    from twicc.cli._process_state import (
+        attach_process_blocks,
+        load_process_rows,
+        resolve_listing_twicc_pid,
+    )
+    from twicc.core.serializers import serialize_session, slim_session
 
     limit = resolve_limit(limit, paginated=paginated, default=20)
     total = qs.count() if paginated else None

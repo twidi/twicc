@@ -364,6 +364,73 @@ def _sessions_default(
     )
 
 
+@sessions_app.command(
+    "stop",
+    help="Stop the agents behind selected sessions (only those actually running).",
+)
+def _sessions_stop(
+    session_ids: list[str] = typer.Argument(
+        None, metavar="[SESSION_ID...]",
+        help=(
+            "Sessions to stop. Omit them to select with the filters below — a "
+            "bare `sessions stop` stops every running session, which is bounded "
+            "by what is alive, not by how many sessions exist. Naming ids "
+            "bypasses the filters, as in `sessions get`."
+        ),
+    ),
+    timeout: int = typer.Option(
+        30, "--timeout",
+        help=(
+            "Seconds to wait for the server's final status across the whole "
+            "batch (stops run in parallel server-side, so this is a wall-clock "
+            "budget, not N*30). Must be > 0."
+        ),
+    ),
+    force: bool = typer.Option(
+        False, "--force",
+        help=(
+            "Hard kill: SIGKILL each process tree now, bypassing the grace "
+            "window (no clean turn finalization). For wedged agents."
+        ),
+    ),
+    project: str = typer.Option(None, "--project", help="Restrict to a project (id or directory path)."),
+    workspace: str = typer.Option(None, "--workspace", help="Restrict to a workspace id."),
+    provider: str = typer.Option(None, "--provider", help="Restrict to a backend provider."),
+    state: list[str] = typer.Option(
+        [], "--state",
+        help=(
+            "Restrict to sessions in these live states (repeatable, "
+            "OR-combined). 'dead' is refused: it selects sessions with no "
+            "process, which there is nothing to stop."
+        ),
+    ),
+    spawned_by: str = typer.Option(None, "--spawned-by", help="Sessions spawned by this id, or 'self'."),
+    spawn_tree: str = typer.Option(None, "--spawn-tree", help="Every session in the spawn tree containing this id, or 'self'."),
+    descendants: str = typer.Option(None, "--descendants", help="Proper descendants of this id, or 'self'."),
+    siblings: str = typer.Option(None, "--siblings", help="Siblings of this id, or 'self'."),
+    annotation: list[str] = typer.Option(None, "--annotation", help="Narrow the selection by annotation (repeatable, AND-combined)."),
+) -> None:
+    """Stop the agents behind selected sessions.
+
+    Only sessions that currently have a process are targeted: a stopped one
+    has nothing to stop, so the selection is always a subset of
+    ``sessions --active``. Hidden sessions are included — skipping them would
+    quietly spare the orchestration workers, which are hidden by convention.
+    """
+    from twicc.cli.sessions_stop import main as sessions_stop_main
+
+    sessions_stop_main(
+        list(session_ids or []),
+        timeout=timeout, force=force,
+        project=project, workspace=workspace, provider=provider,
+        state=list(state or []),
+        spawned_by=spawned_by, spawn_tree=spawn_tree,
+        descendants=descendants, siblings=siblings,
+        annotation=list(annotation or []),
+    )
+
+
+
 @sessions_app.command(name="get")
 def _sessions_get(
     session_ids: list[str] = typer.Argument(
@@ -478,6 +545,36 @@ def messages(
 
     session_messages(ctx.obj, range_str=range, role=role, contains=contains, is_final=is_final,
                      limit=limit, offset=offset, tail=tail, paginated=paginated)
+
+
+@session_app.command("stop", help="Stop the live agent behind this session.")
+def _session_stop(
+    ctx: typer.Context,
+    timeout: int = typer.Option(
+        30, "--timeout",
+        help=(
+            "Seconds to wait for the server's final status before giving up. "
+            "The request stays on disk; the kill may still apply server-side."
+        ),
+    ),
+    force: bool = typer.Option(
+        False, "--force",
+        help=(
+            "Hard kill: SIGKILL the process tree now, bypassing the grace "
+            "window (no clean turn finalization). For a wedged process."
+        ),
+    ),
+) -> None:
+    """Stop the live agent attached to this session.
+
+    Idempotent: stopping a session whose process is already gone still
+    reports ``stopped``. Same operation as ``process <ID> stop``, which this
+    is meant to replace.
+    """
+    from twicc.cli.process_stop import stop_cmd
+
+    stop_cmd(ctx.obj, timeout=timeout, force=force)
+
 
 
 @session_app.command(help=CUTOVER_NOTICE + "List subagents of a session as JSON.")
