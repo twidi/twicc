@@ -30,6 +30,24 @@ const matchCount = computed(() => matchLineNums.value.length)
 // Whether we have results to display (search was performed)
 const hasSearched = ref(false)
 
+// Which pass produced the current matches: 'all' (every term in the same
+// message) or 'any' (no message held them all, so the backend widened). In
+// 'any' the navigation walks messages containing only some of the terms.
+const matchMode = ref('all')
+
+// Whether to flag the matches as partial in the badge
+const isPartialMatch = computed(
+    () => matchMode.value === 'any' && hasSearched.value && !isLoading.value && !error.value
+)
+
+// Text for the badge's tooltip and accessible name. The partial-match state is
+// otherwise carried by the badge colour alone, which no screen reader sees.
+const countLabel = computed(() =>
+    isPartialMatch.value
+        ? 'Partial match — no message contains all your terms'
+        : 'Matches in this session'
+)
+
 // Whether navigation buttons should be enabled
 const canNavigate = computed(() => matchCount.value > 0)
 
@@ -44,6 +62,7 @@ async function performSearch() {
         matchLineNums.value = []
         currentMatchIndex.value = -1
         hasSearched.value = false
+        matchMode.value = 'all'
         error.value = null
         emit('update:terms', [])
         return
@@ -71,6 +90,7 @@ async function performSearch() {
             matchLineNums.value = []
             currentMatchIndex.value = -1
             hasSearched.value = false
+            matchMode.value = 'all'
             return
         }
 
@@ -87,6 +107,10 @@ async function performSearch() {
         }
 
         hasSearched.value = true
+        // 'any' means no message held every term, so the backend widened the
+        // query: the navigation below walks partial matches too. Whitelisted so
+        // an unexpected value cannot light up the partial-match badge.
+        matchMode.value = data.match_mode === 'any' ? 'any' : 'all'
         currentMatchIndex.value = -1
 
         // Emit search terms for highlighting
@@ -101,6 +125,7 @@ async function performSearch() {
         matchLineNums.value = []
         currentMatchIndex.value = -1
         hasSearched.value = false
+        matchMode.value = 'all'
         emit('update:terms', [])
     } finally {
         isLoading.value = false
@@ -206,6 +231,7 @@ function reset() {
     matchLineNums.value = []
     currentMatchIndex.value = -1
     hasSearched.value = false
+    matchMode.value = 'all'
     error.value = null
     emit('update:terms', [])
 }
@@ -228,13 +254,24 @@ defineExpose({ open, reset, openWithQuery, goToNext, goToPrevious })
             <wa-icon slot="start" name="magnifying-glass"></wa-icon>
             <wa-badge
                 v-if="hasSearched || isLoading"
+                id="session-search-count"
                 slot="end"
-                :variant="matchCount === 0 && !isLoading ? 'danger' : 'neutral'"
+                :variant="matchCount === 0 && !isLoading ? 'danger' : (isPartialMatch ? 'warning' : 'neutral')"
+                :aria-label="countLabel"
             >
                 <wa-spinner v-if="isLoading" class="search-spinner"></wa-spinner>
                 <span v-else>{{ badgeText }}</span>
             </wa-badge>
         </wa-input>
+        <!-- Guarded by the same condition as the badge: wa-tooltip resolves its
+             anchor in connectedCallback and never retries, so a tooltip mounted
+             while the badge is absent would stay anchorless forever.
+             `force` because on a touch device AppTooltip renders nothing, and
+             the partial-match state would then be signalled by the badge colour
+             alone — the only cue the find bar has. -->
+        <AppTooltip v-if="hasSearched || isLoading" for="session-search-count" force>
+            {{ countLabel }}
+        </AppTooltip>
         <button
             id="session-search-prev"
             class="nav-button"

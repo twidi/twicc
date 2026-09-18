@@ -133,6 +133,12 @@ const error = ref(null)
 const selectedIndex = ref(0)
 const visitedSessionIds = reactive(new Set())
 
+// Which pass produced the current results: 'all' (every term, same message) or
+// 'any' (the backend widened because the strict pass found nothing). Pinned on
+// "load more" so a page fetched later cannot come from the other pass and be
+// appended to an incompatible list.
+const matchMode = ref('all')
+
 const LIMIT = 20
 
 // ─── Filters ───────────────────────────────────────────────────────────────
@@ -241,6 +247,7 @@ async function performSearch(resetOffset = true) {
     if (q.length < 2) {
         results.value = []
         totalSessions.value = 0
+        matchMode.value = 'all'
         error.value = null
         return
     }
@@ -254,6 +261,10 @@ async function performSearch(resetOffset = true) {
 
     try {
         const params = new URLSearchParams({ q, limit: LIMIT, offset: offset.value })
+        // Pin the mode when paginating: "load more" appends to the current list,
+        // so page 2 must come from the same pass as page 1 even if the index
+        // changed underneath (the watcher reindexes on every JSONL append).
+        if (!resetOffset) params.set('match_mode', matchMode.value)
         if (isWorkspaceFilter.value && filterWorkspaceProjectIds.value) {
             for (const pid of filterWorkspaceProjectIds.value) {
                 params.append('project_ids', pid)
@@ -293,6 +304,7 @@ async function performSearch(resetOffset = true) {
             } else {
                 error.value = 'Search error, please try again'
             }
+            matchMode.value = 'all'
             return
         }
 
@@ -300,6 +312,10 @@ async function performSearch(resetOffset = true) {
 
         if (resetOffset) {
             results.value = data.results || []
+            // Only a fresh search decides the mode; a "load more" pinned it.
+            // Whitelisted: storing anything else — 'auto' above all — would pin
+            // a non-answer on the next page and defeat the pinning entirely.
+            matchMode.value = data.match_mode === 'any' ? 'any' : 'all'
         } else {
             // Append for "load more"
             results.value = [...results.value, ...(data.results || [])]
@@ -308,6 +324,9 @@ async function performSearch(resetOffset = true) {
         selectedIndex.value = 0
     } catch (e) {
         error.value = 'Network error, please try again'
+        // This path keeps `results`, so a stale 'any' would leave the partial-match
+        // banner rendered above the error message.
+        matchMode.value = 'all'
     } finally {
         isLoading.value = false
     }
@@ -322,6 +341,7 @@ watch(query, (newVal) => {
         results.value = []
         totalSessions.value = 0
         offset.value = 0
+        matchMode.value = 'all'
         error.value = null
         visitedSessionIds.clear()
         debouncedSearch.cancel()
@@ -624,6 +644,25 @@ defineExpose({ open })
                 <wa-icon name="hourglass-half"></wa-icon>
                 <span>Indexing in progress ({{ searchIndexPercent }}%) — results may be incomplete</span>
                 <wa-progress-bar :value="searchIndexPercent"></wa-progress-bar>
+            </div>
+
+            <!-- Partial-match banner: the strict pass found nothing and the backend
+                 widened the query. Without it, a result missing one of the typed
+                 words reads as a bug. The wrapper stays mounted and only its
+                 content is conditional: role="status" makes it a polite live
+                 region, and screen readers announce mutations of a region already
+                 in the accessibility tree — a region inserted with its text
+                 already inside is usually silent. -->
+            <div class="search-partial-banner" role="status">
+                <wa-callout
+                    v-if="matchMode === 'any' && results.length > 0"
+                    variant="neutral"
+                    size="small"
+                >
+                    <wa-icon slot="icon" name="circle-info"></wa-icon>
+                    No session contains all your terms in one message. Showing sessions
+                    that match at least one, most relevant first.
+                </wa-callout>
             </div>
 
             <!-- Error state -->
@@ -962,6 +1001,15 @@ defineExpose({ open })
     flex: 1;
     min-width: 60px;
     max-width: 120px;
+}
+
+/* The wrapper is always mounted (it is the live region), so the spacing lives
+   on the callout: an empty banner must take no room. Never set `display` here —
+   wa-callout's host is a flex row, and overriding it drops the icon onto its
+   own line. A flex host is already block-level, so the margin applies. */
+.search-partial-banner wa-callout {
+    margin: var(--wa-space-xs) var(--wa-space-m);
+    font-size: var(--wa-font-size-xs);
 }
 
 .search-error {

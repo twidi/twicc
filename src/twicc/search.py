@@ -90,6 +90,18 @@ TITLE_SCORE_BOOST = 3.0
 # for 10 matches — enough to differentiate without dominating.
 MATCH_COUNT_FACTOR = 0.5
 
+# How the terms of a query combine, for the UI-facing ``search()`` only.
+# ``raw_search`` (CLI / MCP) has always been disjunctive and is unaffected.
+#
+# The strict mode is per DOCUMENT, and a document is one message: "all terms"
+# means "all terms in the same message", not "all terms in the same session".
+# That makes it easy for a multi-word query to return nothing at all even when
+# a session plainly covers every term, which is what AUTO exists to soften.
+MATCH_MODE_ALL = "all"    # every term required (historical behaviour)
+MATCH_MODE_ANY = "any"    # at least one term
+MATCH_MODE_AUTO = "auto"  # ALL first, ANY only if ALL found nothing
+MATCH_MODES = (MATCH_MODE_AUTO, MATCH_MODE_ALL, MATCH_MODE_ANY)
+
 # ---------------------------------------------------------------------------
 # Return types
 # ---------------------------------------------------------------------------
@@ -113,6 +125,11 @@ class SearchResults(NamedTuple):
     query: str
     total_sessions: int
     results: list[SessionResult]
+    # Which combination actually produced these results: MATCH_MODE_ALL or
+    # MATCH_MODE_ANY — never MATCH_MODE_AUTO, which is a request, not an outcome.
+    # Deliberately has no default: a return path that forgets it is a TypeError,
+    # not a result silently mislabelled as strict.
+    match_mode: str
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +471,7 @@ def search(
     siblings: set[str] | None = None,
     limit: int = 20,
     offset: int = 0,
+    match_mode: str = MATCH_MODE_AUTO,
 ) -> SearchResults:
     """Execute a full-text search across indexed messages.
 
@@ -485,28 +503,54 @@ def search(
             ``spawned_by``, ``spawn_tree`` and ``descendants``.
         limit: Max number of session groups to return (default 20).
         offset: Pagination offset for session groups (default 0).
+        match_mode: How bare terms combine — one of ``MATCH_MODES``.
+            ``MATCH_MODE_AUTO`` (default) runs the strict pass and, only when it
+            returns nothing, retries the same query disjunctively.
+            ``MATCH_MODE_ALL`` never retries (the historical behaviour, ordering
+            included); ``MATCH_MODE_ANY`` skips the strict pass. Explicit
+            operators (``AND``, ``+``, ``-``, quoted phrases) are unaffected by
+            the mode; a term that carries none of them is what widens.
 
     Returns:
         SearchResults with grouped, scored, and snippet-annotated results.
+        ``match_mode`` reports which pass produced them — never ``AUTO``.
+
+    Raises:
+        ValueError: if ``match_mode`` is not in ``MATCH_MODES``, or if more than
+            one filiation filter is given.
     """
+    if match_mode not in MATCH_MODES:
+        raise ValueError(
+            f"search(): unknown match_mode {match_mode!r}, expected one of {MATCH_MODES}"
+        )
+
+    # Reported on every early return too: a caller that asked for ANY must never
+    # be told the result came from a strict pass that never ran.
+    requested_mode = MATCH_MODE_ANY if match_mode == MATCH_MODE_ANY else MATCH_MODE_ALL
+
     if sum(x is not None for x in (spawned_by, spawn_tree, descendants, siblings)) > 1:
         raise ValueError(
             "search(): spawned_by, spawn_tree, descendants and siblings are mutually exclusive"
         )
 
     if (descendants is not None and not descendants) or (siblings is not None and not siblings):
-        return SearchResults(query=query_str, total_sessions=0, results=[])
+        return SearchResults(
+            query=query_str, total_sessions=0, results=[], match_mode=requested_mode
+        )
 
     _check_index()
 
-    try:
-        text_query = _index.parse_query(query_str, ["body"], conjunction_by_default=True)
-    except ValueError:
-        logger.warning("Failed to parse search query: %r", query_str)
-        return SearchResults(query=query_str, total_sessions=0, results=[])
+    def parse_text_query(conjunction: bool) -> Query | None:
+        """Parse the user's query, or None when it is not valid Tantivy syntax."""
+        try:
+            return _index.parse_query(query_str, ["body"], conjunction_by_default=conjunction)
+        except ValueError:
+            logger.warning("Failed to parse search query: %r", query_str)
+            return None
 
-    # Build filter clauses
-    clauses: list[tuple[Occur, Query]] = [(Occur.Must, text_query)]
+    # Build the filter clauses — everything EXCEPT the text query, which each
+    # pass adds itself so both passes are filtered identically.
+    clauses: list[tuple[Occur, Query]] = []
 
     if project_id is not None:
         clauses.append((Occur.Must, Query.term_query(_schema, "project_id", project_id)))
@@ -592,13 +636,8 @@ def search(
         date_query_str = f"timestamp:[* TO {_format_datetime_for_query(before)}]"
         clauses.append((Occur.Must, _index.parse_query(date_query_str, [])))
 
-    # Combine all clauses
-    if len(clauses) == 1:
-        combined_query = clauses[0][1]
-    else:
-        combined_query = Query.boolean_query(clauses)
-
-    # Execute search
+    # Execute search. Both passes run off this one searcher, so they see the
+    # same index snapshot even though the watcher keeps indexing underneath.
     _index.reload()
     searcher = _index.searcher()
 
@@ -608,10 +647,50 @@ def search(
         raw_limit = 10000
     else:
         raw_limit = max(limit * 20, 200)
-    result = searcher.search(combined_query, limit=raw_limit)
 
-    if not result.hits:
-        return SearchResults(query=query_str, total_sessions=0, results=[])
+    def run_pass(text_query: Query):
+        """Search the given text query against the shared filter clauses."""
+        if not clauses:
+            return searcher.search(text_query, limit=raw_limit)
+        return searcher.search(
+            Query.boolean_query([(Occur.Must, text_query), *clauses]), limit=raw_limit
+        )
+
+    text_query = None
+    result = None
+    effective_mode = requested_mode
+
+    if match_mode != MATCH_MODE_ANY:
+        text_query = parse_text_query(conjunction=True)
+        if text_query is None:
+            return SearchResults(
+                query=query_str, total_sessions=0, results=[], match_mode=effective_mode
+            )
+        result = run_pass(text_query)
+
+    # Widen only when the strict pass found nothing AND the query holds more than
+    # one whitespace-separated token. A single token parses to the same query
+    # under both conjunction settings — even punctuation-joined ones like
+    # "foo,bar", which become a phrase query — so a retry could return nothing new.
+    if match_mode == MATCH_MODE_ANY or (
+        match_mode == MATCH_MODE_AUTO and not result.hits and len(query_str.split()) > 1
+    ):
+        loose_query = parse_text_query(conjunction=False)
+        if loose_query is not None:
+            loose_result = run_pass(loose_query)
+            # Adopt the widened pass only when it produced something. Otherwise a
+            # query that cannot widen (``foo AND missing``) would be labelled as a
+            # partial match on top of an empty result set. A forced ANY that finds
+            # nothing needs no special case: ``effective_mode`` is already ANY, and
+            # the empty-result return below is the same either way.
+            if loose_result.hits:
+                text_query, result = loose_query, loose_result
+                effective_mode = MATCH_MODE_ANY
+
+    if result is None or not result.hits:
+        return SearchResults(
+            query=query_str, total_sessions=0, results=[], match_mode=effective_mode
+        )
 
     # Generate snippets
     snippet_generator = tantivy.SnippetGenerator.create(searcher, text_query, _schema, "body")
@@ -687,6 +766,7 @@ def search(
         query=query_str,
         total_sessions=total_sessions,
         results=results,
+        match_mode=effective_mode,
     )
 
 

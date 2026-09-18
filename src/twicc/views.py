@@ -3264,6 +3264,17 @@ async def search_sessions(request):
 
     include_archived = request.GET.get("include_archived", "").lower() in ("true", "1", "yes")
 
+    # An absent or empty value means "auto": the strict pass first, widened to a
+    # disjunction only when it returns nothing. Explicit values let the caller pin
+    # a mode, which the frontend does when paginating so "load more" cannot append
+    # a page produced by the other pass.
+    match_mode = request.GET.get("match_mode") or search.MATCH_MODE_AUTO
+    if match_mode not in search.MATCH_MODES:
+        return JsonResponse(
+            {"error": f"Invalid 'match_mode' parameter: must be one of {', '.join(search.MATCH_MODES)}"},
+            status=400,
+        )
+
     try:
         limit = min(int(request.GET.get("limit", 20)), 100)
     except (ValueError, TypeError):
@@ -3286,6 +3297,7 @@ async def search_sessions(request):
             include_archived=include_archived,
             limit=limit,
             offset=offset,
+            match_mode=match_mode,
         )
     except Exception as exc:
         return JsonResponse({"error": f"Search failed: {exc}"}, status=500)
@@ -3308,6 +3320,9 @@ async def search_sessions(request):
     return JsonResponse({
         "query": q,
         "total_sessions": results.total_sessions,
+        # Which pass produced these results ("all" or "any"), so the UI can say
+        # so and pin the same mode when paginating.
+        "match_mode": results.match_mode,
         "results": [
             {
                 "session_id": sr.session_id,
