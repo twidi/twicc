@@ -250,22 +250,25 @@ def resolve_listing_twicc_pid() -> int | None:
     return info.pid if info is not None else None
 
 
-def attach_process_blocks(entries, rows_by_id, *, twicc_pid, slim: bool) -> None:
+def attach_process_blocks(entries, rows_by_id, *, slim: bool) -> None:
     """Add the ``process`` key to already-serialized session entries, in place.
 
-    ``None`` — no state is available for this row — in two cases the caller
-    does not have to tell apart: no live backend (``twicc_pid`` is ``None``),
-    or a subagent, which runs inside its parent's process and never owns a
-    ``ProcessRun`` row. A consumer that needs to distinguish them reads
-    ``parent_session_id``, which both projections carry.
+    ``None`` means one thing: a session that cannot own a process — a subagent,
+    which runs inside its parent's and never has a ``ProcessRun`` row.
 
-    Anything else gets a block: a row when one exists, else ``state="dead"``,
-    which is the honest answer once the table could be read — it means "no
-    TwiCC-managed process", not "this session is not running" (TwiCC never
-    started most of the sessions it indexes).
+    Everything else gets a block, and a missing row is ``state="dead"``.
+    **Including when no backend is running**: an agent does not outlive its
+    TwiCC instance (``agent/process_run_cleanup.py`` forces the point at the
+    next startup), so "TwiCC is down" and "TwiCC runs nothing for this session"
+    are the same fact reached by two roads. An earlier version answered ``None``
+    for the first, out of a caution that bought nothing — it only gave ``None``
+    a second meaning.
+
+    ``dead`` means "no TwiCC-managed process", not "this session is not
+    running": TwiCC never started most of the sessions it indexes.
     """
     for entry in entries:
-        if twicc_pid is None or entry.get("parent_session_id") is not None:
+        if entry.get("parent_session_id") is not None:
             entry["process"] = None
             continue
         entry["process"] = serialize_compact_process(

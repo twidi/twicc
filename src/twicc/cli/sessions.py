@@ -145,11 +145,12 @@ def main(
             resolve_listing_twicc_pid,
         )
 
-        twicc_pid = resolve_listing_twicc_pid()
         attach_process_blocks(
             data,
-            load_process_rows([row["id"] for row in data], twicc_pid),
-            twicc_pid=twicc_pid, slim=slim,
+            load_process_rows(
+                [row["id"] for row in data], resolve_listing_twicc_pid(),
+            ),
+            slim=slim,
         )
 
     emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)

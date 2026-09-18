@@ -209,43 +209,29 @@ surfaces it.
 
 | Case | Payload |
 |---|---|
-| Live backend, row found | `{"state": "<its state>", ...}` |
-| Live backend, no row | `{"state": "dead", ...}` |
-| No live backend | `process: null` |
-| Session that cannot own one (subagent) | `process: null` |
+| A row for this session | `{"state": "<its state>", ...}` |
+| No row — **including no live backend** | `{"state": "dead", ...}` |
+| A session that cannot own a process (subagent) | `process: null` |
 | `--processes` not requested | key **absent** |
 
-`null` carries one meaning — *no process state is available for this row* — and
-it is the meaning `topology` already gives it. An absent key cannot be mistaken
-for a fact, which is why `--no-processes` omits it rather than nulling it.
+**Amended 2026-09-18.** The first version answered `null` when no backend was
+running, on the grounds that the state could not be *read*. That was an
+epistemic distinction over a settled fact: an agent does not outlive its TwiCC
+instance (`agent/process_run_cleanup.py` enforces it at the next startup), so
+"TwiCC is down" and "TwiCC runs nothing for this session" are the same thing
+reached by two roads. The caution bought nothing and cost a second meaning for
+`null` — which a `--state dead` filter would then have contradicted, matching
+rows whose block said `null`.
 
-One combination looks contradictory and is not: a `ProcessRun` row is created
-**before** the `Session` row exists (`base_manager.py:579-581` — "the create
-works even when no Session row exists yet; the watcher creates the Session when
-the JSONL file appears"). So `sessions get <just-started-id>` can legitimately
-return `known: false` **with a real, live `process` block**. Do not "fix" it.
+`null` now means one thing: a session that cannot own a process. An absent key
+cannot be mistaken for a fact, which is why `--no-processes` omits it rather
+than nulling it.
 
-**`parent_session_id` joins `SESSION_LISTING_FIELDS`.** A consumer must be able
-to tell the two `null` cases apart, and the obvious discriminator — "is this a
-subagent?" — is **not** in the slim projection today (verified: neither
-`parent_session_id` nor `type` is in `SESSION_LISTING_FIELDS`, and `spawned_by`
-is null on a subagent, so it does not substitute). Without it,
-`sessions get --slim` cannot distinguish a subagent from a down backend.
+**Known limit, unchanged:** `dead` means *no TwiCC-managed process*, not "this
+session is not running". TwiCC never started most of the sessions it indexes —
+a `claude` launched from a terminal reads `dead` while generating. The skills
+say so in one sentence.
 
-Adding it fits the projection's stated rule — it is identity, and filiation is
-already represented there by `spawned_by` / `spawn_root`. It costs nothing
-extra either: the two exact-key-set tests are being updated anyway.
-
-**Fix the comment while you are there.** The same block (`serializers.py:124-127`)
-says "a tree needs filiation and no visibility state, a flat listing needs the
-reverse" — which reads as *a flat listing does not want filiation*. That is
-already inaccurate (`spawned_by` and `spawn_root` are in the list) and this
-change makes it more so.
-
-Nothing else consumes the constant: `SESSION_LISTING_FIELDS` has exactly three
-readers (the serializer itself and the two tests), the frontend never reads it,
-and `SLIM_HELP`, `SKILLS-AND-CLI.md:18` and `twicc-sessions/SKILL.md:43`
-describe slim in prose with no field list.
 
 ### What moves into `_process_state.py`
 

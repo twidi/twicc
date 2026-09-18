@@ -115,11 +115,10 @@ def main(session_ids: list[str], *, slim: bool = False,
             resolve_listing_twicc_pid,
         )
 
-        twicc_pid = resolve_listing_twicc_pid()
         attach_process_blocks(
             results,
-            load_process_rows(unique_ids, twicc_pid),
-            twicc_pid=twicc_pid, slim=slim,
+            load_process_rows(unique_ids, resolve_listing_twicc_pid()),
+            slim=slim,
         )
 
     emit_json(results)

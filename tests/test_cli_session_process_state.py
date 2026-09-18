@@ -150,18 +150,20 @@ def test_a_read_table_with_no_row_is_dead(project, live_backend, capsysbinary):
     assert [block[f] for f in ("id", "started_at", "last_state_change_at", "pid")] == [None] * 4
 
 
-def test_no_backend_is_null_not_dead(project, no_backend, capsysbinary):
-    """The distinction an orchestrator acts on.
+def test_no_backend_is_dead_like_any_other_absence(project, no_backend, capsysbinary):
+    """"TwiCC is down" and "TwiCC runs nothing here" are the same fact.
 
-    Reporting ``dead`` here would tell a caller polling its workers that they
-    all finished, when the truth is that nothing could be read.
+    An agent does not outlive its TwiCC instance, so there is nothing to be
+    agnostic about here. An earlier version answered ``None``, which only gave
+    that value a second meaning — and would make a ``--state dead`` filter
+    contradict the block it decorates.
     """
     make_session(project)
-    make_run("s1")
+    make_run("s1")  # a row from a previous instance: no live pid, no match
 
-    cli_sessions.main(project=project.id)
+    cli_sessions.main(project=project.id, slim=True)
 
-    assert read(capsysbinary)[0]["process"] is None
+    assert read(capsysbinary)[0]["process"] == {"state": "dead"}
 
 
 def test_a_blocked_agent_surfaces_as_awaiting_user_input(project, live_backend, capsysbinary):

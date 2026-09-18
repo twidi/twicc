@@ -127,9 +127,8 @@ def serialize_network_denial(denial):
 #: listing concern.
 SESSION_LISTING_FIELDS = (
     # Identity, filiation included: ``parent_session_id`` is what tells a
-    # subagent apart from a session, which a caller needs to read the
-    # ``process`` block the CLI joins on top (a subagent has no process of its
-    # own, so its block is null — as it is when no backend could be read).
+    # subagent apart from a session — including in the ``process`` block the
+    # CLI joins on top, whose ``null`` means exactly "subagent".
     "id", "project_id", "provider", "title", "annotations",
     "parent_session_id", "spawned_by", "spawn_root",
     # Position in time and budget

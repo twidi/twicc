@@ -274,9 +274,9 @@ PROCESSES_HELP = (
     "running for the session — `starting`, `assistant_turn`, "
     "`awaiting_user_input`, `user_turn` or `dead` — so `dead` means no "
     "TwiCC-managed process, which is also the answer for the many sessions "
-    "TwiCC indexed but never started. The block is null when no state is "
-    "available: a subagent, which has no process of its own, or no running "
-    "backend."
+    "TwiCC indexed but never started — and for a TwiCC that is not running "
+    "at all, since an agent does not outlive its backend. The block is null "
+    "for one case only: a subagent, which has no process of its own."
 )
 
 
