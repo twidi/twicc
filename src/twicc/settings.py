@@ -391,6 +391,16 @@ LOGGING = {
             "level": "INFO",
             "propagate": False,
         },
+        # Without this, an unhandled exception in a view logs nothing: uvicorn's
+        # access line says ``500`` and the traceback dies with the request.
+        # ``ERROR`` keeps it to that — ``django.request`` logs 4xx at WARNING
+        # (already visible in the access log) and ``django.db.backends`` every
+        # query at DEBUG.
+        "django": {
+            "handlers": ["file"],
+            "level": "ERROR",
+            "propagate": False,
+        },
     },
 }
 
