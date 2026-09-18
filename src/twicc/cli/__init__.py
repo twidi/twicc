@@ -577,10 +577,10 @@ def _session_wait(
         False, "--reply",
         help=(
             "Stop when the session answers — the message closing its turn. "
-            "Always true, with or without the flag: it names the default "
-            "rather than switching it. It exists so the surface reads like "
-            "--wait-reply on the commands that send, where the wait has to "
-            "be turned on; here the command is already the wait."
+            "This is what the wait does with no flag at all, and an answer "
+            "keeps ending it once --blocked is added, so naming --reply "
+            "changes nothing. It reads like --wait-reply on the commands "
+            "that send, which also has to turn the wait on."
         ),
     ),
     blocked: bool = typer.Option(
@@ -606,11 +606,12 @@ def _session_wait(
     Unlike --wait-reply, nothing is sent: this waits on a session someone else
     started, steered from the UI or spawned earlier.
 
-    An answer always ends the wait; --reply names that default rather than
-    switching it. --blocked adds a second way to finish, the session blocking
-    on a human, and an answer still wins a tie. --blocked behaves as --wait-blocked does on the
-    commands that send. --reply has no counterpart there: --wait-reply turns
-    the wait on, and here the command already is the wait. Exit 0 when it answered
+    With no flag, the wait ends on an answer. --reply names that default,
+    --blocked ORs in a second ending — the session blocking on a human — and
+    an answer still wins a tie. That is the combination --wait-reply /
+    --wait-blocked give on the commands that send; the only difference is that
+    there the wait must be turned on, and here the command is the wait.
+    Exit 0 when it answered
     (or blocked, with --blocked), 5 when no answer came, 2 when TwiCC
     stopped, 1 on a local refusal (a bad --from, a non-positive --wait-timeout, an
     unknown session) or the wait itself breaking — so a script can chain on it.

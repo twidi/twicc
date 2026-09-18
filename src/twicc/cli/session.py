@@ -581,11 +581,11 @@ def wait(session_id: str, *, from_line: int | None = None, timeout: float,
     session = _get_session(session_id)
     cursor = session.last_line if from_line is None else from_line
 
-    # Nothing is passed for the answer: it always ends the wait. ``on_reply``
-    # names that default rather than switching it, and ``on_blocked`` adds a
-    # second way to finish rather than replacing the first — the shape
-    # ``--wait-blocked`` has on the commands that send, so a caller who knows
-    # one surface knows the other.
+    # Nothing is passed for the answer: it always ends the wait, which is what
+    # the caller gets with no flag at all. ``on_reply`` names that default, and
+    # ``on_blocked`` ORs in a second ending rather than replacing the first —
+    # the combination ``--wait-reply`` / ``--wait-blocked`` give on the commands
+    # that send, so a caller who knows one surface knows the other.
     reply = wait_for_reply_or_degrade(
         session.id, since_line_num=cursor, timeout=timeout,
         want_text=want_text, stop_when_blocked=on_blocked,
