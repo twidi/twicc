@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Command palette** — Keep typing past a command's name to filter its entries, such as `sess twicc` to find a session — no need to open the command first.
 - **Peer inbox** — The text filter now keeps only the messages that contain every word you type, in their subject or their text, instead of matching scattered letters.
 
+### Fixed
+
+- **Narrow screens** — The page no longer scrolls to a large empty area when the sidebar shows over the content, on a phone or in a narrow window.
+
 ## [1.94.2] - 2026-09-07
 
 ### Summary

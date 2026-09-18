@@ -2607,7 +2607,6 @@ function updateSidebarClosedClass(closed) {
                 >
                     <!-- Sidebar Toggle button (label for hidden checkbox, wa-button inside for styling) -->
                     <label for="sidebar-toggle-state" class="sidebar-toggle" id="sidebar-toggle-label">
-                        <span class="sidebar-backdrop"></span>
                         <wa-button id="sidebar-toggle-button" variant="neutral" appearance="filled-outlined" size="small">
                             <wa-icon class="icon-collapse" name="angles-left"></wa-icon>
                             <wa-icon class="icon-expand" name="angles-right"></wa-icon>
@@ -2667,6 +2666,15 @@ function updateSidebarClosedClass(closed) {
             <FrameHost />
         </main>
     </wa-split-panel>
+
+    <!-- Drawer backdrop (narrow layout only). A second label on the same
+         checkbox, so clicking it closes the sidebar without any JS. It sits
+         here, outside the sidebar, because `position: fixed` must resolve
+         against the viewport: both `.sidebar-toggle` (transform) and
+         `.sidebar` (container-type) would otherwise become its containing
+         block. Fixed also keeps it out of the document's scrollable
+         overflow, which a sticky/translated box inside the sidebar was not. -->
+    <label for="sidebar-toggle-state" class="sidebar-backdrop"></label>
 
     <!-- Shared rename dialog (single instance for sidebar + session header) -->
     <SessionRenameDialog
@@ -3635,6 +3643,11 @@ html.wa-dark .usage-lane-time {
     }
 }
 
+/* Drawer backdrop: only exists in the narrow, overlay-sidebar layout */
+.sidebar-backdrop {
+    display: none;
+}
+
 /* Container query: when sidebar is collapsed (≤ 50px), show expand icon */
 @container sidebar (width <= 50px) {
     .sidebar-toggle .icon-collapse {
@@ -3699,33 +3712,23 @@ html.wa-dark .usage-lane-time {
         }
     }
 
-    /* Backdrop positioned sticky inside the label
-       so clicking on it closes the sidebar */
-    .sidebar-toggle {
-        /* try to reproduce the same size as the button
-          else the label expands because of the backdrop sticky positioned */
-        --checkbox-label-size: calc(var(--wa-form-control-height) - var(--wa-shadow-offset-y-s) * 2 + 2px);
-        height: var(--checkbox-label-size);
-        width: var(--checkbox-label-size);
-        wa-button {
-            position: absolute;
-            top: 0;
-            left: 0;
-        }
-        .sidebar-backdrop {
-            display: block;
-            position: sticky;
-            top: 0;
-            left: 0;
-            /* Its top starts from the label so we have to move it up and on the right of the sidebar */
-            --translate-x: 0px;
-            translate: calc(var(--translate-x) - var(--wa-space-s)) calc(-100dvh + var(--checkbox-label-size) + var(--wa-space-s));
-            width: 100vw;
-            height: 100dvh;
-            pointer-events: none;
-            transition: background var(--transition-duration) ease, translate var(--transition-duration) ease;
-            background: transparent;
-        }
+    /* Backdrop covering the whole viewport, under the drawer. Fixed, so it
+       never contributes to the document's scrollable overflow — the sidebar
+       escapes every ancestor clip here (it is absolute, so the split panel's
+       overflow: hidden no longer applies to it) and any in-flow box of its
+       own would make the page itself scroll. */
+    .sidebar-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        /* Above the main pane, below .sidebar (z-index: 100), which paints
+           over it with its own opaque background. */
+        z-index: 99;
+        background: transparent;
+        pointer-events: none;
+        /* --transition-duration is declared on .sidebar, which is no longer an
+           ancestor here, so the fallback is what actually applies. */
+        transition: background var(--transition-duration, .3s) ease;
     }
 
     /* When sidebar is open, button goes back inside */
@@ -3742,15 +3745,12 @@ html.wa-dark .usage-lane-time {
             .icon-expand {
                 display: none;
             }
-
-            .sidebar-backdrop {
-                pointer-events: all;
-                background: rgba(0, 0, 0, 0.5);
-                --translate-x: var(--sidebar-width);
-            }
         }
 
-
+        .sidebar-backdrop {
+            pointer-events: all;
+            background: rgba(0, 0, 0, 0.5);
+        }
     }
 }
 </style>
