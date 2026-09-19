@@ -49,7 +49,7 @@ def send_message_cmd(
         False,
         "--wait-reply",
         help=(
-"Keep going after the message is delivered, until the session "
+            "Keep going after the message is delivered, until the session "
             "concludes. Adds a `reply` block to the result carrying the "
             "answer's text, its `line_num`, and an `outcome` saying what "
             "ended the wait: 'replied' (the message closing the turn), "
@@ -116,8 +116,9 @@ def send_message_cmd(
     Asynchronous by default: a "sent" status only means the message was
     handed to the agent — not that the agent has finished processing it.
 
-    Pass --wait-reply to keep going until the session answers and get that
-    answer back with the result, in one call. It waits for the turn THIS
+    Pass --wait-reply to keep going until the session answers — or blocks on a
+    pending request only a human can clear — and get that answer back with the
+    result, in one call. It waits for the turn THIS
     message triggers: the reply is matched against a cursor the server reads
     when the agent takes the message, so the previous turn's closing message
     is not returned in its place. That is the way to collect an answer; reach

@@ -1,4 +1,4 @@
-"""``twicc session <ID> wait`` — waiting on a session nobody just prodded.
+"""``twicc session <ID> wait-reply`` — waiting on a session nobody just prodded.
 
 Every other wait rides on a command that triggered the turn, so its cursor
 falls out of the send. Here nothing was sent: the caller names the line to

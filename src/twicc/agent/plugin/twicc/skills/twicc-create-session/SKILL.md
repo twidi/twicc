@@ -101,13 +101,14 @@ Keeps going after the session is created, until it answers, and adds a `reply` b
 - `--no-reply-text` drops `text` and keeps `line_num` — use it when you only need the go-ahead, not the payload in your context. The key is **absent**, never `null`.
 - `--wait-timeout N` caps the wait, whatever ends it. Default **300 s**, which is the ceiling MCP callers are asked to respect — and an MCP client may itself give up on a tool silent that long, so over MCP pass a shorter value and come back rather than riding the default to its end. From a shell, raise it freely for a long first turn. There is no way to disable it, though nothing caps how high you set it.
 - A **pending request** ends the wait too — a tool approval or a question, which only a human can clear. It is not a slow turn: no line will ever arrive until someone clicks, so riding the budget out would buy nothing. `outcome` becomes `awaiting_user_input`, and an answer arriving in the same poll wins.
-- Both modifiers require `--wait-reply` — passing them alone is an error, not a no-op.
+- `--wait-timeout` and `--no-reply-text` require `--wait-reply` — passing them alone is an error, not a no-op.
 
 `outcome` says what ended the wait:
 
 | `outcome` | Meaning | What `reply` carries |
 |---|---|---|
 | `replied` | the message closing the turn | that message |
+| `awaiting_user_input` | a pending request — a tool approval or a question — only a human can clear | nothing; read what it is waiting on with `session <ID> pending-request` |
 | `provider_error` | the provider refused the turn (quota, outage) — your request was not the problem and retrying now fails the same way | the error line |
 | `ended` | the turn is over and nothing closed it — a crash, an interruption, an answer whose text was empty, or one whose provider marker is missing (`is_final: null`) | the last thing it said, or `line_num: null` |
 | `timeout` | the deadline passed | the last thing it said, if any; resume from `since_line_num` |

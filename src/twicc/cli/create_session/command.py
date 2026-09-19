@@ -290,7 +290,8 @@ def create_session_cmd(
     started and the prompt handed to the agent — not that the agent has
     finished, which can take a while. It keeps working in the background.
 
-    Pass --wait-reply to keep going until it answers and get the answer back
+    Pass --wait-reply to keep going until it answers — or blocks on a pending
+    request only a human can clear — and get the answer back
     with the result, in one call. That is the way to collect a worker's
     output; reach for "twicc process <SESSION_ID> wait <STATE>..." only to ask
     whether a session is still running, not what it said.
