@@ -575,11 +575,12 @@ def test_a_transcript_without_timestamps_is_new_from_the_top(session):
     assert at(session, "2026-09-19T12:00:00+00:00") == 0
 
 
-def test_one_line_without_a_timestamp_holds_the_cursor_above_it(session):
+def test_a_line_without_a_timestamp_is_not_a_boundary(session):
     """The mixed case, which the all-null one does not cover.
 
-    Reading the cursor as "the last line at or before the instant" would put
-    it at line 4 and hide line 3 for good. Nothing says line 3 is old.
+    Counting an untimed line as "after" would stop the search at line 3 and
+    put the cursor at 2 — for *every* instant, since line 3 is after all of
+    them. It is not a boundary in either direction; only a stamped line is.
     """
     base = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
     stamped(session, 1, base)
@@ -587,7 +588,26 @@ def test_one_line_without_a_timestamp_holds_the_cursor_above_it(session):
     answer(session, 3)  # no timestamp
     stamped(session, 4, base + timedelta(minutes=3))
 
-    assert at(session, "2026-09-19T12:03:00+00:00") == 2
+    assert at(session, "2026-09-19T12:03:00+00:00") == 4  # nothing after it
+    assert at(session, "2026-09-19T12:00:30+00:00") == 1  # line 2 is the first after
+
+
+def test_an_untimed_line_near_the_top_does_not_pin_the_cursor(session):
+    """The regression this formula was rewritten twice to avoid.
+
+    Claude Code writes untimed `system` lines early and often: line 14 of the
+    session this was written in, line 1 of 220 others in the same database.
+    Treating one as "after" made every instant resolve just below it, so
+    `--since <a minute ago>` on a 6 000-line session answered with a message
+    from three days earlier — a wrong answer where the bug it replaced only
+    gave a missing one.
+    """
+    base = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
+    answer(session, 1)  # no timestamp, first line
+    for offset in range(2, 7):
+        stamped(session, offset, base + timedelta(minutes=offset))
+
+    assert at(session, "2026-09-19T12:04:30+00:00") == 4
 
 
 def test_a_timestamp_that_goes_backwards_never_hides_a_line(session):

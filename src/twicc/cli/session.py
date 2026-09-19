@@ -663,13 +663,17 @@ def _cursor_at(session, instant: datetime) -> int:
     cursor above a line that was written after it, which nobody would ever see
     again. Re-reading a line is recoverable; losing one is not.
 
-    A line with no timestamp counts as after, for the same reason: unknown is
-    not "before".
+    Only a line that carries a timestamp can place an instant. A line without
+    one is not a boundary in either direction: counting it as "after" pins the
+    cursor just below the first of them, whatever the instant, and Claude Code
+    writes untimed `system` lines early and often — line 14 of the session this
+    was written in, and line 1 of 220 others. The cost is that an untimed line
+    below the boundary is not re-scanned, which costs nothing: every untimed
+    item in that database is a `system` line, and the loop only ever matches
+    `assistant_message` and `api_error`.
     """
-    from django.db.models import Q
-
     first_after = (
-        session.items.filter(Q(timestamp__gt=instant) | Q(timestamp__isnull=True))
+        session.items.filter(timestamp__gt=instant)
         .order_by("line_num")
         .values_list("line_num", flat=True)
         .first()
@@ -679,7 +683,13 @@ def _cursor_at(session, instant: datetime) -> int:
         # so the cursor is the line *below* the first one to return.
         return first_after - 1
 
-    # Every line is at or before the instant: nothing is new, and the wait
-    # starts at the end. An empty transcript lands here too, at 0.
-    last = session.items.order_by("-line_num").values_list("line_num", flat=True).first()
-    return last or 0
+    if not session.items.filter(timestamp__isnull=False).exists():
+        # No line carries a timestamp — an empty transcript, or one whose lines
+        # are all untimed. The instant cannot be placed at all, so the whole
+        # thing is new rather than none of it: a wait that finds nothing is
+        # recoverable, one that starts past the answer is not.
+        return 0
+
+    # Every stamped line is at or before the instant: nothing is new, and the
+    # wait starts at the end. There is a line to end at, since one is stamped.
+    return session.items.order_by("-line_num").values_list("line_num", flat=True).first()
