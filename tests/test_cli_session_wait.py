@@ -493,9 +493,11 @@ def test_the_reply_flag_is_accepted(session, monkeypatch):
 @pytest.mark.parametrize("kwargs, message", [
     ({"timeout": 0}, "--wait-timeout must be > 0"),
     ({"timeout": 1.0, "from_line": -1}, "--from must be >= 0"),
+    ({"timeout": 1.0, "since": "bogus"}, "--since"),
+    ({"timeout": 1.0, "from_line": 2, "since": "2026-09-19"}, "--from and --since"),
 ])
 def test_a_bad_flag_is_named_before_the_session_is_looked_up(db, capsysbinary, kwargs, message):
-    """Both checks run before the lookup, and the session here does not exist.
+    """Every check runs before the lookup, and the session here does not exist.
 
     Reordering them behind it makes a typo report "session not found", which
     sends the caller looking for the wrong problem. Nothing pinned the order,
@@ -518,6 +520,10 @@ def stamped(session, line_num, when, text="tick"):
     item = answer(session, line_num, text)
     session.items.filter(pk=item.pk).update(timestamp=when)
     return item
+
+
+def at(session, since):
+    return cli_session._cursor_at(session, cli_session._parse_instant(since))
 
 
 @pytest.fixture
@@ -545,8 +551,8 @@ def timeline(session):
     # Past the last line: nothing before it is new.
     ("2026-09-19T23:00:00+00:00", 5),
 ])
-def test_an_instant_becomes_the_line_written_at_or_before_it(session, timeline, since, expected):
-    assert cli_session._cursor_at(session, cli_session._parse_instant(since)) == expected
+def test_an_instant_becomes_the_line_below_the_first_one_after_it(session, timeline, since, expected):
+    assert at(session, since) == expected
 
 
 def test_the_cursor_it_computes_is_the_cursor_the_wait_uses(session, timeline, capsysbinary):
@@ -561,13 +567,47 @@ def test_the_cursor_it_computes_is_the_cursor_the_wait_uses(session, timeline, c
     assert code == 0
 
 
-def test_lines_without_a_timestamp_are_never_counted_as_past(session, capsysbinary):
-    """A transcript whose lines carry no timestamp reads as "all of it is
-    after", which re-scans rather than skipping. The safe direction."""
+def test_a_transcript_without_timestamps_is_new_from_the_top(session):
+    """No timestamp is not "before": it is unknown, and unknown re-scans."""
     answer(session, 1)
     answer(session, 2)
 
-    assert cli_session._cursor_at(session, cli_session._parse_instant("2026-09-19T12:00:00+00:00")) == 0
+    assert at(session, "2026-09-19T12:00:00+00:00") == 0
+
+
+def test_one_line_without_a_timestamp_holds_the_cursor_above_it(session):
+    """The mixed case, which the all-null one does not cover.
+
+    Reading the cursor as "the last line at or before the instant" would put
+    it at line 4 and hide line 3 for good. Nothing says line 3 is old.
+    """
+    base = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
+    stamped(session, 1, base)
+    stamped(session, 2, base + timedelta(minutes=1))
+    answer(session, 3)  # no timestamp
+    stamped(session, 4, base + timedelta(minutes=3))
+
+    assert at(session, "2026-09-19T12:03:00+00:00") == 2
+
+
+def test_a_timestamp_that_goes_backwards_never_hides_a_line(session):
+    """Timestamps are not monotonic — 121 249 adjacent inversions in this
+    machine's own database.
+
+    Line 2 was written after the instant and line 3 before it. Taking the
+    last line at or before the instant lands on 3, and line 2 is never
+    returned to anyone. The cursor can only ever sit too low.
+    """
+    base = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
+    stamped(session, 1, base)
+    stamped(session, 2, base + timedelta(minutes=9))
+    stamped(session, 3, base + timedelta(minutes=2))
+
+    assert at(session, "2026-09-19T12:05:00+00:00") == 1
+
+
+def test_an_empty_transcript_starts_above_the_first_line(session):
+    assert at(session, "2026-09-19T12:00:00+00:00") == 0
 
 
 def test_the_two_cursors_are_mutually_exclusive(session, capsysbinary):
@@ -578,20 +618,19 @@ def test_the_two_cursors_are_mutually_exclusive(session, capsysbinary):
     assert b"--from and --since" in capsysbinary.readouterr().err
 
 
-@pytest.mark.parametrize("since", ["bogus", "2026-13-01", "yesterday", ""])
+@pytest.mark.parametrize("since", [
+    "bogus", "yesterday", "", "   ", "2026-09",
+    # Not a date at all, and a date that cannot exist: both come back as
+    # "no match".
+    "2026-13-01", "2026-02-30",
+    # Well formed enough to be parsed, then impossible. These *raise* out of
+    # the parser instead of coming back empty, and to a caller they read
+    # exactly like the typos above.
+    "2026-09-19T25:00:00Z", "2026-09-19T12:60:00Z",
+])
 def test_an_unparseable_instant_is_refused_by_name(session, capsysbinary, since):
     with pytest.raises(typer.Exit) as exc:
         cli_session.wait("sw-session", since=since, timeout=2.0)
-
-    assert exc.value.exit_code == 1
-    assert b"--since" in capsysbinary.readouterr().err
-
-
-def test_a_bad_instant_is_named_before_the_session_is_looked_up(db, capsysbinary):
-    """Same rule as the other two arguments: a bad flag is a bad flag, not a
-    session that does not exist."""
-    with pytest.raises(typer.Exit) as exc:
-        cli_session.wait("no-such-session", since="bogus", timeout=2.0)
 
     assert exc.value.exit_code == 1
     assert b"--since" in capsysbinary.readouterr().err

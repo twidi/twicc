@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc session`` subcommand."""
 
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime
 
 import orjson
 
@@ -577,7 +577,7 @@ def wait(session_id: str, *, from_line: int | None = None, since: str | None = N
         wait_for_reply_or_degrade,
     )
 
-    # Both argument checks before the lookup, so a bad flag is named as a bad
+    # Every argument check before the lookup, so a bad flag is named as a bad
     # flag rather than being pre-empted by a session that does not exist.
     if timeout <= 0:
         emit_error(f"Error: --wait-timeout must be > 0 (got {timeout:g}).", code=1)
@@ -624,17 +624,14 @@ def wait(session_id: str, *, from_line: int | None = None, since: str | None = N
 
 def _parse_instant(since: str) -> datetime:
     """Read what ``--since`` was given, or refuse it by name."""
-    from django.utils.dateparse import parse_date, parse_datetime
+    from django.utils.dateparse import parse_datetime
 
-    parsed = None
     try:
-        # A well-formed but impossible value — `2026-13-01` — raises rather
-        # than returning None, and reads to a caller exactly like a typo.
+        # A well-formed but impossible value — `2026-13-01`, `…T25:00:00Z` —
+        # raises rather than returning None, and reads to a caller exactly
+        # like a typo. A bare date needs no help: this already returns its
+        # midnight.
         parsed = parse_datetime(since)
-        if parsed is None:
-            day = parse_date(since)
-            if day is not None:
-                parsed = datetime.combine(day, time.min)
     except ValueError:
         parsed = None
     if parsed is None:
@@ -659,17 +656,30 @@ def _cursor_at(session, instant: datetime) -> int:
     taking one number, and the one behaviour both spellings share cannot drift
     apart.
 
-    The cursor is the last line written **at or before** the instant, because
-    the loop counts a line as new when it is strictly past the cursor. "Past
-    line N" and "after time T" then mean the same thing.
+    Found from the **first** line after the instant rather than the last one
+    before it, so the cursor can only ever sit too low. The two differ when a
+    timestamp goes backwards — 121 249 adjacent inversions in this machine's
+    own database — and taking the last line at or before the instant puts the
+    cursor above a line that was written after it, which nobody would ever see
+    again. Re-reading a line is recoverable; losing one is not.
+
+    A line with no timestamp counts as after, for the same reason: unknown is
+    not "before".
     """
-    last = (
-        session.items.filter(timestamp__lte=instant)
-        .order_by("-line_num")
+    from django.db.models import Q
+
+    first_after = (
+        session.items.filter(Q(timestamp__gt=instant) | Q(timestamp__isnull=True))
+        .order_by("line_num")
         .values_list("line_num", flat=True)
         .first()
     )
-    # Nothing at or before it — an instant older than the session, or a
-    # transcript whose lines carry no timestamp. Every line is then "after",
-    # so the wait starts above the top rather than refusing.
+    if first_after is not None:
+        # The loop counts a line as new when it is strictly past the cursor,
+        # so the cursor is the line *below* the first one to return.
+        return first_after - 1
+
+    # Every line is at or before the instant: nothing is new, and the wait
+    # starts at the end. An empty transcript lands here too, at 0.
+    last = session.items.order_by("-line_num").values_list("line_num", flat=True).first()
     return last or 0

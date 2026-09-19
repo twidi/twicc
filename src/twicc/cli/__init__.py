@@ -569,10 +569,11 @@ def _session_wait(
         help=(
             "The same cursor as an instant instead of a line, mutually "
             "exclusive with --from: only a line written strictly after it "
-            "counts. ISO 8601, as `session messages` returns it — "
-            "'2026-09-19T05:38:20+00:00', '2026-09-19 05:38:20', or a bare "
-            "'2026-09-19' for its midnight. No offset means UTC, which is "
-            "what this CLI stores and prints. An instant older than the "
+            "counts, including one whose timestamp is missing or out of "
+            "order. ISO 8601 — '2026-09-19T05:38:20+00:00', exactly what "
+            "`session messages` returns, and also '2026-09-19 05:38:20' or a "
+            "bare '2026-09-19' for its midnight. No offset means UTC, which "
+            "is what this CLI stores and prints. An instant older than the "
             "session starts the wait above the first line."
         ),
     ),
@@ -625,8 +626,9 @@ def _session_wait(
     there the wait must be turned on, and here the command is the wait.
 
     Exit 0 when it answered (or blocked, with --blocked), 5 when no answer
-    came, 2 when TwiCC stopped, 1 on a local refusal (a bad --from, a
-    non-positive --wait-timeout, an unknown session) or the wait itself
+    came, 2 when TwiCC stopped, 1 on a local refusal (a bad --from or --since, the
+    two cursors passed together, a non-positive --wait-timeout, an unknown
+    session) or the wait itself
     breaking — so a script can chain on it.
 
     --from is the cursor, and only a line strictly past it counts. --since is
