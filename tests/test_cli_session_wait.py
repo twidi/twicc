@@ -528,10 +528,22 @@ def at(session, since):
 
 @pytest.fixture
 def timeline(session):
-    """Lines 1..5, one minute apart, starting at 12:00 UTC."""
+    """Lines 1..5, one minute apart, starting at 12:00 UTC.
+
+    Plus another session holding a line at every one of those instants, offset
+    by half a minute: a cursor is a line number, which means nothing outside
+    the session it was read from, and a query that forgot to scope would still
+    look right on a fixture with one session in it.
+    """
     base = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
+    decoy = Session.objects.create(
+        id="sw-decoy", project=session.project, provider="claude_code",
+        file_path="sw-decoy.jsonl", type=SessionType.SESSION,
+        created_at=timezone.now(), mtime=1000, last_line=5, user_message_count=1,
+    )
     for offset in range(5):
         stamped(session, offset + 1, base + timedelta(minutes=offset))
+        stamped(decoy, offset + 1, base + timedelta(minutes=offset, seconds=30))
     return base
 
 
@@ -547,8 +559,8 @@ def timeline(session):
     ("2026-09-19", 0),
     # Whitespace from a shell or a JSON payload, stripped rather than refused.
     ("  2026-09-19T12:02:00+00:00  ", 3),
-    # Older than the session: the wait starts above the first line, rather
-    # than refusing.
+    # Older than the session: the wait starts above the first stamped line,
+    # rather than refusing. Every line here carries one.
     ("2020-01-01T00:00:00+00:00", 0),
     # Past the last line: nothing before it is new.
     ("2026-09-19T23:00:00+00:00", 5),
@@ -615,6 +627,9 @@ def test_an_untimed_line_near_the_top_does_not_pin_the_cursor(session):
         stamped(session, offset, base + timedelta(minutes=offset))
 
     assert at(session, "2026-09-19T12:04:30+00:00") == 4
+    # And the sentence the documents make about it: an instant older than the
+    # session starts above the first *stamped* line, which is 1 and not 0.
+    assert at(session, "2020-01-01T00:00:00+00:00") == 1
 
 
 def test_a_timestamp_that_goes_backwards_never_hides_a_line(session):

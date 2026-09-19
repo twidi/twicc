@@ -316,12 +316,17 @@ def _refusal_flags() -> set[str]:
                 stack.append(node.func.id)
                 continue
             code = next((kw.value for kw in node.keywords if kw.arg == "code"), None)
-            # Omitted means 1: `emit_error`'s own default.
-            if code is not None and not (isinstance(code, ast.Constant) and code.value == 1):
+            # Omitted means 1: `emit_error`'s own default. A `code` this cannot
+            # read — a name, an expression — counts as a refusal rather than
+            # not: an unknown has to fail loudly, not disappear.
+            if isinstance(code, ast.Constant) and code.value != 1:
                 continue
             for part in [*node.args, *(kw.value for kw in node.keywords if kw.arg != "code")]:
                 flags |= set(FLAG.findall(ast.unparse(part)))
-    assert seen >= {"wait", "_parse_instant"}, seen  # the walk really followed the calls
+    # `--since` is refused inside `_parse_instant`, never in `wait`: finding it
+    # is what says the walk followed the calls. Asserting the callee's *name*
+    # would instead break the day it is inlined, which the walk survives.
+    assert "--since" in flags, (sorted(flags), sorted(seen))
     return flags
 
 
@@ -377,28 +382,33 @@ RULE = ("strictly after", "not a boundary")
 RETIRED = ("at or before that moment", "select the same lines", "mean the same thing")
 
 
+RULE_SOURCES = ("twicc-session/SKILL.md", "SKILLS-AND-CLI.md", "session wait --help", "--since help")
+
+
 def _rule_sources() -> dict[str, str]:
     """The four places that state how the instant becomes a cursor.
 
-    The `--since` help is one of them and never names its own option, so it
-    is taken by label rather than by mention.
+    Named, not detected. Selecting whatever mentions `--since` pulled in a
+    neighbour's help the moment it gained a "mutually exclusive with --since"
+    line — a good edit — and the shortest repair was to widen the expected
+    set, which then demands the rule in a help that has no business stating
+    it. Nothing is lost: a document that stops stating the rule fails on the
+    anchors below.
     """
     sources = {label: "\n".join(line for _, line in lines) for label, lines in _prose_sources()}
-    return {
-        label: text
-        for label, text in sources.items()
-        if "--since" in text or label == "--since help"
-    }
+    missing = [label for label in RULE_SOURCES if label not in sources]
+    assert missing == [], missing
+    return {label: sources[label] for label in RULE_SOURCES}
 
 
 def test_every_document_states_the_rule_the_code_implements():
-    stated = _rule_sources()
-    assert set(stated) == {
-        "twicc-session/SKILL.md", "SKILLS-AND-CLI.md", "session wait --help", "--since help",
-    }, set(stated)
-
+    """Substring presence, not meaning: this catches a document left behind by
+    a rewrite, not one whose author writes a new sentence that is wrong."""
     missing = sorted(
-        (label, anchor) for label, text in stated.items() for anchor in RULE if anchor not in text
+        (label, anchor)
+        for label, text in _rule_sources().items()
+        for anchor in RULE
+        if anchor not in text
     )
     assert missing == []
 
