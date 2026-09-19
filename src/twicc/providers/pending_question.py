@@ -136,12 +136,17 @@ def question_entry(pending, questions: list[dict], *, raw: bool = False) -> dict
     """The full entry for an answerable question.
 
     ``actions`` carries ``cancel`` **alone** when the request is structurally
-    unanswerable — an empty ``questions`` list, or any question flagged
-    ``secret``. Both turn an answer attempt into a guaranteed rejection, so
-    advertising ``answer`` would be a lie a script would act on. Declining stays
-    available: it carries no value, so nothing sensitive transits.
+    unanswerable — an empty ``questions`` list, any question flagged ``secret``,
+    or any question this command could not read, which publishes an empty id.
+    All three turn an answer attempt into a guaranteed rejection, so advertising
+    ``answer`` would be a lie a script would act on. Declining stays available:
+    it carries no value, so nothing sensitive transits.
     """
-    answerable = bool(questions) and not any(q["secret"] for q in questions)
+    answerable = (
+        bool(questions)
+        and not any(q["secret"] for q in questions)
+        and all(q["id"] for q in questions)
+    )
     return _with_raw({
         "request_id": pending.request_id,
         "created_at": created_at_iso(pending.created_at),

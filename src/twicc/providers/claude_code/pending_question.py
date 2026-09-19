@@ -90,14 +90,17 @@ def _stored_questions(pending) -> list:
 
 
 def _normalize_question(question, index: int) -> dict:
-    if not isinstance(question, dict):
-        # A pathological payload keeps its slot, so the ids stay aligned with
-        # what the agent asked; it just carries nothing to answer.
+    # A pathological payload keeps its slot, so the ids of the questions after
+    # it stay aligned with what the agent asked. It publishes an **empty** id,
+    # which no answer can target — and which makes the whole request
+    # cancel-only, rather than one that accepts an answer it would then drop.
+    readable = isinstance(question, dict)
+    if not readable:
         question = {}
     return {
         # 1-based index: Claude has no ids, and a 0-based one reads as a falsy
         # id in every shell that interpolates it.
-        "id": str(index + 1),
+        "id": str(index + 1) if readable else "",
         "header": question.get("header", ""),
         "question": question.get("question", ""),
         "multi_select": bool(question.get("multiSelect")),
@@ -121,8 +124,9 @@ def answers_by_text(pending, answers: dict[str, list[str]]) -> dict[str, str]:
     """Turn the ``{id: [value, …]}`` answers into the widget's ``{text: value}``.
 
     Multiple values join with ``", "``, which is what the widget itself sends
-    for a multi-select question. Unknown ids are dropped — the service validates
-    them before reaching here, and the web UI cannot produce one.
+    for a multi-select question. Only the CLI path reaches this — the widget has
+    its own entry point and never keys by id. An id naming no readable question
+    is dropped; the service refuses it upstream, so this is the second guard.
     """
     stored = _stored_questions(pending)
     mapped: dict[str, str] = {}

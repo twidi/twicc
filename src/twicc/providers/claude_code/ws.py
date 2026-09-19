@@ -359,7 +359,10 @@ class ClaudeCodeWSHandler:
             # through; anything else is a malformed payload and keeps the
             # historical fallback rather than raising at the caller.
             action = content.get("action", "submit")
-            if action not in QUESTION_ACTIONS:
+            # ``isinstance`` first: ``QUESTION_ACTIONS`` is a frozenset, so
+            # testing membership of an unhashable value raises — out of the
+            # consumer, which drops the connection and strands the request.
+            if not isinstance(action, str) or action not in QUESTION_ACTIONS:
                 logger.warning(
                     "pending_request_response: unknown question action %r, submitting",
                     action,

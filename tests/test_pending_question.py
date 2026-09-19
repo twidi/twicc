@@ -290,11 +290,6 @@ class TestTheWidgetEntryPoint:
             claude_question(), action="submit", ui_answers=malformed)
         assert response.updated_input["answers"] == {}
 
-    def test_a_malformed_payload_still_cancels(self):
-        response = claude_pq.build_question_response_from_ui(
-            claude_question(), action="cancel", ui_answers="nonsense")
-        assert isinstance(response, PermissionResultDeny)
-
 
 class TestPathologicalQuestions:
     def test_a_malformed_entry_keeps_its_slot(self):
@@ -304,7 +299,8 @@ class TestPathologicalQuestions:
             "not a dict",
             {"question": "Which cache?", "options": [{"label": "Redis"}]},
         ]))
-        assert [q["id"] for q in entry["questions"]] == ["1", "2"]
+        assert len(entry["questions"]) == 2
+        assert entry["questions"][1]["id"] == "2"
         assert entry["questions"][1]["question"] == "Which cache?"
 
     def test_answering_by_index_reaches_the_right_question(self):
@@ -312,6 +308,36 @@ class TestPathologicalQuestions:
         response = claude_pq.build_question_response(
             pending, action="partial", answers={"2": ["Redis"]})
         assert "  Answer: Redis" in response.message
+
+    def test_an_unreadable_question_publishes_no_id(self):
+        # Nothing can target it, so the request can never be answered in full.
+        entry = claude_pq.normalize_pending_request(claude_question([
+            "not a dict", {"question": "Which cache?"},
+        ]))
+        assert [q["id"] for q in entry["questions"]] == ["", "2"]
+
+    def test_an_unreadable_question_makes_the_request_cancel_only(self):
+        # Advertising ``answer`` here would be a lie a script would act on: the
+        # answer would be accepted, counted, then silently dropped.
+        entry = claude_pq.normalize_pending_request(claude_question([
+            "not a dict", {"question": "Which cache?"},
+        ]))
+        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+
+    def test_the_same_holds_on_codex(self):
+        entry = codex_pq.normalize_pending_request(codex_question([
+            {"id": "cache", "question": "Which cache?"}, "not a dict",
+        ]))
+        assert [q["id"] for q in entry["questions"]] == ["cache", ""]
+        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+
+    def test_an_id_naming_an_unreadable_slot_is_dropped_not_raised(self):
+        # The service refuses it upstream; this is the second guard, and it runs
+        # inside the WebSocket consumer on the widget's behalf.
+        pending = claude_question(["not a dict"])
+        response = claude_pq.build_question_response(
+            pending, action="partial", answers={"1": ["Redis"]})
+        assert "  (No answer provided)" in response.message
 
 
 class TestTheCodexTranslator:

@@ -115,6 +115,18 @@ def test_cancel_denies_with_the_fixed_decline_text(pending):
     )
 
 
+@pytest.mark.parametrize("action", [["submit"], {"a": 1}, 42, None])
+def test_a_malformed_action_does_not_break_the_connection(pending, action):
+    """Same failure mode as a malformed ``answers``, one line up.
+
+    The known-actions set is a frozenset, so testing membership of an
+    unhashable value raises before the handler ever looks at it.
+    """
+    response = _answer(pending, {"action": action, "answers": {}})
+
+    assert isinstance(response, PermissionResultAllow)
+
+
 def test_a_malformed_answers_payload_does_not_break_the_connection(pending):
     """A frame this handler cannot read must not tear the WebSocket down.
 

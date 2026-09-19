@@ -158,6 +158,14 @@ def _validate_answers(entry: dict, answers: dict[str, list[str]]):
     normalizer derives — which is why the write path normalizes too.
     """
     questions = {q["id"]: q for q in entry["questions"]}
+    if any(not q["id"] for q in entry["questions"]):
+        # An unreadable question publishes no id, so nothing can target it and
+        # the request can never be answered in full. The read advertises
+        # ``cancel`` alone for the same reason.
+        return "missing_answers", (
+            "This request holds a question this command cannot read; it cannot "
+            "be answered. Cancel it, or answer it in the web UI."
+        )
     if any(q["secret"] for q in entry["questions"]):
         # Per request, not per question: submitting needs every question
         # answered, so one secret makes the whole request unanswerable.

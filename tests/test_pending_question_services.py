@@ -473,3 +473,25 @@ def test_a_disabled_provider_is_refused_by_both_commands():
             {"session_id": SESSION_ID, "action": "cancel"}))
     assert codes(read) == ["provider_disabled"]
     assert codes(write) == ["provider_disabled"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_question_the_command_cannot_read_is_refused():
+    # It publishes no id, so nothing can target it and the request can never be
+    # answered in full. The read advertises ``cancel`` alone for the same
+    # reason; refusing the answer is the other half of that promise.
+    make_session()
+    pending = claude_pending(["not a dict", {"question": "Which cache?"}])
+    result, _ = run(lambda: answer_pending_question_from_payload(
+        {"session_id": SESSION_ID, "action": "answer", "answers": {"2": ["Redis"]}}),
+        pendings=[pending])
+    assert codes(result) == ["missing_answers"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_it_can_still_be_declined():
+    make_session()
+    pending = claude_pending(["not a dict", {"question": "Which cache?"}])
+    result, _ = run(lambda: answer_pending_question_from_payload(
+        {"session_id": SESSION_ID, "action": "cancel"}), pendings=[pending])
+    assert result.success
