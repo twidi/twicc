@@ -627,10 +627,10 @@ def _parse_instant(since: str) -> datetime:
     from django.utils.dateparse import parse_datetime
 
     try:
-        # A well-formed but impossible value — `2026-13-01`, `…T25:00:00Z` —
-        # raises rather than returning None, and reads to a caller exactly
-        # like a typo. A bare date needs no help: this already returns its
-        # midnight.
+        # `2026-13-01` comes back empty, but an impossible *time* —
+        # `…T25:00:00Z` — raises instead, and to a caller the two read
+        # exactly alike. A bare date needs no help: this already returns
+        # its midnight.
         parsed = parse_datetime(since.strip())
     except ValueError:
         parsed = None

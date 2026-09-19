@@ -536,8 +536,8 @@ def timeline(session):
 
 
 @pytest.mark.parametrize("since,expected", [
-    # At the instant of line 3 — "at or before" includes it, so the wait
-    # starts above it and line 4 is the next thing said.
+    # At the instant of line 3: the first line stamped strictly after it is
+    # line 4, so the cursor is 3 and line 4 is the next thing said.
     ("2026-09-19T12:02:00+00:00", 3),
     # A microsecond earlier: line 3 is now strictly after, and is returned.
     ("2026-09-19T12:01:59.999999+00:00", 2),
@@ -545,6 +545,8 @@ def timeline(session):
     ("2026-09-19 12:02:00", 3),
     # A bare date is its midnight, which is before every line here.
     ("2026-09-19", 0),
+    # Whitespace from a shell or a JSON payload, stripped rather than refused.
+    ("  2026-09-19T12:02:00+00:00  ", 3),
     # Older than the session: the wait starts above the first line, rather
     # than refusing.
     ("2020-01-01T00:00:00+00:00", 0),

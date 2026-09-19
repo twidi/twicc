@@ -286,17 +286,43 @@ def _refusal_flags() -> set[str]:
 
     Derived rather than listed: a pinned set would be bumped to match whatever
     the code does, which is how the enumeration fell behind twice already.
+
+    Parsed rather than grepped. A regex spanning `emit_error(` to `code=1`
+    missed a refusal that takes the default code, one written `code = 1`, one
+    passing its message by keyword, and one moved into a helper — while
+    swallowing an unrelated `code=4` call sitting in between. Following the
+    calls from `wait` costs four lines and answers all five.
     """
+    import ast
     import inspect
 
     from twicc.cli import session as cli_session
 
-    source = "".join(
-        inspect.getsource(function)
-        for function in (cli_session.wait, cli_session._parse_instant)
-    )
-    calls = re.findall(r"emit_error\((.*?)code=1", source, re.DOTALL)
-    return {flag for call in calls for flag in FLAG.findall(call)}
+    module = ast.parse(inspect.getsource(cli_session))
+    functions = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
+
+    flags: set[str] = set()
+    seen: set[str] = set()
+    stack = ["wait"]
+    while stack:
+        name = stack.pop()
+        if name in seen or name not in functions:
+            continue
+        seen.add(name)
+        for node in ast.walk(functions[name]):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id != "emit_error":
+                stack.append(node.func.id)
+                continue
+            code = next((kw.value for kw in node.keywords if kw.arg == "code"), None)
+            # Omitted means 1: `emit_error`'s own default.
+            if code is not None and not (isinstance(code, ast.Constant) and code.value == 1):
+                continue
+            for part in [*node.args, *(kw.value for kw in node.keywords if kw.arg != "code")]:
+                flags |= set(FLAG.findall(ast.unparse(part)))
+    assert seen >= {"wait", "_parse_instant"}, seen  # the walk really followed the calls
+    return flags
 
 
 def _refusal_clauses() -> dict[str, str]:
@@ -310,6 +336,9 @@ def _refusal_clauses() -> dict[str, str]:
     for label, lines in _prose_sources():
         for _, line in lines:
             if "local refusal" in line:
+                # Any `.` ends it, so a decimal or an "i.e." before the flags
+                # would cut the clause short. That direction only ever fails
+                # loudly; the repair is to reword, not to loosen this.
                 clauses[label] = line[line.index("local refusal"):].split(".", 1)[0]
                 break
     return clauses
@@ -336,3 +365,51 @@ def test_all_three_documents_carry_that_clause():
     assert set(_refusal_clauses()) == {
         "twicc-session/SKILL.md", "SKILLS-AND-CLI.md", "session wait --help",
     }
+
+
+# The rule itself, not just the flag names. It has now fallen behind the code
+# twice — once per rewrite of `_cursor_at` — and both times every document
+# still described a cursor the command had stopped returning.
+# Both halves: where the boundary is, and that an untimed line is not one.
+# The second half is the regression `63575678` shipped, so a document keeping
+# the first and dropping the second describes a cursor that once existed.
+RULE = ("strictly after", "not a boundary")
+RETIRED = ("at or before that moment", "select the same lines", "mean the same thing")
+
+
+def _rule_sources() -> dict[str, str]:
+    """The four places that state how the instant becomes a cursor.
+
+    The `--since` help is one of them and never names its own option, so it
+    is taken by label rather than by mention.
+    """
+    sources = {label: "\n".join(line for _, line in lines) for label, lines in _prose_sources()}
+    return {
+        label: text
+        for label, text in sources.items()
+        if "--since" in text or label == "--since help"
+    }
+
+
+def test_every_document_states_the_rule_the_code_implements():
+    stated = _rule_sources()
+    assert set(stated) == {
+        "twicc-session/SKILL.md", "SKILLS-AND-CLI.md", "session wait --help", "--since help",
+    }, set(stated)
+
+    missing = sorted(
+        (label, anchor) for label, text in stated.items() for anchor in RULE if anchor not in text
+    )
+    assert missing == []
+
+
+def test_no_document_still_states_the_rule_that_lost_lines():
+    """`--from N` and `--since T` are not interchangeable, and saying so was
+    the claim both rewrites invalidated."""
+    wrong = [
+        (label, phrase)
+        for label, text in _rule_sources().items()
+        for phrase in RETIRED
+        if phrase in text
+    ]
+    assert wrong == []
