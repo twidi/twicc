@@ -87,6 +87,16 @@ _KIND_HANDLERS: dict[str, tuple[str, str, str]] = {
         "update_session_annotations_from_payload",
         "updated",
     ),
+    "session:pending_requests": (
+        "twicc.core.services.pending_question",
+        "read_pending_requests_from_payload",
+        "fetched",
+    ),
+    "session:answer_pending_question": (
+        "twicc.core.services.pending_question",
+        "answer_pending_question_from_payload",
+        "updated",
+    ),
     "process:stop": (
         "twicc.core.services.process_kill",
         "kill_session_process_from_payload",

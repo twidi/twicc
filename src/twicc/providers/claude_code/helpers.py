@@ -197,6 +197,8 @@ you: when the user asks, re-invoke `Workflow` with `resumeFromRunId`.
 class ClaudeCodeHelpers(BaseProviderHelpers):
     """Helpers for sessions produced by the Claude Code CLI / SDK."""
 
+    question_partial_supported = True
+
     def normalize_pending_request(self, pending, *, raw: bool = False) -> dict:
         from .pending_question import normalize_pending_request
 
