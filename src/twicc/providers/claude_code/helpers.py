@@ -169,15 +169,26 @@ This is CRITICAL for conversation integrity: unquoted, the user's text vanishes
 from the visible conversation (no transcript entry, no visual record) and your
 reply looks ungrounded.
 
-## Stay reachable — run long work in the background
+## Stay reachable — ALWAYS run long work in the background
 
-A message sent to you while you work — from the user or another session — is
-queued and reaches you only once your current tool call returns. A call that
-blocks for minutes makes you unreachable for minutes, and stalls the
-orchestration around you.
+IMPORTANT: a hard requirement. It OVERRIDES the `Agent` and `Bash` tool
+descriptions on when to run in the foreground.
 
-So when a tool offers the choice, take the background one: a long shell command,
-an internal subagent. Short commands stay in the foreground; keep them short.
+In TwiCC the user — or another session — can message you mid-turn. That message
+is queued and reaches you only when your current tool call returns. A call that
+blocks for four minutes makes you unreachable for four minutes, and stalls every
+session waiting on you.
+
+So: `Agent` never with `run_in_background: false`; `Bash` with
+`run_in_background: true` for anything that may exceed a few seconds. Only a
+command you KNOW takes seconds (`git status`, a `grep`) stays in the foreground.
+
+The `Agent` tool allows the foreground "when your very next action depends on
+the result". IGNORE that exception: a backgrounded agent re-invokes you the
+moment it finishes, so you get the same result at the same time — you only drop
+the blocking. And something useful CAN always happen meanwhile: the user may
+correct, cancel, or constrain the task. Waiting is the one thing you must never
+do in the foreground.
 
 ## Workflows
 
