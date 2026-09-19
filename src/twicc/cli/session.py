@@ -1,5 +1,7 @@
 """CLI implementation for the ``twicc session`` subcommand."""
 
+from datetime import UTC, datetime, time
+
 import orjson
 
 import typer
@@ -542,15 +544,19 @@ def workflow(session_id: str, workflow_id: str) -> None:
     emit_json(_workflow_envelope(run, session.cutoff))
 
 
-def wait(session_id: str, *, from_line: int | None = None, timeout: float,
-         want_text: bool = True, on_reply: bool = False,
+def wait(session_id: str, *, from_line: int | None = None, since: str | None = None,
+         timeout: float, want_text: bool = True, on_reply: bool = False,
          on_blocked: bool = False) -> None:
-    """Block until the session says something past ``from_line``.
+    """Block until the session says something past the cursor.
 
     The other waits ride on a command that triggered the turn, so their cursor
     falls out of the send. Here nothing was sent: the caller names the line to
     start above, which is the ``line_num`` or ``since_line_num`` a previous
     wait already handed back. That is what makes a timed-out wait resumable.
+
+    ``since`` names the same cursor as an instant instead of a line. A line
+    number belongs to one session and nothing else, so it cannot address a
+    batch; an instant addresses any number of them the same way.
 
     Omitted, the cursor is the session's current ``last_line`` — "tell me the
     next thing it says". The race that killed ``--transition`` does not apply:
@@ -577,9 +583,20 @@ def wait(session_id: str, *, from_line: int | None = None, timeout: float,
         emit_error(f"Error: --wait-timeout must be > 0 (got {timeout:g}).", code=1)
     if from_line is not None and from_line < 0:
         emit_error(f"Error: --from must be >= 0 (got {from_line}).", code=1)
+    if from_line is not None and since is not None:
+        emit_error("Error: --from and --since name the same cursor; pass one.", code=1)
+    # Parsed here rather than inside the lookup below, for the same reason the
+    # two checks above run first: a bad instant is a bad instant, not a session
+    # that does not exist.
+    instant = None if since is None else _parse_instant(since)
 
     session = _get_session(session_id)
-    cursor = session.last_line if from_line is None else from_line
+    if instant is not None:
+        cursor = _cursor_at(session, instant)
+    elif from_line is not None:
+        cursor = from_line
+    else:
+        cursor = session.last_line
 
     # Nothing is passed for the answer: it always ends the wait, which is what
     # the caller gets with no flag at all. ``on_reply`` names that default, and
@@ -603,3 +620,56 @@ def wait(session_id: str, *, from_line: int | None = None, timeout: float,
     if outcome == WAIT_FAILED:
         raise typer.Exit(1)
     raise typer.Exit(5)  # timeout, ended, provider_error: no answer came
+
+
+def _parse_instant(since: str) -> datetime:
+    """Read what ``--since`` was given, or refuse it by name."""
+    from django.utils.dateparse import parse_date, parse_datetime
+
+    parsed = None
+    try:
+        # A well-formed but impossible value — `2026-13-01` — raises rather
+        # than returning None, and reads to a caller exactly like a typo.
+        parsed = parse_datetime(since)
+        if parsed is None:
+            day = parse_date(since)
+            if day is not None:
+                parsed = datetime.combine(day, time.min)
+    except ValueError:
+        parsed = None
+    if parsed is None:
+        emit_error(
+            f"Error: invalid --since {since!r}. Pass an ISO 8601 instant, as "
+            "`session messages` returns it — '2026-09-19T05:38:20+00:00', "
+            "'2026-09-19 05:38:20', or a bare '2026-09-19' for its midnight.",
+            code=1,
+        )
+    if parsed.tzinfo is None:
+        # UTC, not the server's zone: every timestamp this CLI stores and
+        # prints is UTC, so a value pasted back from one round-trips. Reading
+        # it as local would silently shift the cursor by the offset.
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _cursor_at(session, instant: datetime) -> int:
+    """Translate an instant into the line cursor the wait actually uses.
+
+    Done here, before the loop, so the loop never learns about dates: it keeps
+    taking one number, and the one behaviour both spellings share cannot drift
+    apart.
+
+    The cursor is the last line written **at or before** the instant, because
+    the loop counts a line as new when it is strictly past the cursor. "Past
+    line N" and "after time T" then mean the same thing.
+    """
+    last = (
+        session.items.filter(timestamp__lte=instant)
+        .order_by("-line_num")
+        .values_list("line_num", flat=True)
+        .first()
+    )
+    # Nothing at or before it — an instant older than the session, or a
+    # transcript whose lines carry no timestamp. Every line is then "after",
+    # so the wait starts above the top rather than refusing.
+    return last or 0

@@ -14,6 +14,8 @@ rather than hanging to the deadline.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import orjson
 import pytest
 import typer
@@ -253,12 +255,12 @@ def test_the_flags_travel_from_the_command_line(session, monkeypatch):
 
     seen: dict = {}
 
-    def probe(session_id, *, from_line, timeout, want_text, on_reply, on_blocked):
+    def probe(session_id, *, from_line, since, timeout, want_text, on_reply, on_blocked):
         # ``session_id`` too: ``ctx.obj`` is the only wiring that carries the
         # positional id down from the group callback, and the direct-call
         # tests bypass the wrapper entirely. Recorded but unasserted, a
         # hardcoded id would wait on the wrong session with the suite green.
-        seen.update(session_id=session_id, from_line=from_line, timeout=timeout,
+        seen.update(session_id=session_id, from_line=from_line, since=since, timeout=timeout,
                     want_text=want_text, reply=on_reply, blocked=on_blocked)
         raise typer.Exit(0)
 
@@ -270,7 +272,7 @@ def test_the_flags_travel_from_the_command_line(session, monkeypatch):
     ])
 
     assert result.exit_code == 0, result.output
-    assert seen == {"session_id": "sw-session", "from_line": 42, "timeout": 7.0,
+    assert seen == {"session_id": "sw-session", "from_line": 42, "since": None, "timeout": 7.0,
                     "want_text": False, "reply": False, "blocked": True}
 
 
@@ -281,12 +283,12 @@ def test_the_defaults_are_the_documented_ones(session, monkeypatch):
 
     seen: dict = {}
 
-    def probe(session_id, *, from_line, timeout, want_text, on_reply, on_blocked):
+    def probe(session_id, *, from_line, since, timeout, want_text, on_reply, on_blocked):
         # ``session_id`` too: ``ctx.obj`` is the only wiring that carries the
         # positional id down from the group callback, and the direct-call
         # tests bypass the wrapper entirely. Recorded but unasserted, a
         # hardcoded id would wait on the wrong session with the suite green.
-        seen.update(session_id=session_id, from_line=from_line, timeout=timeout,
+        seen.update(session_id=session_id, from_line=from_line, since=since, timeout=timeout,
                     want_text=want_text, reply=on_reply, blocked=on_blocked)
         raise typer.Exit(0)
 
@@ -295,7 +297,7 @@ def test_the_defaults_are_the_documented_ones(session, monkeypatch):
     result = CliRunner().invoke(app, ["session", "sw-session", "wait"])
 
     assert result.exit_code == 0, result.output
-    assert seen == {"session_id": "sw-session", "from_line": None, "timeout": 300.0,
+    assert seen == {"session_id": "sw-session", "from_line": None, "since": None, "timeout": 300.0,
                     "want_text": True, "reply": False, "blocked": False}
 
 
@@ -351,6 +353,12 @@ def test_the_mcp_description_carries_the_contract():
     assert "`replied`, and `provider_error`" in description
     assert "resumes from its `line_num`" in description
     assert "resumes from its `since_line_num`" in description
+
+    # The two spellings of the cursor, and that they are one cursor. A
+    # description naming only `--from` sends an agent holding a timestamp to
+    # invent a line number.
+    assert "--since is\nthe same cursor as an instant" in description
+    assert "mutually exclusive" in description
 
     # And the vocabulary a caller has to branch on. `pending` is batch-only
     # and must stay out: it cannot happen here.
@@ -498,3 +506,111 @@ def test_a_bad_flag_is_named_before_the_session_is_looked_up(db, capsysbinary, k
 
     assert exc.value.exit_code == 1
     assert message in capsysbinary.readouterr().err.decode()
+
+
+# ---------------------------------------------------------------------------
+# `--since` — the same cursor, named as an instant
+# ---------------------------------------------------------------------------
+
+
+def stamped(session, line_num, when, text="tick"):
+    """One item carrying a timestamp, which is all `--since` reads."""
+    item = answer(session, line_num, text)
+    session.items.filter(pk=item.pk).update(timestamp=when)
+    return item
+
+
+@pytest.fixture
+def timeline(session):
+    """Lines 1..5, one minute apart, starting at 12:00 UTC."""
+    base = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
+    for offset in range(5):
+        stamped(session, offset + 1, base + timedelta(minutes=offset))
+    return base
+
+
+@pytest.mark.parametrize("since,expected", [
+    # At the instant of line 3 — "at or before" includes it, so the wait
+    # starts above it and line 4 is the next thing said.
+    ("2026-09-19T12:02:00+00:00", 3),
+    # A microsecond earlier: line 3 is now strictly after, and is returned.
+    ("2026-09-19T12:01:59.999999+00:00", 2),
+    # No offset is UTC, not the server's zone — same answer as the first.
+    ("2026-09-19 12:02:00", 3),
+    # A bare date is its midnight, which is before every line here.
+    ("2026-09-19", 0),
+    # Older than the session: the wait starts above the first line, rather
+    # than refusing.
+    ("2020-01-01T00:00:00+00:00", 0),
+    # Past the last line: nothing before it is new.
+    ("2026-09-19T23:00:00+00:00", 5),
+])
+def test_an_instant_becomes_the_line_written_at_or_before_it(session, timeline, since, expected):
+    assert cli_session._cursor_at(session, cli_session._parse_instant(since)) == expected
+
+
+def test_the_cursor_it_computes_is_the_cursor_the_wait_uses(session, timeline, capsysbinary):
+    """The translation is not a separate feature: `--since` and the matching
+    `--from` must select the same line, or the two spellings drift apart."""
+    running(session)
+
+    payload, code = run(capsysbinary, since="2026-09-19T12:01:00+00:00")
+
+    assert payload["reply"]["since_line_num"] == 2
+    assert payload["reply"]["line_num"] == 3  # the first line strictly after
+    assert code == 0
+
+
+def test_lines_without_a_timestamp_are_never_counted_as_past(session, capsysbinary):
+    """A transcript whose lines carry no timestamp reads as "all of it is
+    after", which re-scans rather than skipping. The safe direction."""
+    answer(session, 1)
+    answer(session, 2)
+
+    assert cli_session._cursor_at(session, cli_session._parse_instant("2026-09-19T12:00:00+00:00")) == 0
+
+
+def test_the_two_cursors_are_mutually_exclusive(session, capsysbinary):
+    with pytest.raises(typer.Exit) as exc:
+        cli_session.wait("sw-session", from_line=2, since="2026-09-19", timeout=2.0)
+
+    assert exc.value.exit_code == 1
+    assert b"--from and --since" in capsysbinary.readouterr().err
+
+
+@pytest.mark.parametrize("since", ["bogus", "2026-13-01", "yesterday", ""])
+def test_an_unparseable_instant_is_refused_by_name(session, capsysbinary, since):
+    with pytest.raises(typer.Exit) as exc:
+        cli_session.wait("sw-session", since=since, timeout=2.0)
+
+    assert exc.value.exit_code == 1
+    assert b"--since" in capsysbinary.readouterr().err
+
+
+def test_a_bad_instant_is_named_before_the_session_is_looked_up(db, capsysbinary):
+    """Same rule as the other two arguments: a bad flag is a bad flag, not a
+    session that does not exist."""
+    with pytest.raises(typer.Exit) as exc:
+        cli_session.wait("no-such-session", since="bogus", timeout=2.0)
+
+    assert exc.value.exit_code == 1
+    assert b"--since" in capsysbinary.readouterr().err
+
+
+def test_the_instant_travels_from_the_command_line(session, monkeypatch):
+    from typer.testing import CliRunner
+
+    from twicc.cli import app
+
+    seen: dict = {}
+
+    def probe(session_id, *, from_line, since, timeout, want_text, on_reply, on_blocked):
+        seen.update(session_id=session_id, from_line=from_line, since=since)
+        raise typer.Exit(0)
+
+    monkeypatch.setattr("twicc.cli.session.wait", probe)
+
+    result = CliRunner().invoke(app, ["session", "sw-session", "wait", "--since", "2026-09-19"])
+
+    assert result.exit_code == 0, result.output
+    assert seen == {"session_id": "sw-session", "from_line": None, "since": "2026-09-19"}

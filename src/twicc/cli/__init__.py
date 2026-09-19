@@ -564,6 +564,18 @@ def _session_wait(
             "\"tell me the next thing it says\"."
         ),
     ),
+    since: str = typer.Option(
+        None, "--since",
+        help=(
+            "The same cursor as an instant instead of a line, mutually "
+            "exclusive with --from: only a line written strictly after it "
+            "counts. ISO 8601, as `session messages` returns it — "
+            "'2026-09-19T05:38:20+00:00', '2026-09-19 05:38:20', or a bare "
+            "'2026-09-19' for its midnight. No offset means UTC, which is "
+            "what this CLI stores and prints. An instant older than the "
+            "session starts the wait above the first line."
+        ),
+    ),
     wait_timeout: float = typer.Option(
         300.0, "--wait-timeout",
         help=(
@@ -617,7 +629,11 @@ def _session_wait(
     non-positive --wait-timeout, an unknown session) or the wait itself
     breaking — so a script can chain on it.
 
-    --from is the cursor, and only a line strictly past it counts. An ending
+    --from is the cursor, and only a line strictly past it counts. --since is
+    the same cursor as an instant, mutually exclusive with it: the wait starts
+    above the last line written at or before that moment, so "past line N" and
+    "after time T" mean the same thing. A line number belongs to one session
+    and nothing else; an instant addresses any number of them alike. An ending
     that consumed a line — `replied`, and `provider_error`, which points at
     the error the provider wrote — resumes from its `line_num`; every other
     one resumes from its `since_line_num`, which nothing consumed. Getting
@@ -633,7 +649,7 @@ def _session_wait(
     from twicc.cli.session import wait as session_wait
 
     session_wait(
-        ctx.obj, from_line=from_line, timeout=wait_timeout,
+        ctx.obj, from_line=from_line, since=since, timeout=wait_timeout,
         want_text=not no_reply_text, on_reply=reply, on_blocked=blocked,
     )
 
