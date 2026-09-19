@@ -19,8 +19,7 @@ import { useDataStore } from '../../../stores/data'
 import { useSessionSelectionStore } from '../../../stores/sessionSelection'
 import { markSessionReadState, cancelSessionViewedThrottle } from '../../../composables/useWebSocket'
 import { stopSessionProcessUnconfirmed, isStoppable } from '../../../composables/useStopSessionProcess'
-import { isSessionUnread } from '../../../utils/sessions'
-import { PROCESS_STATE } from '../../../constants'
+import { canToggleSessionReadState, isSessionUnread } from '../../../utils/sessions'
 import AppTooltip from '../../ui/AppTooltip.vue'
 
 const props = defineProps({
@@ -73,19 +72,14 @@ function isPinModeChecked(mode) {
         && pinnableSessions.value.every(s => (s.pinned || null) === mode)
 }
 
-/** Mirrors SessionListItem's canToggleReadState (draft/archived/non-user_turn excluded). */
-function canToggleRead(session) {
-    if (session.draft || session.ephemeral || session.archived) return false
-    const ps = store.getProcessState(session.id)
-    if (ps && ps.state !== PROCESS_STATE.USER_TURN) return false
-    return true
-}
-
 const markReadCandidates = computed(() =>
     selectedSessions.value.filter(s => isSessionUnread(s, store.getProcessState(s.id)))
 )
 const markUnreadCandidates = computed(() =>
-    selectedSessions.value.filter(s => canToggleRead(s) && !isSessionUnread(s, store.getProcessState(s.id)))
+    selectedSessions.value.filter(s => {
+        const ps = store.getProcessState(s.id)
+        return canToggleSessionReadState(s, ps) && !isSessionUnread(s, ps)
+    })
 )
 
 const archiveTargets = computed(() =>

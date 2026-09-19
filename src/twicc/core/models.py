@@ -466,9 +466,15 @@ class Session(models.Model):
     # (`type=SUBAGENT`) ignore this flag entirely: they are already invisible
     # everywhere via the `type=SESSION` filter.
     hidden = models.BooleanField(default=False, db_index=True)
-    # Suppress only the finished-working notification family for this session.
-    # Questions, approvals, failures, usage alerts, and process-state broadcasts
-    # remain active. This is TwiCC UI behavior, not an AgentSettings field.
+    # Suppress this session's finished-working notification family AND its
+    # unread state (the row's eye, the project/workspace badges, the favicon,
+    # the sidebar's cross-filter promotion). Questions, approvals, failures,
+    # usage alerts, and process-state broadcasts remain active. Nothing is
+    # erased: last_new_content_at / last_viewed_at keep being written, so
+    # unmuting restores the accumulated unread state. The unread half is a
+    # pure display gate — applied by `frontend/src/utils/sessions.js` and by
+    # the sticky `unread_only` filter in `views._get_sessions_page`, never by
+    # a write path. This is TwiCC UI behavior, not an AgentSettings field.
     mute_on_user_turn = models.BooleanField(default=False)
     # Trace of the session that invoked the CLI to create this one
     # (filiation). Set automatically by `twicc create-session` via PID

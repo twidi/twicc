@@ -57,6 +57,7 @@ import {
 import { getAgentDisplay } from '../utils/agentLabel'
 import { focusChatPrimary, gotoChatFooterPanel, runOnChatTab } from '../utils/focusChat'
 import { toggleSessionMute } from '../composables/useSessionMute'
+import { canToggleSessionReadState, hasUnreadContent } from '../utils/sessions'
 import { fileRootsFromStore } from '../utils/projectRoots'
 import { normalizePosixPath } from '../utils/worktreePath'
 import { computeSessionArtifactBookmarks } from '../utils/sessionArtifactBookmarks'
@@ -1716,20 +1717,16 @@ const LAYOUT_COMMAND_IDS = [
     'layout.load',
 ]
 
-// Read/unread gate for the current session, mirroring SessionListItem's
-// canToggleReadState + hasUnread — minus the "is this the active row" guard,
-// since here the session IS the one on screen. Returns `{ unread }` (the raw
-// unread flag), or null when toggling read state isn't allowed (draft, archived,
-// or a process running outside user_turn). Archived sessions never read as
-// unread, so both palette commands are dropped for them.
+// Read/unread gate for the current session, mirroring SessionListItem — minus
+// the "is this the active row" guard, since here the session IS the one on
+// screen. Returns `{ unread }` (the raw unread flag), or null when toggling
+// read state isn't allowed (draft, archived, muted, or a process running
+// outside user_turn).
 function currentSessionReadState() {
     const s = store.getSession(sessionId.value)
-    if (!s || s.draft || s.ephemeral || s.archived) return null
     const ps = store.getProcessState(sessionId.value)
-    if (ps && ps.state !== PROCESS_STATE.USER_TURN) return null
-    const unread = !!s.last_new_content_at
-        && (!s.last_viewed_at || s.last_new_content_at > s.last_viewed_at)
-    return { unread }
+    if (!canToggleSessionReadState(s, ps)) return null
+    return { unread: hasUnreadContent(s) }
 }
 
 function registerSessionCommands() {
@@ -1794,13 +1791,13 @@ function registerSessionCommands() {
         },
         {
             id: 'session.mute',
-            label: 'Mute "Finished Working" Notification',
+            label: 'Silence Notification and Unread Flag',
             icon: 'bell-slash',
             category: 'session',
-            // Mirrors the session header's bell. Silences that one notification
-            // family for this session only; every other alert still comes
-            // through. Kept visible when no such channel is enabled — the flag
-            // is a durable preference, and the toggle says so itself.
+            // Mirrors the session header's bell. Silences the "finished
+            // working" notification family for this session only, and keeps
+            // the session from ever showing as unread; every other alert still
+            // comes through.
             when: () => {
                 const s = store.getSession(sessionId.value)
                 return !!s && !s.draft && !s.ephemeral

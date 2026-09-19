@@ -9,8 +9,9 @@
 //   2. `crossFilterPinned`  — sessions whose pin mode brings them in from
 //                             outside the current filter (`workspace`/`all`)
 //   3. `crossFilterActive`  — sessions with a running process or unread
-//                             content from outside the current filter
-//                             (gated by `showActiveAcrossFilters`)
+//                             content (never a muted one) from outside the
+//                             current filter (gated by
+//                             `showActiveAcrossFilters`)
 //   4. `natural`            — sessions that naturally belong to the filter
 //                             (single project / workspace / all projects)
 //
@@ -21,6 +22,7 @@
 
 import { sessionSortComparator, ALL_PROJECTS_ID } from '../stores/data'
 import { isWorkspaceProjectId, extractWorkspaceId } from './workspaceIds'
+import { hasUnreadContent } from './sessions'
 
 /**
  * Build the archived-filter predicate. The currently-selected session is
@@ -126,10 +128,13 @@ export function computeSidebarSessionBlocks({
 
     // 3. Cross-filter active — running process OR unread content from any
     //    project, excluding sessions already covered by blocks above.
-    //    "Unread" mirrors the DB-side check used by the backend's
-    //    `/api/sessions/?unread=1` endpoint; the "user_turn only" refinement
+    //    "Unread" goes through `hasUnreadContent`, the same rule the backend's
+    //    `/api/sessions/?unread=1` endpoint applies in SQL, so a muted session
+    //    is never promoted on unread grounds. The "user_turn only" refinement
     //    used for the *unread indicator* in SessionListItem is intentionally
-    //    skipped here — a session mid-assistant-turn still deserves surfacing.
+    //    skipped here — a session mid-assistant-turn still deserves surfacing,
+    //    and a muted one still surfaces through its process, since mute is not
+    //    `hidden`.
     let crossFilterActive = []
     if (showActiveAcrossFilters) {
         const processStates = data.processStates
@@ -140,9 +145,7 @@ export function computeSidebarSessionBlocks({
             if (naturalIds.has(s.id) || crossFilterPinnedIds.has(s.id)) return false
             const ps = processStates[s.id]
             const hasProcess = ps != null
-            const isUnread = !!s.last_new_content_at
-                && (!s.last_viewed_at || s.last_new_content_at > s.last_viewed_at)
-            return hasProcess || isUnread
+            return hasProcess || hasUnreadContent(s)
         })
             .filter(passesArchiveFilter)
             .sort(sessionSortComparator(processStates))

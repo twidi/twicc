@@ -16,7 +16,7 @@ import { useSettingsStore } from '../../../stores/settings'
 import { formatDate } from '../../../utils/date'
 import { sessionRouteLocation } from '../../../utils/sessionRoute'
 import { projectPathTitle } from '../../../utils/projectName'
-import { isSessionUnread } from '../../../utils/sessions'
+import { canToggleSessionReadState, isSessionUnread } from '../../../utils/sessions'
 import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES, SESSION_TIME_FORMAT } from '../../../constants'
 import { markSessionReadState, cancelSessionViewedThrottle } from '../../../composables/useWebSocket'
 import { stopSessionProcess } from '../../../composables/useStopSessionProcess'
@@ -197,16 +197,12 @@ const hasUnread = computed(() => {
 
 /**
  * Whether the mark as read/unread menu items should be shown.
- * Hidden when: draft, archived, or process running but not in user_turn.
- * Archived sessions never read as unread (see `hasUnread` / `isSessionUnread`),
- * so toggling their read state is meaningless — both items are dropped from the
- * Session Actions menu. Active session is allowed (mark-unread will deselect it).
+ * Delegates to the shared gate so this menu, the palette and the multi-select
+ * bar stay in step. Active session is allowed (mark-unread will deselect it).
  */
-const canToggleReadState = computed(() => {
-    if (props.session.draft || props.session.ephemeral || props.session.archived) return false
-    if (processState.value && processState.value.state !== PROCESS_STATE.USER_TURN) return false
-    return true
-})
+const canToggleReadState = computed(() =>
+    canToggleSessionReadState(props.session, processState.value)
+)
 
 /**
  * Whether non-danger menu items are shown after the pin block (mark-read/unread,

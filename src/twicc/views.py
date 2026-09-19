@@ -86,8 +86,9 @@ async def _get_sessions_page(
         before_mtime: Cursor for pagination - only return sessions with mtime < this value.
         project_id_list: List of project IDs to filter by (used when project_id is None).
         pinned_only: If True, include pinned sessions (any pin mode) in the union.
-        unread_only: If True, include sessions with unread content (last_new_content_at
-            set AND later than last_viewed_at, or last_viewed_at null) in the union.
+        unread_only: If True, include sessions with unread content — not muted,
+            and last_new_content_at set and either later than last_viewed_at or
+            last_viewed_at null — in the union.
         active_session_ids: If not None, include sessions whose id is in this list
             (typically the agent manager's active session ids) in the union.
 
@@ -116,8 +117,17 @@ async def _get_sessions_page(
     if pinned_only:
         sticky |= Q(pinned__isnull=False)
     if unread_only:
-        sticky |= Q(last_new_content_at__isnull=False) & (
-            Q(last_viewed_at__isnull=True) | Q(last_new_content_at__gt=F("last_viewed_at"))
+        # The SQL twin of the frontend's ``hasUnreadContent``
+        # (``frontend/src/utils/sessions.js``): content newer than the last
+        # view, and the session not muted. Muting suppresses the unread state
+        # as well as the finished-working notifications, so a muted session
+        # must not be force-fetched into the sidebar on this ground. Its other
+        # sticky reasons still apply: the pinned and active branches are
+        # OR-ed with this one and are deliberately mute-blind.
+        sticky |= (
+            Q(mute_on_user_turn=False)
+            & Q(last_new_content_at__isnull=False)
+            & (Q(last_viewed_at__isnull=True) | Q(last_new_content_at__gt=F("last_viewed_at")))
         )
     if active_session_ids:
         sticky |= Q(id__in=active_session_ids)
@@ -150,7 +160,8 @@ async def all_sessions(request):
         before_mtime: Cursor for pagination - only return sessions older than this mtime.
         project_ids: Comma-separated list of project IDs to filter by.
         pinned: When "1"/"true", include pinned sessions (any pin mode) in the result.
-        unread: When "1"/"true", include sessions with unread content in the result.
+        unread: When "1"/"true", include sessions with unread content in the
+            result. A muted session never counts as unread.
         has_process: When "1"/"true", include sessions that have an active Claude SDK
             process. Combined with pinned/unread via UNION when multiple flags are set.
 

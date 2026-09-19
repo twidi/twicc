@@ -18,7 +18,7 @@ import ProcessDuration from '../../ui/ProcessDuration.vue'
 import CostDisplay from '../../ui/CostDisplay.vue'
 import AppTooltip from '../../ui/AppTooltip.vue'
 import { useSharesStore } from '../../../stores/shares'
-import { isUserTurnMuteInert, toggleSessionMute, USER_TURN_SETTINGS_PATH } from '../../../composables/useSessionMute'
+import { toggleSessionMute } from '../../../composables/useSessionMute'
 
 const props = defineProps({
     sessionId: {
@@ -452,18 +452,14 @@ const pinTooltip = computed(() => {
     return `Pinned: ${PIN_MODE_LABELS[session.value.pinned] || session.value.pinned}`
 })
 
-// The mute button gates four channels at once (toast, sound, browser, Apprise).
-// When none of them is enabled it still toggles — the flag is a durable
-// preference that stays correct once a channel comes back — but it says so.
-const noUserTurnChannel = computed(() => isUserTurnMuteInert())
-
-const muteTooltip = computed(() => {
-    const base = session.value?.mute_on_user_turn
-        ? 'Muted — click to restore the "finished working" notification'
-        : 'Notifications on — click to mute the "finished working" notification'
-    if (!noUserTurnChannel.value) return base
-    return `${base}. No such notification is enabled, so this has no effect right now — turn one on in ${USER_TURN_SETTINGS_PATH}.`
-})
+// The mute button suppresses two things at once: the "finished working"
+// notifications (toast, sound, browser, Apprise) and the session's unread
+// state. The unread half always applies, so the button is never a no-op.
+const muteTooltip = computed(() => (
+    session.value?.mute_on_user_turn
+        ? 'Muted — click to restore the "finished working" notification and the unread flag'
+        : 'Notifications on — click to silence the "finished working" notification and stop this session showing as unread'
+))
 
 function handleMuteToggle() {
     toggleSessionMute(props.sessionId)
