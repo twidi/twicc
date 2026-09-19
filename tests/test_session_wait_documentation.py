@@ -281,7 +281,7 @@ def test_the_documented_numbers_are_read_from_the_code():
         assert text.count("flush window") == text.count(window) >= 1, label
 
 
-def _refusal_flags() -> set[str]:
+def _refusal_flags(source: str | None = None) -> set[str]:
     """Every flag the command refuses on, read off its own `emit_error` calls.
 
     Derived rather than listed: a pinned set would be bumped to match whatever
@@ -298,7 +298,7 @@ def _refusal_flags() -> set[str]:
 
     from twicc.cli import session as cli_session
 
-    module = ast.parse(inspect.getsource(cli_session))
+    module = ast.parse(inspect.getsource(cli_session) if source is None else source)
     functions = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
 
     flags: set[str] = set()
@@ -323,10 +323,6 @@ def _refusal_flags() -> set[str]:
                 continue
             for part in [*node.args, *(kw.value for kw in node.keywords if kw.arg != "code")]:
                 flags |= set(FLAG.findall(ast.unparse(part)))
-    # `--since` is refused inside `_parse_instant`, never in `wait`: finding it
-    # is what says the walk followed the calls. Asserting the callee's *name*
-    # would instead break the day it is inlined, which the walk survives.
-    assert "--since" in flags, (sorted(flags), sorted(seen))
     return flags
 
 
@@ -347,6 +343,43 @@ def _refusal_clauses() -> dict[str, str]:
                 clauses[label] = line[line.index("local refusal"):].split(".", 1)[0]
                 break
     return clauses
+
+
+HELPER_REFUSAL = """
+from twicc.cli._output import emit_error
+
+
+def wait(session_id, *, since=None):
+    _refuse_it()
+
+
+def _refuse_it():
+    emit_error("Error: --only-in-a-helper is not allowed.", code=1)
+"""
+
+INDIRECT_REFUSAL = HELPER_REFUSAL.replace("_refuse_it()", "globals()['_refuse_it']()", 1)
+
+
+def test_the_extraction_follows_a_call_out_of_wait():
+    """Pinned on a module of its own, because nothing in the real one can say it.
+
+    Every flag `_parse_instant` refuses on, `wait` also names — the two cursors
+    passed together — so following the call currently adds nothing observable,
+    and an assertion over the real module passes whether the walk descends or
+    not. The shape is not hypothetical: `_get_session`'s own refusal already
+    lives in a helper.
+    """
+    assert "--only-in-a-helper" in _refusal_flags(HELPER_REFUSAL)
+
+
+def test_and_stops_at_a_call_it_cannot_read():
+    """The limit, stated rather than discovered: the walk follows a plain name.
+
+    Reached through anything else — a dict, an attribute, a variable — the
+    callee is invisible and its refusal is lost. Nothing in this CLI is
+    written that way; this says what would have to change if it were.
+    """
+    assert "--only-in-a-helper" not in _refusal_flags(INDIRECT_REFUSAL)
 
 
 def test_the_exit_code_enumerations_name_every_refusal():
