@@ -304,9 +304,11 @@ and an empty list would say the opposite.
 it on a session blocked on a large patch and you get the patch.
 
 **Read `actions` before answering.** A question whose only action is `cancel` is
-structurally unanswerable here: no questions at all, a secret one, or one
-carrying no id — nothing can target that last kind, so the request can never
-be answered in full.
+structurally unanswerable here. Four cases: no questions at all, a secret one,
+one carrying no id, or two sharing the same id. The last two are the same
+problem — `--answer` names a question by its id, so a set you cannot name one
+by one can never be answered in full, and every attempt earns
+`missing_answers`. Cancel it, or answer it in the web UI.
 
 Nothing pending is exit 0 with an empty list; no agent at all is exit 0 with
 `agent_state: "dead"`. Neither is an error.

@@ -111,7 +111,10 @@ class TestTheDisguisedMcpApproval:
         [{"question": "no id at all"}],
     ])
     def test_a_pathological_payload_does_not_crash(self, questions):
-        # The four defensive guards, plus a question with no id. None of these
+        # The rule's own three guards — a list with nothing in it, a first
+        # entry that is not a dict, an id that is not a string — plus a
+        # question with no id at all. (Its fourth guard, "is this a list",
+        # now lives in the shared reader and has its own test.) None of these
         # is a disguised approval, so none is reported out of scope — which is
         # a different claim from being answerable: a question with no id is
         # cancel-only, and that rule has its own tests.
@@ -149,12 +152,6 @@ class TestTheStoredQuestionsReader:
         assert codex_pq.normalize_pending_request(
             codex_question(questions))["questions"] == []
 
-    @pytest.mark.parametrize("questions", [42, {"a": 1}, "text"])
-    def test_the_disguised_approval_rule_survives_it(self, questions):
-        # It reads the same list, and a non-subscriptable value would raise
-        # before any of its four guards ran.
-        assert codex_pq.normalize_pending_request(
-            codex_question(questions))["kind"] == "question"
 
 
 class TestTheEntryShape:
