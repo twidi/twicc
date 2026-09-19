@@ -215,13 +215,6 @@ const hasItemsAfterPinBlock = computed(() => {
     return canToggleReadState.value || (!s.draft && !s.archived) || s.archived
 })
 
-/**
- * Name of the session's own project, for the menu's "Edit project" entry. The
- * sidebar list mixes projects (all-projects / workspace mode, pinned or
- * cross-filter sessions), so the entry names it instead of relying on the route.
- */
-const menuProjectName = computed(() => store.getProjectDisplayName(props.session.project_id))
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Settings
 // ═══════════════════════════════════════════════════════════════════════════
@@ -686,7 +679,18 @@ function handleMenuSelect(event) {
             <wa-divider></wa-divider>
             <wa-dropdown-item value="edit-project">
                 <wa-icon slot="icon" name="pencil"></wa-icon>
-                Edit project “{{ menuProjectName }}”…
+                <!-- The project is named with the same badge as everywhere else
+                     (color dot / icon, and the main repo ▸ folder pair when the
+                     session lives in a worktree). The sidebar list mixes
+                     projects, so the entry names it instead of relying on the
+                     route. -->
+                <span class="menu-project-entry">
+                    Edit project
+                    <span class="menu-project-badge">
+                        <WorktreeBadge v-if="isProjectWorktree" :project-id="session.project_id" />
+                        <ProjectBadge v-else :project-id="session.project_id" />…
+                    </span>
+                </span>
             </wa-dropdown-item>
         </wa-dropdown>
         <AppTooltip :for="`session-menu-trigger-${session.id}`">Session actions</AppTooltip>
@@ -881,6 +885,22 @@ function handleMenuSelect(event) {
 /* When comments indicator is present, unread doesn't need margin-left: auto */
 .session-comments-indicator + .standalone-unread-indicator {
     margin-left: 0;
+}
+
+/* "Edit project <badge>…" menu entry: keep the label, the badge and the
+   ellipsis on one baseline-aligned line. */
+.menu-project-entry {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    min-width: 0;
+}
+
+/* The badge and the trailing ellipsis form one item: no gap between them. */
+.menu-project-badge {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
 }
 
 .session-project {
