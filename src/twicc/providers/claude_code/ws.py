@@ -326,9 +326,14 @@ class ClaudeCodeWSHandler:
             if decision == "allow":
                 updated_input = content.get("updated_input")
 
-                # Reconstruct accepted permission suggestions (if any) from the frontend
+                # Reconstruct accepted permission suggestions (if any) from the
+                # frontend. Kept only when the shape is the one every reader
+                # below assumes: a stale bundle or a replayed frame sending a
+                # bare value would otherwise raise out of this consumer, which
+                # drops the browser's updates channel and strands the approval.
                 updated_permissions = None
-                raw_permissions = content.get("updated_permissions")
+                raw = content.get("updated_permissions")
+                raw_permissions = [p for p in raw if isinstance(p, dict)] if isinstance(raw, list) else []
                 if raw_permissions:
                     # Clamp a setMode escalation to the trust floor *before* it
                     # reaches the SDK or the DB write below — both read this list.
@@ -384,9 +389,11 @@ class ClaudeCodeWSHandler:
             )
             return
 
-        # Persist setMode suggestions in DB so future resumes use the correct mode
+        # Persist setMode suggestions in DB so future resumes use the correct
+        # mode. Reuses the filtered list above — same condition, so it is always
+        # bound, and re-reading the payload would undo the check. The clamp
+        # mutates those dicts in place, so the persisted mode is the clamped one.
         if request_type == "tool_approval" and content.get("decision") == "allow":
-            raw_permissions = content.get("updated_permissions")
             if raw_permissions:
                 for perm in raw_permissions:
                     if perm.get("type") == "setMode" and perm.get("mode"):
