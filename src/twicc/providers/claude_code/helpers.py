@@ -197,6 +197,16 @@ you: when the user asks, re-invoke `Workflow` with `resumeFromRunId`.
 class ClaudeCodeHelpers(BaseProviderHelpers):
     """Helpers for sessions produced by the Claude Code CLI / SDK."""
 
+    def normalize_pending_request(self, pending, *, raw: bool = False) -> dict:
+        from .pending_question import normalize_pending_request
+
+        return normalize_pending_request(pending, raw=raw)
+
+    def build_question_response(self, pending, *, action: str, answers: dict):
+        from .pending_question import build_question_response
+
+        return build_question_response(pending, action=action, answers=answers)
+
     def get_queue_completions(self, items):
         from .notifications import parse_queue_completion
 

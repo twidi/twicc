@@ -283,6 +283,25 @@ class BaseProviderHelpers:
         """Return persisted (child id, launch tool id, timestamp) completions."""
         return []
 
+    def normalize_pending_request(self, pending, *, raw: bool = False) -> dict:
+        """Describe one :class:`~twicc.agent.states.PendingRequest` for the CLI.
+
+        Answerable questions get the full entry, everything else the minimal
+        ``out_of_scope`` one. See ``docs/plans/2026-09-18-question-cli-design.md``
+        §3 and §5.
+        """
+        raise NotImplementedError
+
+    def build_question_response(self, pending, *, action: str, answers: dict):
+        """Translate an answer into the wire response the provider expects.
+
+        ``action`` is one of ``submit`` / ``partial`` / ``cancel``; deriving
+        which one applies is the caller's rule, not the translator's. Codex has
+        no ``partial``. ``answers`` is keyed by the ids
+        :meth:`normalize_pending_request` published, each value a list.
+        """
+        raise NotImplementedError
+
     def get_spawn_display_name(self, item, tool_use_id) -> str | None:
         """Name the agent a spawn call created, read from that call's own input.
 

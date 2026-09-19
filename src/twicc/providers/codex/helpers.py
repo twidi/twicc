@@ -134,6 +134,16 @@ async def _broadcast_flagged_session(job) -> None:
 class CodexHelpers(BaseProviderHelpers):
     """Helpers for sessions produced by the Codex CLI."""
 
+    def normalize_pending_request(self, pending, *, raw: bool = False) -> dict:
+        from .pending_question import normalize_pending_request
+
+        return normalize_pending_request(pending, raw=raw)
+
+    def build_question_response(self, pending, *, action: str, answers: dict):
+        from .pending_question import build_question_response
+
+        return build_question_response(pending, action=action, answers=answers)
+
     def get_spawn_display_name(self, item, tool_use_id) -> str | None:
         """``Frontend reader`` from the ``spawn_agent`` call's ``task_name``.
 

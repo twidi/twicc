@@ -1,0 +1,318 @@
+"""The per-provider pending-question translation.
+
+Two directions per provider: describing a pending request for
+``session <ID> pending-request``, and turning an answer into the wire response
+the agent receives. The filter that decides which pending requests are
+answerable is shared, so it is tested once per provider payload shape rather
+than once per provider module.
+
+Design: ``docs/plans/2026-09-18-question-cli-design.md``.
+"""
+
+from __future__ import annotations
+
+import time
+
+import pytest
+
+from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+
+from twicc.agent.states import PendingRequest
+from twicc.core.enums import Provider
+from twicc.providers.claude_code import pending_question as claude_pq
+from twicc.providers.codex import pending_question as codex_pq
+from twicc.providers.helpers import get_provider_helpers
+
+
+def claude_question(questions=None, **overrides) -> PendingRequest:
+    fields = {
+        "request_id": "req-claude",
+        "request_type": "ask_user_question",
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": questions if questions is not None else [
+            {"question": "Which database?", "header": "Database",
+             "options": [{"label": "PostgreSQL", "description": "Reliable"},
+                         {"label": "SQLite", "description": "Lightweight"}]},
+        ]},
+        "created_at": time.time(),
+    }
+    fields.update(overrides)
+    return PendingRequest(**fields)
+
+
+def codex_question(questions=None, **overrides) -> PendingRequest:
+    fields = {
+        "request_id": "req-codex",
+        "request_type": "ask_user_question",
+        "tool_name": "toolRequestUserInput",
+        "tool_input": {"questions": questions if questions is not None else [
+            {"id": "db_choice", "header": "Database", "question": "Which database?",
+             "isOther": False, "isSecret": False,
+             "options": [{"label": "PostgreSQL", "description": "Reliable"},
+                         {"label": "SQLite", "description": "Lightweight"}]},
+        ]},
+        "created_at": time.time(),
+    }
+    fields.update(overrides)
+    return PendingRequest(**fields)
+
+
+class TestTheFilter:
+    def test_a_claude_question_is_answerable(self):
+        assert claude_pq.normalize_pending_request(claude_question())["kind"] == "question"
+
+    def test_a_codex_question_is_answerable(self):
+        assert codex_pq.normalize_pending_request(codex_question())["kind"] == "question"
+
+    def test_a_tool_approval_is_out_of_scope(self):
+        pending = claude_question(request_type="tool_approval", tool_name="Bash",
+                                  tool_input={"command": "ls"})
+        entry = claude_pq.normalize_pending_request(pending)
+        assert entry["kind"] == "out_of_scope"
+        assert entry["reason"] == "tool_approval"
+
+    def test_an_elicitation_is_out_of_scope_despite_its_request_type(self):
+        # It carries ``ask_user_question`` too, which is why the filter cannot
+        # be on ``request_type`` alone.
+        pending = claude_question(tool_name="elicitationForm", tool_input={})
+        entry = claude_pq.normalize_pending_request(pending)
+        assert entry["kind"] == "out_of_scope"
+        assert entry["reason"] == "elicitation"
+
+    def test_a_degraded_hybrid_question_is_out_of_scope(self):
+        # The GUI-expiry rewrite changes the request_type and leaves the
+        # tool_name intact, which is why the filter cannot be on tool_name alone.
+        pending = claude_question(request_type="hybrid_terminal")
+        entry = claude_pq.normalize_pending_request(pending)
+        assert entry["kind"] == "out_of_scope"
+        assert entry["reason"] == "terminal_only"
+
+    def test_a_codex_plan_prompt_is_out_of_scope(self):
+        pending = codex_question(request_type="tool_approval", tool_name="planImplementation",
+                                 tool_input={})
+        assert codex_pq.normalize_pending_request(pending)["reason"] == "choice"
+
+
+class TestTheDisguisedMcpApproval:
+    def test_the_prefix_excludes_it(self):
+        pending = codex_question([
+            {"id": "mcp_tool_call_approval_call-1", "question": "Allow this tool?",
+             "options": [{"label": "Allow"}, {"label": "Cancel"}]},
+        ])
+        entry = codex_pq.normalize_pending_request(pending)
+        assert entry["kind"] == "out_of_scope"
+        assert entry["reason"] == "mcp_tool_approval"
+
+    @pytest.mark.parametrize("questions", [
+        "not a list",
+        [],
+        ["not a dict"],
+        [{"id": 42}],
+        [{"question": "no id at all"}],
+    ])
+    def test_a_pathological_payload_does_not_crash(self, questions):
+        # The four defensive guards, plus a question with no id. None of these
+        # is a disguised approval, so all stay answerable.
+        entry = codex_pq.normalize_pending_request(codex_question(questions))
+        assert entry["kind"] == "question"
+
+    def test_a_claude_question_is_never_a_disguised_approval(self):
+        # The rule is Codex-only: an AskUserQuestion has no ids at all.
+        pending = claude_question([
+            {"id": "mcp_tool_call_approval_x", "question": "Which database?"},
+        ])
+        assert claude_pq.normalize_pending_request(pending)["kind"] == "question"
+
+
+class TestTheEntryShape:
+    def test_claude_publishes_one_based_indexes(self):
+        entry = claude_pq.normalize_pending_request(claude_question([
+            {"question": "First?", "header": "A", "options": []},
+            {"question": "Second?", "header": "B", "options": [], "multiSelect": True},
+        ]))
+        assert [q["id"] for q in entry["questions"]] == ["1", "2"]
+        assert entry["questions"][0]["multi_select"] is False
+        assert entry["questions"][1]["multi_select"] is True
+        # "Other" is unconditional in the widget, and Claude has no secrets.
+        assert all(q["allows_free_text"] is True for q in entry["questions"])
+        assert all(q["secret"] is False for q in entry["questions"])
+
+    def test_codex_publishes_native_ids(self):
+        entry = codex_pq.normalize_pending_request(codex_question())
+        question = entry["questions"][0]
+        assert question["id"] == "db_choice"
+        assert question["multi_select"] is False
+        assert question["allows_free_text"] is False
+        assert question["options"] == [
+            {"label": "PostgreSQL", "description": "Reliable"},
+            {"label": "SQLite", "description": "Lightweight"},
+        ]
+
+    def test_codex_free_text_follows_is_other(self):
+        entry = codex_pq.normalize_pending_request(codex_question([
+            {"id": "q1", "question": "Why?", "isOther": True, "options": [{"label": "A"}]},
+        ]))
+        assert entry["questions"][0]["allows_free_text"] is True
+
+    def test_codex_free_text_when_a_question_has_no_options(self):
+        entry = codex_pq.normalize_pending_request(codex_question([
+            {"id": "q1", "question": "Why?", "options": None},
+        ]))
+        assert entry["questions"][0]["allows_free_text"] is True
+
+    def test_the_created_at_becomes_iso_with_an_age(self):
+        pending = claude_question(created_at=time.time() - 42)
+        entry = claude_pq.normalize_pending_request(pending)
+        assert entry["created_at"].startswith("20")
+        assert entry["created_at"].endswith("+00:00")
+        assert 41 <= entry["age_seconds"] <= 44
+
+    def test_an_out_of_scope_entry_carries_no_age(self):
+        pending = claude_question(request_type="tool_approval", tool_name="Bash",
+                                  tool_input={"command": "ls"})
+        entry = claude_pq.normalize_pending_request(pending)
+        assert set(entry) == {"request_id", "created_at", "kind", "reason",
+                              "tool_name", "actions"}
+        assert entry["actions"] == []
+
+    def test_raw_covers_a_question_entry(self):
+        pending = claude_question()
+        entry = claude_pq.normalize_pending_request(pending, raw=True)
+        assert entry["raw"] == {"tool_input": pending.tool_input}
+
+    def test_raw_covers_an_out_of_scope_entry_too(self):
+        pending = claude_question(request_type="tool_approval", tool_name="Bash",
+                                  tool_input={"command": "ls"})
+        entry = claude_pq.normalize_pending_request(pending, raw=True)
+        assert entry["raw"] == {"tool_input": {"command": "ls"}}
+
+
+class TestTheAdvertisedActions:
+    def test_an_ordinary_question_offers_both(self):
+        entry = claude_pq.normalize_pending_request(claude_question())
+        assert [a["action"] for a in entry["actions"]] == ["answer", "cancel"]
+        assert entry["actions"][0]["accepts"] == ["--answer"]
+        # ``--request-id`` and ``--timeout`` are accepted by every action and
+        # never appear here.
+        assert "cancel" not in entry["actions"][1]
+
+    def test_an_empty_question_list_offers_cancel_alone(self):
+        entry = claude_pq.normalize_pending_request(claude_question([]))
+        assert entry["kind"] == "question"
+        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+
+    def test_a_secret_question_offers_cancel_alone(self):
+        entry = codex_pq.normalize_pending_request(codex_question([
+            {"id": "q1", "question": "Token?", "isSecret": True, "options": [{"label": "A"}]},
+        ]))
+        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+
+
+class TestTheClaudeTranslator:
+    def test_submit_allows_with_the_stored_questions(self):
+        pending = claude_question()
+        response = claude_pq.build_question_response(
+            pending, action="submit", answers={"1": ["PostgreSQL"]})
+        assert isinstance(response, PermissionResultAllow)
+        assert response.updated_input == {
+            "questions": pending.tool_input["questions"],
+            "answers": {"Which database?": "PostgreSQL"},
+        }
+
+    def test_multiple_values_join_the_way_the_widget_joins_them(self):
+        pending = claude_question([
+            {"question": "Which caches?", "header": "Cache", "multiSelect": True,
+             "options": [{"label": "Redis"}, {"label": "Memcached"}]},
+        ])
+        response = claude_pq.build_question_response(
+            pending, action="submit", answers={"1": ["Redis", "Memcached"]})
+        assert response.updated_input["answers"] == {"Which caches?": "Redis, Memcached"}
+
+    def test_partial_denies_with_the_native_clarify_text(self):
+        pending = claude_question([
+            {"question": "Which database?", "header": "Database", "options": []},
+            {"question": "Which cache?", "header": "Cache", "options": []},
+        ])
+        response = claude_pq.build_question_response(
+            pending, action="partial", answers={"1": ["PostgreSQL"]})
+        assert isinstance(response, PermissionResultDeny)
+        assert response.message == (
+            "The user wants to clarify these questions.\n"
+            "    This means they may have additional information, context or questions for you.\n"
+            "    Take their response into account and then reformulate the questions if appropriate.\n"
+            "    Start by asking them what they would like to clarify.\n"
+            "\n"
+            "    Questions asked:\n"
+            '- "Which database?"\n'
+            "  Answer: PostgreSQL\n"
+            '- "Which cache?"\n'
+            "  (No answer provided)"
+        )
+
+    def test_cancel_denies_with_the_fixed_text(self):
+        response = claude_pq.build_question_response(
+            claude_question(), action="cancel", answers={})
+        assert isinstance(response, PermissionResultDeny)
+        assert response.message == claude_pq.QUESTION_CANCEL_MESSAGE
+
+    def test_an_unknown_action_is_a_programming_error(self):
+        with pytest.raises(ValueError):
+            claude_pq.build_question_response(claude_question(), action="nope", answers={})
+
+
+class TestTheClaudeUiAdapter:
+    def test_it_keys_by_index_and_wraps_in_a_list(self):
+        pending = claude_question([
+            {"question": "Which database?", "options": []},
+            {"question": "Which cache?", "options": []},
+        ])
+        assert claude_pq.answers_from_ui(pending, {"Which cache?": "Redis, Memcached"}) == {
+            "2": ["Redis, Memcached"],
+        }
+
+    def test_the_round_trip_is_lossless(self):
+        # The widget pre-joins a multi-select answer; wrapping it in a single
+        # element list means the translator does not join it a second time.
+        pending = claude_question([{"question": "Which caches?", "multiSelect": True,
+                                    "options": []}])
+        ui_answers = {"Which caches?": "Redis, Memcached"}
+        response = claude_pq.build_question_response(
+            pending, action="submit",
+            answers=claude_pq.answers_from_ui(pending, ui_answers))
+        assert response.updated_input["answers"] == ui_answers
+
+
+class TestTheCodexTranslator:
+    def test_submit_keys_by_the_native_id(self):
+        response = codex_pq.build_question_response(
+            codex_question(), action="submit", answers={"db_choice": ["PostgreSQL"]})
+        assert response == {"answers": {"db_choice": {"answers": ["PostgreSQL"]}}}
+
+    def test_cancel_is_an_empty_answer_map(self):
+        assert codex_pq.build_question_response(
+            codex_question(), action="cancel", answers={}) == {"answers": {}}
+
+    def test_partial_is_a_programming_error(self):
+        # A partially answered Codex request is ``missing_answers``; the caller
+        # refuses it before reaching the translator.
+        with pytest.raises(ValueError):
+            codex_pq.build_question_response(
+                codex_question(), action="partial", answers={"db_choice": ["PostgreSQL"]})
+
+
+class TestTheProviderDispatch:
+    """Without these overrides the base defaults raise and nothing works."""
+
+    def test_claude_helpers_reach_their_module(self):
+        helpers = get_provider_helpers(Provider.CLAUDE_CODE)
+        assert helpers.normalize_pending_request(claude_question())["kind"] == "question"
+        assert isinstance(
+            helpers.build_question_response(claude_question(), action="cancel", answers={}),
+            PermissionResultDeny,
+        )
+
+    def test_codex_helpers_reach_their_module(self):
+        helpers = get_provider_helpers(Provider.CODEX)
+        assert helpers.normalize_pending_request(codex_question())["kind"] == "question"
+        assert helpers.build_question_response(
+            codex_question(), action="cancel", answers={}) == {"answers": {}}
