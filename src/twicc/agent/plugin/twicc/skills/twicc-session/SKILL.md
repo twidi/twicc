@@ -436,6 +436,6 @@ $TWICC session abc123 workflow wf_cd590ff1
 3. Messages: render transcript in order, prefixing each entry with its role.
 4. Agents: list with titles; offer to inspect any specific subagent.
 5. Plan: render the `content` markdown as-is.
-5. Pending request: say what is waiting and whether you can answer it; quote the question and its options.
-6. You are in TwiCC — link to a session: `[link text](/project/{project_id}/session/{session_id})`.
-6. Only include cost information if explicitly asked.
+6. Pending request: say what is waiting and whether you can answer it; quote the question and its options.
+7. You are in TwiCC — link to a session: `[link text](/project/{project_id}/session/{session_id})`.
+8. Only include cost information if explicitly asked.

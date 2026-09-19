@@ -30,10 +30,7 @@ from twicc.providers.claude_code.agent.elicitation import (
     default_elicitation_response,
 )
 from twicc.providers.claude_code.agent.manager import get_claude_code_agent_manager
-from twicc.providers.claude_code.pending_question import (
-    answers_from_ui,
-    build_question_response,
-)
+from twicc.providers.claude_code.pending_question import build_question_response_from_ui
 from twicc.providers.pending_question import QUESTION_ACTIONS
 from twicc.providers.claude_code.auth import (
     check_and_broadcast as check_auth_and_broadcast,
@@ -368,10 +365,8 @@ class ClaudeCodeWSHandler:
                     action,
                 )
                 action = "submit"
-            response = build_question_response(
-                matching,
-                action=action,
-                answers=answers_from_ui(matching, content.get("answers", {})),
+            response = build_question_response_from_ui(
+                matching, action=action, ui_answers=content.get("answers", {}),
             )
 
         else:

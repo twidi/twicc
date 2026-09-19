@@ -113,3 +113,18 @@ def test_cancel_denies_with_the_fixed_decline_text(pending):
         "The user chose not to answer these questions. Acknowledge this briefly "
         "and ask them how they would like to proceed."
     )
+
+
+def test_a_malformed_answers_payload_does_not_break_the_connection(pending):
+    """A frame this handler cannot read must not tear the WebSocket down.
+
+    An exception raised here propagates out of the consumer: the browser loses
+    its updates channel, and the pending request stays unresolved, so the agent
+    is blocked with nothing left to unblock it. The old branch never inspected
+    the payload and so could not raise; the shared translator must keep that
+    property.
+    """
+    response = _answer(pending, {"action": "submit", "answers": ["PostgreSQL"]})
+
+    assert isinstance(response, PermissionResultAllow)
+    assert response.updated_input == {"questions": QUESTIONS, "answers": {}}

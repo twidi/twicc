@@ -145,8 +145,14 @@ def test_a_malformed_answer_exits_1(submitted):
 ])
 def test_a_non_positive_timeout_exits_1(monkeypatch, command):
     monkeypatch.setattr(pending_question, "_setup_django", lambda: None)
+
     result = CliRunner().invoke(app, ["session", SESSION_ID, *command])
+
     assert result.exit_code == 1
+    # The exit code alone proves nothing: every later refusal on this path also
+    # exits 1, so dropping the guard would leave the test green on an unknown
+    # session instead. The message is what names which check fired.
+    assert "--timeout" in result.output
 
 
 def test_a_stray_token_after_the_read_is_a_usage_error():

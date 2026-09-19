@@ -17,6 +17,8 @@ Design: ``docs/plans/2026-09-18-question-cli-design.md`` §5 and §6.
 
 from __future__ import annotations
 
+import logging
+
 from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
 
 from twicc.providers.pending_question import (
@@ -25,6 +27,9 @@ from twicc.providers.pending_question import (
     out_of_scope_entry,
     question_entry,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 # Deny message sent when the user cancels an AskUserQuestion. Deliberately different
@@ -61,7 +66,9 @@ def build_clarify_message(questions: list[dict], answers: dict) -> str:
         "    Questions asked:",
     ]
     for question in questions:
-        text = question.get("question", "")
+        # A malformed entry keeps its line rather than vanishing: the agent
+        # numbered its questions and must be able to count them back.
+        text = question.get("question", "") if isinstance(question, dict) else ""
         lines.append(f'- "{text}"')
         answer = answers.get(text)
         if answer:
@@ -71,12 +78,22 @@ def build_clarify_message(questions: list[dict], answers: dict) -> str:
     return "\n".join(lines)
 
 
-def _stored_questions(pending) -> list[dict]:
+def _stored_questions(pending) -> list:
+    """The stored question list, passed on as the agent wrote it.
+
+    Entries are NOT filtered: a question is identified by its position, so
+    dropping a malformed one would renumber every question after it. The
+    callers guard the entry instead.
+    """
     questions = pending.tool_input.get("questions")
-    return [q for q in questions if isinstance(q, dict)] if isinstance(questions, list) else []
+    return questions if isinstance(questions, list) else []
 
 
-def _normalize_question(question: dict, index: int) -> dict:
+def _normalize_question(question, index: int) -> dict:
+    if not isinstance(question, dict):
+        # A pathological payload keeps its slot, so the ids stay aligned with
+        # what the agent asked; it just carries nothing to answer.
+        question = {}
     return {
         # 1-based index: Claude has no ids, and a 0-based one reads as a falsy
         # id in every shell that interpolates it.
@@ -114,49 +131,59 @@ def answers_by_text(pending, answers: dict[str, list[str]]) -> dict[str, str]:
             index = int(question_id) - 1
         except (TypeError, ValueError):
             continue
-        if 0 <= index < len(stored):
+        if 0 <= index < len(stored) and isinstance(stored[index], dict):
             mapped[stored[index].get("question", "")] = ", ".join(values)
     return mapped
 
 
-def answers_from_ui(pending, ui_answers: dict) -> dict[str, list[str]]:
-    """Map the widget's ``{question text: value}`` onto the normalized ids.
+def _response_for(pending, *, action: str, answers: dict):
+    """The wire response, over the widget's own ``{question text: value}`` map.
 
-    Two jobs, and the second is easy to miss: the widget sends one **pre-joined**
-    string per question, while the normalized form carries a list. Wrapping each
-    value in a single-element list keeps the round trip lossless — forget it and
-    the translator re-joins an already-joined string.
-    """
-    by_text = {
-        q.get("question", ""): str(i + 1)
-        for i, q in enumerate(_stored_questions(pending))
-    }
-    return {
-        by_text[text]: [value]
-        for text, value in ui_answers.items() if text in by_text
-    }
-
-
-def build_question_response(pending, *, action: str, answers: dict[str, list[str]]):
-    """Return the ``PermissionResult`` for one answered question request.
-
-    ``action`` is explicit on purpose. Deriving submit / partial from how many
-    questions are answered is a **caller** rule: the CLI service derives it and
-    raises the rejections, while the web UI already decides its own action
-    front-end side and passes it straight through. That is what keeps the
-    widget's behaviour identical.
+    Both entry points land here, which is what makes the two paths one
+    implementation. It reads the answers but never rebuilds them, so any value
+    the caller put in reaches the agent as the caller wrote it.
     """
     if action == "cancel":
         return PermissionResultDeny(message=QUESTION_CANCEL_MESSAGE)
 
     stored = _stored_questions(pending)
-    mapped = answers_by_text(pending, answers)
     if action == "partial":
         # A plain deny, not an interrupt: the agent stays alive and sees the
         # partial answers through the native clarify text.
-        return PermissionResultDeny(message=build_clarify_message(stored, mapped))
+        return PermissionResultDeny(message=build_clarify_message(stored, answers))
     if action != "submit":
         raise ValueError(f"unknown question action: {action!r}")
     # The questions are rebuilt from the stored request, never from the caller,
     # so a caller cannot forge the question set.
-    return PermissionResultAllow(updated_input={"questions": stored, "answers": mapped})
+    return PermissionResultAllow(updated_input={"questions": stored, "answers": answers})
+
+
+def build_question_response(pending, *, action: str, answers: dict[str, list[str]]):
+    """Return the ``PermissionResult`` for one answered question request.
+
+    ``answers`` is keyed by the ids :func:`normalize_pending_request` publishes,
+    each value a list. ``action`` is explicit on purpose: deriving submit /
+    partial from how many questions are answered is a **caller** rule, which is
+    what lets the web UI keep deciding its own action.
+    """
+    return _response_for(pending, action=action,
+                         answers=answers_by_text(pending, answers))
+
+
+def build_question_response_from_ui(pending, *, action: str, ui_answers):
+    """Same, over the payload the web UI sends: ``{question text: value}``.
+
+    The widget pre-joins a multi-select answer into one string, so its map needs
+    no translation at all — it already is what the agent receives. Going through
+    the id form and back would only add two chances to lose a value.
+
+    A non-dict ``ui_answers`` is a malformed payload, not a user outcome: it is
+    logged and read as "nothing answered" rather than raised, since this runs
+    inside the WebSocket consumer, where an exception would drop the
+    connection and leave the request pending.
+    """
+    if not isinstance(ui_answers, dict):
+        logger.error("claude_code ask_user_question: invalid answers type=%r",
+                     type(ui_answers).__name__)
+        ui_answers = {}
+    return _response_for(pending, action=action, answers=ui_answers)

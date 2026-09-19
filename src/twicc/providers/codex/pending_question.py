@@ -22,12 +22,23 @@ from twicc.providers.pending_question import (
 )
 
 
-def _stored_questions(pending) -> list[dict]:
+logger = logging.getLogger(__name__)
+
+
+def _stored_questions(pending) -> list:
+    """The stored question list, entries included whatever their shape.
+
+    Dropping a malformed one would shorten the list the caller must answer in
+    full, so a request with one unanswerable question would submit as if it had
+    been answered. The normalizer guards the entry instead.
+    """
     questions = pending.tool_input.get("questions")
-    return [q for q in questions if isinstance(q, dict)] if isinstance(questions, list) else []
+    return questions if isinstance(questions, list) else []
 
 
-def _normalize_question(question: dict) -> dict:
+def _normalize_question(question) -> dict:
+    if not isinstance(question, dict):
+        question = {}
     question_id = question.get("id")
     options = normalized_options(question.get("options"))
     return {
@@ -70,9 +81,6 @@ def build_question_response(pending, *, action: str, answers: dict[str, list[str
     if action != "submit":
         raise ValueError(f"unknown question action for codex: {action!r}")
     return {"answers": {qid: {"answers": list(values)} for qid, values in answers.items()}}
-
-
-logger = logging.getLogger(__name__)
 
 
 def response_from_ui(content: dict) -> dict | None:

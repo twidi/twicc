@@ -192,9 +192,10 @@ class TestTheAdvertisedActions:
         entry = claude_pq.normalize_pending_request(claude_question())
         assert [a["action"] for a in entry["actions"]] == ["answer", "cancel"]
         assert entry["actions"][0]["accepts"] == ["--answer"]
-        # ``--request-id`` and ``--timeout`` are accepted by every action and
-        # never appear here.
-        assert "cancel" not in entry["actions"][1]
+        # ``accepts`` lists the answer-carrying flags only: ``--request-id`` and
+        # ``--timeout`` are accepted by every action, so a targeted cancel stays
+        # expressible when two questions are pending.
+        assert "accepts" not in entry["actions"][1]
 
     def test_an_empty_question_list_offers_cancel_alone(self):
         entry = claude_pq.normalize_pending_request(claude_question([]))
@@ -260,26 +261,57 @@ class TestTheClaudeTranslator:
             claude_pq.build_question_response(claude_question(), action="nope", answers={})
 
 
-class TestTheClaudeUiAdapter:
-    def test_it_keys_by_index_and_wraps_in_a_list(self):
-        pending = claude_question([
-            {"question": "Which database?", "options": []},
-            {"question": "Which cache?", "options": []},
-        ])
-        assert claude_pq.answers_from_ui(pending, {"Which cache?": "Redis, Memcached"}) == {
-            "2": ["Redis, Memcached"],
-        }
+class TestTheWidgetEntryPoint:
+    """The web UI's own payload, which must reach the agent untouched."""
 
-    def test_the_round_trip_is_lossless(self):
-        # The widget pre-joins a multi-select answer; wrapping it in a single
-        # element list means the translator does not join it a second time.
+    def test_the_widget_answers_are_forwarded_verbatim(self):
+        # The widget pre-joins a multi-select answer, so its map already is what
+        # the agent receives. Re-deriving it would only add a chance to lose it.
         pending = claude_question([{"question": "Which caches?", "multiSelect": True,
                                     "options": []}])
         ui_answers = {"Which caches?": "Redis, Memcached"}
-        response = claude_pq.build_question_response(
-            pending, action="submit",
-            answers=claude_pq.answers_from_ui(pending, ui_answers))
+        response = claude_pq.build_question_response_from_ui(
+            pending, action="submit", ui_answers=ui_answers)
         assert response.updated_input["answers"] == ui_answers
+
+    def test_the_stored_questions_are_forwarded_verbatim(self):
+        # Including an entry no normalizer could read: the agent asked with this
+        # list and must get this list back.
+        pending = claude_question([{"question": "Which database?"}, "not a dict"])
+        response = claude_pq.build_question_response_from_ui(
+            pending, action="submit", ui_answers={"Which database?": "SQLite"})
+        assert response.updated_input["questions"] == pending.tool_input["questions"]
+
+    @pytest.mark.parametrize("malformed", [["PostgreSQL"], "PostgreSQL", 42, None])
+    def test_a_malformed_answers_payload_never_raises(self, malformed):
+        # This runs inside the WebSocket consumer: an exception there drops the
+        # connection and leaves the request pending forever.
+        response = claude_pq.build_question_response_from_ui(
+            claude_question(), action="submit", ui_answers=malformed)
+        assert response.updated_input["answers"] == {}
+
+    def test_a_malformed_payload_still_cancels(self):
+        response = claude_pq.build_question_response_from_ui(
+            claude_question(), action="cancel", ui_answers="nonsense")
+        assert isinstance(response, PermissionResultDeny)
+
+
+class TestPathologicalQuestions:
+    def test_a_malformed_entry_keeps_its_slot(self):
+        # Dropping it would renumber every question after it, so an answer to
+        # question 2 would reach question 3.
+        entry = claude_pq.normalize_pending_request(claude_question([
+            "not a dict",
+            {"question": "Which cache?", "options": [{"label": "Redis"}]},
+        ]))
+        assert [q["id"] for q in entry["questions"]] == ["1", "2"]
+        assert entry["questions"][1]["question"] == "Which cache?"
+
+    def test_answering_by_index_reaches_the_right_question(self):
+        pending = claude_question(["not a dict", {"question": "Which cache?"}])
+        response = claude_pq.build_question_response(
+            pending, action="partial", answers={"2": ["Redis"]})
+        assert "  Answer: Redis" in response.message
 
 
 class TestTheCodexTranslator:
