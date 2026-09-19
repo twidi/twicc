@@ -569,8 +569,9 @@ def _session_wait(
         help=(
             "The same cursor as an instant instead of a line, mutually "
             "exclusive with --from: only a line written strictly after it "
-            "counts, including one whose timestamp is missing or out of "
-            "order. ISO 8601 — '2026-09-19T05:38:20+00:00', exactly what "
+            "counts, and an out-of-order timestamp can only push the cursor "
+            "lower. A line with no timestamp is not a boundary, and is not "
+            "re-scanned. ISO 8601 — '2026-09-19T05:38:20+00:00', exactly what "
             "`session messages` returns, and also '2026-09-19 05:38:20' or a "
             "bare '2026-09-19' for its midnight. No offset means UTC, which "
             "is what this CLI stores and prints. An instant older than the "
@@ -633,9 +634,11 @@ def _session_wait(
 
     --from is the cursor, and only a line strictly past it counts. --since is
     the same cursor as an instant, mutually exclusive with it: the wait starts
-    above the last line written at or before that moment, so "past line N" and
-    "after time T" mean the same thing. A line number belongs to one session
-    and nothing else; an instant addresses any number of them alike. An ending
+    just below the first line stamped strictly after that moment. A timestamp
+    that goes backwards can only push the cursor lower, never past a line, and
+    a line carrying no timestamp is not a boundary. A line number belongs to
+    one session and nothing else; an instant addresses any number of them
+    alike. An ending
     that consumed a line — `replied`, and `provider_error`, which points at
     the error the provider wrote — resumes from its `line_num`; every other
     one resumes from its `since_line_num`, which nothing consumed. Getting

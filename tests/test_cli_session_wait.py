@@ -568,7 +568,12 @@ def test_the_cursor_it_computes_is_the_cursor_the_wait_uses(session, timeline, c
 
 
 def test_a_transcript_without_timestamps_is_new_from_the_top(session):
-    """No timestamp is not "before": it is unknown, and unknown re-scans."""
+    """No line carries one, so the instant cannot be placed at all.
+
+    Not the same rule as the test below: there, an untimed line among stamped
+    ones is simply not a boundary. Here there is nothing to place the instant
+    against, and the whole transcript is new rather than none of it.
+    """
     answer(session, 1)
     answer(session, 2)
 

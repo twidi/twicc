@@ -631,7 +631,7 @@ def _parse_instant(since: str) -> datetime:
         # raises rather than returning None, and reads to a caller exactly
         # like a typo. A bare date needs no help: this already returns its
         # midnight.
-        parsed = parse_datetime(since)
+        parsed = parse_datetime(since.strip())
     except ValueError:
         parsed = None
     if parsed is None:
@@ -672,24 +672,32 @@ def _cursor_at(session, instant: datetime) -> int:
     item in that database is a `system` line, and the loop only ever matches
     `assistant_message` and `api_error`.
     """
-    first_after = (
-        session.items.filter(timestamp__gt=instant)
-        .order_by("line_num")
-        .values_list("line_num", flat=True)
-        .first()
-    )
-    if first_after is not None:
-        # The loop counts a line as new when it is strictly past the cursor,
-        # so the cursor is the line *below* the first one to return.
-        return first_after - 1
+    from django.db import transaction
 
-    if not session.items.filter(timestamp__isnull=False).exists():
-        # No line carries a timestamp — an empty transcript, or one whose lines
-        # are all untimed. The instant cannot be placed at all, so the whole
-        # thing is new rather than none of it: a wait that finds nothing is
-        # recoverable, one that starts past the answer is not.
-        return 0
+    # One snapshot for the three reads. Without it, a line stamped after the
+    # instant landing between the first query and the last turns "nothing is
+    # new" into a cursor sitting on top of it, and that line is never returned.
+    with transaction.atomic():
+        first_after = (
+            session.items.filter(timestamp__gt=instant)
+            .order_by("line_num")
+            .values_list("line_num", flat=True)
+            .first()
+        )
+        if first_after is not None:
+            # The loop counts a line as new when it is strictly past the
+            # cursor, so the cursor is the line *below* the first one to
+            # return.
+            return first_after - 1
 
-    # Every stamped line is at or before the instant: nothing is new, and the
-    # wait starts at the end. There is a line to end at, since one is stamped.
-    return session.items.order_by("-line_num").values_list("line_num", flat=True).first()
+        if not session.items.filter(timestamp__isnull=False).exists():
+            # No line carries a timestamp — an empty transcript, or one whose
+            # lines are all untimed. The instant cannot be placed at all, so
+            # the whole thing is new rather than none of it: a wait that finds
+            # nothing is recoverable, one that starts past the answer is not.
+            return 0
+
+        # Every stamped line is at or before the instant: nothing is new, and
+        # the wait starts at the end. There is a line to end at, since one is
+        # stamped.
+        return session.items.order_by("-line_num").values_list("line_num", flat=True).first()

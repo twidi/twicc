@@ -279,3 +279,60 @@ def test_the_documented_numbers_are_read_from_the_code():
         ("docstring", cli_session.wait.__doc__),
     ):
         assert text.count("flush window") == text.count(window) >= 1, label
+
+
+def _refusal_flags() -> set[str]:
+    """Every flag the command refuses on, read off its own `emit_error` calls.
+
+    Derived rather than listed: a pinned set would be bumped to match whatever
+    the code does, which is how the enumeration fell behind twice already.
+    """
+    import inspect
+
+    from twicc.cli import session as cli_session
+
+    source = "".join(
+        inspect.getsource(function)
+        for function in (cli_session.wait, cli_session._parse_instant)
+    )
+    calls = re.findall(r"emit_error\((.*?)code=1", source, re.DOTALL)
+    return {flag for call in calls for flag in FLAG.findall(call)}
+
+
+def _refusal_clauses() -> dict[str, str]:
+    """The sentence each document uses to list them, and only that sentence.
+
+    Scoped to the sentence rather than the line it sits on: the docstring is
+    one "line" and the skill's is a paragraph, so a flag dropped from the list
+    would still be found further along and the check would pass.
+    """
+    clauses = {}
+    for label, lines in _prose_sources():
+        for _, line in lines:
+            if "local refusal" in line:
+                clauses[label] = line[line.index("local refusal"):].split(".", 1)[0]
+                break
+    return clauses
+
+
+def test_the_exit_code_enumerations_name_every_refusal():
+    """The three documents list the exit-1 refusals as a closed set.
+
+    `--since` added two, and all three lists kept the old three — the second
+    time in this loop that a new flag left them stale. The flag guard cannot
+    see it: it reads names, not sentences.
+    """
+    flags = _refusal_flags()
+    assert flags, "no `emit_error(..., code=1)` found — the extraction broke"
+
+    for label, clause in _refusal_clauses().items():
+        missing = sorted(flag for flag in flags if flag not in clause)
+        assert missing == [], (label, missing, clause)
+
+
+def test_all_three_documents_carry_that_clause():
+    """The loop above skips a source that has no clause, so something has to
+    say the clause is still there at all."""
+    assert set(_refusal_clauses()) == {
+        "twicc-session/SKILL.md", "SKILLS-AND-CLI.md", "session wait --help",
+    }
