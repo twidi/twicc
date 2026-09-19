@@ -1,0 +1,115 @@
+"""Lock the wire output of the Claude ``AskUserQuestion`` answer path.
+
+``ClaudeCodeWSHandler._handle_pending_request_response`` turns the widget's
+payload into the ``PermissionResult`` the SDK returns to the agent. A later
+refactor moves that translation into a shared module; these tests are the
+baseline it must reproduce byte for byte, captured while the original code is
+still in place.
+
+Unlike the Codex builders this one is not a pure function: it looks the pending
+request up through the manager, which the handler reaches through a module-level
+factory at call time. So the factory is patched and the response is read off the
+mock's ``resolve_pending_request`` call.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+
+from twicc.agent.states import PendingRequest
+from twicc.providers.claude_code.ws import ClaudeCodeWSHandler
+
+
+QUESTIONS = [
+    {"question": "Which database?", "header": "Database",
+     "options": [{"label": "PostgreSQL"}, {"label": "SQLite"}]},
+    {"question": "Which cache?", "header": "Cache",
+     "options": [{"label": "Redis"}, {"label": "Memcached"}]},
+]
+
+
+@pytest.fixture
+def pending():
+    return PendingRequest(
+        request_id="req-1",
+        request_type="ask_user_question",
+        tool_name="AskUserQuestion",
+        tool_input={"questions": QUESTIONS},
+        created_at=1_700_000_000.0,
+    )
+
+
+def _answer(pending, content_extra: dict):
+    """Run the handler over one widget payload; return the resolved response."""
+    manager = MagicMock()
+    manager.get_agent_info.return_value = MagicMock(pending_requests=[pending])
+    manager.resolve_pending_request = AsyncMock(return_value=True)
+
+    handler = ClaudeCodeWSHandler(consumer=None)
+    content = {
+        "session_id": "s-1",
+        "request_id": "req-1",
+        "request_type": "ask_user_question",
+        **content_extra,
+    }
+    # The provider gate reads the DB; it is not what these tests lock.
+    with patch("twicc.providers.claude_code.ws.ensure_provider_running"), \
+         patch("twicc.providers.claude_code.ws.get_claude_code_agent_manager",
+               return_value=manager):
+        asyncio.run(handler._handle_pending_request_response(content))
+
+    manager.resolve_pending_request.assert_awaited_once()
+    return manager.resolve_pending_request.await_args.args[2]
+
+
+def test_submit_allows_with_the_stored_questions(pending):
+    answers = {"Which database?": "PostgreSQL", "Which cache?": "Redis"}
+
+    response = _answer(pending, {"action": "submit", "answers": answers})
+
+    assert isinstance(response, PermissionResultAllow)
+    # The questions are rebuilt from the pending request, never from the caller.
+    assert response.updated_input == {"questions": QUESTIONS, "answers": answers}
+    assert response.updated_permissions is None
+
+
+def test_a_missing_action_defaults_to_submit(pending):
+    response = _answer(pending, {"answers": {"Which database?": "SQLite"}})
+
+    assert isinstance(response, PermissionResultAllow)
+
+
+def test_partial_denies_with_the_native_clarify_text(pending):
+    response = _answer(pending, {
+        "action": "partial",
+        "answers": {"Which database?": "PostgreSQL"},
+    })
+
+    assert isinstance(response, PermissionResultDeny)
+    assert response.message == (
+        "The user wants to clarify these questions.\n"
+        "    This means they may have additional information, context or questions for you.\n"
+        "    Take their response into account and then reformulate the questions if appropriate.\n"
+        "    Start by asking them what they would like to clarify.\n"
+        "\n"
+        "    Questions asked:\n"
+        '- "Which database?"\n'
+        "  Answer: PostgreSQL\n"
+        '- "Which cache?"\n'
+        "  (No answer provided)"
+    )
+
+
+def test_cancel_denies_with_the_fixed_decline_text(pending):
+    response = _answer(pending, {"action": "cancel", "answers": {}})
+
+    assert isinstance(response, PermissionResultDeny)
+    assert response.message == (
+        "The user chose not to answer these questions. Acknowledge this briefly "
+        "and ask them how they would like to proceed."
+    )
