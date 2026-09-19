@@ -495,3 +495,24 @@ def test_it_can_still_be_declined():
     result, _ = run(lambda: answer_pending_question_from_payload(
         {"session_id": SESSION_ID, "action": "cancel"}), pendings=[pending])
     assert result.success
+
+
+@pytest.mark.django_db(transaction=True)
+def test_two_questions_sharing_one_id_are_refused():
+    # Same rule as the read's cancel-only, quoted from the same function so the
+    # advertised actions and the refusal cannot drift apart.
+    Session.objects.filter(id=make_session().id).update(provider=Provider.CODEX.value)
+    pending = PendingRequest(
+        request_id="req-1", request_type="ask_user_question",
+        tool_name="toolRequestUserInput",
+        tool_input={"questions": [
+            {"id": "db", "question": "Which database?", "options": [{"label": "A"}]},
+            {"id": "db", "question": "Which one really?", "options": [{"label": "B"}]},
+        ]},
+        created_at=time.time(),
+    )
+    result, _ = run(lambda: answer_pending_question_from_payload(
+        {"session_id": SESSION_ID, "action": "answer", "answers": {"db": ["A"]}}),
+        pendings=[pending])
+    assert codes(result) == ["missing_answers"]
+    assert "sharing one id" in result.errors[0].message

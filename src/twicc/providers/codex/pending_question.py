@@ -18,22 +18,12 @@ from twicc.providers.pending_question import (
     is_answerable,
     normalized_options,
     out_of_scope_entry,
+    stored_questions,
     question_entry,
 )
 
 
 logger = logging.getLogger(__name__)
-
-
-def _stored_questions(pending) -> list:
-    """The stored question list, entries included whatever their shape.
-
-    Dropping a malformed one would shorten the list the caller must answer in
-    full, so a request with one unanswerable question would submit as if it had
-    been answered. The normalizer guards the entry instead.
-    """
-    questions = pending.tool_input.get("questions")
-    return questions if isinstance(questions, list) else []
 
 
 def _normalize_question(question) -> dict:
@@ -42,9 +32,10 @@ def _normalize_question(question) -> dict:
     question_id = question.get("id")
     options = normalized_options(question.get("options"))
     return {
-        # The wire guarantees a string id; a pathological payload gets an empty
-        # one, which no ``--answer`` can target — the same defensive stance the
-        # front-end takes when it skips such a question.
+        # The wire guarantees a string id; anything else publishes an empty one,
+        # which no ``--answer`` can target and which makes the whole request
+        # cancel-only. Publishing an integer id verbatim would advertise an
+        # answer the CLI could never express.
         "id": question_id if isinstance(question_id, str) else "",
         "header": question.get("header", ""),
         "question": question.get("question", ""),
@@ -61,7 +52,7 @@ def _normalize_question(question) -> dict:
 def normalize_pending_request(pending, *, raw: bool = False) -> dict:
     if not is_answerable(pending):
         return out_of_scope_entry(pending, raw=raw)
-    questions = [_normalize_question(q) for q in _stored_questions(pending)]
+    questions = [_normalize_question(q) for q in stored_questions(pending)]
     return question_entry(pending, questions, raw=raw)
 
 

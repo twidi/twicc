@@ -43,6 +43,38 @@ ANSWER_ACTION = {"action": "answer", "label": "Answer the questions",
 CANCEL_ACTION = {"action": "cancel", "label": "Decline to answer"}
 
 
+def stored_questions(pending) -> list:
+    """The question list a pending request carries, as its author wrote it.
+
+    Entries are NOT filtered: a Claude question is identified by its position,
+    so dropping a malformed one would renumber every question after it, and on
+    Codex it would shorten the list a caller must answer in full. The readers
+    guard each entry instead.
+
+    ``tool_input`` itself is only a dict by convention — the hybrid hook path
+    fills it from a file it does not own — so that is checked here rather than
+    at four call sites.
+    """
+    tool_input = pending.tool_input
+    questions = tool_input.get("questions") if isinstance(tool_input, dict) else None
+    return questions if isinstance(questions, list) else []
+
+
+def untargetable_reason(questions: list[dict]) -> str | None:
+    """Why no ``--answer`` could address this question set, or ``None``.
+
+    An id is how a caller names a question, so a set that cannot be named one by
+    one cannot be answered in full — whatever the caller does. Both the read and
+    the write go through this, so ``actions`` and the refusal cannot disagree.
+    """
+    ids = [question["id"] for question in questions]
+    if not all(ids):
+        return "a question with no id"
+    if len(set(ids)) != len(ids):
+        return "two questions sharing one id"
+    return None
+
+
 def is_disguised_mcp_approval(pending) -> bool:
     """Whether a ``toolRequestUserInput`` is really an MCP tool approval.
 
@@ -52,10 +84,9 @@ def is_disguised_mcp_approval(pending) -> bool:
     """
     if pending.tool_name != "toolRequestUserInput":
         return False
-    questions = pending.tool_input.get("questions")
+    questions = stored_questions(pending)
     return (
-        isinstance(questions, list)
-        and bool(questions)
+        bool(questions)
         and isinstance(questions[0], dict)
         and isinstance(questions[0].get("id"), str)
         and questions[0]["id"].startswith(MCP_APPROVAL_ID_PREFIX)
@@ -137,7 +168,7 @@ def question_entry(pending, questions: list[dict], *, raw: bool = False) -> dict
 
     ``actions`` carries ``cancel`` **alone** when the request is structurally
     unanswerable — an empty ``questions`` list, any question flagged ``secret``,
-    or any question this command could not read, which publishes an empty id.
+    or a question set no ``--answer`` could address (:func:`untargetable_reason`).
     All three turn an answer attempt into a guaranteed rejection, so advertising
     ``answer`` would be a lie a script would act on. Declining stays available:
     it carries no value, so nothing sensitive transits.
@@ -145,7 +176,7 @@ def question_entry(pending, questions: list[dict], *, raw: bool = False) -> dict
     answerable = (
         bool(questions)
         and not any(q["secret"] for q in questions)
-        and all(q["id"] for q in questions)
+        and untargetable_reason(questions) is None
     )
     return _with_raw({
         "request_id": pending.request_id,

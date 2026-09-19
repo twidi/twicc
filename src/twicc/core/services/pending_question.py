@@ -24,7 +24,7 @@ from twicc.core.services.session_update import (
     _lookup_session_for_update,
 )
 from twicc.providers.helpers import get_provider_helpers
-from twicc.providers.pending_question import is_answerable
+from twicc.providers.pending_question import is_answerable, untargetable_reason
 
 
 logger = logging.getLogger(__name__)
@@ -158,14 +158,14 @@ def _validate_answers(entry: dict, answers: dict[str, list[str]]):
     normalizer derives — which is why the write path normalizes too.
     """
     questions = {q["id"]: q for q in entry["questions"]}
-    if any(not q["id"] for q in entry["questions"]):
-        # An unreadable question publishes no id, so nothing can target it and
-        # the request can never be answered in full. The read advertises
-        # ``cancel`` alone for the same reason.
+    untargetable = untargetable_reason(entry["questions"])
+    if untargetable is not None:
+        # Nothing can name the question, so the request can never be answered in
+        # full whatever the caller does. The read advertises ``cancel`` alone
+        # through the same rule, so the two cannot disagree.
         return "missing_answers", (
-            "This request holds a question with no id: nothing can target it, "
-            "so the request cannot be answered in full. Cancel it, or answer it "
-            "in the web UI."
+            f"This request holds {untargetable}, so it cannot be answered in "
+            "full. Cancel it, or answer it in the web UI."
         )
     if any(q["secret"] for q in entry["questions"]):
         # Per request, not per question: submitting needs every question

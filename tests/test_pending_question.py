@@ -126,6 +126,37 @@ class TestTheDisguisedMcpApproval:
         assert claude_pq.normalize_pending_request(pending)["kind"] == "question"
 
 
+class TestTheStoredQuestionsReader:
+    """One reader for both providers, and it trusts nothing it is handed."""
+
+    @pytest.mark.parametrize("tool_input", [
+        "a json string", ["a", "list"], 42, None,
+    ])
+    def test_a_tool_input_that_is_not_a_dict(self, tool_input):
+        # The hybrid hook path fills ``tool_input`` from a file it does not own,
+        # so a truthy non-dict really can reach here. The widget path runs inside
+        # the WebSocket consumer, where a raise drops the connection.
+        pending = claude_question(tool_input=tool_input)
+        assert claude_pq.normalize_pending_request(pending)["questions"] == []
+        assert codex_pq.normalize_pending_request(
+            codex_question(tool_input=tool_input))["questions"] == []
+
+    # ``None`` is the fixture's "use the default", so it cannot be passed here.
+    @pytest.mark.parametrize("questions", ["not a list", 42, {"a": 1}])
+    def test_a_questions_field_that_is_not_a_list(self, questions):
+        assert claude_pq.normalize_pending_request(
+            claude_question(questions))["questions"] == []
+        assert codex_pq.normalize_pending_request(
+            codex_question(questions))["questions"] == []
+
+    @pytest.mark.parametrize("questions", [42, {"a": 1}, "text"])
+    def test_the_disguised_approval_rule_survives_it(self, questions):
+        # It reads the same list, and a non-subscriptable value would raise
+        # before any of its four guards ran.
+        assert codex_pq.normalize_pending_request(
+            codex_question(questions))["kind"] == "question"
+
+
 class TestTheEntryShape:
     def test_claude_publishes_one_based_indexes(self):
         entry = claude_pq.normalize_pending_request(claude_question([
@@ -155,6 +186,12 @@ class TestTheEntryShape:
             {"id": "q1", "question": "Why?", "isOther": True, "options": [{"label": "A"}]},
         ]))
         assert entry["questions"][0]["allows_free_text"] is True
+
+    def test_a_non_dict_option_is_dropped_not_raised(self):
+        entry = codex_pq.normalize_pending_request(codex_question([
+            {"id": "q1", "question": "Why?", "options": ["not a dict", {"label": "A"}]},
+        ]))
+        assert entry["questions"][0]["options"] == [{"label": "A", "description": ""}]
 
     def test_codex_free_text_when_a_question_has_no_options(self):
         entry = codex_pq.normalize_pending_request(codex_question([
@@ -202,6 +239,24 @@ class TestTheAdvertisedActions:
     def test_an_empty_question_list_offers_cancel_alone(self):
         entry = claude_pq.normalize_pending_request(claude_question([]))
         assert entry["kind"] == "question"
+        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+
+    def test_two_questions_sharing_one_id_offer_cancel_alone(self):
+        # A caller names a question by its id, so a set that cannot be named one
+        # by one can never be answered in full — whatever the caller does.
+        entry = codex_pq.normalize_pending_request(codex_question([
+            {"id": "db", "question": "Which database?", "options": [{"label": "A"}]},
+            {"id": "db", "question": "Which one really?", "options": [{"label": "B"}]},
+        ]))
+        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+
+    def test_a_non_string_codex_id_offers_cancel_alone(self):
+        # Publishing an integer id verbatim would advertise an answer the CLI
+        # could never express: `--answer 42=x` is the id "42", a different key.
+        entry = codex_pq.normalize_pending_request(codex_question([
+            {"id": 42, "question": "Which database?", "options": [{"label": "A"}]},
+        ]))
+        assert entry["questions"][0]["id"] == ""
         assert [a["action"] for a in entry["actions"]] == ["cancel"]
 
     def test_a_secret_question_offers_cancel_alone(self):

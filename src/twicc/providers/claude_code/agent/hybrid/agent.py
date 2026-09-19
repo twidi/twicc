@@ -526,7 +526,10 @@ class HybridClaudeAgent(BaseAgent):
             request_id=nonce,
             request_type="ask_user_question" if tool_name == "AskUserQuestion" else "tool_approval",
             tool_name=tool_name,
-            tool_input=payload.get("tool_input") or {},
+            # A dict whatever the hook wrote: every reader indexes it, and
+            # ``or {}`` only rescues a falsy value — a JSON string or a
+            # non-empty list would have been stored as is.
+            tool_input=tool_input if isinstance(tool_input := payload.get("tool_input"), dict) else {},
             created_at=time.time(),
             # Hook-native suggestions only, through the shared filter (NO
             # SDK-style setMode mode-picker injection, NO synthesized

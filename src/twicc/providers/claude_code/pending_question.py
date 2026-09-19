@@ -25,6 +25,7 @@ from twicc.providers.pending_question import (
     is_answerable,
     normalized_options,
     out_of_scope_entry,
+    stored_questions,
     question_entry,
 )
 
@@ -80,17 +81,6 @@ def build_clarify_message(questions: list[dict], answers: dict) -> str:
     return "\n".join(lines)
 
 
-def _stored_questions(pending) -> list:
-    """The stored question list, passed on as the agent wrote it.
-
-    Entries are NOT filtered: a question is identified by its position, so
-    dropping a malformed one would renumber every question after it. The
-    callers guard the entry instead.
-    """
-    questions = pending.tool_input.get("questions")
-    return questions if isinstance(questions, list) else []
-
-
 def _normalize_question(question, index: int) -> dict:
     # "Readable" means this command can both identify the question and map an
     # answer back onto it. A non-dict entry fails the first half; a non-string
@@ -122,7 +112,7 @@ def _normalize_question(question, index: int) -> dict:
 def normalize_pending_request(pending, *, raw: bool = False) -> dict:
     if not is_answerable(pending):
         return out_of_scope_entry(pending, raw=raw)
-    questions = [_normalize_question(q, i) for i, q in enumerate(_stored_questions(pending))]
+    questions = [_normalize_question(q, i) for i, q in enumerate(stored_questions(pending))]
     return question_entry(pending, questions, raw=raw)
 
 
@@ -134,7 +124,7 @@ def answers_by_text(pending, answers: dict[str, list[str]]) -> dict[str, str]:
     its own entry point and never keys by id. An id naming no readable question
     is dropped; the service refuses it upstream, so this is the second guard.
     """
-    stored = _stored_questions(pending)
+    stored = stored_questions(pending)
     mapped: dict[str, str] = {}
     for question_id, values in answers.items():
         try:
@@ -159,7 +149,7 @@ def _response_for(pending, *, action: str, answers: dict):
     if action == "cancel":
         return PermissionResultDeny(message=QUESTION_CANCEL_MESSAGE)
 
-    stored = _stored_questions(pending)
+    stored = stored_questions(pending)
     if action == "partial":
         # A plain deny, not an interrupt: the agent stays alive and sees the
         # partial answers through the native clarify text.
