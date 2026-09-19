@@ -688,6 +688,92 @@ def _session_stop(
     stop_cmd(ctx.obj, timeout=timeout, force=force)
 
 
+pending_request_app = typer.Typer(
+    name="pending-request",
+    help="Report what this session's live agent is waiting on.",
+    invoke_without_command=True,
+)
+session_app.add_typer(pending_request_app)
+
+
+@pending_request_app.callback(invoke_without_command=True)
+def _session_pending_request(
+    ctx: typer.Context,
+    raw: bool = typer.Option(
+        False, "--raw",
+        help=(
+            "Add each request's untouched tool input under 'raw'. Covers every "
+            "entry, answerable or not. A request carrying a large diff returns "
+            "that diff."
+        ),
+    ),
+    timeout: int = typer.Option(
+        30, "--timeout",
+        help="Seconds to wait for the server's answer before giving up.",
+    ),
+) -> None:
+    """Report every pending request of this session's live agent.
+
+    Both the questions this command can answer (kind ``question``) and
+    everything else (kind ``out_of_scope``, with the reason): a session frozen
+    on a tool approval is waiting even though nothing here can unblock it.
+
+    Exit 0 with an empty list when nothing is pending, and exit 0 with
+    ``agent_state: "dead"`` when no agent is attached. A non-match is not an
+    error.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    from twicc.cli.pending_question import read_cmd
+
+    read_cmd(ctx.obj, raw=raw, timeout=timeout)
+
+
+@session_app.command("answer", help="Answer the question this session is waiting on.")
+def _session_answer(
+    ctx: typer.Context,
+    action: str = typer.Argument(
+        help="'answer' to answer the questions, 'cancel' to decline them.",
+    ),
+    request_id: str = typer.Option(
+        None, "--request-id",
+        help=(
+            "The pending request to answer, as reported by 'pending-request'. "
+            "Optional when one question is pending; required when several are. "
+            "Naming it is also how a script makes sure it answers the request "
+            "it read, and not one that arrived since."
+        ),
+    ),
+    answer: list[str] = typer.Option(
+        [], "--answer",
+        help=(
+            "One answer as ID=VALUE, the id from 'pending-request'. Repeatable: "
+            "once per question, or several times on one id for a multi-select "
+            "question. A value matching no option is free text, accepted when "
+            "the question allows it."
+        ),
+    ),
+    timeout: int = typer.Option(
+        30, "--timeout",
+        help="Seconds to wait for the server's answer before giving up.",
+    ),
+) -> None:
+    """Answer, or decline, the question this session's agent is waiting on.
+
+    Only a question: tool approvals and MCP elicitations are refused, and stay
+    the web UI's business. Answering every question submits; answering some of
+    them sends the agent a partial answer where the provider has one; answering
+    none is an error, since declining is what ``cancel`` is for.
+
+    A session cannot answer its own question.
+    """
+    from twicc.cli.pending_question import answer_cmd
+
+    answer_cmd(ctx.obj, action, request_id=request_id, raw_answers=answer,
+               timeout=timeout)
+
+
 @session_app.command(help=CUTOVER_NOTICE + "List subagents of a session as JSON.")
 def agents(
     ctx: typer.Context,
