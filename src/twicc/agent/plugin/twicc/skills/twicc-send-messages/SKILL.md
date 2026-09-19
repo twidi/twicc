@@ -114,7 +114,7 @@ A per-id `sent` means the message was handed to the agent — not that it finish
 $TWICC send-messages --spawned-by self --message '<TEXT>' --wait-reply
 ```
 
-Each entry gains a `reply` block (`outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text`, `error` on `wait_failed`), and the summary gains `replied` / `all_replied`. `outcome` is `replied`, `awaiting_user_input` (a pending request), `provider_error`, `ended`, `timeout`, `backend_gone`, `wait_failed`, or `pending` (cut short by `--wait-first`).
+Each entry gains a `reply` block (`outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text`, `error` on `wait_failed`), and the summary gains `replied` / `all_replied`. `replied` counts `outcome: replied` and nothing else: a recipient that ended on `awaiting_user_input` concluded, but is not counted, so `all_replied` can be `false` with every recipient done. `outcome` is `replied`, `awaiting_user_input` (a pending request), `provider_error`, `ended`, `timeout`, `backend_gone`, `wait_failed`, or `pending` (cut short by `--wait-first`).
 
 **A timeout is not a failure** and nothing is lost: the agents keep working, and each entry carries its own cursor to resume from — `line_num` when its ending consumed a line (`replied`, `provider_error`), `since_line_num` otherwise. Resume each one with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`): a batch needs one cursor per recipient, which is why there is no plural wait to re-run. The exit code never reflects the wait, only whether the sends went out.
 

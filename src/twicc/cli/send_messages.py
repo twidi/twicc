@@ -138,7 +138,9 @@ def send_messages_cmd(
             "clear (`outcome: awaiting_user_input`). Adds a `reply` block per "
             "entry, the same shape "
             "`send-message --wait-reply` returns, and `replied` / "
-            "`all_replied` to the summary. Only entries that were actually "
+            "`all_replied` to the summary — `replied` counts `outcome: "
+            "replied` alone, so a recipient that concluded on a pending "
+            "request leaves `all_replied` false. Only entries that were actually "
             "sent are waited on. One shared deadline covers the batch (see "
             "--wait-timeout): the sessions are waited on in parallel, so it "
             "is a wall-clock budget, not N x timeout."
@@ -185,12 +187,12 @@ def send_messages_cmd(
     Asynchronous by default: a per-id "sent" status only means the message was
     handed to that agent — not that it has finished.
 
-    Pass --wait-reply to keep going until the recipients answer — or block on a
-    pending request only a human can clear — and get each
+    Pass --wait-reply to keep going until the recipients conclude — an answer, or
+    a pending request only a human can clear — and get each
     answer back with the result. Each is waited from its own cursor, read when
     its agent takes the message, so the previous turn's closing message is not
-    returned in its place. --wait-first stops at the first recipient to conclude instead of
-    waiting for every one. That is the way to collect answers; reach for
+    returned in its place. --wait-first stops at the first recipient
+    to conclude instead of waiting for every one. That is the way to collect answers; reach for
     "twicc processes wait ..." only to ask whether sessions are still running,
     not what they said.
 

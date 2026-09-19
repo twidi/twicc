@@ -4,7 +4,7 @@ A port of the one check that matters from
 ``tests/test_session_wait_documentation.py``: a copyable invocation names
 nothing but that command's own options. That file was written after a shipped
 mix-up — ``--wait-blocked``, a real flag of *another* command, documented as
-``session <ID> wait``'s in four places — and it is not command-parameterised,
+``session <ID> wait-reply``'s — then named ``wait`` — in four places — and it is not command-parameterised,
 so the check is ported rather than reused.
 
 The rest of that file (the prose cross-reference counts, the full-signature
