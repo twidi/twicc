@@ -21,10 +21,10 @@ from twicc.providers.claude_code.agent.hybrid.agent import HybridClaudeAgent
 
 
 def make_agent() -> HybridClaudeAgent:
-    """The method under test touches five attributes; give it those five.
+    """Stub what the method reads; it needs no session, tmux or transcript.
 
-    Building a real agent means a real session, a tmux server and a transcript;
-    ``on_permission_request`` needs none of them.
+    Anything it acquires later that is not stubbed here makes the test raise
+    ``AttributeError`` — red, never a silent pass.
     """
     agent = object.__new__(HybridClaudeAgent)
     agent.session_id = "s-hybrid"
