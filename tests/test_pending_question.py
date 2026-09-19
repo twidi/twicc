@@ -112,7 +112,9 @@ class TestTheDisguisedMcpApproval:
     ])
     def test_a_pathological_payload_does_not_crash(self, questions):
         # The four defensive guards, plus a question with no id. None of these
-        # is a disguised approval, so all stay answerable.
+        # is a disguised approval, so none is reported out of scope — which is
+        # a different claim from being answerable: a question with no id is
+        # cancel-only, and that rule has its own tests.
         entry = codex_pq.normalize_pending_request(codex_question(questions))
         assert entry["kind"] == "question"
 

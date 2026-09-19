@@ -304,7 +304,9 @@ and an empty list would say the opposite.
 it on a session blocked on a large patch and you get the patch.
 
 **Read `actions` before answering.** A question whose only action is `cancel` is
-structurally unanswerable here (no questions at all, or a secret one).
+structurally unanswerable here: no questions at all, a secret one, or one
+carrying no id — nothing can target that last kind, so the request can never
+be answered in full.
 
 Nothing pending is exit 0 with an empty list; no agent at all is exit 0 with
 `agent_state: "dead"`. Neither is an error.

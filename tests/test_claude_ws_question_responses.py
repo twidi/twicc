@@ -140,3 +140,19 @@ def test_a_malformed_answers_payload_does_not_break_the_connection(pending):
 
     assert isinstance(response, PermissionResultAllow)
     assert response.updated_input == {"questions": QUESTIONS, "answers": {}}
+
+
+@pytest.mark.parametrize("tool_name", [["elicitationForm"], {"a": 1}])
+def test_a_malformed_tool_name_does_not_break_the_connection(pending, tool_name):
+    """The elicitation dispatch tests a frozenset, so it raises on this too.
+
+    Same class as the malformed `action` and `answers` above: an exception here
+    leaves the consumer, the browser loses its updates channel, and the request
+    stays pending with nothing left to resolve it.
+    """
+    response = _answer(pending, {"tool_name": tool_name, "action": "cancel",
+                                 "answers": {}})
+
+    # The frame falls through to the question branch, which is what its
+    # ``request_type`` says it is.
+    assert isinstance(response, PermissionResultDeny)

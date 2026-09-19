@@ -110,9 +110,13 @@ class CodexWSHandler:
         request_id = content.get("request_id")
         tool_name = content.get("tool_name")
 
-        if not session_id or not request_id or not tool_name:
+        # ``tool_name`` must be a string, not merely present: every dispatch
+        # below tests it against a set, and a set membership test on an
+        # unhashable value raises — out of this consumer, which drops the
+        # connection and leaves the request pending with nothing to resolve it.
+        if not session_id or not request_id or not isinstance(tool_name, str) or not tool_name:
             logger.warning(
-                "codex:pending_request_response missing required fields "
+                "codex:pending_request_response missing or invalid required fields "
                 "(session_id=%r, request_id=%r, tool_name=%r)",
                 session_id, request_id, tool_name,
             )

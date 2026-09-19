@@ -351,3 +351,22 @@ class TestSafeDefaultsNewMethods:
 
     def test_request_user_input_default(self, handler):
         assert handler._safe_default_for("toolRequestUserInput") == {"answers": {}}
+
+
+class TestAMalformedToolName:
+    """The dispatch tests `tool_name` against sets, so it must be a string.
+
+    A membership test on an unhashable value raises out of the WebSocket
+    consumer, which drops the connection and leaves the pending request
+    unresolved — the agent stays blocked with nothing left to unblock it.
+    """
+
+    @pytest.mark.parametrize("tool_name", [["mcpToolCall"], {"a": 1}, 42, None, ""])
+    def test_the_frame_is_refused_rather_than_raising(self, handler, tool_name):
+        import asyncio
+        from unittest.mock import patch
+
+        with patch("twicc.providers.codex.ws.ensure_provider_running"):
+            asyncio.run(handler._handle_pending_request_response({
+                "session_id": "s-1", "request_id": "r-1", "tool_name": tool_name,
+            }))

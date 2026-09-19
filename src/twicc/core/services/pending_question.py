@@ -163,8 +163,9 @@ def _validate_answers(entry: dict, answers: dict[str, list[str]]):
         # the request can never be answered in full. The read advertises
         # ``cancel`` alone for the same reason.
         return "missing_answers", (
-            "This request holds a question this command cannot read; it cannot "
-            "be answered. Cancel it, or answer it in the web UI."
+            "This request holds a question with no id: nothing can target it, "
+            "so the request cannot be answered in full. Cancel it, or answer it "
+            "in the web UI."
         )
     if any(q["secret"] for q in entry["questions"]):
         # Per request, not per question: submitting needs every question

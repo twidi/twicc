@@ -293,7 +293,12 @@ class ClaudeCodeWSHandler:
         # MCP elicitations first: their payload is keyed by ``tool_name`` (the
         # shared bodies emit no ``request_type``), and their response is a raw
         # wire dict, not a PermissionResult.
-        if content.get("tool_name") in ELICITATION_TOOL_NAMES:
+        #
+        # ``isinstance`` first: the names are a frozenset, and a membership test
+        # on an unhashable value raises out of this consumer, dropping the
+        # connection and stranding the request.
+        tool_name = content.get("tool_name")
+        if isinstance(tool_name, str) and tool_name in ELICITATION_TOOL_NAMES:
             response = self._build_elicitation_response(content)
             if response is None:
                 # Validation failed (already logged). Resolve with the safe
