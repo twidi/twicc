@@ -353,20 +353,52 @@ class TestSafeDefaultsNewMethods:
         assert handler._safe_default_for("toolRequestUserInput") == {"answers": {}}
 
 
-class TestAMalformedToolName:
-    """The dispatch tests `tool_name` against sets, so it must be a string.
+class TestTheToolNameGate:
+    """`tool_name` must be a string, and every real one must still get through.
 
-    A membership test on an unhashable value raises out of the WebSocket
-    consumer, which drops the connection and leaves the pending request
-    unresolved — the agent stays blocked with nothing left to unblock it.
+    The dispatch tests it against sets, so a membership test on an unhashable
+    value raises out of the WebSocket consumer: the connection drops and the
+    pending request stays unresolved, the agent blocked with nothing left to
+    unblock it. Refusing too much is the mirror failure and just as bad — no
+    approval, elicitation or question answered in the web UI would ever reach
+    the agent — so both directions are pinned here.
     """
 
-    @pytest.mark.parametrize("tool_name", [["mcpToolCall"], {"a": 1}, 42, None, ""])
-    def test_the_frame_is_refused_rather_than_raising(self, handler, tool_name):
+    def _dispatch(self, handler, content):
+        """Run the handler with a mocked manager; return it for inspection."""
         import asyncio
-        from unittest.mock import patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
-        with patch("twicc.providers.codex.ws.ensure_provider_running"):
-            asyncio.run(handler._handle_pending_request_response({
-                "session_id": "s-1", "request_id": "r-1", "tool_name": tool_name,
-            }))
+        manager = MagicMock()
+        manager.resolve_pending_request = AsyncMock(return_value=True)
+        registry = MagicMock()
+        registry.get.return_value = manager
+        with patch("twicc.providers.codex.ws.ensure_provider_running"), \
+             patch("twicc.providers.codex.ws.get_agent_manager_registry",
+                   return_value=registry):
+            asyncio.run(handler._handle_pending_request_response(content))
+        return manager
+
+    @pytest.mark.parametrize("tool_name", [["mcpToolCall"], {"a": 1}, 42, None, ""])
+    def test_a_non_string_tool_name_is_refused_rather_than_raising(self, handler, tool_name):
+        manager = self._dispatch(handler, {
+            "session_id": "s-1", "request_id": "r-1", "tool_name": tool_name,
+        })
+
+        manager.resolve_pending_request.assert_not_awaited()
+
+    @pytest.mark.parametrize("tool_name,content", [
+        ("commandExecution", {"decision": "accept"}),
+        ("fileChange", {"decision": "decline"}),
+        ("permissions", {"permissions": [], "scope": "session"}),
+        ("elicitationForm", {"action": "decline"}),
+        ("toolRequestUserInput", {"answers": {}}),
+        ("autoReviewDenial", {"decision": "accept"}),
+    ])
+    def test_a_real_tool_name_still_reaches_the_agent(self, handler, tool_name, content):
+        manager = self._dispatch(handler, {
+            "session_id": "s-1", "request_id": "r-1", "tool_name": tool_name, **content,
+        })
+
+        manager.resolve_pending_request.assert_awaited_once()
+        assert manager.resolve_pending_request.await_args.args[2] is not None

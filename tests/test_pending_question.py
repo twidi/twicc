@@ -333,6 +333,25 @@ class TestPathologicalQuestions:
         assert [q["id"] for q in entry["questions"]] == ["cache", ""]
         assert [a["action"] for a in entry["actions"]] == ["cancel"]
 
+    def test_a_non_string_question_text_is_unreadable_too(self):
+        # The map the agent receives is keyed by that text, so an answer to it
+        # could be accepted, counted, then dropped — the request submitting as
+        # complete with one answer missing.
+        entry = claude_pq.normalize_pending_request(claude_question([
+            {"question": ["a", "b"], "options": []},
+            {"question": "Which cache?", "options": []},
+        ]))
+        assert [q["id"] for q in entry["questions"]] == ["", "2"]
+        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+
+    def test_a_non_string_question_text_never_raises_on_the_widget_path(self):
+        # The text is used as a dict key when the clarify message is built, and
+        # an unhashable one raises. That runs inside the WebSocket consumer.
+        pending = claude_question([{"question": ["a", "b"], "options": []}])
+        response = claude_pq.build_question_response_from_ui(
+            pending, action="partial", ui_answers={"anything": "X"})
+        assert "(No answer provided)" in response.message
+
     def test_an_id_naming_an_unreadable_slot_is_dropped_not_raised(self):
         # The service refuses it upstream; this is the second guard, and it runs
         # inside the WebSocket consumer on the widget's behalf.

@@ -70,7 +70,9 @@ def build_clarify_message(questions: list[dict], answers: dict) -> str:
         # numbered its questions and must be able to count them back.
         text = question.get("question", "") if isinstance(question, dict) else ""
         lines.append(f'- "{text}"')
-        answer = answers.get(text)
+        # The text is a key here, and an unhashable one raises. This runs inside
+        # the WebSocket consumer, where that would drop the connection.
+        answer = answers.get(text) if isinstance(text, str) else None
         if answer:
             lines.append(f"  Answer: {answer}")
         else:
@@ -90,12 +92,16 @@ def _stored_questions(pending) -> list:
 
 
 def _normalize_question(question, index: int) -> dict:
-    # A pathological payload keeps its slot, so the ids of the questions after
-    # it stay aligned with what the agent asked. It publishes an **empty** id,
-    # which no answer can target — and which makes the whole request
-    # cancel-only, rather than one that accepts an answer it would then drop.
-    readable = isinstance(question, dict)
-    if not readable:
+    # "Readable" means this command can both identify the question and map an
+    # answer back onto it. A non-dict entry fails the first half; a non-string
+    # text fails the second, since the map the agent receives is keyed by that
+    # text. Either way the question publishes an **empty** id, which no answer
+    # can target and which makes the whole request cancel-only — rather than one
+    # that accepts an answer, counts it, then drops it and submits as complete.
+    # The slot itself stays, so the ids of the questions after it keep matching
+    # what the agent asked.
+    readable = isinstance(question, dict) and isinstance(question.get("question"), str)
+    if not isinstance(question, dict):
         question = {}
     return {
         # 1-based index: Claude has no ids, and a 0-based one reads as a falsy
@@ -135,8 +141,11 @@ def answers_by_text(pending, answers: dict[str, list[str]]) -> dict[str, str]:
             index = int(question_id) - 1
         except (TypeError, ValueError):
             continue
-        if 0 <= index < len(stored) and isinstance(stored[index], dict):
-            mapped[stored[index].get("question", "")] = ", ".join(values)
+        if not (0 <= index < len(stored)) or not isinstance(stored[index], dict):
+            continue
+        text = stored[index].get("question", "")
+        if isinstance(text, str):
+            mapped[text] = ", ".join(values)
     return mapped
 
 

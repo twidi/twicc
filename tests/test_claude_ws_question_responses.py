@@ -156,3 +156,21 @@ def test_a_malformed_tool_name_does_not_break_the_connection(pending, tool_name)
     # The frame falls through to the question branch, which is what its
     # ``request_type`` says it is.
     assert isinstance(response, PermissionResultDeny)
+
+
+@pytest.mark.parametrize("tool_name", ["elicitationForm", "elicitationUrl"])
+def test_an_elicitation_frame_still_takes_the_elicitation_branch(tool_name):
+    """The other half of the `tool_name` gate: it must not refuse too much.
+
+    This dispatch is what routes an MCP elicitation answer. Disabled, a
+    well-formed frame falls through to the "missing request_type" warning and
+    the elicitation hangs forever — a failure no negative test would see.
+    """
+    pending = PendingRequest(
+        request_id="req-1", request_type="ask_user_question", tool_name=tool_name,
+        tool_input={}, created_at=1_700_000_000.0,
+    )
+    response = _answer(pending, {"tool_name": tool_name, "action": "decline"})
+
+    # The elicitation bridge takes a raw wire dict, not a PermissionResult.
+    assert response == {"action": "decline"}
