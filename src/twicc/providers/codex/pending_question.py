@@ -12,6 +12,8 @@ Design: ``docs/plans/2026-09-18-question-cli-design.md`` §5 and §6.
 
 from __future__ import annotations
 
+import logging
+
 from twicc.providers.pending_question import (
     is_answerable,
     normalized_options,
@@ -68,3 +70,41 @@ def build_question_response(pending, *, action: str, answers: dict[str, list[str
     if action != "submit":
         raise ValueError(f"unknown question action for codex: {action!r}")
     return {"answers": {qid: {"answers": list(values)} for qid, values in answers.items()}}
+
+
+logger = logging.getLogger(__name__)
+
+
+def response_from_ui(content: dict) -> dict | None:
+    """Validate the widget's ``{tool_name, answers}`` into the wire response.
+
+    The web UI sends the native shape already — ``{id: {"answers": [str, …]}}``
+    — so this only validates it and hands the values to the shared translator.
+    Returns ``None`` on any validation failure, which the handler turns into its
+    wire-safe fallback rather than letting a malformed dict reach the SDK. An
+    empty map is valid and means cancel.
+    """
+    answers = content.get("answers")
+    if not isinstance(answers, dict):
+        logger.error(
+            "codex toolRequestUserInput: invalid answers type=%r",
+            type(answers).__name__,
+        )
+        return None
+    values: dict[str, list[str]] = {}
+    for question_id, entry in answers.items():
+        entry_values = entry.get("answers") if isinstance(entry, dict) else None
+        if (
+            not isinstance(question_id, str)
+            or not isinstance(entry_values, list)
+            or not all(isinstance(v, str) for v in entry_values)
+        ):
+            logger.error(
+                "codex toolRequestUserInput: invalid entry for %r: %r",
+                question_id, entry,
+            )
+            return None
+        values[question_id] = entry_values
+    # ``pending`` is unused on this provider: the ids are native, so nothing has
+    # to be mapped back onto the stored questions.
+    return build_question_response(None, action="submit", answers=values)

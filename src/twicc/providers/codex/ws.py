@@ -19,6 +19,7 @@ from twicc.providers.state import ProviderDisabledError, ensure_provider_running
 from twicc.usage_task import broadcast_usage_updated, get_usage_message_for_connection
 
 from .auth import check_and_broadcast, get_auth_message_for_connection
+from .pending_question import response_from_ui
 from .usage import fetch_and_save_usage
 
 from twicc.agent.registry import get_agent_manager_registry
@@ -188,7 +189,7 @@ class CodexWSHandler:
             return self._build_elicitation_response(tool_name, content)
 
         if tool_name == "toolRequestUserInput":
-            return self._build_request_user_input_response(content)
+            return response_from_ui(content)
 
         if tool_name == "autoReviewDenial":
             if isinstance(decision, str) and decision in {"accept", "decline"}:
@@ -342,35 +343,6 @@ class CodexWSHandler:
                 return None
             response["_meta"] = {"persist": persist}
         return response
-
-    def _build_request_user_input_response(self, content: dict) -> dict | None:
-        """Response for ``item/tool/requestUserInput`` (wire: ToolRequestUserInputResponse).
-
-        ``{"answers": {question_id: {"answers": [str, …]}}}`` — an empty map is
-        valid (Codex treats a missing answer as a cancel).
-        """
-        answers = content.get("answers")
-        if not isinstance(answers, dict):
-            logger.error(
-                "codex toolRequestUserInput: invalid answers type=%r",
-                type(answers).__name__,
-            )
-            return None
-        normalized: dict = {}
-        for question_id, entry in answers.items():
-            values = entry.get("answers") if isinstance(entry, dict) else None
-            if (
-                not isinstance(question_id, str)
-                or not isinstance(values, list)
-                or not all(isinstance(v, str) for v in values)
-            ):
-                logger.error(
-                    "codex toolRequestUserInput: invalid entry for %r: %r",
-                    question_id, entry,
-                )
-                return None
-            normalized[question_id] = {"answers": values}
-        return {"answers": normalized}
 
     def _safe_default_for(self, tool_name: str) -> dict:
         """Wire-safe fallback when the frontend response failed validation.

@@ -30,6 +30,11 @@ from twicc.providers.claude_code.agent.elicitation import (
     default_elicitation_response,
 )
 from twicc.providers.claude_code.agent.manager import get_claude_code_agent_manager
+from twicc.providers.claude_code.pending_question import (
+    answers_from_ui,
+    build_question_response,
+)
+from twicc.providers.pending_question import QUESTION_ACTIONS
 from twicc.providers.claude_code.auth import (
     check_and_broadcast as check_auth_and_broadcast,
     get_auth_message_for_connection,
@@ -150,50 +155,6 @@ async def _clamp_setmode_permissions_for_trust(session_id: str, raw_permissions:
             setmode["mode"], clamped, session_id,
         )
         setmode["mode"] = clamped
-
-
-# Deny message sent when the user cancels an AskUserQuestion. Deliberately different
-# from the native CLI cancel (which hard-interrupts the turn — that surfaces as a
-# "terminated due to error" toast in the GUI): we keep the turn alive, exactly like
-# "partial", and have the agent acknowledge the decline and hand control back. The SDK
-# forwards this verbatim as the tool_result content; a non-empty message also avoids
-# the empty ``is_error`` API rejection.
-_QUESTION_CANCEL_MESSAGE = (
-    "The user chose not to answer these questions. Acknowledge this briefly and ask "
-    "them how they would like to proceed."
-)
-
-
-def _build_clarify_message(questions: list[dict], answers: dict) -> str:
-    """Reproduce Claude Code's native "clarify" tool result for a partially
-    answered ``AskUserQuestion``.
-
-    When the user answers some but not all questions, the Claude Code CLI rejects
-    the tool with this exact text: a fixed preamble telling the agent the user
-    wants to clarify, followed by every question in order with its answer (or
-    ``(No answer provided)``). Matching it verbatim means the agent receives the
-    same signal it would from the native TUI.
-
-    ``questions`` is the original ``input.questions`` list; ``answers`` maps a
-    question's text to the user's answer (absent or empty for unanswered ones).
-    """
-    lines = [
-        "The user wants to clarify these questions.",
-        "    This means they may have additional information, context or questions for you.",
-        "    Take their response into account and then reformulate the questions if appropriate.",
-        "    Start by asking them what they would like to clarify.",
-        "",
-        "    Questions asked:",
-    ]
-    for question in questions:
-        text = question.get("question", "")
-        lines.append(f'- "{text}"')
-        answer = answers.get(text)
-        if answer:
-            lines.append(f"  Answer: {answer}")
-        else:
-            lines.append("  (No answer provided)")
-    return "\n".join(lines)
 
 
 class ClaudeCodeWSHandler:
@@ -382,9 +343,8 @@ class ClaudeCodeWSHandler:
                 response = PermissionResultDeny(message=message)
 
         elif request_type == "ask_user_question":
-            action = content.get("action", "submit")
-            answers = content.get("answers", {})
-            # Retrieve the original questions from the matching pending request
+            # The questions are read back from the pending request, never taken
+            # from the payload: the agent must receive the set it asked about.
             process_info = manager.get_agent_info(session_id)
             matching = None
             if process_info is not None:
@@ -398,27 +358,21 @@ class ClaudeCodeWSHandler:
                     request_id, session_id,
                 )
                 return
-            original_questions = matching.tool_input.get("questions", [])
-
-            if action == "cancel":
-                # User declined to answer. Same mechanism as "partial" — a plain deny
-                # (no interrupt) so the agent stays alive and processes the message —
-                # but with a fixed text telling it to acknowledge the decline and ask
-                # how to proceed.
-                response = PermissionResultDeny(message=_QUESTION_CANCEL_MESSAGE)
-            elif action == "partial":
-                # User answered some but not all questions. Deny with the native
-                # "clarify" message so the agent sees the partial answers.
-                response = PermissionResultDeny(
-                    message=_build_clarify_message(original_questions, answers)
+            # The widget decides its own action and this handler passes it
+            # through; anything else is a malformed payload and keeps the
+            # historical fallback rather than raising at the caller.
+            action = content.get("action", "submit")
+            if action not in QUESTION_ACTIONS:
+                logger.warning(
+                    "pending_request_response: unknown question action %r, submitting",
+                    action,
                 )
-            else:
-                response = PermissionResultAllow(
-                    updated_input={
-                        "questions": original_questions,
-                        "answers": answers,
-                    }
-                )
+                action = "submit"
+            response = build_question_response(
+                matching,
+                action=action,
+                answers=answers_from_ui(matching, content.get("answers", {})),
+            )
 
         else:
             logger.warning(

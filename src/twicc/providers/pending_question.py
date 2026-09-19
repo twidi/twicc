@@ -34,6 +34,10 @@ MCP_APPROVAL_ID_PREFIX = "mcp_tool_call_approval"
 
 _ELICITATION_TOOL_NAMES = frozenset({"elicitationForm", "elicitationUrl"})
 
+#: The three actions a question answer may carry. Codex has no ``partial`` —
+#: a partially answered request is ``missing_answers`` there.
+QUESTION_ACTIONS = frozenset({"submit", "partial", "cancel"})
+
 ANSWER_ACTION = {"action": "answer", "label": "Answer the questions",
                  "accepts": ["--answer"]}
 CANCEL_ACTION = {"action": "cancel", "label": "Decline to answer"}
