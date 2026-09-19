@@ -213,6 +213,7 @@ _STATUS_TIME_FIELDS: dict[str, str] = {
     "updated": "updated_at",
     "stopped": "stopped_at",
     "deleted": "deleted_at",
+    "fetched": "fetched_at",
     "rejected": "rejected_at",
     "failed": "failed_at",
 }

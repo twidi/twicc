@@ -11,6 +11,14 @@ import orjson
 
 POLL_INTERVAL_SECONDS = 0.1
 
+# Every status that ends a request. ``fetched`` is the one read outcome:
+# ``session <ID> pending-request`` returns data instead of confirming a
+# mutation, so no mutation word fits it. Owned here and imported by
+# ``transport``; a second copy would drift. Adding a member means adding its
+# timestamp field to ``drop_requests_watcher._STATUS_TIME_FIELDS`` too.
+FINAL_STATUSES = ("created", "sent", "updated", "stopped", "deleted",
+                  "fetched", "rejected", "failed")
+
 
 class PollOutcome(NamedTuple):
     status: str | None        # None => timeout
@@ -36,7 +44,7 @@ def poll_status(status_path: Path, timeout_seconds: int) -> PollOutcome:
             last_data = data
             if status == "received":
                 received_seen = True
-            elif status in ("created", "sent", "updated", "stopped", "deleted", "rejected", "failed"):
+            elif status in FINAL_STATUSES:
                 return PollOutcome(status=status, data=data,
                                    received_seen=received_seen)
         time.sleep(POLL_INTERVAL_SECONDS)

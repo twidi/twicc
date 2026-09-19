@@ -33,6 +33,8 @@ _ARTIFACT_BOOKMARK_ID_FIELDS = ("bookmark_id", "session_id", "project_id")
 # ``status_extra`` ("pending" until the remote user resolves the message).
 _PEER_SEND_ID_FIELDS = ("message_id", "peer_id", "peer_status")
 _SHARE_ID_FIELDS = ("share_id",)
+# The ``fetched`` read payload: what ``session <ID> pending-request`` publishes.
+_READ_FIELDS = ("session_id", "provider", "agent_state", "pending_requests")
 
 # Present on some results, absent on others; never invented as ``null``.
 _OPTIONAL_FIELDS = ("last_line",)
@@ -76,6 +78,18 @@ def build_final(outcome, *, request_uuid: str, timeout: int) -> dict:
             # transcript cursor ``send-message`` hands to ``--wait-reply``.
             if field in d:
                 payload[field] = d[field]
+        return payload
+    if outcome.status == "fetched":
+        # The one read outcome. ``execute_drop_payload`` has already flattened
+        # the id fields, the service's ``status_extra`` and the per-status
+        # timestamp into one dict, so there is nothing left to merge here — only
+        # to project. A whitelist, not a blocklist: ``project_id`` and
+        # ``fetched_at`` are real keys of ``outcome.data`` and neither belongs to
+        # the published payload.
+        d = outcome.data
+        payload = {"status": "fetched", "request_uuid": request_uuid}
+        for field in _READ_FIELDS:
+            payload[field] = d.get(field)
         return payload
     if outcome.status == "rejected":
         d = outcome.data

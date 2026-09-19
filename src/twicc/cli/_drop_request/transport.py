@@ -29,13 +29,11 @@ import orjson
 
 from twicc.cli._drop_request.discovery import check_heartbeat
 from twicc.cli._drop_request.drop_file import write_drop_file
-from twicc.cli._drop_request.polling import POLL_INTERVAL_SECONDS, PollOutcome
+from twicc.cli._drop_request.polling import FINAL_STATUSES, POLL_INTERVAL_SECONDS, PollOutcome
 
 backend_loop: ContextVar[asyncio.AbstractEventLoop | None] = ContextVar(
     "twicc_backend_loop", default=None,
 )
-
-_FINAL_STATUSES = ("created", "sent", "updated", "stopped", "deleted", "rejected", "failed")
 
 
 def _in_backend() -> bool:
@@ -79,7 +77,7 @@ class Submission:
         except (FileNotFoundError, ValueError, OSError):
             return None
         status = data.get("status")
-        if status in _FINAL_STATUSES:
+        if status in FINAL_STATUSES:
             return PollOutcome(status=status, data=data, received_seen=True)
         return None
 
