@@ -502,26 +502,20 @@ def test_an_answer_committed_during_the_settle_check_is_not_lost(project, monkey
     assert reply["line_num"] == 19
 
 
-def test_a_cleared_block_is_not_reported_on_the_answer(project, on_tick):
-    """The flag says why nothing came; on an answer there is nothing to explain.
+def test_the_block_is_the_outcome_and_never_a_field_beside_it(project):
+    """One place says it, so a caller has one thing to read.
 
-    The block has to be seen *first* and cleared *after*, which is the whole
-    point: the flag is sticky, so an agent that asked for an approval, got it
-    clicked, and then answered would otherwise hand back ``replied`` carrying a
-    block that no longer exists.
+    There used to be a sticky ``awaiting_user_input: true`` reported alongside
+    whatever ended the wait, because a block did not end it. A block ends it
+    now, the moment it is seen — so the field could only ever have repeated
+    the outcome, and it is gone.
     """
     session = make_session(project)
-    row = process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
-
-    def clicked_then_answered():
-        ProcessRun.objects.filter(pk=row.pk).update(awaiting_user_input=False)
-        assistant(session, 5, "here it is", "end_turn")
-
-    on_tick({2: clicked_then_answered})
+    process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
 
     reply = wait(session, timeout=2.0)
 
-    assert reply["outcome"] == REPLIED
+    assert reply["outcome"] == "awaiting_user_input"
     assert "awaiting_user_input" not in reply
 
 
@@ -555,23 +549,25 @@ def test_an_answer_beats_a_pending_request_seen_on_the_same_tick(project):
     assert wait(session)["outcome"] == REPLIED
 
 
-def test_a_pending_click_does_not_end_the_wait(project, jsonl):
-    """A human can still click, so abandoning here would not be certain.
+def test_a_pending_click_ends_the_wait_instead_of_riding_the_budget(project, jsonl):
+    """It used to run to the deadline and report the condition; now it is the
+    ending. Nothing but a human clears the request, so the budget bought
+    nothing.
 
-    Every other early abort proves nothing more is coming. This one cannot:
-    the answer is one click away. So the wait runs to its deadline and reports
-    the condition instead of acting on it.
+    The block carries no `text`, like the `pending` ending and unlike `ended`
+    and `timeout`: what the agent said before blocking is a non-final message,
+    and `session <ID> pending-request` is what describes the block itself.
     """
     session = make_session(project)
     jsonl(session, size=0)
     assistant(session, 3, "Which approach do you prefer?", "tool_use")
     process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
 
-    reply = wait(session, timeout=0.3)
+    reply = wait(session, timeout=30.0)
 
-    assert reply["outcome"] == TIMEOUT
-    assert reply["awaiting_user_input"] is True
-    assert reply["text"] == "Which approach do you prefer?"
+    assert reply["outcome"] == "awaiting_user_input"
+    assert reply["waited_seconds"] < 5.0
+    assert "text" not in reply
 
 
 def test_a_wait_that_never_saw_a_pending_click_says_nothing_about_it(project, jsonl):
@@ -579,7 +575,10 @@ def test_a_wait_that_never_saw_a_pending_click_says_nothing_about_it(project, js
     jsonl(session, size=0)
     process(session, AgentState.ASSISTANT_TURN.value)
 
-    assert "awaiting_user_input" not in wait(session, timeout=0.2)
+    reply = wait(session, timeout=0.2)
+
+    assert reply["outcome"] == TIMEOUT
+    assert "awaiting_user_input" not in reply
 
 
 def test_inside_the_backend_the_agent_state_comes_from_memory(project, monkeypatch, jsonl):
@@ -944,7 +943,6 @@ def run_cli(*args):
 @pytest.mark.parametrize(("args", "flag"), [
     (["--wait-timeout", "42"], "--wait-timeout"),
     (["--no-reply-text"], "--no-reply-text"),
-    (["--wait-blocked"], "--wait-blocked"),
     # The documented default, spelled out: comparing against the value instead
     # of "was it passed" would let this one through silently.
     (["--wait-timeout", "300"], "--wait-timeout"),
@@ -1017,7 +1015,6 @@ def run_send_cli(*args):
 @pytest.mark.parametrize(("args", "flag"), [
     (["--wait-timeout", "42"], "--wait-timeout"),
     (["--no-reply-text"], "--no-reply-text"),
-    (["--wait-blocked"], "--wait-blocked"),
     (["--wait-timeout", "300"], "--wait-timeout"),
 ])
 def test_send_message_refuses_the_wait_flags_without_the_wait(args, flag):
@@ -1076,7 +1073,7 @@ def test_a_command_with_no_cursor_does_not_grow_a_null_one():
 # closing message answers for the new one.
 
 
-def _run_send_message(monkeypatch, status_data: dict, *, wait_blocked: bool = False,
+def _run_send_message(monkeypatch, status_data: dict, *,
                       wait_timeout=None, no_reply_text: bool = False) -> dict:
     """Drive ``send_message_cmd --wait-reply`` over a stubbed transport.
 
@@ -1121,10 +1118,9 @@ def _run_send_message(monkeypatch, status_data: dict, *, wait_blocked: bool = Fa
 
     seen: dict = {}
 
-    def _probe(session_id, *, since_line_num, timeout, want_text, stop_when_blocked):
+    def _probe(session_id, *, since_line_num, timeout, want_text):
         seen["session_id"] = session_id
         seen["since_line_num"] = since_line_num
-        seen["stop_when_blocked"] = stop_when_blocked
         seen["timeout"] = timeout
         seen["want_text"] = want_text
         return {"outcome": REPLIED}
@@ -1135,7 +1131,7 @@ def _run_send_message(monkeypatch, status_data: dict, *, wait_blocked: bool = Fa
         send_message_cmd(
             session_id=session.id, prompt="hello", no_expand=False, attach=[],
             wait_reply=True, wait_timeout=wait_timeout, no_reply_text=no_reply_text,
-            wait_blocked=wait_blocked, timeout=30,
+            timeout=30,
         )
     return seen
 
@@ -1225,44 +1221,26 @@ def test_the_service_reads_the_cursor_after_the_agent_took_the_message(monkeypat
 
 
 # ---------------------------------------------------------------------------
-# `--wait-blocked` — stop when a human is what is missing
+# A pending request — the wait's second ending
 # ---------------------------------------------------------------------------
 #
-# Off by default, and deliberately so: waiting through a block is right
-# whenever a human is there to clear it, and the case where nobody is —
-# a `--hidden` worker — is the case where blocking cannot happen at all
-# (hidden enforces a non-interactive permission mode). The flag is for a
-# visible session, where a script would otherwise burn its whole timeout
-# waiting on a click nobody is coming to make.
+# Not a flag, and never was one worth having: nothing but a human clears a
+# pending request, so a wait that rides through it burns its whole budget to
+# learn what the first poll already knew. `--wait-reply` means "tell me when
+# it is no longer my turn to wait", and that has two answers.
 
 
-def test_a_block_ends_the_wait_when_asked(project):
+def test_a_block_ends_the_wait(project):
     session = make_session(project)
     process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
 
-    reply = wait(session, timeout=2.0, stop_when_blocked=True)
+    reply = wait(session, timeout=2.0)
 
     assert reply["outcome"] == "awaiting_user_input"
 
 
-def test_a_block_is_waited_through_by_default(project, on_tick):
-    """The shipped behaviour, unchanged: a human clicks, the answer arrives."""
-    session = make_session(project)
-    row = process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
-
-    def clicked_then_answered():
-        ProcessRun.objects.filter(pk=row.pk).update(awaiting_user_input=False)
-        assistant(session, 5, "here it is", "end_turn")
-
-    on_tick({2: clicked_then_answered})
-
-    reply = wait(session, timeout=2.0)
-
-    assert reply["outcome"] == REPLIED
-
-
 def test_an_answer_wins_a_tie_against_a_block(project, on_tick):
-    """Both flags are OR-combined, and the transcript is scanned first.
+    """Both endings at once, and the transcript is scanned first.
 
     A turn that answered and then asked for something has answered — giving
     back ``awaiting_user_input`` would hide a reply the caller can read.
@@ -1276,28 +1254,28 @@ def test_an_answer_wins_a_tie_against_a_block(project, on_tick):
 
     on_tick({2: answered_and_blocked})
 
-    reply = wait(session, timeout=2.0, stop_when_blocked=True)
+    reply = wait(session, timeout=2.0)
 
     assert reply["outcome"] == REPLIED
     assert reply["line_num"] == 5
 
 
 def test_a_block_that_appears_later_still_ends_the_wait(project, on_tick):
-    """The flag is not only about a session already blocked when the wait
-    starts — the interesting case is the turn that runs, then asks."""
+    """Not only a session already blocked when the wait starts — the
+    interesting case is the turn that runs, then asks."""
     session = make_session(project)
     row = process(session, AgentState.ASSISTANT_TURN.value)
 
     on_tick({2: lambda: ProcessRun.objects.filter(pk=row.pk).update(awaiting_user_input=True)})
 
-    reply = wait(session, timeout=2.0, stop_when_blocked=True)
+    reply = wait(session, timeout=2.0)
 
     assert reply["outcome"] == "awaiting_user_input"
 
 
-def test_the_degrade_wrapper_forwards_the_flag(project):
-    """``wait_for_reply_or_degrade`` is what the commands actually call; a flag
-    stopping at the wrapper is a flag that does nothing."""
+def test_the_degrade_wrapper_ends_on_a_block_too(project):
+    """``wait_for_reply_or_degrade`` is what the commands actually call, and
+    an ending that stops at the wrapper is an ending nobody gets."""
     from twicc.cli._wait_reply import wait_for_reply_or_degrade
 
     session = make_session(project)
@@ -1305,56 +1283,9 @@ def test_the_degrade_wrapper_forwards_the_flag(project):
 
     reply = wait_for_reply_or_degrade(
         session.id, since_line_num=0, timeout=2.0, want_text=True,
-        stop_when_blocked=True,
     )
 
     assert reply["outcome"] == "awaiting_user_input"
-
-
-@pytest.mark.django_db
-def test_send_message_forwards_the_blocked_flag(monkeypatch):
-    """A flag that stops at the command is a flag that does nothing — and the
-    loop's own tests cannot see it, since they call the loop directly."""
-    seen = _run_send_message(monkeypatch, {
-        "session_id": "cursor-wiring-session", "provider": "claude_code",
-        "project_id": "cursor-wiring-project", "last_line": 3,
-    }, wait_blocked=True)
-
-    assert seen["stop_when_blocked"] is True
-
-
-@pytest.mark.django_db
-def test_create_session_forwards_the_blocked_flag(monkeypatch, tmp_path):
-    """Same wiring, the other command. Both were unasserted, and both mutants
-    survived the whole file."""
-    from twicc.cli import _wait_reply as wait_reply_module
-
-    seen: dict = {}
-
-    def _probe(session_id, *, since_line_num, timeout, want_text, stop_when_blocked):
-        seen["stop_when_blocked"] = stop_when_blocked
-        return {"outcome": REPLIED}
-
-    from twicc.cli._drop_request import transport
-    from twicc.cli._drop_request.polling import PollOutcome
-
-    class _Sub:
-        request_uuid = "req-create-blocked"
-
-        def cleanup(self):
-            pass
-
-    monkeypatch.setattr(transport, "ensure_server_available", lambda: None)
-    monkeypatch.setattr(transport, "submit", lambda payload, *, kind: _Sub())
-    monkeypatch.setattr(transport, "wait", lambda sub, timeout_seconds: PollOutcome(
-        "created", {"session_id": "s", "provider": "claude_code", "project_id": "p"}, True,
-    ))
-    monkeypatch.setattr(wait_reply_module, "wait_for_reply_or_degrade", _probe)
-
-    result = run_cli("hello", "--project", str(tmp_path), "--wait-reply", "--wait-blocked")
-
-    assert result.exit_code == 0, result.output
-    assert seen["stop_when_blocked"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -1505,17 +1436,15 @@ def test_a_batch_returns_when_the_last_one_answers(project):
     assert elapsed < 1.0
 
 
-def test_a_block_ends_a_first_batch_when_blocking_was_asked_for(project):
-    """``--wait-first`` fires on either ending the caller asked for, and the
-    tuple that decides it had only its answer half covered."""
+def test_a_block_ends_a_first_batch(project):
+    """``--wait-first`` fires on either ending, and the tuple that decides it
+    had only its answer half covered."""
     blocked = make_session(project, session_id="fb-blocked")
     other = make_session(project, session_id="fb-other")
     process(blocked, AgentState.ASSISTANT_TURN.value, awaiting=True)
     process(other, AgentState.ASSISTANT_TURN.value)
 
-    replies = wait_many(
-        {blocked.id: 0, other.id: 0}, timeout=3.0, first=True, stop_when_blocked=True,
-    )
+    replies = wait_many({blocked.id: 0, other.id: 0}, timeout=3.0, first=True)
 
     assert replies[blocked.id]["outcome"] == "awaiting_user_input"
     assert replies[other.id]["outcome"] == "pending"
@@ -1585,7 +1514,7 @@ def test_create_session_hands_its_wait_arguments_over(monkeypatch, tmp_path, arg
 
     seen: dict = {}
 
-    def _probe(session_id, *, since_line_num, timeout, want_text, stop_when_blocked):
+    def _probe(session_id, *, since_line_num, timeout, want_text):
         seen.update(since_line_num=since_line_num, timeout=timeout, want_text=want_text)
         return {"outcome": REPLIED}
 
@@ -1709,19 +1638,17 @@ def test_the_budget_is_one_for_the_batch_not_one_each(project):
     assert elapsed < 1.5
 
 
-def test_a_block_that_was_cleared_is_still_reported_on_a_timeout(project, on_tick):
-    """The flag is sticky, and that is the whole point of it.
+def test_a_block_is_read_every_tick_and_not_only_at_the_start(project, on_tick):
+    """A wait that sampled the state once would miss the turn that runs first.
 
-    A human was asked for during the turn; that the click came before the
-    deadline does not erase it. The existing test pins the opposite half —
-    that it is *not* reported on an answer.
+    Here nothing is pending when the wait starts; the request appears on the
+    second poll.
     """
     session = make_session(project)
-    row = process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
+    row = process(session, AgentState.ASSISTANT_TURN.value)
 
-    on_tick({2: lambda: ProcessRun.objects.filter(pk=row.pk).update(awaiting_user_input=False)})
+    on_tick({2: lambda: ProcessRun.objects.filter(pk=row.pk).update(awaiting_user_input=True)})
 
-    reply = wait(session, timeout=0.5)
+    reply = wait(session, timeout=30.0)
 
-    assert reply["outcome"] == TIMEOUT
-    assert reply["awaiting_user_input"] is True
+    assert reply["outcome"] == "awaiting_user_input"

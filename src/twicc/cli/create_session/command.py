@@ -234,20 +234,18 @@ def create_session_cmd(
         False,
         "--wait-reply",
         help=(
-            "Keep going after the session is created, until it answers. Adds a "
-            "`reply` block to the result carrying the answer's text, its "
-            "`line_num`, and an `outcome` saying what ended the wait: "
-            "'replied' (the message closing the turn), "
+            "Keep going after the session is created, until it concludes. "
+            "Adds a `reply` block to the result carrying the answer's text, "
+            "its `line_num`, and an `outcome` saying what ended the wait: "
+            "'replied' (the message closing the turn), 'awaiting_user_input' "
+            "(a pending request — a tool approval or a question — which only "
+            "a human can clear), "
             "'provider_error' (the provider refused the turn: quota, outage), "
             "'ended' (the turn is over and nothing closed it: a crash, an "
             "interruption, or an answer whose text was empty), 'timeout', "
             "'backend_gone' (TwiCC stopped or restarted, so nothing could be "
-            "observed), 'awaiting_user_input' (with --wait-blocked) or "
-            "'wait_failed' (the wait itself broke; the session is "
-            "unaffected). Without --wait-blocked, an agent blocked on a click "
-            "does not end the wait — a human can still answer — and the "
-            "result carries `awaiting_user_input: true` alongside whatever "
-            "did end it. The exit code never changes: "
+            "observed), or 'wait_failed' (the wait itself broke; the session "
+            "is unaffected). The exit code never changes: "
             "the session was created either way, so read `outcome` rather than "
             "the status code."
         ),
@@ -259,7 +257,8 @@ def create_session_cmd(
         None,
         "--wait-timeout",
         help=(
-            "Seconds the wait may last, whatever ends it — an answer, a block on a human with --wait-blocked, a crash (default 300, the ceiling "
+            "Seconds the wait may last, whatever ends it — an answer, a "
+            "pending request, a crash (default 300, the ceiling "
             "MCP callers are asked to respect). A timeout is not a failure and "
             "nothing is lost — the agent keeps working, and the result carries "
             "the cursor to resume from — `line_num` when the ending consumed a "
@@ -267,19 +266,6 @@ def create_session_cmd(
             "Raise it for a session whose "
             "first turn is long; there is no way to wait forever on purpose. "
             "Requires --wait-reply."
-        ),
-    ),
-    wait_blocked: bool = typer.Option(
-        False,
-        "--wait-blocked",
-        help=(
-            "With --wait-reply, also stop when the session blocks on a human "
-            "(a tool approval or a pending question) instead of waiting "
-            "through it — the outcome becomes `awaiting_user_input`. The two "
-            "are OR-combined: whichever happens first ends the wait, and an "
-            "answer wins a tie. Off by default, because waiting through a "
-            "block is right whenever a human is there to clear it; a --hidden "
-            "session cannot block at all. Requires --wait-reply."
         ),
     ),
     no_reply_text: bool = typer.Option(
@@ -345,8 +331,7 @@ def create_session_cmd(
     wait_errors: list[ValidationError] = []
     if not wait_reply:
         for flag, given in (("--wait-timeout", wait_timeout is not None),
-                            ("--no-reply-text", no_reply_text),
-                            ("--wait-blocked", wait_blocked)):
+                            ("--no-reply-text", no_reply_text)):
             if given:
                 wait_errors.append(ValidationError(
                     flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
@@ -607,7 +592,6 @@ def create_session_cmd(
             since_line_num=0,
             timeout=wait_timeout,
             want_text=not no_reply_text,
-            stop_when_blocked=wait_blocked,
         )
         emit_json(final)
         raise typer.Exit(0)

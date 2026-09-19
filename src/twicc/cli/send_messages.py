@@ -134,7 +134,8 @@ def send_messages_cmd(
         "--wait-reply",
         help=(
             "Keep going after the batch is delivered, until the recipients "
-            "answer. Adds a `reply` block per entry, the same shape "
+            "conclude — an answer, or a pending request only a human can "
+            "clear. Adds a `reply` block per entry, the same shape "
             "`send-message --wait-reply` returns, and `replied` / "
             "`all_replied` to the summary. Only entries that were actually "
             "sent are waited on. One shared deadline covers the batch (see "
@@ -147,7 +148,7 @@ def send_messages_cmd(
         "--wait-timeout",
         help=(
             "Seconds the wait may last, whatever ends it — an answer, a "
-            "block on a human with --wait-blocked, a crash. One budget for "
+            "pending request, a crash. One budget for "
             "the whole batch, since the recipients are waited on together "
             "(default 300, the ceiling MCP callers are asked to respect). A "
             "timeout is not a failure and nothing is lost — the agents keep "
@@ -165,25 +166,16 @@ def send_messages_cmd(
             "returning their text. Requires --wait-reply."
         ),
     ),
-    wait_blocked: bool = typer.Option(
-        False,
-        "--wait-blocked",
-        help=(
-            "With --wait-reply, a recipient blocking on a human also ends its "
-            "own wait, with `outcome: awaiting_user_input`, instead of waiting "
-            "through it. OR-combined with the answer, which wins a tie. "
-            "Requires --wait-reply."
-        ),
-    ),
     wait_first: bool = typer.Option(
         False,
         "--wait-first/--wait-all",
         help=(
-            "--wait-all (default): wait until EVERY recipient has answered. "
-            "--wait-first: stop as soon as ONE has, leaving the rest "
-            "`outcome: pending`. A recipient whose turn crashed or was refused "
-            "never ends a --wait-first batch: the others may still answer, and "
-            "an answer is what was asked for. Requires --wait-reply."
+            "--wait-all (default): wait until EVERY recipient has concluded. "
+            "--wait-first: stop as soon as ONE has answered or blocked on a "
+            "human, leaving the rest `outcome: pending`. A recipient whose "
+            "turn crashed or was refused never ends a --wait-first batch: the "
+            "others may still answer, and an answer is what was asked for. "
+            "Requires --wait-reply."
         ),
     ),
 ) -> None:
@@ -314,7 +306,6 @@ def send_messages_cmd(
     if not wait_reply:
         for flag, given in (("--wait-timeout", wait_timeout is not None),
                             ("--no-reply-text", no_reply_text),
-                            ("--wait-blocked", wait_blocked),
                             ("--wait-first", wait_first)):
             if given:
                 wait_errors.append(ValidationError(
@@ -354,7 +345,6 @@ def send_messages_cmd(
                 cursors,
                 timeout=budget,
                 want_text=not no_reply_text,
-                stop_when_blocked=wait_blocked,
                 first=wait_first,
             )
         except BaseException as exc:  # noqa: BLE001 - deliberate

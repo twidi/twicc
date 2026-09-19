@@ -82,7 +82,7 @@ def answer(session, line_num, text="done"):
 def run(capsysbinary, **kwargs):
     kwargs.setdefault("timeout", 2.0)
     with pytest.raises(typer.Exit) as exc:
-        cli_session.wait("sw-session", **kwargs)
+        cli_session.wait_reply("sw-session", **kwargs)
     payload = orjson.loads(capsysbinary.readouterr().out)
     return payload, exc.value.exit_code
 
@@ -147,7 +147,8 @@ def test_an_idle_session_ends_instead_of_hanging(session, capsysbinary):
 
 
 def test_a_block_can_end_the_wait_and_exits_zero(session, capsysbinary):
-    """Asked for, so it is an ending the caller wanted, not a failure."""
+    """An ending the caller wanted, not a failure: nobody but a human can
+    clear a pending request, so waiting on is waiting for nothing."""
     now = timezone.now()
     ProcessRun.objects.create(
         provider=session.provider, session_id=session.id, twicc_pid=TWICC_PID,
@@ -155,7 +156,7 @@ def test_a_block_can_end_the_wait_and_exits_zero(session, capsysbinary):
         last_state_change_at=now, awaiting_user_input=True,
     )
 
-    payload, code = run(capsysbinary, on_blocked=True)
+    payload, code = run(capsysbinary)
 
     assert payload["reply"]["outcome"] == "awaiting_user_input"
     assert code == 0
@@ -228,7 +229,7 @@ def test_the_text_can_be_dropped(session, capsysbinary):
 ])
 def test_bad_arguments_are_refused(session, capsysbinary, kwargs, message):
     with pytest.raises(typer.Exit) as exc:
-        cli_session.wait("sw-session", **kwargs)
+        cli_session.wait_reply("sw-session", **kwargs)
 
     assert exc.value.exit_code == 1
     assert message in capsysbinary.readouterr().err.decode()
@@ -236,7 +237,7 @@ def test_bad_arguments_are_refused(session, capsysbinary, kwargs, message):
 
 def test_an_unknown_session_is_refused(db, capsysbinary):
     with pytest.raises(typer.Exit) as exc:
-        cli_session.wait("nope", timeout=1.0)
+        cli_session.wait_reply("nope", timeout=1.0)
 
     assert exc.value.exit_code == 1
 
@@ -247,33 +248,33 @@ def test_an_unknown_session_is_refused(db, capsysbinary):
 
 
 def test_the_flags_travel_from_the_command_line(session, monkeypatch):
-    """Calling ``wait()`` directly leaves the Typer wiring untested, and an
-    option that never arrives is a silent no-op."""
+    """Calling ``wait_reply()`` directly leaves the Typer wiring untested, and
+    an option that never arrives is a silent no-op."""
     from typer.testing import CliRunner
 
     from twicc.cli import app
 
     seen: dict = {}
 
-    def probe(session_id, *, from_line, since, timeout, want_text, on_reply, on_blocked):
+    def probe(session_id, *, from_line, since, timeout, want_text):
         # ``session_id`` too: ``ctx.obj`` is the only wiring that carries the
         # positional id down from the group callback, and the direct-call
         # tests bypass the wrapper entirely. Recorded but unasserted, a
         # hardcoded id would wait on the wrong session with the suite green.
-        seen.update(session_id=session_id, from_line=from_line, since=since, timeout=timeout,
-                    want_text=want_text, reply=on_reply, blocked=on_blocked)
+        seen.update(session_id=session_id, from_line=from_line, since=since,
+                    timeout=timeout, want_text=want_text)
         raise typer.Exit(0)
 
-    monkeypatch.setattr("twicc.cli.session.wait", probe)
+    monkeypatch.setattr("twicc.cli.session.wait_reply", probe)
 
     result = CliRunner().invoke(app, [
-        "session", "sw-session", "wait",
-        "--from", "42", "--wait-timeout", "7", "--blocked", "--no-reply-text",
+        "session", "sw-session", "wait-reply",
+        "--from", "42", "--wait-timeout", "7", "--no-reply-text",
     ])
 
     assert result.exit_code == 0, result.output
-    assert seen == {"session_id": "sw-session", "from_line": 42, "since": None, "timeout": 7.0,
-                    "want_text": False, "reply": False, "blocked": True}
+    assert seen == {"session_id": "sw-session", "from_line": 42, "since": None,
+                    "timeout": 7.0, "want_text": False}
 
 
 def test_the_defaults_are_the_documented_ones(session, monkeypatch):
@@ -283,22 +284,22 @@ def test_the_defaults_are_the_documented_ones(session, monkeypatch):
 
     seen: dict = {}
 
-    def probe(session_id, *, from_line, since, timeout, want_text, on_reply, on_blocked):
+    def probe(session_id, *, from_line, since, timeout, want_text):
         # ``session_id`` too: ``ctx.obj`` is the only wiring that carries the
         # positional id down from the group callback, and the direct-call
         # tests bypass the wrapper entirely. Recorded but unasserted, a
         # hardcoded id would wait on the wrong session with the suite green.
-        seen.update(session_id=session_id, from_line=from_line, since=since, timeout=timeout,
-                    want_text=want_text, reply=on_reply, blocked=on_blocked)
+        seen.update(session_id=session_id, from_line=from_line, since=since,
+                    timeout=timeout, want_text=want_text)
         raise typer.Exit(0)
 
-    monkeypatch.setattr("twicc.cli.session.wait", probe)
+    monkeypatch.setattr("twicc.cli.session.wait_reply", probe)
 
-    result = CliRunner().invoke(app, ["session", "sw-session", "wait"])
+    result = CliRunner().invoke(app, ["session", "sw-session", "wait-reply"])
 
     assert result.exit_code == 0, result.output
-    assert seen == {"session_id": "sw-session", "from_line": None, "since": None, "timeout": 300.0,
-                    "want_text": True, "reply": False, "blocked": False}
+    assert seen == {"session_id": "sw-session", "from_line": None, "since": None,
+                    "timeout": 300.0, "want_text": True}
 
 
 def test_the_payload_names_the_session_it_waited_on(session, capsysbinary):
@@ -322,10 +323,10 @@ def test_the_wait_is_published_as_a_read():
     """
     from twicc.mcp.tools import MCP_READ_ONLY_PATHS, iter_mcp_tools
 
-    assert "session/wait" in MCP_READ_ONLY_PATHS
+    assert "session/wait-reply" in MCP_READ_ONLY_PATHS
 
     hints = {t.name: t.annotations.read_only_hint for t in iter_mcp_tools()}
-    assert hints["session_wait"] is True
+    assert hints["session_wait_reply"] is True
     assert hints["session_stop"] is False
 
 
@@ -339,7 +340,7 @@ def test_the_mcp_description_carries_the_contract():
     from twicc.mcp.tools import iter_mcp_tools
 
     description = next(
-        t.description for t in iter_mcp_tools() if t.name == "session_wait"
+        t.description for t in iter_mcp_tools() if t.name == "session_wait_reply"
     )
 
     # The exit codes are the answer over MCP, where a non-zero code is
@@ -360,12 +361,13 @@ def test_the_mcp_description_carries_the_contract():
     assert "--since is\nthe same cursor as an instant" in description
     assert "mutually exclusive" in description
 
-    # And the vocabulary a caller has to branch on. `pending` is batch-only
-    # and must stay out: it cannot happen here.
+    # And the vocabulary a caller has to branch on. The `pending` *outcome* is
+    # batch-only and must stay out: it cannot happen here. The word itself now
+    # appears on its own — a pending request is one of the two endings.
     for outcome in ("replied", "ended", "timeout", "provider_error",
                     "backend_gone", "wait_failed", "awaiting_user_input"):
         assert f"`{outcome}`" in description, outcome
-    assert "pending" not in description
+    assert "`pending`" not in description
 
 
 def test_a_provider_error_consumes_a_line_like_an_answer_does(session, capsysbinary):
@@ -407,8 +409,8 @@ def test_a_provider_error_consumes_a_line_like_an_answer_does(session, capsysbin
 # ---------------------------------------------------------------------------
 
 
-def test_an_answer_ends_the_wait_by_default(session, capsysbinary):
-    """An answer always ends the wait, with or without `--reply`."""
+def test_an_answer_ends_the_wait(session, capsysbinary):
+    """One of the two endings; the other is a pending request."""
     running(session)
     answer(session, 20, "here")
 
@@ -418,25 +420,8 @@ def test_an_answer_ends_the_wait_by_default(session, capsysbinary):
     assert code == 0
 
 
-def test_blocked_is_an_addition_not_a_replacement(session, capsysbinary):
-    """`--blocked` adds a second way to finish; an answer still ends the wait.
-
-    The same shape `--wait-blocked` has on the commands that send, so a caller
-    who knows one surface knows the other. An earlier version made the two
-    flags exclusive selectors, which read well on its own and made the same
-    word mean two different things across the CLI.
-    """
-    running(session)
-    answer(session, 20, "here")
-
-    payload, code = run(capsysbinary, from_line=0, on_blocked=True)
-
-    assert payload["reply"]["outcome"] == "replied"
-    assert code == 0
-
-
 def test_an_answer_wins_a_tie_against_a_block(session, capsysbinary):
-    """OR-combined, and the answer wins a tie: the transcript is scanned
+    """Both endings at once, and the answer wins: the transcript is scanned
     before the agent's state is read."""
     now = timezone.now()
     ProcessRun.objects.create(
@@ -446,19 +431,18 @@ def test_an_answer_wins_a_tie_against_a_block(session, capsysbinary):
     )
     answer(session, 20, "answered then asked")
 
-    payload, code = run(capsysbinary, from_line=0, on_blocked=True)
+    payload, code = run(capsysbinary, from_line=0)
 
     assert payload["reply"]["outcome"] == "replied"
     assert code == 0
 
 
-def test_a_block_is_ignored_unless_asked_for(session, capsysbinary):
-    """`--blocked` is off by default, and that is the half nothing pinned.
+def test_a_block_never_waits_out_the_budget(session, capsysbinary):
+    """The half that used to need a flag, and is now the only behaviour.
 
-    A session blocked on a tool approval must be waited through: a human can
-    still click, and the answer would arrive. Wiring the flag on by default
-    survived the whole suite — the shared loop's own test covers it from
-    `send-message`, not from here.
+    A pending request is not a slow turn: no line will ever arrive until a
+    human clears it, so riding the deadline out would burn the whole budget to
+    learn what the first poll already knew.
     """
     now = timezone.now()
     ProcessRun.objects.create(
@@ -467,27 +451,29 @@ def test_a_block_is_ignored_unless_asked_for(session, capsysbinary):
         last_state_change_at=now, awaiting_user_input=True,
     )
 
-    payload, code = run(capsysbinary, timeout=0.3)
+    payload, code = run(capsysbinary, timeout=30.0)
 
-    assert payload["reply"]["outcome"] == "timeout"
-    assert code == 5
+    assert payload["reply"]["outcome"] == "awaiting_user_input"
+    assert payload["reply"]["waited_seconds"] < 5.0
+    assert code == 0
 
 
-def test_the_reply_flag_is_accepted(session, monkeypatch):
-    """It changes nothing, so being accepted is its whole contract.
+def test_the_sub_command_answers_to_its_name(session, monkeypatch):
+    """`wait-reply`, not `wait`: the rename has to reach the command line.
 
-    A typo in the option string makes every documented `--reply` invocation
-    exit 2, and no test ever passed it on a command line.
+    A group still registering the old name would leave every documented
+    invocation exiting 2, and calling the function directly never notices.
+    The old name is gone outright — there is no compatibility to keep, the
+    flags it took never shipped anywhere.
     """
     from typer.testing import CliRunner
 
     from twicc.cli import app
 
-    monkeypatch.setattr("twicc.cli.session.wait", lambda *a, **k: None)
+    monkeypatch.setattr("twicc.cli.session.wait_reply", lambda *a, **k: None)
 
-    result = CliRunner().invoke(app, ["session", "sw-session", "wait", "--reply"])
-
-    assert result.exit_code == 0, result.output
+    assert CliRunner().invoke(app, ["session", "sw-session", "wait-reply"]).exit_code == 0
+    assert CliRunner().invoke(app, ["session", "sw-session", "wait"]).exit_code != 0
 
 
 @pytest.mark.parametrize("kwargs, message", [
@@ -504,7 +490,7 @@ def test_a_bad_flag_is_named_before_the_session_is_looked_up(db, capsysbinary, k
     so a refactor moved it without noticing.
     """
     with pytest.raises(typer.Exit) as exc:
-        cli_session.wait("no-such-session", **kwargs)
+        cli_session.wait_reply("no-such-session", **kwargs)
 
     assert exc.value.exit_code == 1
     assert message in capsysbinary.readouterr().err.decode()
@@ -654,7 +640,7 @@ def test_an_empty_transcript_starts_above_the_first_line(session):
 
 def test_the_two_cursors_are_mutually_exclusive(session, capsysbinary):
     with pytest.raises(typer.Exit) as exc:
-        cli_session.wait("sw-session", from_line=2, since="2026-09-19", timeout=2.0)
+        cli_session.wait_reply("sw-session", from_line=2, since="2026-09-19", timeout=2.0)
 
     assert exc.value.exit_code == 1
     assert b"--from and --since" in capsysbinary.readouterr().err
@@ -672,7 +658,7 @@ def test_the_two_cursors_are_mutually_exclusive(session, capsysbinary):
 ])
 def test_an_unparseable_instant_is_refused_by_name(session, capsysbinary, since):
     with pytest.raises(typer.Exit) as exc:
-        cli_session.wait("sw-session", since=since, timeout=2.0)
+        cli_session.wait_reply("sw-session", since=since, timeout=2.0)
 
     assert exc.value.exit_code == 1
     assert b"--since" in capsysbinary.readouterr().err
@@ -685,13 +671,13 @@ def test_the_instant_travels_from_the_command_line(session, monkeypatch):
 
     seen: dict = {}
 
-    def probe(session_id, *, from_line, since, timeout, want_text, on_reply, on_blocked):
+    def probe(session_id, *, from_line, since, timeout, want_text):
         seen.update(session_id=session_id, from_line=from_line, since=since)
         raise typer.Exit(0)
 
-    monkeypatch.setattr("twicc.cli.session.wait", probe)
+    monkeypatch.setattr("twicc.cli.session.wait_reply", probe)
 
-    result = CliRunner().invoke(app, ["session", "sw-session", "wait", "--since", "2026-09-19"])
+    result = CliRunner().invoke(app, ["session", "sw-session", "wait-reply", "--since", "2026-09-19"])
 
     assert result.exit_code == 0, result.output
     assert seen == {"session_id": "sw-session", "from_line": None, "since": "2026-09-19"}

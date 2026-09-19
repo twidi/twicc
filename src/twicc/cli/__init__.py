@@ -549,8 +549,8 @@ def messages(
                      limit=limit, offset=offset, tail=tail, paginated=paginated)
 
 
-@session_app.command("wait")
-def _session_wait(
+@session_app.command("wait-reply")
+def _session_wait_reply(
     ctx: typer.Context,
     from_line: int = typer.Option(
         None, "--from",
@@ -587,26 +587,6 @@ def _session_wait(
             "shorter value and come back from the `since_line_num` you got."
         ),
     ),
-    reply: bool = typer.Option(
-        False, "--reply",
-        help=(
-            "Stop when the session answers — the message closing its turn. "
-            "This is what the wait does with no flag at all, and an answer "
-            "keeps ending it once --blocked is added, so naming --reply "
-            "changes nothing. It reads like --wait-reply on the commands "
-            "that send, where the wait must additionally be turned on."
-        ),
-    ),
-    blocked: bool = typer.Option(
-        False, "--blocked",
-        help=(
-            "Also stop when the session blocks on a human (a tool approval, "
-            "a pending question) — the outcome becomes `awaiting_user_input`. "
-            "A second way to finish, not a replacement: an answer still ends "
-            "the wait, and wins a tie. Same meaning as --wait-blocked on the "
-            "commands that send."
-        ),
-    ),
     no_reply_text: bool = typer.Option(
         False, "--no-reply-text",
         help=(
@@ -615,22 +595,21 @@ def _session_wait(
         ),
     ),
 ) -> None:
-    """Block until this session produces a message past the cursor.
+    """Block until this session concludes, past the cursor.
 
-    Unlike --wait-reply, nothing is sent: this waits on a session someone else
-    started, steered from the UI or spawned earlier.
+    The same wait `--wait-reply` runs on the commands that send, on a session
+    nobody just messaged: one spawned earlier, steered from the UI, or
+    messaged by someone else. Nothing is sent, so the cursor is named rather
+    than read off a send.
 
-    With no flag, the wait ends on an answer. --reply names that default,
-    --blocked ORs in a second ending — the session blocking on a human — and
-    an answer still wins a tie. That is the combination --wait-reply /
-    --wait-blocked give on the commands that send; the only difference is that
-    there the wait must be turned on, and here the command is the wait.
+    It ends on an answer — the message closing a turn — or on a pending
+    request, a tool approval or a question only a human can clear. Both are
+    "it is no longer my turn to wait"; an answer wins a tie.
 
-    Exit 0 when it answered (or blocked, with --blocked), 5 when no answer
-    came, 2 when TwiCC stopped, 1 on a local refusal (a bad --from or --since, the
-    two cursors passed together, a non-positive --wait-timeout, an unknown
-    session) or the wait itself
-    breaking — so a script can chain on it.
+    Exit 0 when it answered or blocked, 5 when neither came, 2 when TwiCC
+    stopped, 1 on a local refusal (a bad --from or --since, the two cursors
+    passed together, a non-positive --wait-timeout, an unknown session) or the
+    wait itself breaking — so a script can chain on it.
 
     --from is the cursor, and only a line strictly past it counts. --since is
     the same cursor as an instant, mutually exclusive with it: the wait starts
@@ -645,17 +624,17 @@ def _session_wait(
     this backwards on a `provider_error` re-matches the same error forever.
     Omitted, the cursor is the session's current last line.
 
-    `outcome` is `replied` (the message closing the turn), `ended` (the turn
-    is over and nothing closed it — a crash, an interruption, an empty
-    answer), `timeout`, `provider_error` (the provider refused: quota,
-    outage), `backend_gone`, `wait_failed`, or `awaiting_user_input` with
-    --blocked.
+    `outcome` is `replied` (the message closing the turn),
+    `awaiting_user_input` (a pending request), `ended` (the turn is over and
+    nothing closed it — a crash, an interruption, an empty answer), `timeout`,
+    `provider_error` (the provider refused: quota, outage), `backend_gone`, or
+    `wait_failed`.
     """
-    from twicc.cli.session import wait as session_wait
+    from twicc.cli.session import wait_reply as session_wait_reply
 
-    session_wait(
+    session_wait_reply(
         ctx.obj, from_line=from_line, since=since, timeout=wait_timeout,
-        want_text=not no_reply_text, on_reply=reply, on_blocked=blocked,
+        want_text=not no_reply_text,
     )
 
 

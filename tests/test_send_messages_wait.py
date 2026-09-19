@@ -57,9 +57,9 @@ def batch(monkeypatch, two_sessions):
 
     seen: dict = {}
 
-    def fake_wait(cursors, *, timeout, want_text, stop_when_blocked, first):
+    def fake_wait(cursors, *, timeout, want_text, first):
         seen.update(cursors=dict(cursors), timeout=timeout, want_text=want_text,
-                    blocked=stop_when_blocked, first=first)
+                    first=first)
         return {
             sid: {"outcome": "replied", "line_num": 9, "text": "ok"}
             for sid in cursors
@@ -89,7 +89,6 @@ def run(capsysbinary, **kwargs):
     kwargs.setdefault("annotation", None)
     kwargs.setdefault("wait_timeout", None)
     kwargs.setdefault("no_reply_text", False)
-    kwargs.setdefault("wait_blocked", False)
     kwargs.setdefault("wait_first", False)
     import typer
 
@@ -148,15 +147,14 @@ def test_nothing_is_waited_on_without_the_flag(batch, capsysbinary):
     assert "replied" not in payload["summary"]
 
 
-@pytest.mark.parametrize("flag, key", [("wait_first", "first"), ("wait_blocked", "blocked")])
-def test_the_wait_flags_reach_the_loop(batch, capsysbinary, flag, key):
+def test_the_wait_first_flag_reaches_the_loop(batch, capsysbinary):
     """A flag that stops at the command is a flag that does nothing, and the
     loop's own tests cannot see it."""
     batch["statuses"].update(alpha=sent("alpha", 1), beta=sent("beta", 1))
 
-    run(capsysbinary, **{flag: True})
+    run(capsysbinary, wait_first=True)
 
-    assert batch["seen"][key] is True
+    assert batch["seen"]["first"] is True
 
 
 def test_the_shared_deadline_reaches_the_loop(batch, capsysbinary):
@@ -189,7 +187,6 @@ def test_the_text_is_kept_by_default(batch, capsysbinary):
 @pytest.mark.parametrize("kwargs, message", [
     ({"wait_timeout": 5.0}, "--wait-timeout requires --wait-reply."),
     ({"no_reply_text": True}, "--no-reply-text requires --wait-reply."),
-    ({"wait_blocked": True}, "--wait-blocked requires --wait-reply."),
     ({"wait_first": True}, "--wait-first requires --wait-reply."),
 ])
 def test_the_modifiers_are_refused_without_the_wait(batch, capsysbinary, kwargs, message):

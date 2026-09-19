@@ -46,7 +46,7 @@ $TWICC send-message [OPTIONS] '<SESSION_ID|parent>' ['<PROMPT>']
 - `--wait-reply` — keep going after delivery, until the session answers. See **Following up** below.
 - `--wait-timeout N` — caps that wait, whatever ends it. Default **300 s**, which is the ceiling MCP callers are asked to respect — and an MCP client may itself give up on a tool silent that long, so over MCP pass a shorter value and come back rather than riding the default to its end. There is no way to disable it. Requires `--wait-reply`.
 - `--no-reply-text` — report that the answer arrived without returning its text. Requires `--wait-reply`.
-- `--wait-blocked` — with `--wait-reply`, also stop when the session blocks on a human (a tool approval, a pending question) instead of waiting through it; the outcome becomes `awaiting_user_input`. **OR-combined** with the reply wait — whichever happens first ends it, and an answer wins a tie. Off by default: waiting through a block is right whenever a human is there to clear it, and the case where nobody is (a `--hidden` session) is the case where blocking cannot happen at all.
+- A **pending request** ends the wait too — a tool approval or a question, which only a human can clear. It is not a slow turn: no line will ever arrive until someone clicks, so riding the budget out would buy nothing. `outcome` becomes `awaiting_user_input`, and an answer arriving in the same poll wins.
 
 ### Target discovery
 
@@ -76,7 +76,7 @@ Symmetrically: an incoming message that opens with this header comes from anothe
 - `project_no_directory`
 - `parent_not_found` — `parent` used but no TwiCC session in the ancestry, or the current session has no `spawned_by` link.
 - `missing_prompt` — no `PROMPT` and no `--attach`: the message would be empty.
-- `requires_wait_reply` — `--wait-timeout`, `--no-reply-text` or `--wait-blocked` passed without `--wait-reply`.
+- `requires_wait_reply` — `--wait-timeout` or `--no-reply-text` passed without `--wait-reply`.
 - `invalid_value` — `--wait-timeout` is not > 0.
 
 ### Server (exit 3)
@@ -146,11 +146,11 @@ $TWICC send-message <SESSION_ID> '<TEXT>' --wait-reply [--wait-timeout N] [--no-
 
 It adds a `reply` block: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (drop it with `--no-reply-text` when you only need the go-ahead), and `error` on `wait_failed`. `outcome` is `replied` (the message closing the turn), `provider_error` (the provider refused: quota, outage), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `backend_gone`, or `wait_failed`.
 
-**Only a line written after your message counts.** `since_line_num` is the transcript cursor, read server-side the instant the agent took it, so the *previous* turn's closing message is not returned in its place — the trap `process wait` has no way to avoid. Chaining `--wait-reply` calls is safe by construction: each one returns only once the answer is indexed, so the next cursor is always past it. A timeout is not a failure: the agent keeps working, and that cursor is what you resume from — with `$TWICC session <SESSION_ID> wait --from <CURSOR>` (skill: `twicc-session`), the command that takes one. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. The exit code only ever says whether the message was sent.
+**Only a line written after your message counts.** `since_line_num` is the transcript cursor, read server-side the instant the agent took it, so the *previous* turn's closing message is not returned in its place — the trap `process wait` has no way to avoid. Chaining `--wait-reply` calls is safe by construction: each one returns only once the answer is indexed, so the next cursor is always past it. A timeout is not a failure: the agent keeps working, and that cursor is what you resume from — with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`), the command that takes one. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. The exit code only ever says whether the message was sent.
 
 `since_line_num: 0` on a `replied` means no cursor came back (a backend older than the flag). The wait then started from the top of the turn, so check the answer is the one you expected.
 
-An agent that blocks on a click **during** the turn does not end the wait — a human can still answer — so the result carries `"awaiting_user_input": true` alongside whatever ended it. A target already blocked when you send is a different case: it is refused outright (exit 3, above).
+An agent that blocks on a click **during** the turn ends the wait, with `outcome: awaiting_user_input`: only a human clears it. Read what it is waiting on with `$TWICC session <SESSION_ID> pending-request` (skill: `twicc-session`). A target already blocked when you send is a different case: it is refused outright (exit 3, above).
 
 Falling back to the state machine, when you want liveness rather than an answer:
 

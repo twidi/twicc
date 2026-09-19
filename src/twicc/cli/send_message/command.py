@@ -49,19 +49,17 @@ def send_message_cmd(
         False,
         "--wait-reply",
         help=(
-            "Keep going after the message is delivered, until the session "
-            "answers. Adds a `reply` block to the result carrying the answer's "
-            "text, its `line_num`, and an `outcome` saying what ended the "
-            "wait: 'replied' (the message closing the turn), 'provider_error' "
-            "(the provider refused: quota, outage), 'ended' (the turn is over "
-            "and nothing closed it), 'timeout', 'backend_gone', or "
-            "'awaiting_user_input' (with --wait-blocked) or 'wait_failed'. Only a "
-            "line written after this message counts, so "
-            "the previous turn's answer is not returned in its place. An "
-            "agent that blocks on a click DURING the turn does not end the "
-            "wait — a human can still answer — so the result carries "
-            "`awaiting_user_input: true` instead (a target already blocked "
-            "when you send is refused outright, exit 3). The exit code never "
+"Keep going after the message is delivered, until the session "
+            "concludes. Adds a `reply` block to the result carrying the "
+            "answer's text, its `line_num`, and an `outcome` saying what "
+            "ended the wait: 'replied' (the message closing the turn), "
+            "'awaiting_user_input' (a pending request — a tool approval "
+            "or a question — which only a human can clear), "
+            "'provider_error' (the provider refused: quota, outage), "
+            "'ended' (the turn is over and nothing closed it), "
+            "'timeout', 'backend_gone', or 'wait_failed'. Only a line "
+            "written after this message counts, so the previous turn's "
+            "answer is not returned in its place. The exit code never "
             "changes: the message was sent either way, so read `outcome`."
         ),
     ),
@@ -69,7 +67,8 @@ def send_message_cmd(
         None,
         "--wait-timeout",
         help=(
-            "Seconds the wait may last, whatever ends it — an answer, a block on a human with --wait-blocked, a crash (default 300, the ceiling "
+            "Seconds the wait may last, whatever ends it — an answer, a "
+            "pending request, a crash (default 300, the ceiling "
             "MCP callers are asked to respect — an MCP client may itself give "
             "up on a tool silent that long, so over MCP pass a shorter value "
             "and come back rather than riding the default to its end). A "
@@ -78,19 +77,6 @@ def send_message_cmd(
             "when the ending consumed a line (`replied`, `provider_error`), "
             "`since_line_num` otherwise. "
             "Requires --wait-reply."
-        ),
-    ),
-    wait_blocked: bool = typer.Option(
-        False,
-        "--wait-blocked",
-        help=(
-            "With --wait-reply, also stop when the session blocks on a human "
-            "(a tool approval or a pending question) instead of waiting "
-            "through it — the outcome becomes `awaiting_user_input`. The two "
-            "are OR-combined: whichever happens first ends the wait, and an "
-            "answer wins a tie. Off by default, because waiting through a "
-            "block is right whenever a human is there to clear it; a --hidden "
-            "session cannot block at all. Requires --wait-reply."
         ),
     ),
     no_reply_text: bool = typer.Option(
@@ -173,8 +159,7 @@ def send_message_cmd(
     wait_errors: list[ValidationError] = []
     if not wait_reply:
         for flag, given in (("--wait-timeout", wait_timeout is not None),
-                            ("--no-reply-text", no_reply_text),
-                            ("--wait-blocked", wait_blocked)):
+                            ("--no-reply-text", no_reply_text)):
             if given:
                 wait_errors.append(ValidationError(
                     flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
@@ -346,7 +331,6 @@ def send_message_cmd(
             since_line_num=final.get("last_line") or 0,
             timeout=wait_timeout,
             want_text=not no_reply_text,
-            stop_when_blocked=wait_blocked,
         )
         emit_json(final)
         raise typer.Exit(0)

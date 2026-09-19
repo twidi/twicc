@@ -11,6 +11,12 @@ it returns to ``USER_TURN`` (see ``ClaudeCodeAgent``'s ResultMessage handler).
 Waiting on the state machine there costs hours; waiting on
 ``SessionItem.is_final`` costs nothing.
 
+A pending request ends the wait too, and always: a session blocked on a tool
+approval or a question is not going to answer until a human clicks, so the
+caller has to be told rather than left to the deadline. The two endings are one
+question — "is it still my turn to wait?" — which is why there is no flag
+separating them.
+
 Whether the agent is still working is the **backstop**, never the signal.
 ``is_final`` says when an answer arrived; it never says when one will not.
 A turn that crashes, that is interrupted, or that closes on an empty text
@@ -84,7 +90,7 @@ AGENT_FLUSH_SECONDS = 5.0
 REPLIED = "replied"                # a final assistant message landed past the cursor
 PROVIDER_ERROR = "provider_error"  # the provider refused the turn (quota, outage, ...)
 ENDED = "ended"                    # the turn is over and no final message appeared
-AWAITING = "awaiting_user_input"   # the agent is blocked on a human, and the caller asked to be told
+AWAITING = "awaiting_user_input"   # a pending request: the agent is blocked on a human
 PENDING = "pending"                # batch only: --wait-first ended the wait before this one concluded
 TIMEOUT = "timeout"                # the deadline passed, the session keeps running
 BACKEND_GONE = "backend_gone"      # TwiCC stopped or restarted: nothing can be observed
@@ -112,7 +118,6 @@ def wait_for_reply_or_degrade(
     since_line_num: int,
     timeout: float,
     want_text: bool,
-    stop_when_blocked: bool = False,
 ) -> dict:
     """:func:`wait_for_reply`, unable to take its caller's payload down with it.
 
@@ -131,7 +136,7 @@ def wait_for_reply_or_degrade(
     try:
         return wait_for_reply(
             session_id, since_line_num=since_line_num, timeout=timeout,
-            want_text=want_text, stop_when_blocked=stop_when_blocked,
+            want_text=want_text,
         )
     except BaseException as exc:  # noqa: BLE001 - deliberate, see above
         return degraded_reply(since_line_num, time.monotonic() - started, exc)
@@ -285,21 +290,19 @@ class _SessionWait:
     """
 
     def __init__(self, session_id: str, since_line_num: int, *, started: float,
-                 twicc_pid, want_text: bool, stop_when_blocked: bool):
+                 twicc_pid, want_text: bool):
         self.session_id = session_id
         self.since_line_num = since_line_num
         self.scanned_up_to = since_line_num
         self.started = started
         self.twicc_pid = twicc_pid
         self.want_text = want_text
-        self.stop_when_blocked = stop_when_blocked
         # Read once and kept: ``provider`` and ``file_path`` never change, and
         # ``last_offset`` is refreshed below only where it is actually used.
         self.session = None
         self.stopped_since = None
         self.confirming = False
         self.last_message = None
-        self.awaiting_user_input = False
 
     def build(self, outcome: str, message=None, *, line_num=None) -> dict:
         block = {
@@ -311,14 +314,6 @@ class _SessionWait:
         }
         if self.want_text and message is not None:
             block["text"] = message.text
-        if self.awaiting_user_input and outcome not in (REPLIED, PROVIDER_ERROR):
-            # Reported, never acted on: a human clicking would unblock the
-            # agent and the answer would arrive, so giving up there would not
-            # be the safe ending every other one is. It answers "why did my
-            # wait end with nothing", so it is attached only to the endings
-            # that have nothing — on a ``replied`` it would describe a block
-            # that was cleared before the answer came.
-            block["awaiting_user_input"] = True
         return block
 
     def step(self) -> dict | None:
@@ -385,15 +380,11 @@ class _SessionWait:
                     return block
 
         working, awaiting = _agent_activity(self.session_id, self.twicc_pid)
-        self.awaiting_user_input = self.awaiting_user_input or awaiting
 
-        if self.stop_when_blocked and awaiting:
+        if awaiting:
             # Checked AFTER the transcript scan above, so a turn that both
             # answered and then blocked reports the answer: an arrived reply is
-            # always the better ending. Opt-in, because waiting through a block
-            # is right whenever a human is there to clear it — and the case
-            # where nobody is (a --hidden worker) is the case where blocking
-            # cannot happen at all.
+            # always the better ending.
             return self.build(AWAITING)
 
         if working:
@@ -449,7 +440,6 @@ def wait_for_replies(
     *,
     timeout: float,
     want_text: bool,
-    stop_when_blocked: bool = False,
     first: bool = False,
 ) -> dict:
     """Wait on one or more sessions; return one reply block per id.
@@ -461,8 +451,9 @@ def wait_for_replies(
     budget rather than N × timeout.
 
     ``first`` stops as soon as one session **answers** — or blocks on a human,
-    when that was asked for. A turn that crashed or was refused does not end
-    the batch: the others may still answer, and the caller asked for an answer.
+    which is the other way a wait concludes. A turn that crashed or was refused
+    does not end the batch: the others may still answer, and the caller asked
+    for an answer.
     Sessions still waiting when that happens get ``outcome: "pending"``, the
     word ``processes wait`` already uses for the same situation.
 
@@ -483,7 +474,7 @@ def wait_for_replies(
     waiting = {
         session_id: _SessionWait(
             session_id, cursor, started=started, twicc_pid=twicc_pid,
-            want_text=want_text, stop_when_blocked=stop_when_blocked,
+            want_text=want_text,
         )
         for session_id, cursor in cursors.items()
     }
@@ -535,9 +526,9 @@ def wait_for_reply(
     since_line_num: int,
     timeout: float,
     want_text: bool,
-    stop_when_blocked: bool = False,
 ) -> dict:
-    """Poll until the session answers, the turn ends, or ``timeout`` elapses.
+    """Poll until the session answers, blocks on a human, the turn ends, or
+    ``timeout`` elapses.
 
     The one-session case of :func:`wait_for_replies`, kept as its own name
     because that is what every singular command asks for.
@@ -547,5 +538,5 @@ def wait_for_reply(
     """
     return wait_for_replies(
         {session_id: since_line_num},
-        timeout=timeout, want_text=want_text, stop_when_blocked=stop_when_blocked,
+        timeout=timeout, want_text=want_text,
     )[session_id]

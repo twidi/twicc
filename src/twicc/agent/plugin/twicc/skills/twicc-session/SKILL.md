@@ -1,7 +1,7 @@
 ---
 name: twicc-session
 description: Inspect, wait on, unblock, or stop a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, list/inspect its workflows, see what it is waiting on and answer its question, or stop its live agent. Use when you or the user want to examine a session, read conversation content, explore subagent activity, block until it answers, unblock a session waiting on a human, or stop its agent.
-argument-hint: <session_id> [content|messages|agents|plan|wait|pending-request|answer|stop|workflows|workflow]
+argument-hint: <session_id> [content|messages|agents|plan|wait-reply|pending-request|answer|stop|workflows|workflow]
 ---
 
 # TwiCC Session
@@ -11,7 +11,7 @@ Inspect, wait on, unblock, or stop a single session. Eleven sub-commands:
 - Default — full session metadata.
 - `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
-- `wait [--from N]` — block until this session says something past the cursor. Use it on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. `--from` is the `line_num` or `since_line_num` a previous wait returned, so a wait that timed out can be resumed exactly where it stopped; omitted, it is the session's current last line. `--since` names that same cursor as an ISO 8601 instant instead, for when you have a time and not a line number. An idle session concludes with `ended` rather than hanging, but not instantly: the loop waits out a ~5 s flush window before it can tell a finished turn from one about to speak, so a `--wait-timeout` below that always reports `timeout`. With no flag, the wait ends on an answer: `--reply` names that default, and `--blocked` ORs in a second ending, the session blocking on a human, with an answer still winning a tie. Same combination as `--wait-reply` / `--wait-blocked` on the commands that send, where the wait must also be turned on. Also takes `--wait-timeout` (default 300 s) and `--no-reply-text`. **Exit code:** `0` answered or blocked, `5` nothing came, `2` TwiCC stopped, `1` a local refusal — a bad `--from` or `--since`, the two cursors passed together, a non-positive `--wait-timeout`, an unknown session, or the wait itself breaking. So `$TWICC session <ID> wait && …` chains, and a `1` is worth reading before retrying.
+- `wait-reply [--from N]` — block until this session concludes past the cursor. Use it on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. `--from` is the `line_num` or `since_line_num` a previous wait returned, so a wait that timed out can be resumed exactly where it stopped; omitted, it is the session's current last line. `--since` names that same cursor as an ISO 8601 instant instead, for when you have a time and not a line number. An idle session concludes with `ended` rather than hanging, but not instantly: the loop waits out a ~5 s flush window before it can tell a finished turn from one about to speak, so a `--wait-timeout` below that always reports `timeout`. Two endings, and no flag chooses between them: an answer — the message closing a turn — or a **pending request**, which only a human can clear. An answer arriving in the same poll wins. Exactly what `--wait-reply` does on the commands that send, which is why it carries the same name. Also takes `--wait-timeout` (default 300 s) and `--no-reply-text`. **Exit code:** `0` answered or blocked, `5` neither came, `2` TwiCC stopped, `1` a local refusal — a bad `--from` or `--since`, the two cursors passed together, a non-positive `--wait-timeout`, an unknown session, or the wait itself breaking. So `$TWICC session <ID> wait-reply && …` chains, and a `1` is worth reading before retrying.
 - `pending-request [--raw]` — what this session's live agent is waiting on, answerable or not.
 - `answer <answer|cancel> [--request-id ID] [--answer 'ID=VALUE']` — answer, or decline, the question it is waiting on.
 - `stop` — stop this session's live agent (`--timeout`, `--force` for a SIGKILL without the grace window). Idempotent: stopping an already-stopped session still reports `stopped`. Same operation as `process <ID> stop`, which it is meant to replace.
@@ -224,13 +224,13 @@ Other patterns:
 - Messages mentioning a term: `messages --contains "auth"`
 - Last reply mentioning a term: `messages --role assistant --contains "auth" --tail 1`
 
-### Wait — block until the session speaks again
+### Wait-reply — block until the session concludes
 
 ```bash
-$TWICC session '<SESSION_ID>' wait [--from N] [--since INSTANT] [--reply] [--blocked] [--wait-timeout N] [--no-reply-text]
+$TWICC session '<SESSION_ID>' wait-reply [--from N] [--since INSTANT] [--wait-timeout N] [--no-reply-text]
 ```
 
-For a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. When you sent the message yourself, use `send-message --wait-reply` instead — it reads its own cursor server-side and needs nothing from you.
+The same wait `--wait-reply` runs on the commands that send — an answer or a pending request, whichever comes first — on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. When you sent the message yourself, use `send-message --wait-reply` instead — it reads its own cursor server-side and needs nothing from you.
 
 **`--from` is the cursor**, and choosing it right is the whole of using this command. Only a line strictly past it counts.
 
@@ -245,14 +245,14 @@ For a session **you did not just message**: one spawned earlier, steered from th
 
 Returns `{"session_id": ..., "reply": {...}}`, the `reply` block being the one `--wait-reply` returns: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (dropped by `--no-reply-text`), `error` on `wait_failed`, and `awaiting_user_input: true` when a human was asked for during the turn — attached only to the endings that came back with nothing, since on a `replied` or a `provider_error` it would describe a block that was cleared before the ending arrived.
 
-`outcome` is `replied` (the message closing the turn), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `provider_error` (quota, outage), `backend_gone`, `wait_failed`, or `awaiting_user_input` with `--blocked`.
+`outcome` is `replied` (the message closing the turn), `awaiting_user_input` (a pending request — read it with `pending-request`, answer it with `answer`), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `provider_error` (quota, outage), `backend_gone`, or `wait_failed`.
 
 ```bash
-$TWICC session 4a8352fb-... wait --wait-timeout 120
+$TWICC session 4a8352fb-... wait-reply --wait-timeout 120
 # → {"session_id":"4a8352fb-...","reply":{"outcome":"replied","line_num":42,...,"text":"done"}}
-$TWICC session 4a8352fb-... wait --from 42 --wait-timeout 60
+$TWICC session 4a8352fb-... wait-reply --from 42 --wait-timeout 60
 # Resumes above the answer just read.
-$TWICC session 4a8352fb-... wait --since 2026-09-19T05:38:20+00:00
+$TWICC session 4a8352fb-... wait-reply --since 2026-09-19T05:38:20+00:00
 # Anything said after that moment, without knowing a line number.
 ```
 

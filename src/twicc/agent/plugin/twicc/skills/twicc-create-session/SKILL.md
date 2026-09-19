@@ -100,8 +100,8 @@ Keeps going after the session is created, until it answers, and adds a `reply` b
 
 - `--no-reply-text` drops `text` and keeps `line_num` — use it when you only need the go-ahead, not the payload in your context. The key is **absent**, never `null`.
 - `--wait-timeout N` caps the wait, whatever ends it. Default **300 s**, which is the ceiling MCP callers are asked to respect — and an MCP client may itself give up on a tool silent that long, so over MCP pass a shorter value and come back rather than riding the default to its end. From a shell, raise it freely for a long first turn. There is no way to disable it, though nothing caps how high you set it.
-- `--wait-blocked` — with `--wait-reply`, also stop when the session blocks on a human (a tool approval, a pending question) instead of waiting through it; the outcome becomes `awaiting_user_input`. **OR-combined** with the reply wait — whichever happens first ends it, and an answer wins a tie. Off by default: waiting through a block is right whenever a human is there to clear it, and the case where nobody is (a `--hidden` session) is the case where blocking cannot happen at all.
-- All three require `--wait-reply` — passing them alone is an error, not a no-op.
+- A **pending request** ends the wait too — a tool approval or a question, which only a human can clear. It is not a slow turn: no line will ever arrive until someone clicks, so riding the budget out would buy nothing. `outcome` becomes `awaiting_user_input`, and an answer arriving in the same poll wins.
+- Both modifiers require `--wait-reply` — passing them alone is an error, not a no-op.
 
 `outcome` says what ended the wait:
 
@@ -114,9 +114,9 @@ Keeps going after the session is created, until it answers, and adds a `reply` b
 | `backend_gone` | TwiCC stopped or restarted mid-wait | nothing — the session may well be fine, you just cannot see it from here |
 | `wait_failed` | the wait itself broke (a locked DB, a Ctrl-C) — the session is unaffected | nothing, plus an `error` string |
 
-**An agent blocked on a click does not end the wait.** A tool approval or a question can still be answered by a human, so abandoning would not be certain the way every other early ending is. The wait runs to its deadline and the result carries `"awaiting_user_input": true`, telling you why nothing came. Pass `--no-question-widget` to a session you drive yourself — though it does not rule the case out entirely: an MCP server's elicitation reaches that path in every permission mode.
+**An agent blocked on a click ends the wait**, with `outcome: awaiting_user_input`. Only a human clears a tool approval or a question, so nothing would arrive before the deadline anyway. Read what it is waiting on with `$TWICC session <SESSION_ID> pending-request` (skill: `twicc-session`), and answer a question with `session <SESSION_ID> answer`. Pass `--no-question-widget` to a session you drive yourself — though it does not rule the case out entirely: an MCP server's elicitation reaches that path in every permission mode.
 
-**A timeout is not a failure.** Resume it with `$TWICC session <SESSION_ID> wait --from <CURSOR>` (skill: `twicc-session`), which is the command that takes a cursor: pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. The agent keeps working and the session is intact — only the waiting stopped. Expect it on a worker whose first turn runs long: raise `--wait-timeout`, or take the `session_id` and come back later. **The exit code never reflects the wait**, only whether the session was created, so a script must read `outcome` rather than `$?`.
+**A timeout is not a failure.** Resume it with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`), which is the command that takes a cursor: pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. The agent keeps working and the session is intact — only the waiting stopped. Expect it on a worker whose first turn runs long: raise `--wait-timeout`, or take the `session_id` and come back later. **The exit code never reflects the wait**, only whether the session was created, so a script must read `outcome` rather than `$?`.
 
 The wait reads the **transcript**, not the process state. A session held busy by a Monitor, a live subagent or a pending wake-up has already written its answer long before it goes idle — this reports it at once instead of hours later.
 

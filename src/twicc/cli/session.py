@@ -544,15 +544,17 @@ def workflow(session_id: str, workflow_id: str) -> None:
     emit_json(_workflow_envelope(run, session.cutoff))
 
 
-def wait(session_id: str, *, from_line: int | None = None, since: str | None = None,
-         timeout: float, want_text: bool = True, on_reply: bool = False,
-         on_blocked: bool = False) -> None:
-    """Block until the session says something past the cursor.
+def wait_reply(session_id: str, *, from_line: int | None = None, since: str | None = None,
+               timeout: float, want_text: bool = True) -> None:
+    """Block until the session concludes, past the cursor.
 
-    The other waits ride on a command that triggered the turn, so their cursor
-    falls out of the send. Here nothing was sent: the caller names the line to
-    start above, which is the ``line_num`` or ``since_line_num`` a previous
-    wait already handed back. That is what makes a timed-out wait resumable.
+    The same wait ``--wait-reply`` runs on the commands that send, which is
+    why it carries the same name: it ends on an answer or on a pending request,
+    whichever comes first. Those rides on a command that triggered the turn, so
+    their cursor falls out of the send. Here nothing was sent: the caller names
+    the line to start above, which is the ``line_num`` or ``since_line_num`` a
+    previous wait already handed back. That is what makes a timed-out wait
+    resumable.
 
     ``since`` names the same cursor as an instant instead of a line. A line
     number belongs to one session and nothing else, so it cannot address a
@@ -598,14 +600,8 @@ def wait(session_id: str, *, from_line: int | None = None, since: str | None = N
     else:
         cursor = session.last_line
 
-    # Nothing is passed for the answer: it always ends the wait, which is what
-    # the caller gets with no flag at all. ``on_reply`` names that default, and
-    # ``on_blocked`` ORs in a second ending rather than replacing the first —
-    # the combination ``--wait-reply`` / ``--wait-blocked`` give on the commands
-    # that send, so a caller who knows one surface knows the other.
     reply = wait_for_reply_or_degrade(
-        session.id, since_line_num=cursor, timeout=timeout,
-        want_text=want_text, stop_when_blocked=on_blocked,
+        session.id, since_line_num=cursor, timeout=timeout, want_text=want_text,
     )
     emit_json({"session_id": session.id, "reply": reply})
 

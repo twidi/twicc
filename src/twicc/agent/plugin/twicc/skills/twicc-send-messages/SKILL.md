@@ -34,7 +34,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 ## Usage
 
 ```bash
-$TWICC send-messages [SESSION_ID...] [--message <TEXT>] [--attach PATH...] [--spawned-by X|--descendants X|--siblings X] [--annotation ...] [--wait-reply [--wait-first] [--wait-blocked] [--wait-timeout N] [--no-reply-text]]
+$TWICC send-messages [SESSION_ID...] [--message <TEXT>] [--attach PATH...] [--spawned-by X|--descendants X|--siblings X] [--annotation ...] [--wait-reply [--wait-first] [--wait-timeout N] [--no-reply-text]]
 ```
 
 Selection is identical to `update-sessions` (skill: `twicc-update-sessions`): a positional `SESSION_ID...` list merged (union, explicit first) with the scope filters. `self` means the current session.
@@ -48,8 +48,8 @@ Selection is identical to `update-sessions` (skill: `twicc-update-sessions`): a 
 - `--annotation KEY[OP]VALUE` — narrow the filiation scope by annotation; repeatable, AND-combined; requires a filiation scope; does not filter explicit ids. Same syntax as `twicc sessions --annotation` (skill: `twicc-sessions`).
 - `--timeout SECONDS` — wall-clock budget for the whole batch (default 30; drops run in parallel server-side).
 - `--wait-reply` — keep going until the recipients answer. Adds a `reply` block per entry, the same shape `send-message --wait-reply` returns, and `replied` / `all_replied` to the summary. Only entries that reached `sent` are waited on: a rejected send has no turn to answer it.
-- `--wait-first` / `--wait-all` — `--wait-all` (default) waits until EVERY recipient answers; `--wait-first` stops at the first one, leaving the rest `outcome: pending`. A recipient whose turn crashed or was refused never ends a `--wait-first` batch: the others may still answer, and an answer is what was asked for. Requires `--wait-reply`.
-- `--wait-blocked` — a recipient blocking on a human also ends its own wait (`outcome: awaiting_user_input`) instead of waiting through it. OR-combined with the answer, which wins a tie. Requires `--wait-reply`.
+- `--wait-first` / `--wait-all` — `--wait-all` (default) waits until EVERY recipient answers; `--wait-first` stops at the first one to answer or block, leaving the rest `outcome: pending`. A recipient whose turn crashed or was refused never ends a `--wait-first` batch: the others may still answer, and an answer is what was asked for. Requires `--wait-reply`.
+- A recipient hitting a **pending request** — a tool approval or a question — ends its own wait with `outcome: awaiting_user_input`. Only a human clears it, so there is nothing to wait for; an answer arriving in the same poll wins.
 - `--wait-timeout N` — caps the wait, whatever ends it. Default **300 s**, a wall-clock budget for the whole batch (they are waited on together, not one after another), which is also the ceiling MCP callers are asked to respect. Requires `--wait-reply`.
 - `--no-reply-text` — report that the answers arrived without returning their text; each `line_num` is still there to fetch one. Requires `--wait-reply`.
 
@@ -114,9 +114,9 @@ A per-id `sent` means the message was handed to the agent — not that it finish
 $TWICC send-messages --spawned-by self --message '<TEXT>' --wait-reply
 ```
 
-Each entry gains a `reply` block (`outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text`, `error` on `wait_failed`, and `awaiting_user_input: true` when a human was asked for during the turn — which can happen without `--wait-blocked`, since the flag only decides whether it *ends* the wait), and the summary gains `replied` / `all_replied`. `outcome` is `replied`, `provider_error`, `ended`, `timeout`, `backend_gone`, `wait_failed`, `awaiting_user_input` (with `--wait-blocked`) or `pending` (cut short by `--wait-first`).
+Each entry gains a `reply` block (`outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text`, `error` on `wait_failed`), and the summary gains `replied` / `all_replied`. `outcome` is `replied`, `awaiting_user_input` (a pending request), `provider_error`, `ended`, `timeout`, `backend_gone`, `wait_failed`, or `pending` (cut short by `--wait-first`).
 
-**A timeout is not a failure** and nothing is lost: the agents keep working, and each entry carries its own cursor to resume from — `line_num` when its ending consumed a line (`replied`, `provider_error`), `since_line_num` otherwise. Resume each one with `$TWICC session <SESSION_ID> wait --from <CURSOR>` (skill: `twicc-session`): a batch needs one cursor per recipient, which is why there is no plural wait to re-run. The exit code never reflects the wait, only whether the sends went out.
+**A timeout is not a failure** and nothing is lost: the agents keep working, and each entry carries its own cursor to resume from — `line_num` when its ending consumed a line (`replied`, `provider_error`), `since_line_num` otherwise. Resume each one with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`): a batch needs one cursor per recipient, which is why there is no plural wait to re-run. The exit code never reflects the wait, only whether the sends went out.
 
 Falling back to the state machine, when you want liveness rather than answers:
 

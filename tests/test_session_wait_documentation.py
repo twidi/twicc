@@ -1,4 +1,4 @@
-"""Everything this repo publishes about ``session <ID> wait``, checked against Typer.
+"""Everything this repo publishes about ``session <ID> wait-reply``, checked against Typer.
 
 Prose is the only thing between the command and an agent, and nothing looked at
 it. The gap is not theoretical, and it has two shapes, both already shipped:
@@ -7,7 +7,8 @@ it. The gap is not theoretical, and it has two shapes, both already shipped:
   left two worked examples behind. The suite stayed green, the plugin shipped,
   and an agent copying the example got ``No such option`` and exit 2.
 * ``--wait-blocked`` — a real flag, but of *another* command — was written as
-  this one's in four places. It is refused here; the flag is ``--blocked``.
+  this one's in four places. Both are gone now: the wait it turned on became
+  the only behaviour, so the flag had nothing left to switch.
 
 So a name being real somewhere is not enough: the copyable spans accept nothing
 but this command's own options, and the prose that may legitimately mention a
@@ -34,33 +35,32 @@ SESSION_SKILL = SKILLS_DIR / "twicc-session/SKILL.md"
 CLI_DOC = ROOT / "SKILLS-AND-CLI.md"
 
 FLAG = re.compile(r"(?<![\w-])--[A-Za-z0-9][\w-]*")
-# `session <ID> wait …`, an invocation of this command. `\S+` is the id, which
-# the documents write a dozen ways (`<SESSION_ID>`, `'<SESSION_ID>'`, `4a8…`).
-INVOCATION = re.compile(r"session\s+\S+\s+wait(?![\w-])")
+# `session <ID> wait-reply …`, an invocation of this command. `\S+` is the id,
+# which the documents write a dozen ways (`<SESSION_ID>`, `'<SESSION_ID>'`,
+# `4a8…`). Anchored on the full name so `processes wait` stays out.
+INVOCATION = re.compile(r"session\s+\S+\s+wait-reply(?![\w-])")
 CODE_SPAN = re.compile(r"`([^`]+)`")
 BRACKET_GROUP = re.compile(r"\[(--[^\]]*)\]")
 
 # Flags of the commands that send, and the marker of the retired `process wait`.
 # Legitimate in prose that points at those commands, never in an invocation of
 # this one.
-CROSS_REFERENCES = {"--wait-reply", "--wait-blocked", "--transition"}
+CROSS_REFERENCES = {"--wait-reply", "--transition"}
 
 # Every sanctioned mention of a neighbour's flag, per prose source. Raising one
 # of these is a deliberate act: re-read the sentence first, because the last
 # three times the number went up it was `--blocked` written `--wait-blocked`.
 SANCTIONED = {
-    "twicc-session/SKILL.md": {"--wait-reply": 3, "--wait-blocked": 1, "--transition": 0},
-    "SKILLS-AND-CLI.md": {"--wait-reply": 2, "--wait-blocked": 1, "--transition": 1},
-    "session wait --help": {"--wait-reply": 2, "--wait-blocked": 1, "--transition": 0},
-    "--reply help": {"--wait-reply": 1, "--wait-blocked": 0, "--transition": 0},
-    "--blocked help": {"--wait-reply": 0, "--wait-blocked": 1, "--transition": 0},
+    "twicc-session/SKILL.md": {"--wait-reply": 4, "--transition": 0},
+    "SKILLS-AND-CLI.md": {"--wait-reply": 1, "--transition": 1},
+    "session wait-reply --help": {"--wait-reply": 1, "--transition": 0},
 }
 
 
 def _command():
     from twicc.cli import app
 
-    return typer.main.get_command(app).commands["session"].commands["wait"]
+    return typer.main.get_command(app).commands["session"].commands["wait-reply"]
 
 
 def _real_options() -> set[str]:
@@ -132,7 +132,7 @@ def _copyable_spans() -> list[tuple[str, int, str]]:
                 spans.append(stripped)
             own_section = path == CLI_DOC and number in cli_section
             for span in spans:
-                if INVOCATION.search(span) or (own_section and span.startswith("wait [--")):
+                if INVOCATION.search(span) or (own_section and span.startswith("wait-reply [--")):
                     found.append((label, number, span))
     return found
 
@@ -147,7 +147,7 @@ def _is_full_signature(label: str, span: str) -> bool:
     """
     if "[--" not in span:
         return False
-    return span.startswith("$TWICC session") or (label == "SKILLS-AND-CLI.md" and span.startswith("wait [--"))
+    return span.startswith("$TWICC session") or (label == "SKILLS-AND-CLI.md" and span.startswith("wait-reply [--"))
 
 
 def _session_section_of_the_cli_doc() -> list[tuple[int, str]]:
@@ -170,11 +170,12 @@ def _prose_sources() -> list[tuple[str, list[tuple[int, str]]]]:
     sources = [
         (
             "twicc-session/SKILL.md",
-            [(number, line) for number, line in skill if line.startswith("- `wait ")]
-            + _section(skill, "### Wait — "),
+            [(number, line) for number, line in skill if line.startswith("- `wait-reply ")]
+            + _section(skill, "### Wait-reply — "),
         ),
-        ("SKILLS-AND-CLI.md", [(n, line) for n, line in cli_section if line.startswith("- `wait ")]),
-        ("session wait --help", [(0, _command().help or "")]),
+        ("SKILLS-AND-CLI.md",
+         [(n, line) for n, line in cli_section if line.startswith("- `wait-reply ")]),
+        ("session wait-reply --help", [(0, _command().help or "")]),
     ]
     for param in _command().params:
         if param.help:
@@ -276,7 +277,7 @@ def test_the_documented_numbers_are_read_from_the_code():
     for label, text in (
         ("skill", SESSION_SKILL.read_text(encoding="utf-8")),
         ("CLI reference", CLI_DOC.read_text(encoding="utf-8")),
-        ("docstring", cli_session.wait.__doc__),
+        ("docstring", cli_session.wait_reply.__doc__),
     ):
         assert text.count("flush window") == text.count(window) >= 1, label
 
@@ -303,7 +304,7 @@ def _refusal_flags(source: str | None = None) -> set[str]:
 
     flags: set[str] = set()
     seen: set[str] = set()
-    stack = ["wait"]
+    stack = ["wait_reply"]
     while stack:
         name = stack.pop()
         if name in seen or name not in functions:
@@ -349,7 +350,7 @@ HELPER_REFUSAL = """
 from twicc.cli._output import emit_error
 
 
-def wait(session_id, *, since=None):
+def wait_reply(session_id, *, since=None):
     _refuse_it()
 
 
@@ -401,7 +402,7 @@ def test_all_three_documents_carry_that_clause():
     """The loop above skips a source that has no clause, so something has to
     say the clause is still there at all."""
     assert set(_refusal_clauses()) == {
-        "twicc-session/SKILL.md", "SKILLS-AND-CLI.md", "session wait --help",
+        "twicc-session/SKILL.md", "SKILLS-AND-CLI.md", "session wait-reply --help",
     }
 
 
@@ -415,7 +416,8 @@ RULE = ("strictly after", "not a boundary")
 RETIRED = ("at or before that moment", "select the same lines", "mean the same thing")
 
 
-RULE_SOURCES = ("twicc-session/SKILL.md", "SKILLS-AND-CLI.md", "session wait --help", "--since help")
+RULE_SOURCES = ("twicc-session/SKILL.md", "SKILLS-AND-CLI.md",
+                "session wait-reply --help", "--since help")
 
 
 def _rule_sources() -> dict[str, str]:
