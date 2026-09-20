@@ -433,6 +433,113 @@ def _sessions_stop(
     )
 
 
+@sessions_app.command("wait-reply")
+def _sessions_wait_reply(
+    session_ids: list[str] = typer.Argument(
+        None,
+        help=(
+            "Session ids to wait on ('self' / 'parent' accepted). UNIONED "
+            "with whatever the filters select, never replaced by them."
+        ),
+    ),
+    since: str = typer.Option(
+        None, "--since",
+        help=(
+            "Start each session above the last line it stamped at or before "
+            "this instant, instead of above its current last line. ISO 8601 "
+            "— '2026-09-19T05:38:20+00:00', exactly what `session messages` "
+            "returns, and also '2026-09-19 05:38:20' or a bare '2026-09-19' "
+            "for its midnight. No offset means UTC. There is no --from here: "
+            "a line number belongs to one transcript and means something "
+            "else in every other, which is why an instant is what addresses "
+            "a batch."
+        ),
+    ),
+    wait_timeout: float = typer.Option(
+        300.0, "--wait-timeout",
+        help=(
+            "Seconds the wait may last, whatever ends it. ONE wall-clock "
+            "budget for the batch, not N x timeout: the sessions are polled "
+            "together. Default 300, the ceiling MCP callers are asked to "
+            "respect."
+        ),
+    ),
+    wait_first: bool = typer.Option(
+        False, "--wait-first/--wait-all",
+        help=(
+            "--wait-all (default): wait until EVERY selected session "
+            "concludes. --wait-first: stop as soon as ONE has — an answer or "
+            "a pending request — leaving the rest `outcome: pending`. A "
+            "session whose turn crashed or was refused never ends a "
+            "--wait-first batch: the others may still answer."
+        ),
+    ),
+    no_reply_text: bool = typer.Option(
+        False, "--no-reply-text",
+        help=(
+            "Report that the answers arrived without returning their text; "
+            "each `line_num` is still there to fetch one."
+        ),
+    ),
+    project: str = typer.Option(None, "--project", help="Restrict to a project (id or directory path)."),
+    workspace: str = typer.Option(None, "--workspace", help="Restrict to a workspace id."),
+    provider: str = typer.Option(None, "--provider", help="Restrict to a backend provider."),
+    state: list[str] = typer.Option(
+        None, "--state",
+        help=(
+            "Restrict to sessions in this live process state (repeatable, "
+            "OR-combined). Same vocabulary as the listing."
+        ),
+    ),
+    spawned_by: str = typer.Option(None, "--spawned-by", help="Sessions spawned by this id, or 'self'."),
+    spawn_tree: str = typer.Option(None, "--spawn-tree", help="Every session in the spawn tree containing this id, or 'self'."),
+    descendants: str = typer.Option(None, "--descendants", help="Proper descendants of this id, or 'self'."),
+    siblings: str = typer.Option(None, "--siblings", help="Siblings of this id, or 'self'."),
+    annotation: list[str] = typer.Option(None, "--annotation", help="Narrow the selection by annotation (repeatable, AND-combined)."),
+) -> None:
+    """Block until several sessions conclude, past their own cursors.
+
+    The plural of `session <ID> wait-reply`, on sessions nobody just messaged:
+    spawned earlier, steered from the UI, or messaged by someone else. One
+    loop polls them all and one budget covers the batch, so it costs a
+    wall-clock wait, not N of them.
+
+    Each concludes the same two ways the singular does — an answer, the
+    message closing a turn, or a pending request only a human can clear — and
+    an answer arriving in the same poll wins.
+
+    Selection is the listing's, filter for filter, with explicit ids UNIONED
+    on top. One difference: a bare call is refused. The listing with no filter
+    shows a page; a wait with no filter would poll every session TwiCC has
+    indexed until the deadline, so at least one id or one filter is required.
+
+    Each session starts above its own current last line — "tell me the next
+    thing each of them says" — or above the instant --since names, translated
+    per session. There is no --from: line 42 is a different place in every
+    transcript.
+
+    Returns `summary` + `results`, one `reply` block per id, the same shape
+    the singular returns. `summary.replied` counts `outcome: replied` alone;
+    `concluded` also counts the ones that ended on a pending request.
+    Exit 0 whatever the outcomes, 1 on a local refusal — read `results`.
+    """
+    from twicc.cli.sessions_wait_reply import main as sessions_wait_reply_main
+
+    sessions_wait_reply_main(
+        list(session_ids or []),
+        since=since, timeout=wait_timeout, first=wait_first,
+        want_text=not no_reply_text,
+        # Same normalisation the listing applies: the help promises a
+        # directory path works, and an un-normalised one matches nothing.
+        project=derive_project_id(project)[0] if project is not None else None,
+        workspace=workspace, provider=provider,
+        state=list(state or []),
+        spawned_by=spawned_by, spawn_tree=spawn_tree,
+        descendants=descendants, siblings=siblings,
+        annotation=list(annotation or []),
+    )
+
+
 @sessions_app.command(name="get")
 def _sessions_get(
     session_ids: list[str] = typer.Argument(
