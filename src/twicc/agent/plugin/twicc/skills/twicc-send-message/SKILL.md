@@ -81,7 +81,7 @@ Symmetrically: an incoming message that opens with this header comes from anothe
 
 ### Server (exit 3)
 
-- `awaiting_user_input` — the session has a pending dialog in the UI; a CLI message cannot unblock it. The user must click in the UI first. Fetch what's being asked with `$TWICC session <id> messages --tail 1`.
+- `awaiting_user_input` — the session holds a pending request; a CLI message cannot unblock it. Read what is being asked with `$TWICC session <id> pending-requests` — **not** `messages`, which does not carry it. A `question` you answer yourself with `answer-questions`; anything else the user must clear in the UI.
 - `is_subagent`
 - `provider_disabled`
 - `session_not_found`
@@ -132,7 +132,7 @@ The message is delivered immediately. The recipient picks it up based on its cur
 - **`user_turn`** — starts a new turn right away.
 - **`assistant_turn`** — delivered immediately; the agent reads it as soon as possible, typically before finishing its current turn (real-time steering, mid-flight redirects, reminders).
 - **`dead`** — the session is resumed automatically. A session stopped by timeout, manual kill, or any other reason will come back to life on receiving a message. This means there is no need to check a session's state before sending — `user_turn`, `assistant_turn`, and `dead` all work transparently.
-- **`awaiting_user_input`** — the only case that fails (exit 3). A CLI message cannot unblock a pending UI dialog. To avoid this entirely, create orchestration sessions with `--hidden` (which enforces a non-interactive `permission_mode` and disables the question widget), making `awaiting_user_input` impossible.
+- **`awaiting_user_input`** — the only case that fails (exit 3). A CLI message cannot unblock a pending request, but `session <id> answer-questions` clears a **question**, and the send then goes through. To avoid the case entirely, create orchestration sessions with `--hidden` (which enforces a non-interactive `permission_mode` and disables the question widget), making `awaiting_user_input` impossible.
 
 ## Following up
 
@@ -150,7 +150,7 @@ It adds a `reply` block: `outcome`, `line_num`, `is_final`, `since_line_num`, `w
 
 `since_line_num: 0` on a `replied` means no cursor came back (a backend older than the flag). The wait then started from the top of the turn, so check the answer is the one you expected.
 
-An agent that blocks on a click **during** the turn ends the wait, with `outcome: awaiting_user_input`: only a human clears it. Read what it is waiting on with `$TWICC session <SESSION_ID> pending-requests` (skill: `twicc-session`). A target already blocked when you send is a different case: it is refused outright (exit 3, above).
+An agent that blocks on a click **during** the turn ends the wait, with `outcome: awaiting_user_input`. Read it with `$TWICC session <SESSION_ID> pending-requests` (skill: `twicc-session`). An entry whose `kind` is `question` you can answer yourself, with `answer-questions` — the plain read already carries the question ids and options, so **never pass `--raw` to answer**. Anything else is the user's to clear in the UI; `--raw` is how you tell them what it is about, and it returns the whole payload, diff included. A target already blocked when you send is a different case: it is refused outright (exit 3, above).
 
 Falling back to the state machine, when you want liveness rather than an answer:
 
@@ -176,4 +176,4 @@ Falling back to the state machine, when you want liveness rather than an answer:
 
 1. On success, give a clickable link: `[link text](/project/{project_id}/session/{session_id})`.
 2. On validation error, summarize the failing fields with codes.
-3. On `awaiting_user_input` (exit 3), tell the user they must click in the TwiCC UI first — a CLI message cannot unblock the pending dialog.
+3. On `awaiting_user_input` (exit 3), read it with `session <id> pending-requests` before reporting: a `question` you can answer yourself, and only then does the send go through. For anything else, tell the user what it is about and that they must clear it in the TwiCC UI.

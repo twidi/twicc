@@ -250,7 +250,7 @@ The same wait `--wait-reply` runs on the commands that send — an answer or a p
 
 Returns `{"session_id": ..., "reply": {...}}`, the `reply` block being the one `--wait-reply` returns: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (dropped by `--no-reply-text`), `error` on `wait_failed`. A block is the `outcome`, never a field beside it: there is one place to read it.
 
-`outcome` is `replied` (the message closing the turn), `awaiting_user_input` (a pending request — read it with `pending-requests`, answer it with `answer`), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `provider_error` (quota, outage), `backend_gone`, or `wait_failed`.
+`outcome` is `replied` (the message closing the turn), `awaiting_user_input` (a pending request — read it with `pending-requests`, and answer it with `answer-questions` when it is a question), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `provider_error` (quota, outage), `backend_gone`, or `wait_failed`.
 
 ```bash
 $TWICC session 4a8352fb-... wait-reply --wait-timeout 120
@@ -308,9 +308,15 @@ and an empty list would say the opposite.
 `--raw` adds each request's untouched `tool_input`, on **every** entry. Ask for
 it on a session blocked on a large patch and you get the patch.
 
+**You never need `--raw` to answer.** The plain read already carries the
+question ids, options and flags — everything `answer-questions` takes. `--raw`
+is for the other half of the job: telling a human what a request you *cannot*
+answer is about. So read plain first, and add `--raw` only once you know the
+entry is out of scope and you mean to describe it.
+
 `actions[].action` names the sub-command that performs it.
 
-**Read `actions` before answering.** A question whose only action is `cancel` is
+**Read `actions` before answering.** A question whose only action is `cancel-questions` is
 structurally unanswerable here. Four cases: no questions at all, a secret one,
 one carrying no id, or two sharing the same id. The last two are the same
 problem — `--choice` names a question by its id, so a set you cannot name one

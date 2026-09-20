@@ -122,6 +122,50 @@ def _copyable_spans(name: str) -> list[tuple[str, int, str]]:
     return found
 
 
+#: Names this feature used and dropped. A rename updates the lines a reader
+#: would copy — the guard below sees those — and leaves the ones that merely
+#: *mention* a command in a sentence. That is how "answer it with `answer`"
+#: survived the rename to `answer-questions`, and how "its only action is
+#: `cancel`" survived the one to `cancel-questions`: neither is an invocation,
+#: so nothing looked at them. Adding a name here is how a rename stays finished.
+RETIRED = (
+    "pending-request",
+    "answer",
+    "cancel",
+    "--answer",
+    "--choices",
+)
+
+
+def _mentions(name: str) -> list[tuple[str, int, str]]:
+    """Every code span in these documents that is exactly ``name``.
+
+    A bare mention, not an invocation: `` `answer` `` in the middle of a
+    sentence. Exactness matters — `answer-questions` must not match `answer`.
+    """
+    found = []
+    for path in [*sorted(SKILLS_DIR.glob("*/SKILL.md")), CLI_DOC]:
+        label = f"{path.parent.name}/{path.name}" if path != CLI_DOC else path.name
+        for number, line in _numbered(path):
+            for span in CODE_SPAN.findall(line):
+                if span.strip() == name:
+                    found.append((label, number, line.strip()))
+    return found
+
+
+@pytest.mark.parametrize("name", RETIRED)
+def test_no_document_still_names_a_command_this_feature_dropped(name):
+    assert _mentions(name) == []
+
+
+def test_the_retired_check_can_see_a_name_that_is_there():
+    # The mirror of every other assertion here: a check that finds nothing
+    # passes whatever the documents say. These three exist, so the extraction
+    # is looking where it thinks it is.
+    for live in ("pending-requests", "answer-questions", "cancel-questions"):
+        assert _mentions(live), live
+
+
 def test_a_copyable_read_invocation_uses_nothing_but_its_options():
     spans = _copyable_spans("pending-requests")
     # An extraction that selects nothing passes every assertion below it.

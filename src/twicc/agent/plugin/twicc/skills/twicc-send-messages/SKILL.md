@@ -49,7 +49,7 @@ Selection is identical to `update-sessions` (skill: `twicc-update-sessions`): a 
 - `--timeout SECONDS` — wall-clock budget for the whole batch (default 30; drops run in parallel server-side).
 - `--wait-reply` — keep going until the recipients answer. Adds a `reply` block per entry, the same shape `send-message --wait-reply` returns, and `replied` / `all_replied` to the summary. Only entries that reached `sent` are waited on: a rejected send has no turn to answer it.
 - `--wait-first` / `--wait-all` — `--wait-all` (default) waits until EVERY recipient answers; `--wait-first` stops at the first one to answer or block, leaving the rest `outcome: pending`. A recipient whose turn crashed or was refused never ends a `--wait-first` batch: the others may still answer, and an answer is what was asked for. Requires `--wait-reply`.
-- A recipient hitting a **pending request** — a tool approval or a question — ends its own wait with `outcome: awaiting_user_input`. Only a human clears it, so there is nothing to wait for; an answer arriving in the same poll wins.
+- A recipient hitting a **pending request** — a tool approval or a question — ends its own wait with `outcome: awaiting_user_input`. There is nothing to wait for: it stays blocked until someone clears it, and an answer arriving in the same poll wins. Read it with `session <id> pending-requests`; a `question` you can answer yourself with `answer-questions`.
 - `--wait-timeout N` — caps the wait, whatever ends it. Default **300 s**, a wall-clock budget for the whole batch (they are waited on together, not one after another), which is also the ceiling MCP callers are asked to respect. Requires `--wait-reply`.
 - `--no-reply-text` — report that the answers arrived without returning their text; each `line_num` is still there to fetch one. Requires `--wait-reply`.
 
@@ -135,6 +135,6 @@ This closes the orchestration loop: `create-session` → … → `send-messages 
 ## How to present results
 
 1. Bucket by per-id `status` and show counts (e.g. "5 sent, 1 rejected").
-2. Surface `rejected` / `validation_error` entries with their `code` (esp. `awaiting_user_input` — that session needs a UI click first).
+2. Surface `rejected` / `validation_error` entries with their `code`. For `awaiting_user_input`, read that session with `session <id> pending-requests` before reporting: a `question` you can answer yourself with `answer-questions`, and the send then goes through; anything else the user must clear in the UI.
 3. Remind that `sent` ≠ done — point to `--wait-reply` to await the answers.
 4. You are in TwiCC — link to a session: `[link text](/project/{project_id}/session/{session_id})`.

@@ -108,14 +108,14 @@ Keeps going after the session is created, until it answers, and adds a `reply` b
 | `outcome` | Meaning | What `reply` carries |
 |---|---|---|
 | `replied` | the message closing the turn | that message |
-| `awaiting_user_input` | a pending request — a tool approval or a question — only a human can clear | nothing; read what it is waiting on with `session <ID> pending-requests` |
+| `awaiting_user_input` | a pending request — a tool approval, or a question you can answer yourself | read it with `session <ID> pending-requests`, then `answer-questions` if it is a question |
 | `provider_error` | the provider refused the turn (quota, outage) — your request was not the problem and retrying now fails the same way | the error line |
 | `ended` | the turn is over and nothing closed it — a crash, an interruption, an answer whose text was empty, or one whose provider marker is missing (`is_final: null`) | the last thing it said, or `line_num: null` |
 | `timeout` | the deadline passed | the last thing it said, if any; resume from `since_line_num` |
 | `backend_gone` | TwiCC stopped or restarted mid-wait | nothing — the session may well be fine, you just cannot see it from here |
 | `wait_failed` | the wait itself broke (a locked DB, a Ctrl-C) — the session is unaffected | nothing, plus an `error` string |
 
-**An agent blocked on a click ends the wait**, with `outcome: awaiting_user_input`. Only a human clears a tool approval or a question, so nothing would arrive before the deadline anyway. Read what it is waiting on with `$TWICC session <SESSION_ID> pending-requests` (skill: `twicc-session`), and answer a question with `session <SESSION_ID> answer-questions`. Pass `--no-question-widget` to a session you drive yourself — though it does not rule the case out entirely: an MCP server's elicitation reaches that path in every permission mode.
+**An agent blocked on a click ends the wait**, with `outcome: awaiting_user_input`. Nothing would arrive before the deadline: it stays blocked until someone clears it. Read it with `$TWICC session <SESSION_ID> pending-requests` (skill: `twicc-session`). An entry whose `kind` is `question` you can answer yourself, with `answer-questions` — the plain read already carries the question ids and options, so **never pass `--raw` to answer**. Anything else is the user's to clear in the UI; `--raw` is how you tell them what it is about, and it returns the whole payload, diff included. Pass `--no-question-widget` to a session you drive yourself — though it does not rule the case out entirely: an MCP server's elicitation reaches that path in every permission mode.
 
 **A timeout is not a failure.** Resume it with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`), which is the command that takes a cursor: pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. The agent keeps working and the session is intact — only the waiting stopped. Expect it on a worker whose first turn runs long: raise `--wait-timeout`, or take the `session_id` and come back later. **The exit code never reflects the wait**, only whether the session was created, so a script must read `outcome` rather than `$?`.
 
@@ -229,7 +229,7 @@ A `created` status only means the session started and the prompt was handed to t
 
 **Check state (snapshot):** `$TWICC process <SESSION_ID>` (skill: `twicc-process`):
 - `assistant_turn` → still working.
-- `awaiting_user_input` → blocked on a pending UI dialog. Do NOT call `send-message` — the user must click in the TwiCC UI first. Fetch what's being asked with `$TWICC session <ID> messages --tail 1`.
+- `awaiting_user_input` → blocked on a pending request. Do NOT call `send-message`: it is refused. Read what is being asked with `$TWICC session <ID> pending-requests` — **not** `messages`, which does not carry it. A `question` you answer with `answer-questions`; anything else needs the user in the UI.
 - `user_turn` → done; fetch the reply with `$TWICC session <ID> messages --tail 1`.
 - `starting` → still booting; retry shortly.
 - Exit 1 (no process row) → the process finished and was cleaned up. Check `messages --tail 1`: if the last message is from the assistant **and its `is_final` is `true`**, the turn completed; `is_final: false` means it stopped mid-turn; `is_final: null` leaves it undecided — the text is probably the answer, but nothing here proves the turn ended; a trailing **user** message means nothing readable came back; an **empty list** means the last item carries no readable text — re-read with `--tail 2` and apply the same checks to what comes back, keeping in mind that "the child's closing message was empty" is a real outcome. Do not widen further: a longer window reaches the previous turn, whose closing message also says `is_final: true`. Read the **last** message and check its field, rather than filtering on `--is-final true`: the filter spans the whole session and would hand you a previous turn's answer.
