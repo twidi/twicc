@@ -73,10 +73,10 @@ Host-only commands that manage the Bearer tokens gating `/rpc/` — never expose
 
 ### `twicc info [SECTION...]`
 Inspect TwiCC's per-provider catalogues. Sections: `presets`, `commands`, `models`, `agent-settings`, `settings`, `all`. Output always carries `twicc_version` and `providers` (with enabled/disabled + default + orchestration flags — `orchestration` is the user's soft preference for which providers agents should pick on their own when orchestrating; an explicit user request for another enabled provider still wins); each named section adds its key.
-- `--provider TEXT` — filter every section by provider key (naming one bypasses the disabled-provider filter).
+- `--provider TEXT` — filter every provider-keyed section by provider key (naming one bypasses the disabled-provider filter); `settings` is instance-wide and ignores it.
 - `--project TEXT` — only for the `commands` section: also list commands scoped to that project.
 - `--filter TEXT` — case-insensitive substring filter for `commands` (whitespace-separated tokens are ANDed).
-- `--include-disabled-providers` — include disabled providers in the section payloads.
+- `--include-disabled-providers` — include disabled providers in the provider-keyed section payloads (not `settings`, which is instance-wide).
 - Skill: [`twicc-info`](src/twicc/agent/plugin/twicc/skills/twicc-info/SKILL.md).
 
 ### `twicc status`

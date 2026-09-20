@@ -40,7 +40,7 @@ $TWICC info [SECTION...] [OPTIONS]
 
 ### Options
 
-- `--provider <key>` — narrow every requested *provider-keyed* section to a single provider — no effect on `settings`, which is instance-wide (`claude_code`, `codex`, …). Naming a provider also **bypasses** the disabled-provider filter for that one — its data is returned even when disabled. The top-level `providers` dict always lists every registered provider regardless of this flag.
+- `--provider <key>` — narrow every requested *provider-keyed* section to a single provider (`claude_code`, `codex`, …) — no effect on `settings`, which is instance-wide. Naming a provider also **bypasses** the disabled-provider filter for that one — its data is returned even when disabled. The top-level `providers` dict always lists every registered provider regardless of this flag.
 - `--project <PROJECT>` — directory path or project id (**drop the leading dash** on ids). **Only consumed when `commands` is requested.** Adds the project-scoped commands on top of the globals — i.e. exactly what a session inside that project would see at runtime. Passing it without `commands` is an error.
 - `--filter "TOKENS"` — case-insensitive whitespace-tokenised substring search for `commands`: every token must appear in either the `command` literal or the `description`. **Only consumed when `commands` is requested.**
 - `--include-disabled-providers` — flips the disabled-provider filter on the provider-keyed section payloads (not `settings`), so disabled providers are listed alongside the enabled ones. Does not change the top-level `providers` dict (which is always exhaustive).
@@ -284,7 +284,7 @@ $TWICC info presets models --provider claude_code
 $TWICC info presets commands models agent-settings
 $TWICC info all                    # the previous line plus `settings`
 
-# Include disabled providers in the section payloads
+# Include disabled providers in the provider-keyed section payloads
 $TWICC info models --include-disabled-providers
 ```
 
@@ -303,5 +303,6 @@ $TWICC info models --include-disabled-providers
 3. **`commands`** — group by provider; within a provider, list in `command` order and optionally split by scope (globals first, then project-scoped). For `--filter` queries, lead with the count of matches.
 4. **`models`** — group by `family`; show the latest entry first with both its `identifier` and `alias`. Surface `retirement_date` on non-latest entries. Translate the `extra` flags into a short capability bullet list when relevant ("1M context", "effort=max", …).
 5. **`agent-settings`** — for each field, list values briefly. For values with a `restricted_to`, summarise the requirement ("only on opus 4.6+") rather than dumping the full list. Always surface `description` verbatim when present.
-6. **Multi-section payloads** — give each requested section its own short summary in canonical order (`presets`, `commands`, `models`, `agent-settings`, `settings`) rather than dumping the whole JSON.
-7. You are in TwiCC — when discussing a session in the output of another command, link to it: `[link text](/project/{project_id}/session/{session_id})`.
+6. **`settings`** — group by owner (`generic`, `provider`, `notifications`, `excluded`); per key give `key`, `type` and `default`, and name the command its `hint` points at. Say plainly that `excluded` is UI-only.
+7. **Multi-section payloads** — give each requested section its own short summary in canonical order (`presets`, `commands`, `models`, `agent-settings`, `settings`) rather than dumping the whole JSON.
+8. You are in TwiCC — when discussing a session in the output of another command, link to it: `[link text](/project/{project_id}/session/{session_id})`.
