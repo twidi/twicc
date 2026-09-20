@@ -41,7 +41,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 ### Options
 
 - `--processes / --no-processes` — include compact live process state when a TwiCC backend is running. Defaults to `--processes`; if no backend is running, topology is still returned with process data marked unavailable.
-- `--full-sessions / --no-full-sessions` — emit the full session serialization for every node (same shape as `$TWICC session <ID>`). Defaults to `--no-full-sessions`: each `nodes[].session` block carries only the slim subset listed below. Use this only when you actually need extra fields for every node; otherwise call `$TWICC session <ID>` for the few nodes you care about.
+- `--full-sessions / --no-full-sessions` — emit the full session serialization for every node — the fields `$TWICC session <ID>` returns, minus its `process` block, which topology carries per node as `nodes[].process`. Defaults to `--no-full-sessions`: each `nodes[].session` block carries only the slim subset listed below. Use this only when you actually need extra fields for every node; otherwise call `$TWICC session <ID>` for the few nodes you care about.
 - `--annotation KEY[OP]VALUE` — annotate every node with a `matches_annotations` boolean indicating whether that node's `annotations` match the expression. The full tree is always preserved (no pruning). Repeatable; multiple flags are AND-combined. Five operators:
   - `KEY=VALUE` — annotation key equals VALUE.
   - `KEY!=VALUE` — annotation key differs from VALUE (or key absent).
@@ -125,7 +125,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 - `tree` — nested id-only tree for traversal.
 - `nodes` — node data in tree pre-order; the root is first.
 - `nodes[].id` — same value as `nodes[].session.id`, exposed for direct indexing.
-- `nodes[].session` — slim session payload by default (fields shown above); pass `--full-sessions` to get the full shape — identical to `$TWICC session <ID>` — for every node. With `--full-sessions`, the synthetic `directory` field is **not** added: use `git_directory` / `cwd` directly.
+- `nodes[].session` — slim session payload by default (fields shown above); pass `--full-sessions` to get the full shape for every node — the fields `$TWICC session <ID>` returns, minus its `process` block, which lives at `nodes[].process` here. With `--full-sessions`, the synthetic `directory` field is **not** added: use `git_directory` / `cwd` directly.
 - `nodes[].session.directory` — resolved working directory: `git_directory` when known, else `cwd`. Slim payload only.
 - `nodes[].direct_child_count` — immediate spawned children.
 - `nodes[].descendant_count` — spawned descendants across all levels.

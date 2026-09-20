@@ -15,7 +15,8 @@ of B is closer than A in the chain, so we resolve to B. Each level
 of nesting works the same way.
 
 Returns the resolved ``Session`` (full row, so callers can serialise
-the same shape as ``twicc session <ID>``) or ``None`` when no match
+what ``twicc session <ID>`` returns, minus the ``process`` block it
+joins on) or ``None`` when no match
 is found in the ancestry (e.g. a human running ``twicc`` from a
 plain terminal).
 """

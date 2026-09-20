@@ -50,7 +50,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 $TWICC session <SESSION_ID>
 ```
 
-Works for regular sessions and subagents. The same row `sessions get <SESSION_ID>` returns for one id, `process` block included, minus its `known` flag — reach for that one for several ids, for `--slim`, or for an id that may not exist or may not be indexed yet: it answers `known: false` where this one exits 1 (a session with no user message, or none yet computed, is not found here).
+Works for regular sessions and subagents. The same row `sessions get <SESSION_ID>` returns for one id, `process` block included, minus its `known` flag — reach for that one for several ids, for `--slim`, or for an id this one refuses: an id with no row at all comes back as a `known: false` placeholder, and a session TwiCC has not finished computing (no user message yet) comes back in full with `known: true` — both where this one exits 1.
 
 ```json
 {
