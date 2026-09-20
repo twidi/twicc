@@ -726,7 +726,19 @@ def test_a_subagent_is_null_here_as_well(project, live_backend, capsysbinary):
     assert read_one(capsysbinary)["process"] is None
 
 
-def test_a_subagent_asks_the_database_nothing_here_either(project, live_backend, capsysbinary):
+def test_a_subagent_asks_nothing_at_all_here_either(project, live_backend, capsysbinary, monkeypatch):
+    """No query, and no pid resolution either.
+
+    Resolving the pid is not a query: it reads `twicc.info.json` and calls
+    `psutil.pid_exists`, so `CaptureQueriesContext` cannot see it. Hoisting
+    that call out of the branch — which reads naturally — survived the whole
+    suite and put a file read plus a syscall on every subagent lookup.
+    """
+    resolved = []
+    monkeypatch.setattr(
+        "twicc.cli._process_state.resolve_listing_twicc_pid",
+        lambda: resolved.append(1),
+    )
     parent = make_session(project)
     make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
 
@@ -734,3 +746,4 @@ def test_a_subagent_asks_the_database_nothing_here_either(project, live_backend,
         cli_session.main("sub1")
 
     assert not [q for q in queries.captured_queries if "core_processrun" in q["sql"]]
+    assert resolved == []

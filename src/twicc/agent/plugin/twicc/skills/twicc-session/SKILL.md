@@ -50,7 +50,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 $TWICC session <SESSION_ID>
 ```
 
-Works for regular sessions and subagents. Same data as `sessions get <SESSION_ID>` for one id, `process` block included — reach for that one when you want several at once, or `--slim`.
+Works for regular sessions and subagents. The same row `sessions get <SESSION_ID>` returns for one id, `process` block included, minus its `known` flag — reach for that one for several ids, for `--slim`, or for an id that may not exist or may not be indexed yet: it answers `known: false` where this one exits 1 (a session with no user message, or none yet computed, is not found here).
 
 ```json
 {
@@ -93,8 +93,9 @@ Works for regular sessions and subagents. Same data as `sessions get <SESSION_ID
   "spawned_by": null,
   "spawn_root": null,
   "annotations": {"role": "reviewer"},
-  "process": {"id": 5847, "state": "assistant_turn", "started_at": "2026-09-20T10:43:57+00:00",
-              "last_state_change_at": "2026-09-20T10:44:45+00:00", "pid": 3501299}
+  "process": {"id": 5847, "state": "assistant_turn",
+              "started_at": "2026-09-20T10:43:57.327194+00:00",
+              "last_state_change_at": "2026-09-20T10:44:45.240981+00:00", "pid": 3501299}
 }
 ```
 
