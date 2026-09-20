@@ -1,7 +1,7 @@
 ---
 name: twicc-info
 description: Read-only inspection of TwiCC — version, providers (and enabled state), slash/dollar commands, supported models, agent-settings choices/constraints, and presets — any subset composed into one JSON. Use when you or the user need a machine-readable picture of what's available before scripting a session, picking a preset/model, or filtering commands.
-argument-hint: '[presets|commands|models|agent-settings|all...]'
+argument-hint: '[presets|commands|models|agent-settings|settings|all...]'
 ---
 
 # TwiCC Info
@@ -35,7 +35,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 $TWICC info [SECTION...] [OPTIONS]
 ```
 
-`SECTION...` is any combination (0+) of `presets`, `commands`, `models`, `agent-settings`, plus the shortcut `all` (expands to the four others). Order does not matter and duplicates are ignored.
+`SECTION...` is any combination (0+) of `presets`, `commands`, `models`, `agent-settings`, `settings`, plus the shortcut `all` (expands to the five others). Order does not matter and duplicates are ignored.
 
 ### Options
 
@@ -68,7 +68,7 @@ Every invocation returns at minimum:
   - `disabled` — `true` when the user has disabled the provider; `create-session` and similar calls will refuse it.
   - `default` — `true` for the user's default provider; `false` otherwise.
   - `orchestration` — `true` when the provider is fair game for agents picking providers **on their own** while orchestrating sessions (see `twicc-orchestration`). Soft preference: an explicit user request for an `orchestration: false` provider still works as long as it is not `disabled`. Always `false` for disabled providers.
-- `available_info_arguments` — discovery dict for the positional sections this command itself accepts (`presets`, `commands`, `models`, `agent-settings`, `all`). The reserved `__description` key explains the dict; every other key is an accepted argument paired with a one-line summary of what it adds to the payload.
+- `available_info_arguments` — discovery dict for the positional sections this command itself accepts (`presets`, `commands`, `models`, `agent-settings`, `settings`, `all`). The reserved `__description` key explains the dict; every other key is an accepted argument paired with a one-line summary of what it adds to the payload.
 
 ## Section payloads
 
@@ -264,7 +264,7 @@ $TWICC info agent-settings --provider codex
 $TWICC info models agent-settings
 $TWICC info presets models --provider claude_code
 $TWICC info presets commands models agent-settings
-$TWICC info all                    # same as the previous line
+$TWICC info all                    # the previous line plus `settings`
 
 # Include disabled providers in the section payloads
 $TWICC info models --include-disabled-providers
