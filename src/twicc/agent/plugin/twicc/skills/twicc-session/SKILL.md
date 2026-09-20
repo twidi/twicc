@@ -8,7 +8,7 @@ argument-hint: <session_id> [content|messages|agents|plan|wait-reply|pending-req
 
 Inspect, wait on, unblock, or stop a single session. Eleven sub-commands:
 
-- Default — full session metadata.
+- Default — full session metadata, `process` block included (the live state, `null` on a subagent).
 - `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
 - `wait-reply [--from N]` — block until this session concludes past the cursor. Use it on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. `--from` is the `line_num` or `since_line_num` a previous wait returned, so a wait that timed out can be resumed exactly where it stopped; omitted, it is the session's current last line. `--since` names that same cursor as an ISO 8601 instant instead, for when you have a time and not a line number. An idle session concludes with `ended` rather than hanging, but not instantly: the loop waits out a ~5 s flush window before it can tell a finished turn from one about to speak, so a `--wait-timeout` below that always reports `timeout`. Two endings, and no flag chooses between them: an answer — the message closing a turn — or a **pending request**, which only a human can clear. An answer arriving in the same poll wins. Exactly what `--wait-reply` does on the commands that send, which is why it carries the same name. Also takes `--wait-timeout` (default 300 s) and `--no-reply-text`. **Exit code:** `0` answered or blocked, `5` neither came, `2` TwiCC stopped, `1` a local refusal — a bad `--from` or `--since`, the two cursors passed together, a non-positive `--wait-timeout`, an unknown session, or the wait itself breaking. So `$TWICC session <ID> wait-reply && …` chains, and a `1` is worth reading before retrying.
@@ -50,7 +50,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 $TWICC session <SESSION_ID>
 ```
 
-Works for regular sessions and subagents.
+Works for regular sessions and subagents. Same data as `sessions get <SESSION_ID>` for one id, `process` block included — reach for that one when you want several at once, or `--slim`.
 
 ```json
 {
@@ -92,7 +92,9 @@ Works for regular sessions and subagents.
   "hidden": false,
   "spawned_by": null,
   "spawn_root": null,
-  "annotations": {"role": "reviewer"}
+  "annotations": {"role": "reviewer"},
+  "process": {"id": 5847, "state": "assistant_turn", "started_at": "2026-09-20T10:43:57+00:00",
+              "last_state_change_at": "2026-09-20T10:44:45+00:00", "pid": 3501299}
 }
 ```
 
@@ -111,6 +113,7 @@ Works for regular sessions and subagents.
 - `spawned_by` — session ID that spawned this session, or `null`.
 - `spawn_root` — root session ID for the spawned-session tree, or `null` before a session joins one.
 - `annotations` — free-form JSON object attached at session creation.
+- `process` — the live process, the same block `sessions` puts on every row: `state` is one of `starting`, `assistant_turn`, `awaiting_user_input` (blocked on a user click), `user_turn`, or `dead`. `dead` means TwiCC runs no process for this session — most sessions it indexes it never started — and it is also the answer when no backend is running. `null` on a subagent, which has no process of its own.
 
 ### Content — raw items
 

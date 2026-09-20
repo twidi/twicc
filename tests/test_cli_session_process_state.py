@@ -1,4 +1,4 @@
-"""The ``process`` block the three session-listing commands join onto their rows.
+"""The ``process`` block the session commands join onto their rows.
 
 `ProcessRun` lives in its own table, so the query-free session serializer cannot
 read it: the join belongs to the CLI, exactly as ``topology`` already does it.
@@ -91,6 +91,11 @@ def make_run(session_id, state=AgentState.ASSISTANT_TURN, *, twicc_pid=TWICC_PID
 def read(capsysbinary):
     payload = orjson.loads(capsysbinary.readouterr().out)
     return payload["items"] if isinstance(payload, dict) else payload
+
+
+def read_one(capsysbinary):
+    """``session <ID>`` prints the row itself, not a list of them."""
+    return orjson.loads(capsysbinary.readouterr().out)
 
 
 # ---------------------------------------------------------------------------
@@ -668,3 +673,64 @@ def test_repeating_the_flag_unions_from_the_command_line(invoke):
     assert invoke("sessions", "--state", "assistant_turn", "--state", "dead", "--slim") == {
         "gen", "gone",
     }
+
+
+# ---------------------------------------------------------------------------
+# The singular command
+# ---------------------------------------------------------------------------
+#
+# `sessions get <ID>` and `session <ID>` take the same argument and name the
+# same thing. One answered the live state and the other omitted it, so anyone
+# wanting it for a single session went through the listing to get it.
+
+
+def test_the_singular_command_carries_the_block_too(project, live_backend, capsysbinary):
+    make_session(project)
+    make_run("s1")
+
+    cli_session.main("s1")
+
+    assert read_one(capsysbinary)["process"]["state"] == "assistant_turn"
+
+
+def test_it_is_the_same_block_the_listing_builds(project, live_backend, capsysbinary):
+    """Field for field, not merely "a block": the two commands answer the same
+    question, so a caller must not have to read them differently."""
+    make_session(project)
+    make_run("s1")
+
+    cli_sessions_get.main(["s1"])
+    from_listing = read(capsysbinary)[0]["process"]
+    cli_session.main("s1")
+    from_singular = read_one(capsysbinary)["process"]
+
+    assert from_singular == from_listing
+
+
+@pytest.mark.parametrize("backend", ["live_backend", "no_backend"])
+def test_no_row_is_dead_here_as_well(project, backend, capsysbinary, request):
+    request.getfixturevalue(backend)
+    make_session(project)
+
+    cli_session.main("s1")
+
+    assert read_one(capsysbinary)["process"]["state"] == "dead"
+
+
+def test_a_subagent_is_null_here_as_well(project, live_backend, capsysbinary):
+    parent = make_session(project)
+    make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
+
+    cli_session.main("sub1")
+
+    assert read_one(capsysbinary)["process"] is None
+
+
+def test_a_subagent_asks_the_database_nothing_here_either(project, live_backend, capsysbinary):
+    parent = make_session(project)
+    make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
+
+    with CaptureQueriesContext(connection) as queries:
+        cli_session.main("sub1")
+
+    assert not [q for q in queries.captured_queries if "core_processrun" in q["sql"]]

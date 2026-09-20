@@ -64,15 +64,35 @@ def _slice_window(seq, total: int, *, limit: int | None, offset: int, tail: int 
 
 
 def main(session_id: str) -> None:
-    """Fetch a single session by ID and print its JSON representation to stdout."""
+    """Fetch a single session by ID and print its JSON representation to stdout.
+
+    Carries the same ``process`` block ``sessions`` puts on every row, built by
+    the same helper: the two commands take the same argument and name the same
+    thing, so answering the live state on one and omitting it on the other
+    sent a caller after a single session through the listing to get it.
+    """
     import django
 
     django.setup()
 
+    from twicc.cli._process_state import (
+        attach_process_blocks,
+        load_process_rows,
+        resolve_listing_twicc_pid,
+    )
     from twicc.core.serializers import serialize_session
 
     session = _get_session(session_id)
     data = serialize_session(session)
+
+    # A subagent's answer is known by construction — it runs inside its
+    # parent's process — so nothing is read for one, as `session <ID> agents`
+    # already does for a whole page of them.
+    rows = (
+        {} if data["parent_session_id"] is not None
+        else load_process_rows([data["id"]], resolve_listing_twicc_pid())
+    )
+    attach_process_blocks([data], rows, slim=False)
 
     emit_json(data)
 
