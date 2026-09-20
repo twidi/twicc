@@ -561,8 +561,8 @@ def _sessions_wait_reply(
     1 on a local refusal, before anything is waited on.
 
     Resuming a timed-out batch: pass --since the instant the batch started and
-    each cursor lands back where it was, or just below it, so nothing stamped
-    after that instant is missed. That is what --since is for. Without
+    each cursor is placed from that instant, so nothing stamped after it is
+    missed. That is what --since is for. Without
     it, re-running re-reads each current last line and silently skips an answer
     that arrived in between; the per-session alternative is each block's
     `since_line_num` handed to `session <ID> wait-reply --from`.
