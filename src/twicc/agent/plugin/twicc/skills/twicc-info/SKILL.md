@@ -14,6 +14,7 @@ A single read-only command that always reports TwiCC's running version and provi
 - You're about to script a `create-session` / `update-session settings` call and need the effective default agent settings, the valid model identifiers / aliases, the allowed values for each setting, or a stored preset to start from.
 - You want to find a slash / dollar command by substring of its literal or its description.
 - You want to check, for an agent-setting value (e.g. `effort=max`), which models actually support it.
+- You want to know which TwiCC settings exist, what type each takes, and which command sets it — before calling `$TWICC settings set`.
 - You want several of the above in one call instead of issuing several CLI runs.
 
 ## How to invoke
@@ -39,10 +40,10 @@ $TWICC info [SECTION...] [OPTIONS]
 
 ### Options
 
-- `--provider <key>` — narrow every requested section to a single provider (`claude_code`, `codex`, …). Naming a provider also **bypasses** the disabled-provider filter for that one — its data is returned even when disabled. The top-level `providers` dict always lists every registered provider regardless of this flag.
+- `--provider <key>` — narrow every requested *provider-keyed* section to a single provider — no effect on `settings`, which is instance-wide (`claude_code`, `codex`, …). Naming a provider also **bypasses** the disabled-provider filter for that one — its data is returned even when disabled. The top-level `providers` dict always lists every registered provider regardless of this flag.
 - `--project <PROJECT>` — directory path or project id (**drop the leading dash** on ids). **Only consumed when `commands` is requested.** Adds the project-scoped commands on top of the globals — i.e. exactly what a session inside that project would see at runtime. Passing it without `commands` is an error.
 - `--filter "TOKENS"` — case-insensitive whitespace-tokenised substring search for `commands`: every token must appear in either the `command` literal or the `description`. **Only consumed when `commands` is requested.**
-- `--include-disabled-providers` — flips the disabled-provider filter on the section payloads, so disabled providers are listed alongside the enabled ones. Does not change the top-level `providers` dict (which is always exhaustive).
+- `--include-disabled-providers` — flips the disabled-provider filter on the provider-keyed section payloads (not `settings`), so disabled providers are listed alongside the enabled ones. Does not change the top-level `providers` dict (which is always exhaustive).
 
 ## Always-present keys
 
@@ -72,7 +73,7 @@ Every invocation returns at minimum:
 
 ## Section payloads
 
-Each section adds one top-level key with the exact name of the section (`presets`, `commands`, `models`, `agent-settings`, `settings`). Within a section, the data is keyed by provider identifier.
+Each section adds one top-level key with the exact name of the section (`presets`, `commands`, `models`, `agent-settings`, `settings`). Within the first four, the data is keyed by provider identifier; `settings` describes the instance rather than a provider, and carries `__description` + `groups` instead.
 
 ### `presets`
 
@@ -292,6 +293,7 @@ $TWICC info models --include-disabled-providers
 - `$TWICC create-session` — accepts a `--preset` name (one of the user presets listed by `info presets`) and individual setting overrides. Skill: `twicc-create-session`.
 - `$TWICC update-session <session_id> settings` — same preset / override vocabulary on an existing session. Skill: `twicc-update-session`.
 - `$TWICC projects` — browse projects (needed to feed `info commands --project`). Skill: `twicc-projects`.
+- `$TWICC settings` — read and write the synced settings whose schema `info settings` describes (`set`, `provider`, `notifications`).
 - `$TWICC usage` — current usage quotas and cost estimates per provider. Skill: `twicc-usage`.
 
 ## How to present results
