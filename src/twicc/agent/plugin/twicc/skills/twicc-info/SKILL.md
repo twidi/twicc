@@ -1,12 +1,12 @@
 ---
 name: twicc-info
-description: Read-only inspection of TwiCC — version, providers (and enabled state), slash/dollar commands, supported models, agent-settings choices/constraints, and presets — any subset composed into one JSON. Use when you or the user need a machine-readable picture of what's available before scripting a session, picking a preset/model, or filtering commands.
+description: Read-only inspection of TwiCC — version, providers (and enabled state), slash/dollar commands, supported models, agent-settings choices/constraints, presets, and the synced-settings schema — any subset composed into one JSON. Use when you or the user need a machine-readable picture of what's available before scripting a session, picking a preset/model, or filtering commands.
 argument-hint: '[presets|commands|models|agent-settings|settings|all...]'
 ---
 
 # TwiCC Info
 
-A single read-only command that always reports TwiCC's running version and provider list, and on demand composes any subset of four sections: `presets`, `commands`, `models`, `agent-settings`. Pass zero or more section names as positional arguments — the output keys appear in canonical order regardless of input order, duplicates collapse. Everything is JSON on stdout. Nothing here writes to disk or to the live TwiCC.
+A single read-only command that always reports TwiCC's running version and provider list, and on demand composes any subset of five sections: `presets`, `commands`, `models`, `agent-settings`, `settings`. Pass zero or more section names as positional arguments — the output keys appear in canonical order regardless of input order, duplicates collapse. Everything is JSON on stdout. Nothing here writes to disk or to the live TwiCC.
 
 ## When to use
 
@@ -72,7 +72,7 @@ Every invocation returns at minimum:
 
 ## Section payloads
 
-Each section adds one top-level key with the exact name of the section (`presets`, `commands`, `models`, `agent-settings`). Within a section, the data is keyed by provider identifier.
+Each section adds one top-level key with the exact name of the section (`presets`, `commands`, `models`, `agent-settings`, `settings`). Within a section, the data is keyed by provider identifier.
 
 ### `presets`
 
@@ -247,6 +247,23 @@ Field keys match the CLI flags / presets: the model is `model` (not the wire nam
 
 This is the canonical "what can I set, and when does it apply" reference before calling `update-session settings` or building a preset.
 
+### `settings`
+
+```bash
+$TWICC info settings
+```
+
+The schema of every **synced** setting — TwiCC's own configuration, not a session's. Grouped by owner under
+`settings.groups`, each entry carrying `key`, `type`, `default`, `owner` and a `hint` naming the command that sets it:
+
+- `generic` — settable with `$TWICC settings set <key> <value>`.
+- `provider` — per-provider defaults; `$TWICC settings provider <provider>`.
+- `notifications` — `$TWICC settings notifications`.
+- `excluded` — UI-only, no CLI path. Listed so you can tell "not settable here" from "does not exist".
+
+Do not confuse it with `agent-settings`, which describes what a **session** accepts. This one describes the
+instance. Read it before `$TWICC settings set` to learn a key's type and who owns it.
+
 ## Examples
 
 ```bash
@@ -284,5 +301,5 @@ $TWICC info models --include-disabled-providers
 3. **`commands`** — group by provider; within a provider, list in `command` order and optionally split by scope (globals first, then project-scoped). For `--filter` queries, lead with the count of matches.
 4. **`models`** — group by `family`; show the latest entry first with both its `identifier` and `alias`. Surface `retirement_date` on non-latest entries. Translate the `extra` flags into a short capability bullet list when relevant ("1M context", "effort=max", …).
 5. **`agent-settings`** — for each field, list values briefly. For values with a `restricted_to`, summarise the requirement ("only on opus 4.6+") rather than dumping the full list. Always surface `description` verbatim when present.
-6. **Multi-section payloads** — give each requested section its own short summary in canonical order (`presets`, `commands`, `models`, `agent-settings`) rather than dumping the whole JSON.
+6. **Multi-section payloads** — give each requested section its own short summary in canonical order (`presets`, `commands`, `models`, `agent-settings`, `settings`) rather than dumping the whole JSON.
 7. You are in TwiCC — when discussing a session in the output of another command, link to it: `[link text](/project/{project_id}/session/{session_id})`.
