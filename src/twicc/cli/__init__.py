@@ -526,12 +526,13 @@ def _sessions_wait_reply(
     an answer arriving in the same poll wins.
 
     Selection takes the listing's filters — --project, --workspace, --provider,
-    --state, --active, --only-hidden, the four filiation scopes and
-    --annotation — with explicit ids UNIONED on top rather than replacing them.
-    The listing's visibility switches do not apply: hidden sessions are always
-    included (orchestration workers are hidden by convention) and archived ones
-    never are, since archiving kills the agent. `--state dead` is refused: a
-    session with no process will never speak.
+    --state, --active, --only-hidden, --spawned-by, --spawn-tree, --descendants,
+    --siblings and --annotation — with explicit ids UNIONED on top rather than
+    replacing them.
+    --include-hidden and --include-archived do not apply: hidden is always on
+    (orchestration workers are hidden by convention) and archived always off,
+    since archiving kills the agent. --only-hidden still narrows. `--state
+    dead` is refused: a session with no process will never speak.
 
     A bare call is refused too. The listing with no filter shows a page; a wait
     with no filter would poll every session TwiCC has indexed until the
@@ -544,7 +545,8 @@ def _sessions_wait_reply(
 
     Returns `summary` + `results`, one `reply` block per id — the block the
     singular returns, except for a named id that does not exist, which comes
-    back as `outcome: unknown_session` with no cursor to carry.
+    back as `outcome: unknown_session` carrying only that and `session_id` —
+    none of the four keys every other block has, since nothing was waited on.
     `summary.replied` counts `outcome: replied` alone; `concluded` also counts
     the ones that ended on a pending request, so `all_replied` can be false
     with nothing left to wait for.
@@ -553,10 +555,11 @@ def _sessions_wait_reply(
     fit in one code; branch on `summary.all_replied` or on each `outcome`. Exit
     1 on a local refusal, before anything is waited on.
 
-    A timed-out batch resumes per session: each block carries the
-    `since_line_num` to hand to `session <ID> wait-reply --from`. Re-running
-    this command instead re-reads each current last line, which silently skips
-    an answer that arrived in between.
+    Resuming a timed-out batch: pass --since the instant the batch started and
+    every cursor lands back where it was, which is what --since is for. Without
+    it, re-running re-reads each current last line and silently skips an answer
+    that arrived in between; the per-session alternative is each block's
+    `since_line_num` handed to `session <ID> wait-reply --from`.
     """
     from twicc.cli.sessions_wait_reply import main as sessions_wait_reply_main
 

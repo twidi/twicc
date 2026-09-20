@@ -1,6 +1,6 @@
 ---
 name: twicc-sessions
-description: List sessions tracked by TwiCC with each one's live process state, batch-look them up by id, or stop the agents behind them. Use when you or the user want to browse sessions, find a session ID, filter by project, see which are still running, or batch-stop them.
+description: List sessions tracked by TwiCC with each one's live process state, batch-look them up by id, wait until several of them conclude, or stop the agents behind them. Use when you or the user want to browse sessions, find a session ID, filter by project, see which are still running, or batch-stop them.
 ---
 
 # TwiCC Sessions
@@ -27,13 +27,13 @@ One loop polls them all and **one budget covers the batch**, so it costs a wall-
 
 **A bare call is refused** — at least one id or one filter. The listing with no filter shows a page; a wait with no filter would poll every session TwiCC has indexed until the deadline.
 
-Filters: `--project`, `--workspace`, `--provider`, `--state`, `--active`, `--only-hidden`, the four filiation scopes and `--annotation`, with named ids **unioned** on top (never replacing them). The listing's visibility switches do not apply — hidden sessions are always included, since orchestration workers are hidden by convention, and archived ones never are, since archiving kills the agent. `--state dead` is refused: a session with no process will never speak. `--active` is the shorthand for "wait on everything alive".
+Filters: `--project`, `--workspace`, `--provider`, `--state`, `--active`, `--only-hidden`, `--spawned-by`, `--spawn-tree`, `--descendants`, `--siblings` and `--annotation`, with named ids **unioned** on top (never replacing them). `--include-hidden` and `--include-archived` do not apply — hidden is always on, since orchestration workers are hidden by convention, and archived always off, since archiving kills the agent; `--only-hidden` still narrows. `--state dead` is refused: a session with no process will never speak. `--active` is the shorthand for "wait on everything alive".
 
 **Each session starts above its own last line** — "tell me the next thing each of them says". `--since` names that cursor as an ISO 8601 instant instead, translated per session. There is no `--from`: line 42 is a different place in every transcript, which is why an instant is what addresses a batch at all.
 
-Returns `summary` + `results`, one `reply` block per id — the block the singular returns, except for a named id that does not exist: it comes back as `outcome: unknown_session` with no cursor to carry, rather than being dropped. `summary.replied` counts `outcome: replied` alone; `concluded` also counts the ones that ended on a pending request, so `all_replied` can be `false` with nothing left to wait for. Exit 0 whatever the outcomes — a per-id verdict does not fit in one code, so branch on `summary.all_replied` or on each `outcome`; `1` on a local refusal, before anything is waited on.
+Returns `summary` + `results`, one `reply` block per id — the block the singular returns, except for a named id that does not exist: it comes back as `outcome: unknown_session` carrying only that and `session_id` — none of the four keys every other block has, since there was nothing to wait on — rather than being dropped. `summary.replied` counts `outcome: replied` alone; `concluded` also counts the ones that ended on a pending request, so `all_replied` can be `false` with nothing left to wait for. Exit 0 whatever the outcomes — a per-id verdict does not fit in one code, so branch on `summary.all_replied` or on each `outcome`; `1` on a local refusal, before anything is waited on.
 
-**Resuming a timed-out batch is per session**, not per batch: each block carries the `since_line_num` to hand to `$TWICC session <ID> wait-reply --from`. Re-running this command instead re-reads each session's current last line, which silently skips an answer that arrived in between.
+**Resuming a timed-out batch:** pass `--since` the instant the batch started and every cursor lands back where it was, which is what `--since` is for. Without it, re-running re-reads each session's current last line and silently skips an answer that arrived in between; the per-session alternative is each block's `since_line_num` handed to `$TWICC session <ID> wait-reply --from`.
 
 ## Stopping what is running
 

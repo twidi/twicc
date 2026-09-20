@@ -144,6 +144,12 @@ def test_a_named_id_that_does_not_exist_comes_back(project, capsysbinary, loop):
 
     assert payload["results"]["ghost"]["outcome"] == "unknown_session"
     assert "ghost" not in loop["cursors"]
+    # And it counts: summarising before the unknown blocks are folded in would
+    # report `all_replied` on a batch one of whose ids never ran.
+    assert payload["summary"] == {
+        "total": 2, "replied": 1, "awaiting_user_input": 0,
+        "concluded": 1, "all_replied": False,
+    }
 
 
 def test_an_empty_selection_is_not_an_error(project, capsysbinary, loop):
@@ -311,6 +317,29 @@ def test_the_flags_travel_from_the_command_line(project, monkeypatch):
     assert seen["state"] == ["user_turn"]
 
 
+@pytest.mark.parametrize("flag, key", [("--active", "active"), ("--only-hidden", "only_hidden")])
+def test_the_two_visibility_flags_travel_too(project, monkeypatch, flag, key):
+    """They cannot ride the probe above — `--active` is exclusive with the
+    `--state` it passes — and both were wired at one place with nothing
+    watching. Dropping either from the call left the whole suite green."""
+    from typer.testing import CliRunner
+
+    from twicc.cli import app
+
+    seen: dict = {}
+
+    def probe(session_ids, **kwargs):
+        seen.update(kwargs)
+        raise typer.Exit(0)
+
+    monkeypatch.setattr("twicc.cli.sessions_wait_reply.main", probe)
+
+    result = CliRunner().invoke(app, ["sessions", "wait-reply", "a", flag])
+
+    assert result.exit_code == 0, result.output
+    assert seen[key] is True
+
+
 def test_the_defaults_are_the_documented_ones(project, monkeypatch):
     from typer.testing import CliRunner
 
@@ -459,12 +488,29 @@ def test_state_dead_is_refused(project, capsysbinary):
     assert b"never speak again" in capsysbinary.readouterr().err
 
 
+def test_state_dead_is_refused_before_anything_is_read(project, capsysbinary):
+    """Below the query it would still exit 1, with the builder's message about
+    a workspace instead — and after having selected every session first."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    make_session(project, "a")
+
+    with CaptureQueriesContext(connection) as queries, pytest.raises(typer.Exit):
+        sessions_wait_reply.main([], timeout=5.0, state=["dead"], workspace="nope")
+
+    assert b"never speak again" in capsysbinary.readouterr().err
+    assert [q for q in queries.captured_queries if "core_session" in q["sql"]] == []
+
+
 def test_active_and_state_are_mutually_exclusive(project, capsysbinary):
+    """Named here rather than left to the builder, which raises its own later:
+    the message has to name the two flags the caller passed."""
     with pytest.raises(typer.Exit) as exc:
         sessions_wait_reply.main([], timeout=5.0, active=True, state=["user_turn"])
 
     assert exc.value.exit_code == 1
-    assert b"mutually exclusive" in capsysbinary.readouterr().err
+    assert b"--active and --state are mutually exclusive" in capsysbinary.readouterr().err
 
 
 # ---------------------------------------------------------------------------

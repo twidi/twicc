@@ -67,9 +67,10 @@ def main(
     instant = None if since is None else _parse_instant(since)
 
     # Refused rather than honoured, as `sessions stop` refuses it: `dead` is
-    # "no TwiCC process", so those sessions will never say anything. Left
-    # accepted it would also be the one filter that lifts the refusal below
-    # while selecting every session in the database.
+    # "no TwiCC process", so those sessions have nothing to say. It is also the
+    # one filter that would lift the refusal below while selecting every
+    # unarchived session there is — each polled for the ~5 s flush window
+    # before concluding `ended`, to produce a payload that says nothing.
     if state and DEAD_VIRTUAL_STATE in state:
         emit_error(
             "Error: --state dead selects sessions with no process, which will "
@@ -90,7 +91,8 @@ def main(
     ))
     # The one place this command refuses what the listing allows. A listing with
     # no filter shows a page; a wait with no filter would poll every session
-    # ever indexed until the deadline, and mean nothing by it.
+    # ever indexed — the live ones to the deadline, the rest for the flush
+    # window — to hand back thousands of blocks nobody asked about.
     if not explicit and not has_filter:
         emit_error(
             "Error: sessions wait-reply needs at least one session id or one "
