@@ -431,6 +431,7 @@ $TWICC session abc123 workflow wf_cd590ff1
 
 ## Related commands
 
+- `$TWICC sessions wait-reply` — the plural of `wait-reply`: several at once, one budget for the batch. Skill: `twicc-sessions`.
 - `$TWICC sessions` — find session IDs. Skill: `twicc-sessions`.
 - `$TWICC process <session_id>` — live process state and PID. Skill: `twicc-process`.
 - `$TWICC topology <ID|self>` — map spawned sessions around this node. Skill: `twicc-topology`.

@@ -331,3 +331,208 @@ def test_the_defaults_are_the_documented_ones(project, monkeypatch):
     assert seen["first"] is False
     assert seen["want_text"] is True
     assert seen["since"] is None
+
+
+# ---------------------------------------------------------------------------
+# Every filter, twice over
+# ---------------------------------------------------------------------------
+#
+# Each of these is load-bearing twice here, where it is once in `sessions
+# stop`: a filter that never reaches the query selects too much, AND a filter
+# missing from `has_filter` either refuses a legitimate call or is ignored
+# beside a named id. Nine mutants used to survive this file.
+
+
+FILTERS = [
+    {"project": "swr-project"},
+    {"provider": "codex"},
+    {"state": ["user_turn"]},
+    {"active": True},
+    {"only_hidden": True},
+    {"spawned_by": "root"},
+    {"spawn_tree": "root"},
+    {"descendants": "root"},
+    {"siblings": "sib"},
+    {"annotation": ["role=worker"]},
+]
+
+
+@pytest.mark.parametrize("kwargs", FILTERS, ids=lambda k: next(iter(k)))
+def test_every_filter_lifts_the_refusal(project, capsysbinary, loop, kwargs):
+    """One left out of `has_filter` refuses a call that names only it."""
+    sessions_wait_reply.main([], timeout=5.0, **kwargs)
+
+    capsysbinary.readouterr()  # a refusal would have raised instead
+
+
+@pytest.mark.parametrize("kwargs", FILTERS, ids=lambda k: next(iter(k)))
+def test_every_filter_reaches_the_query(project, other_project, capsysbinary, loop, kwargs):
+    """Only `--project swr-project` selects our session; every other filter
+    must select nothing here. One that never reaches the builder selects
+    everything instead, which on a wait means polling the whole database."""
+    make_session(project, "here")
+    make_session(other_project, "elsewhere")
+
+    payload = run(capsysbinary, **kwargs)
+
+    # Only `--project swr-project` matches; both sessions are claude_code, so
+    # `--provider codex` must select nothing — a dropped filter would select
+    # both and be indistinguishable from a filter that matched everything.
+    expected = {"here"} if kwargs.get("project") == "swr-project" else set()
+    assert set(payload["results"]) == expected
+
+
+def test_a_hidden_session_is_waited_on(project, capsysbinary, loop):
+    """The promise the command is for: orchestration workers are hidden by
+    convention, and a wait that skipped them would answer for nobody."""
+    make_session(project, "worker", hidden=True)
+
+    payload = run(capsysbinary, project=project.id)
+
+    assert set(payload["results"]) == {"worker"}
+
+
+def test_a_session_whose_transcript_is_not_indexed_yet_is_waited_on(project, capsysbinary, loop):
+    """It started two seconds ago, which makes it the most likely to speak —
+    and the listing's own predicate would spare exactly that one."""
+    make_session(project, "fresh")
+    Session.objects.filter(id="fresh").update(created_at=None, user_message_count=0)
+
+    payload = run(capsysbinary, project=project.id)
+
+    assert set(payload["results"]) == {"fresh"}
+
+
+def test_an_archived_session_is_not_waited_on(project, capsysbinary, loop):
+    """Archiving kills the agent, so it will never speak again."""
+    make_session(project, "live")
+    make_session(project, "gone", archived=True)
+
+    payload = run(capsysbinary, project=project.id)
+
+    assert set(payload["results"]) == {"live"}
+
+
+def test_only_hidden_narrows_rather_than_reveals(project, capsysbinary, loop):
+    make_session(project, "visible")
+    make_session(project, "worker", hidden=True)
+
+    payload = run(capsysbinary, project=project.id, only_hidden=True)
+
+    assert set(payload["results"]) == {"worker"}
+
+
+def test_a_project_directory_is_normalised_like_the_listing(project, capsysbinary, loop, tmp_path):
+    """The help promises "id or directory path". Passing the path raw matches
+    nothing — exit 0 on an empty batch, a false negative with no signal."""
+    from typer.testing import CliRunner
+
+    from twicc.cli import app
+    from twicc.cli._drop_request.project import derive_project_id
+
+    directory = str(tmp_path)
+    pid = derive_project_id(directory)[0]
+    Project.objects.filter(id="swr-project").update(id=pid, directory=directory)
+    make_session(Project.objects.get(id=pid), "here")
+
+    result = CliRunner().invoke(app, ["sessions", "wait-reply", "--project", directory])
+
+    assert result.exit_code == 0, result.output
+    assert set(orjson.loads(result.stdout)["results"]) == {"here"}
+
+
+# ---------------------------------------------------------------------------
+# The two refusals that are not about a missing filter
+# ---------------------------------------------------------------------------
+
+
+def test_state_dead_is_refused(project, capsysbinary):
+    """`dead` is "no TwiCC process", so those sessions will never speak — and
+    it is the one filter that would lift the bare-call refusal while selecting
+    every session in the database."""
+    make_session(project, "a")
+
+    with pytest.raises(typer.Exit) as exc:
+        sessions_wait_reply.main([], timeout=5.0, state=["dead"])
+
+    assert exc.value.exit_code == 1
+    assert b"never speak again" in capsysbinary.readouterr().err
+
+
+def test_active_and_state_are_mutually_exclusive(project, capsysbinary):
+    with pytest.raises(typer.Exit) as exc:
+        sessions_wait_reply.main([], timeout=5.0, active=True, state=["user_turn"])
+
+    assert exc.value.exit_code == 1
+    assert b"mutually exclusive" in capsysbinary.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# A broken wait must not take the batch with it
+# ---------------------------------------------------------------------------
+
+
+def test_the_batch_survives_a_broken_wait(project, capsysbinary, monkeypatch):
+    """N sessions means N times the queries, so this is the command most
+    exposed to a locked database over a long poll. Losing the payload would
+    take the cursors with it, and a re-run reads each current last line —
+    skipping whatever arrived in between."""
+    make_session(project, "a", last_line=40)
+    make_session(project, "b", last_line=7)
+
+    def boom(cursors, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr("twicc.cli._wait_reply.wait_for_replies", boom)
+
+    payload = run(capsysbinary, "a", "b")
+
+    assert set(payload["results"]) == {"a", "b"}
+    assert payload["results"]["a"]["outcome"] == "wait_failed"
+    assert payload["results"]["a"]["since_line_num"] == 40
+    assert payload["results"]["b"]["since_line_num"] == 7
+
+
+def test_a_ctrl_c_is_caught_too(project, capsysbinary, monkeypatch):
+    """Why the guard reads `BaseException` and not `Exception`.
+
+    Caught here rather than left to escape: an escaping ``KeyboardInterrupt``
+    stops the whole pytest run, which is a red signal for the wrong reason and
+    hides every test after it.
+    """
+    make_session(project, "a")
+
+    def boom(cursors, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("twicc.cli._wait_reply.wait_for_replies", boom)
+
+    try:
+        payload = run(capsysbinary, "a")
+    except KeyboardInterrupt:
+        pytest.fail("the interrupt escaped: the batch and its cursors are lost")
+
+    assert payload["results"]["a"]["outcome"] == "wait_failed"
+
+
+def test_an_unknown_workspace_is_refused(project, capsysbinary, loop):
+    """It exits 1 rather than selecting nothing, so it cannot ride the table
+    above — and a silently empty batch would read as "nothing to wait for"."""
+    with pytest.raises(typer.Exit) as exc:
+        sessions_wait_reply.main([], timeout=5.0, workspace="no-such-workspace")
+
+    assert exc.value.exit_code == 1
+
+
+def test_a_known_workspace_reaches_the_query(project, other_project, capsysbinary, loop, monkeypatch):
+    """The other half: `--workspace` must also lift the refusal and narrow."""
+    make_session(project, "here")
+    make_session(other_project, "elsewhere")
+    monkeypatch.setattr(
+        "twicc.workspaces.read_workspaces",
+        lambda: {"workspaces": [{"id": "w1", "name": "W", "projectIds": [project.id]}]},
+    )
+
+    payload = run(capsysbinary, workspace="w1")
+
+    assert set(payload["results"]) == {"here"}

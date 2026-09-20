@@ -25,11 +25,15 @@ The plural of `session <ID> wait-reply`, on sessions **nobody just messaged**: s
 
 One loop polls them all and **one budget covers the batch**, so it costs a wall-clock wait, not N of them. Each concludes the same two ways the singular does — an answer, or a **pending request** only a human can clear — and an answer arriving in the same poll wins. `--wait-all` (default) waits for every one; `--wait-first` stops at the first to conclude, leaving the rest `outcome: pending`.
 
-**A bare call is refused** — at least one id or one filter. The listing with no filter shows a page; a wait with no filter would poll every session TwiCC has indexed until the deadline. Selection is otherwise the listing's, filter for filter, with named ids **unioned** on top (never replacing them). Hidden sessions are included, archived ones are not: archiving kills the agent.
+**A bare call is refused** — at least one id or one filter. The listing with no filter shows a page; a wait with no filter would poll every session TwiCC has indexed until the deadline.
+
+Filters: `--project`, `--workspace`, `--provider`, `--state`, `--active`, `--only-hidden`, the four filiation scopes and `--annotation`, with named ids **unioned** on top (never replacing them). The listing's visibility switches do not apply — hidden sessions are always included, since orchestration workers are hidden by convention, and archived ones never are, since archiving kills the agent. `--state dead` is refused: a session with no process will never speak. `--active` is the shorthand for "wait on everything alive".
 
 **Each session starts above its own last line** — "tell me the next thing each of them says". `--since` names that cursor as an ISO 8601 instant instead, translated per session. There is no `--from`: line 42 is a different place in every transcript, which is why an instant is what addresses a batch at all.
 
-Returns `summary` + `results`, one `reply` block per id — the same shape the singular returns. `summary.replied` counts `outcome: replied` alone; `concluded` also counts the ones that ended on a pending request, so `all_replied` can be `false` with nothing left to wait for. A named id that does not exist comes back as `outcome: unknown_session` rather than being dropped. Exit 0 whatever the outcomes; `1` on a local refusal.
+Returns `summary` + `results`, one `reply` block per id — the block the singular returns, except for a named id that does not exist: it comes back as `outcome: unknown_session` with no cursor to carry, rather than being dropped. `summary.replied` counts `outcome: replied` alone; `concluded` also counts the ones that ended on a pending request, so `all_replied` can be `false` with nothing left to wait for. Exit 0 whatever the outcomes — a per-id verdict does not fit in one code, so branch on `summary.all_replied` or on each `outcome`; `1` on a local refusal, before anything is waited on.
+
+**Resuming a timed-out batch is per session**, not per batch: each block carries the `since_line_num` to hand to `$TWICC session <ID> wait-reply --from`. Re-running this command instead re-reads each session's current last line, which silently skips an answer that arrived in between.
 
 ## Stopping what is running
 

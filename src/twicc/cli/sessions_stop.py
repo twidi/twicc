@@ -47,6 +47,10 @@ def main(
         DEAD_VIRTUAL_STATE,
         resolve_listing_twicc_pid,
     )
+    from twicc.cli._session_selection import (
+        reject_conflicting_scopes,
+        resolve_explicit_ids,
+    )
     from twicc.cli._stop_batch import stop_session_ids
     from twicc.cli.sessions import build_filtered_queryset
 
@@ -62,14 +66,10 @@ def main(
             code=1,
         )
 
-    scopes = [n for n, v in (("--spawned-by", spawned_by), ("--spawn-tree", spawn_tree),
-                             ("--descendants", descendants), ("--siblings", siblings)) if v]
-    if len(scopes) > 1:
-        emit_error(
-            f"Error: {' and '.join(scopes)} are mutually exclusive.", code=1,
-        )
-    if project and workspace:
-        emit_error("Error: --project and --workspace are mutually exclusive.", code=1)
+    reject_conflicting_scopes(
+        spawned_by, spawn_tree, descendants, siblings,
+        project=project, workspace=workspace,
+    )
 
     try:
         transport.ensure_server_available()
@@ -88,30 +88,8 @@ def main(
     # `processes wait`, `send-messages` and `update-sessions`. An earlier
     # version replaced them, which silently turned a migrated
     # `processes stop <id> --descendants self` into a one-agent stop.
-    explicit: list[str] = []
-    seen: set = set()
-    for raw in session_ids:
-        sid = raw
-        if raw in ("self", "parent"):
-            from twicc.cli._drop_request.whoami import resolve_current_session
-
-            current = resolve_current_session()
-            if current is None:
-                emit_error(
-                    f"Error: '{raw}' needs a TwiCC session in the process "
-                    "ancestry. Pass an explicit session_id.",
-                    code=1,
-                )
-            sid = current.id if raw == "self" else current.spawned_by_id
-            if sid is None:
-                emit_error(
-                    "Error: the current session has no spawner, so 'parent' "
-                    "resolves to nothing.",
-                    code=1,
-                )
-        if sid not in seen:
-            seen.add(sid)
-            explicit.append(sid)
+    explicit = resolve_explicit_ids(session_ids)
+    seen = set(explicit)
 
     has_filter = any((
         project, workspace, provider, state,

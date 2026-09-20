@@ -488,7 +488,24 @@ def _sessions_wait_reply(
         None, "--state",
         help=(
             "Restrict to sessions in this live process state (repeatable, "
-            "OR-combined). Same vocabulary as the listing."
+            "OR-combined). Same vocabulary as the listing, minus `dead`: a "
+            "session with no process will never speak again."
+        ),
+    ),
+    active: bool = typer.Option(
+        False, "--active",
+        help=(
+            "Restrict to sessions TwiCC is currently running — every state "
+            "but `dead`. The batch shorthand for \"wait on everything that is "
+            "alive\". Mutually exclusive with --state."
+        ),
+    ),
+    only_hidden: bool = typer.Option(
+        False, "--only-hidden",
+        help=(
+            "Restrict to hidden sessions. Hidden ones are waited on either "
+            "way — orchestration workers are hidden by convention — so this "
+            "narrows rather than reveals."
         ),
     ),
     spawned_by: str = typer.Option(None, "--spawned-by", help="Sessions spawned by this id, or 'self'."),
@@ -508,27 +525,45 @@ def _sessions_wait_reply(
     message closing a turn, or a pending request only a human can clear — and
     an answer arriving in the same poll wins.
 
-    Selection is the listing's, filter for filter, with explicit ids UNIONED
-    on top. One difference: a bare call is refused. The listing with no filter
-    shows a page; a wait with no filter would poll every session TwiCC has
-    indexed until the deadline, so at least one id or one filter is required.
+    Selection takes the listing's filters — --project, --workspace, --provider,
+    --state, --active, --only-hidden, the four filiation scopes and
+    --annotation — with explicit ids UNIONED on top rather than replacing them.
+    The listing's visibility switches do not apply: hidden sessions are always
+    included (orchestration workers are hidden by convention) and archived ones
+    never are, since archiving kills the agent. `--state dead` is refused: a
+    session with no process will never speak.
+
+    A bare call is refused too. The listing with no filter shows a page; a wait
+    with no filter would poll every session TwiCC has indexed until the
+    deadline, so at least one id or one filter is required.
 
     Each session starts above its own current last line — "tell me the next
     thing each of them says" — or above the instant --since names, translated
     per session. There is no --from: line 42 is a different place in every
     transcript.
 
-    Returns `summary` + `results`, one `reply` block per id, the same shape
-    the singular returns. `summary.replied` counts `outcome: replied` alone;
-    `concluded` also counts the ones that ended on a pending request.
-    Exit 0 whatever the outcomes, 1 on a local refusal — read `results`.
+    Returns `summary` + `results`, one `reply` block per id — the block the
+    singular returns, except for a named id that does not exist, which comes
+    back as `outcome: unknown_session` with no cursor to carry.
+    `summary.replied` counts `outcome: replied` alone; `concluded` also counts
+    the ones that ended on a pending request, so `all_replied` can be false
+    with nothing left to wait for.
+
+    Exit 0 whatever the outcomes — the batch ran, and a per-id verdict does not
+    fit in one code; branch on `summary.all_replied` or on each `outcome`. Exit
+    1 on a local refusal, before anything is waited on.
+
+    A timed-out batch resumes per session: each block carries the
+    `since_line_num` to hand to `session <ID> wait-reply --from`. Re-running
+    this command instead re-reads each current last line, which silently skips
+    an answer that arrived in between.
     """
     from twicc.cli.sessions_wait_reply import main as sessions_wait_reply_main
 
     sessions_wait_reply_main(
         list(session_ids or []),
         since=since, timeout=wait_timeout, first=wait_first,
-        want_text=not no_reply_text,
+        want_text=not no_reply_text, active=active, only_hidden=only_hidden,
         # Same normalisation the listing applies: the help promises a
         # directory path works, and an un-normalised one matches nothing.
         project=derive_project_id(project)[0] if project is not None else None,

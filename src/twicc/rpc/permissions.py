@@ -44,9 +44,8 @@ RPC_SCOPE_READ = "read"
 # ``processes/wait``, ``process/wait`` and ``session/wait-reply`` are long-polls:
 # they block but never mutate, so they qualify as reads under the
 # mutation-is-the-line rule. ``session/wait-reply`` matters twice over: ``batch_read``
-# only accepts reads, and it is the primitive that gives one cursor per call —
-# which is how a caller waits on several sessions at once, since the plural
-# command is deliberately not built.
+# only accepts reads. ``sessions/wait-reply`` is the plural of the same wait,
+# and read for the same reason: it polls and never writes.
 # ``artifacts`` is the listing only — ``artifacts/bookmark`` and
 # ``artifacts/unbookmark`` write and are deliberately excluded.
 COOKIE_READONLY_COMMANDS: frozenset[str] = frozenset(

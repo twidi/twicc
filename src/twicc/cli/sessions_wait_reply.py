@@ -23,9 +23,6 @@ from __future__ import annotations
 
 from twicc.cli._output import emit_error, emit_json
 
-#: Scope flags that may not be combined, mirroring the listing's own rule.
-_SCOPES = ("--spawned-by", "--spawn-tree", "--descendants", "--siblings")
-
 
 def main(
     session_ids: list[str],
@@ -33,6 +30,8 @@ def main(
     since: str | None = None,
     timeout: float,
     first: bool = False,
+    active: bool = False,
+    only_hidden: bool = False,
     want_text: bool = True,
     project: str | None = None,
     workspace: str | None = None,
@@ -49,7 +48,14 @@ def main(
 
     django.setup()
 
-    from twicc.cli._wait_reply import wait_for_replies
+    import time
+
+    from twicc.cli._process_state import DEAD_VIRTUAL_STATE
+    from twicc.cli._session_selection import (
+        reject_conflicting_scopes,
+        resolve_explicit_ids,
+    )
+    from twicc.cli._wait_reply import degraded_reply, wait_for_replies
     from twicc.cli.session import _cursor_at, _parse_instant
     from twicc.cli.sessions import build_filtered_queryset
     from twicc.core.models import Session
@@ -60,16 +66,26 @@ def main(
         emit_error(f"Error: --wait-timeout must be > 0 (got {timeout:g}).", code=1)
     instant = None if since is None else _parse_instant(since)
 
-    scopes = [n for n, v in zip(_SCOPES, (spawned_by, spawn_tree, descendants, siblings))
-              if v]
-    if len(scopes) > 1:
-        emit_error(f"Error: {' and '.join(scopes)} are mutually exclusive.", code=1)
-    if project and workspace:
-        emit_error("Error: --project and --workspace are mutually exclusive.", code=1)
+    # Refused rather than honoured, as `sessions stop` refuses it: `dead` is
+    # "no TwiCC process", so those sessions will never say anything. Left
+    # accepted it would also be the one filter that lifts the refusal below
+    # while selecting every session in the database.
+    if state and DEAD_VIRTUAL_STATE in state:
+        emit_error(
+            "Error: --state dead selects sessions with no process, which will "
+            "never speak again — there is nothing to wait for.",
+            code=1,
+        )
+    if active and state:
+        emit_error("Error: --active and --state are mutually exclusive.", code=1)
+    reject_conflicting_scopes(
+        spawned_by, spawn_tree, descendants, siblings,
+        project=project, workspace=workspace,
+    )
 
-    explicit = _resolve_explicit(session_ids)
+    explicit = resolve_explicit_ids(session_ids)
     has_filter = any((
-        project, workspace, provider, state,
+        project, workspace, provider, state, active, only_hidden,
         spawned_by, spawn_tree, descendants, siblings, annotation,
     ))
     # The one place this command refuses what the listing allows. A listing with
@@ -90,10 +106,10 @@ def main(
             # be hidden (orchestration workers are, by convention) and may have
             # started too recently to be indexed. Archived ones are excluded —
             # archiving kills the agent, so none of them will ever speak again.
-            include_hidden=True, require_indexed=False,
+            include_hidden=True, only_hidden=only_hidden, require_indexed=False,
             spawned_by=spawned_by, spawn_tree=spawn_tree,
             descendants=descendants, siblings=siblings,
-            annotation=annotation, provider=provider, state=state,
+            annotation=annotation, provider=provider, state=state, active=active,
         )
         selected = [sid for sid in qs.values_list("id", flat=True) if sid not in explicit]
 
@@ -109,16 +125,27 @@ def main(
     for sid in targets:
         session = rows.get(sid)
         if session is None:
-            # Named and unknown. Reported rather than dropped: the caller must
-            # be able to align the result with what they asked for.
+            # Named and unknown, or selected by a filter and deleted between
+            # the two queries. Reported rather than dropped: the caller must be
+            # able to align the result with what they asked for.
             continue
         cursors[sid] = (
-            _cursor_at(session, instant) if instant is not None else (session.last_line or 0)
+            _cursor_at(session, instant) if instant is not None else session.last_line
         )
 
-    replies = wait_for_replies(
-        cursors, timeout=timeout, want_text=want_text, first=first,
-    ) if cursors else {}
+    started = time.monotonic()
+    try:
+        replies = wait_for_replies(
+            cursors, timeout=timeout, want_text=want_text, first=first,
+        ) if cursors else {}
+    except BaseException as exc:  # noqa: BLE001 - deliberate, as in `send-messages`
+        # N sessions means N times the queries, so this command is the one most
+        # exposed to a locked database over a long poll — and losing the whole
+        # batch would take the answers already collected with it, along with
+        # every cursor to resume from. The singular is covered by
+        # ``wait_for_reply_or_degrade``; this is its plural.
+        waited = round(time.monotonic() - started, 1)
+        replies = {sid: degraded_reply(cursor, waited, exc) for sid, cursor in cursors.items()}
     for sid in targets:
         if sid not in replies:
             replies[sid] = {"outcome": "unknown_session", "session_id": sid}
@@ -127,7 +154,11 @@ def main(
 
 
 def _summary(replies: dict) -> dict:
-    """Counts over the sessions actually waited on.
+    """Counts over every id in ``results``, including the unknown ones.
+
+    ``total`` is what was asked for, not what was reachable: an id that names
+    no session is a mistake the caller has to see, and hiding it from the count
+    would let ``all_replied`` read true on a batch that never ran.
 
     ``replied`` counts `outcome: replied` and nothing else, like
     ``send-messages``: a session that concluded on a pending request concluded,
@@ -147,30 +178,3 @@ def _summary(replies: dict) -> dict:
     }
 
 
-def _resolve_explicit(session_ids: list[str]) -> list[str]:
-    """Explicit ids, de-duplicated, with ``self`` / ``parent`` resolved."""
-    from twicc.cli._drop_request.whoami import resolve_current_session
-
-    out: list[str] = []
-    seen: set = set()
-    for raw in session_ids or []:
-        sid = raw
-        if raw in ("self", "parent"):
-            current = resolve_current_session()
-            if current is None:
-                emit_error(
-                    f"Error: '{raw}' needs a TwiCC session in the process "
-                    "ancestry. Pass an explicit session_id.",
-                    code=1,
-                )
-            sid = current.id if raw == "self" else current.spawned_by_id
-            if sid is None:
-                emit_error(
-                    "Error: the current session has no spawner, so 'parent' "
-                    "resolves to nothing.",
-                    code=1,
-                )
-        if sid not in seen:
-            seen.add(sid)
-            out.append(sid)
-    return out
