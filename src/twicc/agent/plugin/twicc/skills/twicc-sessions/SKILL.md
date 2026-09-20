@@ -1,6 +1,6 @@
 ---
 name: twicc-sessions
-description: List sessions tracked by TwiCC with each one's live process state, batch-look them up by id, wait until several of them conclude, or stop the agents behind them. Use when you or the user want to browse sessions, find a session ID, filter by project, see which are still running, or batch-stop them.
+description: List sessions tracked by TwiCC with each one's live process state, batch-look them up by id, wait until several of them conclude, or stop the agents behind them. Use when you or the user want to browse sessions, find a session ID, filter by project, see which are still running, block until several of them conclude, or batch-stop them.
 ---
 
 # TwiCC Sessions
@@ -31,9 +31,9 @@ Filters: `--project`, `--workspace`, `--provider`, `--state`, `--active`, `--onl
 
 **Each session starts above its own last line** — "tell me the next thing each of them says". `--since` names that cursor as an ISO 8601 instant instead, translated per session. There is no `--from`: line 42 is a different place in every transcript, which is why an instant is what addresses a batch at all.
 
-Returns `summary` + `results`, one `reply` block per id — the block the singular returns, except for a named id that does not exist: it comes back as `outcome: unknown_session` carrying only that and `session_id` — none of the four keys every other block has, since there was nothing to wait on — rather than being dropped. `summary.replied` counts `outcome: replied` alone; `concluded` also counts the ones that ended on a pending request, so `all_replied` can be `false` with nothing left to wait for. Exit 0 whatever the outcomes — a per-id verdict does not fit in one code, so branch on `summary.all_replied` or on each `outcome`; `1` on a local refusal, before anything is waited on.
+Returns `summary` + `results`, one `reply` block per id — the block the singular returns, except for a named id that does not exist: it comes back as `outcome: unknown_session` carrying only that and `session_id` — none of the four keys every other block has, since there was nothing to wait on — rather than being dropped. `summary` carries `total` (every id asked for, unknown ones included), `replied`, `awaiting_user_input`, `concluded` and `all_replied`. `replied` counts `outcome: replied` alone; `concluded` also counts the ones that ended on a pending request, so `all_replied` can be `false` with nothing left to wait for. Exit 0 whatever the outcomes — a per-id verdict does not fit in one code, so branch on `summary.all_replied` or on each `outcome`; `1` on a local refusal, before anything is waited on.
 
-**Resuming a timed-out batch:** pass `--since` the instant the batch started and every cursor lands back where it was, which is what `--since` is for. Without it, re-running re-reads each session's current last line and silently skips an answer that arrived in between; the per-session alternative is each block's `since_line_num` handed to `$TWICC session <ID> wait-reply --from`.
+**Resuming a timed-out batch:** pass `--since` the instant the batch started and every cursor lands back where it was, or just below it — a line can be re-read, never skipped, since an out-of-order timestamp only ever pushes a cursor lower. That is what `--since` is for. Without it, re-running re-reads each session's current last line and silently skips an answer that arrived in between; the per-session alternative is each block's `since_line_num` handed to `$TWICC session <ID> wait-reply --from`.
 
 ## Stopping what is running
 

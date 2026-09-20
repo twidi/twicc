@@ -445,8 +445,11 @@ def _sessions_wait_reply(
     since: str = typer.Option(
         None, "--since",
         help=(
-            "Start each session above the last line it stamped at or before "
-            "this instant, instead of above its current last line. ISO 8601 "
+            "Start each session above the instant instead of above its "
+            "current last line: only a line written strictly after it counts, "
+            "and an out-of-order timestamp can only push the cursor lower, "
+            "never past a line. A line with no timestamp is not a boundary. "
+            "ISO 8601 "
             "— '2026-09-19T05:38:20+00:00', exactly what `session messages` "
             "returns, and also '2026-09-19 05:38:20' or a bare '2026-09-19' "
             "for its midnight. No offset means UTC. There is no --from here: "
@@ -547,8 +550,10 @@ def _sessions_wait_reply(
     singular returns, except for a named id that does not exist, which comes
     back as `outcome: unknown_session` carrying only that and `session_id` —
     none of the four keys every other block has, since nothing was waited on.
-    `summary.replied` counts `outcome: replied` alone; `concluded` also counts
-    the ones that ended on a pending request, so `all_replied` can be false
+    `summary` carries `total` (every id asked for, unknown ones included),
+    `replied`, `awaiting_user_input`, `concluded` and `all_replied`. `replied`
+    counts `outcome: replied` alone; `concluded` also counts the ones that
+    ended on a pending request, so `all_replied` can be false
     with nothing left to wait for.
 
     Exit 0 whatever the outcomes — the batch ran, and a per-id verdict does not
@@ -556,7 +561,8 @@ def _sessions_wait_reply(
     1 on a local refusal, before anything is waited on.
 
     Resuming a timed-out batch: pass --since the instant the batch started and
-    every cursor lands back where it was, which is what --since is for. Without
+    every cursor lands back where it was, or just below it — a line can be
+    re-read, never skipped. That is what --since is for. Without
     it, re-running re-reads each current last line and silently skips an answer
     that arrived in between; the per-session alternative is each block's
     `since_line_num` handed to `session <ID> wait-reply --from`.

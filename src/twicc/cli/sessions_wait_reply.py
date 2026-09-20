@@ -12,11 +12,19 @@ of them says" — or above the instant ``--since`` names. There is deliberately
 no ``--from``: a line number belongs to one transcript and means something
 else in every other, which is the whole reason ``--since`` exists.
 
-**Selection is the listing's**, filter for filter, through
-``build_filtered_queryset``. What is not shared is the empty case: a bare call
-would wait on every session TwiCC has ever indexed, so at least one id or one
-filter is required. ``sessions stop`` can afford a bare call because the live
-process set bounds it; nothing bounds this one.
+**Selection goes through the listing's** ``build_filtered_queryset``, and
+diverges from it in four places. Hidden sessions are always included and
+``--include-hidden`` is not offered — orchestration workers are hidden by
+convention, and this command is for them. The indexing predicate is off: a
+session that started two seconds ago has neither a date nor a first user
+message, and is the one most likely to speak. Archived ones are always out and
+``--include-archived`` is not offered, since archiving kills the agent. And
+``--state dead`` is refused outright.
+
+The fifth difference is the empty case: a bare call would wait on every session
+TwiCC has ever indexed, so at least one id or one filter is required.
+``sessions stop`` can afford a bare call because the live process set bounds
+it; nothing bounds this one.
 """
 
 from __future__ import annotations

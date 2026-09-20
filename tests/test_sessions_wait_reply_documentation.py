@@ -30,16 +30,22 @@ INVOCATION = re.compile(r"sessions\s+wait-reply(?![\w-])")
 CODE_SPAN = re.compile(r"`([^`]+)`")
 
 #: Flags of neighbouring commands, legitimate in prose that points at them.
-CROSS_REFERENCES = {"--from", "--wait-reply", "--include-hidden", "--include-archived"}
+#: `--include-hidden` and `--include-archived` are deliberately NOT here: the
+#: corrected prose now discusses them by name, which is exactly where the next
+#: copyable example naming a flag this command refuses would come from.
+CROSS_REFERENCES = {"--from", "--wait-reply"}
 
-#: The options that narrow the batch, as opposed to shaping the wait. This is
-#: the list the documents have to match: one missing sends a caller to a
-#: workaround, one invented sends them to `No such option`.
-FILTERS = {
-    "--project", "--workspace", "--provider", "--state", "--active",
-    "--only-hidden", "--spawned-by", "--spawn-tree", "--descendants",
-    "--annotation", "--siblings",
+#: Everything that shapes the wait rather than narrowing it. The filters are
+#: what is left, so a new option must be classified here or the documents are
+#: required to name it — a hand-written filter list is a pin, and a pin gets
+#: bumped to match whatever the code does.
+WAIT_OPTIONS = {
+    "--since", "--wait-timeout", "--wait-first", "--wait-all", "--no-reply-text",
 }
+
+#: Legitimate in *prose*, never in something copyable: the documents name the
+#: two switches this command drops precisely to say they do not apply here.
+NAMED_IN_PROSE = CROSS_REFERENCES | {"--include-hidden", "--include-archived"}
 
 
 def _command():
@@ -53,7 +59,19 @@ def _real_options() -> set[str]:
         opt
         for param in _command().params
         for opt in (*param.opts, *param.secondary_opts)
+        if opt.startswith("--")
     }
+
+
+def _filters() -> set[str]:
+    """The options that narrow the batch: everything that is not a wait knob.
+
+    Derived by subtraction, so adding a filter to the command and naming it in
+    no document fails here — which a list written out by hand cannot do.
+    """
+    unknown = WAIT_OPTIONS - _real_options()
+    assert unknown == set(), unknown  # a renamed knob must not silently become a filter
+    return _real_options() - WAIT_OPTIONS
 
 
 def _copyable_spans() -> list[tuple[str, int, str]]:
@@ -130,7 +148,49 @@ def test_every_surface_enumerates_exactly_the_filters():
     workaround for something that works, and an invented one to `No such
     option`. Both shipped in the first two rounds of this command's review.
     """
-    assert FILTERS < _real_options()  # the split is still the command's
+    filters = _filters()
+    assert filters, _real_options()
 
     for label, sentence in _filter_sentences().items():
-        assert set(FLAG.findall(sentence)) == FILTERS, (label, sentence)
+        assert set(FLAG.findall(sentence)) == filters, (label, sentence)
+
+
+def test_the_help_strings_name_no_flag_the_command_lacks():
+    """The docstring is the MCP tool description and each `help=` is a
+    parameter description, so an agent reads them with no document at hand.
+
+    They were outside this guard, which is where the plural's `--since` help
+    came to describe the cursor rule the code deliberately rejects.
+    """
+    real = _real_options() | NAMED_IN_PROSE
+    command = _command()
+    texts = [("docstring", command.help or "")]
+    texts += [(param.opts[0], param.help) for param in command.params if param.help]
+
+    wrong = [
+        (label, flag) for label, text in texts
+        for flag in FLAG.findall(text)
+        if flag not in real
+    ]
+    assert wrong == []
+
+
+def test_the_two_commands_describe_one_cursor_rule():
+    """`--since` is translated by the same `_cursor_at` for both, so the two
+    help strings cannot say different things about it. One said "the last line
+    stamped at or before the instant", which is the rule that function rejects
+    by name — and with 121 249 adjacent inversions in this machine's database,
+    the difference is reachable.
+    """
+    from twicc.cli import app
+
+    sessions = typer.main.get_command(app).commands["sessions"].commands["wait-reply"]
+    session = typer.main.get_command(app).commands["session"].commands["wait-reply"]
+    helps = {
+        c.name: next(p.help for p in c.params if p.name == "since")
+        for c in (sessions, session)
+    }
+
+    for name, text in helps.items():
+        assert "strictly after" in text, name
+        assert "at or before" not in text, name
