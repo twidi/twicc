@@ -184,13 +184,17 @@ def test_the_two_commands_describe_one_cursor_rule():
     """
     from twicc.cli import app
 
-    sessions = typer.main.get_command(app).commands["sessions"].commands["wait-reply"]
-    session = typer.main.get_command(app).commands["session"].commands["wait-reply"]
-    helps = {
-        c.name: next(p.help for p in c.params if p.name == "since")
-        for c in (sessions, session)
-    }
+    root = typer.main.get_command(app)
+    # Keyed by label, not by `.name`: both are called `wait-reply`, so a dict
+    # over the commands collapses to one entry and the singular — already
+    # pinned by the other guard — silently stands in for the plural. That is
+    # the half this test exists for, and it was checking neither.
+    commands = (
+        ("sessions wait-reply", root.commands["sessions"].commands["wait-reply"]),
+        ("session wait-reply", root.commands["session"].commands["wait-reply"]),
+    )
 
-    for name, text in helps.items():
-        assert "strictly after" in text, name
-        assert "at or before" not in text, name
+    for label, command in commands:
+        text = next(p.help for p in command.params if p.name == "since")
+        assert "strictly after" in text, label
+        assert "at or before" not in text, label
