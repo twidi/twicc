@@ -137,7 +137,8 @@ async def send_message_to_session_from_payload(payload: dict) -> SendMessageResu
     # --- awaiting_user_input guard --------------------------------------
     # A live ProcessRun blocked on a user click won't consume new CLI
     # messages. A question can be answered from the CLI too
-    # (``session <ID> answer``); anything else needs the UI. We refuse rather
+    # (``session <ID> answer-questions``); anything else needs the UI. We
+    # refuse rather
     # than enqueue silently.
     twicc_pid = os.getpid()
     row = await sync_to_async(
@@ -153,7 +154,7 @@ async def send_message_to_session_from_payload(payload: dict) -> SendMessageResu
                              f"Session {session_id!r} is awaiting user input "
                              "(tool approval or pending question). See "
                              "'twicc session <ID> pending-requests'; a question "
-                             "is answerable with 'twicc session <ID> answer', "
+                             "is answerable with 'twicc session <ID> answer-questions', "
                              "anything else needs the UI."),
         ])
 

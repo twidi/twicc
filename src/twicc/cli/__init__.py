@@ -860,23 +860,18 @@ def _session_pending_requests(
     read_cmd(ctx.obj, raw=raw, timeout=timeout)
 
 
-@session_app.command("answer", help="Answer the question this session is waiting on.")
-def _session_answer(
+@session_app.command("answer-questions",
+                     help="Answer the question this session is waiting on.")
+def _session_answer_questions(
     ctx: typer.Context,
-    action: str = typer.Argument(
-        help="'answer' to answer the questions, 'cancel' to decline them.",
-    ),
     request_id: str = typer.Option(
         None, "--request-id",
         help=(
-            "The pending request to answer, as reported by 'pending-requests'. "
-            "Optional when one question is pending; required when several are. "
-            "Naming it is also how a script makes sure it answers the request "
-            "it read, and not one that arrived since."
+            "The pending request to act on, as reported by 'pending-requests'. Optional when one question is pending; required when several are. Naming it is also how a script makes sure it answers the request it read, and not one that arrived since."
         ),
     ),
-    answer: list[str] = typer.Option(
-        [], "--answer",
+    choice: list[str] = typer.Option(
+        [], "--choice",
         help=(
             "One answer as ID=VALUE, the id from 'pending-requests'. Repeatable: "
             "once per question, or several times on one id for a multi-select "
@@ -889,18 +884,45 @@ def _session_answer(
         help="Seconds to wait for the server's answer before giving up.",
     ),
 ) -> None:
-    """Answer, or decline, the question this session's agent is waiting on.
+    """Answer the question this session's agent is waiting on.
 
     Only a question: tool approvals and MCP elicitations are refused, and stay
     the web UI's business. Answering every question submits; answering some of
     them sends the agent a partial answer where the provider has one; answering
-    none is an error, since declining is what ``cancel`` is for.
+    none is an error, since declining is what ``cancel-questions`` is for.
 
     A session cannot answer its own question.
     """
     from twicc.cli.pending_question import answer_cmd
 
-    answer_cmd(ctx.obj, action, request_id=request_id, raw_answers=answer,
+    answer_cmd(ctx.obj, "answer", request_id=request_id, raw_answers=choice,
+               timeout=timeout)
+
+
+@session_app.command("cancel-questions",
+                     help="Decline the question this session is waiting on.")
+def _session_cancel_questions(
+    ctx: typer.Context,
+    request_id: str = typer.Option(
+        None, "--request-id",
+        help=(
+            "The pending request to act on, as reported by 'pending-requests'. Optional when one question is pending; required when several are. Naming it is also how a script makes sure it answers the request it read, and not one that arrived since."
+        ),
+    ),
+    timeout: int = typer.Option(
+        30, "--timeout",
+        help="Seconds to wait for the server's answer before giving up.",
+    ),
+) -> None:
+    """Decline the question this session's agent is waiting on.
+
+    The agent is told the user chose not to answer and hands control back; it
+    is not an interrupt. This is also the way out of a question no answer can
+    address — one with no id, two sharing one id, a secret one, or none at all.
+    """
+    from twicc.cli.pending_question import answer_cmd
+
+    answer_cmd(ctx.obj, "cancel", request_id=request_id, raw_answers=[],
                timeout=timeout)
 
 

@@ -226,8 +226,8 @@ class TestTheEntryShape:
 class TestTheAdvertisedActions:
     def test_an_ordinary_question_offers_both(self):
         entry = claude_pq.normalize_pending_request(claude_question())
-        assert [a["action"] for a in entry["actions"]] == ["answer", "cancel"]
-        assert entry["actions"][0]["accepts"] == ["--answer"]
+        assert [a["action"] for a in entry["actions"]] == ["answer-questions", "cancel-questions"]
+        assert entry["actions"][0]["accepts"] == ["--choice"]
         # ``accepts`` lists the answer-carrying flags only: ``--request-id`` and
         # ``--timeout`` are accepted by every action, so a targeted cancel stays
         # expressible when two questions are pending.
@@ -236,7 +236,7 @@ class TestTheAdvertisedActions:
     def test_an_empty_question_list_offers_cancel_alone(self):
         entry = claude_pq.normalize_pending_request(claude_question([]))
         assert entry["kind"] == "question"
-        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+        assert [a["action"] for a in entry["actions"]] == ["cancel-questions"]
 
     def test_two_questions_sharing_one_id_offer_cancel_alone(self):
         # A caller names a question by its id, so a set that cannot be named one
@@ -245,7 +245,7 @@ class TestTheAdvertisedActions:
             {"id": "db", "question": "Which database?", "options": [{"label": "A"}]},
             {"id": "db", "question": "Which one really?", "options": [{"label": "B"}]},
         ]))
-        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+        assert [a["action"] for a in entry["actions"]] == ["cancel-questions"]
 
     def test_a_non_string_codex_id_offers_cancel_alone(self):
         # Publishing an integer id verbatim would advertise an answer the CLI
@@ -254,13 +254,13 @@ class TestTheAdvertisedActions:
             {"id": 42, "question": "Which database?", "options": [{"label": "A"}]},
         ]))
         assert entry["questions"][0]["id"] == ""
-        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+        assert [a["action"] for a in entry["actions"]] == ["cancel-questions"]
 
     def test_a_secret_question_offers_cancel_alone(self):
         entry = codex_pq.normalize_pending_request(codex_question([
             {"id": "q1", "question": "Token?", "isSecret": True, "options": [{"label": "A"}]},
         ]))
-        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+        assert [a["action"] for a in entry["actions"]] == ["cancel-questions"]
 
 
 class TestTheClaudeTranslator:
@@ -376,14 +376,14 @@ class TestPathologicalQuestions:
         entry = claude_pq.normalize_pending_request(claude_question([
             "not a dict", {"question": "Which cache?"},
         ]))
-        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+        assert [a["action"] for a in entry["actions"]] == ["cancel-questions"]
 
     def test_the_same_holds_on_codex(self):
         entry = codex_pq.normalize_pending_request(codex_question([
             {"id": "cache", "question": "Which cache?"}, "not a dict",
         ]))
         assert [q["id"] for q in entry["questions"]] == ["cache", ""]
-        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+        assert [a["action"] for a in entry["actions"]] == ["cancel-questions"]
 
     def test_a_non_string_question_text_is_unreadable_too(self):
         # The map the agent receives is keyed by that text, so an answer to it
@@ -394,7 +394,7 @@ class TestPathologicalQuestions:
             {"question": "Which cache?", "options": []},
         ]))
         assert [q["id"] for q in entry["questions"]] == ["", "2"]
-        assert [a["action"] for a in entry["actions"]] == ["cancel"]
+        assert [a["action"] for a in entry["actions"]] == ["cancel-questions"]
 
     def test_a_non_string_question_text_never_raises_on_the_widget_path(self):
         # The text is used as a dict key when the clarify message is built, and

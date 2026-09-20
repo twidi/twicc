@@ -38,9 +38,12 @@ _ELICITATION_TOOL_NAMES = frozenset({"elicitationForm", "elicitationUrl"})
 #: a partially answered request is ``missing_answers`` there.
 QUESTION_ACTIONS = frozenset({"submit", "partial", "cancel"})
 
-ANSWER_ACTION = {"action": "answer", "label": "Answer the questions",
-                 "accepts": ["--answer"]}
-CANCEL_ACTION = {"action": "cancel", "label": "Decline to answer"}
+#: ``action`` names the CLI command that performs it, so a caller reads the
+#: entry and knows what to type. ``accepts`` lists the answer-carrying flags
+#: only: ``--request-id`` and ``--timeout`` work on both and never appear here.
+ANSWER_ACTION = {"action": "answer-questions", "label": "Answer the questions",
+                 "accepts": ["--choice"]}
+CANCEL_ACTION = {"action": "cancel-questions", "label": "Decline to answer"}
 
 
 def stored_questions(pending) -> list:

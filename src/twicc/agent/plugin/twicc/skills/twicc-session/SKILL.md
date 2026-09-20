@@ -1,19 +1,20 @@
 ---
 name: twicc-session
 description: Inspect, wait on, unblock, or stop a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, list/inspect its workflows, see what it is waiting on and answer its question, or stop its live agent. Use when you or the user want to examine a session, read conversation content, explore subagent activity, block until it answers, unblock a session waiting on a human, or stop its agent.
-argument-hint: <session_id> [content|messages|agents|plan|wait-reply|pending-requests|answer|stop|workflows|workflow]
+argument-hint: <session_id> [content|messages|agents|plan|wait-reply|pending-requests|answer-questions|cancel-questions|stop|workflows|workflow]
 ---
 
 # TwiCC Session
 
-Inspect, wait on, unblock, or stop a single session. Eleven sub-commands:
+Inspect, wait on, unblock, or stop a single session. Twelve sub-commands:
 
 - Default — full session metadata, `process` block included (the live state, `null` on a subagent).
 - `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
 - `wait-reply [--from N]` — block until this session concludes past the cursor. Use it on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. `--from` is the `line_num` or `since_line_num` a previous wait returned, so a wait that timed out can be resumed exactly where it stopped; omitted, it is the session's current last line. `--since` names that same cursor as an ISO 8601 instant instead, for when you have a time and not a line number. An idle session concludes with `ended` rather than hanging, but not instantly: the loop waits out a ~5 s flush window before it can tell a finished turn from one about to speak, so a `--wait-timeout` below that always reports `timeout`. Two endings, and no flag chooses between them: an answer — the message closing a turn — or a **pending request**, which only a human can clear. An answer arriving in the same poll wins. Exactly what `--wait-reply` does on the commands that send, which is why it carries the same name. Also takes `--wait-timeout` (default 300 s) and `--no-reply-text`. **Exit code:** `0` answered or blocked, `5` neither came, `2` TwiCC stopped, `1` a local refusal — a bad `--from` or `--since`, the two cursors passed together, a non-positive `--wait-timeout`, an unknown session, or the wait itself breaking. So `$TWICC session <ID> wait-reply && …` chains, and a `1` is worth reading before retrying.
 - `pending-requests [--raw]` — what this session's live agent is waiting on, answerable or not.
-- `answer <answer|cancel> [--request-id ID] [--answer 'ID=VALUE']` — answer, or decline, the question it is waiting on.
+- `answer-questions [--request-id ID] [--choice 'ID=VALUE']` — answer the question it is waiting on.
+- `cancel-questions [--request-id ID]` — decline it.
 - `stop` — stop this session's live agent (`--timeout`, `--force` for a SIGKILL without the grace window). Idempotent: stopping an already-stopped session still reports `stopped`. Same operation as `process <ID> stop`, which it is meant to replace.
 - `agents` — list subagents spawned by this session. `--slim` returns the reduced projection (see the `twicc-sessions` skill), about 80% lighter. Rows carry the same `process` block as `sessions`, always `null` here: a subagent runs inside its parent's process and never has one of its own.
 - `plan [PATH] [--list]` — the session's tracked plan documents (both providers): most recently updated one by default, a specific one by path, `--list` to enumerate.
@@ -290,8 +291,8 @@ and an empty list would say the opposite.
                      {"label": "SQLite", "description": "Lightweight, file-based"}]}
       ],
       "actions": [
-        {"action": "answer", "label": "Answer the questions", "accepts": ["--answer"]},
-        {"action": "cancel", "label": "Decline to answer"}
+        {"action": "answer-questions", "label": "Answer the questions", "accepts": ["--choice"]},
+        {"action": "cancel-questions", "label": "Decline to answer"}
       ]
     }
   ]
@@ -307,10 +308,12 @@ and an empty list would say the opposite.
 `--raw` adds each request's untouched `tool_input`, on **every** entry. Ask for
 it on a session blocked on a large patch and you get the patch.
 
+`actions[].action` names the sub-command that performs it.
+
 **Read `actions` before answering.** A question whose only action is `cancel` is
 structurally unanswerable here. Four cases: no questions at all, a secret one,
 one carrying no id, or two sharing the same id. The last two are the same
-problem — `--answer` names a question by its id, so a set you cannot name one
+problem — `--choice` names a question by its id, so a set you cannot name one
 by one can never be answered in full, and every attempt earns
 `missing_answers`. Cancel it, or answer it in the web UI.
 
@@ -320,8 +323,8 @@ Nothing pending is exit 0 with an empty list; no agent at all is exit 0 with
 ### Answer — unblock a waiting session
 
 ```bash
-$TWICC session <SESSION_ID> answer answer --answer '1=PostgreSQL'
-$TWICC session <SESSION_ID> answer cancel
+$TWICC session <SESSION_ID> answer-questions --choice '1=PostgreSQL'
+$TWICC session <SESSION_ID> cancel-questions
 ```
 
 Answers only a **question**. A tool approval or an MCP elicitation is refused
@@ -330,7 +333,7 @@ Answers only a **question**. A tool approval or an MCP elicitation is refused
 - **The id comes from `pending-requests`**, and it is not the same thing on both
   providers: a 1-based index on Claude Code, which has no question ids, and the
   native id on Codex. Read first, then answer.
-- `--answer` splits on the **first** `=`, so a value may contain more. Repeat it
+- `--choice` splits on the **first** `=`, so a value may contain more. Repeat it
   once per question, or several times on one id for a multi-select question.
 - A value matching no option is free text, accepted when `allows_free_text` says
   so, and exclusive of the options — do not mix the two on one question.
@@ -338,8 +341,8 @@ Answers only a **question**. A tool approval or an MCP elicitation is refused
   are. **Pass it anyway from a script:** a request that cleared between your read
   and your answer then surfaces as `request_gone` instead of a wrong answer.
 - Answer every question and it submits. Answer some and the agent gets a partial
-  answer, on Claude Code only. Answer none and it is refused — `cancel` is how
-  you decline.
+  answer, on Claude Code only. Answer none and it is refused — `cancel-questions`
+  is how you decline.
 - **A session cannot answer its own question.** Answering for the human is the
   one thing this command must not let an agent do.
 
@@ -422,8 +425,8 @@ $TWICC session abc123 plan docs/plans/feature-plan.md
 $TWICC session abc123 plan --list
 $TWICC session abc123 pending-requests
 $TWICC session abc123 pending-requests --raw
-$TWICC session abc123 answer answer --answer '1=PostgreSQL' --answer '2=Redis'
-$TWICC session abc123 answer cancel --request-id req-9
+$TWICC session abc123 answer-questions --choice '1=PostgreSQL' --choice '2=Redis'
+$TWICC session abc123 cancel-questions --request-id req-9
 $TWICC session abc123 workflows
 $TWICC session abc123 workflows --limit 5
 $TWICC session abc123 workflow wf_cd590ff1

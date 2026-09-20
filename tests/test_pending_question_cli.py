@@ -95,8 +95,8 @@ def test_the_read_defaults_omit_raw(submitted):
 
 def test_the_answer_flags_travel_from_the_command_line(submitted):
     result = CliRunner().invoke(app, [
-        "session", SESSION_ID, "answer", "answer",
-        "--request-id", "req-9", "--answer", "1=PostgreSQL", "--answer", "2=Redis",
+        "session", SESSION_ID, "answer-questions",
+        "--request-id", "req-9", "--choice", "1=PostgreSQL", "--choice", "2=Redis",
         "--timeout", "12",
     ])
 
@@ -112,11 +112,32 @@ def test_the_answer_flags_travel_from_the_command_line(submitted):
 
 
 def test_cancel_carries_no_answers_key(submitted):
-    result = CliRunner().invoke(app, ["session", SESSION_ID, "answer", "cancel"])
+    result = CliRunner().invoke(app, ["session", SESSION_ID, "cancel-questions"])
 
     assert result.exit_code == 0, result.output
+    assert submitted["payload"]["action"] == "cancel"
     assert "answers" not in submitted["payload"]
     assert "request_id" not in submitted["payload"]
+
+
+def test_cancel_takes_a_request_id_too(submitted):
+    # A targeted decline must stay expressible when two questions are pending.
+    result = CliRunner().invoke(app, [
+        "session", SESSION_ID, "cancel-questions", "--request-id", "req-9",
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert submitted["payload"]["request_id"] == "req-9"
+
+
+def test_cancel_has_no_choices_flag():
+    # The action carries no answer, so the flag it would ignore does not exist.
+    result = CliRunner().invoke(app, [
+        "session", SESSION_ID, "cancel-questions", "--choice", "1=X",
+    ])
+
+    assert result.exit_code == 2
+    assert "--choice" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -124,16 +145,16 @@ def test_cancel_carries_no_answers_key(submitted):
 # ---------------------------------------------------------------------------
 
 
-def test_an_unknown_action_word_exits_1(submitted):
-    # A positional argument, so Typer accepts it and the body refuses it.
-    result = CliRunner().invoke(app, ["session", SESSION_ID, "answer", "maybe"])
-    assert result.exit_code == 1
-    assert submitted == {}
+def test_an_unknown_command_is_a_usage_error():
+    # The action used to be a positional argument the body had to refuse. It is
+    # the command name now, so Typer refuses it first — exit 2, not 1.
+    result = CliRunner().invoke(app, ["session", SESSION_ID, "maybe-questions"])
+    assert result.exit_code == 2
 
 
-def test_a_malformed_answer_exits_1(submitted):
+def test_a_malformed_choice_exits_1(submitted):
     result = CliRunner().invoke(app, [
-        "session", SESSION_ID, "answer", "answer", "--answer", "no-equals",
+        "session", SESSION_ID, "answer-questions", "--choice", "no-equals",
     ])
     assert result.exit_code == 1
     assert submitted == {}
@@ -141,7 +162,7 @@ def test_a_malformed_answer_exits_1(submitted):
 
 @pytest.mark.parametrize("command", [
     ["pending-requests", "--timeout", "0"],
-    ["answer", "cancel", "--timeout", "-1"],
+    ["cancel-questions", "--timeout", "-1"],
 ])
 def test_a_non_positive_timeout_exits_1(monkeypatch, command):
     monkeypatch.setattr(pending_question, "_setup_django", lambda: None)
@@ -171,7 +192,7 @@ def test_the_answer_payload_carries_the_calling_session(submitted):
     # over MCP the same resolution reads the id pinned from the signed token.
     with patch("twicc.cli._drop_request.whoami.resolve_current_session",
                return_value=SimpleNamespace(id="caller-session")):
-        result = CliRunner().invoke(app, ["session", SESSION_ID, "answer", "cancel"])
+        result = CliRunner().invoke(app, ["session", SESSION_ID, "cancel-questions"])
 
     assert result.exit_code == 0, result.output
     assert submitted["payload"]["caller_session_id"] == "caller-session"
@@ -180,7 +201,7 @@ def test_the_answer_payload_carries_the_calling_session(submitted):
 def test_a_human_caller_stamps_nothing(submitted):
     with patch("twicc.cli._drop_request.whoami.resolve_current_session",
                return_value=None):
-        result = CliRunner().invoke(app, ["session", SESSION_ID, "answer", "cancel"])
+        result = CliRunner().invoke(app, ["session", SESSION_ID, "cancel-questions"])
 
     assert result.exit_code == 0, result.output
     assert "caller_session_id" not in submitted["payload"]
@@ -207,7 +228,8 @@ def test_the_read_is_registered_as_read_only():
     from twicc.rpc.permissions import COOKIE_READONLY_COMMANDS
 
     assert "session/pending-requests" in COOKIE_READONLY_COMMANDS
-    assert "session/answer" not in COOKIE_READONLY_COMMANDS
+    assert "session/answer-questions" not in COOKIE_READONLY_COMMANDS
+    assert "session/cancel-questions" not in COOKIE_READONLY_COMMANDS
 
 
 def test_both_commands_have_an_rpc_route():
@@ -215,4 +237,5 @@ def test_both_commands_have_an_rpc_route():
 
     registry = build_registry()
     assert "session/pending-requests" in registry
-    assert "session/answer" in registry
+    assert "session/answer-questions" in registry
+    assert "session/cancel-questions" in registry

@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 import typer
 
 
@@ -36,9 +37,13 @@ COMMANDS = {
         re.compile(r"session\s+\S+\s+pending-requests(?![\w-])"),
         ("pending-requests [--", "pending-requests ["),
     ),
-    "answer": (
-        re.compile(r"session\s+\S+\s+answer(?![\w-])"),
-        ("answer <answer|cancel>",),
+    "answer-questions": (
+        re.compile(r"session\s+\S+\s+answer-questions(?![\w-])"),
+        ("answer-questions [--", "answer-questions ["),
+    ),
+    "cancel-questions": (
+        re.compile(r"session\s+\S+\s+cancel-questions(?![\w-])"),
+        ("cancel-questions [--", "cancel-questions ["),
     ),
 }
 
@@ -134,13 +139,14 @@ def test_a_copyable_read_invocation_uses_nothing_but_its_options():
     assert wrong == []
 
 
-def test_a_copyable_answer_invocation_uses_nothing_but_its_options():
-    spans = _copyable_spans("answer")
+@pytest.mark.parametrize("command", ["answer-questions", "cancel-questions"])
+def test_a_copyable_write_invocation_uses_nothing_but_its_options(command):
+    spans = _copyable_spans(command)
     assert {label for label, _, _ in spans} >= {
         "twicc-session/SKILL.md", "SKILLS-AND-CLI.md",
     }, spans
 
-    real = _real_options("answer")
+    real = _real_options(command)
     wrong = [
         (label, number, flag, span)
         for label, number, span in spans

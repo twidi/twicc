@@ -1,10 +1,11 @@
-"""``twicc session <ID> pending-requests`` and ``twicc session <ID> answer``.
+"""The three pending-question commands.
 
-The first reports what a session's live agent is waiting on; the second
-answers the one question among it that TwiCC can answer from outside the web
-UI. Both ride the drop-request transport, so both share the same failure
-surface: exit 2 with no backend, 3 on a server rejection, 4 on a service
-failure, 5 on a timeout.
+``session <ID> pending-requests`` reports what a session's live agent is
+waiting on; ``answer-questions`` and ``cancel-questions`` resolve the one
+question among it that TwiCC can answer from outside the web UI. All three
+ride the drop-request transport, so all three share the same failure surface:
+exit 2 with no backend, 3 on a server rejection, 4 on a service failure, 5 on
+a timeout.
 
 Design: ``docs/plans/2026-09-18-question-cli-design.md``.
 """
@@ -12,9 +13,6 @@ Design: ``docs/plans/2026-09-18-question-cli-design.md``.
 from __future__ import annotations
 
 import typer
-
-
-ANSWER_ACTIONS = ("answer", "cancel")
 
 
 def _setup_django() -> None:
@@ -25,7 +23,7 @@ def _setup_django() -> None:
 
 
 def parse_answers(raw_answers: list[str]) -> dict[str, list[str]]:
-    """Turn repeated ``--answer ID=VALUE`` into ``{id: [value, …]}``.
+    """Turn repeated ``--choice ID=VALUE`` into ``{id: [value, …]}``.
 
     Split on the **first** ``=``: a value may contain more, which is reachable
     since free text is accepted. An argument with no ``=`` at all is the error.
@@ -38,7 +36,7 @@ def parse_answers(raw_answers: list[str]) -> dict[str, list[str]]:
         question_id, separator, value = item.partition("=")
         if not separator or not question_id:
             raise ValueError(
-                f"Invalid --answer {item!r}: expected ID=VALUE "
+                f"Invalid --choice {item!r}: expected ID=VALUE "
                 "(the id comes from 'session <ID> pending-requests')"
             )
         answers.setdefault(question_id, []).append(value)
@@ -119,16 +117,13 @@ def read_cmd(session_id: str, *, raw: bool, timeout: int) -> None:
 
 def answer_cmd(session_id: str, action: str, *, request_id: str | None,
                raw_answers: list[str], timeout: int) -> None:
-    """Answer (or decline) the session's pending question."""
-    from twicc.cli._output import emit_error
+    """Answer or decline the session's pending question.
 
-    if action not in ANSWER_ACTIONS:
-        # A positional argument, so Typer accepts it and this body refuses it.
-        emit_error(
-            f"Error: unknown action {action!r}; expected one of "
-            f"{', '.join(ANSWER_ACTIONS)}.",
-            code=1,
-        )
+    ``action`` comes from the command the caller typed, not from an argument
+    they can get wrong: ``answer-questions`` and ``cancel-questions`` each pass
+    their own.
+    """
+    from twicc.cli._output import emit_error
 
     try:
         answers = parse_answers(raw_answers)
