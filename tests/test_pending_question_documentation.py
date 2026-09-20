@@ -32,9 +32,9 @@ CODE_SPAN = re.compile(r"`([^`]+)`")
 # signature opens in a bullet. ``\S+`` is the session id, which the documents
 # write a dozen ways (``<SESSION_ID>``, ``abc123``).
 COMMANDS = {
-    "pending-request": (
-        re.compile(r"session\s+\S+\s+pending-request(?![\w-])"),
-        ("pending-request [--", "pending-request ["),
+    "pending-requests": (
+        re.compile(r"session\s+\S+\s+pending-requests(?![\w-])"),
+        ("pending-requests [--", "pending-requests ["),
     ),
     "answer": (
         re.compile(r"session\s+\S+\s+answer(?![\w-])"),
@@ -54,7 +54,7 @@ def _real_options(name: str) -> set[str]:
     # documenting ``--no-x`` must not read as a flag the command refuses.
     command = _command(name)
     options = {opt for param in command.params for opt in (*param.opts, *param.secondary_opts)}
-    # ``pending-request`` is a group whose callback carries the options; its
+    # ``pending-requests`` is a group whose callback carries the options; its
     # click wrapper exposes them on the group itself, so nothing extra is
     # needed — this assertion is what says so.
     assert options, name
@@ -118,13 +118,13 @@ def _copyable_spans(name: str) -> list[tuple[str, int, str]]:
 
 
 def test_a_copyable_read_invocation_uses_nothing_but_its_options():
-    spans = _copyable_spans("pending-request")
+    spans = _copyable_spans("pending-requests")
     # An extraction that selects nothing passes every assertion below it.
     assert {label for label, _, _ in spans} >= {
         "twicc-session/SKILL.md", "SKILLS-AND-CLI.md",
     }, spans
 
-    real = _real_options("pending-request")
+    real = _real_options("pending-requests")
     wrong = [
         (label, number, flag, span)
         for label, number, span in spans

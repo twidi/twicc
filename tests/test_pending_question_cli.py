@@ -75,7 +75,7 @@ class TestParseAnswers:
 
 def test_the_read_flags_travel_from_the_command_line(submitted):
     result = CliRunner().invoke(app, [
-        "session", SESSION_ID, "pending-request", "--raw", "--timeout", "7",
+        "session", SESSION_ID, "pending-requests", "--raw", "--timeout", "7",
     ])
 
     assert result.exit_code == 0, result.output
@@ -86,7 +86,7 @@ def test_the_read_flags_travel_from_the_command_line(submitted):
 
 
 def test_the_read_defaults_omit_raw(submitted):
-    result = CliRunner().invoke(app, ["session", SESSION_ID, "pending-request"])
+    result = CliRunner().invoke(app, ["session", SESSION_ID, "pending-requests"])
 
     assert result.exit_code == 0, result.output
     assert submitted["payload"] == {"session_id": SESSION_ID}
@@ -140,7 +140,7 @@ def test_a_malformed_answer_exits_1(submitted):
 
 
 @pytest.mark.parametrize("command", [
-    ["pending-request", "--timeout", "0"],
+    ["pending-requests", "--timeout", "0"],
     ["answer", "cancel", "--timeout", "-1"],
 ])
 def test_a_non_positive_timeout_exits_1(monkeypatch, command):
@@ -157,7 +157,7 @@ def test_a_non_positive_timeout_exits_1(monkeypatch, command):
 
 def test_a_stray_token_after_the_read_is_a_usage_error():
     # Typer rejects it; Click's UsageError exit code is 2, not the body's 1.
-    result = CliRunner().invoke(app, ["session", SESSION_ID, "pending-request", "foo"])
+    result = CliRunner().invoke(app, ["session", SESSION_ID, "pending-requests", "foo"])
     assert result.exit_code == 2
 
 
@@ -190,7 +190,7 @@ def test_the_read_never_stamps_a_caller(submitted):
     # It is a read: there is nothing for the self-answer rule to refuse.
     with patch("twicc.cli._drop_request.whoami.resolve_current_session",
                return_value=SimpleNamespace(id="caller-session")):
-        result = CliRunner().invoke(app, ["session", SESSION_ID, "pending-request"])
+        result = CliRunner().invoke(app, ["session", SESSION_ID, "pending-requests"])
 
     assert result.exit_code == 0, result.output
     assert "caller_session_id" not in submitted["payload"]
@@ -206,7 +206,7 @@ def test_the_read_is_registered_as_read_only():
     # refuses it. ``session/answer`` stays out, deliberately.
     from twicc.rpc.permissions import COOKIE_READONLY_COMMANDS
 
-    assert "session/pending-request" in COOKIE_READONLY_COMMANDS
+    assert "session/pending-requests" in COOKIE_READONLY_COMMANDS
     assert "session/answer" not in COOKIE_READONLY_COMMANDS
 
 
@@ -214,5 +214,5 @@ def test_both_commands_have_an_rpc_route():
     from twicc.rpc.generator import build_registry
 
     registry = build_registry()
-    assert "session/pending-request" in registry
+    assert "session/pending-requests" in registry
     assert "session/answer" in registry

@@ -64,7 +64,7 @@ COOKIE_READONLY_COMMANDS: frozenset[str] = frozenset(
         "session/agents",
         "session/wait-reply",
         "sessions/wait-reply",
-        "session/pending-request",
+        "session/pending-requests",
         "artifacts",
         "processes",
         "processes/get",

@@ -818,16 +818,16 @@ def _session_stop(
     stop_cmd(ctx.obj, timeout=timeout, force=force)
 
 
-pending_request_app = typer.Typer(
-    name="pending-request",
+pending_requests_app = typer.Typer(
+    name="pending-requests",
     help="Report what this session's live agent is waiting on.",
     invoke_without_command=True,
 )
-session_app.add_typer(pending_request_app)
+session_app.add_typer(pending_requests_app)
 
 
-@pending_request_app.callback(invoke_without_command=True)
-def _session_pending_request(
+@pending_requests_app.callback(invoke_without_command=True)
+def _session_pending_requests(
     ctx: typer.Context,
     raw: bool = typer.Option(
         False, "--raw",
@@ -869,7 +869,7 @@ def _session_answer(
     request_id: str = typer.Option(
         None, "--request-id",
         help=(
-            "The pending request to answer, as reported by 'pending-request'. "
+            "The pending request to answer, as reported by 'pending-requests'. "
             "Optional when one question is pending; required when several are. "
             "Naming it is also how a script makes sure it answers the request "
             "it read, and not one that arrived since."
@@ -878,7 +878,7 @@ def _session_answer(
     answer: list[str] = typer.Option(
         [], "--answer",
         help=(
-            "One answer as ID=VALUE, the id from 'pending-request'. Repeatable: "
+            "One answer as ID=VALUE, the id from 'pending-requests'. Repeatable: "
             "once per question, or several times on one id for a multi-select "
             "question. A value matching no option is free text, accepted when "
             "the question allows it."

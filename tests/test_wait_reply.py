@@ -556,7 +556,7 @@ def test_a_pending_click_ends_the_wait_instead_of_riding_the_budget(project, jso
 
     The block carries no `text`, like the `pending` ending and unlike `ended`
     and `timeout`: what the agent said before blocking is a non-final message,
-    and `session <ID> pending-request` is what describes the block itself.
+    and `session <ID> pending-requests` is what describes the block itself.
     """
     session = make_session(project)
     jsonl(session, size=0)

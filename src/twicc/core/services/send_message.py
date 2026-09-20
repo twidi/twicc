@@ -152,7 +152,7 @@ async def send_message_to_session_from_payload(payload: dict) -> SendMessageResu
             SendMessageError("session_id", "awaiting_user_input",
                              f"Session {session_id!r} is awaiting user input "
                              "(tool approval or pending question). See "
-                             "'twicc session <ID> pending-request'; a question "
+                             "'twicc session <ID> pending-requests'; a question "
                              "is answerable with 'twicc session <ID> answer', "
                              "anything else needs the UI."),
         ])

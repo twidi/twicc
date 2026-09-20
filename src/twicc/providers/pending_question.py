@@ -1,6 +1,6 @@
 """What the two providers share when they describe a pending question.
 
-The CLI's ``session <ID> pending-request`` reports **every** pending request of
+The CLI's ``session <ID> pending-requests`` reports **every** pending request of
 a live agent, and answers only the two that are questions — Claude's
 ``AskUserQuestion`` and Codex's ``toolRequestUserInput``. The filter that draws
 that line, the reason an entry falls outside it, and the entry shapes are the

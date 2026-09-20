@@ -108,14 +108,14 @@ Keeps going after the session is created, until it answers, and adds a `reply` b
 | `outcome` | Meaning | What `reply` carries |
 |---|---|---|
 | `replied` | the message closing the turn | that message |
-| `awaiting_user_input` | a pending request — a tool approval or a question — only a human can clear | nothing; read what it is waiting on with `session <ID> pending-request` |
+| `awaiting_user_input` | a pending request — a tool approval or a question — only a human can clear | nothing; read what it is waiting on with `session <ID> pending-requests` |
 | `provider_error` | the provider refused the turn (quota, outage) — your request was not the problem and retrying now fails the same way | the error line |
 | `ended` | the turn is over and nothing closed it — a crash, an interruption, an answer whose text was empty, or one whose provider marker is missing (`is_final: null`) | the last thing it said, or `line_num: null` |
 | `timeout` | the deadline passed | the last thing it said, if any; resume from `since_line_num` |
 | `backend_gone` | TwiCC stopped or restarted mid-wait | nothing — the session may well be fine, you just cannot see it from here |
 | `wait_failed` | the wait itself broke (a locked DB, a Ctrl-C) — the session is unaffected | nothing, plus an `error` string |
 
-**An agent blocked on a click ends the wait**, with `outcome: awaiting_user_input`. Only a human clears a tool approval or a question, so nothing would arrive before the deadline anyway. Read what it is waiting on with `$TWICC session <SESSION_ID> pending-request` (skill: `twicc-session`), and answer a question with `session <SESSION_ID> answer`. Pass `--no-question-widget` to a session you drive yourself — though it does not rule the case out entirely: an MCP server's elicitation reaches that path in every permission mode.
+**An agent blocked on a click ends the wait**, with `outcome: awaiting_user_input`. Only a human clears a tool approval or a question, so nothing would arrive before the deadline anyway. Read what it is waiting on with `$TWICC session <SESSION_ID> pending-requests` (skill: `twicc-session`), and answer a question with `session <SESSION_ID> answer`. Pass `--no-question-widget` to a session you drive yourself — though it does not rule the case out entirely: an MCP server's elicitation reaches that path in every permission mode.
 
 **A timeout is not a failure.** Resume it with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`), which is the command that takes a cursor: pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. The agent keeps working and the session is intact — only the waiting stopped. Expect it on a worker whose first turn runs long: raise `--wait-timeout`, or take the `session_id` and come back later. **The exit code never reflects the wait**, only whether the session was created, so a script must read `outcome` rather than `$?`.
 

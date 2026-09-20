@@ -1,4 +1,4 @@
-"""``twicc session <ID> pending-request`` and ``twicc session <ID> answer``.
+"""``twicc session <ID> pending-requests`` and ``twicc session <ID> answer``.
 
 The first reports what a session's live agent is waiting on; the second
 answers the one question among it that TwiCC can answer from outside the web
@@ -39,7 +39,7 @@ def parse_answers(raw_answers: list[str]) -> dict[str, list[str]]:
         if not separator or not question_id:
             raise ValueError(
                 f"Invalid --answer {item!r}: expected ID=VALUE "
-                "(the id comes from 'session <ID> pending-request')"
+                "(the id comes from 'session <ID> pending-requests')"
             )
         answers.setdefault(question_id, []).append(value)
     return answers

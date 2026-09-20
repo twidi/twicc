@@ -1,7 +1,7 @@
 ---
 name: twicc-session
 description: Inspect, wait on, unblock, or stop a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, list/inspect its workflows, see what it is waiting on and answer its question, or stop its live agent. Use when you or the user want to examine a session, read conversation content, explore subagent activity, block until it answers, unblock a session waiting on a human, or stop its agent.
-argument-hint: <session_id> [content|messages|agents|plan|wait-reply|pending-request|answer|stop|workflows|workflow]
+argument-hint: <session_id> [content|messages|agents|plan|wait-reply|pending-requests|answer|stop|workflows|workflow]
 ---
 
 # TwiCC Session
@@ -12,7 +12,7 @@ Inspect, wait on, unblock, or stop a single session. Eleven sub-commands:
 - `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
 - `wait-reply [--from N]` — block until this session concludes past the cursor. Use it on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. `--from` is the `line_num` or `since_line_num` a previous wait returned, so a wait that timed out can be resumed exactly where it stopped; omitted, it is the session's current last line. `--since` names that same cursor as an ISO 8601 instant instead, for when you have a time and not a line number. An idle session concludes with `ended` rather than hanging, but not instantly: the loop waits out a ~5 s flush window before it can tell a finished turn from one about to speak, so a `--wait-timeout` below that always reports `timeout`. Two endings, and no flag chooses between them: an answer — the message closing a turn — or a **pending request**, which only a human can clear. An answer arriving in the same poll wins. Exactly what `--wait-reply` does on the commands that send, which is why it carries the same name. Also takes `--wait-timeout` (default 300 s) and `--no-reply-text`. **Exit code:** `0` answered or blocked, `5` neither came, `2` TwiCC stopped, `1` a local refusal — a bad `--from` or `--since`, the two cursors passed together, a non-positive `--wait-timeout`, an unknown session, or the wait itself breaking. So `$TWICC session <ID> wait-reply && …` chains, and a `1` is worth reading before retrying.
-- `pending-request [--raw]` — what this session's live agent is waiting on, answerable or not.
+- `pending-requests [--raw]` — what this session's live agent is waiting on, answerable or not.
 - `answer <answer|cancel> [--request-id ID] [--answer 'ID=VALUE']` — answer, or decline, the question it is waiting on.
 - `stop` — stop this session's live agent (`--timeout`, `--force` for a SIGKILL without the grace window). Idempotent: stopping an already-stopped session still reports `stopped`. Same operation as `process <ID> stop`, which it is meant to replace.
 - `agents` — list subagents spawned by this session. `--slim` returns the reduced projection (see the `twicc-sessions` skill), about 80% lighter. Rows carry the same `process` block as `sessions`, always `null` here: a subagent runs inside its parent's process and never has one of its own.
@@ -249,7 +249,7 @@ The same wait `--wait-reply` runs on the commands that send — an answer or a p
 
 Returns `{"session_id": ..., "reply": {...}}`, the `reply` block being the one `--wait-reply` returns: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (dropped by `--no-reply-text`), `error` on `wait_failed`. A block is the `outcome`, never a field beside it: there is one place to read it.
 
-`outcome` is `replied` (the message closing the turn), `awaiting_user_input` (a pending request — read it with `pending-request`, answer it with `answer`), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `provider_error` (quota, outage), `backend_gone`, or `wait_failed`.
+`outcome` is `replied` (the message closing the turn), `awaiting_user_input` (a pending request — read it with `pending-requests`, answer it with `answer`), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `provider_error` (quota, outage), `backend_gone`, or `wait_failed`.
 
 ```bash
 $TWICC session 4a8352fb-... wait-reply --wait-timeout 120
@@ -265,7 +265,7 @@ An idle session ends rather than hanging, but only after a ~5 s flush window: be
 ### Pending request — what the session is waiting on
 
 ```bash
-$TWICC session <SESSION_ID> pending-request [--raw] [--timeout N]
+$TWICC session <SESSION_ID> pending-requests [--raw] [--timeout N]
 ```
 
 Lists **every** pending request, not only the ones you can answer. A session
@@ -327,7 +327,7 @@ $TWICC session <SESSION_ID> answer cancel
 Answers only a **question**. A tool approval or an MCP elicitation is refused
 (`not_a_question`) and stays the web UI's business.
 
-- **The id comes from `pending-request`**, and it is not the same thing on both
+- **The id comes from `pending-requests`**, and it is not the same thing on both
   providers: a 1-based index on Claude Code, which has no question ids, and the
   native id on Codex. Read first, then answer.
 - `--answer` splits on the **first** `=`, so a value may contain more. Repeat it
@@ -420,8 +420,8 @@ $TWICC session abc123 agents --limit 50
 $TWICC session abc123 plan
 $TWICC session abc123 plan docs/plans/feature-plan.md
 $TWICC session abc123 plan --list
-$TWICC session abc123 pending-request
-$TWICC session abc123 pending-request --raw
+$TWICC session abc123 pending-requests
+$TWICC session abc123 pending-requests --raw
 $TWICC session abc123 answer answer --answer '1=PostgreSQL' --answer '2=Redis'
 $TWICC session abc123 answer cancel --request-id req-9
 $TWICC session abc123 workflows

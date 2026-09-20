@@ -33,7 +33,7 @@ _ARTIFACT_BOOKMARK_ID_FIELDS = ("bookmark_id", "session_id", "project_id")
 # ``status_extra`` ("pending" until the remote user resolves the message).
 _PEER_SEND_ID_FIELDS = ("message_id", "peer_id", "peer_status")
 _SHARE_ID_FIELDS = ("share_id",)
-# The ``fetched`` read payload: what ``session <ID> pending-request`` publishes.
+# The ``fetched`` read payload: what ``session <ID> pending-requests`` publishes.
 _READ_FIELDS = ("session_id", "provider", "agent_state", "pending_requests")
 
 # Present on some results, absent on others; never invented as ``null``.

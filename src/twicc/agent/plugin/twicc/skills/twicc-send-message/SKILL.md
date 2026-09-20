@@ -150,7 +150,7 @@ It adds a `reply` block: `outcome`, `line_num`, `is_final`, `since_line_num`, `w
 
 `since_line_num: 0` on a `replied` means no cursor came back (a backend older than the flag). The wait then started from the top of the turn, so check the answer is the one you expected.
 
-An agent that blocks on a click **during** the turn ends the wait, with `outcome: awaiting_user_input`: only a human clears it. Read what it is waiting on with `$TWICC session <SESSION_ID> pending-request` (skill: `twicc-session`). A target already blocked when you send is a different case: it is refused outright (exit 3, above).
+An agent that blocks on a click **during** the turn ends the wait, with `outcome: awaiting_user_input`: only a human clears it. Read what it is waiting on with `$TWICC session <SESSION_ID> pending-requests` (skill: `twicc-session`). A target already blocked when you send is a different case: it is refused outright (exit 3, above).
 
 Falling back to the state machine, when you want liveness rather than an answer:
 

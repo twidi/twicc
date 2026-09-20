@@ -1,7 +1,7 @@
 """Claude Code's half of the pending-question contract.
 
 Two directions, one per caller. ``normalize_pending_request`` describes a
-pending request for ``session <ID> pending-request``;
+pending request for ``session <ID> pending-requests``;
 ``build_question_response`` turns an answer into the ``PermissionResult`` the
 SDK returns to the agent. The WebSocket handler and the CLI service both go
 through the second one, so there is exactly one implementation of the wire

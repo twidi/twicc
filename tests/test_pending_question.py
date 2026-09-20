@@ -1,7 +1,7 @@
 """The per-provider pending-question translation.
 
 Two directions per provider: describing a pending request for
-``session <ID> pending-request``, and turning an answer into the wire response
+``session <ID> pending-requests``, and turning an answer into the wire response
 the agent receives. The filter that decides which pending requests are
 answerable is shared, so it is tested once per provider payload shape rather
 than once per provider module.
