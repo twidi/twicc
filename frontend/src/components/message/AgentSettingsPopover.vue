@@ -145,12 +145,15 @@ function findBestCell() {
         const defProvider = matrixDefaultCell.value?.provider
         candidates = blocks.filter(b => b.provider === defProvider)
     }
+    // Ranked on the unrounded penalty (lower is better), so cells that round to
+    // the same score still yield the real best one.
     let best = null
     for (const block of candidates) {
         for (const row of block.rows) {
             for (const cell of row.cells) {
-                if (cell.enabled && cell.score != null && (best === null || cell.score > best.score)) {
-                    best = { provider: block.provider, model: row.model, effort: cell.effort, score: cell.score }
+                const penalty = cell.benchmark?.scored?.penalty
+                if (cell.enabled && penalty != null && (best === null || penalty < best.penalty)) {
+                    best = { provider: block.provider, model: row.model, effort: cell.effort, penalty }
                 }
             }
         }

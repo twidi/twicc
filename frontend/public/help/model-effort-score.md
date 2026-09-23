@@ -44,12 +44,15 @@ refreshed automatically.
 
 The difficulty sets a **target level** on the task type's ability scale.
 A pair **at or above** the target does the job: among those, the cheaper
-(or faster) one wins. A pair **below** the target loses points, faster the
-further below it is.
+(or faster) one wins. A pair slightly **below** the target loses a few
+points; a pair far below it loses so many that a low price cannot save it.
 
 - **100** is the best pair for this task.
 - **50** is "one doubling worse": twice the cost (or time) of the best,
   or far enough below the target to count as much.
+- Pairs further away keep **small, non-zero** scores. Several of them
+  may show the same number: the **ring** still marks each provider's
+  best pair, so you can pick the best one of a single provider.
 - Scores compare **every enabled provider** together, so you can choose
   across Claude Code and Codex. Disabled providers, retired or disabled
   models, and efforts a model does not support never count.
@@ -76,8 +79,12 @@ For a type built on several evaluations, the ability is their average
   middle of the slider already asks for a capable model.
 - **No penalty above the target**: a pair that exceeds it only pays for
   its cost (or time).
-- Being **4 Intelligence Index points** below the target weighs as much as
+- Being **2 Intelligence Index points** below the target weighs as much as
   paying twice as much; other task types scale this by their own range.
+  The penalty grows with the **4th power** of the gap: 4 points below
+  weighs as much as paying 2¹⁶ times more.
+- The score falls from 100 to 50 over the first doubling, then more and
+  more slowly, so it never collapses to 0.
 - Cost and time are compared on a **logarithmic** scale: what matters is
   the ratio (from $1 to $2 counts like $10 to $20).
 - Time is Artificial Analysis's time per task: the time spent generating

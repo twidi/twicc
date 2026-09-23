@@ -2,12 +2,18 @@
  * Model × effort scores — the "target ability" model.
  *
  * Spec: docs/plans/2026-09-23-artificial-analysis-benchmark-scores-design.md §4.
+ * Tuned since the spec: tolerance 2 (was 4), 4th-power penalty (was squared),
+ * score 100 / (1 + log2(1 + d)) (was 100 × 2^-d).
  * Rows come from the frozen Artificial Analysis snapshot
  * (``data/modelBenchmarks.json``). The user picks a task type, a difficulty and
  * whether to favor cost or speed. The difficulty sets a target on the task
- * type's ability axis; each (model, effort) pays a squared distance penalty
- * when below the target (none above it) plus log2 of its cost (or time) per
- * task. The lowest penalty scores 100; every "doubling" worse halves the score.
+ * type's ability axis; each (model, effort) pays a distance penalty when below
+ * the target (4th power: a small shortfall stays cheap, a large one is crushed;
+ * none above the target) plus log2 of its cost (or time) per task. The lowest
+ * penalty scores 100 and one "doubling" worse scores 50; the score then decays
+ * logarithmically, so far-off couples keep small, non-zero scores (neighbours
+ * may share an integer; the best-per-provider ring ranks on the unrounded
+ * penalty).
  *
  * Pure module: no store, no Vue. The scoring-set predicate is injected so the
  * store decides which rows count (enabled providers, available models,
@@ -18,7 +24,10 @@
 export const CURVE = 0.55
 // Being this many Intelligence Index points below the target weighs as much as
 // paying (or waiting) twice as much. Other task types scale it by their range.
-export const TOLERANCE_II = 4
+export const TOLERANCE_II = 2
+// Power of the below-target distance penalty, in tolerances: 1 tolerance below
+// = 1 doubling, 2 below = 16, so a much weaker couple cannot win on price alone.
+export const PENALTY_EXPONENT = 4
 
 // Display name of each Artificial Analysis evaluation key.
 export const EVAL_LABELS = {
@@ -142,15 +151,18 @@ export function computeBenchmarkScores(rows, { taskType, difficulty, favor }, is
         if (m.ability === null || metric === null || !(metric > 0)) continue
         // No distance penalty above the target, nor on a flat range (tolerance 0).
         const below = typeSpan > 0 && m.ability < target
-        const distance = below ? ((target - m.ability) / tolerance) ** 2 : 0
+        const distance = below ? ((target - m.ability) / tolerance) ** PENALTY_EXPONENT : 0
         scored.push({ row, ability: m.ability, metric, penalty: distance + Math.log2(metric) })
     }
     if (!scored.length) return result
 
     const minPenalty = Math.min(...scored.map(s => s.penalty))
     for (const s of scored) {
+        // d = doublings behind the best: 0 → 100, 1 → 50, then a logarithmic
+        // decay that never collapses far-off couples to 0.
+        const d = s.penalty - minPenalty
         result.set(rowKey(s.row), {
-            score: Math.round(100 * Math.pow(2, minPenalty - s.penalty)),
+            score: Math.round(100 / (1 + Math.log2(1 + d))),
             penalty: s.penalty,
             ability: s.ability,
             target,
@@ -158,6 +170,19 @@ export function computeBenchmarkScores(rows, { taskType, difficulty, favor }, is
         })
     }
     return result
+}
+
+/**
+ * Lowest finite penalty among ``values`` (missing entries skipped), or null.
+ * Ranks cells on the unrounded penalty so couples that round to the same score
+ * still have a single real best (best-per-provider ring, auto-select).
+ */
+export function lowestPenalty(values) {
+    let best = null
+    for (const v of values) {
+        if (isNum(v) && (best === null || v < best)) best = v
+    }
+    return best
 }
 
 /**

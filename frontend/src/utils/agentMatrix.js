@@ -8,6 +8,7 @@
 // The output feeds ``AgentSettingsMatrix.vue`` directly (``blocks`` +
 // ``effortColumns`` props).
 import { getProviderHelpers, getProviderLabel, getProviderIcon } from '../providers'
+import { lowestPenalty } from './benchmarkScores'
 
 /**
  * Shared effort columns for the matrix: the union of the given providers'
@@ -49,7 +50,8 @@ export function buildEffortColumns(providers) {
  *        shown provider's own default cell; a match that is NOT the main default
  *        is flagged ``isProviderDefault`` (hollow dot), so every provider's
  *        default stays referenced when several blocks are shown. Default: none.
- * @param {{getScore:(p:string,fullName:string,effort:any)=>number|null}} opts.benchmarksStore
+ * @param {{getScore:(p:string,fullName:string,effort:any)=>number|null,
+ *          getRow:(p:string,fullName:string,effort:any)=>{row:object,scored:object}|null}} opts.benchmarksStore
  * @returns {Array} blocks for ``AgentSettingsMatrix``.
  */
 export function buildMatrixBlocks({
@@ -116,17 +118,15 @@ export function buildMatrixBlocks({
         // Top-score border: mark the block's best-scoring enabled cell(s). A
         // single provider (or the default provider when several are shown) gets
         // a solid border; each other provider gets a dashed one — so the user
-        // spots the best score for their provider and for each other.
-        let maxScore = null
-        for (const row of rows) for (const cell of row.cells) {
-            if (cell.enabled && cell.score != null && (maxScore === null || cell.score > maxScore)) {
-                maxScore = cell.score
-            }
-        }
-        if (maxScore !== null) {
+        // spots the best score for their provider and for each other. Ranked on
+        // the unrounded penalty, so cells that round to the same score still
+        // ring the real best one.
+        const cellPenalty = cell => (cell.enabled ? cell.benchmark?.scored?.penalty : null)
+        const bestPenalty = lowestPenalty(rows.flatMap(row => row.cells.map(cellPenalty)))
+        if (bestPenalty !== null) {
             const borderStyle = (nProviders < 2 || provider === def?.provider) ? 'solid' : 'dashed'
             for (const row of rows) for (const cell of row.cells) {
-                if (cell.enabled && cell.score === maxScore) cell.borderStyle = borderStyle
+                if (cellPenalty(cell) === bestPenalty) cell.borderStyle = borderStyle
             }
         }
         return { provider, label: getProviderLabel(provider), icon: getProviderIcon(provider), isCurrent, rows }

@@ -5,11 +5,13 @@ import { readFileSync } from 'node:fs'
 import {
     CURVE,
     EVAL_LABELS,
+    PENALTY_EXPONENT,
     TASK_TYPES,
     computeBenchmarkScores,
     formatBenchmarkDetails,
     formatCost,
     formatTime,
+    lowestPenalty,
     makeScoringSetPredicate,
     scoreKey,
     typeMetrics,
@@ -76,20 +78,20 @@ test('no distance penalty above the target: the cheapest wins', () => {
         row('c', 50, { evals: { terminalbench_4_0: { cost_usd: 4 } } }),
     ]
     const s = computeBenchmarkScores(rows, opts({ difficulty: 0 }), ALL)
-    assert.deepEqual(rows.map(r => s.get(key(r)).score), [100, 50, 25])
+    assert.deepEqual(rows.map(r => s.get(key(r)).score), [100, 50, 39]) // 100 / (1 + log2(1 + d))
 })
 
-test('general tolerance is 4 points: 4 below the target at equal cost scores 50', () => {
-    const rows = [row('lo', 20), row('best', 60), row('near', 56)]
+test('general tolerance is 2 points: 2 below the target at equal cost scores 50', () => {
+    const rows = [row('lo', 20), row('best', 60), row('near', 58)]
     const s = computeBenchmarkScores(rows, opts({ difficulty: 100 }), ALL)
     assert.equal(s.get(key(rows[1])).score, 100)
     assert.equal(s.get(key(rows[2])).score, 50)
 })
 
 test('the tolerance scales with the type range', () => {
-    // coding abilities 20 / 40 / 38 (range 20); general 20 / 60 / 40 (range 40) → tolerance 2.
+    // coding abilities 20 / 40 / 39 (range 20); general 20 / 60 / 40 (range 40) → tolerance 1.
     const coding = (a) => ({ terminalbench_4_0: { score: a }, scicode: { score: a } })
-    const rows = [row('x', 20, { evals: coding(0.2) }), row('y', 60, { evals: coding(0.4) }), row('z', 40, { evals: coding(0.38) })]
+    const rows = [row('x', 20, { evals: coding(0.2) }), row('y', 60, { evals: coding(0.4) }), row('z', 40, { evals: coding(0.39) })]
     const s = computeBenchmarkScores(rows, opts({ taskType: 'coding', difficulty: 100 }), ALL)
     assert.equal(s.get(key(rows[1])).score, 100)
     assert.equal(s.get(key(rows[2])).score, 50)
@@ -124,9 +126,9 @@ test('degenerate cases return safe results', () => {
     const s = computeBenchmarkScores(flat, opts({ difficulty: 100 }), ALL)
     assert.equal(s.get(key(flat[0])).target, 50)
     assert.deepEqual(flat.map(r => s.get(key(r)).score), [100, 50])
-    // Flat general range, spread coding range: tolerance stays 4.
+    // Flat general range, spread coding range: tolerance stays 2.
     const coding = (a) => ({ terminalbench_4_0: { score: a }, scicode: { score: a } })
-    const g = [row('p', 50, { evals: coding(0.2) }), row('q', 50, { evals: coding(0.6) }), row('r', 50, { evals: coding(0.56) })]
+    const g = [row('p', 50, { evals: coding(0.2) }), row('q', 50, { evals: coding(0.6) }), row('r', 50, { evals: coding(0.58) })]
     const sg = computeBenchmarkScores(g, opts({ taskType: 'coding', difficulty: 100 }), ALL)
     assert.equal(sg.get(key(g[2])).score, 50)
     // No row with both ability and cost: empty map, even in Speed mode.
@@ -138,7 +140,28 @@ test('scores are global across providers', () => {
     const rows = [row('cheap', 50, { provider: 'codex' }), row('dear', 50, { provider: 'claude_code', evals: { terminalbench_4_0: { cost_usd: 4 } } })]
     const s = computeBenchmarkScores(rows, opts(), ALL)
     assert.equal(s.get(key(rows[0])).score, 100)
-    assert.equal(s.get(key(rows[1])).score, 25)
+    assert.equal(s.get(key(rows[1])).score, 39)
+})
+
+test('below the target, the distance penalty grows with the 4th power', () => {
+    assert.equal(PENALTY_EXPONENT, 4)
+    // Two tolerances below the target at equal cost: 2^4 = 16 doublings → 100 / (1 + log2(17)).
+    const rows = [row('lo', 20), row('best', 60), row('far', 56)]
+    const s = computeBenchmarkScores(rows, opts({ difficulty: 100 }), ALL)
+    assert.equal(s.get(key(rows[2])).score, 20)
+})
+
+test('far couples keep small, non-zero scores, still decreasing', () => {
+    const costs = [1, 2 ** 10, 2 ** 20]
+    const rows = costs.map((c, i) => row(`m${i}`, 50, { evals: { terminalbench_4_0: { cost_usd: c } } }))
+    const s = computeBenchmarkScores(rows, opts(), ALL)
+    assert.deepEqual(rows.map(r => s.get(key(r)).score), [100, 22, 19])
+})
+
+test('lowestPenalty ignores missing values', () => {
+    assert.equal(lowestPenalty([3, null, 1.5, undefined, 2]), 1.5)
+    assert.equal(lowestPenalty([null, undefined]), null)
+    assert.equal(lowestPenalty([]), null)
 })
 
 // Fake provider helpers for the scoring-set predicate (spec §4.3).
@@ -224,21 +247,24 @@ test('details for coding', () => {
     ])
 })
 
-// Regression on the real snapshot against Appendix B of the spec.
 const data = JSON.parse(readFileSync(new URL('../data/modelBenchmarks.json', import.meta.url), 'utf8'))
-const APPENDIX_B = [
-    ['general', 'cost', 0, 20.90, ['codex gpt-6-luna low', 100], ['codex gpt-5.6-luna low', 46]],
-    ['general', 'cost', 50, 45.98, ['codex gpt-6-sol xhigh', 100], ['codex gpt-6-astra low', 99]],
-    ['general', 'cost', 100, 57.62, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-opus-5-5 high', 95]],
-    ['general', 'speed', 50, 45.98, ['codex gpt-6-astra low', 100], ['codex gpt-6-sol xhigh', 65]],
-    ['coding', 'cost', 50, 50.51, ['codex gpt-6-astra low', 100], ['codex gpt-6-sol max', 71]],
-    ['office', 'cost', 100, 53.23, ['claude_code claude-opus-5-5 high', 100], ['claude_code claude-opus-5-5 xhigh', 82]],
-    ['knowledge', 'speed', 0, 42.65, ['claude_code claude-sonnet-5 low', 100], ['claude_code claude-sonnet-5 medium', 46]],
-    ['longdocs', 'cost', 100, 85.30, ['codex gpt-6-luna max', 100], ['codex gpt-5.6-luna max', 63]],
+// Reference cases on the real snapshot. The first version of this table was
+// Appendix B of the design doc (tolerance 4, square penalty, 2^-d score); the
+// values below follow the tuned model (tolerance 2, 4th-power penalty,
+// 100 / (1 + log2(1 + d)) score) and were computed by an independent script.
+const REFERENCE_CASES = [
+    ['general', 'cost', 0, 20.90, ['codex gpt-6-luna low', 100], ['codex gpt-5.6-luna low', 48]],
+    ['general', 'cost', 50, 45.98, ['codex gpt-6-astra low', 100], ['codex gpt-6-sol xhigh', 61]],
+    ['general', 'cost', 100, 57.62, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-opus-5-5 max', 84]],
+    ['general', 'speed', 50, 45.98, ['codex gpt-6-astra low', 100], ['claude_code claude-opus-5-5 medium', 51]],
+    ['coding', 'cost', 50, 50.51, ['codex gpt-6-sol max', 100], ['claude_code claude-opus-5-5 medium', 98]],
+    ['office', 'cost', 100, 53.23, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-opus-5-5 max', 54]],
+    ['knowledge', 'speed', 0, 42.65, ['claude_code claude-sonnet-5 low', 100], ['claude_code claude-sonnet-5 medium', 48]],
+    ['longdocs', 'cost', 100, 85.30, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-opus-5-5 max', 81]],
 ]
 
-test('reproduces Appendix B on the real snapshot', () => {
-    for (const [taskType, favor, difficulty, target, first, second] of APPENDIX_B) {
+test('reproduces the reference cases on the real snapshot', () => {
+    for (const [taskType, favor, difficulty, target, first, second] of REFERENCE_CASES) {
         const s = computeBenchmarkScores(data.rows, { taskType, difficulty, favor }, ALL)
         const ranked = [...s.entries()].sort((a, b) => a[1].penalty - b[1].penalty)
         const label = `${taskType}/${favor}/${difficulty}`
