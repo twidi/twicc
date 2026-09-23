@@ -41,7 +41,14 @@ function cellId(provider, model, effort) {
     return `${uid}-cell-${key}`
 }
 
-const showOldModels = ref(false)
+const taskStore = useBenchmarkTaskStore()
+
+// Shared with the scores: older models only take part in the scoring reference
+// (range, tolerance, the 100) when shown — hence the store, not a local ref.
+const showOldModels = computed({
+    get: () => taskStore.showOlder,
+    set: (value) => { taskStore.showOlder = value },
+})
 
 const hasOldModels = computed(() =>
     props.blocks.some(b => b.rows.some(r => !r.isLatest)),
@@ -140,7 +147,6 @@ const tipsById = computed(() => {
 // Desktop: it follows the pointer (always below it). Touch: long-press toggles it
 // below the cell. All the geometry lives here; the panel just renders at left/top.
 const settingsStore = useSettingsStore()
-const taskStore = useBenchmarkTaskStore()
 const gridRef = ref(null)
 const panelRef = ref(null)
 
@@ -426,6 +432,9 @@ onBeforeUnmount(() => {
                         </div>
                         <div class="cell-tip-desc">{{ d.description }}</div>
                     </div>
+                    <!-- The panel never takes the pointer, so no link here: point
+                         at the help link above the matrix instead. -->
+                    <div class="cell-tip-help">More on these numbers: “What are those numbers?” above the matrix.</div>
                 </template>
                 <div v-else class="cell-tip-empty">Artificial Analysis provides no usable data for this model &times; effort.</div>
             </div>
@@ -740,5 +749,13 @@ onBeforeUnmount(() => {
 .cell-tip-empty {
     font-size: var(--wa-font-size-s);
     line-height: 1.3;
+}
+
+/* Pointer to the help link above the matrix, closing the details. */
+.cell-tip-help {
+    margin-top: var(--wa-space-2xs);
+    font-size: var(--wa-font-size-xs);
+    opacity: 0.75;
+    line-height: 1.25;
 }
 </style>

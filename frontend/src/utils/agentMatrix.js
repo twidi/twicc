@@ -120,8 +120,9 @@ export function buildMatrixBlocks({
         // a solid border; each other provider gets a dashed one — so the user
         // spots the best score for their provider and for each other. Ranked on
         // the unrounded penalty, so cells that round to the same score still
-        // ring the real best one.
-        const cellPenalty = cell => (cell.enabled ? cell.benchmark?.scored?.penalty : null)
+        // ring the real best one; only reference cells count (an older model
+        // shown just because it is selected never takes the ring).
+        const cellPenalty = cell => (cell.enabled && cell.benchmark?.scored?.reference ? cell.benchmark.scored.penalty : null)
         const bestPenalty = lowestPenalty(rows.flatMap(row => row.cells.map(cellPenalty)))
         if (bestPenalty !== null) {
             const borderStyle = (nProviders < 2 || provider === def?.provider) ? 'solid' : 'dashed'

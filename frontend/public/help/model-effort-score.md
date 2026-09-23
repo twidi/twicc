@@ -56,6 +56,11 @@ points; a pair far below it loses so many that a low price cannot save it.
 - Scores compare **every enabled provider** together, so you can choose
   across Claude Code and Codex. Disabled providers, retired or disabled
   models, and efforts a model does not support never count.
+- Older models count only while **Show older models** is on. Otherwise the
+  scores compare the latest models, so the 100 is always on a visible cell.
+  An older model you already selected stays visible and is scored against
+  the latest models (at most 100), but never gets the ring nor the
+  auto-select.
 
 ## Task types
 

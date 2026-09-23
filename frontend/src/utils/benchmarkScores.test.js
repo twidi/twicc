@@ -12,6 +12,7 @@ import {
     formatCost,
     formatTime,
     lowestPenalty,
+    makeLatestModelPredicate,
     makeScoringSetPredicate,
     scoreKey,
     typeMetrics,
@@ -174,6 +175,35 @@ function fakeHelpers({ registry, efforts = ['low', 'medium', 'high', 'xhigh', 'm
     }
 }
 
+test('non-reference rows are scored against the reference but never move it', () => {
+    const rows = [row('old-cheap', 60, { evals: { terminalbench_4_0: { cost_usd: 0.5 } } }), row('lo', 20), row('best', 50)]
+    const isReference = r => r.model !== 'old-cheap'
+    const s = computeBenchmarkScores(rows, opts({ difficulty: 100 }), ALL, isReference)
+    // The reference range is 20..50, so the target at 100 is 50 (not 60).
+    assert.equal(s.get(key(rows[2])).target, 50)
+    assert.equal(s.get(key(rows[2])).score, 100)
+    assert.equal(s.get(key(rows[2])).reference, true)
+    // Better and cheaper than the reference best: capped at 100, flagged non-reference.
+    assert.equal(s.get(key(rows[0])).score, 100)
+    assert.equal(s.get(key(rows[0])).reference, false)
+})
+
+test('no reference row means no score at all', () => {
+    const rows = [row('a', 50), row('b', 60)]
+    assert.equal(computeBenchmarkScores(rows, opts(), ALL, () => false).size, 0)
+})
+
+test('the latest-model predicate follows the registry flag', () => {
+    const helpers = fakeHelpers({
+        registry: [{ full_name: 'new', selected_model: 'n', latest: true }, { full_name: 'old', selected_model: 'o', latest: false }],
+    })
+    const isLatest = makeLatestModelPredicate(() => helpers)
+    assert.equal(isLatest({ provider: 'codex', model: 'new', effort: 'high' }), true)
+    assert.equal(isLatest({ provider: 'codex', model: 'old', effort: 'high' }), false)
+    assert.equal(isLatest({ provider: 'codex', model: 'unknown', effort: 'high' }), false)
+    assert.equal(makeLatestModelPredicate(() => null)({ provider: 'codex', model: 'new', effort: 'high' }), false)
+})
+
 test('the scoring set keeps enabled providers, available models and selectable efforts', () => {
     const codex = fakeHelpers({
         registry: [
@@ -230,7 +260,6 @@ test('details for general', () => {
         ['Target', '46.0'],
         ['Cost / task', '$5.12'],
         ['Time / task', '11.6 min'],
-        ['Based on', 'Intelligence Index; cost and time from Terminal-Bench 4.0'],
     ])
     for (const x of d) assert.ok(x.description.length > 0)
 })
@@ -243,7 +272,6 @@ test('details for coding', () => {
         ['Target', '50.5'],
         ['Cost / task', '$2.58'],
         ['Time / task', '5.9 min'],
-        ['Based on', 'Terminal-Bench 4.0, SciCode'],
     ])
 })
 

@@ -3,21 +3,25 @@
  *
  * Spec: docs/plans/2026-09-23-artificial-analysis-benchmark-scores-design.md §4.
  * Tuned since the spec: tolerance 2 (was 4), 4th-power penalty (was squared),
- * score 100 / (1 + log2(1 + d)) (was 100 × 2^-d).
+ * score 100 / (1 + log2(1 + d)) (was 100 × 2^-d); older models only form the
+ * scoring reference while shown (was: always); no "Based on" detail row.
  * Rows come from the frozen Artificial Analysis snapshot
  * (``data/modelBenchmarks.json``). The user picks a task type, a difficulty and
  * whether to favor cost or speed. The difficulty sets a target on the task
  * type's ability axis; each (model, effort) pays a distance penalty when below
  * the target (4th power: a small shortfall stays cheap, a large one is crushed;
  * none above the target) plus log2 of its cost (or time) per task. The lowest
- * penalty scores 100 and one "doubling" worse scores 50; the score then decays
- * logarithmically, so far-off couples keep small, non-zero scores (neighbours
- * may share an integer; the best-per-provider ring ranks on the unrounded
- * penalty).
+ * reference penalty scores 100 and one "doubling" worse scores 50; the score
+ * then decays logarithmically, so far-off couples keep small, non-zero scores
+ * (neighbours may share an integer; the best-per-provider ring ranks on the
+ * unrounded penalty).
  *
- * Pure module: no store, no Vue. The scoring-set predicate is injected so the
- * store decides which rows count (enabled providers, available models,
- * selectable efforts) while this module stays testable.
+ * Pure module: no store, no Vue. Two predicates are injected so the store
+ * decides which rows count while this module stays testable: the scoring set
+ * (enabled providers, available models, selectable efforts) gets scores; the
+ * reference among them (the latest models unless older ones are shown) sets
+ * the slider range, the tolerance and the 100. Rows outside the reference are
+ * scored against it, capped at 100.
  */
 
 // Exponent of the concave difficulty → target curve (the slider's middle lands high).
@@ -29,7 +33,8 @@ export const TOLERANCE_II = 2
 // = 1 doubling, 2 below = 16, so a much weaker couple cannot win on price alone.
 export const PENALTY_EXPONENT = 4
 
-// Display name of each Artificial Analysis evaluation key.
+// The Artificial Analysis evaluation keys of a snapshot row, with their display
+// names (the keys drive TASK_TYPES and the data tests; the help page lists the names).
 export const EVAL_LABELS = {
     terminalbench_4_0: 'Terminal-Bench 4.0',
     scicode: 'SciCode',
@@ -128,17 +133,22 @@ function abilityRange(rows, taskType) {
  *
  * @param {Array<object>} rows - snapshot rows.
  * @param {{taskType: string, difficulty: number, favor: 'cost'|'speed'}} controls
- * @param {(row: object) => boolean} isInScoringSet - which rows count.
- * @returns {Map<string, {score: number, penalty: number, ability: number, target: number, metric: number}>}
+ * @param {(row: object) => boolean} isInScoringSet - which rows get a score.
+ * @param {(row: object) => boolean} [isReference] - among those, which rows set
+ *   the slider range, the tolerance and the best (100). Defaults to all of them.
+ *   The others (e.g. an older model kept visible because it is selected) are
+ *   scored against that reference, capped at 100, and flagged ``reference: false``.
+ * @returns {Map<string, {score: number, penalty: number, ability: number, target: number, metric: number, reference: boolean}>}
  *   keyed by scoreKey; a missing key means "no score" ("?").
  */
-export function computeBenchmarkScores(rows, { taskType, difficulty, favor }, isInScoringSet) {
+export function computeBenchmarkScores(rows, { taskType, difficulty, favor }, isInScoringSet, isReference = () => true) {
     const result = new Map()
     const set = (rows ?? []).filter(isInScoringSet)
-    const range = abilityRange(set, taskType)
+    const reference = set.filter(isReference)
+    const range = abilityRange(reference, taskType)
     if (!range) return result
 
-    const general = abilityRange(set, 'general')
+    const general = abilityRange(reference, 'general')
     const typeSpan = range.max - range.min
     const generalSpan = general ? general.max - general.min : 0
     const tolerance = generalSpan > 0 ? TOLERANCE_II * typeSpan / generalSpan : TOLERANCE_II
@@ -152,21 +162,24 @@ export function computeBenchmarkScores(rows, { taskType, difficulty, favor }, is
         // No distance penalty above the target, nor on a flat range (tolerance 0).
         const below = typeSpan > 0 && m.ability < target
         const distance = below ? ((target - m.ability) / tolerance) ** PENALTY_EXPONENT : 0
-        scored.push({ row, ability: m.ability, metric, penalty: distance + Math.log2(metric) })
+        scored.push({ row, ability: m.ability, metric, penalty: distance + Math.log2(metric), reference: isReference(row) })
     }
-    if (!scored.length) return result
+    const referencePenalties = scored.filter(s => s.reference).map(s => s.penalty)
+    if (!referencePenalties.length) return result
 
-    const minPenalty = Math.min(...scored.map(s => s.penalty))
+    const minPenalty = Math.min(...referencePenalties)
     for (const s of scored) {
         // d = doublings behind the best: 0 → 100, 1 → 50, then a logarithmic
-        // decay that never collapses far-off couples to 0.
-        const d = s.penalty - minPenalty
+        // decay that never collapses far-off couples to 0. A non-reference row
+        // better than the best is capped at 100 (d floored at 0).
+        const d = Math.max(0, s.penalty - minPenalty)
         result.set(rowKey(s.row), {
             score: Math.round(100 / (1 + Math.log2(1 + d))),
             penalty: s.penalty,
             ability: s.ability,
             target,
             metric: s.metric,
+            reference: s.reference,
         })
     }
     return result
@@ -183,6 +196,22 @@ export function lowestPenalty(values) {
         if (isNum(v) && (best === null || v < best)) best = v
     }
     return best
+}
+
+/**
+ * Build the "latest model" predicate: the row's model is its provider's latest
+ * registry entry of its family (``latest: true``). With "Show older models"
+ * off, only these rows form the scoring reference.
+ *
+ * @param {(provider: string) => object|null} getHelpers - provider helpers lookup.
+ */
+export function makeLatestModelPredicate(getHelpers) {
+    return (row) => {
+        const helpers = getHelpers(row.provider)
+        if (!helpers) return false
+        const entry = (helpers.getModelRegistry?.() ?? []).find(e => e.full_name === row.model)
+        return entry?.latest === true
+    }
 }
 
 /**
@@ -257,13 +286,6 @@ export function formatBenchmarkDetails(row, scored, taskType) {
             label: 'Time / task',
             value: formatTime(m.time),
             description: 'Average decode time of one task.',
-        },
-        {
-            label: 'Based on',
-            value: type.evals
-                ? type.evals.map(k => EVAL_LABELS[k]).join(', ')
-                : 'Intelligence Index; cost and time from Terminal-Bench 4.0',
-            description: 'The Artificial Analysis evaluations used.',
         },
     ]
 }

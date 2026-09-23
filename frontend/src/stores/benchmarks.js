@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import benchmarkData from '../data/modelBenchmarks.json'
-import { computeBenchmarkScores, makeScoringSetPredicate, scoreKey } from '../utils/benchmarkScores'
+import { computeBenchmarkScores, makeLatestModelPredicate, makeScoringSetPredicate, scoreKey } from '../utils/benchmarkScores'
 import { useBenchmarkTaskStore } from './benchmarkTask'
 import { useSettingsStore } from './settings'
 import { getProviderHelpers } from '../providers'
@@ -12,9 +12,12 @@ import { getProviderHelpers } from '../providers'
  * frontend (``data/modelBenchmarks.json``; no fetch, no backend). ``scoreLookup``
  * scores them with the controls of the ``benchmarkTask`` store over the scoring
  * set — enabled providers, available models, selectable efforts — so scores
- * recompute when the controls, the enabled providers or the registries change,
- * yet never depend on what the matrix currently shows. The matrix joins on
- * ``(provider, model, effort)`` with ``model`` = the registry ``full_name``.
+ * recompute when the controls, the enabled providers or the registries change.
+ * The reference (slider range, tolerance, the 100) is the latest models only,
+ * unless "Show older models" is on: older models are then shown AND counted;
+ * otherwise they are still scored (an older row stays visible when selected)
+ * but against the latest models. The matrix joins on ``(provider, model,
+ * effort)`` with ``model`` = the registry ``full_name``.
  */
 export const useBenchmarksStore = defineStore('benchmarks', {
     state: () => ({
@@ -27,14 +30,16 @@ export const useBenchmarksStore = defineStore('benchmarks', {
             return new Map(state.rows.map(r => [scoreKey(r.provider, r.model, r.effort), r]))
         },
 
-        /** Map scoreKey -> { score, penalty, ability, target, metric } for the scored rows. */
+        /** Map scoreKey -> { score, penalty, ability, target, metric, reference } for the scored rows. */
         scoreLookup(state) {
             const task = useBenchmarkTaskStore()
             const inScoringSet = makeScoringSetPredicate(useSettingsStore().enabledProviders, getProviderHelpers)
+            const isReference = task.showOlder ? () => true : makeLatestModelPredicate(getProviderHelpers)
             return computeBenchmarkScores(
                 state.rows,
                 { taskType: task.taskType, difficulty: task.difficulty, favor: task.favor },
                 inScoringSet,
+                isReference,
             )
         },
 

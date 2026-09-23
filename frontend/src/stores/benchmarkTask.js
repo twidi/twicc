@@ -3,7 +3,9 @@ import { TASK_TYPES } from '../utils/benchmarkScores'
 
 /**
  * Controls of the model × effort score (spec §5.1): task type, task difficulty
- * (0..100) and whether to favor cost or speed, plus the auto-select switches.
+ * (0..100) and whether to favor cost or speed, plus the auto-select switches
+ * and the matrix's "Show older models" toggle — older models only take part in
+ * the scoring reference when shown, so the 100 always sits on a visible cell.
  * In memory only — reset to the defaults on reload, like the former weights.
  */
 export const useBenchmarkTaskStore = defineStore('benchmarkTask', {
@@ -13,6 +15,7 @@ export const useBenchmarkTaskStore = defineStore('benchmarkTask', {
         favor: 'cost',
         autoSelectBest: false,
         defaultProviderOnly: false,
+        showOlder: false,
     }),
 
     actions: {

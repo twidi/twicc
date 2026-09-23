@@ -146,12 +146,14 @@ function findBestCell() {
         candidates = blocks.filter(b => b.provider === defProvider)
     }
     // Ranked on the unrounded penalty (lower is better), so cells that round to
-    // the same score still yield the real best one.
+    // the same score still yield the real best one. Only reference cells count:
+    // a hidden (or merely selected) older model is never auto-picked.
     let best = null
     for (const block of candidates) {
         for (const row of block.rows) {
             for (const cell of row.cells) {
-                const penalty = cell.benchmark?.scored?.penalty
+                const scored = cell.benchmark?.scored
+                const penalty = scored?.reference ? scored.penalty : null
                 if (cell.enabled && penalty != null && (best === null || penalty < best.penalty)) {
                     best = { provider: block.provider, model: row.model, effort: cell.effort, penalty }
                 }
@@ -168,6 +170,8 @@ watch(
         () => taskStore.taskType,
         () => taskStore.difficulty,
         () => taskStore.favor,
+        // Showing / hiding older models changes the scoring reference, so the best.
+        () => taskStore.showOlder,
     ],
     () => {
         if (!taskStore.autoSelectBest) return
