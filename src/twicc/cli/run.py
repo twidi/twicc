@@ -85,7 +85,6 @@ from twicc.log_retention import log_trim_enabled, trim_log_file  # noqa: E402
 from twicc.orchestrator import get_orchestrator_registry  # noqa: E402
 from twicc.paths import get_backend_log_path, get_data_dir  # noqa: E402
 from twicc.pricing_task import start_price_sync_task, sync_all_providers  # noqa: E402
-from twicc.benchmarks_task import start_benchmark_sync_task  # noqa: E402
 from twicc.quota_wakeup_task import start_quota_wakeup_task  # noqa: E402
 from twicc.session_dirs_cleanup_task import start_session_dirs_cleanup_task  # noqa: E402
 from twicc.peer_purge_task import start_peer_purge_task  # noqa: E402
@@ -306,7 +305,6 @@ async def run_server(port: int):
 
     # Cross-provider periodic tasks
     price_sync_task = asyncio.create_task(start_price_sync_task(shutdown_event))
-    benchmark_sync_task = asyncio.create_task(start_benchmark_sync_task(shutdown_event))
     quota_wakeup_task = asyncio.create_task(start_quota_wakeup_task(shutdown_event))
     session_dirs_cleanup_task = asyncio.create_task(start_session_dirs_cleanup_task(shutdown_event))
     peer_purge_task = asyncio.create_task(start_peer_purge_task(shutdown_event))
@@ -394,9 +392,6 @@ async def run_server(port: int):
         # so we just wait for it to finish.
         logger.info("Stopping price sync task...")
         await _cancel_task(price_sync_task, "Price sync task")
-
-        logger.info("Stopping model benchmark sync task...")
-        await _cancel_task(benchmark_sync_task, "Model benchmark sync task")
 
         logger.info("Stopping quota warm-up task...")
         await _cancel_task(quota_wakeup_task, "Quota warm-up task")

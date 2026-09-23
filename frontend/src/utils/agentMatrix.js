@@ -97,8 +97,8 @@ export function buildMatrixBlocks({
                     // Benchmark score joins on the internal SDK id (full_name),
                     // not the picker alias (selected_model). null -> "?".
                     score: benchmarksStore.getScore(provider, entry.full_name, effort),
-                    // Raw benchmark row (same join) for the cell's details
-                    // tooltip; null when the benchmark doesn't cover the pair.
+                    // { row, scored } for the cell's details panel (same join);
+                    // null when the couple has no score.
                     benchmark: benchmarksStore.getRow(provider, entry.full_name, effort),
                 }
             })

@@ -562,24 +562,6 @@ class _PersistProviderPricesJob(NamedTuple):
     future: asyncio.Future  # → dict[str, int] with keys created/unchanged
 
 
-class _PersistModelBenchmarksJob(NamedTuple):
-    """A request to upsert DeepSWE model benchmarks (cross-provider).
-
-    The producer (``benchmarks_task``) fetches the DeepSWE leaderboard and maps
-    it to our supported models (HTTP + parse + registry lookup, no DB), then
-    submits this job. The DB writer applies the upsert in one
-    ``transaction.atomic``: for each ``(provider, model, reasoning_effort)``,
-    update the metrics + ``updated_at`` or insert a new row; rows absent from
-    the fresh data are left untouched. ``provider`` is ``None`` because one
-    fetch spans every backend. ``future`` resolves to a
-    ``{"created": N, "updated": M}`` dict.
-    """
-
-    benchmarks: list[dict]
-    future: asyncio.Future  # → dict[str, int] with keys created/updated
-    provider: Provider | None = None
-
-
 class _MarkSessionsIndexedJob(NamedTuple):
     """A request to bump ``search_version`` on a batch of just-indexed sessions.
 
@@ -1844,10 +1826,6 @@ async def _dispatch_async_job(job) -> None:
         await _settle_async_job(job, _apply_persist_provider_prices_job, "price sync")
         return
 
-    if isinstance(job, _PersistModelBenchmarksJob):
-        await _settle_async_job(job, _apply_persist_model_benchmarks_job, "model benchmark sync")
-        return
-
     if isinstance(job, _MarkSessionsIndexedJob):
         await _settle_async_job(job, _apply_mark_sessions_indexed_job, "search-index mark")
         return
@@ -2773,20 +2751,6 @@ def _apply_persist_provider_prices_job(job: _PersistProviderPricesJob) -> dict[s
 
     with transaction.atomic():
         return persist_provider_prices(job.provider, job.prices)
-
-
-def _apply_persist_model_benchmarks_job(job: _PersistModelBenchmarksJob) -> dict[str, int]:
-    """Persist DeepSWE model benchmarks (cross-provider).
-
-    Delegates to :func:`persist_benchmarks` so the upsert logic stays in one
-    place — wrapped here in ``transaction.atomic`` so every per-row upsert
-    commits (or rolls back) together and the helper is never invoked from a
-    different writer.
-    """
-    from twicc.benchmarks import persist_benchmarks
-
-    with transaction.atomic():
-        return persist_benchmarks(job.benchmarks)
 
 
 def _apply_mark_sessions_indexed_job(job: _MarkSessionsIndexedJob) -> int:

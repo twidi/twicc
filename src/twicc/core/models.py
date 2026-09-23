@@ -1187,49 +1187,6 @@ class ModelPrice(models.Model):
         return None
 
 
-class ModelBenchmark(models.Model):
-    """Latest external benchmark scores for a supported model, per effort.
-
-    One row per ``(provider, model, reasoning_effort)``, refreshed daily from
-    the DeepSWE leaderboard (see :mod:`twicc.benchmarks`). Only models present
-    in our per-provider registry are stored; ``model`` is our internal SDK
-    identifier (the ``full_name`` in ``MODEL_VERSIONS``), normalised from the
-    dashed ids DeepSWE publishes. ``updated_at`` records the last refresh that
-    saw this row in the fresh data — a model that stops being reported keeps
-    its last-known metrics and timestamp rather than being deleted.
-    """
-
-    # Backend provider that owns this model (see Provider enum)
-    provider = models.CharField(max_length=50)
-
-    # Our internal SDK model identifier (MODEL_VERSIONS full_name),
-    # e.g. "claude-opus-4-8", "gpt-5.6-sol"
-    model = models.CharField(max_length=100)
-
-    # Reasoning effort the score was measured at (e.g. "low"/"medium"/"high"/"xhigh"/"max")
-    reasoning_effort = models.CharField(max_length=10)
-
-    # Benchmark metrics (nullable: a row may omit a metric upstream)
-    pass_at_1 = models.FloatField(null=True, blank=True)  # attempt pass rate (0..1)
-    pass_at_4 = models.FloatField(null=True, blank=True)  # any-of-4 pass rate (0..1)
-    mean_cost_usd = models.FloatField(null=True, blank=True)  # mean run cost in USD
-    median_duration_seconds = models.FloatField(null=True, blank=True)  # median run duration
-
-    # When this row was last refreshed from fresh benchmark data
-    updated_at = models.DateTimeField()
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["provider", "model", "reasoning_effort"],
-                name="uniq_mb_prov_model_effort",
-            ),
-        ]
-
-    def __str__(self):
-        return f"[{self.provider}] {self.model} ({self.reasoning_effort})"
-
-
 class UsageSnapshot(models.Model):
     """
     A point-in-time snapshot of a provider's usage quotas.

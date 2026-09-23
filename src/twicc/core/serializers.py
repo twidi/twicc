@@ -329,26 +329,6 @@ def serialize_usage_snapshot(snapshot, period_costs=None, references=None):
     return data
 
 
-def serialize_benchmark_row(row):
-    """Serialize a ModelBenchmark row for the bootstrap payload.
-
-    Sends the raw stored metrics only; the frontend derives the composite
-    score over the complete dataset (see ``utils/benchmarkScores.js``) and
-    joins to the model picker on ``(provider, model, reasoning_effort)`` —
-    ``model`` being the internal SDK ``full_name`` shared with the serialized
-    model registry.
-    """
-    return {
-        "provider": row.provider,
-        "model": row.model,
-        "reasoning_effort": row.reasoning_effort,
-        "pass_at_1": row.pass_at_1,
-        "pass_at_4": row.pass_at_4,
-        "mean_cost_usd": row.mean_cost_usd,
-        "median_duration_seconds": row.median_duration_seconds,
-    }
-
-
 def serialize_session_item(item):
     """
     Serialize a SessionItem model to a dictionary with full content.

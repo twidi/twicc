@@ -20,15 +20,21 @@ export const vPopoverFocusFix = {
             savedActiveElement: null,
         }
 
+        // Both handlers only react to the popover's own events: a nested wa-select
+        // or wa-dropdown fires the same wa-hide / wa-after-hide when its panel
+        // closes, and handling those would move focus back onto that control.
+
         // wa-hide fires BEFORE the animation and dialog.close().
         // At this point, document.activeElement is still what the user clicked on.
-        state.hideHandler = () => {
+        state.hideHandler = (event) => {
+            if (event.target !== el) return
             state.savedActiveElement = document.activeElement
         }
 
         // wa-after-hide fires AFTER dialog.close() has restored focus to the trigger.
         // We undo that restoration: blur the trigger, then re-focus the saved element.
-        state.afterHideHandler = () => {
+        state.afterHideHandler = (event) => {
+            if (event.target !== el) return
             // Blur whatever dialog.close() just focused (works through shadow DOM)
             document.activeElement?.blur()
 

@@ -1,193 +1,244 @@
 /**
- * Benchmark scoring — turns the raw per-(provider, model, effort) benchmark
- * rows into a single integer score in 0..100 for each row.
+ * Model × effort scores — the "target ability" model.
  *
- * Every reference min/max (capability, log-cost, log-duration, and the final raw
- * stretch) is computed over the COMPLETE set of rows — all providers, models
- * and efforts — so a cell's score never depends on what the picker happens to
- * show (a filtered provider, hidden older models, …). Rows missing a metric,
- * or with a non-positive cost / duration / pass@4 (the formula can't take a
- * log or a fractional power of those), carry no score: the matrix renders
- * them as "?".
+ * Spec: docs/plans/2026-09-23-artificial-analysis-benchmark-scores-design.md §4.
+ * Rows come from the frozen Artificial Analysis snapshot
+ * (``data/modelBenchmarks.json``). The user picks a task type, a difficulty and
+ * whether to favor cost or speed. The difficulty sets a target on the task
+ * type's ability axis; each (model, effort) pays a squared distance penalty
+ * when below the target (none above it) plus log2 of its cost (or time) per
+ * task. The lowest penalty scores 100; every "doubling" worse halves the score.
  *
- * The three weights are adjustable at runtime (see stores/benchmarkWeights.js);
- * DEFAULT_WEIGHTS is the "Balanced" fallback. ALPHA and GAMMA stay fixed.
+ * Pure module: no store, no Vue. The scoring-set predicate is injected so the
+ * store decides which rows count (enabled providers, available models,
+ * selectable efforts) while this module stays testable.
  */
 
-// Default score weights (fractions summing to 1) — the "Balanced" profile.
-// Adjustable at runtime; used as the fallback when no weights are supplied.
-export const DEFAULT_WEIGHTS = { capability: 0.40, economy: 0.50, speed: 0.10 }
+// Exponent of the concave difficulty → target curve (the slider's middle lands high).
+export const CURVE = 0.55
+// Being this many Intelligence Index points below the target weighs as much as
+// paying (or waiting) twice as much. Other task types scale it by their range.
+export const TOLERANCE_II = 4
 
-export const ALPHA = 1.4 // coverage irregularity exponent (capability metric)
-export const GAMMA = 2.5 // contrast (final stretch)
-export const EPS = 1e-3 // clamp floor for the [0,1] notes
+// Display name of each Artificial Analysis evaluation key.
+export const EVAL_LABELS = {
+    terminalbench_4_0: 'Terminal-Bench 4.0',
+    scicode: 'SciCode',
+    aa_briefcase: 'AA-Briefcase',
+    gdpval_aa: 'GDPval-AA',
+    gdp_pdf: 'GDP.pdf',
+    automationbench_aa: 'AutomationBench-AA',
+    humanitys_last_exam: "Humanity's Last Exam",
+    critpt: 'CritPt',
+    aa_omniscience: 'AA-Omniscience',
+    aa_lcr: 'AA-LCR',
+}
+
+// Task types, in display order. ``evals: null`` = the Intelligence Index, with
+// Terminal-Bench 4.0 cost and time.
+export const TASK_TYPES = [
+    { id: 'general', label: 'General (Intelligence Index)', evals: null },
+    { id: 'coding', label: 'Coding & terminal', evals: ['terminalbench_4_0', 'scicode'] },
+    { id: 'office', label: 'Office & knowledge work', evals: ['aa_briefcase', 'gdpval_aa', 'gdp_pdf'] },
+    { id: 'automation', label: 'Automation & tools', evals: ['automationbench_aa'] },
+    { id: 'science', label: 'Science & reasoning', evals: ['humanitys_last_exam', 'critpt', 'scicode'] },
+    { id: 'knowledge', label: 'Factual knowledge', evals: ['aa_omniscience'] },
+    { id: 'longdocs', label: 'Long documents', evals: ['aa_lcr'] },
+]
+
+// Evaluation scores not already a 0..1 rate: Elo as Artificial Analysis converts
+// it, and the Omniscience index from -100..100.
+const EVAL_NORMALIZERS = {
+    aa_briefcase: s => (s - 500) / 2000,
+    gdpval_aa: s => (s - 500) / 2000,
+    aa_omniscience: s => (s + 100) / 200,
+}
+
+const DASH = '—'
+
+const isNum = v => typeof v === 'number' && Number.isFinite(v)
+
+// Mean of the values, or null as soon as one is missing.
+function meanOrNull(values) {
+    if (!values.length || !values.every(isNum)) return null
+    return values.reduce((a, b) => a + b, 0) / values.length
+}
 
 /** Lookup key joining a benchmark row to a matrix cell. */
 export function scoreKey(provider, model, effort) {
     return `${provider} ${model} ${effort}`
 }
 
+const rowKey = row => scoreKey(row.provider, row.model, row.effort)
+
 /**
- * Human-facing detail rows for a matrix cell's "Benchmark data" panel: our own
- * computed ``score`` (the cell's number) first, then the metrics derived from the
- * raw benchmark row (pass rates are fractions in 0..1). Rates render as integer
- * %, costs as $ with 2 decimals, time in minutes with 1 decimal; a missing metric
- * or a zero divisor renders as an em dash.
- *
- * @param {{pass_at_1:number, pass_at_4:number, mean_cost_usd:number,
- *          median_duration_seconds:number}} row
- * @param {number|null} [score] the cell's computed score (0..100).
- * @returns {{label:string, value:string, description:string}[]}
+ * Ability (0..100), cost per task (USD) and time per task (s) of one row for a
+ * task type; each is null when a needed value is missing (spec §4.1).
  */
-export function formatBenchmarkDetails(row, score = null) {
-    const DASH = '—'
-    const pct = (x) => (Number.isFinite(x) ? `${Math.round(x * 100)}%` : DASH)
-    const usd = (x) => (Number.isFinite(x) ? `$${x.toFixed(2)}` : DASH)
-    const p1 = row?.pass_at_1
-    const p4 = row?.pass_at_4
-    const cost = row?.mean_cost_usd
-    const dur = row?.median_duration_seconds
+export function typeMetrics(row, taskType) {
+    const type = TASK_TYPES.find(t => t.id === taskType)
+    if (!type) return { ability: null, cost: null, time: null }
+    if (type.evals === null) {
+        const tb = row.evals?.terminalbench_4_0
+        return {
+            ability: isNum(row.intelligence_index) ? row.intelligence_index : null,
+            cost: isNum(tb?.cost_usd) ? tb.cost_usd : null,
+            time: isNum(tb?.time_s) ? tb.time_s : null,
+        }
+    }
+    const parts = type.evals.map(k => row.evals?.[k] ?? null)
+    const scores = parts.map((p, i) => {
+        if (!isNum(p?.score)) return null
+        const normalize = EVAL_NORMALIZERS[type.evals[i]]
+        return normalize ? normalize(p.score) : p.score
+    })
+    const ability = meanOrNull(scores)
+    return {
+        ability: ability === null ? null : 100 * ability,
+        cost: meanOrNull(parts.map(p => p?.cost_usd)),
+        time: meanOrNull(parts.map(p => p?.time_s)),
+    }
+}
+
+// Lowest and highest ability over the rows having both an ability and a cost
+// (cost in both modes, so the slider mapping never depends on Favor), or null.
+function abilityRange(rows, taskType) {
+    let min = Infinity
+    let max = -Infinity
+    for (const row of rows) {
+        const m = typeMetrics(row, taskType)
+        if (m.ability === null || m.cost === null) continue
+        if (m.ability < min) min = m.ability
+        if (m.ability > max) max = m.ability
+    }
+    return min === Infinity ? null : { min, max }
+}
+
+/**
+ * Score every scorable row of the scoring set (spec §4.2–§4.5, §4.7).
+ *
+ * @param {Array<object>} rows - snapshot rows.
+ * @param {{taskType: string, difficulty: number, favor: 'cost'|'speed'}} controls
+ * @param {(row: object) => boolean} isInScoringSet - which rows count.
+ * @returns {Map<string, {score: number, penalty: number, ability: number, target: number, metric: number}>}
+ *   keyed by scoreKey; a missing key means "no score" ("?").
+ */
+export function computeBenchmarkScores(rows, { taskType, difficulty, favor }, isInScoringSet) {
+    const result = new Map()
+    const set = (rows ?? []).filter(isInScoringSet)
+    const range = abilityRange(set, taskType)
+    if (!range) return result
+
+    const general = abilityRange(set, 'general')
+    const typeSpan = range.max - range.min
+    const generalSpan = general ? general.max - general.min : 0
+    const tolerance = generalSpan > 0 ? TOLERANCE_II * typeSpan / generalSpan : TOLERANCE_II
+    const target = range.min + typeSpan * Math.pow(difficulty / 100, CURVE)
+
+    const scored = []
+    for (const row of set) {
+        const m = typeMetrics(row, taskType)
+        const metric = favor === 'speed' ? m.time : m.cost
+        if (m.ability === null || metric === null || !(metric > 0)) continue
+        // No distance penalty above the target, nor on a flat range (tolerance 0).
+        const below = typeSpan > 0 && m.ability < target
+        const distance = below ? ((target - m.ability) / tolerance) ** 2 : 0
+        scored.push({ row, ability: m.ability, metric, penalty: distance + Math.log2(metric) })
+    }
+    if (!scored.length) return result
+
+    const minPenalty = Math.min(...scored.map(s => s.penalty))
+    for (const s of scored) {
+        result.set(rowKey(s.row), {
+            score: Math.round(100 * Math.pow(2, minPenalty - s.penalty)),
+            penalty: s.penalty,
+            ability: s.ability,
+            target,
+            metric: s.metric,
+        })
+    }
+    return result
+}
+
+/**
+ * Build the scoring-set predicate (spec §4.3): the row's provider is enabled,
+ * its model is an available registry entry of that provider (enabled, not
+ * retired), and its effort is selectable for that model — the same test that
+ * enables a matrix cell (``agentMatrix.js``).
+ *
+ * @param {string[]} enabledProviders
+ * @param {(provider: string) => object|null} getHelpers - provider helpers lookup.
+ */
+export function makeScoringSetPredicate(enabledProviders, getHelpers) {
+    const enabled = new Set(enabledProviders ?? [])
+    return (row) => {
+        if (!enabled.has(row.provider)) return false
+        const helpers = getHelpers(row.provider)
+        if (!helpers) return false
+        const entry = (helpers.getModelRegistry?.() ?? []).find(e => e.full_name === row.model)
+        if (!entry || !helpers.isModelAvailable(entry)) return false
+        const efforts = new Set((helpers.getFieldChoices('effort') ?? []).map(c => c.value))
+        if (!efforts.has(row.effort)) return false
+        return !helpers.isChoiceDisabled('effort', row.effort, { effectiveModel: entry.selected_model })
+    }
+}
+
+/** "$" + 3 significant digits, trailing zeros dropped; em dash when missing. */
+export function formatCost(x) {
+    return isNum(x) ? `$${String(Number(x.toPrecision(3)))}` : DASH
+}
+
+/** Seconds (1 decimal) below 60 s after rounding, else minutes (1 decimal). */
+export function formatTime(seconds) {
+    if (!isNum(seconds)) return DASH
+    const s = Math.round(seconds * 10) / 10
+    return s < 60 ? `${s.toFixed(1)} s` : `${(s / 60).toFixed(1)} min`
+}
+
+/**
+ * Rows of a matrix cell's "Benchmark data" panel (spec §5.3).
+ *
+ * @param {object} row - the snapshot row.
+ * @param {{score: number, target: number}} scored - the computeBenchmarkScores entry.
+ * @param {string} taskType
+ * @returns {{label: string, value: string, description: string}[]}
+ */
+export function formatBenchmarkDetails(row, scored, taskType) {
+    const type = TASK_TYPES.find(t => t.id === taskType) ?? TASK_TYPES[0]
+    const m = typeMetrics(row, type.id)
+    const one = x => (isNum(x) ? x.toFixed(1) : DASH)
     return [
         {
             label: 'Score',
-            value: score != null ? String(score) : DASH,
-            description: 'Based on our own calculation from the metrics below.',
+            value: isNum(scored?.score) ? String(scored.score) : DASH,
+            description: 'Our score for this task: 100 = best choice.',
         },
         {
-            label: 'Success rate',
-            value: pct(p1),
-            description: 'How often a single attempt solves the task.',
+            label: type.evals ? `${type.label} score` : 'Intelligence Index',
+            value: one(m.ability),
+            description: "The couple's ability on this task type (0–100).",
         },
         {
-            label: 'Coverage',
-            value: pct(p4),
-            description: "Share of tasks solved at least once across the benchmark's 4 attempts.",
-        },
-        {
-            label: 'Consistency',
-            value: (Number.isFinite(p1) && Number.isFinite(p4) && p4 > 0) ? pct(p1 / p4) : DASH,
-            description: 'On the tasks it can solve, how reliably it lands them per attempt.',
+            label: 'Target',
+            value: one(scored?.target),
+            description: 'The level set by Task difficulty.',
         },
         {
             label: 'Cost / task',
-            value: usd(cost),
-            description: 'Average cost of one attempt.',
+            value: formatCost(m.cost),
+            description: 'Average cost of one task.',
         },
         {
-            label: 'Cost per solve',
-            value: (Number.isFinite(cost) && Number.isFinite(p1) && p1 > 0) ? usd(cost / p1) : DASH,
-            description: 'Expected cost to actually get one task solved — it pays for failed attempts too, so it runs higher than Cost / task. Lower is better.',
+            label: 'Time / task',
+            value: formatTime(m.time),
+            description: 'Average decode time of one task.',
         },
         {
-            label: 'Typical time',
-            value: Number.isFinite(dur) ? `${(dur / 60).toFixed(1)} min` : DASH,
-            description: 'Median duration of one attempt.',
+            label: 'Based on',
+            value: type.evals
+                ? type.evals.map(k => EVAL_LABELS[k]).join(', ')
+                : 'Intelligence Index; cost and time from Terminal-Bench 4.0',
+            description: 'The Artificial Analysis evaluations used.',
         },
     ]
-}
-
-// Clamp a note into [EPS, 1] so its natural log stays finite and negative.
-function clampNote(x) {
-    return Math.max(EPS, Math.min(1, x))
-}
-
-// Normalize the three weights to fractions summing to 1 (the geometric mean
-// needs weights summing to 1). Defensive: the caller's displayed weights
-// already sum to 100, but a zero/negative total falls back to the defaults.
-function normalizeWeights(w) {
-    const capability = Math.max(0, w?.capability ?? 0)
-    const economy = Math.max(0, w?.economy ?? 0)
-    const speed = Math.max(0, w?.speed ?? 0)
-    const total = capability + economy + speed
-    if (total <= 0) return DEFAULT_WEIGHTS
-    return { capability: capability / total, economy: economy / total, speed: speed / total }
-}
-
-// (value - min) / (max - min); equal bounds -> 1 (divide-by-zero guard).
-function normUp(value, min, max) {
-    return max > min ? (value - min) / (max - min) : 1
-}
-
-// (max - value) / (max - min): smaller value -> higher note (cheaper / faster);
-// equal bounds -> 1 (divide-by-zero guard).
-function normDown(value, min, max) {
-    return max > min ? (max - value) / (max - min) : 1
-}
-
-// Capability metric: p1^ALPHA * p4^(1 - ALPHA).
-function capabilityMetric(p1, p4) {
-    return Math.pow(p1, ALPHA) * Math.pow(p4, 1 - ALPHA)
-}
-
-// A row is scorable only if all four metrics are present and finite, with
-// cost / duration / pass@4 strictly positive: log10() needs cost, dur > 0 and
-// p4^(1 - ALPHA) with 1 - ALPHA < 0 needs p4 > 0. (p1 may be 0; capability is then 0.)
-function isScorable(r) {
-    const p1 = r.pass_at_1
-    const p4 = r.pass_at_4
-    const cost = r.mean_cost_usd
-    const dur = r.median_duration_seconds
-    return (
-        Number.isFinite(p1) && p1 >= 0
-        && Number.isFinite(p4) && p4 > 0
-        && Number.isFinite(cost) && cost > 0
-        && Number.isFinite(dur) && dur > 0
-    )
-}
-
-/**
- * Compute the integer score for every scorable benchmark row.
- *
- * @param {Array<object>} rows - the COMPLETE set of benchmark rows.
- * @param {{capability:number,economy:number,speed:number}} [weights] - metric
- *   weights (any non-negative magnitudes; normalised to sum 1). Defaults to
- *   DEFAULT_WEIGHTS.
- * @returns {Map<string, number>} scoreKey(provider, model, effort) -> score 0..100.
- *   Only scorable rows are present; a missing key means "no benchmark data".
- */
-export function computeBenchmarkScores(rows, weights = DEFAULT_WEIGHTS) {
-    const scores = new Map()
-    if (!Array.isArray(rows) || rows.length === 0) return scores
-
-    const scorable = rows.filter(isScorable)
-    if (scorable.length === 0) return scores
-
-    const { capability: wCapability, economy: wEconomy, speed: wSpeed } = normalizeWeights(weights)
-
-    // Steps 0-1: capability metric and reference min/max over the COMPLETE set.
-    const capabilities = scorable.map(r => capabilityMetric(r.pass_at_1, r.pass_at_4))
-    const logCosts = scorable.map(r => Math.log10(r.mean_cost_usd))
-    const logDurs = scorable.map(r => Math.log10(r.median_duration_seconds))
-
-    const capabilityMin = Math.min(...capabilities)
-    const capabilityMax = Math.max(...capabilities)
-    const logCostMin = Math.min(...logCosts)
-    const logCostMax = Math.max(...logCosts)
-    const logDurMin = Math.min(...logDurs)
-    const logDurMax = Math.max(...logDurs)
-
-    // Steps 2-3: three notes in [0,1] then their weighted geometric mean.
-    const raws = scorable.map((r, i) => {
-        const noteResult = clampNote(normUp(capabilities[i], capabilityMin, capabilityMax))
-        const noteEconomy = clampNote(normDown(logCosts[i], logCostMin, logCostMax)) // cheaper cost -> higher economy
-        const noteSpeed = clampNote(normDown(logDurs[i], logDurMin, logDurMax)) // faster -> higher
-        return 100 * Math.exp(
-            wCapability * Math.log(noteResult)
-            + wEconomy * Math.log(noteEconomy)
-            + wSpeed * Math.log(noteSpeed),
-        )
-    })
-
-    // Step 4: stretch reference, again over the COMPLETE set.
-    const rawMin = Math.min(...raws)
-    const rawMax = Math.max(...raws)
-
-    // Step 5: contrast then round to an integer 0..100.
-    scorable.forEach((r, i) => {
-        const stretched = normUp(raws[i], rawMin, rawMax)
-        const score = Math.round(100 * Math.pow(stretched, GAMMA))
-        scores.set(scoreKey(r.provider, r.model, r.reasoning_effort), score)
-    })
-
-    return scores
 }

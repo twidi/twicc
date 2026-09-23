@@ -9,6 +9,7 @@
 // current selection is highlighted; "Show older models" reveals non-latest rows.
 import { computed, ref, useId, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import { useBenchmarkTaskStore } from '../../stores/benchmarkTask'
 import HoverInfoPanel from '../ui/HoverInfoPanel.vue'
 import ProviderIcon from '../ui/ProviderIcon.vue'
 import { effortIconSrc } from '../../utils/effortIcon'
@@ -18,9 +19,9 @@ const props = defineProps({
     // [{ provider, label, icon, isCurrent, rows: [{ model, label, isLatest,
     //    cells: [{ effort, enabled, selected, isDefault, isProviderDefault,
     //             score, benchmark }] }] }]
-    // score is the benchmark score (integer 0..100) or null when there's no
-    // benchmark data for that (model, effort); benchmark is the raw benchmark row
-    // (or null) feeding the per-cell details tooltip.
+    // score is the benchmark score (integer 0..100) or null ("?"); benchmark is
+    // { row, scored } (the snapshot row and its computed score entry) or null,
+    // feeding the per-cell details panel.
     blocks: { type: Array, default: () => [] },
     // [{ effort, label }] — shared columns across every block
     effortColumns: { type: Array, default: () => [] },
@@ -104,10 +105,10 @@ function onCellClick(provider, model, cell) {
     emit('select', { provider, model, effort: cell.effort })
 }
 
-// One "Benchmark data" tooltip per visible enabled cell: the six derived metrics
-// when the benchmark covers the (model, effort), else a short "no data" note (the
-// "?" cells). Disabled (unsupported-effort) cells get none. Built off ``layout``
-// so it only covers the currently-rendered cells.
+// One "Benchmark data" tooltip per visible enabled cell: the score details for
+// the current task controls when the couple has a score, else a short "no data"
+// note (the "?" cells). Disabled (unsupported-effort) cells get none. Built off
+// ``layout`` so it only covers the currently-rendered cells.
 const cellTips = computed(() => {
     const effortLabel = (effort) => props.effortColumns.find(c => c.effort === effort)?.label ?? String(effort)
     const tips = []
@@ -120,7 +121,7 @@ const cellTips = computed(() => {
                 tips.push({
                     id: cellId(block.provider, r.model, cell.effort),
                     title: `Benchmark data for ${modelLabel} × ${effortLabel(cell.effort)}`,
-                    details: hasData ? formatBenchmarkDetails(cell.benchmark, cell.score) : null,
+                    details: hasData ? formatBenchmarkDetails(cell.benchmark.row, cell.benchmark.scored, taskStore.taskType) : null,
                 })
             }
         }
@@ -139,6 +140,7 @@ const tipsById = computed(() => {
 // Desktop: it follows the pointer (always below it). Touch: long-press toggles it
 // below the cell. All the geometry lives here; the panel just renders at left/top.
 const settingsStore = useSettingsStore()
+const taskStore = useBenchmarkTaskStore()
 const gridRef = ref(null)
 const panelRef = ref(null)
 
@@ -283,7 +285,7 @@ function onScroll() {
     if (activeTip.value) activeTip.value = null
 }
 
-// Keep the shown tip pointing at the fresh object after a recompute (weights /
+// Keep the shown tip pointing at the fresh object after a recompute (task controls /
 // show-older toggle); drop it if its cell is gone.
 watch(cellTips, () => {
     if (activeTip.value) activeTip.value = tipsById.value.get(activeTip.value.id) ?? null
@@ -425,7 +427,7 @@ onBeforeUnmount(() => {
                         <div class="cell-tip-desc">{{ d.description }}</div>
                     </div>
                 </template>
-                <div v-else class="cell-tip-empty">The benchmark provides no data for this model &times; effort.</div>
+                <div v-else class="cell-tip-empty">Artificial Analysis provides no usable data for this model &times; effort.</div>
             </div>
         </HoverInfoPanel>
     </div>

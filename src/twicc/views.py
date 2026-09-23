@@ -23,10 +23,9 @@ import orjson
 from twicc import search
 from twicc.agent.registry import get_agent_manager_registry
 from twicc.core.enums import ItemKind, Provider
-from twicc.core.models import ArtifactBookmark, ArtifactNetworkDenial, Command, DailyActivity, ModelBenchmark, PinMode, Project, Session, SessionItem, SessionType, ToolResultLink, UsageSnapshot, WeeklyActivity, Workflow
+from twicc.core.models import ArtifactBookmark, ArtifactNetworkDenial, Command, DailyActivity, PinMode, Project, Session, SessionItem, SessionType, ToolResultLink, UsageSnapshot, WeeklyActivity, Workflow
 from twicc.core.serializers import (
     serialize_artifact_bookmark,
-    serialize_benchmark_row,
     serialize_network_denial,
     serialize_project,
     serialize_session,
@@ -3603,9 +3602,6 @@ async def bootstrap(request):
             for provider, helpers in get_provider_helpers_registry().items()
         }
     )
-    # Model benchmark rows (every provider/model/effort). The frontend needs the
-    # COMPLETE set to normalise scores over the whole dataset, so ship them all.
-    benchmarks = await asyncio.to_thread(lambda: list(ModelBenchmark.objects.all()))
     # Filter out agent-settings fields hidden from the frontend. ``get_bootstrap_data``
     # itself returns the full classification (so in-process consumers — notably the
     # CLI via ``load_local_bootstrap`` — can still see hidden fields as supported and
@@ -3636,7 +3632,6 @@ async def bootstrap(request):
         "seen_help": seen_help,
         "help_manifest": help_manifest,
         "providers": providers_data,
-        "benchmarks": [serialize_benchmark_row(b) for b in benchmarks],
         "disabledProvidersPresent": disabled_providers_present,
         "disabledProviders": disabled_providers,
         "providerStates": provider_states,

@@ -62,7 +62,6 @@ import { useTerminalConfigStore } from './stores/terminalConfig'
 import { useMessageSnippetsStore } from './stores/messageSnippets'
 import { useTipsStore } from './stores/tips'
 import { useHelpStore } from './stores/help'
-import { useBenchmarksStore } from './stores/benchmarks'
 import { useAgentSettingsPresetsStore } from './stores/agentSettingsPresets'
 import { getProviderStore } from './providers'
 import { computeUsageData } from './utils/usage'
@@ -242,7 +241,6 @@ if (!authStore.needsLogin) {
     useTipsStore().applySeenTips(bootstrapData.seen_tips)
     useHelpStore().applyManifest(bootstrapData.help_manifest)
     useHelpStore().applySeenHelp(bootstrapData.seen_help)
-    useBenchmarksStore().applyBenchmarks(bootstrapData.benchmarks)
 
     // Hydrate drafts from IndexedDB before mounting the WebSocket consumer
     // Order matters: sessions first so draft messages have their session available

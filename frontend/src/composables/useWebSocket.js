@@ -1742,14 +1742,6 @@ export function useWebSocket() {
                     useMessageSnippetsStore().applyConfig(msg.config)
                 })
                 break
-            case 'benchmarks_updated':
-                // Full benchmark dataset pushed after the daily sync wrote at
-                // least one row. Replace the store's set wholesale — scores
-                // recompute over the whole dataset. Lazy import mirrors siblings.
-                import('../stores/benchmarks').then(({ useBenchmarksStore }) => {
-                    useBenchmarksStore().applyBenchmarks(msg.benchmarks)
-                })
-                break
             case 'agent_settings_presets_updated':
                 // Cross-provider preset update — the on-disk format is identical
                 // for every provider, the ``provider`` field selects the bucket

@@ -1,8 +1,8 @@
 <script setup>
 // Single-provider agent-settings picker built on the shared matrix design: the
 // unavailable-model fallback callout, the model × effort matrix, the
-// benchmark-score weighting block (auto-select hidden — the weights store is
-// global and the always-mounted message popover watches it), and the compact
+// benchmark-score task controls (auto-select hidden — the benchmarkTask store
+// is global and the always-mounted message popover watches it), and the compact
 // switch row. Shared by the Settings panel's per-provider defaults editor
 // (values = the persisted defaults; no default dot, the selection IS the
 // default) and the preset editor (values = the preset's nullable overrides; the
@@ -20,7 +20,7 @@ import { useBenchmarksStore } from '../../stores/benchmarks'
 import { buildEffortColumns, buildMatrixBlocks } from '../../utils/agentMatrix'
 import { buildSwitchRows } from '../../utils/agentSwitchRows'
 import AgentSettingsMatrix from './AgentSettingsMatrix.vue'
-import AgentSettingsBenchmarkWeights from './AgentSettingsBenchmarkWeights.vue'
+import AgentSettingsBenchmarkTask from './AgentSettingsBenchmarkTask.vue'
 import AgentSettingsSwitches from './AgentSettingsSwitches.vue'
 
 const props = defineProps({
@@ -109,7 +109,7 @@ function onMatrixSelect({ model, effort }) {
             :effort-columns="effortColumns"
             @select="onMatrixSelect"
         />
-        <AgentSettingsBenchmarkWeights :provider-count="1" :show-auto-select="false" />
+        <AgentSettingsBenchmarkTask :provider-count="1" :show-auto-select="false" />
         <AgentSettingsSwitches :rows="switchRows" @change="emit('change', $event)" />
     </div>
 </template>
@@ -121,9 +121,9 @@ function onMatrixSelect({ model, effort }) {
     gap: var(--wa-space-m);
 }
 
-/* Pull the weighting block up toward the matrix (the uniform gap is a touch
-   airy right there), matching the popover's tightened matrix→weights gap. */
-.defaults-picker :deep(.weights) {
+/* Pull the task controls up toward the matrix (the uniform gap is a touch
+   airy right there), matching the popover's tightened matrix→task-controls gap. */
+.defaults-picker :deep(.benchmark-task) {
     margin-top: calc(var(--wa-space-2xs) - var(--wa-space-m));
 }
 

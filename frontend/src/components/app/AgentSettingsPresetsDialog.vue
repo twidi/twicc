@@ -2,7 +2,7 @@
 // Provider-agnostic dialog to manage the agent settings presets of a given
 // provider. Opens the list view by default; "Add" / "Edit" switch to a form
 // built on the shared matrix design: the model × effort picker (matrix +
-// weights + switches, via ``AgentSettingsDefaultsPicker`` — with the provider-
+// task controls + switches, via ``AgentSettingsDefaultsPicker`` — with the provider-
 // default cell dotted), then the permission selects, which keep their explicit
 // "Default" sentinel (a preset's permission stays independently unset-able).
 //
@@ -345,7 +345,7 @@ function handleSave() {
                 ></wa-input>
             </div>
 
-            <!-- Model & effort picker (shared matrix + weights + switches). The
+            <!-- Model & effort picker (shared matrix + task controls + switches). The
                  provider-default cell keeps its dot here — a preset field left
                  on the default follows it at apply time. -->
             <div class="form-group">

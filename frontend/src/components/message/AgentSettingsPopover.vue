@@ -12,11 +12,11 @@ import { presetSummaryParts, bundleSummaryParts } from '../../utils/presetFormat
 import { DEFAULT_SENTINEL } from '../../composables/useSessionAgentSettings'
 import { getProviderHelpers } from '../../providers'
 import { useDataStore } from '../../stores/data'
-import { useBenchmarkWeightsStore } from '../../stores/benchmarkWeights'
+import { useBenchmarkTaskStore } from '../../stores/benchmarkTask'
 import AgentSettingsPresetsDialog from '../app/AgentSettingsPresetsDialog.vue'
 import AgentSettingsSummaryView from './AgentSettingsSummaryView.vue'
 import AgentSettingsMatrix from './AgentSettingsMatrix.vue'
-import AgentSettingsBenchmarkWeights from './AgentSettingsBenchmarkWeights.vue'
+import AgentSettingsBenchmarkTask from './AgentSettingsBenchmarkTask.vue'
 import AgentSettingsSwitches from './AgentSettingsSwitches.vue'
 import HelpTextLink from '../help/HelpTextLink.vue'
 import ProviderIcon from '../ui/ProviderIcon.vue'
@@ -69,7 +69,7 @@ const {
 } = props.settings
 
 const dataStore = useDataStore()
-const weightsStore = useBenchmarkWeightsStore()
+const taskStore = useBenchmarkTaskStore()
 
 // Non-image attachments currently held by the draft. Computed off the
 // store's reactive Map so the labelled wa-callout below reacts to add /
@@ -134,14 +134,14 @@ async function onMatrixSelect({ provider, model, effort }) {
 
 // ─── Auto-select the best-scoring cell ───────────────────────────────────
 // With "Auto-select best" on, pick the highest-scoring cell whenever the
-// weights change (or the switches toggle) — exactly as if the user clicked
+// task controls change (or the switches toggle) — exactly as if the user clicked
 // that square. "Default provider only" restricts the search to the user's
 // default provider when several providers are shown.
 function findBestCell() {
     const blocks = matrixBlocks.value
     if (!blocks?.length) return null
     let candidates = blocks
-    if (weightsStore.defaultProviderOnly && blocks.length > 1) {
+    if (taskStore.defaultProviderOnly && blocks.length > 1) {
         const defProvider = matrixDefaultCell.value?.provider
         candidates = blocks.filter(b => b.provider === defProvider)
     }
@@ -160,14 +160,14 @@ function findBestCell() {
 
 watch(
     [
-        () => weightsStore.autoSelectBest,
-        () => weightsStore.defaultProviderOnly,
-        () => weightsStore.display.capability,
-        () => weightsStore.display.economy,
-        () => weightsStore.display.spd,
+        () => taskStore.autoSelectBest,
+        () => taskStore.defaultProviderOnly,
+        () => taskStore.taskType,
+        () => taskStore.difficulty,
+        () => taskStore.favor,
     ],
     () => {
-        if (!weightsStore.autoSelectBest) return
+        if (!taskStore.autoSelectBest) return
         const best = findBestCell()
         if (best) onMatrixSelect({ provider: best.provider, model: best.model, effort: best.effort })
     },
@@ -610,8 +610,8 @@ onBeforeUnmount(() => {
                 @select="onMatrixSelect"
             />
 
-            <!-- Adjustable weights driving the matrix's benchmark scores. -->
-            <AgentSettingsBenchmarkWeights :provider-count="matrixBlocks.length" />
+            <!-- Task controls driving the matrix's benchmark scores. -->
+            <AgentSettingsBenchmarkTask :provider-count="matrixBlocks.length" />
 
             <!-- Switches (context toggle, thinking, Chrome MCP, fast mode) share
                  one wrapping flex row; the permission select renders below. -->
@@ -725,9 +725,9 @@ onBeforeUnmount(() => {
     margin-bottom: calc(var(--wa-space-2xs) - var(--wa-space-m));
 }
 
-/* Tighten only the matrix (+ legend) → weighting-block gap; the panel's uniform
+/* Tighten only the matrix (+ legend) → task-controls gap; the panel's uniform
    space-m is too airy right there. */
-.settings-panel :deep(.weights) {
+.settings-panel :deep(.benchmark-task) {
     margin-top: calc(var(--wa-space-3xs) - var(--wa-space-m));
 }
 

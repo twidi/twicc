@@ -2860,7 +2860,7 @@ wa-popover > wa-divider {
     margin-block: var(--wa-space-s);
 }
 
-/* The switch row closing the matrix + weights stack (provider sections): a
+/* The switch row closing the matrix + task-controls stack (provider sections): a
    little extra room before the following group. */
 .settings-sections .settings-switches {
     margin-bottom: var(--wa-space-s);

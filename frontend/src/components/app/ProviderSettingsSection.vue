@@ -5,9 +5,9 @@
  * settings defaults.
  *
  * Adopts the per-session agent-settings design: a provider × model × effort
- * matrix (owns the default model + effort) with its benchmark-score weighting
+ * matrix (owns the default model + effort) with its benchmark-score task
  * controls, a compact row of switches (context toggle, thinking, Chrome MCP,
- * fast mode), and permission as plain wa-selects. The matrix, weights, switches
+ * fast mode), and permission as plain wa-selects. The matrix, task controls, switches
  * and their builders are SHARED with ``AgentSettingsPopover`` — see
  * ``utils/agentMatrix.js`` / ``utils/agentSwitchRows.js`` and the three
  * ``AgentSettings*`` components under ``components/message/``.
@@ -51,7 +51,7 @@ const PERMISSION_LABELS = {
     permission_mode_if_untrusted: 'Default permission mode (untrusted projects)',
 }
 
-// ─── Matrix + weights + switches (shared AgentSettingsDefaultsPicker) ──────
+// ─── Matrix + task controls + switches (shared AgentSettingsDefaultsPicker) ──
 // Values ARE the persisted defaults, so the picker reads them raw (no null
 // layer) and never shows a separate default dot — the selection IS the default.
 function defaultValueFor(field) {
@@ -174,7 +174,7 @@ function onOrchestrationToggle(event) {
         </div>
         <wa-divider v-if="provider === 'claude_code' && settingsStore.isClaudeHybridEnabled"></wa-divider>
 
-        <!-- Default model × effort matrix (+ score weighting) and the switch row.
+        <!-- Default model × effort matrix (+ score task controls) and the switch row.
              Own wrapper class (not .setting-group) so the section's
              `label ~ :not(label)` indent rule doesn't shift the wide grid. -->
         <div class="agent-defaults-group">
@@ -190,7 +190,7 @@ function onOrchestrationToggle(event) {
             />
         </div>
 
-        <!-- No divider here: the weights block ends with its own trailing divider
+        <!-- No divider here: the task-controls block ends with its own trailing divider
              (and the switches, when present, follow it) — mirroring the popover,
              where permission follows the switches with no extra rule. This also
              avoids a double divider on Codex, whose switch row is empty. -->
@@ -291,7 +291,7 @@ function onOrchestrationToggle(event) {
    section's `.setting-group > label ~ :not(label)` indent rule never shifts
    the wide matrix grid; the label still gets its styling from the class-keyed
    `.settings-sections .setting-group-label` rule. The callout / matrix /
-   weights / switches layout lives in AgentSettingsDefaultsPicker. */
+   task controls / switches layout lives in AgentSettingsDefaultsPicker. */
 .agent-defaults-group {
     display: flex;
     flex-direction: column;
