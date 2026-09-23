@@ -122,7 +122,7 @@ def test_the_full_block_carries_the_five_non_redundant_fields(project, live_back
     make_session(project)
     make_run("s1", agent_pid=777)
 
-    cli_sessions.main(project=project.id)
+    cli_sessions.main(project=project.id, full=True)
 
     block = read(capsysbinary)[0]["process"]
     assert set(block) == {"id", "state", "started_at", "last_state_change_at", "pid"}
@@ -138,7 +138,7 @@ def test_the_full_block_carries_the_five_non_redundant_fields(project, live_back
 def test_a_read_table_with_no_row_is_dead(project, live_backend, capsysbinary):
     make_session(project)
 
-    cli_sessions.main(project=project.id)
+    cli_sessions.main(project=project.id, full=True)
 
     block = read(capsysbinary)[0]["process"]
     assert block["state"] == "dead"
@@ -303,10 +303,10 @@ def test_the_join_costs_one_query_whatever_the_page_size(project, live_backend, 
         make_run(f"many-{i}")
 
     with CaptureQueriesContext(connection) as one:
-        cli_sessions.main(project=project.id, limit=1)
+        cli_sessions.main(project=project.id, limit=1, full=True)
     capsysbinary.readouterr()
     with CaptureQueriesContext(connection) as five:
-        cli_sessions.main(project=project.id, limit=5)
+        cli_sessions.main(project=project.id, limit=5, full=True)
     capsysbinary.readouterr()
 
     def process_queries(ctx):
@@ -354,7 +354,7 @@ def test_a_subagent_is_null_in_full_mode_too(project, live_backend, capsysbinary
     make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
     make_run("sub1")
 
-    cli_sessions_get.main(["sub1"])
+    cli_sessions_get.main(["sub1"], full=True)
 
     assert read(capsysbinary)[0]["process"] is None
 
@@ -699,7 +699,7 @@ def test_it_is_the_same_block_the_listing_builds(project, live_backend, capsysbi
     make_session(project)
     make_run("s1")
 
-    cli_sessions_get.main(["s1"])
+    cli_sessions_get.main(["s1"], full=True)
     from_listing = read(capsysbinary)[0]["process"]
     cli_session.main("s1")
     from_singular = read_one(capsysbinary)["process"]

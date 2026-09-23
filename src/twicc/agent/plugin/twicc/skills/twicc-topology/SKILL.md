@@ -1,7 +1,7 @@
 ---
 name: twicc-topology
 description: Show the spawned-session tree around a session, rooted at its top-level ancestor, with session metadata, process state, and aggregate child/cost data.
-argument-hint: <session_id|self> [--no-processes] [--full-sessions] [--siblings]
+argument-hint: <session_id|self> [--no-processes] [--slim|--full] [--siblings]
 ---
 
 # TwiCC Topology
@@ -41,7 +41,8 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 ### Options
 
 - `--processes / --no-processes` — include compact live process state when a TwiCC backend is running. Defaults to `--processes`; if no backend is running, topology is still returned with process data marked unavailable.
-- `--full-sessions / --no-full-sessions` — emit the full session serialization for every node — the fields `$TWICC session <ID>` returns, minus its `process` block, which topology carries per node as `nodes[].process`. Defaults to `--no-full-sessions`: each `nodes[].session` block carries only the slim subset listed below. Use this only when you actually need extra fields for every node; otherwise call `$TWICC session <ID>` for the few nodes you care about.
+- `--full` — emit the full session serialization for every node — the fields `$TWICC session <ID>` returns, minus its `process` block, which topology carries per node as `nodes[].process` — and the full five-field `process` block. Off by default: each `nodes[].session` block carries only the slim subset listed below. Use this only when you actually need extra fields for every node; otherwise call `$TWICC session <ID>` for the few nodes you care about. `--full-sessions` is a deprecated alias of `--full`.
+- `--slim` — reduce each node's `process` block to `{state}`. **Before 2026-10-01 the block keeps its five fields by default and `--slim` opts in; from that date `{state}` is the default and `--slim` is an accepted no-op.** Until then a call with neither flag (and with processes requested) prints a one-line notice on stderr (in the RPC `warnings` key; never on MCP). Mutually exclusive with `--full` / `--full-sessions` (exit `2`).
 - `--annotation KEY[OP]VALUE` — annotate every node with a `matches_annotations` boolean indicating whether that node's `annotations` match the expression. The full tree is always preserved (no pruning). Repeatable; multiple flags are AND-combined. Five operators:
   - `KEY=VALUE` — annotation key equals VALUE.
   - `KEY!=VALUE` — annotation key differs from VALUE (or key absent).
@@ -125,20 +126,21 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 - `tree` — nested id-only tree for traversal.
 - `nodes` — node data in tree pre-order; the root is first.
 - `nodes[].id` — same value as `nodes[].session.id`, exposed for direct indexing.
-- `nodes[].session` — slim session payload by default (fields shown above); pass `--full-sessions` to get the full shape for every node — the fields `$TWICC session <ID>` returns, minus its `process` block, which lives at `nodes[].process` here. With `--full-sessions`, the synthetic `directory` field is **not** added: use `git_directory` / `cwd` directly.
+- `nodes[].session` — slim session payload by default (fields shown above); pass `--full` to get the full shape for every node — the fields `$TWICC session <ID>` returns, minus its `process` block, which lives at `nodes[].process` here. With `--full`, the synthetic `directory` field is **not** added: use `git_directory` / `cwd` directly.
 - `nodes[].session.directory` — resolved working directory: `git_directory` when known, else `cwd`. Slim payload only.
 - `nodes[].direct_child_count` — immediate spawned children.
 - `nodes[].descendant_count` — spawned descendants across all levels.
 - `nodes[].subtree_total_cost` — sum of `session.total_cost` for this node and all descendants, or `null` when none has cost.
 - `nodes[].matches_annotations` — `true` if this node's annotations match all `--annotation` predicates; `false` otherwise. Absent when no `--annotation` is passed. The tree is never pruned: all nodes are present regardless.
 - `nodes[].matches_siblings` — `true` if this node is a sibling of the anchor (shares the anchor's parent, anchor itself excluded); `false` otherwise. Absent when `--siblings` is not passed. The tree is never pruned.
-- `process.state` — `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, or `dead`; `process` is `null` when process data is unavailable or not requested.
+- `process.state` — `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, or `dead`; `process` is `null` when process data is unavailable or not requested. The example shows the five-field block, the default until 2026-10-01; from that date the default block is `{"state": …}` alone, and `--full` keeps the five fields.
 - `cycle_detected` — defensive flag for corrupt `spawned_by` data.
 
 ### Exit codes
 
 - `0` — Success
 - `1` — Session not found, `self` could not resolve, or the target is a provider-internal subagent
+- `2` — `--slim` with `--full` / `--full-sessions`, or an invalid `--annotation`
 - `64` — Bad CLI usage
 
 ## Examples
@@ -147,7 +149,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 $TWICC topology self
 $TWICC topology 4a8352fb-1674-41c0-8a85-0a5a3e4e623a
 $TWICC topology self --no-processes
-$TWICC topology self --full-sessions
+$TWICC topology self --full
 $TWICC topology self --annotation role=implementer
 $TWICC topology self --annotation status:exists --annotation priority:in:high,critical
 $TWICC topology self --siblings

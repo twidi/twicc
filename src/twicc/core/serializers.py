@@ -110,7 +110,8 @@ def serialize_network_denial(denial):
     }
 
 
-#: What a listing keeps under ``--slim``. Lives next to the serializer on
+#: The reduced projection a listing returns by default (or with ``--slim``
+#: before the cutover). Lives next to the serializer on
 #: purpose: a new field gets classified the moment it is added, instead of
 #: silently landing in the full payload and never being reconsidered.
 #:

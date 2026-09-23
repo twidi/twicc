@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from twicc.cli._output import emit_error, emit_json
+from twicc.cli._output import emit_error, emit_json, slim_notice
 from twicc.cli._process_state import load_process_rows, serialize_compact_process
 
 
 # Fields kept in each ``nodes[].session`` block by default. The caller can opt
-# into the full ``serialize_session()`` shape with ``--full-sessions``; the slim
+# into the full ``serialize_session()`` shape with ``--full``; the slim
 # shape is enough to render the tree and identify nodes, and any other field can
 # be recovered for a specific node via ``twicc session <id>``. The synthetic
 # ``directory`` field (``git_directory`` falling back to ``cwd``) is added on
@@ -34,7 +34,8 @@ def main(
     session_id: str,
     *,
     include_processes: bool = True,
-    full_sessions: bool = False,
+    slim: bool = False,
+    full: bool = False,
     annotation: list[str] | None = None,
     siblings: bool = False,
 ) -> None:
@@ -42,6 +43,11 @@ def main(
     import django
 
     django.setup()
+    # The cutover only changes the `process` block: without one there is
+    # nothing to announce. ``full`` alone decides the session projection.
+    slim_processes = (
+        slim_notice("topology", slim, full, kind="topology") if include_processes else False
+    )
 
     from twicc.core.models import SessionType
 
@@ -64,7 +70,8 @@ def main(
     data = build_topology(
         seed,
         include_processes=include_processes,
-        full_sessions=full_sessions,
+        full_sessions=full,
+        slim_processes=slim_processes,
         annotation_filters=annotation_filters,
         mark_siblings=siblings,
     )
@@ -76,6 +83,7 @@ def build_topology(
     *,
     include_processes: bool = True,
     full_sessions: bool = False,
+    slim_processes: bool = False,
     twicc_pid: int | None = None,
     annotation_filters: list | None = None,
     mark_siblings: bool = False,
@@ -85,6 +93,10 @@ def build_topology(
     ``twicc_pid`` is injectable for tests. When omitted and process data is
     requested, the live TwiCC sidecar is resolved; if unavailable, topology is
     still returned with process data marked unavailable.
+
+    ``slim_processes`` reduces each read ``process`` block to ``{state}``. Its
+    default keeps the five fields, which the REST view relies on: only the CLI
+    resolves it from ``--slim`` / ``--full`` and the cutover.
 
     ``annotation_filters`` preserves the full tree but enriches every node with
     a ``matches_annotations`` flag when provided.
@@ -168,6 +180,7 @@ def build_topology(
             processes_available=processes_available,
             metrics=metrics_by_id[session_id],
             full_sessions=full_sessions,
+            slim_processes=slim_processes,
             matching_ids=matching_ids,
             sibling_ids=sibling_ids,
         )
@@ -363,6 +376,7 @@ def _serialize_topology_node(
     processes_available: bool,
     metrics: dict,
     full_sessions: bool,
+    slim_processes: bool = False,
     matching_ids: set[str] | None = None,
     sibling_ids: set[str] | None = None,
 ) -> dict:
@@ -377,7 +391,9 @@ def _serialize_topology_node(
         # ``None`` when processes were not read at all — topology says so in its
         # own ``processes`` envelope, so the node does not repeat the reason.
         "process": (
-            serialize_compact_process(process_row) if processes_available else None
+            serialize_compact_process(process_row, slim=slim_processes)
+            if processes_available
+            else None
         ),
         **metrics,
     }

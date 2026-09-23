@@ -77,10 +77,10 @@ Results are ordered by most recently active.
 - `--workspace ID` — filter to sessions of projects in the given workspace, including each member project's git worktrees. Mutually exclusive with `--project`.
 - `--limit N` — max results (default: 20; 50 with `--paginated`).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--slim` — reduced projection: identity, state, cost, and the `has_*` flags (`has_tasks`, `has_goals`, `has_plan`, `has_artifacts`, `has_workflows`) saying what else there is to fetch. Drops the per-session payloads (`tasks`, `plan_paths`, `goals`, `layout`), the redundant timestamps and paths, and the agent-settings bundle. **About 80% lighter** — prefer it whenever you are scanning rather than inspecting one session. `sessions get` takes it too, placeholders included, so a batch lookup keeps one shape.
-- **Live process state:** every row carries a `process` block. `{state}` under `--slim`, plus `id`, `started_at`, `last_state_change_at` and `pid` otherwise. `state` is one of `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, `dead` — note `awaiting_user_input`, the non-obvious stop: the agent is blocked on a human, not working. It answers **what TwiCC is running**, so `dead` means no TwiCC-managed process, which is also the answer for the many sessions TwiCC indexed but never started (a `claude` run straight from a terminal keeps generating and still reads `dead`). `dead` also covers a TwiCC that is not running at all: an agent does not outlive its backend, so "TwiCC is down" and "TwiCC runs nothing for this session" are the same fact. The block is `null` for one case only — a subagent, which runs inside its parent's process and never has one of its own; `parent_session_id` identifies those.
+- `--slim` / `--full` — the projection of each row. The reduced one: identity, state, cost, and the `has_*` flags (`has_tasks`, `has_goals`, `has_plan`, `has_artifacts`, `has_workflows`) saying what else there is to fetch; it drops the per-session payloads (`tasks`, `plan_paths`, `goals`, `layout`), the redundant timestamps and paths, and the agent-settings bundle — **about 80% lighter**. `--full` returns the full payload, the one `session <ID>` returns. **Before 2026-10-01 the full payload is the default and `--slim` opts in; from that date the reduced projection is the default and `--slim` is an accepted no-op** — `--full` keeps working on both sides. Until then a call with neither flag prints a one-line notice on stderr (in the RPC envelope's `warnings` key; never on MCP), next to the `--paginated` one. Mutually exclusive (exit `2`). `sessions get` takes them too, placeholders included, so a batch lookup keeps one shape.
+- **Live process state:** every row carries a `process` block. `{state}` in the reduced projection, plus `id`, `started_at`, `last_state_change_at` and `pid` with `--full`. `state` is one of `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, `dead` — note `awaiting_user_input`, the non-obvious stop: the agent is blocked on a human, not working. It answers **what TwiCC is running**, so `dead` means no TwiCC-managed process, which is also the answer for the many sessions TwiCC indexed but never started (a `claude` run straight from a terminal keeps generating and still reads `dead`). `dead` also covers a TwiCC that is not running at all: an agent does not outlive its backend, so "TwiCC is down" and "TwiCC runs nothing for this session" are the same fact. The block is `null` for one case only — a subagent, which runs inside its parent's process and never has one of its own; `parent_session_id` identifies those.
 - **Filtering on it:** `--state <VALUE>` keeps one bucket — **repeatable and OR-combined**, since a session holds a single state, so `--state assistant_turn --state awaiting_user_input` means "busy or blocked" and naming all five is the unfiltered listing. Unlike `processes --state` (single-valued, and which silently keeps the last of two), `dead` is accepted here and means "no TwiCC-managed process", `--active` keeps every state but `dead` — `user_turn` included, the agent is loaded and idle, not gone. The two are mutually exclusive. `--provider claude_code|codex` is an ordinary column filter, unrelated to state. The state filter runs **before** the page is cut, so `total` and `has_more` count what matches. Hidden sessions stay hidden unless you ask (`--include-hidden`, or any filiation scope, which lifts it for you).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. **Before 2026-09-15 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. **Before 2026-10-01 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
 - `--include-archived` — include archived sessions (excluded by default).
 - `--include-hidden` — include hidden sessions (excluded by default).
 - `--only-hidden` — only hidden sessions. Mutually exclusive with `--include-hidden`.
@@ -100,14 +100,16 @@ Results are ordered by most recently active.
 ### Batch lookup
 
 ```bash
-$TWICC sessions get <SESSION_ID> [<SESSION_ID>...]
+$TWICC sessions get <SESSION_ID> [<SESSION_ID>...] [--slim | --full]
 ```
 
-Returns one entry per id in input order (duplicates collapsed). No filter flags — all session types returned.
+Returns one entry per id in input order (duplicates collapsed). No filter flags — all session types returned. Same projection as the listing (`--slim` / `--full`, same default and same date).
 
 ## Output format
 
 ### Listing
+
+The reduced projection — the default from 2026-10-01, `--slim` before:
 
 ```json
 [
@@ -115,56 +117,47 @@ Returns one entry per id in input order (duplicates collapsed). No filter flags 
     "id": "abc123-def456",
     "project_id": "-home-twidi-dev-myproject",
     "provider": "claude_code",
-    "parent_session_id": null,
-    "last_line": 150,
-    "mtime": 1741654800.0,
-    "created_at": "2025-03-10T14:30:00+00:00",
-    "last_started_at": "2025-03-10T14:30:00+00:00",
-    "last_updated_at": "2025-03-10T15:45:00+00:00",
-    "last_stopped_at": "2025-03-10T15:50:00+00:00",
-    "last_new_content_at": "2025-03-10T15:45:00+00:00",
-    "last_viewed_at": "2025-03-10T16:00:00+00:00",
-    "stale": false,
     "title": "Implement user authentication",
-    "slug": null,
-    "user_message_count": 12,
-    "compute_version_up_to_date": true,
-    "context_usage": 85000,
-    "self_cost": 1.234,
-    "subagents_cost": 0.567,
-    "total_cost": 1.801,
-    "cwd": "/home/twidi/dev/myproject",
-    "git_branch": "feature/auth",
-    "git_directory": "/home/twidi/dev/myproject",
-    "model": {"raw": "claude-opus-4-20250514", "family": "opus", "version": "4"},
-    "archived": false,
-    "pinned": null,
-    "permission_mode": "default",
-    "selected_model": null,
-    "effort": null,
-    "thinking_enabled": null,
-    "claude_in_chrome": false,
-    "fast_mode": false,
-    "context_max": 200000,
-    "compacted": false,
-    "hidden": false,
+    "annotations": {"role": "reviewer"},
+    "parent_session_id": null,
     "spawned_by": null,
     "spawn_root": null,
-    "annotations": {"role": "reviewer"}
+    "created_at": "2025-03-10T14:30:00+00:00",
+    "last_new_content_at": "2025-03-10T15:45:00+00:00",
+    "context_usage": 85000,
+    "context_max": 200000,
+    "total_cost": 1.801,
+    "user_message_count": 12,
+    "model": {"raw": "claude-opus-4-20250514", "family": "opus", "version": "4"},
+    "git_branch": "feature/auth",
+    "archived": false,
+    "hidden": false,
+    "pinned": null,
+    "stale": false,
+    "unavailable_reason": null,
+    "mute_on_user_turn": false,
+    "has_artifacts": false,
+    "has_plan": true,
+    "has_workflows": false,
+    "has_tasks": true,
+    "has_goals": false,
+    "process": {"state": "user_turn"}
   }
 ]
 ```
 
+With `--full` (and by default before 2026-10-01), each row is the full payload `session <ID>` returns: the fields above plus `last_line`, `mtime`, the `last_started_at` / `last_updated_at` / `last_stopped_at` / `last_viewed_at` timestamps, `slug`, `compute_version_up_to_date`, `self_cost` / `subagents_cost`, `cwd`, `git_directory`, the agent-settings bundle (`permission_mode`, `selected_model`, `effort`, `thinking_enabled`, `claude_in_chrome`, `fast_mode`), `compacted`, `layout`, `browser_url`, `tasks`, `plan_paths`, `goals`, `hybrid`, `artifacts_dir` — and a five-field `process` block.
+
 ### Key fields
 
 - `provider` — `"claude_code"` or `"codex"`. Determines item schema and supported settings.
-- `slug` — provider short id (e.g. Codex subagent nickname), or `null`.
+- `slug` — provider short id (e.g. Codex subagent nickname), or `null`. `--full` only.
 - `parent_session_id` — `null` for regular sessions, set for subagents.
 - `model` — `{"raw": "...", "family": "...", "version": "..."}`.
 - `context_max` / `context_usage` — max context window and current usage in tokens.
-- `compacted` — whether the session has been compacted at least once.
+- `compacted` — whether the session has been compacted at least once. `--full` only.
 - `last_new_content_at` — most recent item appended.
-- `last_viewed_at` — when the user last opened the session in TwiCC.
+- `last_viewed_at` — when the user last opened the session in TwiCC. `--full` only.
 - `hidden` — whether the session is hidden from all listings and broadcasts.
 - `spawned_by` — session ID that spawned this session, or `null`.
 - `spawn_root` — root session ID for the spawned-session tree, or `null` before a session joins one.

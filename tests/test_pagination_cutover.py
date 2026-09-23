@@ -1,7 +1,7 @@
 """Tests for the dated cutover to the pagination envelope.
 
 Design: docs/plans/2026-09-08-pagination-cutover-design.md. Every test drives a
-real command on one side of ``PAGINATION_CUTOVER`` or the other. The pinned
+real command on one side of ``LISTING_CUTOVER`` or the other. The pinned
 value is always **naive**: the constant is a local wall-clock instant, and
 comparing it against an aware datetime raises ``TypeError``.
 """
@@ -30,12 +30,12 @@ FUTURE = datetime(2200, 1, 1)   # noqa: DTZ001 — naive, like the constant
 
 @pytest.fixture
 def before(monkeypatch):
-    monkeypatch.setattr(_output, "PAGINATION_CUTOVER", FUTURE)
+    monkeypatch.setattr(_output, "LISTING_CUTOVER", FUTURE)
 
 
 @pytest.fixture
 def after(monkeypatch):
-    monkeypatch.setattr(_output, "PAGINATION_CUTOVER", PAST)
+    monkeypatch.setattr(_output, "LISTING_CUTOVER", PAST)
 
 
 @pytest.fixture
@@ -67,16 +67,16 @@ def read(capsysbinary):
 
 
 def test_the_predicate_flips_at_the_constant():
-    cutover = _output.PAGINATION_CUTOVER
-    assert _output.pagination_is_default(cutover - timedelta(minutes=1)) is False
-    assert _output.pagination_is_default(cutover) is True
+    cutover = _output.LISTING_CUTOVER
+    assert _output.listing_cutover_passed(cutover - timedelta(minutes=1)) is False
+    assert _output.listing_cutover_passed(cutover) is True
 
 
 def test_the_predicate_refuses_an_aware_now():
     """The constant is naive local time; `timezone.now()` would raise TypeError
     deep inside a command body, so it is rejected up front instead."""
     with pytest.raises(ValueError, match="naive datetime"):
-        _output.pagination_is_default(datetime.now(UTC))
+        _output.listing_cutover_passed(datetime.now(UTC))
 
 
 # --- phase 1: the shape does not move, a notice is emitted ------------------
@@ -100,7 +100,7 @@ def test_before_the_cutover_a_flagless_call_is_notified(before, project, capsysb
 
 
 def test_the_date_comes_from_the_constant(before, project, capsysbinary, monkeypatch):
-    monkeypatch.setattr(_output, "PAGINATION_CUTOVER", datetime(2199, 3, 4))  # noqa: DTZ001
+    monkeypatch.setattr(_output, "LISTING_CUTOVER", datetime(2199, 3, 4))  # noqa: DTZ001
     make_sessions(project, 1)
     cli_sessions.main(project=project.id)
     assert "2199-03-04" in read(capsysbinary)[1]
@@ -108,7 +108,8 @@ def test_the_date_comes_from_the_constant(before, project, capsysbinary, monkeyp
 
 def test_a_migrated_caller_is_left_alone(before, project, capsysbinary):
     make_sessions(project, 3)
-    cli_sessions.main(project=project.id, limit=2, paginated=True)
+    # `full=True` answers the other migration, whose notice would otherwise fill `err`.
+    cli_sessions.main(project=project.id, limit=2, paginated=True, full=True)
     payload, err = read(capsysbinary)
     assert set(payload) == {"items", "pagination"}
     assert err == ""
@@ -225,7 +226,8 @@ def test_the_rpc_path_carries_the_notice_in_the_envelope(before, project):
     from twicc.rpc.invoker import invoke
 
     make_sessions(project, 1)
-    result = invoke(["sessions", "--project", project.id])
+    # --full isolates the pagination notice from the slim one.
+    result = invoke(["sessions", "--project", project.id, "--full"])
     assert len(result.warnings) == 1
     assert result.warnings[0].startswith("twicc: from ")
 
@@ -241,8 +243,8 @@ def test_notices_do_not_accumulate_across_invocations(before, project):
     from twicc.rpc.invoker import invoke
 
     make_sessions(project, 1)
-    invoke(["sessions", "--project", project.id])
-    assert len(invoke(["sessions", "--project", project.id]).warnings) == 1
+    invoke(["sessions", "--project", project.id, "--full"])
+    assert len(invoke(["sessions", "--project", project.id, "--full"]).warnings) == 1
 
 
 def test_mcp_is_never_notified(before, project):
@@ -278,7 +280,7 @@ def test_a_failing_command_still_carries_its_notice(before, project):
 def _isolate_logger(monkeypatch, *, handlers):
     """Drive the log branch explicitly, on a logger the harness cannot reach.
 
-    Patching the real ``twicc.cli.pagination`` logger does not survive: every
+    Patching the real ``twicc.cli.cutover`` logger does not survive: every
     command body calls ``django.setup()``, which re-applies ``dictConfig``, and
     ``settings_test`` sets ``disable_existing_loggers: True`` — so the logger is
     re-disabled and its handlers wiped mid-test. Production sets that flag to
@@ -305,7 +307,7 @@ def test_the_log_carrier_fires_when_a_handler_exists(before, project, capsysbina
 
     _isolate_logger(monkeypatch, handlers=[Collect()])
     make_sessions(project, 1)
-    cli_sessions.main(project=project.id)
+    cli_sessions.main(project=project.id, full=True)
     assert len(records) == 1
     assert "--paginated" in records[0].getMessage()
 
@@ -315,7 +317,7 @@ def test_the_log_carrier_is_skipped_without_a_handler(before, project, capsysbin
     ``logging.lastResort``, which passes anything at WARNING."""
     _isolate_logger(monkeypatch, handlers=[])
     make_sessions(project, 1)
-    cli_sessions.main(project=project.id)
+    cli_sessions.main(project=project.id, full=True)
     _, err = read(capsysbinary)
     assert err.count("twicc: from ") == 1
 
@@ -382,7 +384,7 @@ def test_the_mcp_descriptions_match_the_side_of_the_cutover_we_are_on():
     assert set(described) == listings
 
     announced = {n for n, d in described.items() if d.startswith("DEPRECATION")}
-    if _output.pagination_is_default():
+    if _output.listing_cutover_passed():
         assert announced == set(), "the migration is over; the notice should be gone"
     else:
         assert announced == listings, f"no notice in: {sorted(listings - announced)}"

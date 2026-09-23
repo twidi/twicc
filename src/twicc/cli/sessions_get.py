@@ -20,7 +20,7 @@ can legitimately carry a live process block.
 
 from __future__ import annotations
 
-from twicc.cli._output import emit_json
+from twicc.cli._output import emit_json, slim_notice
 
 
 # Cached null-filled template for the placeholder shape. We derive it
@@ -47,16 +47,18 @@ def _build_placeholder_template() -> dict:
     return {k: None for k in serialize_session(sample)}
 
 
-def main(session_ids: list[str], *, slim: bool = False) -> None:
+def main(session_ids: list[str], *, slim: bool = False, full: bool = False) -> None:
     """Emit one JSON entry per session_id (placeholder when missing).
 
-    ``slim`` applies the same projection as ``twicc sessions --slim``, on the
-    placeholders too: a batch whose rows changed shape depending on whether the
-    id resolved would be worse than no projection at all.
+    The slim mode (``--slim``, or the default past the cutover) applies the same
+    projection as ``twicc sessions``, on the placeholders too: a batch whose rows
+    changed shape depending on whether the id resolved would be worse than no
+    projection at all.
     """
     import django
 
     django.setup()
+    slim = slim_notice("sessions get", slim, full)
 
     from twicc.core.models import Session
     from twicc.core.serializers import serialize_session

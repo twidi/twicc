@@ -6,7 +6,9 @@ import orjson
 
 import typer
 
-from twicc.cli._output import emit_error, emit_json, emit_list, pagination_notice, resolve_limit
+from twicc.cli._output import (
+    emit_error, emit_json, emit_list, pagination_notice, resolve_limit, slim_notice,
+)
 
 
 def _get_session(session_id: str):
@@ -366,12 +368,13 @@ def messages(
 
 
 def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
-          paginated: bool = False, slim: bool = False) -> None:
+          paginated: bool = False, slim: bool = False, full: bool = False) -> None:
     """List subagents of a session as JSON to stdout."""
     import django
 
     django.setup()
     paginated = pagination_notice("session agents", paginated, default_limit=20)
+    slim = slim_notice("session agents", slim, full)
 
     from twicc.core.models import Session
     from twicc.core.serializers import serialize_session, slim_session

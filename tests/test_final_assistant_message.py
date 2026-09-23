@@ -13,11 +13,14 @@ which is the whole point of routing both through ``parse_item_content``.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import orjson
 import pytest
 import typer
 from django.utils import timezone
 
+from twicc.cli import _output
 from twicc.cli import session as cli_session
 from twicc.core.enums import ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
@@ -310,14 +313,15 @@ def test_get_user_messages_still_stops_at_the_limit(project, provider, lines, mo
 
 
 @pytest.mark.parametrize(("provider", "lines"), TURNS)
-def test_cli_messages_exposes_final_on_every_entry(project, provider, lines, capsysbinary):
+def test_cli_messages_exposes_final_on_every_entry(project, provider, lines, capsysbinary, monkeypatch):
     session = make_session(project, provider)
     add_items(session, lines)
 
+    # Pinned past ``LISTING_CUTOVER``, where every listing is wrapped in the
+    # ``{items, pagination}`` envelope. Naive, like the constant it replaces.
+    monkeypatch.setattr(_output, "LISTING_CUTOVER", datetime(2000, 1, 1))  # noqa: DTZ001
     cli_session.messages(session.id)
 
-    # Past ``PAGINATION_CUTOVER`` every listing is wrapped in the
-    # ``{items, pagination}`` envelope.
     entries = orjson.loads(capsysbinary.readouterr().out)["items"]
     assert [(entry["text"], entry["is_final"]) for entry in entries] == EXPECTED_TURN
     assert [entry["role"] for entry in entries] == [

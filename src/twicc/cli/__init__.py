@@ -22,8 +22,9 @@ ensure_env_loaded()
 
 from twicc.cli._drop_request.project import derive_project_id  # noqa: E402
 from twicc.cli._output import (  # noqa: E402
-    CUTOVER_NOTICE, CUTOVER_NOTICE_OBJECT, PAGINATED_HELP, SLIM_HELP,
-    emit_error, limit_help,
+    CUTOVER_NOTICE, CUTOVER_NOTICE_OBJECT, FULL_HELP, PAGINATED_HELP,
+    SESSIONS_GET_IDS_HELP, SLIM_CUTOVER_NOTICE, SLIM_HELP, TOPOLOGY_CUTOVER_NOTICE,
+    TOPOLOGY_FULL_HELP, TOPOLOGY_SLIM_HELP, emit_error, limit_help,
 )
 from twicc.version import get_version  # noqa: E402
 
@@ -207,7 +208,7 @@ def workspace(
 
 sessions_app = typer.Typer(
     name="sessions",
-    help=CUTOVER_NOTICE + "List sessions, or look up specific session_ids in batch.",
+    help=CUTOVER_NOTICE + SLIM_CUTOVER_NOTICE + "List sessions, or look up specific session_ids in batch.",
     invoke_without_command=True,
 )
 app.add_typer(sessions_app)
@@ -226,6 +227,7 @@ def _sessions_default(
     workspace: str = typer.Option(None, "--workspace", help="Filter by workspace ID (only sessions of projects in that workspace, worktrees included). Mutually exclusive with --project."),
     limit: int = typer.Option(None, help=limit_help("sessions", 20)),
     slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
+    full: bool = typer.Option(False, "--full", help=FULL_HELP),
     provider: str = typer.Option(
         None, "--provider",
         help="Filter by backend provider (e.g. 'claude_code', 'codex').",
@@ -328,6 +330,9 @@ def _sessions_default(
     if include_hidden and only_hidden:
         emit_error("Error: --include-hidden and --only-hidden are mutually exclusive.", code=2)
 
+    if slim and full:
+        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
+
     if sum(x is not None for x in (spawned_by, spawn_tree, descendants, siblings)) > 1:
         emit_error(
             "Error: --spawned-by, --spawn-tree, --descendants and --siblings are mutually exclusive.",
@@ -358,6 +363,7 @@ def _sessions_default(
         annotation=annotation,
         paginated=paginated,
         slim=slim,
+        full=full,
         provider=provider,
         state=state,
         active=active,
@@ -584,33 +590,34 @@ def _sessions_wait_reply(
     )
 
 
-@sessions_app.command(name="get")
+@sessions_app.command(
+    name="get",
+    # An explicit help, not the docstring: the deprecation prefix must precede
+    # it, and the help is also the MCP tool description.
+    help=SLIM_CUTOVER_NOTICE + (
+        "Look up sessions by id (placeholder for missing, includes subagents).\n\n"
+        "Unlike ``twicc sessions``, ``get`` takes no filter flags: when the "
+        "caller names the sessions it cares about, layering archived / "
+        "hidden / subagent filters on top would only blur the meaning of the "
+        "placeholder rows."
+    ),
+)
 def _sessions_get(
     session_ids: list[str] = typer.Argument(
         ...,
         metavar="SESSION_ID...",
-        help=(
-            "One or more session IDs to look up. The output mirrors the input "
-            "order (duplicates collapsed, first occurrence wins). Each entry "
-            "is either the full session metadata or a placeholder with "
-            "`known: false` when no Session row exists for that id. "
-            "Subagents, archived and hidden sessions are returned just like "
-            "regular ones — the listing filters don't apply when you name "
-            "explicit ids."
-        ),
+        help=SESSIONS_GET_IDS_HELP,
     ),
     slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
+    full: bool = typer.Option(False, "--full", help=FULL_HELP),
 ) -> None:
-    """Look up sessions by id (placeholder for missing, includes subagents).
+    """Look up sessions by id (placeholder for missing, includes subagents)."""
+    if slim and full:
+        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
 
-    Unlike ``twicc sessions``, ``get`` takes no filter flags: when the
-    caller names the sessions it cares about, layering archived /
-    hidden / subagent filters on top would only blur the meaning of the
-    placeholder rows.
-    """
     from twicc.cli.sessions_get import main as sessions_get_main
 
-    sessions_get_main(session_ids, slim=slim)
+    sessions_get_main(session_ids, slim=slim, full=full)
 
 
 session_app = typer.Typer(
@@ -926,18 +933,22 @@ def _session_cancel_questions(
                timeout=timeout)
 
 
-@session_app.command(help=CUTOVER_NOTICE + "List subagents of a session as JSON.")
+@session_app.command(help=CUTOVER_NOTICE + SLIM_CUTOVER_NOTICE + "List subagents of a session as JSON.")
 def agents(
     ctx: typer.Context,
     limit: int = typer.Option(None, help=limit_help("subagents", 20)),
     slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
+    full: bool = typer.Option(False, "--full", help=FULL_HELP),
     offset: int = typer.Option(0, help="Skip first N subagents."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """List subagents of a session as JSON."""
+    if slim and full:
+        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
+
     from twicc.cli.session import agents as session_agents
 
-    session_agents(ctx.obj, limit=limit, offset=offset, paginated=paginated, slim=slim)
+    session_agents(ctx.obj, limit=limit, offset=offset, paginated=paginated, slim=slim, full=full)
 
 
 @session_app.command()
@@ -1314,7 +1325,7 @@ def usage() -> None:
     usage_main()
 
 
-@app.command()
+@app.command(help=TOPOLOGY_CUTOVER_NOTICE + "Show the spawned-session tree containing a session as JSON.")
 def topology(
     session_id: str = typer.Argument(
         help=(
@@ -1331,19 +1342,12 @@ def topology(
             "data marked unavailable."
         ),
     ),
+    slim: bool = typer.Option(False, "--slim", help=TOPOLOGY_SLIM_HELP),
+    full: bool = typer.Option(False, "--full", help=TOPOLOGY_FULL_HELP),
     full_sessions: bool = typer.Option(
         False,
         "--full-sessions/--no-full-sessions",
-        help=(
-            "Emit the full session serialization for every node (same shape as "
-            "``twicc session <id>``). Disabled by default: each node carries a "
-            "slim subset (id, project_id, provider, title, annotations, "
-            "spawned_by, spawn_root, created_at, last_new_content_at, "
-            "context_usage, context_max, total_cost, directory). Use this when "
-            "you need fields like timestamps, costs breakdown or agent "
-            "settings; otherwise call ``twicc session <id>`` for the few nodes "
-            "you actually care about."
-        ),
+        help="Deprecated alias of --full, kept for existing callers.",
     ),
     annotation: list[str] = typer.Option(
         [],
@@ -1368,12 +1372,18 @@ def topology(
     ),
 ) -> None:
     """Show the spawned-session tree containing a session as JSON."""
+    # The alias only ever adds: `--no-full-sessions` never cancels `--full`.
+    full = full or full_sessions
+    if slim and full:
+        emit_error("Error: --slim and --full (or --full-sessions) are mutually exclusive.", code=2)
+
     from twicc.cli.topology import main as topology_main
 
     topology_main(
         session_id,
         include_processes=processes,
-        full_sessions=full_sessions,
+        slim=slim,
+        full=full,
         annotation=annotation,
         siblings=siblings,
     )

@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc sessions`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit
+from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit, slim_notice
 
 
 def build_filtered_queryset(
@@ -209,6 +209,7 @@ def main(
     annotation: list[str] | None = None,
     paginated: bool = False,
     slim: bool = False,
+    full: bool = False,
     provider: str | None = None,
     state: list[str] | None = None,
     active: bool = False,
@@ -226,6 +227,7 @@ def main(
 
     django.setup()
     paginated = pagination_notice("sessions", paginated, default_limit=20)
+    slim = slim_notice("sessions", slim, full)
 
 
     qs, process_rows = build_filtered_queryset(

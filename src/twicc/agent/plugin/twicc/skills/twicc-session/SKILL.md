@@ -16,7 +16,7 @@ Inspect, wait on, unblock, or stop a single session. Twelve sub-commands:
 - `answer-questions [--request-id ID] [--choice 'ID=VALUE']` — answer the question it is waiting on.
 - `cancel-questions [--request-id ID]` — decline it.
 - `stop` — stop this session's live agent (`--timeout`, `--force` for a SIGKILL without the grace window). Idempotent: stopping an already-stopped session still reports `stopped`. Same operation as `process <ID> stop`, which it is meant to replace.
-- `agents` — list subagents spawned by this session. `--slim` returns the reduced projection (see the `twicc-sessions` skill), about 80% lighter. Rows carry the same `process` block as `sessions`, always `null` here: a subagent runs inside its parent's process and never has one of its own.
+- `agents` — list subagents spawned by this session. Rows use the reduced projection or the full payload like `sessions` (see the `twicc-sessions` skill): **before 2026-10-01 the full payload is the default and `--slim` opts in; from that date the reduced one is the default, `--slim` is a no-op, and `--full` brings the full payload back**. Until then a call with neither flag prints a one-line notice on stderr (in the RPC `warnings` key; never on MCP). Rows carry the same `process` block as `sessions`, always `null` here: a subagent runs inside its parent's process and never has one of its own.
 - `plan [PATH] [--list]` — the session's tracked plan documents (both providers): most recently updated one by default, a specific one by path, `--list` to enumerate.
 - `workflows [--limit N] [--offset N] [--paginated] [--result] [--full]` — list this session's workflows (Claude Code only).
 - `workflow <ID>` — show one (Claude Code only).
@@ -51,7 +51,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 $TWICC session <SESSION_ID>
 ```
 
-Works for regular sessions and subagents. The same row `sessions get <SESSION_ID>` returns for one id, `process` block included, minus its `known` flag — reach for that one for several ids, for `--slim`, or for an id this one refuses: an id with no row at all comes back as a `known: false` placeholder, and a session with no user message — one still being computed, or one that never had a user turn at all — comes back in full with `known: true`; both exit 1 here.
+Works for regular sessions and subagents. The same row `sessions get <SESSION_ID>` returns for one id, `process` block included, minus its `known` flag — reach for that one for several ids, for the reduced projection, or for an id this one refuses: an id with no row at all comes back as a `known: false` placeholder, and a session with no user message — one still being computed, or one that never had a user turn at all — comes back in full with `known: true`; both exit 1 here.
 
 ```json
 {
@@ -141,7 +141,7 @@ The range and the window answer different questions and stack. The range is an a
 
 **To reach the end of a filtered result, use `--tail`.** A filtered result has no line address, so without it you would need a first call to learn `total`, and the session can grow in between. Under `--tail N` the reported window is the range it covers (`offset = total - N`) and `has_more` means matches remain **before** it.
 
-`--paginated` adds the `{items, pagination}` envelope and caps the page at **50** when no `--limit` is given, so `total` tells you how many items match before you pull them all. **Before 2026-09-15 that capping is opt-in; from that date it is the only behaviour**, so a call with no `--limit` returns a page rather than every item in the session. It also counts as a selector on its own — `content --paginated` is a valid browse entry point, since a bounded page cannot dump the session.
+`--paginated` adds the `{items, pagination}` envelope and caps the page at **50** when no `--limit` is given, so `total` tells you how many items match before you pull them all. **Before 2026-10-01 that capping is opt-in; from that date it is the only behaviour**, so a call with no `--limit` returns a page rather than every item in the session. It also counts as a selector on its own — `content --paginated` is a valid browse entry point, since a bounded page cannot dump the session.
 
 `--contains` is **case-insensitive** and matches the **raw JSONL string** (the verbatim line as stored). Consequences: it also matches JSON keys (e.g. `"role"`, `"type"`), and embedded newlines are escaped (`\n`), so a query spanning a line break won't match. This is the only way to substring-search across all raw items (tool_use/tool_result included).
 
@@ -176,10 +176,10 @@ User + assistant messages only, uniform shape across providers. No tool calls, n
 - `--role user|assistant` — keep only one side.
 - `--contains TEXT` — keep only messages whose text contains the substring. Repeatable and **AND-combined** (a message must contain every term). **Case-insensitive.** Unlike `content`'s `--contains` (which matches the raw JSONL), this matches the extracted `text` shown below — no JSON keys, no tool noise. Applied **before** `--tail`/`--limit`/`--offset`, so paging windows the matching messages.
 - `--is-final true|false|null` — keep only messages whose `is_final` field (see below) has one of these values. Repeatable and **OR-combined** — the opposite of `--contains`, because a message carries a single value, so an AND would always be empty. Omit it and nothing is filtered: **`null` is only ever dropped when you ask for a set without it.** Passing all three is the identity — exactly the no-flag answer. Applied **before** `--tail`/`--limit`/`--offset`.
-- `--limit N` — cap results. Since the 2026-09-15 cutover a call without it pages at **50**, so pass it (or `--tail`) whenever you need more, and read `has_more`.
+- `--limit N` — cap results. **Before 2026-10-01 a call without it returns every message; from that date it pages at 50**, so pass it (or `--tail`) whenever you need more, and read `has_more`.
 - `--offset N` — skip first N messages (default: 0).
 - `--tail N` — return the last N messages. Mutually exclusive with `--limit`/`--offset`.
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. Without an explicit `--limit` the page size becomes **50** instead of "everything". **Before 2026-09-15 that is opt-in; from that date it is the only behaviour**, so an unfiltered call returns a page rather than the whole session. With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. When nothing filters after extraction — no `--contains`, and no `--is-final` (or one listing all three values, which filters nothing) — `total` counts raw items, a few of which extract to nothing and are dropped, so `has_more` can be a rare false positive, never a false negative.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. Without an explicit `--limit` the page size becomes **50** instead of "everything". **Before 2026-10-01 that is opt-in; from that date it is the only behaviour**, so an unfiltered call returns a page rather than the whole session. With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. When nothing filters after extraction — no `--contains`, and no `--is-final` (or one listing all three values, which filters nothing) — `total` counts raw items, a few of which extract to nothing and are dropped, so `has_more` can be a rare false positive, never a false negative.
 
 ```json
 {"items": [
@@ -361,7 +361,7 @@ Exit 3 carries the reason: `no_pending_question`, `ambiguous_request`,
 ### Agents — list subagents
 
 ```bash
-$TWICC session <SESSION_ID> agents [--limit N] [--offset N] [--paginated] [--slim]
+$TWICC session <SESSION_ID> agents [--limit N] [--offset N] [--paginated] [--slim | --full]
 ```
 
 Only valid on parent sessions (errors on subagents). Returns provider-internal subagents, not sessions created via `create-session`; use `$TWICC topology <ID|self>` for the `spawned_by` tree (skill: `twicc-topology`). Ordered by most recently active.
