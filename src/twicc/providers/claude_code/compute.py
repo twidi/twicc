@@ -562,6 +562,28 @@ def _tasks_data_to_todos(tasks_data) -> list[dict] | None:
 
 
 # =============================================================================
+# Post-compaction context estimate
+# =============================================================================
+
+# Rough text-to-token ratio, only used to strip the first user prompt from the
+# context baseline (see ``ClaudeCodeSessionCompute._lookup_context_baseline``).
+_CHARS_PER_TOKEN = 4
+
+
+def _user_text_length(content) -> int:
+    """Length of the text part of a user message ``content`` (media ignored)."""
+    if isinstance(content, str):
+        return len(content)
+    if not isinstance(content, list):
+        return 0
+    return sum(
+        len(block.get("text") or "")
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
+# =============================================================================
 # Live Sync — watcher entry point
 # =============================================================================
 
@@ -594,6 +616,10 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         bounded growth is acceptable for typical install scales (a few KB
         per session, dozens to low hundreds of sessions per long-running
         process).
+      * ``_context_baselines`` — per-session context baseline used to
+        estimate the context usage right after a compaction (see
+        :meth:`_estimate_post_compaction_context`). One int per session,
+        looked up lazily from the DB, pruned like the task states.
 
     :func:`get_compute` returns a per-process singleton.
     """
@@ -607,14 +633,19 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         # _SessionTaskState). Reconstructed lazily on the first
         # transform_inline that needs it (see _rebuild_state_if_missing).
         self._session_task_states: dict[str, _SessionTaskState] = {}
+        # {session_id: context baseline}, see _lookup_context_baseline. Only
+        # found values are cached, so a miss is retried on the next compaction.
+        self._context_baselines: dict[str, int] = {}
 
     def begin_session_compute(self, session_id: str) -> None:
         self._monitor_task_to_tool_use_id[session_id] = {}
         self._session_task_states.pop(session_id, None)
+        self._context_baselines.pop(session_id, None)
 
     def end_session_compute(self, session_id: str) -> None:
         self._monitor_task_to_tool_use_id.pop(session_id, None)
         self._session_task_states.pop(session_id, None)
+        self._context_baselines.pop(session_id, None)
 
     def extra_session_fields(self, session: Session) -> dict:
         # Detect whether this session has any workflow run (a ``wf_*.json`` at
@@ -1751,6 +1782,10 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         seen_message_ids: set[str],
         current_model: str | None,  # noqa: ARG002 (model lives on the line itself)
     ) -> None:
+        if parsed_json.get("type") == "system" and parsed_json.get("subtype") == "compact_boundary":
+            item.context_usage = self._estimate_post_compaction_context(item, parsed_json)
+            return
+
         message = parsed_json.get("message", {})
         if not isinstance(message, dict):
             return
@@ -1793,6 +1828,77 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
                     item.cost = get_provider_helpers(Provider.CLAUDE_CODE).calculate_line_cost(
                         token_usage, model_id, dt.date(),
                     )
+
+    def _estimate_post_compaction_context(self, item: SessionItem, parsed_json: dict) -> int | None:
+        """Estimate the context usage right after a compaction.
+
+        Without it, the session keeps its pre-compaction value (e.g. 95 %)
+        until the next assistant message, and the agent reads that stale
+        figure in its injected context. The estimate is only temporary: the
+        next assistant ``usage`` replaces it.
+
+        ``compactMetadata.postTokens`` (CLI ~2.1.206+) counts the messages
+        kept by the compaction (summary, re-read files, invoked skills, ...)
+        but not the system prompt, the tools, CLAUDE.md or the hooks output.
+        That missing part is the baseline (see :meth:`_lookup_context_baseline`).
+        Either part alone is used when the other one is unknown.
+        """
+        metadata = parsed_json.get("compactMetadata")
+        post_tokens = metadata.get("postTokens") if isinstance(metadata, dict) else None
+        if not isinstance(post_tokens, int) or post_tokens < 0:
+            post_tokens = 0
+
+        session_id = item.session_id
+        baseline = self._context_baselines.get(session_id)
+        if baseline is None:
+            baseline = self._lookup_context_baseline(session_id, item.line_num)
+            if baseline is not None:
+                self._context_baselines[session_id] = baseline
+
+        # ``None`` rather than 0: a 0 would overwrite the session's last
+        # known value (see the zero-usage guard in compute_item_cost_and_usage).
+        return (post_tokens + (baseline or 0)) or None
+
+    def _lookup_context_baseline(self, session_id: str, before_line_num: int) -> int | None:
+        """Return the context usage of the session's first API call, minus its prompt text.
+
+        This approximates the fixed part of the context (system prompt, tools,
+        CLAUDE.md, hooks output), which a compaction keeps. Only the text of
+        the first user message is subtracted, with a chars/4 ratio: media
+        blocks and @-mentioned files stay in the baseline, so the estimate
+        can be a bit high. Returns ``None`` when no assistant usage exists
+        before ``before_line_num``.
+
+        Reads raw ``content`` from the DB, so it works both in batch (where
+        the computed ``context_usage`` of earlier items may not be stored
+        yet) and in live mode.
+        """
+        user_chars = 0
+        candidates = SessionItem.objects.filter(
+            session_id=session_id, line_num__lt=before_line_num,
+        ).order_by("line_num").only("content")
+        for candidate in candidates.iterator(chunk_size=20):
+            try:
+                parsed = orjson.loads(candidate.content)
+            except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            message = parsed.get("message")
+            if not isinstance(message, dict):
+                continue
+            line_type = parsed.get("type")
+            if line_type == "user":
+                if not parsed.get("isMeta") and not parsed.get("isCompactSummary"):
+                    user_chars += _user_text_length(message.get("content"))
+            elif line_type == "assistant":
+                usage = message.get("usage")
+                if not isinstance(usage, dict):
+                    continue
+                context_usage = calculate_line_context_usage(to_token_usage(usage))
+                if context_usage:
+                    return max(context_usage - user_chars // _CHARS_PER_TOKEN, 0)
+        return None
 
     def is_tool_result_item(self, parsed_json: dict) -> bool:
         content = get_message_content_list(parsed_json, "user")

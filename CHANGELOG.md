@@ -28,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **Context usage after a compaction** — No longer shows the pre-compaction value in Claude sessions.
 - **Narrow screens** — The page no longer scrolls to a large empty area when the sidebar shows over the content, on a phone or in a narrow window.
 
 ## [1.94.2] - 2026-09-07
