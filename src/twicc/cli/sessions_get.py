@@ -101,10 +101,10 @@ def main(session_ids: list[str], *, slim: bool = False, full: bool = False) -> N
             entry["known"] = True
         results.append(entry)
 
-    # Per entry, AFTER the projection — never into _PLACEHOLDER_TEMPLATE,
-        # which is a module global the MCP server keeps alive across tool
-        # calls: one --processes run would then leave the key in every later
-        #
+    # Per entry, AFTER the projection — never into _PLACEHOLDER_TEMPLATE, which
+    # is a module global the MCP server keeps alive across tool calls: a
+    # `process` key written there would leak into every later placeholder.
+    #
     # An unknown id is looked up like any other. A ProcessRun row is created
     # before the watcher writes the Session row, so `known: false` with a live
     # block is a session that just started, not a bug.

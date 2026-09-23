@@ -71,8 +71,20 @@ def after(monkeypatch):
 
 @pytest.fixture
 def no_backend(monkeypatch):
-    """No live backend: the bodies that do run exit fast instead of polling."""
+    """No live backend: the bodies that do run exit fast instead of polling.
+
+    Both probes are patched. ``settings_test`` does not isolate the data dir, so
+    an unpatched drop-request heartbeat sees the developer's own running TwiCC
+    and a stop would be delivered to it — and the outcome would then depend on
+    whether one happens to run.
+    """
+    from twicc.cli._drop_request.discovery import ServerDownError
+
+    def server_down():
+        raise ServerDownError("TwiCC is not running.")
+
     monkeypatch.setattr("twicc.cli._twicc_info.resolve_live_twicc", lambda: None)
+    monkeypatch.setattr("twicc.cli._drop_request.transport.ensure_server_available", server_down)
 
 
 @pytest.fixture
@@ -136,7 +148,7 @@ def _call_tool(name, arguments):
 # behaviour, untouched by the notice placed in front of it.
 BEFORE_EXIT_CODES = {
     "processes": 1, "processes get": 1, "processes stop": 2, "processes wait": 2,
-    "process": 1, "process stop": 1, "process wait": 2,
+    "process": 1, "process stop": 2, "process wait": 2,
 }
 
 
