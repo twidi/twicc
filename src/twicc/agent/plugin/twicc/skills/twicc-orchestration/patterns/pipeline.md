@@ -15,7 +15,8 @@ Shape: chain · files (+ short messages) · staged · chain (no merge) · often 
 1. Define the stages and the artifact handed between them.
 2. Run stage K: brief it with the location of stage K-1's output in the shared
    scratch (`scratch_dir`) and where to write its own.
-3. Wait for stage K (`processes wait --spawned-by self ...`), confirm its artifact,
+3. Wait for stage K (`create-session --wait-reply`, or
+   `sessions wait-reply <STAGE_K_ID> --since 2000-01-01`), confirm its artifact,
    then start stage K+1.
 4. The last stage's artifact is the result.
 

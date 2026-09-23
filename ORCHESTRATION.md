@@ -29,9 +29,9 @@ Orchestration is built entirely from the ordinary commands in [`SKILLS-AND-CLI.m
 
 - **Spawning** — a parent creates a child with `create-session`; the prompt carries the child's mode, job, and how to report back. A child starts with no memory of its parent, so every brief is self-contained.
 - **Pushing up** — a child reports results with `send-message parent`.
-- **Broadcasting** — one message reaches many children at once with `send-messages --spawned-by self --message "…"`: to steer them, request status, or ask for a graceful wrap-up (`sent` ≠ done, so a `processes wait` follows).
+- **Broadcasting** — one message reaches many children at once with `send-messages --spawned-by self --message "…"`: to steer them, request status, or ask for a graceful wrap-up (`sent` ≠ done, so pass `--wait-reply` to wait for the answers).
 - **Pulling** — a parent can read any child's transcript at will with `session <id> messages --tail N`, independent of whether the child can push.
-- **Mapping & tracking** — `topology self` maps the tree, `processes --spawned-by self` tracks the direct children, and `processes wait --spawned-by self ...` / `processes stop --spawned-by self ...` wait on or stop scoped batches.
+- **Mapping & tracking** — `topology self` maps the tree, `sessions --spawned-by self --active` tracks the direct children, and `sessions wait-reply <ids> ...` / `sessions stop <ids> ...` wait on or stop batches.
 - **Tagging** — annotations keep the tree legible (`update-session self annotations set:status=done`), and a whole batch of children can be retagged, hidden, or archived at once with `update-sessions <op> --spawned-by self ...`.
 
 ## Communication
@@ -55,7 +55,7 @@ Orchestration uses only the two **non-interactive** extremes of each provider �
 
 ## Annotations: a map of the tree
 
-Annotations are short key/value tags (free-form JSON) on a session. They turn a tree of opaque sessions into something an orchestrator — and, on request, the user — can read at a glance, because `topology self` and `sessions --spawn-tree self` carry each node's annotations, and `sessions` / `processes` / `search` / `topology` can filter by them. For live processes, an annotation is paired with a filiation scope, e.g. `processes --spawned-by self --annotation status=blocked` for direct children, or `processes wait --spawned-by self --annotation job=review user_turn dead --timeout 600` for a scoped barrier.
+Annotations are short key/value tags (free-form JSON) on a session. They turn a tree of opaque sessions into something an orchestrator — and, on request, the user — can read at a glance, because `topology self` and `sessions --spawn-tree self` carry each node's annotations, and `sessions` / `search` / `topology` can filter by them. An annotation is paired with a filiation scope, e.g. `sessions --spawned-by self --annotation status=blocked` for direct children. A barrier on an annotated subset names only that subset's ids (`sessions wait-reply <REVIEW_IDS> --since 2000-01-01`): a child spawned seconds ago matches no filter yet, and named ids are unioned with the filters, never narrowed by them.
 
 Conventional keys (free, not enforced):
 
@@ -83,14 +83,14 @@ A session goes `starting → assistant_turn → user_turn`, then `dead` when its
 
 ## Process control in an orchestration
 
-Live-process commands are scoped operations, never global annotation searches:
+`sessions stop` and `sessions wait-reply` accept `--annotation` alone, across every tree: use them scoped, on a node's own children or subtree.
 
-- **Observing the direct children** with `processes --spawned-by self`, or narrowing them with `processes --spawned-by self --annotation status=blocked`.
-- **Waiting for the direct children** with `processes wait --spawned-by self user_turn dead --timeout <N>`. `--annotation` narrows the wait to a named phase or role when only that subset should participate.
-- **Stopping a selected batch** with `processes stop --spawned-by self --annotation status=cancelled --timeout <N>`, or explicit session ids when the losing or runaway children are known exactly.
-- **Cleaning up a subtree**, only when it is intentionally aborted: `processes stop <manager_id> --descendants <manager_id> --timeout <N>` stops the manager plus its proper descendants.
+- **Observing the direct children** with `sessions --spawned-by self --active`, or narrowing them with `sessions --spawned-by self --annotation status=blocked`. A child spawned seconds ago is not listed yet: `sessions get <id>` reads it.
+- **Waiting for the direct children** with `sessions wait-reply <child ids> --since 2000-01-01 --wait-timeout 300`, named by id. When only a phase or role should participate, name only that subset's ids. The call exits `0` whatever the outcomes: a child still on `timeout` is waited on again (same `--since`, only those ids); `ended`, `provider_error` and `unknown_session` are final.
+- **Stopping a selected batch** with `sessions stop --spawned-by self --annotation status=cancelled --timeout <N>`, or explicit session ids when the losing or runaway children are known exactly.
+- **Cleaning up a subtree**, only when it is intentionally aborted: `sessions stop <manager_id> --descendants <manager_id> --timeout <N>` stops the manager plus its proper descendants (the id and the scope are unioned).
 
-`processes wait` and `processes stop` do not use `--spawn-tree` or `parent`; those controls act on a node's own children/subtree, not on its parent or the entire tree that includes it.
+`sessions stop` has no guardrail: a bare call stops every running session, the caller included, and `parent`, `--spawn-tree` or `--siblings` reach beyond a node's own children.
 
 ## Patterns
 

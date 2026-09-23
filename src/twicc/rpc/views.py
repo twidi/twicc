@@ -9,6 +9,7 @@ import orjson
 from django.db import close_old_connections
 from django.http import HttpRequest, HttpResponse
 
+from twicc.cli._output import RETIRED_COMMANDS, listing_cutover_passed, removal_message
 from twicc.rpc.generator import build_registry, render_argv
 from twicc.rpc.invoker import invoke
 from twicc.rpc.permissions import RPC_SCOPE_FULL, RPC_SCOPE_READ, cookie_scope_allows
@@ -107,6 +108,12 @@ async def dispatch(request: HttpRequest, command_path: str) -> HttpResponse:
                 {"error": "argv must start with an allowed command."}, status=400
             )
     else:
+        # A retired command refuses before its body is validated, so a body
+        # missing a required field gets the removal error, not a 400. The argv
+        # form above needs no such check: the CLI group callback refuses too.
+        command_key = command_path.rstrip("/").replace("/", " ")
+        if command_key in RETIRED_COMMANDS and listing_cutover_passed():
+            return _json({"exit_code": 64, "result": None, "error": removal_message(command_key)})
         ok, err = _validate_body(spec, body)
         if not ok:
             return _json(err, status=400)

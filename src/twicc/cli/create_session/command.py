@@ -293,8 +293,8 @@ def create_session_cmd(
     Pass --wait-reply to keep going until it concludes — an answer, or a pending
     request only a human can clear — and get the answer back
     with the result, in one call. That is the way to collect a worker's
-    output; reach for "twicc process <SESSION_ID> wait <STATE>..." only to ask
-    whether a session is still running, not what it said.
+    output; to check whether it is still running, read `process.state` from
+    "twicc session <SESSION_ID>" or "twicc sessions get <SESSION_ID>...".
     """
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import os

@@ -194,7 +194,15 @@ def validate_batch(
     read_only_paths: frozenset[str],
     external: bool,
     batch_id: str,
+    retired: frozenset[str] = frozenset(),
 ) -> BatchValidation:
+    """Validate a batch before any child runs.
+
+    ``retired`` holds the tool names refused past the cutover whether or not
+    they are still in ``registry`` (they stay listed until the backend
+    restarts): such a child gets ``unknown_tool`` before its arguments are
+    checked, so the batch answers the same on both sides of the restart.
+    """
     schema = BATCH_INPUT_SCHEMAS[name]
     # Structural failure can stop before inspecting any command arguments.
     error = next(_validator(name, orjson.dumps(schema)).iter_errors(arguments), None)
@@ -223,7 +231,7 @@ def validate_batch(
             if tool_name in BATCH_NAMES:
                 yield diagnostic("tool_not_allowed")
                 continue
-            spec = registry.get(tool_name)
+            spec = None if tool_name in retired else registry.get(tool_name)
             if spec is None:
                 yield diagnostic("unknown_tool")
                 continue

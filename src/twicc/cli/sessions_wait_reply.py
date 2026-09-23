@@ -131,10 +131,29 @@ def main(
         return
 
     rows = {s.id: s for s in Session.objects.filter(id__in=targets)}
+    # A session exists as a ProcessRun before the watcher writes its row: one
+    # just spawned is live yet unknown here. It is waited on from line 0, as
+    # `create-session --wait-reply` does — a new transcript holds nothing
+    # older than this wait. The wait loop already copes with the missing row.
+    missing = [sid for sid in targets if sid not in rows]
+    live_unindexed: set = set()
+    if missing:
+        from twicc.cli._process_state import (
+            live_session_ids,
+            load_process_rows,
+            resolve_listing_twicc_pid,
+        )
+
+        live_unindexed = live_session_ids(
+            load_process_rows(missing, resolve_listing_twicc_pid())
+        )
     cursors = {}
     for sid in targets:
         session = rows.get(sid)
         if session is None:
+            if sid in live_unindexed:
+                cursors[sid] = 0
+                continue
             # Named and unknown, or selected by a filter and deleted between
             # the two queries. Reported rather than dropped: the caller must be
             # able to align the result with what they asked for.

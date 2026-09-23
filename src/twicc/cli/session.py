@@ -615,8 +615,20 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
     # that does not exist.
     instant = None if since is None else _parse_instant(since)
 
-    session = _get_session(session_id)
-    if instant is not None:
+    from twicc.core.models import Session
+
+    # The row `_get_session` requires is written by the watcher, after the
+    # agent starts: a session just spawned has a live process and no indexed
+    # transcript yet. It is waited on from line 0, as `create-session
+    # --wait-reply` does — nothing in a new transcript predates this wait.
+    session = Session.objects.filter(
+        id=session_id, created_at__isnull=False, user_message_count__gt=0,
+    ).first()
+    if session is None:
+        if session_id not in _live_session_ids([session_id]):
+            emit_error(f"Error: session '{session_id}' not found.", code=1)
+        cursor = from_line if from_line is not None else 0
+    elif instant is not None:
         cursor = _cursor_at(session, instant)
     elif from_line is not None:
         cursor = from_line
@@ -624,9 +636,9 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
         cursor = session.last_line
 
     reply = wait_for_reply_or_degrade(
-        session.id, since_line_num=cursor, timeout=timeout, want_text=want_text,
+        session_id, since_line_num=cursor, timeout=timeout, want_text=want_text,
     )
-    emit_json({"session_id": session.id, "reply": reply})
+    emit_json({"session_id": session_id, "reply": reply})
 
     # Unlike `--wait-reply`, nothing was sent that must not be reported as a
     # failure: waiting IS the command, so the exit code is allowed to say how
@@ -639,6 +651,17 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
     if outcome == WAIT_FAILED:
         raise typer.Exit(1)
     raise typer.Exit(5)  # timeout, ended, provider_error: no answer came
+
+
+def _live_session_ids(session_ids: list[str]) -> set:
+    """Those of ``session_ids`` with a live process on this TwiCC instance."""
+    from twicc.cli._process_state import (
+        live_session_ids,
+        load_process_rows,
+        resolve_listing_twicc_pid,
+    )
+
+    return live_session_ids(load_process_rows(session_ids, resolve_listing_twicc_pid()))
 
 
 def _parse_instant(since: str) -> datetime:

@@ -159,7 +159,7 @@ $TWICC topology self --siblings
 
 - `$TWICC whoami` — identify the current session. Skill: `twicc-whoami`.
 - `$TWICC sessions --spawned-by <ID|self>` — list direct children. Skill: `twicc-sessions`.
-- `$TWICC processes --spawned-by <ID|self>` — list live child processes. Skill: `twicc-processes`.
+- `$TWICC sessions --spawned-by <ID|self> --active` — list children with a live process. Skill: `twicc-sessions`.
 - `$TWICC send-message <SESSION_ID>` — message a discovered session. Skill: `twicc-send-message`.
 - `$TWICC session <SESSION_ID>` — inspect full metadata for one node. Skill: `twicc-session`.
 

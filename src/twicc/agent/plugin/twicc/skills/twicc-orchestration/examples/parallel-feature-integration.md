@@ -11,8 +11,8 @@ and verifies → refuter tries to break the result.
    manager reads the plan, validates it, then decides the actual slice split.
 2. Spawn producer workers per slice with `--annotation role=producer --annotation slice=<name>`.
    If overlap is likely, producers write patch plans or scratch diffs instead of applying.
-3. Barrier on producers:
-   `processes wait --spawned-by self --annotation role=producer user_turn dead --timeout <N>`.
+3. Barrier on the producers' ids only:
+   `sessions wait-reply <PRODUCER_ID>... --since 2000-01-01 --wait-timeout 300`.
 4. Pull producer outputs and spawn one executor integrator:
    `--annotation role=integrator`, briefed with the accepted producer outputs and target checks.
 5. The integrator applies changes in one working tree, resolves conflicts, runs checks, and reports one result.

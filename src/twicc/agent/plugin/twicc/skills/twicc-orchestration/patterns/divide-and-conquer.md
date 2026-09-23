@@ -23,10 +23,10 @@ whole goal and answers to the user; a manager holds one slice and answers to its
 1. Split your mandate into pieces that are independent *within this level*.
 2. Per piece, pick the mode and brief it (mandate, skills to load, report-back —
    see the hub's briefing): atomic → worker; nested → manager.
-3. Barrier on your direct children:
-   `processes wait --spawned-by self user_turn dead --timeout <N>`.
-   If this level runs several annotated batches, narrow the barrier with
-   `--annotation`, e.g. `processes wait --spawned-by self --annotation phase=audit user_turn dead --timeout <N>`.
+3. Barrier on your direct children, named by id:
+   `sessions wait-reply <CHILD_ID>... --since 2000-01-01 --wait-timeout 300`.
+   If this level runs several annotated batches, name only the ids of the batch
+   you wait on (e.g. the ones spawned with `--annotation phase=audit`).
 4. Collect each deliverable (push as it lands, or pull `session <id> messages --tail 1`;
    bulky → a file in the shared scratch).
 5. Aggregate into ONE deliverable, then report up / present.

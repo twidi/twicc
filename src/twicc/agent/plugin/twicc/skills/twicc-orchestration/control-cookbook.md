@@ -1,47 +1,66 @@
 # Process Control Cookbook
 
 Concrete process-control recipes for leaders and managers. Use these when you
-need exact `processes` commands; otherwise the main orchestration skill is enough.
+need exact `sessions wait-reply` / `sessions stop` commands; otherwise the main
+orchestration skill is enough.
 
 ## Direct-child barrier
 
-Wait for the children you spawned, not grandchildren:
+Wait for the children you spawned, not grandchildren. Name their ids (from each
+`create-session` result): a child spawned seconds ago matches no filter yet.
 
 ```bash
-$TWICC processes wait --spawned-by self user_turn dead --timeout <N>
+$TWICC sessions wait-reply <CHILD_ID>... --since 2000-01-01 --wait-timeout 300
 ```
 
-Use `--all` by default. Use `--first` only for races or queue loops where one
-finished child is enough to move forward.
+`--since 2000-01-01` fits children never messaged since their spawn; for a later
+round, pass the instant captured before that send. Never today's date: a bare
+date is midnight UTC, and a future instant misses an answer already given.
 
-If you also pass explicit session ids, they are added to the filtered wait pool
-and deduplicated; omit explicit ids for a pure direct-child barrier.
+Exit 0 whatever the outcomes: read each `results[id].outcome`. Repeat the same
+call, same `--since`, naming only the ids still on `timeout` (or `wait_failed`);
+`ended`, `provider_error` and `unknown_session` are final. Never loop on
+`summary.concluded == summary.total`: it counts `replied` and
+`awaiting_user_input` only.
+
+Use `--wait-all` (the default). Use `--wait-first` only for races or queue loops
+where one child is enough to move forward.
+
+Adding `--spawned-by self` is safe only when every child is in the barrier:
+named ids are unioned with the filters, never narrowed by them.
 
 ## Scoped barrier by annotation
 
-Use annotations to wait on one phase, wave, role, or attempt set:
+To wait on one phase, wave, role, or attempt set, name **only that subset's
+ids** — the ones you spawned for it:
 
 ```bash
-$TWICC processes wait --spawned-by self --annotation phase=audit user_turn dead --timeout <N>
-$TWICC processes wait --spawned-by self --annotation wave=3 user_turn dead --timeout <N>
+$TWICC sessions wait-reply <AUDIT_ID>... --since 2000-01-01 --wait-timeout 300
 ```
 
-Annotation filters on `processes` must always be paired with a filiation scope.
-For orchestration control, prefer `--spawned-by self`.
+An `--annotation phase=audit` filter adds nothing here: it misses a child not
+indexed yet, and the ids already cover the subset. Never name ids outside the
+subset: the filters do not narrow them.
 
 ## First-wins race
 
-Wait for one child to finish, validate it, then stop the losers:
+Wait for one child to answer, validate it, then stop the losers:
 
 ```bash
-$TWICC processes wait --spawned-by self --annotation attempt:exists user_turn --first --timeout <N>
-$TWICC processes stop <LOSER_ID> [<LOSER_ID>...] --timeout 30
+$TWICC sessions wait-reply <ATTEMPT_ID>... --since 2000-01-01 --wait-first --wait-timeout 300
+$TWICC sessions stop <LOSER_ID>... --timeout 30
 ```
+
+`--wait-first` also stops on `awaiting_user_input`: declare a winner only on
+`outcome == "replied"`. When the first conclusion is `awaiting_user_input`,
+answer that session and wait again, or wait again naming only the other ids —
+the same call with the same `--since` returns the blocked session at once. A
+winner that finished before the call is seen only with `--since`.
 
 If you tagged losers after validation:
 
 ```bash
-$TWICC processes stop --spawned-by self --annotation status=loser --timeout 30
+$TWICC sessions stop --spawned-by self --annotation status=loser --timeout 30
 ```
 
 Never stop before validating the first finisher; "first done" is not "correct".
@@ -51,16 +70,20 @@ Never stop before validating the first finisher; "first done" is not "correct".
 For one child, use the exact id:
 
 ```bash
-$TWICC process <SESSION_ID> stop --timeout 30
+$TWICC session <SESSION_ID> stop --timeout 30
 ```
 
 For a batch you own:
 
 ```bash
-$TWICC processes stop --spawned-by self --annotation status=cancelled --timeout 30
+$TWICC sessions stop <SESSION_ID>... --timeout 30
+$TWICC sessions stop --spawned-by self --annotation status=cancelled --timeout 30
 ```
 
-`processes stop` does not accept `parent` or `--spawn-tree`.
+`sessions stop` has no guardrail: never call it bare (it stops every running
+session, you included). `parent`, `--spawn-tree` and `--siblings` reach beyond
+your children; use them only when that is the intent. Pair `--annotation` with
+a filiation scope.
 
 ## Abort a subtree
 
@@ -68,10 +91,10 @@ Only do this when you intentionally cancel a manager and everything below it.
 `--descendants` excludes the target, so pass the manager id explicitly too:
 
 ```bash
-$TWICC processes stop <MANAGER_ID> --descendants <MANAGER_ID> --timeout 30
+$TWICC sessions stop <MANAGER_ID> --descendants <MANAGER_ID> --timeout 30
 ```
 
-Explicit ids and filtered ids are merged: the explicit `<MANAGER_ID>` stops the
+Explicit ids and filtered ids are unioned: the explicit `<MANAGER_ID>` stops the
 manager, and `--descendants <MANAGER_ID>` adds every proper descendant below it.
 
 This is exceptional cleanup, not normal synchronization.
@@ -81,11 +104,15 @@ This is exceptional cleanup, not normal synchronization.
 Use direct-child listing for ordinary control:
 
 ```bash
-$TWICC processes --spawned-by self
-$TWICC processes --spawned-by self --annotation status=blocked
+$TWICC sessions --spawned-by self --active --slim
+$TWICC sessions --spawned-by self --annotation status=blocked --slim
+$TWICC sessions get <CHILD_ID>...
 ```
 
-Use `topology self` for structure and context. Use `processes --spawn-tree self`
+Drop `--active` to see finished children too (`process.state: "dead"`). A child
+spawned seconds ago is not listed yet: `sessions get` returns it by id.
+
+Use `topology self` for structure and context. Use `sessions --spawn-tree self`
 only for an explicit whole-tree inventory, not for routine manager control.
 
 ## Annotation keys for control

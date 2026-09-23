@@ -10,12 +10,12 @@ then advances.
 2. Pick a concurrency cap K from `usage` and risk; tag workers with
    `--annotation phase=migrate --annotation wave=<n> --annotation status=working`.
 3. For each wave, spawn at most K executor workers, one module/package per worker.
-4. Wait for that wave:
-   `processes wait --spawned-by self --annotation wave=<n> user_turn dead --timeout <N>`.
+4. Wait for that wave, naming only its ids:
+   `sessions wait-reply <WAVE_ID>... --since 2000-01-01 --wait-timeout 300`.
 5. Pull results and run the gate yourself, or spawn a verifier session for it:
    tests, lints, smoke checks, focused review, or manual review.
 6. If a worker is hung, tag it `status=runaway` and stop the scoped batch:
-   `processes stop --spawned-by self --annotation status=runaway --timeout 30`.
+   `sessions stop --spawned-by self --annotation status=runaway --timeout 30`.
 7. Advance only after the gate passes; otherwise retry failed slices with smaller mandates.
 8. Aggregate the migration report and known residual risks.
 

@@ -6,7 +6,7 @@ argument-hint: <session_id|self> {settings|title|annotations|archive|unarchive|p
 
 # TwiCC Update Session
 
-Eleven sub-commands: `settings`, `title`, `annotations`, `archive`, `unarchive`, `pin <MODE>`, `unpin`, `hide`, `unhide`, `mute`, `notify`. To stop the live agent without touching the row, use `$TWICC process <SESSION_ID> stop` (skill: `twicc-process`). To apply the same change to several sessions at once (every sub-command except `title`), use `$TWICC update-sessions` (skill: `twicc-update-sessions`).
+Eleven sub-commands: `settings`, `title`, `annotations`, `archive`, `unarchive`, `pin <MODE>`, `unpin`, `hide`, `unhide`, `mute`, `notify`. To stop the live agent without touching the row, use `$TWICC session <SESSION_ID> stop` (skill: `twicc-session`). To apply the same change to several sessions at once (every sub-command except `title`), use `$TWICC update-sessions` (skill: `twicc-update-sessions`).
 
 All sub-commands share the `--timeout SECONDS` output flag (default 30).
 
@@ -80,7 +80,7 @@ A flag the session's provider doesn't support (e.g. `--thinking` on Codex) is si
 - *Live* (`permission_mode` on Claude Code) — applied immediately.
 - *Idle* (`model`, `context_max` on Claude Code; `model`, `effort`, `permission_mode`, `context_max`, `fast_mode` on Codex) — applied on next `user_turn`.
 - *Startup* (`effort`, `thinking`, `claude_in_chrome`, `fast_mode`, `question_widget` on Claude Code) — applied on the next restart: the agent is stopped (immediately if at `user_turn`, or at the end of its current `assistant_turn` if working), so the next message you send restarts it with the new settings. If currently `awaiting_user_input`, the pending dialog is lost.
-- *Startup on Codex* (`question_widget`) — **no automatic restart**. The value is stored, the running process keeps the old one. To apply it: `$TWICC process <ID> stop` (skill: `twicc-process`), then send a message — the resumed thread picks up the new value. A session with no live process needs nothing.
+- *Startup on Codex* (`question_widget`) — **no automatic restart**. The value is stored, the running process keeps the old one. To apply it: `$TWICC session <ID> stop` (skill: `twicc-session`), then send a message — the resumed thread picks up the new value. A session with no live process needs nothing.
 
 ### `title`
 
@@ -217,7 +217,7 @@ $TWICC update-session self annotations set:role=worker
 
 - `$TWICC update-sessions <op> [SESSION_ID...]` — apply the same update, including `mute` or `notify`, to several sessions at once (no `title`). Skill: `twicc-update-sessions`.
 - `$TWICC info [models|agent-settings|presets]` — discover providers, models, agent-settings values and presets before editing a session. Skill: `twicc-info`.
-- `$TWICC process <session_id> stop` — stop the agent without touching the row. Skill: `twicc-process`.
+- `$TWICC session <session_id> stop` — stop the agent without touching the row. Skill: `twicc-session`.
 - `$TWICC send-message <session_id>` — send a message (settings unchanged). Skill: `twicc-send-message`.
 - `$TWICC session <session_id>` — full metadata. Skill: `twicc-session`.
 

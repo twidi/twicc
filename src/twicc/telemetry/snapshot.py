@@ -136,12 +136,18 @@ def mcp_group_by_tool() -> dict[str, str]:
     Imported lazily: the registry walks the whole Click tree, and telemetry
     must not pay for that at import time.
     """
-    from twicc.mcp.tools import build_mcp_registry, tool_name_for
+    from twicc.mcp.tools import RETIRED_MCP_TOOLS, build_mcp_registry, tool_name_for
 
-    return {
+    groups = {
         tool_name_for(path): MCP_TOOL_GROUPS.get(path.split("/")[0], "other")
         for path in build_mcp_registry()
     }
+    # The retired tools leave the registry at the first restart past their
+    # cutover, but calls recorded under their names before it must keep their
+    # group instead of falling into "other".
+    for tool, command in RETIRED_MCP_TOOLS.items():
+        groups.setdefault(tool, MCP_TOOL_GROUPS.get(command.split(" ")[0], "other"))
+    return groups
 
 
 def bucket(value: int | Decimal, edges: tuple[tuple[int | None, str], ...]) -> str:

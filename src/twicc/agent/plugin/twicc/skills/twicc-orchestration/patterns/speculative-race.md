@@ -15,10 +15,12 @@ Shape: star · pull + push · first-wins · select · heterogeneous (varied appr
 ## Protocol
 1. Spawn K attempts, ideally diverse (`--model`/`--provider`/`--preset` or a
    different brief), `--annotation attempt=<k>` and optionally `--annotation status=racing`.
-2. First-wins: `processes wait --spawned-by self user_turn --first --timeout <N>`.
+2. First-wins: `sessions wait-reply <ATTEMPT_ID>... --since 2000-01-01 --wait-first --wait-timeout 300`.
+   A winner needs `outcome == "replied"`: `--wait-first` also stops on
+   `awaiting_user_input` — answer that attempt, or wait again without it.
 3. Inspect the finisher: if acceptable, stop the rest by explicit ids, or mark the
-   losers and run `processes stop --spawned-by self --annotation status=loser --timeout <N>`.
-   If not acceptable, keep waiting for the next.
+   losers and run `sessions stop --spawned-by self --annotation status=loser --timeout <N>`.
+   If not acceptable, wait again with the same `--since`, naming only the other ids.
 4. Use the winning result.
 
 ## Use it when

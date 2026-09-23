@@ -76,8 +76,8 @@ $TWICC status >/dev/null && echo "TwiCC is up" || echo "TwiCC is down"
 
 ## Related commands
 
-- `$TWICC processes` — what's running inside the backend (only meaningful when `running`). Skill: `twicc-processes`.
-- `$TWICC process <session_id>` — inspect a specific session's process. Skill: `twicc-process`.
+- `$TWICC sessions --active` — what's running inside the backend (only meaningful when `running`). Skill: `twicc-sessions`.
+- `$TWICC session <session_id>` — a specific session, its live `process` block included. Skill: `twicc-session`.
 - `$TWICC create-session` — fails fast when not `running`. Skill: `twicc-create-session`.
 
 ## How to present results

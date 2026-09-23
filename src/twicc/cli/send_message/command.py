@@ -121,9 +121,9 @@ def send_message_cmd(
     the result, in one call. It waits for the turn THIS
     message triggers: the reply is matched against a cursor the server reads
     when the agent takes the message, so the previous turn's closing message
-    is not returned in its place. That is the way to collect an answer; reach
-    for "twicc process <SESSION_ID> wait <STATE>..." only to ask whether a
-    session is still running, not what it said.
+    is not returned in its place. That is the way to collect an answer; to
+    check whether the session is still running, read `process.state` from
+    "twicc session <SESSION_ID>" or "twicc sessions get <SESSION_ID>...".
     """
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import os

@@ -1,148 +1,20 @@
 ---
 name: twicc-process
-description: Inspect or control (stop or wait for state) the live process of a single TwiCC session. Use when you or the user want details on a live process, stop a running agent, or block a script until a session finishes.
-argument-hint: <session_id> [stop | wait <status>...]
+description: Retired on 2026-10-01 (deprecated until then). Use `sessions …` / `session <id> …` instead.
 ---
 
-# TwiCC Process
+# TwiCC Process (retired)
 
-Inspect or control the live process attached to one session. Three sub-commands:
+The `process <id>` commands are deprecated until **2026-10-01** and refuse to run from that date: exit `64`, with an error naming the replacement. Use the session commands below. Skills: `twicc-session`, `twicc-sessions`.
 
-- Default (no sub-command) — show current state, last transition, OS PID.
-- `stop` — kill the live agent (same as the UI's *Stop process* button); `--force` hard-kills (SIGKILL the process tree now, no grace window) for a wedged agent. Does not modify the session row.
-- `wait <STATUS>... --timeout N` — block until the process reaches any of the listed states, or timeout.
+## What replaces what
 
-## When to use
+| Retired | Replacement | What changes |
+|---|---|---|
+| `process <id>` | `session <id>` (or `sessions get <id>` right after a spawn) | Exit `0` with `process.state: "dead"` when nothing runs, instead of exit `1`. `session <id>` exits `1` on a session not indexed yet; `sessions get <id>` returns it as `known: false` with its live `process` block. |
+| `process <id> stop` | `session <id> stop` | None: same `--force` and `--timeout`. |
+| `process <id> wait` | `session <id> wait-reply` | Waits for an answer, not a state. Exit `0` on `replied` or `awaiting_user_input`, `5` on `timeout`, `ended` or `provider_error`, `2` on `backend_gone`, `1` on a refusal or `wait_failed`. Right after `create-session`, use `create-session --wait-reply` (or `--since 2000-01-01`, or an answer already given is missed); after `send-message`, use `send-message --wait-reply`. |
 
-- You want to know whether a session's process is running and what state it's in.
-- You need the OS PID to attach external tools.
-- You want to stop a stuck or runaway agent.
-- You want to block a script until a session finishes its turn (`wait user_turn`) or is fully dead (`wait dead`).
-- You just triggered an action and want to observe the next state transition (`wait --transition`).
+## Lifecycle waits
 
-## How to invoke
-
-**Prefer the `mcp__twicc__*` tools — inside a TwiCC session you normally have all of them.** One per command below (the command with `/` and `-` turned into `_`, e.g. `mcp__twicc__create_session`, `mcp__twicc__update_session_settings`). Use them instead of the `$TWICC` CLI: same arguments, same JSON result, no shell, and your session identity travels with the call so `self`/`parent` resolve on their own. **Most of them are deferred, so a tool missing from your visible tool list is not a missing tool** — search your full tool list for the one you need (`ToolSearch` on Claude Code, `ALL_TOOLS` on Codex), and fall back to the `$TWICC` CLI below only when the search finds nothing (outside a session, or when scripting from a terminal).
-
-TwiCC's executable varies by launch mode (uvx, dev, installed tool). ALWAYS USE THIS TO RESOLVE $TWICC AT THE START OF EACH BASH INVOCATION:
-
-```bash
-TWICC=${TWICC_BIN:-$(command -v twicc 2>/dev/null)}
-[ -n "$TWICC" ] || { echo "TwiCC executable not found in this context" >&2; exit 1; }
-```
-
-Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never `"$TWICC" args`): it may expand to multiple words, which quoting would break.
-
-## Usage
-
-### Inspect (default)
-
-```bash
-$TWICC process <SESSION_ID>
-```
-
-### Stop
-
-```bash
-$TWICC process <SESSION_ID> stop [--timeout N] [--force]
-```
-
-Idempotent — succeeds even if no live process is attached.
-
-### Wait
-
-```bash
-$TWICC process <SESSION_ID> wait <STATUS>... --timeout N [--transition]
-```
-
-- `STATUS` — one or more of: `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, `dead`.
-- `--timeout N` — **required**. Exits 5 if no match before deadline.
-- `--transition` — only match after at least one state change since the initial snapshot. Note: `wait dead --transition` on an already-dead session will always timeout.
-
-## Errors (stop only)
-
-### Local (exit 1)
-
-- `is_subagent` — subagents cannot be stopped directly; target the parent session.
-- `session_not_found`
-- `session_stale`
-- `project_no_directory`
-- `unknown_provider`
-
-### Server (exit 3)
-
-Same codes, re-checked server-side.
-
-## Output format
-
-```json
-{
-  "id": 42,
-  "provider": "claude_code",
-  "session_id": "abc123-def456",
-  "session_title": "Implement user authentication",
-  "project_id": "-home-twidi-dev-myproject",
-  "state": "awaiting_user_input",
-  "started_at": "2026-05-29T15:30:00+00:00",
-  "last_state_change_at": "2026-05-29T15:45:12+00:00",
-  "pid": 81287
-}
-```
-
-### Fields
-
-- `state` — `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, or `dead` (`wait dead` only; default action exits 1 instead).
-- `matched_state` — `wait` only. Which requested status matched.
-- `id` — `null` in `wait dead` when no row exists.
-- `session_title` — `null` if the session row doesn't exist yet.
-- `pid` — `null` briefly after start, or in `wait dead` no-row case.
-
-### Exit codes (default + stop)
-
-- `0` — Success
-- `1` — Local validation error
-- `2` — TwiCC server not running
-- `3` — Server rejected
-- `4` — Server error
-- `5` — Timeout
-- `64` — Bad CLI usage
-
-### Exit codes (wait)
-
-- `0` — State matched
-- `1` — Unknown session
-- `2` — TwiCC not running or disappeared mid-wait
-- `5` — Timeout
-- `64` — Invalid arguments
-
-## Examples
-
-```bash
-$TWICC process abc123-def456
-$TWICC process abc123-def456 stop
-$TWICC process abc123-def456 stop
-# → {"status":"stopped","session_id":"...","provider":"claude_code","project_id":"...","request_uuid":"..."}
-$TWICC process abc123 wait user_turn --timeout 600
-$TWICC process abc123 wait user_turn dead --timeout 120
-$TWICC process abc123 wait user_turn --transition --timeout 300
-$TWICC process abc123 wait user_turn dead --timeout 600
-```
-
-## Related commands
-
-- `$TWICC processes` — list all live processes; find session IDs. Skill: `twicc-processes`.
-- `$TWICC session <session_id>` — session metadata (title, costs, etc.). Skill: `twicc-session`.
-- `$TWICC update-session <session_id> archive` — archive + stop in one operation. Skill: `twicc-update-session`.
-
-## How to present results
-
-1. Lead with the session title and a human label for `state`:
-   - `starting` → "spinning up"
-   - `assistant_turn` → "currently working"
-   - `awaiting_user_input` → "blocked — pending dialog in the UI"
-   - `user_turn` → "waiting for the next message"
-   - `dead` → "no live process" (only from `wait dead`)
-2. If `assistant_turn` and `last_state_change_at` is several minutes old, flag it as potentially hung.
-3. Surface `pid` only when the user asks about OS-level details.
-4. You are in TwiCC — link to the session: `[link text](/project/{project_id}/session/{session_id})`.
-5. On "no running process" error, suggest `$TWICC session <id>` (session may exist without a live process) or `$TWICC processes` (to see what's running).
+Waiting for a state (`starting`, `assistant_turn`, `user_turn`, `awaiting_user_input`, `dead`) and `--transition` have **no replacement**. Wait for the answer with `session <id> wait-reply`; its `awaiting_user_input` outcome covers a session blocked on a human. To check whether a session still runs, read `process.state` from `session <id>`.

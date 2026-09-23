@@ -146,17 +146,17 @@ $TWICC send-message <SESSION_ID> '<TEXT>' --wait-reply [--wait-timeout N] [--no-
 
 It adds a `reply` block: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (drop it with `--no-reply-text` when you only need the go-ahead), and `error` on `wait_failed`. `outcome` is `replied` (the message closing the turn), `awaiting_user_input` (a pending request — a tool approval or a question — which only a human can clear), `provider_error` (the provider refused: quota, outage), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `backend_gone`, or `wait_failed`.
 
-**Only a line written after your message counts.** `since_line_num` is the transcript cursor, read server-side the instant the agent took it, so the *previous* turn's closing message is not returned in its place — the trap `process wait` has no way to avoid. Chaining `--wait-reply` calls is safe by construction: each one returns only once the answer is indexed, so the next cursor is always past it. A timeout is not a failure: the agent keeps working, and that cursor is what you resume from — with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`), the command that takes one. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. The exit code only ever says whether the message was sent.
+**Only a line written after your message counts.** `since_line_num` is the transcript cursor, read server-side the instant the agent took it, so the *previous* turn's closing message is not returned in its place — the trap a separate wait started after the send falls into. Chaining `--wait-reply` calls is safe by construction: each one returns only once the answer is indexed, so the next cursor is always past it. A timeout is not a failure: the agent keeps working, and that cursor is what you resume from — with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`), the command that takes one. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. The exit code only ever says whether the message was sent.
 
 `since_line_num: 0` on a `replied` means no cursor came back (a backend older than the flag). The wait then started from the top of the turn, so check the answer is the one you expected.
 
 An agent that blocks on a click **during** the turn ends the wait, with `outcome: awaiting_user_input`. Read it with `$TWICC session <SESSION_ID> pending-requests` (skill: `twicc-session`). An entry whose `kind` is `question` you can answer yourself, with `answer-questions` — the plain read already carries the question ids and options, so **never pass `--raw` to answer**. Anything else is the user's to clear in the UI; `--raw` is how you tell them what it is about, and it returns the whole payload, diff included. A target already blocked when you send is a different case: it is refused outright (exit 3, above).
 
-Falling back to the state machine, when you want liveness rather than an answer:
+Without `--wait-reply`:
 
-- Wait for a state: `$TWICC process <SESSION_ID> wait <STATE>... --timeout <N>` blocks until the agent reaches one of the listed states (`starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, `dead`). To wait for the end of the turn this message triggers, add `--transition` so it doesn't match the idle `user_turn` the session was already in before the message: `wait user_turn --transition --timeout <N>`. Skill: `twicc-process`.
-- Check state (snapshot): `$TWICC process <SESSION_ID>` — still working, blocked, or done? Skill: `twicc-process`.
-- Read the reply: `$TWICC session <SESSION_ID> messages --tail 1`. Skill: `twicc-session`.
+- Wait later: `$TWICC session <SESSION_ID> wait-reply --from <LAST_LINE>`, with the `last_line` of the send result as the cursor. Exit `0` on `replied` / `awaiting_user_input`, `5` on `timeout` / `ended` / `provider_error`, `2` on `backend_gone`, `1` on a refusal or `wait_failed`. Skill: `twicc-session`.
+- Check state (snapshot): `process.state` from `$TWICC session <SESSION_ID>` — still working, blocked, or done? Skill: `twicc-session`.
+- Read the reply: `$TWICC session <SESSION_ID> messages --tail 1`.
 
 **Let the child talk back:** if the target is a session you spawned, tell it in the message to load the `twicc-send-message` skill and use `send-message parent '<text>'` to reply async — `parent` resolves to you via its `spawned_by` link. Loading the skill is what gives the child the `$TWICC` resolution and full invocation syntax.
 
@@ -167,8 +167,8 @@ Falling back to the state machine, when you want liveness rather than an answer:
 - `$TWICC create-session` — create a new session instead. Skill: `twicc-create-session`.
 - `$TWICC topology self` — discover sibling and descendant session ids. Skill: `twicc-topology`.
 - `$TWICC update-session <session_id> settings` — change agent settings before sending. Skill: `twicc-update-session`.
-- `$TWICC process <session_id> stop` — stop the live agent. Skill: `twicc-process`.
-- `$TWICC processes --state awaiting_user_input` — find sessions blocked on user input. Skill: `twicc-processes`.
+- `$TWICC session <session_id> stop` — stop the live agent. Skill: `twicc-session`.
+- `$TWICC sessions --state awaiting_user_input` — find sessions blocked on user input. Skill: `twicc-sessions`.
 - `$TWICC session <session_id>` — full session metadata. Skill: `twicc-session`.
 - `$TWICC sessions --project <PROJECT>` — find session ids. Skill: `twicc-sessions`.
 

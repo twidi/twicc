@@ -33,11 +33,12 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from twicc.cli._drop_request import transport
 from twicc.cli._drop_request.whoami import forced_session_id
+from twicc.cli._output import listing_cutover_passed, removal_message
 from twicc.mcp.identity import resolve_session_token, external_caller, batch_correlation, mcp_call
 from twicc.mcp.batch import BatchRuntime
 from twicc.mcp.batch_contract import BATCH_NAMES, validate_batch, fit_result, rejected_batch
 from twicc.mcp.dispatch import PreparedTool, UnknownToolError, check_caller_arguments, prepare_tool
-from twicc.mcp.tools import iter_mcp_tools, tools_by_name, MCP_READ_ONLY_PATHS
+from twicc.mcp.tools import iter_mcp_tools, tools_by_name, MCP_READ_ONLY_PATHS, RETIRED_MCP_TOOLS
 from twicc.rpc.generator import render_argv
 from twicc.rpc.views import _run_invoke
 
@@ -65,7 +66,8 @@ Conventions:
   so `whoami` works and `create_session` records you as the spawner.
 - Always pass absolute paths (directories, attachments): tools execute inside
   the TwiCC backend, whose working directory is not yours.
-- Keep `*_wait` timeouts <= 300 seconds; poll again rather than exceeding them.
+- Keep `wait_timeout` <= 300 seconds on the `*_wait_reply` tools and on
+  `wait_reply` calls; wait again rather than exceeding it.
 - Catalogues (models, presets, providers) drift: fetch them live with `info`.
 """
 
@@ -176,6 +178,7 @@ async def _call_batch(ctx, params, session_id):
         validation = validate_batch(
             params.name, params.arguments, registry=tools_by_name(),
             read_only_paths=MCP_READ_ONLY_PATHS, external=external_caller.get() is not None, batch_id=batch_id,
+            retired=frozenset(RETIRED_MCP_TOOLS) if listing_cutover_passed() else frozenset(),
         )
         request = getattr(ctx, "request", None)
         auth_ms = request.scope.get("twicc_mcp_auth_ms") if request is not None else None
@@ -208,6 +211,14 @@ async def _call_tool(
     session_id = _session_id_from_request(ctx)
     if name in BATCH_NAMES:
         return await _call_batch(ctx, params, session_id)
+    if name in RETIRED_MCP_TOOLS and listing_cutover_passed():
+        # Before the schema check and the registry lookup: a retired tool is
+        # still listed until the backend restarts, and a client connected
+        # before the restart still names it after. Either way it gets the
+        # removal message, in the envelope any refused command answers with.
+        return _envelope_result({
+            "exit_code": 64, "result": None, "error": removal_message(RETIRED_MCP_TOOLS[name]),
+        })
     try:
         try:
             prepared = prepare_tool(name, arguments, registry=tools_by_name(), external=external_caller.get() is not None)
@@ -228,6 +239,10 @@ async def _call_tool(
             content=[mcp_types.TextContent(type="text", text=str(exc))],
             is_error=True,
         )
+    return _envelope_result(envelope)
+
+
+def _envelope_result(envelope: dict) -> mcp_types.CallToolResult:
     # v1 wrapped dicts automatically; v2 lowlevel handlers own both representations.
     # A non-zero CLI exit_code remains business data, not an MCP tool error.
     return mcp_types.CallToolResult(

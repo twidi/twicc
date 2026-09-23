@@ -1,6 +1,6 @@
 # Retiring the `process` / `processes` commands
 
-**Status:** design, not implemented
+**Status:** implemented
 **Date:** 2026-09-23
 **Cutover instant:** `LISTING_CUTOVER` — `2026-10-01T00:00:00`, local time on the machine running TwiCC, shared with the pagination and slim-listing cutovers
 

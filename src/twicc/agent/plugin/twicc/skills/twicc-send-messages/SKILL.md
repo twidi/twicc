@@ -14,7 +14,7 @@ Batch sibling of `send-message`: delivers the SAME message to every targeted ses
 
 - Broadcast a steering correction to a set of children: "the spec changed, the API base is now /v2 — re-check your work."
 - Ask every worker for status: "what's your progress and ETA?"
-- Graceful wrap-up (vs the hard kill of `processes stop`): "finish your current step, write your report, and reply DONE."
+- Graceful wrap-up (vs the hard kill of `sessions stop`): "finish your current step, write your report, and reply DONE."
 - Push a uniform follow-up to a fan-out group after delegating the same task.
 - **Talk to your peers** (worker → worker): `--siblings self` broadcasts to the other sessions your parent spawned, you excluded — e.g. "I finished the auth module, you can wire against `/v2/login` now." This is the direct peer channel; you do not have to route everything back through the manager.
 
@@ -118,9 +118,9 @@ Each entry gains a `reply` block (`outcome`, `line_num`, `is_final`, `since_line
 
 **A timeout is not a failure** and nothing is lost: the agents keep working, and each entry carries its own cursor to resume from — `line_num` when its ending consumed a line (`replied`, `provider_error`), `since_line_num` otherwise. Resume each one with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`): a batch needs one cursor per recipient, so the per-session resume is the exact one. For one wait over all of them instead, `$TWICC sessions wait-reply --since <the instant the batch started>` (skill: `twicc-sessions`) — without `--since` it re-reads each current last line and skips what arrived in between. The exit code never reflects the wait, only whether the sends went out.
 
-Falling back to the state machine, when you want liveness rather than answers:
+Without `--wait-reply`:
 
-- `$TWICC processes wait --spawned-by self user_turn dead --transition --timeout <N>` — block until every recipient's process is idle or gone. **`--transition` is not optional here**: without it the command matches the idle `user_turn` the recipients were still in when the send returned, hands back immediately, and the next `messages --tail 1` reads the *previous* turn's answer. Even with it, this is a weaker signal than `--wait-reply`: a session held busy by a subagent has already answered long before it returns to `user_turn`. Skill: `twicc-processes`.
+- `$TWICC sessions get <SESSION_ID>...` — whether each recipient still runs (`process.state`). Skill: `twicc-sessions`.
 - `$TWICC session <SESSION_ID> messages --tail 1` — read a reply by hand. Skill: `twicc-session`.
 
 This closes the orchestration loop: `create-session` → … → `send-messages --wait-reply`.
@@ -128,7 +128,7 @@ This closes the orchestration loop: `create-session` → … → `send-messages 
 ## Related commands
 
 - `$TWICC send-message <id|parent> <text>` — message one session, or reply to your parent. Skill: `twicc-send-message`.
-- `$TWICC processes wait --spawned-by self <STATE>...` — await the batch you just messaged. Skill: `twicc-processes`.
+- `$TWICC sessions wait-reply <SESSION_ID>... --since <INSTANT>` — await a batch messaged without `--wait-reply`. Skill: `twicc-sessions`.
 - `$TWICC update-sessions settings --spawned-by self ...` — change settings of the same batch (e.g. before re-prompting). Skill: `twicc-update-sessions`.
 - `$TWICC topology self` — discover the ids in your spawn tree. Skill: `twicc-topology`.
 

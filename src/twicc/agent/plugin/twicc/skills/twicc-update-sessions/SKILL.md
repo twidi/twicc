@@ -100,7 +100,7 @@ Same flags as `update-session settings` (skill: `twicc-update-session`): `--pres
 
 Resolution is **per session against its own provider**, which makes a mixed-provider batch trivial. Provider-agnostic aliases resolve to each provider's concrete value — `--model max`, `--effort max`, `--permission-mode open`, `--context-max max` (and `min`, `strict`, `auto`, ...; see `twicc-create-session` for the full list) each land on the right value per session. A flag a session's provider doesn't support (e.g. `--thinking` on Codex) is silently ignored for that session — no error. A genuinely invalid value on a supported field (e.g. `--model opus` on a Codex session) yields a per-id `validation_error` (`invalid_choice` / `invalid_format` / `invalid_preset`) while the other sessions proceed.
 
-Claude Code startup settings (`effort`, `thinking`, `claude-in-chrome`, `fast-mode`, `question-widget`) are applied on the next restart; Codex Fast mode applies on its next turn. No agent is interrupted mid-turn. Codex `question-widget` is a startup setting with **no automatic restart** — stop each session (`$TWICC processes stop`, skill: `twicc-processes`) and send it a message to apply the new value.
+Claude Code startup settings (`effort`, `thinking`, `claude-in-chrome`, `fast-mode`, `question-widget`) are applied on the next restart; Codex Fast mode applies on its next turn. No agent is interrupted mid-turn. Codex `question-widget` is a startup setting with **no automatic restart** — run `$TWICC sessions stop <ids>` (skill: `twicc-sessions`), then `$TWICC send-messages <ids>` (skill: `twicc-send-messages`) to apply the new value.
 
 ## Errors
 
@@ -155,7 +155,7 @@ $TWICC update-sessions settings --descendants self --preset 'deep think'
 
 - `$TWICC update-session <id|self> <op>` — update one session (and the only place for `title`). Skill: `twicc-update-session`.
 - `$TWICC send-messages [SESSION_ID...] --message <text>` — send the same message to several sessions (same selection model, plus a `--siblings self` peer broadcast this command does not have). Skill: `twicc-send-messages`.
-- `$TWICC processes stop [SESSION_ID...]` — batch-stop live agents (same selection model). Skill: `twicc-processes`.
+- `$TWICC sessions stop [SESSION_ID...]` — batch-stop live agents; its selection is wider than this command's (bare call, `parent`, `--spawn-tree`, `--siblings`, `--annotation` alone), and can stop you too. Skill: `twicc-sessions`.
 - `$TWICC sessions` — browse / filter sessions to pick the ids to update. Skill: `twicc-sessions`.
 - `$TWICC topology <id|self>` — see the spawn tree before targeting `--descendants` / `--spawned-by`. Skill: `twicc-topology`.
 

@@ -16,7 +16,7 @@ This file only documents what differs from running the CLI locally.
 
 | Method & path | Purpose |
 |---|---|
-| `POST /rpc/<command>[/<subcommand>…]` | Run a command (e.g. `POST /rpc/sessions`, `POST /rpc/process/wait`). |
+| `POST /rpc/<command>[/<subcommand>…]` | Run a command (e.g. `POST /rpc/sessions`, `POST /rpc/sessions/wait-reply`). |
 | `GET /rpc/` | List the exposed routes with their one-line summary. |
 | `GET /rpc/openapi.json` | OpenAPI 3.1 schema for every route. |
 
@@ -89,17 +89,25 @@ a file that isn't present on the server's filesystem.
 
 ### Blocking waits can be cut short — mind the timeouts
 
-`process wait` and `processes wait` are **blocking long-polls**: the server holds
-the HTTP response open until the wait condition is met or the command's
-`--timeout` elapses (a timeout is a normal result with its own exit code, not an
-HTTP error). Over HTTP this means:
+`session/wait-reply` and `sessions/wait-reply` are **blocking long-polls**: the
+server holds the HTTP response open until the wait concludes or the command's
+`--wait-timeout` (default 300 s) elapses (a timeout is a normal result, not an
+HTTP error). The `--wait-reply` forms of `create-session`, `send-message` and
+`send-messages` hold the connection the same way, for the send and then the
+wait. Over HTTP this means:
 
-- the **client's** HTTP read timeout must be **≥** the command `--timeout`, or the
-  client aborts a wait that would otherwise have succeeded;
+- the **client's** HTTP read timeout must be **≥** the command `--wait-timeout`
+  (plus the send's `--timeout` on a `--wait-reply` form), or the client aborts a
+  wait that would otherwise have succeeded;
 - any **intermediate proxy** (or the remote server itself) can drop a connection it
-  considers idle before `--timeout` is reached, interrupting the wait.
+  considers idle before `--wait-timeout` is reached, interrupting the wait.
 
-Keep `--timeout` modest and retry, or raise the relevant client/proxy idle limits.
+Keep `--wait-timeout` modest and resume from the returned cursor, or raise the
+relevant client/proxy idle limits.
+
+The `process`, `process/*`, `processes` and `processes/*` routes stop working on
+2026-10-01 (exit `64`, error naming the replacement); use the `session` /
+`sessions` routes.
 
 ### Some commands are local-only
 
@@ -141,8 +149,10 @@ Remote-specific behavior (the same limitations as above, from the client side):
 - **Path arguments** (`--project`, `--directory`) are resolved on the server, so
   they must be absolute (or, for `--project`, an id) — there is no caller working
   directory over HTTP.
-- **`wait` commands** block as a long-poll; the client read timeout is sized to
-  the command `--timeout` (mind any intermediate proxy idle limit).
+- **`wait-reply` commands** and the **`--wait-reply`** forms block as a
+  long-poll; the client read timeout is sized to `--wait-timeout` (plus the
+  send's `--timeout` on a `--wait-reply` form; mind any intermediate proxy idle
+  limit).
 - **Local-only commands** and the **`self`/`parent`** session keywords are
   rejected client-side over `--remote` — they only mean something on the local
   host.

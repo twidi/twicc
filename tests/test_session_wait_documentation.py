@@ -52,7 +52,7 @@ CROSS_REFERENCES = {"--wait-reply", "--transition"}
 # three times the number went up it was `--blocked` written `--wait-blocked`.
 SANCTIONED = {
     "twicc-session/SKILL.md": {"--wait-reply": 4, "--transition": 0},
-    "SKILLS-AND-CLI.md": {"--wait-reply": 1, "--transition": 1},
+    "SKILLS-AND-CLI.md": {"--wait-reply": 1, "--transition": 0},
     "session wait-reply --help": {"--wait-reply": 1, "--transition": 0},
 }
 

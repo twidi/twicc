@@ -622,6 +622,12 @@ def inline_prompt(argv: list[str], resolved: Resolved) -> list[str]:
 # must be at least that long (+ a margin) — see :func:`_request_timeout`.
 _WAIT_PATHS: frozenset[str] = frozenset({"process/wait", "processes/wait"})
 
+# The answer-waits hold the response open up to their ``--wait-timeout`` (a
+# 300 s default), not a ``--timeout``: without their own entry they would get
+# :data:`_DEFAULT_TIMEOUT` and be cut by the client long before the server
+# answers.
+_WAIT_REPLY_PATHS: frozenset[str] = frozenset({"session/wait-reply", "sessions/wait-reply"})
+
 # Read-timeout margin (seconds) added on top of a wait command's ``--timeout``
 # so the local read does not race the server's own deadline.
 _WAIT_TIMEOUT_MARGIN = 15.0
@@ -664,6 +670,9 @@ def _request_timeout(resolved: Resolved) -> httpx.Timeout:
     so an omitted flag leaves it ``None`` (the server will reject the missing
     option fast); in that case fall back to :data:`_DEFAULT_TIMEOUT`.
 
+    The two answer-waits (``session wait-reply``, ``sessions wait-reply``) are
+    sized to their ``--wait-timeout`` the same way.
+
     ``--wait-reply`` gets the same treatment on top of its own ``--timeout``:
     the server holds the connection for the drop request *and* the wait.
     Every other command uses :data:`_DEFAULT_TIMEOUT` for both connect and read.
@@ -674,6 +683,11 @@ def _request_timeout(resolved: Resolved) -> httpx.Timeout:
         command_timeout = resolved.params.get("timeout")
         if isinstance(command_timeout, (int, float)) and command_timeout > 0:
             read = float(command_timeout) + _WAIT_TIMEOUT_MARGIN
+    elif resolved.path in _WAIT_REPLY_PATHS:
+        wait_timeout = resolved.params.get("wait_timeout")
+        if not isinstance(wait_timeout, (int, float)) or wait_timeout <= 0:
+            wait_timeout = _DEFAULT_WAIT_TIMEOUT
+        read = float(wait_timeout) + _WAIT_TIMEOUT_MARGIN
     elif resolved.params.get("wait_reply"):
         # ``--wait-reply`` turns an ordinary drop-and-poll command into a long
         # one: the server holds the connection for the drop request *and* the

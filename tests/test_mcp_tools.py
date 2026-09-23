@@ -1,5 +1,6 @@
 """Tool derivation from the Click tree: selection, naming, metadata."""
 
+from twicc.cli._output import listing_cutover_passed
 from twicc.mcp.tools import build_mcp_registry, iter_mcp_tools
 from twicc.rpc.generator import build_registry
 
@@ -15,8 +16,14 @@ def test_selection_matches_the_skill_surface():
     assert "share/create" not in paths  # the group is no longer callable (silent no-op fix)
     for banned in ("password", "token", "run", "claude", "codex"):
         assert not any(p.split("/")[0] == banned for p in paths)
-    # Everything else from the RPC registry is present.
-    rpc_paths = {p for p in build_registry() if p.split("/")[0] != "settings"}
+    # Everything else from the RPC registry is present — except, past
+    # 2026-10-01, the retired `process` / `processes` routes, which RPC keeps
+    # (they answer with their removal error) and MCP drops. Read on the real
+    # clock: MCP_EXCLUDED_ROOTS is evaluated at import.
+    excluded = {"settings"}
+    if listing_cutover_passed():
+        excluded |= {"process", "processes"}
+    rpc_paths = {p for p in build_registry() if p.split("/")[0] not in excluded}
     assert rpc_paths <= paths
 
 

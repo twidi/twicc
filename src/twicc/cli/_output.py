@@ -243,6 +243,61 @@ def slim_notice(command: str, slim: bool, full: bool, *, kind: str = "listing") 
     return False
 
 
+#: Retired command → its replacement. The single source for the wrappers, the
+#: help texts, and the RPC / MCP refusals. Design:
+#: docs/plans/2026-09-23-process-commands-removal-design.md
+RETIRED_COMMANDS = {
+    "processes": "sessions --active",
+    "processes get": "sessions get",
+    "processes stop": "sessions stop",
+    "processes wait": "sessions wait-reply",
+    "process": "session <id>",
+    "process stop": "session <id> stop",
+    "process wait": "session <id> wait-reply",
+}
+
+
+def removal_message(command: str) -> str:
+    """The error a retired command answers with past the cutover.
+
+    One builder for every channel — the terminal, the RPC view and the MCP
+    pre-check — so the three never drift. The date is read at call time.
+    """
+    when = LISTING_CUTOVER.strftime("%Y-%m-%d")
+    return (
+        f"Error: `twicc {command}` was removed on {when}. "
+        f"Use `twicc {RETIRED_COMMANDS[command]}` instead."
+    )
+
+
+def removed_command(command: str) -> None:
+    """Announce a retired command before the cutover; refuse it after.
+
+    Exit 64 (bad usage), not 1: ``process <id>`` already exits 1 for "no
+    running process", and a script testing that code must not read a retired
+    command as "not running".
+    """
+    if listing_cutover_passed():
+        emit_error(removal_message(command), code=64)
+    if _capture.get() is not None and _in_mcp_call():
+        return
+    when = LISTING_CUTOVER.strftime("%Y-%m-%d")
+    _record_notice(
+        f"twicc: `twicc {command}` stops working on {when}. "
+        f"Use `twicc {RETIRED_COMMANDS[command]}` instead."
+    )
+
+
+def refuse_if_removed(group: str, subcommand: str | None) -> None:
+    """Past the cutover, refuse ``group`` or ``group subcommand``; else do nothing.
+
+    Called first in the group callback, which Click runs before it parses the
+    subcommand's own arguments: the refusal then wins over a missing argument.
+    """
+    if listing_cutover_passed():
+        removed_command(group if subcommand is None else f"{group} {subcommand}")
+
+
 def _record_notice(message: str) -> None:
     """Carry one notice to the caller, on the channel native to it."""
     recorded = _notices.get()
@@ -400,6 +455,15 @@ TOPOLOGY_CUTOVER_NOTICE = cutover_help(
     "on every node. ",
     "",
 )
+
+
+def removal_help(command: str) -> str:
+    """Help prefix of a retired command, true on both sides of the cutover."""
+    replacement = RETIRED_COMMANDS[command]
+    return cutover_help(
+        f"DEPRECATION: stops working on {_CUTOVER_DATE}; use `twicc {replacement}` instead. ",
+        f"REMOVED on {_CUTOVER_DATE}: use `twicc {replacement}` instead. ",
+    )
 
 
 def emit_list(

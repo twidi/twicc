@@ -225,14 +225,14 @@ A `created` status only means the session started and the prompt was handed to t
 
 **Map spawned work:** `$TWICC topology self` shows the full spawned-session tree rooted at your top-level ancestor, with compact process state for every node (skill: `twicc-topology`).
 
-**Wait for a state:** `$TWICC process <SESSION_ID> wait <STATE>... --timeout <N>` blocks until the agent reaches one of the listed states (`starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, `dead`). Pass `user_turn` to wait for the reply, or several (`user_turn awaiting_user_input dead`) to return on whichever comes first (skill: `twicc-process`).
+**Wait for the answer later:** `$TWICC sessions wait-reply <SESSION_ID>... --since 2000-01-01` waits until each child answers or blocks on a pending request (skill: `twicc-sessions`). Any instant before the spawn works for a child never messaged since; never pass today's date — a bare date is midnight UTC, and a future instant misses an answer already given. Exit 0 whatever the outcomes: read `summary.all_replied` and each `outcome`.
 
-**Check state (snapshot):** `$TWICC process <SESSION_ID>` (skill: `twicc-process`):
+**Check state (snapshot):** `process.state` from `$TWICC sessions get <SESSION_ID>` (skill: `twicc-sessions`) — `session <ID>` exits 1 until the watcher indexes the new session:
 - `assistant_turn` → still working.
 - `awaiting_user_input` → blocked on a pending request. Do NOT call `send-message`: it is refused. Read what is being asked with `$TWICC session <ID> pending-requests` — **not** `messages`, which does not carry it. A `question` you answer with `answer-questions`; anything else needs the user in the UI.
 - `user_turn` → done; fetch the reply with `$TWICC session <ID> messages --tail 1`.
 - `starting` → still booting; retry shortly.
-- Exit 1 (no process row) → the process finished and was cleaned up. Check `messages --tail 1`: if the last message is from the assistant **and its `is_final` is `true`**, the turn completed; `is_final: false` means it stopped mid-turn; `is_final: null` leaves it undecided — the text is probably the answer, but nothing here proves the turn ended; a trailing **user** message means nothing readable came back; an **empty list** means the last item carries no readable text — re-read with `--tail 2` and apply the same checks to what comes back, keeping in mind that "the child's closing message was empty" is a real outcome. Do not widen further: a longer window reaches the previous turn, whose closing message also says `is_final: true`. Read the **last** message and check its field, rather than filtering on `--is-final true`: the filter spans the whole session and would hand you a previous turn's answer.
+- `dead` → no live process: the turn finished, or the agent stopped. Check `messages --tail 1`: if the last message is from the assistant **and its `is_final` is `true`**, the turn completed; `is_final: false` means it stopped mid-turn; `is_final: null` leaves it undecided — the text is probably the answer, but nothing here proves the turn ended; a trailing **user** message means nothing readable came back; an **empty list** means the last item carries no readable text — re-read with `--tail 2` and apply the same checks to what comes back, keeping in mind that "the child's closing message was empty" is a real outcome. Do not widen further: a longer window reaches the previous turn, whose closing message also says `is_final: true`. Read the **last** message and check its field, rather than filtering on `--is-final true`: the filter spans the whole session and would hand you a previous turn's answer.
 
 **Continue the conversation:** once at `user_turn`, post a follow-up with `$TWICC send-message <SESSION_ID> '<text>'` (skill: `twicc-send-message`). To change settings mid-session, use `$TWICC update-session <SESSION_ID> settings ...` (skill: `twicc-update-session`).
 
@@ -242,8 +242,7 @@ A `created` status only means the session started and the prompt was handed to t
 
 - `$TWICC info [models|agent-settings|presets|commands]` — discover providers, models, agent-settings values, presets, and slash / dollar commands before crafting a session. Skill: `twicc-info`.
 - `$TWICC send-message <session_id>` — send a follow-up. Skill: `twicc-send-message`.
-- `$TWICC process <session_id>` — check agent state. Skill: `twicc-process`.
-- `$TWICC processes --spawned-by self` — track sessions you spawned. Skill: `twicc-processes`.
+- `$TWICC sessions --spawned-by self --active` — track sessions you spawned (`sessions get <ID>` for one spawned seconds ago). Skill: `twicc-sessions`.
 - `$TWICC topology self` — map the spawned-session tree around you. Skill: `twicc-topology`.
 - `$TWICC update-session <session_id> settings` — change agent settings. Skill: `twicc-update-session`.
 - `$TWICC session <session_id>` — full metadata. Skill: `twicc-session`.

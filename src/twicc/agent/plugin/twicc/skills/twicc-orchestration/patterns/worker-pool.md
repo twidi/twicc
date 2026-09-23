@@ -15,12 +15,14 @@ Shape: star · push or pull · waves · merge · homogeneous.
 ## Protocol
 1. Set K from the work size and cost/quota headroom (check `usage`).
 2. Launch the first K tasks, optionally tagged with `--annotation wave=<n>`.
-3. Wait for the active wave with
-   `processes wait --spawned-by self --annotation wave=<n> user_turn dead --timeout <N>`,
+3. Wait for the active wave by its ids only:
+   `sessions wait-reply <WAVE_ID>... --since <INSTANT> --wait-timeout 300`,
    collect each result, then either `send-message` a worker the next task (reuse)
    or spawn a fresh worker for it.
-4. If you reuse workers by wave, update their `wave` annotation before sending the
-   next task so the next scoped wait targets the right sessions.
+4. `--since` is `2000-01-01` for fresh workers. For reused workers, capture the
+   instant before sending the next task (`date -u +%Y-%m-%dT%H:%M:%SZ`), or send
+   it with `send-message --wait-reply`. Update their `wave` annotation too, so the
+   map shows which wave each worker is on.
 5. Continue until the queue drains; aggregate.
 
 ## Use it when

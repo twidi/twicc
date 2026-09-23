@@ -21,8 +21,9 @@ def whoami_cmd() -> None:
     shared scratch folder, present only when the session is part of an
     orchestration tree), the resolved ``agent_settings``, the full
     ``session`` payload (what ``twicc session <ID>`` returns, minus its
-    ``process`` block), and the matching ``process`` row in the nine-field
-    shape ``processes`` uses, not that block's compact five.
+    ``process`` block), and the matching ``process`` row with nine fields
+    (``provider``, ``session_id``, ``session_title`` and ``project_id`` on top of
+    the compact block's five).
 
     Useful from inside a session's Bash tool to discover the session's
     own identity (the agent doesn't otherwise know its TwiCC session_id).

@@ -143,9 +143,11 @@ def test_token_allows_read_command(client, protected, tokens_store, invoke_calls
 
 def test_token_allows_write_command(client, protected, tokens_store, invoke_calls):
     tokens_store["secret"] = _record()
-    res = _post(client, "/rpc/processes/stop", headers={"Authorization": "Bearer secret"})
+    # A write route that is not retired: past 2026-10-01 `processes/stop`
+    # answers with its removal error before reaching `invoke`.
+    res = _post(client, "/rpc/sessions/stop", headers={"Authorization": "Bearer secret"})
     assert res.status_code == 200
-    assert invoke_calls == [["processes", "stop"]]
+    assert invoke_calls == [["sessions", "stop"]]
 
 
 def test_token_allows_argv_form(client, protected, tokens_store, invoke_calls):
@@ -219,6 +221,6 @@ def test_cookie_with_stale_fingerprint_rejected(
 
 def test_unprotected_allows_everything(client, settings, tokens_store, invoke_calls):
     settings.TWICC_PASSWORD_HASH = ""  # no password, and tokens_store is empty
-    res = _post(client, "/rpc/processes/stop")
+    res = _post(client, "/rpc/sessions/stop")
     assert res.status_code == 200
-    assert invoke_calls == [["processes", "stop"]]
+    assert invoke_calls == [["sessions", "stop"]]

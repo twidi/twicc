@@ -24,7 +24,8 @@ from twicc.cli._drop_request.project import derive_project_id  # noqa: E402
 from twicc.cli._output import (  # noqa: E402
     CUTOVER_NOTICE, CUTOVER_NOTICE_OBJECT, FULL_HELP, PAGINATED_HELP,
     SESSIONS_GET_IDS_HELP, SLIM_CUTOVER_NOTICE, SLIM_HELP, TOPOLOGY_CUTOVER_NOTICE,
-    TOPOLOGY_FULL_HELP, TOPOLOGY_SLIM_HELP, emit_error, limit_help,
+    TOPOLOGY_FULL_HELP, TOPOLOGY_SLIM_HELP, emit_error, limit_help, listing_cutover_passed,
+    refuse_if_removed, removal_help, removed_command,
 )
 from twicc.version import get_version  # noqa: E402
 
@@ -241,9 +242,8 @@ def _sessions_default(
             "still loaded) or 'dead'. Repeatable, **OR**-combined — a session "
             "holds one state, so naming several means any of them (e.g. "
             "--state assistant_turn --state awaiting_user_input for 'busy or "
-            "blocked'); naming all five is the unfiltered listing. Unlike "
-            "`processes --state`, 'dead' is accepted and means no "
-            "TwiCC-managed process — which is also every session when no "
+            "blocked'); naming all five is the unfiltered listing. 'dead' "
+            "is accepted and means no TwiCC-managed process — which is also every session when no "
             "backend is running. Mutually exclusive with --active."
         ),
     ),
@@ -380,8 +380,8 @@ def _sessions_stop(
         help=(
             "Sessions to stop. Omit them to select with the filters below — a "
             "bare `sessions stop` stops every running session, which is bounded "
-            "by what is alive, not by how many sessions exist. Naming ids "
-            "bypasses the filters, as in `sessions get`."
+            "by what is alive, not by how many sessions exist. Named ids are "
+            "added to the filters' selection (unioned)."
         ),
     ),
     timeout: int = typer.Option(
@@ -553,9 +553,11 @@ def _sessions_wait_reply(
     transcript.
 
     Returns `summary` + `results`, one `reply` block per id — the block the
-    singular returns, except for a named id that does not exist, which comes
-    back as `outcome: unknown_session` carrying only that and `session_id` —
-    none of the four keys every other block has, since nothing was waited on.
+    singular returns. A named id with a live process but no indexed transcript
+    yet (just spawned) is waited on from line 0, --since not applying to it. A
+    named id with neither a session nor a live process comes back as
+    `outcome: unknown_session` carrying only that and `session_id` — none of
+    the four keys every other block has, since nothing was waited on.
     `summary` carries `total` (every id asked for, unknown ones included),
     `replied`, `awaiting_user_input`, `concluded` and `all_replied`. `replied`
     counts `outcome: replied` alone; `concluded` also counts the ones that
@@ -766,8 +768,10 @@ def _session_wait_reply(
 
     Exit 0 when it answered or blocked, 5 when neither came, 2 when TwiCC
     stopped, 1 on a local refusal (a bad --from or --since, the two cursors
-    passed together, a non-positive --wait-timeout, an unknown session) or the
-    wait itself breaking — so a script can chain on it.
+    passed together, a non-positive --wait-timeout, an id with no session and
+    no live process) or the wait itself breaking — so a script can chain on
+    it. A session whose live process runs but which is not indexed yet (just
+    spawned) is waited on from line 0.
 
     --from is the cursor, and only a line strictly past it counts. --since is
     the same cursor as an instant, mutually exclusive with it: the wait starts
@@ -1391,8 +1395,11 @@ def topology(
 
 processes_app = typer.Typer(
     name="processes",
-    help=CUTOVER_NOTICE + "List live TwiCC processes, or look up specific session_ids.",
+    # No CUTOVER_NOTICE: the command stops on the date its envelope would
+    # have become the default, so announcing the envelope would be moot.
+    help=removal_help("processes") + "List live TwiCC processes, or look up specific session_ids.",
     invoke_without_command=True,
+    hidden=listing_cutover_passed(),
 )
 app.add_typer(processes_app)
 
@@ -1476,8 +1483,12 @@ def _processes_default(
     ),
 ) -> None:
     """List currently running processes of the live TwiCC instance as JSON (default action)."""
+    # Runs before Click parses a subcommand's own arguments, so past the
+    # cutover the refusal wins over a missing one.
+    refuse_if_removed("processes", ctx.invoked_subcommand)
     if ctx.invoked_subcommand is not None:
         return
+    removed_command("processes")
 
     if include_hidden and only_hidden:
         emit_error("Error: --include-hidden and --only-hidden are mutually exclusive.", code=2)
@@ -1513,7 +1524,16 @@ def _processes_default(
     )
 
 
-@processes_app.command(name="get")
+@processes_app.command(
+    name="get",
+    help=removal_help("processes get") + (
+        "Look up live process state for one or more session_ids (placeholder for "
+        "missing).\n\n"
+        "Unlike ``twicc processes``, ``get`` takes no filter flags: when the caller "
+        "names the sessions it cares about, layering ``--provider`` / ``--state`` "
+        "would only blur the meaning of the placeholder rows."
+    ),
+)
 def _processes_get(
     session_ids: list[str] = typer.Argument(
         ...,
@@ -1527,18 +1547,22 @@ def _processes_get(
         ),
     ),
 ) -> None:
-    """Look up live process state for one or more session_ids (placeholder for missing).
-
-    Unlike ``twicc processes``, ``get`` takes no filter flags: when the
-    caller names the sessions it cares about, layering ``--provider`` /
-    ``--state`` would only blur the meaning of the placeholder rows.
-    """
+    """Look up live process state for one or more session_ids (placeholder for missing)."""
+    removed_command("processes get")
     from twicc.cli.processes_get import main as processes_get_main
 
     processes_get_main(session_ids)
 
 
-@processes_app.command(name="stop")
+@processes_app.command(
+    name="stop",
+    help=removal_help("processes stop") + (
+        "Batch-stop live agent processes (idempotent, tolerant to skipped IDs).\n\n"
+        "Explicit session_ids and filtered session_ids are merged, then pre-checked "
+        "locally before dropping kill requests. Exit 0 always when the command "
+        "completes — callers inspect each entry's ``status`` for the per-id outcome."
+    ),
+)
 def _processes_stop(
     session_ids: list[str] | None = typer.Argument(
         None,
@@ -1593,12 +1617,8 @@ def _processes_stop(
         ),
     ),
 ) -> None:
-    """Batch-stop live agent processes (idempotent, tolerant to skipped IDs).
-
-    Explicit session_ids and filtered session_ids are merged, then pre-checked
-    locally before dropping kill requests. Exit 0 always when the command
-    completes — callers inspect each entry's ``status`` for the per-id outcome.
-    """
+    """Batch-stop live agent processes (idempotent, tolerant to skipped IDs)."""
+    removed_command("processes stop")
     if sum(x is not None for x in (spawned_by, descendants)) > 1:
         emit_error(
             "Error: --spawned-by and --descendants are mutually exclusive.",
@@ -1617,7 +1637,16 @@ def _processes_stop(
     )
 
 
-@processes_app.command(name="wait")
+@processes_app.command(
+    name="wait",
+    help=removal_help("processes wait") + (
+        "Block until multiple session_ids reach matching virtual states.\n\n"
+        "Explicit session_ids and filtered session_ids are merged into one wait pool. "
+        "Unknown explicit session_ids (no Session row AND no ProcessRun for this "
+        "TwiCC) are skipped silently and do NOT participate in --all / --first. If "
+        "every session_id is skipped, exits 0 (vacuous truth — nothing to wait for)."
+    ),
+)
 def _processes_wait(
     items: list[str] | None = typer.Argument(
         None,
@@ -1682,14 +1711,8 @@ def _processes_wait(
         ),
     ),
 ) -> None:
-    """Block until multiple session_ids reach matching virtual states.
-
-    Explicit session_ids and filtered session_ids are merged into one wait pool.
-    Unknown explicit session_ids (no Session row AND no ProcessRun for this
-    TwiCC) are skipped silently and do NOT participate in --all / --first.
-    If every session_id is skipped, exits 0 (vacuous truth — nothing to
-    wait for).
-    """
+    """Block until multiple session_ids reach matching virtual states."""
+    removed_command("processes wait")
     if sum(x is not None for x in (spawned_by, descendants)) > 1:
         emit_error(
             "Error: --spawned-by and --descendants are mutually exclusive.",
@@ -1711,8 +1734,9 @@ def _processes_wait(
 
 process_app = typer.Typer(
     name="process",
-    help="Inspect or control a session's live process.",
+    help=removal_help("process") + "Inspect or control a session's live process.",
     invoke_without_command=True,
+    hidden=listing_cutover_passed(),
 )
 app.add_typer(process_app)
 
@@ -1723,16 +1747,27 @@ def _process_default(
     session_id: str = typer.Argument(help="The session ID of the running process."),
 ) -> None:
     """Show the currently running process for a session as JSON (default action)."""
+    refuse_if_removed("process", ctx.invoked_subcommand)
     ctx.obj = session_id
     if ctx.invoked_subcommand is not None:
         return
+    removed_command("process")
 
     from twicc.cli.process import main as process_main
 
     process_main(session_id)
 
 
-@process_app.command(name="stop")
+@process_app.command(
+    name="stop",
+    help=removal_help("process stop") + (
+        "Stop the live agent process attached to the session.\n\n"
+        "Equivalent to clicking the UI's *Stop process* button: asks the agent "
+        "manager to kill the agent with ``reason=\"manual\"``. Idempotent — if no live "
+        "agent is currently attached, the command still exits 0.\n\n"
+        "``--force`` hard-kills (SIGKILL the process tree) without the grace window."
+    ),
+)
 def process_stop(
     ctx: typer.Context,
     timeout: int = typer.Option(
@@ -1753,14 +1788,8 @@ def process_stop(
         ),
     ),
 ) -> None:
-    """Stop the live agent process attached to the session.
-
-    Equivalent to clicking the UI's *Stop process* button: asks the agent
-    manager to kill the agent with ``reason="manual"``. Idempotent — if no
-    live agent is currently attached, the command still exits 0.
-
-    ``--force`` hard-kills (SIGKILL the process tree) without the grace window.
-    """
+    """Stop the live agent process attached to the session."""
+    removed_command("process stop")
     from twicc.cli.process_stop import stop_cmd
 
     stop_cmd(
@@ -1770,7 +1799,15 @@ def process_stop(
     )
 
 
-@process_app.command(name="wait")
+@process_app.command(
+    name="wait",
+    help=removal_help("process wait") + (
+        "Block until the live process reaches any of the listed states.\n\n"
+        "Polls the DB locally every 250 ms; the live TwiCC writes process transitions "
+        "to the same row this command reads. Exits 0 on match, 5 on timeout, 2 if "
+        "TwiCC is not running, 1 on validation errors."
+    ),
+)
 def process_wait(
     ctx: typer.Context,
     statuses: list[str] = typer.Argument(
@@ -1804,12 +1841,8 @@ def process_wait(
         ),
     ),
 ) -> None:
-    """Block until the live process reaches any of the listed states.
-
-    Polls the DB locally every 250 ms; the live TwiCC writes process
-    transitions to the same row this command reads. Exits 0 on match,
-    5 on timeout, 2 if TwiCC is not running, 1 on validation errors.
-    """
+    """Block until the live process reaches any of the listed states."""
+    removed_command("process wait")
     from twicc.cli.process_wait import wait_cmd
 
     wait_cmd(

@@ -18,10 +18,10 @@ common, useful combinations to start from. When none fits, compose your own.
   `send-message <sibling_id>` / `send-messages --siblings self`, or pull a peer) —
   no rule forces every exchange through the parent. See `patterns/peer-coordination.md`.
 - **Synchronization** — when you move on: barrier (wait for all,
-  `processes wait --spawned-by self ... --all`), phase gate (wait on one
-  annotation-scoped batch, validate, then advance), first-wins (`--first`, then
-  stop the losers by explicit id or scoped `processes stop`), or continuous (no
-  barrier — you watch and steer as they run).
+  `sessions wait-reply <CHILD_ID>... --since 2000-01-01`), phase gate (wait on one
+  batch, named by its ids only, validate, then advance), first-wins
+  (`--wait-first`, then stop the losers by explicit id or scoped `sessions stop`),
+  or continuous (no barrier — you watch and steer as they run).
 - **Aggregation** — how N results become one: concat/merge/dedup, vote (majority),
   select (best, or first that works), synthesize (a new artifact from the inputs),
   single-writer integration, or chain (no merge — one output is the next input).

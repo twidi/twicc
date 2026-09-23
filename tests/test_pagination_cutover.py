@@ -378,6 +378,9 @@ def test_the_mcp_descriptions_match_the_side_of_the_cutover_we_are_on():
         "search", "session_content", "session_messages", "session_agents",
         "session_workflows",
     }
+    if _output.listing_cutover_passed():
+        # Retired on the same date: no longer an MCP tool at all.
+        listings.discard("processes")
     described = {
         t.name: t.description for t in iter_mcp_tools() if t.name in listings
     }

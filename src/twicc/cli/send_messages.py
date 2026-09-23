@@ -21,10 +21,9 @@ a per-id ``validation_error`` while the other sessions still receive the
 message.
 
 Like the singular command this is asynchronous: a per-id ``"sent"`` only means
-the message was handed to the agent, not that the agent finished. Follow up with
-``twicc processes wait --spawned-by self <STATE>... --timeout N`` (skill:
-``twicc-processes``) to await completion, then read results with ``twicc session
-<ID> messages``.
+the message was handed to the agent, not that the agent finished. Pass
+``--wait-reply`` to await the answers in the same call, or read them later with
+``twicc session <ID> messages``.
 
 ``parent`` is NOT supported here (it is a singular, one-recipient concept); use
 ``send-message parent`` for that.
@@ -192,9 +191,9 @@ def send_messages_cmd(
     answer back with the result. Each is waited from its own cursor, read when
     its agent takes the message, so the previous turn's closing message is not
     returned in its place. --wait-first stops at the first recipient
-    to conclude instead of waiting for every one. That is the way to collect answers; reach for
-    "twicc processes wait ..." only to ask whether sessions are still running,
-    not what they said.
+    to conclude instead of waiting for every one. That is the way to collect answers; to
+    check whether sessions are still running, read `process.state` from
+    "twicc sessions get <SESSION_ID>...".
 
     `--message` may be omitted when at least one `--attach` is given: both
     providers accept a message made only of attachments.
