@@ -22,16 +22,15 @@ from twicc.providers.helpers import AgentSettingCategory, ModelVersion, assert_u
 # ``build_provider_show`` to appear in the bare read. Mirror the change in the
 # Claude Code constants.
 SYNCED_SETTINGS_DEFAULTS: dict = {
-    "codexDefaultModel": "gpt-terra",
+    "codexDefaultModel": "gpt-sol",
     "codexDefaultEffort": "medium",
     "codexDefaultPermissionMode": "read_only",
     "codexDefaultUntrustedPermissionMode": "read_only",
     "codexDefaultFastMode": False,
-    # Matches ``codexDefaultModel``'s window (gpt-terra). Mostly inert: the
-    # window is a per-model property and ``enforce_agent_settings_consistency``
-    # re-pins it against whichever model actually runs. Temporarily 272K while
-    # GPT_56_CONTEXT_WINDOW_TEMPORARILY_REDUCED is on (gpt-terra rolled back to
-    # 272K); restore to 372_000 alongside that switch.
+    # Matches ``codexDefaultModel``'s window (gpt-sol, GPT-6 Sol: 272K). Mostly
+    # inert: the window is a per-model property and
+    # ``enforce_agent_settings_consistency`` re-pins it against whichever model
+    # actually runs.
     "codexDefaultContextMax": 272_000,
     "codexUsageReadFileEnabled": False,
     "codexUsageReadFilePath": "",
@@ -101,7 +100,7 @@ AGENT_SETTINGS_DESCRIPTIONS: dict[str, dict] = {
         "yolo": "No restrictions.",
     },
     "fast_mode": {
-        True: "Faster generation — 2x on GPT-6 Astra, 2.5x on GPT-5.6, 1.5x before; uses credits at 2.5x.",
+        True: "Faster generation — 2x on GPT-6 Astra, 1.5x on other models; uses credits at 2.5x.",
     },
 }
 
@@ -116,10 +115,13 @@ AGENT_SETTINGS_ALIASES: dict[str, dict[str, str]] = {
     # ``min``/``fastest``/``cheapest`` point at Luna, not at the 5.4 mini: the
     # 5.6 price cut took Luna below it ($0.20/$1.20 per Mtok against
     # $0.75/$4.50), so Luna is now the cheapest model of the catalogue outright
-    # — and the mini retires on 2026-08-31 anyway.
+    # — and the mini retires on 2026-08-31 anyway. The bare ``gpt-luna`` alias
+    # now resolves to GPT-6 Luna ($0.10/$0.50).
+    # ``medium``/``balanced`` point at Sol: GPT-6 has no Terra tier, and GPT-6
+    # Sol costs less than GPT-5.6 Terra ($2/$10 against $2/$12).
     "selected_model": {
         "min": "gpt-luna", "fastest": "gpt-luna", "cheapest": "gpt-luna",
-        "medium": "gpt-terra", "balanced": "gpt-terra",
+        "medium": "gpt-sol", "balanced": "gpt-sol",
         "max": "gpt-astra", "strongest": "gpt-astra",
     },
     # ``max`` is a native effort since GPT-5.6, so native-first keeps it as-is
@@ -154,14 +156,15 @@ class CodexModelExtra(NamedTuple):
     single-agent reasoning) and ``ultra`` (subagent parallelisation). They are
     NOT uniform across the family, and not Sol-only as the launch coverage
     claimed — the CLI is the source of truth and reports the per-model set in
-    ``model/list`` under ``supportedReasoningEfforts``. Astra, Sol, and Terra
-    expose both, Luna exposes ``max`` only, and every pre-5.6 model exposes
-    neither. Mirrors ``claude_code.constants.ClaudeCodeModelExtra``.
+    ``model/list`` under ``supportedReasoningEfforts``. Astra, Sol (5.6 and 6),
+    and Terra expose both, Luna (5.6 and 6) exposes ``max`` only, and every
+    pre-5.6 model exposes neither. Mirrors
+    ``claude_code.constants.ClaudeCodeModelExtra``.
 
-    ``supports_fast`` mirrors the model catalog's ``serviceTiers`` list: the
-    six frontier models expose the ``priority`` tier, while GPT-5.4 mini does
-    not. Keeping it in the registry lets every settings surface use the same
-    model gate without guessing from a model name.
+    ``supports_fast`` mirrors the model catalog's ``serviceTiers`` list: every
+    model exposes the ``priority`` tier except GPT-5.4 mini. Keeping it in the
+    registry lets every settings surface use the same model gate without
+    guessing from a model name.
 
     ``context_window`` is the model's nominal INPUT window when run inside
     Codex — a fixed property of the model, not a user choice (unlike Claude's
@@ -169,7 +172,7 @@ class CodexModelExtra(NamedTuple):
     128K for output and publishes 95% of the input part in
     ``task_started.model_context_window`` (see ``compute.py``'s
     ``_TASK_STARTED_WINDOW_HEADROOM_FACTOR``). Empirically: 272K for the
-    Astra and the pre-5.6 models (400K total = 272K input + 128K output,
+    GPT-6 and the pre-5.6 models (400K total = 272K input + 128K output,
     published as 258_400) and 372K for the GPT-5.6 tiers (published as 353_400).
     ``enforce_agent_settings_consistency`` pins ``context_max`` to this value,
     so the stored/displayed window always matches what Codex actually runs.
@@ -213,21 +216,23 @@ GPT_56_CONTEXT_WINDOW_TEMPORARILY_REDUCED = True
 # Codex CLI models the bundled binary accepts, cross-checked against the CLI's
 # own ``model/list`` response. ``selected_model_value`` returns the bare alias
 # for ``latest=True`` entries (``"gpt"``, ``"gpt-sol"``, ``"gpt-mini"``) and the
-# versioned alias for the rest (``"gpt-5.4"``), matching the Claude Code
-# convention of bare-alias-for-latest / versioned-alias.
+# versioned alias for the rest (``"gpt-5.4"``, ``"gpt-sol-5.6"``), matching the
+# Claude Code convention of bare-alias-for-latest / versioned-alias.
 #
 # With GPT-5.6 the name denotes a durable capability tier (Sol/Terra/Luna)
 # rather than a size suffix, so each tier is its own family here. That family is
 # also the pricing-equivalence key ``extract_model_info`` derives from the
 # ``full_name`` (``gpt-5.6-sol`` → family ``gpt-sol``), which keeps the registry
-# and the price table in agreement without a second mapping.
+# and the price table in agreement without a second mapping. GPT-6 keeps the
+# tiers as families — ``gpt-6-sol`` is version ``6`` of ``gpt-sol`` — and adds
+# Astra above them. GPT-6 has no Terra tier, so ``gpt-terra`` stays on 5.6.
 #
 # ``weight`` is laid out by *tier block*, not by generation — the same shape as
-# Claude Code, where Sonnet 5 sits below Opus 4.5. The 5.6 tiers each open a
-# block and the pre-5.6 models fall in behind the tier they belong to. That
-# placement is what makes the nearest-by-weight fallback land on the right
-# successor when a model retires, with no explicit successor mapping:
-# ``gpt-5.4-mini`` → ``gpt-luna``, matching OpenAI's own migration guidance.
+# Claude Code, where Sonnet 5 sits below Opus 4.5. Each tier opens a block with
+# its newest version on top, and the pre-5.6 models fall in behind the tier they
+# belong to. That placement is what makes the nearest-by-weight fallback land on
+# the right successor when a model retires, with no explicit successor mapping:
+# ``gpt-5.4-mini`` → ``gpt-5.6-luna``, matching OpenAI's own migration guidance.
 # ``gpt-5.5`` sits between Terra and ``gpt-5.4``: a retiring ``gpt-5.4`` lands
 # on it rather than on Terra, which is the intended behaviour — someone still
 # on 5.4 declined the newer generations, so the substitution moves them by the
@@ -251,10 +256,25 @@ MODEL_VERSIONS: list[ModelVersion] = [
     ModelVersion(
         provider=Provider.CODEX,
         model="gpt-sol",
+        version="6",
+        full_name="gpt-6-sol",
+        retirement_date=None,
+        latest=True,
+        weight=210,
+        provider_extra=CodexModelExtra(
+            supports_effort_max=True,
+            supports_effort_ultra=True,
+            supports_fast=True,
+            context_window=272_000,
+        ),
+    ),
+    ModelVersion(
+        provider=Provider.CODEX,
+        model="gpt-sol",
         version="5.6",
         full_name="gpt-5.6-sol",
         retirement_date=None,
-        latest=True,
+        latest=False,
         weight=200,
         provider_extra=CodexModelExtra(
             supports_effort_max=True,
@@ -315,10 +335,25 @@ MODEL_VERSIONS: list[ModelVersion] = [
     ModelVersion(
         provider=Provider.CODEX,
         model="gpt-luna",
+        version="6",
+        full_name="gpt-6-luna",
+        retirement_date=None,
+        latest=True,
+        weight=40,
+        provider_extra=CodexModelExtra(
+            supports_effort_max=True,
+            supports_effort_ultra=False,
+            supports_fast=True,
+            context_window=272_000,
+        ),
+    ),
+    ModelVersion(
+        provider=Provider.CODEX,
+        model="gpt-luna",
         version="5.6",
         full_name="gpt-5.6-luna",
         retirement_date=None,
-        latest=True,
+        latest=False,
         weight=30,
         provider_extra=CodexModelExtra(
             supports_effort_max=True,
@@ -334,8 +369,7 @@ MODEL_VERSIONS: list[ModelVersion] = [
         full_name="gpt-5.4-mini",
         # Retires alongside gpt-5.4 on 2026-08-31, same ChatGPT-sign-in scope.
         # The weight puts it right under gpt-5.6-luna, so the fallback lands on
-        # Luna — OpenAI's announced replacement, and now the cheapest model of
-        # the catalogue.
+        # it — OpenAI's announced replacement.
         retirement_date=date(2026, 8, 31),
         latest=True,
         weight=20,

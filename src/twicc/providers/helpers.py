@@ -937,7 +937,7 @@ class BaseProviderHelpers:
         implementation replaces with ``prompt``. Default implementation
         returns ``None`` (provider has no title generation surface);
         providers override to call their own model — Claude Code runs
-        a short Haiku query and Codex runs a short gpt-5.6-luna query,
+        a short Haiku query and Codex runs a short gpt-6-luna query,
         both via their respective SDKs.
         """
         return None

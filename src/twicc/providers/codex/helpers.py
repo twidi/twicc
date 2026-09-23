@@ -83,7 +83,7 @@ AGENT_SETTINGS_CHOICES: dict[str, list] = {
     # One entry per distinct ``CodexModelExtra.context_window`` value, derived
     # from the live registry so it never lists a window no model runs. Unlike
     # Claude's 200K/1M these are not a user choice: the window is pinned to the
-    # model by ``enforce_agent_settings_consistency`` (272K for Astra and
+    # model by ``enforce_agent_settings_consistency`` (272K for GPT-6 and
     # pre-5.6, 372K for the GPT-5.6 tiers); the catalogue only tells validation
     # which concrete values exist. While ``GPT_56_CONTEXT_WINDOW_TEMPORARILY_REDUCED`` is on the
     # 5.6 tiers run at 272K, so 372K drops out here and reappears on revert — no
@@ -236,14 +236,14 @@ class CodexHelpers(BaseProviderHelpers):
     # Per-family default prices (USD per million tokens) — fallback when no
     # ``ModelPrice`` row matches and no other version of the same family is
     # in the DB. Covers the families Codex CLI actually runs: Astra, the pre-5.6
-    # ``gpt`` / ``gpt-codex`` / ``gpt-codex-max``, plus one bucket per GPT-5.6
-    # tier (each tier is its own family, and each is priced differently). Other
+    # ``gpt`` / ``gpt-codex`` / ``gpt-codex-max``, plus one bucket per tier
+    # (each tier is its own family, priced at its latest version). Other
     # OpenAI families (``gpt-pro``, …) get parsed correctly by
     # :meth:`extract_family_and_version` but rely entirely on the synced
     # OpenRouter rows since Codex CLI doesn't run them today.
     #
     # Cache writes: OpenRouter exposes no ``input_cache_write`` price for the
-    # pre-5.6 OpenAI models (hence their zeros), but does for Astra and the
+    # pre-5.6 OpenAI models (hence their zeros), but does for the GPT-6 and
     # GPT-5.6 tiers — 1.25x the uncached input rate, with no 5m/1h split (that
     # distinction is Anthropic's). The figures below mirror the synced rows. They stay inert
     # either way: :func:`codex.pricing.to_token_usage` always reports zero
@@ -279,12 +279,12 @@ class CodexHelpers(BaseProviderHelpers):
             cache_write_5m_price=Decimal(0),
             cache_write_1h_price=Decimal(0),
         ),
-        "gpt-sol": FamilyPrices(  # gpt-5.6-sol pricing
-            input_price=Decimal("5.00"),
-            output_price=Decimal("30.00"),
-            cache_read_price=Decimal("0.50"),
-            cache_write_5m_price=Decimal("6.25"),
-            cache_write_1h_price=Decimal("6.25"),
+        "gpt-sol": FamilyPrices(  # gpt-6-sol pricing
+            input_price=Decimal("2.00"),
+            output_price=Decimal("10.00"),
+            cache_read_price=Decimal("0.20"),
+            cache_write_5m_price=Decimal("2.50"),
+            cache_write_1h_price=Decimal("2.50"),
         ),
         "gpt-terra": FamilyPrices(  # gpt-5.6-terra pricing
             input_price=Decimal("2.50"),
@@ -293,12 +293,12 @@ class CodexHelpers(BaseProviderHelpers):
             cache_write_5m_price=Decimal("3.125"),
             cache_write_1h_price=Decimal("3.125"),
         ),
-        "gpt-luna": FamilyPrices(  # gpt-5.6-luna pricing
-            input_price=Decimal("1.00"),
-            output_price=Decimal("6.00"),
-            cache_read_price=Decimal("0.10"),
-            cache_write_5m_price=Decimal("1.25"),
-            cache_write_1h_price=Decimal("1.25"),
+        "gpt-luna": FamilyPrices(  # gpt-6-luna pricing
+            input_price=Decimal("0.10"),
+            output_price=Decimal("0.50"),
+            cache_read_price=Decimal("0.01"),
+            cache_write_5m_price=Decimal("0.125"),
+            cache_write_1h_price=Decimal("0.125"),
         ),
     }
 
@@ -526,7 +526,7 @@ class CodexHelpers(BaseProviderHelpers):
     def selected_model_context_window(self, selected_model: str | None) -> int | None:
         """Return the model's Codex input window (or the default fallback's).
 
-        The window is a fixed per-model property (272K for Astra and pre-5.6,
+        The window is a fixed per-model property (272K for GPT-6 and pre-5.6,
         372K for the GPT-5.6 tiers — see :class:`CodexModelExtra`), not a user
         choice.
         Returns ``None`` when neither the given model nor the synced default
@@ -580,7 +580,7 @@ class CodexHelpers(BaseProviderHelpers):
         3. Clears ``fast_mode`` when the model does not expose the Priority
            service tier (currently GPT-5.4 mini).
         4. Pins ``context_max`` to the (post-substitution) model's fixed
-           window (272K for Astra and pre-5.6, 372K for the GPT-5.6 tiers).
+           window (272K for GPT-6 and pre-5.6, 372K for the GPT-5.6 tiers).
            Unlike Claude's 1M cap this is bidirectional — the window is not a
            user choice, so any stored value that diverges (stale row, cross-model preset) is
            replaced, in both directions. A ``None`` ``context_max`` stays
@@ -652,7 +652,7 @@ class CodexHelpers(BaseProviderHelpers):
             synced["codexDefaultContextMax"] = adjusted.context_max
 
     async def generate_title(self, prompt: str, system_prompt: str) -> str | None:
-        """Run a short gpt-5.6-luna SDK query to suggest a title for ``prompt``."""
+        """Run a short gpt-6-luna SDK query to suggest a title for ``prompt``."""
         from .title_suggest import generate_title as _generate_title
 
         return await _generate_title(prompt, system_prompt)
@@ -660,7 +660,7 @@ class CodexHelpers(BaseProviderHelpers):
     async def warm_up_quota(self) -> bool | None:
         """Open the Codex 5-hour window via the existing auth-probe throwaway turn.
 
-        ``probe_auth_via_codex_sdk`` runs one ephemeral gpt-5.6-luna turn over
+        ``probe_auth_via_codex_sdk`` runs one ephemeral gpt-6-luna turn over
         the ChatGPT OAuth credentials and reports whether it completed — the
         same minimal turn we want for the warm-up, and the same
         accepted/rejected signal. Reused rather than duplicated.

@@ -59,6 +59,8 @@ DEEPSWE_TO_INTERNAL_MODEL = {
     "claude-sonnet-4-6": "claude-sonnet-4-6",
     # GPT models (codex provider) — DeepSWE dashes -> our dotted full_name
     "gpt-6-astra": "gpt-6-astra",
+    "gpt-6-sol": "gpt-6-sol",
+    "gpt-6-luna": "gpt-6-luna",
     "gpt-5-6-sol": "gpt-5.6-sol",
     "gpt-5-6-terra": "gpt-5.6-terra",
     "gpt-5-6-luna": "gpt-5.6-luna",

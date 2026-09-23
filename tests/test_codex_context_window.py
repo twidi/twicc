@@ -43,10 +43,12 @@ def helpers():
     ("selected_model", "expected"),
     [
         ("gpt-astra", 272_000),
+        ("gpt-sol", 272_000),    # latest of family gpt-sol = gpt-6-sol
+        ("gpt-luna", 272_000),   # latest of family gpt-luna = gpt-6-luna
         # GPT-5.6 tiers temporarily rolled back to 272K (see module docstring).
-        ("gpt-sol", 272_000),
+        ("gpt-sol-5.6", 272_000),
         ("gpt-terra", 272_000),
-        ("gpt-luna", 272_000),
+        ("gpt-luna-5.6", 272_000),
         ("gpt", 272_000),        # latest of family gpt = gpt-5.5
         ("gpt-5.4", 272_000),
         ("gpt-mini", 272_000),
@@ -63,9 +65,32 @@ def test_astra_alias_resolves_to_the_codex_model(helpers):
     assert "gpt-astra" not in constraints["ultra"]
 
 
+@pytest.mark.parametrize(
+    ("selected_model", "sdk_model"),
+    [
+        # Bare tier aliases follow the latest generation; GPT-6 has no Terra.
+        ("gpt-sol", "gpt-6-sol"),
+        ("gpt-luna", "gpt-6-luna"),
+        ("gpt-terra", "gpt-5.6-terra"),
+        # The 5.6 tiers stay reachable through their versioned aliases.
+        ("gpt-sol-5.6", "gpt-5.6-sol"),
+        ("gpt-luna-5.6", "gpt-5.6-luna"),
+    ],
+)
+def test_gpt6_tier_aliases_resolve_to_the_codex_model(helpers, selected_model, sdk_model):
+    assert helpers.resolve_sdk_model(selected_model) == sdk_model
+
+
+def test_gpt6_tiers_effort_support(helpers):
+    constraints = helpers.get_agent_settings_constraints()["effort"]
+    assert {"gpt-sol", "gpt-luna"} <= set(constraints["max"])
+    # ``ultra`` stays disabled product-wide (ULTRA_EFFORT_TEMPORARILY_DISABLED).
+    assert "gpt-sol" not in constraints["ultra"]
+
+
 def test_context_window_unknown_model_falls_back_to_default(helpers, temp_settings):
-    # Synced default model is gpt-terra (SYNCED_SETTINGS_DEFAULTS); its window is
-    # temporarily 272K while the GPT-5.6 rollback switch is on.
+    # Synced default model is gpt-sol (SYNCED_SETTINGS_DEFAULTS), i.e. GPT-6 Sol,
+    # whose window is 272K.
     assert helpers.selected_model_context_window("no-such-model") == 272_000
     assert helpers.selected_model_context_window(None) == 272_000
 
@@ -132,7 +157,7 @@ def test_constraints_map_each_window_to_its_models(helpers):
     # longer a catalogue value, so only the 272K bucket is present.
     constraints = helpers.get_agent_settings_constraints()["context_max"]
     assert set(constraints[272_000]) == {
-        "gpt-astra-6", "gpt-astra",
+        "gpt-astra-6", "gpt-astra", "gpt-sol-6", "gpt-luna-6",
         "gpt-5.5", "gpt", "gpt-5.4", "gpt-mini-5.4", "gpt-mini",
         "gpt-sol-5.6", "gpt-sol", "gpt-terra-5.6", "gpt-terra", "gpt-luna-5.6", "gpt-luna",
     }

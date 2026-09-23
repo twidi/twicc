@@ -166,11 +166,11 @@ const AGENT_SETTINGS_CHOICES = {
             value: true,
             label: 'Enabled',
             display_label: 'Fast mode',
-            description: 'Faster generation — 2x on GPT-6 Astra, 2.5x on GPT-5.6, 1.5x before; uses credits at 2.5x.',
+            description: 'Faster generation — 2x on GPT-6 Astra, 1.5x on other models; uses credits at 2.5x.',
         },
         { value: false, label: 'Disabled', display_label: 'No fast mode' },
     ],
-    // Not a user choice: the window is fixed by the model (272K for Astra and
+    // Not a user choice: the window is fixed by the model (272K for GPT-6 and
     // pre-5.6, 372K for the GPT-5.6 tiers) — for the selected model the
     // non-matching option is disabled, a window no model supports is dropped entirely by
     // ``getFieldChoices``, and ``enforceAgentSettingsConsistency`` pins the
@@ -356,7 +356,7 @@ export class CodexHelpers extends BaseProviderHelpers {
     /**
      * Effective context window for a Codex session.
      *
-     * The window is a fixed per-model property (272K for Astra and pre-5.6,
+     * The window is a fixed per-model property (272K for GPT-6 and pre-5.6,
      * 372K for the GPT-5.6 tiers — the registry's
      * ``provider_extra.context_window``), so
      * when the session names a model the registry knows, that window wins
@@ -384,28 +384,29 @@ export class CodexHelpers extends BaseProviderHelpers {
 
     /**
      * Build a human-friendly label for a Codex ``selected_model`` value.
-     * "gpt" → "GPT", "gpt-5.5" → "GPT 5.5".
+     * "gpt" → "GPT", "gpt-5.5" → "GPT 5.5", "gpt-sol" → "GPT sol",
+     * "gpt-sol-5.6" → "GPT sol 5.6" (versioned alias of an older tier).
      */
     getModelLabel(selectedModel) {
         if (!selectedModel) return ''
-        if (selectedModel.includes('-')) {
-            const [model, version] = selectedModel.split('-', 2)
-            return `${model.toUpperCase()} ${version}`
-        }
-        return selectedModel.toUpperCase()
+        const [model, ...rest] = selectedModel.split('-')
+        return [model.toUpperCase(), ...rest].join(' ')
     }
 
     /**
      * Short grid-row label: drop the "gpt-" prefix so "gpt-sol" → "Sol",
-     * "gpt-mini" → "Mini"; the bare "gpt" family stays "GPT". Numeric-suffixed
-     * legacy aliases ("gpt-5.4") keep the full "GPT 5.4" label to stay clear.
+     * "gpt-mini" → "Mini", "gpt-sol-5.6" → "Sol 5.6"; the bare "gpt" family
+     * stays "GPT". Numeric-suffixed legacy aliases ("gpt-5.4") keep the full
+     * "GPT 5.4" label to stay clear.
      */
     getModelShortLabel(selectedModel) {
         if (!selectedModel) return ''
         if (selectedModel === 'gpt') return 'GPT'
         const suffix = selectedModel.startsWith('gpt-') ? selectedModel.slice(4) : selectedModel
-        if (/^[a-z]+$/i.test(suffix)) {
-            return suffix.charAt(0).toUpperCase() + suffix.slice(1)
+        const match = suffix.match(/^([a-z]+)(?:-(.+))?$/i)
+        if (match) {
+            const tier = match[1].charAt(0).toUpperCase() + match[1].slice(1)
+            return match[2] ? `${tier} ${match[2]}` : tier
         }
         return this.getModelLabel(selectedModel)
     }
@@ -463,7 +464,7 @@ export class CodexHelpers extends BaseProviderHelpers {
     }
 
     /**
-     * The model's fixed Codex input window (272K for Astra and pre-5.6,
+     * The model's fixed Codex input window (272K for GPT-6 and pre-5.6,
      * 372K for the GPT-5.6 tiers), from the registry's
      * ``provider_extra.context_window``.
      * Falls back to the default model when ``selectedModel`` is unknown

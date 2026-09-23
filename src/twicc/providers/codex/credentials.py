@@ -79,7 +79,7 @@ _TOKEN_REFRESH_TIMEOUT = 30
 # the codex-app-server binary check / refresh its OAuth tokens. Luna is the
 # cheapest model of the catalogue, and the turns below pin ``low`` — the
 # lowest effort any Codex model accepts — to keep the probe minimal.
-_REFRESH_MODEL = "gpt-5.6-luna"
+_REFRESH_MODEL = "gpt-6-luna"
 _REFRESH_PROMPT = "What model are you?"
 
 

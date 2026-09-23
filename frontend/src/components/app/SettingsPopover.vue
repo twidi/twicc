@@ -1893,7 +1893,7 @@ function onChangelogClose() {
                             @keydown="onTitleSuggestionModelKeydown"
                         >
                             <wa-radio :value="TITLE_SUGGESTION_MODEL.PROVIDER">
-                                Match session provider — Haiku for Claude Code, GPT-5.6 Luna for Codex
+                                Match session provider — Haiku for Claude Code, GPT-6 Luna for Codex
                             </wa-radio>
                             <wa-radio
                                 :value="TITLE_SUGGESTION_MODEL.HAIKU"
@@ -1909,7 +1909,7 @@ function onChangelogClose() {
                                 :value="TITLE_SUGGESTION_MODEL.LUNA"
                                 :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                             >
-                                GPT-5.6 Luna for every session
+                                GPT-6 Luna for every session
                                 <span
                                     v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                                     class="radio-note"

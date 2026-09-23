@@ -10,7 +10,7 @@
  * Unlike Claude's 200K/1M these are not a user choice: the window is a fixed
  * per-model property (the registry entry's ``provider_extra.context_window``),
  * pinned by ``enforceAgentSettingsConsistency``. ``DEFAULT`` (272K, used by
- * Astra and pre-5.6 models) doubles as the last-resort fallback for legacy sessions;
+ * GPT-6 and pre-5.6 models) doubles as the last-resort fallback for legacy sessions;
  * ``LARGE`` (372K) is the GPT-5.6 tiers' window. Mirrors the backend
  * ``AGENT_SETTINGS_CHOICES`` in ``providers/codex/helpers.py`` — keep in sync.
  */
@@ -50,8 +50,9 @@ export const UNTRUSTED_PERMISSION_MODES = [
  *
  * ``MAX`` and ``ULTRA`` are model-gated: the registry entry's
  * ``provider_extra.supports_effort_{max,ultra}`` says which models take them
- * (Astra, Sol, and Terra take both; Luna takes ``max`` only). Mirrors the
- * backend ``AGENT_SETTINGS_CHOICES`` in ``providers/codex/helpers.py``.
+ * (Astra, Sol, and Terra take both; Luna takes ``max`` only, in every
+ * generation that has the tier). Mirrors the backend
+ * ``AGENT_SETTINGS_CHOICES`` in ``providers/codex/helpers.py``.
  */
 export const EFFORT = {
     LOW: 'low',

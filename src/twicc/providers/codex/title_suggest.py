@@ -1,5 +1,5 @@
 """
-Title suggestion service for Codex sessions using gpt-5.6-luna via the
+Title suggestion service for Codex sessions using gpt-6-luna via the
 Codex SDK.
 
 Single-shot prompt: open an *ephemeral* thread (the SDK passes
@@ -45,7 +45,7 @@ MAX_RETRIES = 2
 # its lowest reasoning effort is ``low``
 # (the CLI's ``model/list`` exposes no ``none``/``minimal`` on any model), so
 # the turn below pins ``low`` rather than taking Luna's ``medium`` default.
-TITLE_MODEL = "gpt-5.6-luna"
+TITLE_MODEL = "gpt-6-luna"
 
 
 async def generate_title(user_message: str, system_prompt: str) -> str | None:
@@ -114,7 +114,7 @@ async def _call_codex(
     user_message: str, system_prompt: str, source: str = "unknown", attempt: int = 1,
 ) -> str | None:
     """
-    Single attempt to call gpt-5.6-luna via the Codex SDK and return the title suggestion.
+    Single attempt to call gpt-6-luna via the Codex SDK and return the title suggestion.
 
     The full operation (start ephemeral thread → run turn → close transport)
     is wrapped in a single timeout. Returns the suggested title, or None on

@@ -164,6 +164,8 @@ CLAUDE_SPEC = ProviderSpec(
 
 CODEX_MODEL_CASES: list[ModelCase] = [
     ModelCase("gpt-astra", "6", ("openai/gpt-6-astra",), ("gpt-6-astra",)),
+    ModelCase("gpt-sol",   "6", ("openai/gpt-6-sol",),   ("gpt-6-sol",)),
+    ModelCase("gpt-luna",  "6", ("openai/gpt-6-luna",),  ("gpt-6-luna",)),
 
     # gpt (flagship line — bare family, no variant suffix). ``gpt-4-0314``
     # is a dated snapshot of ``gpt-4`` so it shares the same case via
