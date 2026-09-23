@@ -39,6 +39,8 @@ refreshed automatically.
   control changes, exactly as if you clicked it. When several providers
   are shown, **Default provider only** restricts that pick to your default
   provider.
+- **Auto-select best** and **Show older models** turn off each time the
+  picker, the Settings panel or a preset form opens or closes.
 
 ## What the score means
 

@@ -363,6 +363,8 @@ function handleShow(e) {
     // current viewport rect for this opening so Floating UI does not move the
     // popover while the controls underneath it reflow.
     if (e.target !== popoverRef.value) return
+    // Every opening starts with older models hidden and auto-select off.
+    taskStore.resetTransientControls()
     const trigger = document.getElementById(props.for)
     frozenAnchorRect = trigger?.getBoundingClientRect() ?? null
 }
@@ -371,6 +373,8 @@ function handleAfterHide(e) {
     // Restore the live element so the next opening starts from wherever the
     // trigger ended up after the previous settings changes.
     if (e.target !== popoverRef.value) return
+    // Nothing carries over to the next opening (nor to the Settings matrix).
+    taskStore.resetTransientControls()
     const pop = popoverRef.value
     if (resizeTimer !== null) clearTimeout(resizeTimer)
     resizeTimer = null

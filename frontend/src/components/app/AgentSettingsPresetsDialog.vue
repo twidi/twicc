@@ -21,6 +21,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { getProviderHelpers } from '../../providers'
 import { RESERVED_PRESET_NAMES, useAgentSettingsPresetsStore } from '../../stores/agentSettingsPresets'
+import { useBenchmarkTaskStore } from '../../stores/benchmarkTask'
 import { presetSummaryParts } from '../../utils/presetFormat'
 import { DEFAULT_SENTINEL } from '../../composables/useSessionAgentSettings'
 import AgentSettingsDefaultsPicker from '../message/AgentSettingsDefaultsPicker.vue'
@@ -42,6 +43,7 @@ const emit = defineEmits(['update:open'])
 
 const providerHelpers = computed(() => getProviderHelpers(props.provider))
 const presetsStore = useAgentSettingsPresetsStore()
+const benchmarkTaskStore = useBenchmarkTaskStore()
 const providerLabel = computed(() => providerHelpers.value?.constructor?.label ?? 'Agent')
 
 // Preset records use historical key names (``model``, ``thinking``) while
@@ -200,6 +202,7 @@ function handleReorder(index, direction) {
 }
 
 function closeDialog() {
+    benchmarkTaskStore.resetTransientControls()
     emit('update:open', false)
 }
 
@@ -210,7 +213,10 @@ function onAfterShow() {
     errorMessage.value = ''
 }
 
+// The form is where the model × effort matrix shows: it opens with older
+// models hidden and auto-select off, like every other matrix surface.
 function openAddForm() {
+    benchmarkTaskStore.resetTransientControls()
     formData.value = emptyFormData()
     editIndex.value = null
     errorMessage.value = ''
@@ -221,6 +227,7 @@ function openAddForm() {
 function openEditForm(index) {
     const source = presets.value[index]
     if (!source) return
+    benchmarkTaskStore.resetTransientControls()
     formData.value = presetToFormData(source)
     editIndex.value = index
     errorMessage.value = ''

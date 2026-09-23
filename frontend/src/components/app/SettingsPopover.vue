@@ -10,6 +10,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useTipsStore } from '../../stores/tips'
 import { useHelpStore } from '../../stores/help'
 import { usePeersStore } from '../../stores/peers'
+import { useBenchmarkTaskStore } from '../../stores/benchmarkTask'
 import { getProviderHelpers, getProviderLabel, getProviderOptions, getRegisteredProviders, getProviderIcon } from '../../providers'
 import ProviderIcon from '../ui/ProviderIcon.vue'
 import { getActivationCharMetadata } from '../../utils/commandActivation'
@@ -55,6 +56,7 @@ const authStore = useAuthStore()
 const tipsStore = useTipsStore()
 const helpStore = useHelpStore()
 const peersStore = usePeersStore()
+const benchmarkTaskStore = useBenchmarkTaskStore()
 
 // Tips section is hidden from the nav (and the active-section watcher
 // below redirects away from it) when no tip matches the current
@@ -1201,6 +1203,10 @@ function resetTitleSystemPrompt() {
  * restricts it to the popover's own event (target === currentTarget).
  */
 function onPopoverShow() {
+    // The provider sections' model × effort matrix starts with older models
+    // hidden and auto-select off, whatever the last opening (or the session
+    // popover) left behind.
+    benchmarkTaskStore.resetTransientControls()
     mobileShowContent.value = false
     // Seed the worktree-directory template input from the persisted value
     // (General is the default section, so selectSection('general') may not fire
@@ -1265,7 +1271,7 @@ function onChangelogClose() {
         <PeerInboxBadge :count="peersStore.inboxCount" class="settings-trigger-badge" />
     </wa-button>
     <AppTooltip for="settings-trigger">Toggle settings</AppTooltip>
-    <wa-popover ref="popoverRef" v-popover-focus-fix for="settings-trigger" placement="top" class="settings-popover" @wa-show.self="onPopoverShow">
+    <wa-popover ref="popoverRef" v-popover-focus-fix for="settings-trigger" placement="top" class="settings-popover" @wa-show.self="onPopoverShow" @wa-after-hide.self="benchmarkTaskStore.resetTransientControls()">
         <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
         <div class="settings-layout">
             <div class="settings-layout-inner" :class="{ 'showing-content': mobileShowContent }">
