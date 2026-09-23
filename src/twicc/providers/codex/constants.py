@@ -236,7 +236,8 @@ GPT_56_CONTEXT_WINDOW_TEMPORARILY_REDUCED = True
 # ``gpt-5.5`` sits between Terra and ``gpt-5.4``: a retiring ``gpt-5.4`` lands
 # on it rather than on Terra, which is the intended behaviour — someone still
 # on 5.4 declined the newer generations, so the substitution moves them by the
-# smallest possible step.
+# smallest possible step. Once ``gpt-5.5`` retires too (2026-10-04), both land
+# on ``gpt-5.6-terra``, the nearest remaining weight.
 MODEL_VERSIONS: list[ModelVersion] = [
     ModelVersion(
         provider=Provider.CODEX,
@@ -303,7 +304,9 @@ MODEL_VERSIONS: list[ModelVersion] = [
         model="gpt",
         version="5.5",
         full_name="gpt-5.5",
-        retirement_date=None,
+        # Retires on 2026-10-04. Its weight puts gpt-5.6-terra as the nearest
+        # remaining model, so the fallback lands there.
+        retirement_date=date(2026, 10, 4),
         latest=True,
         weight=110,
         provider_extra=CodexModelExtra(
@@ -321,7 +324,7 @@ MODEL_VERSIONS: list[ModelVersion] = [
         # Retires from Codex with ChatGPT sign-in on 2026-08-31 (the OpenAI API
         # and Codex authenticated with an API key are unaffected). Announced
         # replacement is gpt-5.6-terra; see the weight comment above for why we
-        # let the fallback land on gpt-5.5 instead.
+        # let the fallback land on gpt-5.5 instead, until gpt-5.5 retires too.
         retirement_date=date(2026, 8, 31),
         latest=False,
         weight=100,

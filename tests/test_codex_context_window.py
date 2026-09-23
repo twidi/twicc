@@ -123,9 +123,11 @@ def test_enforce_matching_window_returns_same_instance(helpers):
 
 
 def test_enforce_combines_effort_demotion_and_window_pin(helpers):
-    s = AgentSettings(selected_model="gpt", effort="ultra", context_max=372_000)
+    # GPT-6 Luna: max but no ultra, native 272K window — neither depends on a
+    # retirement date nor on the temporary ultra / GPT-5.6 rollbacks.
+    s = AgentSettings(selected_model="gpt-luna", effort="ultra", context_max=372_000)
     adjusted = helpers.enforce_agent_settings_consistency(s)
-    assert adjusted.effort == "xhigh"
+    assert adjusted.effort == "max"
     assert adjusted.context_max == 272_000
 
 
