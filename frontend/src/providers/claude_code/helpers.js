@@ -488,7 +488,7 @@ export class ClaudeCodeHelpers extends BaseProviderHelpers {
      *    (post-upgrade) model doesn't support auto (only Opus 4.6+ /
      *    Sonnet 4.6+).
      * 6. Force ``thinkingEnabled`` on when the (post-upgrade) model can't
-     *    disable thinking (Fable 5: adaptive thinking is always on).
+     *    disable thinking (fable family, Opus 5.5: adaptive thinking is always on).
      *
      * Fields not in the input are left absent in the output.
      * ``claudeInChrome`` is passed through.

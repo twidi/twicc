@@ -247,9 +247,25 @@ MODEL_VERSIONS: list[ModelVersion] = [
     ),
     ModelVersion(
         provider=Provider.CLAUDE_CODE,
-        model="opus", version="5", full_name="claude-opus-5",
+        model="opus", version="5.5", full_name="claude-opus-5-5",
         retirement_date=None,
         latest=True,
+        weight=110,
+        # ``supports_thinking_disabled=False``: unlike Opus 5 (which merely caps
+        # effort at ``high`` when thinking is off), Opus 5.5 rejects
+        # ``thinking:{type:disabled}`` outright — the CLI model catalog flags it
+        # ``rejects_disabled_thinking``, as it does for the fable family.
+        provider_extra=ClaudeCodeModelExtra(
+            supports_1m=True, supports_effort_xhigh=True, supports_effort_max=True,
+            supports_fast=True, supports_permission_auto=True,
+            supports_highres_images=True, supports_thinking_disabled=False,
+        ),
+    ),
+    ModelVersion(
+        provider=Provider.CLAUDE_CODE,
+        model="opus", version="5", full_name="claude-opus-5",
+        retirement_date=None,
+        latest=False,
         weight=100,
         provider_extra=ClaudeCodeModelExtra(
             supports_1m=True, supports_effort_xhigh=True, supports_effort_max=True,

@@ -52,6 +52,7 @@ DEEPSWE_TO_INTERNAL_MODEL = {
     # Claude models (claude_code provider) — DeepSWE ids already match full_name
     "claude-fable-5-1": "claude-fable-5-1",
     "claude-fable-5": "claude-fable-5",
+    "claude-opus-5-5": "claude-opus-5-5",
     "claude-opus-5": "claude-opus-5",
     "claude-opus-4-8": "claude-opus-4-8",
     "claude-sonnet-5": "claude-sonnet-5",

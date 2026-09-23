@@ -336,12 +336,12 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
             cache_write_5m_price=Decimal("12.50"),
             cache_write_1h_price=Decimal("20.00"),
         ),
-        "opus": FamilyPrices(
-            input_price=Decimal("5.00"),
-            output_price=Decimal("25.00"),
-            cache_read_price=Decimal("0.50"),
-            cache_write_5m_price=Decimal("6.25"),
-            cache_write_1h_price=Decimal("10.00"),
+        "opus": FamilyPrices(  # Opus 5.5 pricing (the family's latest; Opus 5 and older are 5.00 / 25.00)
+            input_price=Decimal("4.00"),
+            output_price=Decimal("20.00"),
+            cache_read_price=Decimal("0.20"),
+            cache_write_5m_price=Decimal("5.00"),
+            cache_write_1h_price=Decimal("8.00"),
         ),
         "sonnet": FamilyPrices(
             input_price=Decimal("3.00"),
@@ -587,8 +587,9 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
         """Return ``True`` if the model lets you turn thinking off.
 
         ``False`` ⇒ adaptive thinking is always on and
-        ``thinking:{type:disabled}`` is rejected by the API (Fable 5), so
-        ``thinking_enabled`` is forced on for that model.
+        ``thinking:{type:disabled}`` is rejected by the API (the fable
+        family, Opus 5.5), so ``thinking_enabled`` is forced on for that
+        model.
         """
         mv = self.find_model(selected_model) if selected_model else None
         if mv is None:
@@ -671,8 +672,8 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
            the model doesn't support auto (Opus 4.5 / Sonnet 4.5 and
            earlier are rejected by the SDK / CLI).
         6. Forces ``thinking_enabled`` on when the model can't disable
-           thinking (Fable 5: adaptive thinking is always on and
-           ``thinking:{type:disabled}`` is rejected by the API).
+           thinking (fable family, Opus 5.5: adaptive thinking is always
+           on and ``thinking:{type:disabled}`` is rejected by the API).
         """
         settings = super().enforce_agent_settings_consistency(settings)
 
