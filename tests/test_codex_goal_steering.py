@@ -41,6 +41,9 @@ def agent_fixture():
         register_goal_operation=router.register_goal,
         unregister_goal_operation=router.unregister_goal,
         turn_steer=AsyncMock(return_value=SimpleNamespace(turn_id="a")),
+        # Since 0.155 an AsyncTurnHandle subscribes on construction. The real
+        # client delegates to the router, so mirror that chain here.
+        _subscribe_turn_notifications=router.subscribe_turn,
     )
     codex = SimpleNamespace(_client=client, _ensure_initialized=AsyncMock())
     client._sync = SimpleNamespace(_approval_handler=None, _router=router)

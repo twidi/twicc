@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Command palette** — Keep typing past a command's name to filter its entries, such as `sess twicc` to find a session — no need to open the command first.
 - **Peer inbox** — The text filter now keeps only the messages that contain every word you type, in their subject or their text, instead of matching scattered letters.
 - **Claude Agent SDK** — Upgrade from 0.2.152 to 0.2.157 (bundled Claude Code CLI: 2.1.259 → 2.1.277)
+- **Codex runtime** — Update from v0.153.4 to v0.155.1.
 
 ### Fixed
 

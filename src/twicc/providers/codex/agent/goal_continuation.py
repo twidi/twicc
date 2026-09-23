@@ -11,8 +11,8 @@ import asyncio
 import re
 from collections.abc import AsyncIterator
 
-from openai_codex import AsyncCodex, AsyncTurnHandle
-from openai_codex._inputs import RunInput
+from openai_codex import AsyncCodex
+from openai_codex._inputs import RunInput, _normalize_run_input, _to_wire_input
 from openai_codex._goal import _GoalOperationState
 from openai_codex.errors import JsonRpcError
 from openai_codex.generated.v2_all import ThreadGoalStatus, TurnSteerResponse
@@ -61,7 +61,17 @@ class GoalContinuation:
             if turn_id is not None and turn_id != rejected_turn:
                 try:
                     # Do not timeout the RPC and replay it: delivery would be ambiguous.
-                    return await AsyncTurnHandle(self.codex, self.thread_id, turn_id).steer(turn_input)
+                    # Call the client directly rather than through an
+                    # AsyncTurnHandle: since 0.155 its constructor opens a
+                    # turn-notification subscription, and a handle built only to
+                    # steer never drains it. This route already has its own
+                    # consumer, so the subscription would buffer for nothing.
+                    await self.codex._ensure_initialized()
+                    return await self.codex._client.turn_steer(
+                        self.thread_id,
+                        turn_id,
+                        _to_wire_input(_normalize_run_input(turn_input)),
+                    )
                 except JsonRpcError as exc:
                     if exc.code != -32600 or not (
                         exc.message == "no active turn to steer" or _TURN_MISMATCH.fullmatch(exc.message)
