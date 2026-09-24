@@ -364,7 +364,8 @@ Details:
 ## Changed now, without a notice
 
 Nothing released breaks before October 1: a change that only adds (a new
-key, a new flag, a new keyword, an error that becomes an answer) applies now,
+command, a new key, a new flag, a new keyword, an error that becomes an
+answer) applies now,
 and everything else waits for the date and is announced by a notice. Four
 changes of released values are exceptions and apply now, without a notice:
 
@@ -398,6 +399,29 @@ Additive changes, applied now:
 - `session <id>` answers for a row with no user message yet (it exited `1`).
 - `--slim` / `--full` on `session <id>` and `whoami`; `--paginated` on
   `sessions get`, `projects get`, `workspaces get` and `peers`.
+- **Pending requests and questions.** `session <id> pending-requests` lists
+  what the session's agent waits on: a `question`, or an `out_of_scope`
+  request (a tool approval, an MCP elicitation, …), each with its
+  `request_id` and the `actions` it accepts. `session <id> answer-questions
+  --request-id <request_id> --choice 'ID=VALUE'` answers a question (repeat
+  `--choice` once per question); `session <id> cancel-questions --request-id
+  <request_id>` declines it. A tool approval stays in the web UI, and a
+  session cannot answer its own question. Use them when a wait ends on
+  `outcome: awaiting_user_input`, then wait again with `session <id>
+  wait-reply`. MCP tools: `session_pending_requests`,
+  `session_answer_questions`, `session_cancel_questions`.
+- The replacements of section 4, usable now: `--wait-reply` on
+  `create-session`, `send-message` and `send-messages`; `session <id>
+  wait-reply` and `sessions wait-reply`; `session <id> stop` and `sessions
+  stop`; the `last_line` key in every `send-message` and `send-messages`
+  result.
+- The `process` block on every session row, and the `sessions` filters
+  `--active`, `--state` (repeatable) and `--provider`.
+- `session <id> messages`: an `is_final` key on each message (`true` on the
+  assistant message that closes a turn), and an `--is-final true|false|null`
+  filter (repeatable, OR-combined).
+- `session <id> content`: `--limit`, `--offset`, `--tail N` and
+  `--paginated`, applied after the range and `--contains`.
 
 ## `/rpc/` specifics
 
