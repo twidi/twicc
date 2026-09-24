@@ -7,7 +7,6 @@
 import { computed } from 'vue'
 import { useHelpStore } from '../../stores/help'
 import { useSettingsStore } from '../../stores/settings'
-import { formatRelative } from '../../utils/date'
 import { showHelp } from '../help/showHelp'
 
 const helpStore = useHelpStore()
@@ -22,22 +21,6 @@ const env = computed(() => ({
 const availableHelp = computed(() => {
     return helpStore.getAvailableHelp(env.value).sort((a, b) => a.title.localeCompare(b.title))
 })
-
-function isSeen(key) {
-    return key in helpStore.seenHelp
-}
-
-function statusIcon(item) {
-    return isSeen(item.key) ? 'check' : 'circle'
-}
-
-function statusLabel(item) {
-    const iso = helpStore.seenHelp[item.key]
-    if (!iso) return 'Not shown yet'
-    const ms = Date.parse(iso)
-    if (Number.isNaN(ms)) return 'Seen'
-    return `Seen ${formatRelative(ms)}`
-}
 
 function onClickHelp(key) {
     // Close the Settings popover before opening the dialog, like the tips
@@ -68,16 +51,11 @@ function onClickHelp(key) {
                 v-for="item in availableHelp"
                 :key="item.key"
                 class="help-row"
-                :class="{ seen: isSeen(item.key) }"
                 tabindex="0"
                 @click="onClickHelp(item.key)"
                 @keydown.enter="onClickHelp(item.key)"
             >
-                <wa-icon :name="statusIcon(item)" class="help-status" />
-                <div class="help-content">
-                    <div class="help-row-title">{{ item.title }}</div>
-                    <div class="help-row-sub">{{ statusLabel(item) }}</div>
-                </div>
+                <div class="help-row-title">{{ item.title }}</div>
             </li>
         </ul>
     </div>
@@ -112,9 +90,6 @@ function onClickHelp(key) {
 }
 
 .help-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
     padding: 0.5rem;
     border-radius: 0.25rem;
     cursor: pointer;
@@ -127,24 +102,10 @@ function onClickHelp(key) {
     outline: none;
 }
 
-.help-row.seen .help-row-title {
-    color: var(--wa-color-neutral-on-quiet, #888);
-}
-
-.help-content {
-    flex: 1;
-    min-width: 0;
-}
-
 .help-row-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.help-row-sub {
-    font-size: 0.8em;
-    color: var(--wa-color-neutral-on-quiet, #888);
 }
 
 .help-empty {
