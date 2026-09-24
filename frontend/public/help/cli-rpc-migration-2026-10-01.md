@@ -33,7 +33,8 @@ script.
 
 Until the date, an affected call still returns what it always did — except
 the changes listed in "Changed now, without a notice" (the `share` page size,
-`artifacts_dir`, the effective agent settings, the new keys) — plus one notice
+the `workflows` trace, `artifacts_dir`, the effective agent settings, the new
+keys) — plus one notice
 line per change it is affected by (a flagless `sessions`, `sessions get` or
 `session agents` call gets two):
 
@@ -364,11 +365,15 @@ Details:
 
 Nothing released breaks before October 1: a change that only adds (a new
 key, a new flag, a new keyword, an error that becomes an answer) applies now,
-and everything else waits for the date and is announced by a notice. Three
+and everything else waits for the date and is announced by a notice. Four
 changes of released values are exceptions and apply now, without a notice:
 
 - **`share` pages at 20** by default (it was 50). Pass `--limit 50` to keep
   the old page.
+- **`session <id> workflows` leaves out each run's execution trace**
+  (`workflowProgress`, `script`, `logs`, `args`) and its `result`. Pass
+  `--result` to get the `result` back, or `--full` for each run's envelope
+  verbatim; `session <id> workflow <run_id>` still returns one run in full.
 - **`artifacts_dir` is always the session's folder path** on `sessions`,
   `sessions get`, `session <id>` and `session <id> agents` (it was `null`
   until an artifact existed). Over `/rpc/` and MCP `has_artifacts` says
