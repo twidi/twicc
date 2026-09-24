@@ -69,7 +69,7 @@ twicc = "twicc:main"
 
 [tool.hatch.build.targets.wheel]
 # Two top-level packages ship inside the wheel: the TwiCC app itself, and the
-# vendored Codex Python SDK (extracted from openai/codex tag rust-v0.155.1 —
+# vendored Codex Python SDK (extracted from openai/codex tag rust-v0.156.1 —
 # see hatch_build.py). The SDK is vendored rather than pulled from PyPI
 # because the PyPI release `openai-codex` pins an older runtime version and
 # we want to ride a known-good combination with the matching upstream tag.
