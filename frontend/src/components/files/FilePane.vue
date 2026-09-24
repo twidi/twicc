@@ -1065,6 +1065,20 @@ async function checkWritable(filePath) {
  *   (editor stays visible). false for the very first load.
  */
 async function fetchFileContent(filePath, { isSwitch = false } = {}) {
+    // Binary media (PDF, audio, video) render straight from the raw endpoint;
+    // never fetch their content — it would read up to its 5 MB cap or error on
+    // larger media, while the player streams from file-raw with no cap. Guarded
+    // here, not only on file selection, because reload()/revert() (live artifact
+    // change, tree refresh, WS reconnect) also land here.
+    if (isBinaryMediaFile.value) {
+        currentContent.value = ''
+        error.value = null
+        isBinary.value = false
+        loading.value = false
+        switching.value = false
+        return
+    }
+
     if (isSwitch) {
         switching.value = true
     } else {
@@ -1148,18 +1162,6 @@ watch(() => props.filePath, async (newPath) => {
         if (!props.diffReadOnly) {
             checkWritable(newPath)
         }
-        return
-    }
-
-    // Binary media (PDF, audio, video) render straight from the raw endpoint;
-    // skip the file-content fetch — it would read up to its 5 MB cap or error
-    // on larger media, while the player streams from file-raw with no cap.
-    if (isBinaryMediaFile.value) {
-        currentContent.value = ''
-        error.value = null
-        isBinary.value = false
-        loading.value = false
-        switching.value = false
         return
     }
 
