@@ -11,6 +11,7 @@ import SettingsPopover from '../components/app/SettingsPopover.vue'
 import PeerInboxButton from '../components/peer/PeerInboxButton.vue'
 import ActivitySparkline from '../components/activity/ActivitySparkline.vue'
 import AppTooltip from '../components/ui/AppTooltip.vue'
+import BrandLogo from '../components/ui/BrandLogo.vue'
 import StartupProgressCallout from '../components/app/StartupProgressCallout.vue'
 import ProjectEditDialog from '../components/project/ProjectEditDialog.vue'
 import WorkspaceManageDialog from '../components/workspace/WorkspaceManageDialog.vue'
@@ -105,6 +106,7 @@ onBeforeUnmount(() => {
 <template>
     <div class="home-view">
         <header class="home-header">
+            <BrandLogo :size="36" animated />
             <h1>Welcome to TwiCC</h1>
             <span id="home-global-sparkline" class="global-sparkline">
                 <ActivitySparkline :data="globalWeeklyActivity" />

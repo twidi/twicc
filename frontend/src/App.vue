@@ -49,6 +49,7 @@ import { focusChatPrimary, gotoChatFooterPanel } from './utils/focusChat'
 import { TERMINAL_ROUTES, WORKFLOW_ROUTES } from './utils/tabRoutes'
 import { toggleSearchInActiveCodeMirror } from './composables/useCodeMirror'
 import { useSessionSwitcher } from './composables/useSessionSwitcher'
+import BrandLogo from './components/ui/BrandLogo.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -67,7 +68,7 @@ const isConnecting = computed(() => authStore.isConnecting)
 // Connection is deferred until authenticated (see useWebSocket).
 const { wsStatus, openWs, closeWs } = useWebSocket()
 
-// Dynamic favicon: overlays a status badge based on global process state
+// Dynamic favicon: the robot nods (orange when unread) based on global process state
 useFavicon()
 
 // Start the tip scheduler: first tip after FIRST_TIP_DELAY_MS, then
@@ -787,7 +788,7 @@ const toastTheme = computed(() => {
     <!-- Version mismatch: non-dismissible reload dialog -->
     <wa-dialog :open="versionMismatchDetected || undefined" without-header @wa-hide.prevent>
         <div class="version-reload-content">
-            <wa-spinner></wa-spinner>
+            <BrandLogo :size="56" animated />
             <p class="version-reload-text">TwiCC has been updated, reloading…</p>
         </div>
     </wa-dialog>
@@ -795,7 +796,7 @@ const toastTheme = computed(() => {
     <!-- Connecting overlay: shown while waiting for backend during auth check retry -->
     <div v-if="isConnecting" class="connecting-backdrop">
         <div class="connecting-content">
-            <wa-spinner></wa-spinner>
+            <BrandLogo :size="56" animated />
             <p class="connecting-text">Connecting to server...</p>
         </div>
     </div>

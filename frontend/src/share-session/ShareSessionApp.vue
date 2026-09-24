@@ -3,6 +3,7 @@ import { ref, reactive, provide, onMounted, onUnmounted, computed } from 'vue'
 import ShareItemsList from './ShareItemsList.vue'
 import SharedSubagentView from './SharedSubagentView.vue'
 import GlobalMediaPreview from '../components/media/GlobalMediaPreview.vue'
+import BrandLogo from '../components/ui/BrandLogo.vue'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { getProviderIcon } from '../providers'
@@ -207,7 +208,7 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
             :stack="subagentStack" @close="closeSubagent" @clear="clearSubagents" />
 
         <GlobalMediaPreview />
-        <footer class="share-footer">Shared with
+        <footer class="share-footer"><BrandLogo :size="16" /> Shared with
             <a href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">TwiCC</a></footer>
     </div>
 </template>

@@ -1081,7 +1081,7 @@ export const useDataStore = defineStore('data', {
 
         /**
          * Whether any session globally is in assistant_turn state.
-         * Used by the dynamic favicon to show a blue activity dot.
+         * Used by the dynamic favicon to make the robot nod.
          * Synthetic subagent states are skipped (a subagent is not a session,
          * and a stale synthetic must not pin the favicon "active"), as are
          * hidden sessions (kept out of every user-facing indicator).

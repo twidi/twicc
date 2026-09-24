@@ -2269,6 +2269,7 @@ function onChangelogClose() {
         <wa-divider></wa-divider>
         <footer v-if="currentVersion" class="settings-footer">
             <span class="settings-footer-version">
+                <BrandLogo :size="16" class="settings-footer-logo" />
                 <a href="https://github.com/twidi/twicc/" target="_blank" rel="noopener">TwiCC v{{ currentVersion }}</a><template v-if="store.isDevMode"> [dev]</template>
                 <template v-if="latestVersion">
                     &rarr;
@@ -2750,6 +2751,10 @@ wa-popover > wa-divider {
 
 .settings-footer-version {
     white-space: nowrap;
+}
+
+.settings-footer-logo {
+    margin-right: var(--wa-space-2xs);
 }
 
 .settings-footer-status {

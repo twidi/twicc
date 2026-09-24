@@ -6,6 +6,7 @@
 import { ref, onMounted } from 'vue'
 import { useArtifactBroker } from '../composables/useArtifactBroker'
 import ArtifactBrokerPrompt from '../components/artifacts/ArtifactBrokerPrompt.vue'
+import BrandLogo from '../components/ui/BrandLogo.vue'
 
 const props = defineProps({
     // Backend-served inner-doc URL (/artifacts/<id>/__twicc_doc__).
@@ -112,7 +113,7 @@ onMounted(() => {
     ></iframe>
     <!-- Share mode gets the same "Shared with TwiCC" footer as the session/doc
          share viewers; the in-app owner page (a plain tool view) does not. -->
-    <footer v-if="mode === 'share'" class="share-footer">Shared with
+    <footer v-if="mode === 'share'" class="share-footer"><BrandLogo :size="16" /> Shared with
         <a href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">TwiCC</a></footer>
     <!-- Share mode never prompts (server enforces the owner allowlist, D6). -->
     <ArtifactBrokerPrompt v-if="mode !== 'share'" :prompt="brokerPrompt" @decision="onBrokerDecision" />

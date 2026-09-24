@@ -1,34 +1,28 @@
 /**
- * useFavicon — Dynamically updates the browser favicon with a colored dot
- * in the top-right area based on global session state.
+ * useFavicon — Animates the favicon robot based on global session state.
  *
  * Two independent signals are tracked:
  * - hasAssistantTurn: at least one session is actively working
  * - hasUnread: at least one session has unread content
  *
- * Animation cycle:
- * - Neither active → original favicon (no animation)
- * - One active → 2-step cycle: default → colored dot (1s each)
- * - Both active → 4-step cycle: default → blue dot → default → orange dot
+ * At rest the favicon is the static robot (no animation). While a signal is
+ * on, the robot nods its head — its tilt is mirrored left/right, 1s per frame —
+ * in its own colour for activity, in the warning colour for unread content:
+ * - Activity only → 2-step cycle: active-left → active-right
+ * - Unread only   → 2-step cycle: unread-left → unread-right
+ * - Both          → 4-step cycle: active-left → active-right → unread-left → unread-right
  *
- * The three possible favicon variants (default, blue dot, orange dot) are
- * pre-generated as blob URLs once when the base SVG is loaded, then reused
- * from cache. Blob URLs avoid polluting the browser network panel (unlike
- * data: URLs which Chrome logs as requests on every href change).
+ * The frames are derived from `favicon.svg`: its `#tilt` group carries the
+ * rotation, its `#body` group the head colour. They are pre-generated as blob
+ * URLs once when the base SVG is loaded, then reused from cache. Blob URLs
+ * avoid polluting the browser network panel (unlike data: URLs which Chrome
+ * logs as requests on every href change).
  */
 import { watch, ref, computed, onBeforeUnmount } from 'vue'
 import { useDataStore } from '../stores/data'
 
-/** CSS variable names for dot colors. */
-const DOT_CSS_VARS = {
-    assistant_turn: '--wa-color-brand-60',
-    unread: '--wa-color-warning-60',
-}
-
-/** Dot size and position within the 100×100 viewBox (top-right area). */
-const DOT_RADIUS = 20
-const DOT_CX = 80
-const DOT_CY = 20
+/** CSS variable for the head colour of the unread frames. */
+const UNREAD_CSS_VAR = '--wa-color-warning-60'
 
 /**
  * Resolve a CSS custom property to its computed value.
@@ -38,21 +32,21 @@ function resolveCssColor(varName) {
 }
 
 /**
- * Build a composed SVG string: base favicon + optional colored dot in top-right.
+ * Build one frame from the base favicon SVG: optionally mirror the head tilt
+ * (`rotate(a …)` → `rotate(-a …)` on `#tilt`) and recolour the head (`#body`).
  */
-function buildComposedSvg(baseViewBox, baseInnerHtml, dotColor) {
-    const dotSvg = dotColor
-        ? `<circle cx="${DOT_CX}" cy="${DOT_CY}" r="${DOT_RADIUS}" fill="${dotColor}"/>`
-        : ''
-
-    return (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
-            `<svg viewBox="${baseViewBox}" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet">` +
-                baseInnerHtml +
-            '</svg>' +
-            dotSvg +
-        '</svg>'
-    )
+function buildFrameSvg(svgText, { mirrored = false, color = null } = {}) {
+    const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml')
+    const tilt = doc.getElementById('tilt')
+    if (mirrored && tilt) {
+        const transform = tilt.getAttribute('transform') || ''
+        tilt.setAttribute('transform', transform.replace(/rotate\(\s*(-?[\d.]+)/, (_, angle) => `rotate(${-parseFloat(angle)}`))
+    }
+    const body = doc.getElementById('body')
+    if (color && body) {
+        body.setAttribute('fill', color)
+    }
+    return new XMLSerializer().serializeToString(doc)
 }
 
 /**
@@ -63,8 +57,8 @@ function svgToBlobUrl(svgString) {
 }
 
 /**
- * Composable: watches global process state and updates the browser favicon
- * with a colored dot overlay, cycling through steps.
+ * Composable: watches global process state and animates the browser favicon,
+ * cycling through the nodding frames.
  */
 export function useFavicon() {
     const store = useDataStore()
@@ -75,62 +69,48 @@ export function useFavicon() {
 
     /**
      * Animation cycle steps. Each step is a key into cachedUrls.
-     * - Neither active → null (no cycle)
-     * - One active → ['default', dotKey] (2-step)
-     * - Both active → ['default', 'assistant_turn', 'default', 'unread'] (4-step)
+     * - Neither active → null (no cycle, static favicon)
+     * - One active → its left/right pair (2-step)
+     * - Both active → active pair then unread pair (4-step)
      */
     const cycleSteps = computed(() => {
-        const a = hasAssistantTurn.value
-        const u = hasUnread.value
-
-        if (!a && !u) return null
-
-        if (a && u) {
-            return ['default', 'assistant_turn', 'default', 'unread']
-        }
-
-        return ['default', a ? 'assistant_turn' : 'unread']
+        const steps = []
+        if (hasAssistantTurn.value) steps.push('activeLeft', 'activeRight')
+        if (hasUnread.value) steps.push('unreadLeft', 'unreadRight')
+        return steps.length ? steps : null
     })
 
     // ── DOM references ─────────────────────────────────────────────────
     const linkEl = document.querySelector('link[rel="icon"][type="image/svg+xml"]')
     const originalHref = linkEl?.getAttribute('href')
 
-    // Base SVG info (loaded asynchronously from the original favicon)
-    const baseSvg = ref(null)
+    // Set once the base SVG is loaded and the frames are cached (re-triggers the watcher)
+    const framesReady = ref(false)
     let animationInterval = null
 
-    // Pre-generated blob URLs for the 3 favicon variants: { default, assistant_turn, unread }
+    // Pre-generated blob URLs for the 4 frames: { activeLeft, activeRight, unreadLeft, unreadRight }
     let cachedUrls = null
 
     /**
-     * Build and cache the 3 favicon blob URLs from the loaded base SVG.
+     * Build and cache the 4 frame blob URLs from the base SVG text.
      */
-    function buildCache(base) {
-        const defaultSvg = buildComposedSvg(base.viewBox, base.innerHTML, null)
-        const blueSvg = buildComposedSvg(base.viewBox, base.innerHTML, resolveCssColor(DOT_CSS_VARS.assistant_turn))
-        const orangeSvg = buildComposedSvg(base.viewBox, base.innerHTML, resolveCssColor(DOT_CSS_VARS.unread))
+    function buildCache(svgText) {
+        const unreadColor = resolveCssColor(UNREAD_CSS_VAR)
         cachedUrls = {
-            default: svgToBlobUrl(defaultSvg),
-            assistant_turn: svgToBlobUrl(blueSvg),
-            unread: svgToBlobUrl(orangeSvg),
+            activeLeft: svgToBlobUrl(buildFrameSvg(svgText)),
+            activeRight: svgToBlobUrl(buildFrameSvg(svgText, { mirrored: true })),
+            unreadLeft: svgToBlobUrl(buildFrameSvg(svgText, { color: unreadColor })),
+            unreadRight: svgToBlobUrl(buildFrameSvg(svgText, { mirrored: true, color: unreadColor })),
         }
     }
 
-    // Fetch and parse the original favicon SVG
+    // Fetch the original favicon SVG
     if (originalHref) {
         fetch(originalHref)
             .then((r) => r.text())
             .then((svgText) => {
-                const parser = new DOMParser()
-                const doc = parser.parseFromString(svgText, 'image/svg+xml')
-                const svgEl = doc.documentElement
-                const base = {
-                    viewBox: svgEl.getAttribute('viewBox'),
-                    innerHTML: svgEl.innerHTML,
-                }
-                buildCache(base)
-                baseSvg.value = base
+                buildCache(svgText)
+                framesReady.value = true
             })
             .catch(() => {
                 // Fetch failed — favicon stays unchanged
@@ -159,7 +139,7 @@ export function useFavicon() {
 
     // ── Reactive watcher ───────────────────────────────────────────────
     watch(
-        [cycleSteps, baseSvg],
+        [cycleSteps, framesReady],
         ([steps]) => {
             clearAnimation()
 
