@@ -35,7 +35,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (it may expand to multiple
 
 ## Acting from inside a session: `self` and `parent`
 
-Commands that target a session accept two keywords resolved via PID ancestry, so an agent never needs to know its own id:
+Commands that target a session accept two keywords resolved via PID ancestry (over MCP, from the connection), so an agent never needs to know its own id:
 
 - **`self`** — the current session. Accepted by `session <ID>` and its subcommands, `update-session`, `update-sessions` / `send-messages` / `sessions stop` / `sessions wait-reply` (as an explicit id; `sessions stop self` answers `skipped_self`), `topology`, `artifacts bookmark` / `unbookmark`, `share create session`, the share list `--session`, and the `--spawned-by` / `--spawn-tree` / `--descendants` / `--siblings` filters.
 - **`parent`** — the session that spawned the current one. Accepted by `session <ID>` and its subcommands, `send-message`, `sessions stop` / `sessions wait-reply` (as an explicit id), `artifacts bookmark` / `unbookmark`, `share create session`, the share list `--session`, and the filiation filters (except `--spawn-tree` and `--siblings`, which reject `parent`).

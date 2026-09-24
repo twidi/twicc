@@ -333,18 +333,16 @@ def test_the_wait_is_published_as_a_read():
     assert hints["session_stop"] is False
 
 
-def test_the_mcp_description_carries_the_contract():
-    """The subcommand's docstring is the tool description an agent reads.
+def test_the_cli_help_carries_the_contract():
+    """The subcommand's docstring is the help a script author reads.
 
     A one-line `help=` on the decorator silently replaces it, which is how
     the exit codes went missing the first time. Nothing caught that, so the
     fix could have been undone by the next person shortening the help.
     """
-    from twicc.mcp.tools import iter_mcp_tools
+    from twicc.mcp.tools import _click_leaf
 
-    description = next(
-        t.description for t in iter_mcp_tools() if t.name == "session_wait_reply"
-    )
+    description = _click_leaf("session/wait-reply").help
 
     # The exit codes are the answer over MCP, where a non-zero code is
     # business data rather than a failure.
@@ -367,6 +365,28 @@ def test_the_mcp_description_carries_the_contract():
     # And the vocabulary a caller has to branch on. The `pending` *outcome* is
     # batch-only and must stay out: it cannot happen here. The word itself now
     # appears on its own — a pending request is one of the two endings.
+    for outcome in ("replied", "ended", "timeout", "provider_error",
+                    "backend_gone", "wait_failed", "awaiting_user_input"):
+        assert f"`{outcome}`" in description, outcome
+    assert "`pending`" not in description
+
+
+def test_the_mcp_description_carries_the_contract():
+    """The MCP tool has its own short description (the CLI help exceeds the
+    client cap), so the same contract is asserted on it: exit codes, the
+    resume rule as a pairing, the two cursors, and every outcome.
+    """
+    from twicc.mcp.tools import iter_mcp_tools
+
+    description = next(
+        t.description for t in iter_mcp_tools() if t.name == "session_wait_reply"
+    )
+
+    assert "Exit 0" in description
+    assert "after `replied` or `provider_error`, its `line_num`" in description
+    assert "after any other outcome, its `since_line_num`" in description
+    assert "from_line" in description and "since" in description
+    assert "mutually exclusive" in description
     for outcome in ("replied", "ended", "timeout", "provider_error",
                     "backend_gone", "wait_failed", "awaiting_user_input"):
         assert f"`{outcome}`" in description, outcome

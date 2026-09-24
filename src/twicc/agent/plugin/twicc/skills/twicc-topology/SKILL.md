@@ -36,7 +36,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 ### Arguments
 
 - `SESSION_ID` — any regular session in the spawned tree.
-- `self` — resolve the current TwiCC session from PID ancestry.
+- `self` — resolve the current TwiCC session (from PID ancestry, or from the connection over MCP).
 
 ### Options
 

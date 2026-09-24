@@ -86,7 +86,7 @@ def update_hide_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the hide may still apply on the "
+            "The request is not cancelled; the hide may still apply on the "
             "server side."
         ),
     ),
@@ -98,9 +98,6 @@ def update_hide_cmd(
     permission_mode to be in the non-interactive whitelist and (Claude
     Code) question_widget=False — change those first via
     `twicc update-session <ID> settings` if needed.
-
-    Connected clients receive a `session_removed` broadcast and drop the
-    session from their store.
     """
     _run_hidden_update(
         ctx.obj,
@@ -116,7 +113,7 @@ def update_unhide_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the unhide may still apply on the "
+            "The request is not cancelled; the unhide may still apply on the "
             "server side."
         ),
     ),
@@ -124,9 +121,7 @@ def update_unhide_cmd(
     """Unhide the session.
 
     Flips hidden back to False; the session reappears in every list /
-    search / counter. Connected clients receive a `session_updated`
-    broadcast and re-add it to their store. Counters and FTS are
-    re-synced server-side.
+    search / counter.
     """
     _run_hidden_update(
         ctx.obj,

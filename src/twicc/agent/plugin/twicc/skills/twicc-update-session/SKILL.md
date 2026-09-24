@@ -88,7 +88,7 @@ A flag the session's provider doesn't support (e.g. `--thinking` on Codex) is si
 $TWICC update-session '<SESSION_ID>' title '<NEW_TITLE>'
 ```
 
-Trimmed; non-empty; ≤ 200 characters. After the DB write, the server persists the title to the provider's backing store (non-critical; DB is already updated regardless).
+Trimmed; non-empty; ≤ 200 characters. The title is also written to the provider's own session store.
 
 ### `annotations`
 

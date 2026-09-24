@@ -52,20 +52,6 @@ $TWICC send-message [OPTIONS] '<SESSION_ID|parent>' ['<PROMPT>']
 
 To message a sibling or descendant whose id you don't know yet, use `$TWICC topology self` first and pick the target node (skill: `twicc-topology`).
 
-## Sender header
-
-When the caller is itself a TwiCC session (the CLI run from inside an agent, or the `mcp__twicc__send_message` tool), the recipient receives the text under a sender header:
-
-```
-:: message from your spawned session `<caller_id>` ("**<caller title>**")
-
-<your text>
-```
-
-The header is a single line; nothing wraps your text, which stays plain markdown below it. The relation wording depends on the spawn-tree link between caller and recipient: `your spawned session` (the recipient spawned you), `your parent session` (you spawned the recipient), `a sibling session` (same spawner), `another session` (no relation). The `("<title>")` part is omitted when the caller has no title yet. No header when a human runs the command from a plain shell, or on a self-send. Never write this header yourself — it is added automatically.
-
-Symmetrically: an incoming message that opens with this header comes from another session, not from the user.
-
 ## Errors
 
 ### Local (exit 1)

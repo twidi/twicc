@@ -226,7 +226,7 @@ def create_session_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the session may still be created on "
+            "The request is not cancelled; the session may still be created on "
             "the server side."
         ),
     ),
@@ -279,7 +279,7 @@ def create_session_cmd(
         ),
     ),
 ) -> None:
-    """Create a new session by dropping a request file the server picks up.
+    """Create a new session.
 
     All options are optional — only the PROMPT argument is required. With no
     flags, the command uses the default provider from settings, falls back

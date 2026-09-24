@@ -551,6 +551,7 @@ def _sessions_wait_reply(
     siblings: str = typer.Option(None, "--siblings", help="Siblings of this id, or 'self'."),
     annotation: list[str] = typer.Option(None, "--annotation", help="Narrow the selection by annotation (repeatable, AND-combined)."),
 ) -> None:
+    # The MCP tool uses a short description instead: twicc/mcp/descriptions.py (keep in sync).
     """Block until several sessions conclude, past their own cursors.
 
     The plural of `session <ID> wait-reply`, on sessions nobody just messaged:
@@ -826,6 +827,7 @@ def _session_wait_reply(
         ),
     ),
 ) -> None:
+    # The MCP tool uses a short description instead: twicc/mcp/descriptions.py (keep in sync).
     """Block until this session concludes, past the cursor.
 
     The same wait `--wait-reply` runs on the commands that send, on a session
@@ -882,7 +884,7 @@ def _session_stop(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the kill may still apply server-side."
+            "The request is not cancelled; the kill may still apply server-side."
         ),
     ),
     force: bool = typer.Option(
@@ -1187,15 +1189,14 @@ def _artifacts_bookmark(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. The "
-            "request stays on disk; the write may still apply on the server side."
+            "request is not cancelled; the write may still apply on the server side."
         ),
     ),
 ) -> None:
     """Bookmark an artifact (or rename / re-scope an existing bookmark).
 
     Upserts on the (session, path) key — same effect as the UI's bookmark
-    button + dialog. Requires the live TwiCC server: the write is broadcast so
-    open UIs refresh.
+    button + dialog. Requires the live TwiCC server.
     """
     from twicc.cli._session_keywords import (
         SELF_PARENT_KEYWORDS,
@@ -1228,7 +1229,7 @@ def _artifacts_unbookmark(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. The "
-            "request stays on disk; the removal may still apply on the server side."
+            "request is not cancelled; the removal may still apply on the server side."
         ),
     ),
 ) -> None:
@@ -1317,6 +1318,7 @@ def _share_create_session(
     show_title: bool = typer.Option(True, "--show-title/--no-title", help="Show a title to viewers; --no-title shows a generic label instead."),
     timeout: int = typer.Option(30, "--timeout"),
 ) -> None:
+    """Create a public read-only link to a session transcript."""
     from twicc.cli._session_keywords import (
         SELF_PARENT_KEYWORDS,
         resolve_session_keyword,
@@ -1345,6 +1347,7 @@ def _share_create_artifact(
     show_title: bool = typer.Option(True, "--show-title/--no-title", help="Show a title to viewers; --no-title shows a generic label instead."),
     timeout: int = typer.Option(30, "--timeout"),
 ) -> None:
+    """Create a public read-only link to a bookmarked artifact."""
     from twicc.cli.share_mutation import run_create_artifact
     run_create_artifact(
         bookmark_id=bookmark_id, label=label, password=password, expires_at=expires,
@@ -1355,24 +1358,28 @@ def _share_create_artifact(
 
 @share_app.command(name="revoke")
 def _share_revoke(share_id: str = typer.Argument(...), timeout: int = typer.Option(30)) -> None:
+    """Revoke a share link: viewers lose access. Reversible with unrevoke."""
     from twicc.cli.share_mutation import run_simple
     run_simple(share_id=share_id, kind="share:revoke", success="updated", timeout=timeout)
 
 
 @share_app.command(name="unrevoke")
 def _share_unrevoke(share_id: str = typer.Argument(...), timeout: int = typer.Option(30)) -> None:
+    """Restore a revoked share link."""
     from twicc.cli.share_mutation import run_simple
     run_simple(share_id=share_id, kind="share:unrevoke", success="updated", timeout=timeout)
 
 
 @share_app.command(name="delete")
 def _share_delete(share_id: str = typer.Argument(...), timeout: int = typer.Option(30)) -> None:
+    """Delete a share link (and its snapshot, if any). Not reversible."""
     from twicc.cli.share_mutation import run_simple
     run_simple(share_id=share_id, kind="share:delete", success="deleted", timeout=timeout)
 
 
 @share_app.command(name="propagate")
 def _share_propagate(share_id: str = typer.Argument(...), timeout: int = typer.Option(30)) -> None:
+    """Refresh a frozen share to the newest content: a snapshot session share or an artifact share."""
     from twicc.cli.share_mutation import run_simple
     run_simple(share_id=share_id, kind="share:propagate", success="updated", timeout=timeout)
 
@@ -1385,6 +1392,7 @@ def _share_update(
     expires: str = typer.Option(None, "--expires"),
     timeout: int = typer.Option(30),
 ) -> None:
+    """Update a share link's label, password, or expiry."""
     from twicc.cli.share_mutation import run_update
     fields = {}
     if label is not None:
@@ -1850,7 +1858,7 @@ def process_stop(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the kill may still apply on the "
+            "The request is not cancelled; the kill may still apply on the "
             "server side."
         ),
     ),

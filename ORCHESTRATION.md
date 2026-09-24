@@ -36,9 +36,9 @@ Orchestration is built entirely from the ordinary commands in [`SKILLS-AND-CLI.m
 
 ## Communication
 
-- **Push / pull coexist.** An executor child reports with `send-message parent`; a parent can also pull any child's messages at will. A read-only child (below) cannot push, so pull is the only way to read it.
-- **Attribution.** A message sent from one session to another arrives prefixed with a sender header — `> Message from <relation> session <id> ("<title>")` then `---` — where the relation (`your spawned session` / `your parent session` / `a sibling session` / `another session`) is computed from the spawn tree. It is added automatically by `send-message` / `send-messages`; a message without it comes from the user.
-- **Siblings never talk directly** — they route through the common parent.
+- **Push / pull coexist.** An executor child reports with `send-message parent`; a parent can also pull any child's messages at will. A read-only child (below) cannot run the CLI, but can still push through the `mcp__twicc__send_message` tool; only with the TwiCC MCP server disabled is pull the only way to read it.
+- **Attribution.** A message sent from one session to another arrives under a sender header — a single `:: message from <relation> session <id> ("**<title>**")` line, then the text — where the relation (`your spawned session` / `your parent session` / `a sibling session` / `another session`) is computed from the spawn tree. It is added automatically by `send-message` / `send-messages`; a message without it comes from the user.
+- **Siblings can talk directly** (`send-messages --siblings self`); control and accountability still flow along the tree.
 - **A node waits only on its direct children** in normal synchronization, never on grandchildren. Each level pilots its own children; `--descendants` is for exceptional subtree cleanup, not for routine barriers.
 
 ## Permission modes: the two extremes
@@ -46,7 +46,7 @@ Orchestration is built entirely from the ordinary commands in [`SKILLS-AND-CLI.m
 Orchestration uses only the two **non-interactive** extremes of each provider — interactive modes pause for per-tool approvals or questions, and a spawned session stuck on a UI dialog cannot be reliably unblocked from a parent:
 
 - **Executor — allows everything** (Claude Code `bypassPermissions`, Codex `yolo`): can act, write, spawn children, and push to its parent. A manager *must* be an executor.
-- **Read-only — allows only reading** (Claude Code `dontAsk`, Codex `strict`): pure analysis of a project; cannot run commands, so cannot spawn, message, or write. Always a terminal leaf, read only by pull — worth it for pure code/content analysis.
+- **Read-only — allows only reading** (Claude Code `dontAsk`, Codex `strict`): pure analysis of a project; cannot run commands or write files. It can still spawn, message and retag itself through the `mcp__twicc__*` tools; only with the TwiCC MCP server disabled is it a terminal leaf, read only by pull. Worth it for pure code/content analysis.
 
 ## Visibility & propagation
 

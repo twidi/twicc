@@ -80,7 +80,7 @@ def create_workspace_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the workspace may still be created on "
+            "The request is not cancelled; the workspace may still be created on "
             "the server side."
         ),
     ),

@@ -75,7 +75,7 @@ Every session knows its own `permission_mode` from its injected context. For orc
 - **Executor — allows everything** (Claude Code `bypassPermissions`, Codex `yolo`; alias for both `open`): can run shell, write files, edit code, spawn children, and push to its parent — by any means (the `$TWICC` CLI or the MCP tools).
 - **Read-only — no shell execution** (Claude Code `dontAsk`, Codex `strict`; alias for both `strict`): pure read/analysis of the given project. It **cannot run any shell command**, so it cannot use the `$TWICC` CLI, the bash-based skills, write files, or edit code.
 
-**But read-only is not a dead end for orchestration.** The `mcp__twicc__*` tools are a control plane mediated by the provider core, *not* the execution sandbox — so they work in **every** mode, read-only included. A read-only session can therefore still drive TwiCC through those tools: `mcp__twicc__create_session` to spawn a child, `mcp__twicc__send_message` (target `parent`) to push, `mcp__twicc__update_session` to retag itself, and every read tool. So a read-only session is a **pull-only leaf only when MCP is disabled outright**; otherwise it delegates and pushes like an executor — it just still cannot touch the shell, the filesystem, or the project's code.
+**But read-only is not a dead end for orchestration.** The `mcp__twicc__*` tools are a control plane mediated by the provider core, *not* the execution sandbox — so they work in **every** mode, read-only included. A read-only session can therefore still drive TwiCC through those tools: `mcp__twicc__create_session` to spawn a child, `mcp__twicc__send_message` (target `parent`) to push, `mcp__twicc__update_session_annotations` to retag itself, and every read tool. So a read-only session is a **pull-only leaf only when MCP is disabled outright**; otherwise it delegates and pushes like an executor — it just still cannot touch the shell, the filesystem, or the project's code.
 
 **Never conclude from your visible tool list that you lack an `mcp__twicc__*` tool.** TwiCC defers most of them on purpose, so they carry no schema until you ask for one: on Codex every tool is deferred, on Claude Code all but a handful. Search your full tool list for the tool you need (`ToolSearch` on Claude Code, `ALL_TOOLS` on Codex) before you treat it as absent. Below, "no MCP tools" always means MCP is off, never merely deferred.
 
@@ -138,7 +138,7 @@ Useful keys (free — conventions, not rules):
 Who sets them:
 
 - A **parent** tags a child at spawn (`create-session --annotation mode=worker --annotation job=reviewer`).
-- A session updates **its own** tags as it goes (`update-session self annotations set:status=done`) — a read-only session can't run the CLI for this, but retags itself with `mcp__twicc__update_session`; only with MCP disabled does it keep whatever the parent gave it.
+- A session updates **its own** tags as it goes (`update-session self annotations set:status=done`) — a read-only session can't run the CLI for this, but retags itself with `mcp__twicc__update_session_annotations`; only with MCP disabled does it keep whatever the parent gave it.
 
 Keep values **short and single-line** — annotations are metadata, not a message channel. Anything long goes in the message or a scratch file.
 

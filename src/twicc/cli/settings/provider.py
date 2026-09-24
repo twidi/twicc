@@ -388,7 +388,7 @@ def provider_main(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:
@@ -582,7 +582,7 @@ def provider_enable(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:
@@ -605,7 +605,7 @@ def provider_disable(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:
@@ -632,7 +632,7 @@ def provider_set_default(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:
@@ -668,7 +668,7 @@ def provider_orchestration_enable(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:
@@ -691,7 +691,7 @@ def provider_orchestration_disable(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:

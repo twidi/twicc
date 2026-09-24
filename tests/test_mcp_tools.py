@@ -77,3 +77,30 @@ def test_annotations_and_always_load():
         "share_propagate",
     ):
         assert by_name[name].annotations.read_only_hint is False
+
+
+def test_every_tool_has_a_title_and_a_description():
+    for tool in iter_mcp_tools():
+        assert tool.title, tool.name
+        assert tool.description, tool.name
+    by_name = {t.name: t for t in iter_mcp_tools()}
+    assert by_name["update_session_settings"].title == "Update session settings"
+    assert by_name["batch_read"].title == "Batch read"
+
+
+def test_descriptions_fit_the_client_cap_on_both_surfaces():
+    # The external surface appends a suffix to every description; both
+    # surfaces must stay within the 1024-character client cap.
+    from twicc.mcp.descriptions import EXTERNAL_DESCRIPTION_SUFFIX, MAX_DESCRIPTION_LENGTH
+
+    for tool in iter_mcp_tools():
+        length = len(tool.description) + len(EXTERNAL_DESCRIPTION_SUFFIX)
+        assert length <= MAX_DESCRIPTION_LENGTH, (tool.name, length)
+
+
+def test_mcp_description_overrides_target_exposed_commands():
+    from twicc.mcp.descriptions import MCP_DESCRIPTIONS
+
+    assert set(MCP_DESCRIPTIONS) <= set(build_mcp_registry())
+    by_name = {t.name: t for t in iter_mcp_tools()}
+    assert by_name["session_wait_reply"].description == MCP_DESCRIPTIONS["session/wait-reply"]

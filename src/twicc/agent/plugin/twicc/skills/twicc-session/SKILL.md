@@ -235,7 +235,7 @@ $TWICC session <ID> messages --tail 1
 
 (`messages` exits 1 with `session not found` while a freshly created session still has no user message — a third non-answer, not an error to report.)
 
-**Why neither filter here.** `--is-final true` spans the **whole session**, not the current turn, so mid-turn it returns the closing message of a *previous* turn — an answer to an older question, which reads as perfectly valid. Measured live: last user message at line 956, agent still writing at line 1228, and `--role assistant --is-final true --tail 1` returned line **953**. And `--role assistant` alone hides a trailing user message, bringing the same staleness back in the window before the agent's first line.
+**Why neither filter here.** `--is-final true` spans the **whole session**, not the current turn, so mid-turn it returns the closing message of a *previous* turn — an answer to an older question, which reads as perfectly valid. And `--role assistant` alone hides a trailing user message, bringing the same staleness back in the window before the agent's first line.
 
 Other patterns:
 - The session's answers, without the commentary: `messages --role assistant --is-final true --tail N` (spanning the session is what you want here — but a bare call pages at **20 oldest**, so ask for the end explicitly, or page with `--limit`/`--offset` and read `has_more`)

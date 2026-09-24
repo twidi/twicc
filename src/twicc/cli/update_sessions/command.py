@@ -103,9 +103,9 @@ def _archive(
 ) -> None:
     """Archive every targeted session.
 
-    Per session, same effect as `update-session <ID> archive`: kills the live
-    agent (reason=archived) and any tmux terminal, may auto-unpin
-    (autoUnpinOnArchive synced setting), broadcasts session_updated.
+    Per session, same effect as `update-session <ID> archive`: stops the live
+    agent, closes the session's terminals, may auto-unpin
+    (autoUnpinOnArchive synced setting).
     """
     run_batch(
         session_ids or [],

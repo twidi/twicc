@@ -199,7 +199,7 @@ With `--full` (and by default before 2026-10-01), each row is the full payload (
 
 ### Batch lookup (`get`)
 
-Same shape per entry, plus `known` boolean. When `known: false`, the session fields are `null` (`artifacts_dir` included: there is no session to own a folder) — but `process` is not: a `ProcessRun` row exists before the watcher writes the `Session` row, so a live block on an unknown id is a session that just started.
+Same shape per entry, plus `known` boolean. When `known: false`, the session fields are `null` (`artifacts_dir` included: there is no session to own a folder) — but `process` is not: a live process can exist before its session is indexed, so a live block on an unknown id is a session that just started.
 
 Before 2026-10-01 (without `--paginated`), a bare array:
 

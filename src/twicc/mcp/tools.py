@@ -9,7 +9,9 @@ injects the caller identity, making it THE discovery primitive).
 
 Naming: registry path with ``/`` and ``-`` mapped to ``_``
 (``update-session/settings`` → ``update_session_settings``). Claude prefixes
-these as ``mcp__twicc__<name>``.
+these as ``mcp__twicc__<name>``. Title: the same path in words
+(``Update session settings``). Description: the command's CLI help, or its
+short MCP text from ``descriptions.py`` when the help exceeds the client cap.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from mcp import types as mcp_types
 from twicc.cli._local_only import LOCAL_ONLY_COMMANDS
 from twicc.cli._output import RETIRED_COMMANDS, listing_cutover_passed
 from twicc.mcp.batch_contract import BATCH_INPUT_SCHEMAS, BATCH_OUTPUT_SCHEMA, BATCH_NAMES
+from twicc.mcp.descriptions import MCP_DESCRIPTIONS
 from twicc.rpc.generator import CommandSpec, build_registry
 from twicc.rpc.invoker import get_command
 from twicc.rpc.permissions import COOKIE_READONLY_COMMANDS
@@ -59,6 +62,12 @@ def tool_name_for(path: str) -> str:
     return path.replace("/", "_").replace("-", "_")
 
 
+def tool_title_for(path: str) -> str:
+    """Human-readable title: ``update-session/settings`` → ``Update session settings``."""
+    words = path.replace("/", " ").replace("-", " ").replace("_", " ")
+    return words[:1].upper() + words[1:]
+
+
 #: MCP tool name of each retired command → its ``RETIRED_COMMANDS`` key. Kept
 #: here, not in ``_output``, which every command imports and which must not pull
 #: in the MCP layer. Past the cutover, a call to one of these names answers with
@@ -88,6 +97,8 @@ def _click_leaf(path: str) -> click.Command:
 
 
 def _description_for(path: str, spec: CommandSpec) -> str:
+    if path in MCP_DESCRIPTIONS:
+        return MCP_DESCRIPTIONS[path]
     help_text = (_click_leaf(path).help or "").strip()
     return help_text or spec.summary
 
@@ -100,6 +111,7 @@ def iter_mcp_tools() -> list[mcp_types.Tool]:
         out.append(
             mcp_types.Tool(
                 name=tool_name_for(path),
+                title=tool_title_for(path),
                 description=_description_for(path, spec),
                 input_schema=spec.json_schema,
                 annotations=mcp_types.ToolAnnotations(
@@ -114,6 +126,7 @@ def iter_mcp_tools() -> list[mcp_types.Tool]:
         read = name == "batch_read"
         out.append(mcp_types.Tool(
             name=name,
+            title=tool_title_for(name),
             description=(
                 "Run up to 20 read-only commands in one call. Parallel by default (4 at once); "
                 "mode=sequential is also available. on_error defaults to continue. "

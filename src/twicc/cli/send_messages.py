@@ -184,6 +184,7 @@ def send_messages_cmd(
         ),
     ),
 ) -> None:
+    # The MCP tool uses a short description instead: twicc/mcp/descriptions.py (keep in sync).
     """Send the same message to several sessions at once.
 
     Asynchronous by default: a per-id "sent" status only means the message was
@@ -206,12 +207,6 @@ def send_messages_cmd(
     `--annotation` (plus `--siblings`, unique to send-messages). Output is keyed
     by session id with a summary; a per-session failure never fails the batch
     (exit 0), exit 6 if no session was sent.
-
-    When the caller is itself a TwiCC session, each recipient receives the
-    text under a sender header (a single ":: message from <relation> session
-    <id> (\"**<title>**\")" line, then the text) identifying the calling session;
-    the relation wording (spawned/parent/sibling/another) is computed per
-    recipient.
 
     Heads-up: each send starts/resumes an agent (real work, token spend); a
     batch can cold-start many stopped sessions at once.

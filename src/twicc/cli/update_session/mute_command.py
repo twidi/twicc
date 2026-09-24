@@ -74,7 +74,7 @@ def update_mute_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the mute may still apply on the server side."
+            "The request is not cancelled; the mute may still apply on the server side."
         ),
     ),
 ) -> None:
@@ -93,7 +93,7 @@ def update_notify_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; notifications may still be enabled on "
+            "The request is not cancelled; notifications may still be enabled on "
             "the server side."
         ),
     ),

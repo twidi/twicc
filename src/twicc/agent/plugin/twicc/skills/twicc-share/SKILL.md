@@ -7,9 +7,8 @@ description: Create and manage public read-only links for session transcripts or
 
 A share is a public, read-only capability URL. Two global settings gate this
 surface, per kind: `allowAgentSessionShares` and `allowAgentArtifactShares`,
-both OFF by default. **Never enable these settings yourself** (you could,
-via `twicc settings set` — that is a property of the trust model, not an
-invitation): only the user flips them, in Settings → Sharing.
+both OFF by default. **Never enable these settings yourself**: only the
+user flips them, in Settings → Sharing.
 
 ## When to use
 

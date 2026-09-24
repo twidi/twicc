@@ -95,7 +95,7 @@ def update_pin_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the pin may still apply on the "
+            "The request is not cancelled; the pin may still apply on the "
             "server side."
         ),
     ),
@@ -138,7 +138,7 @@ def update_unpin_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the unpin may still apply on the "
+            "The request is not cancelled; the unpin may still apply on the "
             "server side."
         ),
     ),
@@ -146,8 +146,7 @@ def update_unpin_cmd(
     """Unpin the session (regardless of the current pin scope).
 
     Same effect as picking "Not pinned" in the UI's pin menu. Idempotent:
-    unpinning an already-unpinned session is a no-op write and still
-    emits a ``session_updated`` broadcast.
+    unpinning an already-unpinned session succeeds.
     """
     _run_pinned_update(
         ctx.obj,

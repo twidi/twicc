@@ -27,7 +27,7 @@ def delete_workspace_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the delete may still apply on the "
+            "The request is not cancelled; the delete may still apply on the "
             "server side."
         ),
     ),

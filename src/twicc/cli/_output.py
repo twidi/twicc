@@ -542,17 +542,17 @@ WHOAMI_CUTOVER_NOTICE = cutover_help(
 )
 
 WHOAMI_HELP = cutover_help(
-    "Print details of the session that owns the calling process, found by "
-    f"walking the PID ancestry. Without --slim or --full, until {_CUTOVER_DATE}: "
+    "Print details of the calling session (found by walking the PID ancestry; "
+    f"over MCP, from the connection). Without --slim or --full, until {_CUTOVER_DATE}: "
     "a JSON object with session_id, title, project_id, project_directory, "
     "current_working_directory, artifacts_dir, scratch_dir, "
     "orchestration_scratch_dir (only inside an orchestration), the resolved "
-    "agent_settings, the serializer payload of the session, and the nine-field `process` row. "
+    "agent_settings, the session payload, and the nine-field `process` row. "
     "With --slim or --full: the `session self` payload — the session row, "
     "reduced or in full, with its `process` block inside. From a plain terminal, "
     "this command exits 1.",
-    "Print the session that owns the calling process, found by walking the PID "
-    "ancestry: the `session self` payload — the session row, reduced by default "
+    "Print the calling session (found by walking the PID ancestry; over MCP, "
+    "from the connection): the `session self` payload — the session row, reduced by default "
     "(--full for every field), with its `process` block inside. From a plain "
     "terminal, this command exits 1.",
 )

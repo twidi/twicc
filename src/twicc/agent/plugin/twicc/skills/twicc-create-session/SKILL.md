@@ -132,11 +132,9 @@ Creates the session invisible in every user-facing listings, search, and broadca
 **Restrictive modes (`dontAsk` / `strict`) are heavily sandboxed.** A hidden child running in one of these modes can read files from the project but typically **cannot**:
 - write any file (anywhere, including scratch or temp directories),
 - access the network,
-- run the `twicc` CLI (it writes to its DB, logs, and `uv` cache — all blocked),
-- therefore **invoke any TwiCC skill** (every skill goes through the `twicc` CLI),
-- therefore **send a message back to its parent** via `twicc-send-message`.
+- run any shell command, so it **cannot use the `$TWICC` CLI**.
 
-The child's only output channel is the final assistant message of its turn. **The simplest way to collect it is `--wait-reply`** (see above), which creates the session and hands back the answer in one call. Failing that, **the parent is responsible** for fetching it via `$TWICC session <ID> messages --tail 1` (skill: `twicc-session`). Check the entry's `is_final` field before using it: `true` confirms the turn's closing message, `false` means you read an intermediate one and must retry, `null` means unknown — use the entry, but do not treat it as proof the turn ended. Read too early, a `false` is the difference between the child's answer and "I'll start by reading the file". Use these modes for pure "analyst" workers (read code, return a synthesis as text); for anything that needs side effects, pick `bypassPermissions` (Claude Code) or `yolo` (Codex) — alias `open` for both — and accept the broader latitude.
+It can still use the `mcp__twicc__*` tools, which work in every mode — including `mcp__twicc__send_message` with `parent` to push a message back to you. Only when the TwiCC MCP server is disabled is the child's only output channel the final assistant message of its turn. **The simplest way to collect it is `--wait-reply`** (see above), which creates the session and hands back the answer in one call. Failing that, **the parent is responsible** for fetching it via `$TWICC session <ID> messages --tail 1` (skill: `twicc-session`). Check the entry's `is_final` field before using it: `true` confirms the turn's closing message, `false` means you read an intermediate one and must retry, `null` means unknown — use the entry, but do not treat it as proof the turn ended. Read too early, a `false` is the difference between the child's answer and "I'll start by reading the file". Use these modes for pure "analyst" workers (read code, return a synthesis as text); for anything that needs side effects, pick `bypassPermissions` (Claude Code) or `yolo` (Codex) — alias `open` for both — and accept the broader latitude.
 
 ### `--no-question-widget`
 
@@ -235,7 +233,7 @@ A `created` status only means the session started and the prompt was handed to t
 
 **Continue the conversation:** once at `user_turn`, post a follow-up with `$TWICC send-message <SESSION_ID> '<text>'` (skill: `twicc-send-message`). To change settings mid-session, use `$TWICC update-session <SESSION_ID> settings ...` (skill: `twicc-update-session`).
 
-**Let the child talk back:** to enable async replies, instruct the spawned session in the prompt to load the `twicc-send-message` skill and use `send-message parent '<text>'` — the `parent` keyword resolves to you via its `spawned_by` link, and the reply lands in your own session prefixed with the child's id. Loading the skill is what gives the child the `$TWICC` resolution and full invocation syntax. **Not available under `--permission-mode dontAsk` / `strict`** (the `twicc` CLI itself is blocked there — see the `--hidden` section above); fetch the child's final message via `$TWICC session <ID> messages --tail 1` instead.
+**Let the child talk back:** to enable async replies, instruct the spawned session in the prompt to load the `twicc-send-message` skill and use `send-message parent '<text>'` — the `parent` keyword resolves to you via its `spawned_by` link, and the reply lands in your own session. Under `--permission-mode dontAsk` / `strict` the child cannot run the `$TWICC` CLI: tell it to use the `mcp__twicc__send_message` tool instead (see the `--hidden` section above). With the TwiCC MCP server disabled, fetch the child's final message via `$TWICC session <ID> messages --tail 1` instead.
 
 ## Related commands
 

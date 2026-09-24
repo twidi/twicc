@@ -32,7 +32,7 @@ def update_title_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the rename may still apply on the "
+            "The request is not cancelled; the rename may still apply on the "
             "server side."
         ),
     ),

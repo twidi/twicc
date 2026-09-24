@@ -95,11 +95,12 @@ def send_message_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the message may still be sent on "
+            "The request is not cancelled; the message may still be sent on "
             "the server side."
         ),
     ),
 ) -> None:
+    # The MCP tool uses a short description instead: twicc/mcp/descriptions.py (keep in sync).
     """Send a message to an existing session.
 
     PROMPT may be omitted when at least one ``--attach`` is given: both
@@ -108,12 +109,6 @@ def send_message_cmd(
     The session keeps its currently stored agent settings (model, effort,
     permission mode, ...). To change settings, use
     ``twicc update-session <ID> settings`` — or the UI.
-
-    When the caller is itself a TwiCC session, the recipient receives the
-    text under a sender header (a single ":: message from <relation> session
-    <id> (\"**<title>**\")" line, then the text) identifying the calling session
-    and its spawn-tree relation to the recipient
-    (spawned/parent/sibling/another).
 
     Asynchronous by default: a "sent" status only means the message was
     handed to the agent — not that the agent has finished processing it.

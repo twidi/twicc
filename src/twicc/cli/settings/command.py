@@ -172,7 +172,7 @@ def settings_set(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:
@@ -220,7 +220,7 @@ def settings_unset(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:

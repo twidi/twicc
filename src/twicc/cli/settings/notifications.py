@@ -184,7 +184,7 @@ def notifications_add(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:
@@ -271,7 +271,7 @@ def notifications_update(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:
@@ -326,7 +326,7 @@ def notifications_remove(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the update may still apply."
+            "The request is not cancelled; the update may still apply."
         ),
     ),
 ) -> None:
@@ -368,7 +368,7 @@ def notifications_test(
         30, "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the test may still complete."
+            "The request is not cancelled; the test may still complete."
         ),
     ),
 ) -> None:

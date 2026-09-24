@@ -85,19 +85,17 @@ def update_archive_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the archive may still apply on the "
+            "The request is not cancelled; the archive may still apply on the "
             "server side."
         ),
     ),
 ) -> None:
     """Archive the session.
 
-    Same effect as the UI's archive action: sets ``archived=True`` on the
-    row, kills any live agent attached to the session (``reason=archived``),
-    tears down any tmux terminal in the ``s:<session_id>`` namespace, and —
-    when the synced setting ``autoUnpinOnArchive`` is enabled and the
-    session is currently pinned — also unpins. UI clients receive a
-    ``session_updated`` broadcast carrying the final row state.
+    Same effect as the UI's archive action: stops any live agent attached to
+    the session, closes the session's terminals, and — when the synced
+    setting ``autoUnpinOnArchive`` is enabled and the session is currently
+    pinned — also unpins.
     """
     _run_archived_update(
         ctx.obj,
@@ -113,7 +111,7 @@ def update_unarchive_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the unarchive may still apply on the "
+            "The request is not cancelled; the unarchive may still apply on the "
             "server side."
         ),
     ),
@@ -122,7 +120,7 @@ def update_unarchive_cmd(
 
     Flips ``archived`` back to ``False``. Does not resume the agent — the
     session stays cold until you explicitly send a message or update its
-    settings. UI clients receive a ``session_updated`` broadcast.
+    settings.
     """
     _run_archived_update(
         ctx.obj,

@@ -49,7 +49,7 @@ def peer_send_cmd(
         "--timeout",
         help=(
             "Seconds to wait for the server's final status before giving up. "
-            "The request stays on disk; the message may still be sent on "
+            "The request is not cancelled; the message may still be sent on "
             "the server side."
         ),
     ),

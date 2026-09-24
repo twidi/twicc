@@ -42,7 +42,7 @@ Every sub-command takes a positional `SESSION_ID...` list plus optional scope fi
 - `--spawned-by <ID|self>` — also target the direct children of the given session. `parent` is not supported. Mutually exclusive with `--descendants`.
 - `--descendants <ID|self>` — also target every proper descendant of the given session (target excluded). Mutually exclusive with `--spawned-by`.
 - `--annotation KEY[OP]VALUE` — narrow the `--spawned-by` / `--descendants` scope by annotation; repeatable, AND-combined. Requires a filiation scope and does **not** filter explicit ids. Same operators as `twicc sessions --annotation` (skill: `twicc-sessions`).
-- `--timeout SECONDS` — wall-clock budget for the whole batch (default 30; drops run in parallel server-side).
+- `--timeout SECONDS` — wall-clock budget for the whole batch (default 30; the updates run in parallel).
 
 If neither ids nor a filiation scope is given, the command errors (exit 1). An empty resolved set is not an error: `results` is `{}` and the command exits 0.
 

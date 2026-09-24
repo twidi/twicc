@@ -38,6 +38,7 @@ from twicc.mcp.identity import resolve_session_token, external_caller, batch_cor
 from twicc.mcp.batch import BatchRuntime
 from twicc.mcp.batch_contract import BATCH_NAMES, validate_batch, fit_result, rejected_batch
 from twicc.mcp.dispatch import PreparedTool, UnknownToolError, check_caller_arguments, prepare_tool
+from twicc.mcp.descriptions import EXTERNAL_DESCRIPTION_SUFFIX
 from twicc.mcp.tools import iter_mcp_tools, tools_by_name, MCP_READ_ONLY_PATHS, RETIRED_MCP_TOOLS
 from twicc.rpc.generator import render_argv
 from twicc.rpc.views import _run_invoke
@@ -315,7 +316,7 @@ async def _external_list(ctx, params):
         if tool.name == "whoami":
             continue
         item = tool.model_copy(deep=True)
-        item.description = (item.description or "") + "\nExternal MCP: use explicit IDs. No self or parent references."
+        item.description = (item.description or "") + EXTERNAL_DESCRIPTION_SUFFIX
         item.meta = {"securitySchemes": [{"type": "oauth2", "scopes": ["twicc:full"]}]}
         tools.append(item)
     return mcp_types.ListToolsResult(tools=tools)

@@ -41,7 +41,7 @@ Your parent is who you **report** to — but it is not the only session you can 
 
 Use it for real coordination — hand off a result a sibling is waiting on, share a discovery, flag that an interface you own is ready. It does **not** replace reporting: your own result still goes to your parent. (Read-only analyst? You can't reach peers via the CLI, but you can with `mcp__twicc__send_message`; only with MCP disabled can peers merely pull you.) If your task was framed as deliberately independent — e.g. you are one vote in a quorum — then **don't** confer; independence is the point there. Full picture: `twicc-orchestration` › *Talking between sessions* and `patterns/peer-coordination.md`.
 
-If you can run commands, keep your own annotations current as you go — `$TWICC update-session self annotations set:status=working`, then `set:status=done` (or `failed`) when finished. Short single-line values only; see `twicc-orchestration` for what annotations are for. (A read-only session can't run the CLI for this, but retags itself with `mcp__twicc__update_session`; only with MCP disabled does it keep whatever its parent tagged it with.)
+If you can run commands, keep your own annotations current as you go — `$TWICC update-session self annotations set:status=working`, then `set:status=done` (or `failed`) when finished. Short single-line values only; see `twicc-orchestration` for what annotations are for. (A read-only session can't run the CLI for this, but retags itself with `mcp__twicc__update_session_annotations`; only with MCP disabled does it keep whatever its parent tagged it with.)
 
 ## If the task is too big
 
