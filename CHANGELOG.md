@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **TwiCC CLI and RPC API** — BREAKING: Many changes. Existing scripts keep working until October 1, 2026, then the new behavior applies. See **Settings → Help → CLI / RPC migration of October 1, 2026**.
 - **GPT-5.5 leaves Codex** — GPT-5.5 retires on October 4, 2026. The model pickers now show the date, and sessions still on it move to GPT-5.6 Terra on the day.
 - **Model & effort picker** — Scores now come from Artificial Analysis evaluations and follow three controls: Task type, Task difficulty and Cost / Speed.
+- **Search** — When no message contains all your words, sessions that match at least one of them now show up, marked as partial matches, instead of no result at all.
 - **Long sessions** — A session that keeps working is no longer stopped after 10 hours.
 - **Command palette** — Keep typing past a command's name to filter its entries, such as `sess twicc` to find a session — no need to open the command first.
 - **Peer inbox** — The text filter now keeps only the messages that contain every word you type, in their subject or their text, instead of matching scattered letters.
