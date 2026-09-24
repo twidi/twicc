@@ -306,9 +306,9 @@ function buildSessionNavItems({
     // inter-group divider rendered by CommandPalette in nested mode.
     const toItem = (s, group) => {
         const project = data.projects[s.project_id]
-        // When the session lives in a git worktree, the row mirrors WorktreeBadge:
-        // a code-branch marker before the title and the dot color falling back to
-        // the parent repo's when the worktree has none of its own.
+        // When the session lives in a git worktree, the row mirrors ProjectBadge's
+        // worktree form: a code-branch marker before the title and the dot color
+        // falling back to the parent repo's when the worktree has none of its own.
         const isWorktree = !!project?.worktree_of
         const parentColor = isWorktree ? (data.projects[project.worktree_of]?.color ?? null) : null
         const processState = data.processStates[s.id] || null
@@ -460,11 +460,11 @@ export function initStaticCommands(router) {
         }
     }
 
-    /** Map a git worktree to a palette sub-item. Mirrors WorktreeBadge: the dot
-     *  uses the worktree's own color falling back to the parent's; the label is
-     *  the worktree's own name or its final directory segment; `worktree.parentName`
-     *  is rendered as a prefix (parent name + code-branch icon) and is searchable
-     *  alongside the label and the path. The optional `activity` rides on
+    /** Map a git worktree to a palette sub-item. Mirrors ProjectBadge's worktree
+     *  form: the dot uses the worktree's own color falling back to the parent's;
+     *  the label is the worktree's own name or its final directory segment;
+     *  `worktree.parentName` is rendered as a prefix (parent name + code-branch
+     *  icon) and is searchable alongside the label and the path. The optional `activity` rides on
      *  `project` (same indicator as a plain project row). */
     function toWorktreeItem(wt, action, activity = null) {
         const parent = wt.worktree_of ? data.getProject(wt.worktree_of) : null

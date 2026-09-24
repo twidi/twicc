@@ -170,7 +170,7 @@ function later() {
     white-space: nowrap;
     min-width: 6ch;
 }
-.peer-toast-route__project { max-width: 20ch; }
+.peer-toast-route__project { --project-badge-name-max-width: 20ch; }
 
 .peer-toast-url {
     font-family: var(--wa-font-family-code, monospace);

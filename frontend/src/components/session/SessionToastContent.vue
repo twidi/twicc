@@ -22,7 +22,6 @@ import { stopSessionProcess } from '../../composables/useStopSessionProcess'
 import { parseProcessError } from '../../utils/errorParsing'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
 import ProjectBadge from '../project/ProjectBadge.vue'
-import WorktreeBadge from '../project/WorktreeBadge.vue'
 
 const props = defineProps({
     sessionId: {
@@ -70,9 +69,6 @@ const processState = computed(() => store.processStates[props.sessionId])
 // Use session data when available, fall back to processState (enriched by backend)
 const projectId = computed(() => session.value?.project_id || processState.value?.project_id)
 
-// When the project is a git worktree, show the worktree badge (parent name +
-// branch icon + folder) instead of the plain project badge.
-const isProjectWorktree = computed(() => !!store.getProject(projectId.value)?.worktree_of)
 
 const sessionTitle = computed(() => session.value?.title || processState.value?.session_title || 'Unknown')
 
@@ -161,8 +157,7 @@ function goToSession() {
     <div class="session-toast-content">
         <span v-if="projectId" class="session-toast-row">
             <span class="session-toast-label">Project:</span>
-            <WorktreeBadge v-if="isProjectWorktree" :project-id="projectId" class="session-toast-project" />
-            <ProjectBadge v-else :project-id="projectId" class="session-toast-project" />
+            <ProjectBadge :project-id="projectId" class="session-toast-project" />
         </span>
         <span class="session-toast-session">
             <span class="session-toast-label">Session:</span>

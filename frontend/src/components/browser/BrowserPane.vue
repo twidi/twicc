@@ -43,7 +43,6 @@ import SelectAreaToolbar from '../frames/SelectAreaToolbar.vue'
 import ViewportStage from '../frames/ViewportStage.vue'
 import ViewportToolbar from '../frames/ViewportToolbar.vue'
 import ProjectBadge from '../project/ProjectBadge.vue'
-import WorktreeBadge from '../project/WorktreeBadge.vue'
 import TextSelectionComment from '../session/detail/TextSelectionComment.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 
@@ -987,8 +986,7 @@ async function makeDefaultSavedUrl(opt) {
                     <wa-dropdown-item disabled class="save-menu-header">Open a saved URL…</wa-dropdown-item>
                     <wa-dropdown-item v-for="opt in homeOptions" :key="opt.key" :value="opt.url">
                         <div class="home-menu-item">
-                            <WorktreeBadge v-if="opt.levelKey === 'project' && mainRepoProject" :project-id="props.projectId" />
-                            <ProjectBadge v-else-if="opt.levelKey === 'project'" :project-id="props.projectId" />
+                            <ProjectBadge v-if="opt.levelKey === 'project'" :project-id="props.projectId" />
                             <ProjectBadge v-else-if="opt.levelKey === 'main-repo'" :project-id="mainRepoProject.id" />
                             <span v-else class="save-menu-ws">
                                 <wa-icon name="layer-group" :style="opt.ws.color ? { color: opt.ws.color } : null"></wa-icon>
@@ -1331,8 +1329,7 @@ async function makeDefaultSavedUrl(opt) {
                             :checked="saveTarget === level.key"
                             @change="saveTarget = level.key"
                         />
-                        <WorktreeBadge v-if="level.key === 'project' && mainRepoProject" :project-id="props.projectId" />
-                        <ProjectBadge v-else-if="level.key === 'project'" :project-id="props.projectId" />
+                        <ProjectBadge v-if="level.key === 'project'" :project-id="props.projectId" />
                         <ProjectBadge v-else-if="level.key === 'main-repo'" :project-id="mainRepoProject.id" />
                         <span v-else class="save-menu-ws">
                             <wa-icon name="layer-group" :style="level.ws.color ? { color: level.ws.color } : null"></wa-icon>

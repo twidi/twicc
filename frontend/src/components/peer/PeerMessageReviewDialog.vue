@@ -1742,7 +1742,7 @@ function onHide(event) {
     cursor: pointer;
 }
 .pr-route__title--link:hover { text-decoration: underline; }
-.pr-route__project { max-width: 20ch; }
+.pr-route__project { --project-badge-name-max-width: 20ch; }
 .pr-attach-project { flex: 0 1 18rem; min-width: 12rem; }
 
 .pr-purged { color: var(--wa-color-text-quiet); font-size: 0.85rem; }

@@ -6,6 +6,7 @@ import { usePanelContentFocus } from '../../composables/usePanelContentFocus'
 import FileTreePanel from './FileTreePanel.vue'
 import FilePane from './FilePane.vue'
 import ArtifactBookmarkTree from '../artifacts/ArtifactBookmarkTree.vue'
+import ProjectBadge from '../project/ProjectBadge.vue'
 import { useCodeCommentsStore, buildCommentedPathsSet } from '../../stores/codeComments'
 import { useSettingsStore } from '../../stores/settings'
 import { useDataStore } from '../../stores/data'
@@ -173,7 +174,9 @@ let syncingFromRoute = false
 const dataStore = useDataStore()
 
 /**
- * Available root directories for the Files tab. Each entry: { key, label, path, roles }.
+ * Available root directories for the Files tab. Each entry: { key, label, path, roles },
+ * plus an optional `projectId` (workspace mode) that shows the project badge in
+ * place of the label.
  *
  * Built from the session/project roots plus — when the project is a git
  * worktree — the main repository's directories (see utils/projectRoots.js).
@@ -1150,7 +1153,10 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                             :data-root-selected="selectedRootKey === root.key ? 'true' : 'false'"
                             :disabled="missingRoots.has(root.key)"
                         >
-                            <div>{{ root.label }}</div>
+                            <div v-if="root.projectId" class="root-label">
+                                <ProjectBadge :project-id="root.projectId" />
+                            </div>
+                            <div v-else>{{ root.label }}</div>
                             <div class="root-path">{{ root.path }}</div>
                             <div v-if="missingRoots.has(root.key)" class="root-missing">Directory no longer exists</div>
                         </wa-dropdown-item>
@@ -1351,6 +1357,11 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
 /* ═══════════════════════════════════════════════════════════════════════════
    Options slot styling (root items)
    ═══════════════════════════════════════════════════════════════════════════ */
+
+.root-label {
+    display: flex;
+    min-width: 0;
+}
 
 .root-path {
     font-size: var(--wa-font-size-xs);

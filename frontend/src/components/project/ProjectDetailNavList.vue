@@ -15,7 +15,6 @@ import { useDataStore, ALL_PROJECTS_ID } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds'
-import { worktreeLabel } from '../../utils/worktree'
 import ProjectBadge from './ProjectBadge.vue'
 import AggregatedProcessIndicator from '../ui/AggregatedProcessIndicator.vue'
 import CodeCommentsIndicator from '../ui/CodeCommentsIndicator.vue'
@@ -168,8 +167,8 @@ const items = computed(() => {
                 result.push({
                     type: 'project',
                     id: wt.id,
-                    // Worktrees show just their final folder name (or own name).
-                    label: worktreeLabel(wt) || dataStore.getProjectDisplayName(wt.id),
+                    // Listed under their main repository: just their own folder.
+                    hideParent: true,
                     projectIds: [wt.id],
                     to: { name: 'project', params: { projectId: wt.id } },
                 })
@@ -212,7 +211,7 @@ const items = computed(() => {
             </template>
             <template v-else>
                 <wa-icon v-if="item.isUp" name="arrow-up" auto-width class="nav-up-icon"></wa-icon>
-                <ProjectBadge :project-id="item.id" :label="item.label" use-directory-for-unnamed gap="var(--wa-space-2xs)" />
+                <ProjectBadge :project-id="item.id" :hide-parent="!!item.hideParent" use-directory-for-unnamed gap="var(--wa-space-2xs)" />
             </template>
 
             <template v-if="item.projectIds">

@@ -11,11 +11,9 @@
 //
 // Each worktree row is rendered with the SAME <ProjectSelectorRow> as a normal
 // project (so it inherits every state indicator identically); the only
-// differences are the deeper indentation, the label (its name or just its final
-// folder name) and the color fallback (the main repo's color).
+// differences are the deeper indentation and `hide-parent` (the main repository
+// is the row right above).
 import { computed } from 'vue'
-import { useDataStore } from '../../stores/data'
-import { worktreeLabel } from '../../utils/worktree'
 import ProjectSelectorRow from './ProjectSelectorRow.vue'
 import AggregatedProcessIndicator from '../ui/AggregatedProcessIndicator.vue'
 
@@ -34,23 +32,13 @@ const props = defineProps({
     isAllProjectsMode: { type: Boolean, default: false },
 })
 
-const dataStore = useDataStore()
-
 const headerDepth = computed(() => props.baseDepth + 1)
 const itemDepth = computed(() => props.baseDepth + 2)
 
-const parentProject = computed(() => dataStore.getProject(props.parentId))
-// Worktrees inherit their main repository's color when they have none of their own.
-const parentColor = computed(() => parentProject.value?.color || null)
 // All worktree ids — the "Worktrees" header shows their aggregated state
 // (process / unread / pending …), the same way a workspace row aggregates its
 // projects.
 const worktreeIds = computed(() => props.worktrees.map(w => w.id))
-
-/** Worktree label: its name if any, else just the final folder name of its directory. */
-function labelFor(wt) {
-    return worktreeLabel(wt) || dataStore.getProjectDisplayName(wt.id)
-}
 </script>
 
 <template>
@@ -75,8 +63,7 @@ function labelFor(wt) {
                 :key="wt.id"
                 :project-id="wt.id"
                 :depth="itemDepth"
-                :label="labelFor(wt)"
-                :fallback-color="parentColor"
+                hide-parent
                 :current-project-id="currentProjectId"
                 :is-all-projects-mode="isAllProjectsMode"
             />

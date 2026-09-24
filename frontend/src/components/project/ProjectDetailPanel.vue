@@ -16,6 +16,7 @@ import GitPanel from '../git/GitPanel.vue'
 import TerminalPanel from '../terminal/TerminalPanel.vue'
 import TabBar from '../ui/TabBar.vue'
 import { deriveFileRoots, getWorktreeParent } from '../../utils/projectRoots'
+import { worktreeLabel } from '../../utils/worktree'
 import {
     buildFilesRouteParams,
     buildGitRouteParams,
@@ -170,10 +171,20 @@ const filesAvailableRoots = computed(() => {
             const dir = project?.directory
             if (!dir || seen.has(dir)) continue
             seen.add(dir)
+            // The root selector renders the project badge (a worktree reads as
+            // "<main repo> ⎇ <folder>"); `label` is the same text, used for
+            // sorting, so a worktree sorts right after its main repository.
+            const ownName = project.worktree_of
+                ? worktreeLabel(project) || dataStore.getProjectDisplayName(pid)
+                : dataStore.getProjectDisplayName(pid)
+            const parentName = project.worktree_of && dataStore.getProject(project.worktree_of)
+                ? dataStore.getProjectDisplayName(project.worktree_of)
+                : ''
             projectEntries.push({
                 key: `p:${pid}`,
-                label: project.name || dir.split('/').pop(),
+                label: parentName ? `${parentName} / ${ownName}` : ownName,
                 path: dir,
+                projectId: pid,
             })
         }
         projectEntries.sort((a, b) => a.label.localeCompare(b.label))

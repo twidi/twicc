@@ -5,9 +5,9 @@
 //
 // The wa-option counterpart of WorktreePickerRows (the wa-dropdown-item
 // version used by the sidebar's "New session" pickers): same grammar — same
-// header, same indentation, a bare <ProjectBadge> per worktree with the main
-// repo's color as fallback. A select has no room for the collapsible toggle
-// those dropdowns carry, so the worktrees are always listed.
+// header, same indentation, a <ProjectBadge hide-parent> per worktree (the
+// main repository is the option right above). A select has no room for the
+// collapsible toggle those dropdowns carry, so the worktrees are always listed.
 //
 // Each option's value is the worktree's own project id, so picking one targets
 // that worktree exactly like picking a normal project.
@@ -41,10 +41,6 @@ const worktrees = computed(() =>
 const headerDepth = computed(() => props.baseDepth + 1)
 const itemDepth = computed(() => props.baseDepth + 2)
 
-const parentProject = computed(() => dataStore.getProject(props.parentId))
-// Worktrees inherit their main repository's color when they have none of their own.
-const parentColor = computed(() => parentProject.value?.color || null)
-
 /** Worktree label: its name if any, else just the final folder name. */
 function labelFor(wt) {
     return worktreeLabel(wt) || dataStore.getProjectDisplayName(wt.id)
@@ -67,7 +63,7 @@ function buttonLabelFor(wt) {
         </wa-option>
         <wa-option v-for="wt in worktrees" :key="wt.id" :value="wt.id" :label="buttonLabelFor(wt)">
             <span class="worktree-option" :style="{ paddingLeft: `${itemDepth * 12}px` }">
-                <ProjectBadge :project-id="wt.id" :label="labelFor(wt)" :fallback-color="parentColor" />
+                <ProjectBadge :project-id="wt.id" hide-parent />
             </span>
         </wa-option>
     </template>

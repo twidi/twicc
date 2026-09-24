@@ -4,7 +4,6 @@ import { useDataStore } from '../../stores/data'
 import { matchQuery } from '../../utils/textFilter'
 import { ARTIFACT_ICON, artifactTypeIcon } from '../../utils/artifactBookmark'
 import ProjectBadge from '../project/ProjectBadge.vue'
-import WorktreeBadge from '../project/WorktreeBadge.vue'
 
 const props = defineProps({
     bookmarks: { type: Array, default: () => [] },
@@ -44,7 +43,6 @@ const groups = computed(() => {
 
     return [...byProject.entries()]
         .map(([projectId, projectBookmarks]) => {
-            const project = dataStore.getProject(projectId)
             let order = 3
             if (projectId === props.currentProjectId) {
                 order = 0
@@ -56,7 +54,6 @@ const groups = computed(() => {
             return {
                 id: `project:${projectId}`,
                 projectId,
-                kind: project?.worktree_of ? 'worktree' : 'project',
                 order,
                 bookmarks: projectBookmarks,
             }
@@ -134,14 +131,7 @@ watch(() => props.selectedBookmarkId, (id) => {
                         tabindex="-1"
                         @click="activateNode($event, `virtual:bookmarks:${group.id}`, () => toggleGroup(group.id))"
                     >
-                        <WorktreeBadge
-                            v-if="group.kind === 'worktree'"
-                            :project-id="group.projectId"
-                            gap="var(--wa-space-3xs)"
-                            class="group-badge"
-                        />
                         <ProjectBadge
-                            v-else
                             :project-id="group.projectId"
                             gap="var(--wa-space-3xs)"
                             class="group-badge"

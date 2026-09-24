@@ -11,7 +11,6 @@ import { getAgentDisplay } from '../../../utils/agentLabel'
 import { stopSubagent, interruptSession } from '../../../composables/useWebSocket'
 import { stopSessionProcess, hardKillSessionProcess } from '../../../composables/useStopSessionProcess'
 import ProjectBadge from '../../project/ProjectBadge.vue'
-import WorktreeBadge from '../../project/WorktreeBadge.vue'
 import ProcessIndicator from '../../ui/ProcessIndicator.vue'
 import CodeCommentsIndicator from '../../ui/CodeCommentsIndicator.vue'
 import ProcessDuration from '../../ui/ProcessDuration.vue'
@@ -63,8 +62,7 @@ function toggleSessionDebug() {
     store.toggleSessionDebug(props.sessionId)
 }
 // Whether the session's project is a git worktree of another project — drives
-// the worktree-style title badge (parent name + branch icon + worktree folder),
-// matching the project home header.
+// the worktree marker before the title.
 const isProjectWorktree = computed(() => !!store.getProject(session.value?.project_id)?.worktree_of)
 // Whether the session's project is not trusted (effective trust ≠ trusted —
 // explicitly untrusted or unknown). Drives the title-line lock marker, a
@@ -691,7 +689,7 @@ defineExpose({
                 <AppTooltip v-if="isProjectWorktree" :for="`session-header-${sessionId}-worktree`">
                     <div class="worktree-title-tooltip">
                         <span>This session runs in a git worktree</span>
-                        <WorktreeBadge :project-id="session.project_id" />
+                        <ProjectBadge :project-id="session.project_id" />
                     </div>
                 </AppTooltip>
 
@@ -714,8 +712,7 @@ defineExpose({
                 <AppTooltip :for="`session-header-${sessionId}-title`">{{ displayName }}</AppTooltip>
 
                 <router-link v-if="session.project_id" :to="{ name: 'project', params: { projectId: session.project_id } }" class="session-project" @click.stop>
-                    <WorktreeBadge v-if="isProjectWorktree" :project-id="session.project_id" />
-                    <ProjectBadge v-else :project-id="session.project_id" />
+                    <ProjectBadge :project-id="session.project_id" />
                 </router-link>
 
                 <!-- Context usage ring duplicate for compact mode (visible only on small viewports when not expanded) -->

@@ -969,9 +969,9 @@ wa-divider {
     padding: 0;
 }
 /* Worktree sub-item first line: [parent] [code-branch] [folder], mirroring
-   WorktreeBadge. It stands in for the plain label, so it keeps .command-label
-   (for mark styling); flex lets the parent and folder names ellipsize while the
-   separator icon stays fixed. */
+   ProjectBadge's worktree form. It stands in for the plain label, so it keeps
+   .command-label (for mark styling); flex lets the parent and folder names
+   ellipsize while the separator icon stays fixed. */
 .command-wt-line {
     display: flex;
     align-items: center;
@@ -993,7 +993,7 @@ wa-divider {
     font-size: 0.85em;
 }
 
-/* Untrusted-project marker (mirrors ProjectBadge/WorktreeBadge): faint closed
+/* Untrusted-project marker (mirrors ProjectBadge): faint closed
    lock — normal text colour at low opacity, so it adapts to light/dark and every
    theme on its own (quieter than --wa-color-text-quiet). */
 .palette-trust-icon {
@@ -1074,7 +1074,7 @@ wa-divider {
 }
 
 /* Session row: code-branch marker before the title when the session lives in a
-   git worktree (mirrors WorktreeBadge's separator icon). */
+   git worktree (mirrors ProjectBadge's worktree separator icon). */
 .palette-session-wt-icon {
     flex-shrink: 0;
     font-size: var(--wa-font-size-2xs);

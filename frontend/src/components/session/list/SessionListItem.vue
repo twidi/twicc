@@ -22,7 +22,6 @@ import { markSessionReadState, cancelSessionViewedThrottle } from '../../../comp
 import { stopSessionProcess } from '../../../composables/useStopSessionProcess'
 import { useDragHover } from '../../../composables/useDragHover'
 import ProjectBadge from '../../project/ProjectBadge.vue'
-import WorktreeBadge from '../../project/WorktreeBadge.vue'
 import ProjectMark from '../../project/ProjectMark.vue'
 import ProcessIndicator from '../../ui/ProcessIndicator.vue'
 import ProcessDuration from '../../ui/ProcessDuration.vue'
@@ -463,7 +462,7 @@ function handleMenuSelect(event) {
                     :color="projectDotColor"
                 />
                 <AppTooltip v-if="compactView && effectiveShowProjectName" :for="`compact-project-dot-${session.id}`">
-                    <WorktreeBadge v-if="isProjectWorktree" :project-id="session.project_id" :dot="false" />
+                    <ProjectBadge v-if="isProjectWorktree" :project-id="session.project_id" :dot="false" />
                     <template v-else>{{ projectPathTitle(store.getProject(session.project_id)) || store.getProjectDisplayName(session.project_id) }}</template>
                 </AppTooltip>
                 <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
@@ -479,7 +478,7 @@ function handleMenuSelect(event) {
                     class="session-worktree-icon"
                 ></wa-icon>
                 <AppTooltip v-if="showWorktreeIcon" :for="`session-worktree-${session.id}`">
-                    <WorktreeBadge :project-id="session.project_id" :dot="false" />
+                    <ProjectBadge :project-id="session.project_id" :dot="false" />
                 </AppTooltip>
                 <span class="session-name">{{ getSessionDisplayName(session) }}</span>
                 <!-- Compact mode: code comments indicator -->
@@ -520,8 +519,7 @@ function handleMenuSelect(event) {
             <!-- Project badge line (hidden in compact mode, dot is shown inline instead) -->
             <!-- When unread + no process: show unread indicator on the project line (right-aligned) -->
             <div v-if="!compactView && (effectiveShowProjectName || hasCodeComments || (hasUnread && !processState))" class="session-project-row">
-                <WorktreeBadge v-if="effectiveShowProjectName && isProjectWorktree" :project-id="session.project_id" class="session-project" />
-                <ProjectBadge v-else-if="effectiveShowProjectName" :project-id="session.project_id" class="session-project" />
+                <ProjectBadge v-if="effectiveShowProjectName" :project-id="session.project_id" class="session-project" />
                 <wa-icon
                     v-if="hasCodeComments"
                     name="comment"
@@ -687,8 +685,7 @@ function handleMenuSelect(event) {
                 <span class="menu-project-entry">
                     Edit project
                     <span class="menu-project-badge">
-                        <WorktreeBadge v-if="isProjectWorktree" :project-id="session.project_id" />
-                        <ProjectBadge v-else :project-id="session.project_id" />…
+                        <ProjectBadge :project-id="session.project_id" />…
                     </span>
                 </span>
             </wa-dropdown-item>

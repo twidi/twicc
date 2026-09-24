@@ -18,7 +18,6 @@ import { aggregateWeeklyActivity } from '../../utils/activityAggregation'
 import { formatDate } from '../../utils/date'
 import { SESSION_TIME_FORMAT } from '../../constants'
 import ProjectBadge from './ProjectBadge.vue'
-import WorktreeBadge from './WorktreeBadge.vue'
 import ProjectDirectoryPath from './ProjectDirectoryPath.vue'
 import ProjectMissingDirectoryIcon from './ProjectMissingDirectoryIcon.vue'
 import ProjectMissingDirectoryNote from './ProjectMissingDirectoryNote.vue'
@@ -89,9 +88,6 @@ const isArchived = computed(() => {
     if (isWorkspaceMode.value) return !!workspace.value?.archived
     return false
 })
-
-// Whether the current single project is a git worktree of another project.
-const isWorktree = computed(() => !!project.value?.worktree_of)
 
 // All projects data (for aggregate mode)
 const allProjects = computed(() => store.getProjects)
@@ -251,8 +247,7 @@ function handleUnarchive() {
 
                 <!-- Single project mode -->
                 <template v-if="isSingleProjectMode">
-                    <WorktreeBadge v-if="isWorktree" :project-id="projectId" parent-link class="detail-title" />
-                    <ProjectBadge v-else :project-id="projectId" class="detail-title" />
+                    <ProjectBadge :project-id="projectId" parent-link class="detail-title" />
                 </template>
                 <!-- Workspace or All Projects mode -->
                 <template v-else>

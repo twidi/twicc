@@ -4,9 +4,9 @@
 // followed (when expanded) by that project's worktree entries.
 //
 // Mirrors WorktreeSelectorRows, but tuned for the lighter "new session"
-// pickers: each worktree row is a bare <ProjectBadge> (color dot + label),
-// with NO selection check mark and NO state indicators — matching how those
-// pickers render normal projects (unlike the navigation selector, whose rows
+// pickers: each worktree row is a bare <ProjectBadge hide-parent> (mark +
+// worktree folder), with NO selection check mark and NO state indicators —
+// matching how those pickers render normal projects (unlike the navigation selector, whose rows
 // carry every state indicator). Purely presentational and emits no events:
 // the expand/collapse toggle is driven by the parent dropdown's wa-select
 // handler via the special "worktrees-toggle:<id>" value.
@@ -14,8 +14,6 @@
 // Each worktree row's value is its own project id, so selecting it creates a
 // new session in that worktree exactly like selecting a normal project.
 import { computed } from 'vue'
-import { useDataStore } from '../../stores/data'
-import { worktreeLabel } from '../../utils/worktree'
 import ProjectBadge from './ProjectBadge.vue'
 
 const props = defineProps({
@@ -30,19 +28,8 @@ const props = defineProps({
     baseDepth: { type: Number, default: 0 },
 })
 
-const dataStore = useDataStore()
-
 const headerDepth = computed(() => props.baseDepth + 1)
 const itemDepth = computed(() => props.baseDepth + 2)
-
-const parentProject = computed(() => dataStore.getProject(props.parentId))
-// Worktrees inherit their main repository's color when they have none of their own.
-const parentColor = computed(() => parentProject.value?.color || null)
-
-/** Worktree label: its name if any, else just the final folder name of its directory. */
-function labelFor(wt) {
-    return worktreeLabel(wt) || dataStore.getProjectDisplayName(wt.id)
-}
 </script>
 
 <template>
@@ -57,7 +44,7 @@ function labelFor(wt) {
         <template v-if="expanded">
             <wa-dropdown-item v-for="wt in worktrees" :key="wt.id" :value="wt.id">
                 <span class="worktree-picker-content" :style="{ paddingLeft: `${itemDepth * 12}px` }">
-                    <ProjectBadge :project-id="wt.id" :label="labelFor(wt)" :fallback-color="parentColor" />
+                    <ProjectBadge :project-id="wt.id" hide-parent />
                 </span>
             </wa-dropdown-item>
         </template>

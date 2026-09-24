@@ -4,9 +4,9 @@
 // project badge (color dot + name) and the end-of-line state indicators
 // (code comments + aggregated process/unread). Used for both normal projects
 // and worktree entries — a worktree is simply the same row at a deeper `depth`,
-// with a `label` (its name or just its final folder name) and a `fallbackColor`
-// (its main repo's color). Keeping a single row component guarantees worktrees
-// stay in lockstep with normal projects for every state indicator.
+// with `hideParent` (it is listed under its main repository). Keeping a single
+// row component guarantees worktrees stay in lockstep with normal projects for
+// every state indicator.
 import { computed, inject } from 'vue'
 import { useDataStore } from '../../stores/data'
 import ProjectBadge from './ProjectBadge.vue'
@@ -20,11 +20,9 @@ const props = defineProps({
     // Currently selected project id (drives the leading check mark).
     currentProjectId: { type: String, default: null },
     isAllProjectsMode: { type: Boolean, default: false },
-    // Optional display-name override (e.g. a worktree's relative path).
-    label: { type: String, default: null },
-    // Optional dot color fallback when the project has no color of its own
-    // (e.g. a worktree inheriting its main repository's color).
-    fallbackColor: { type: String, default: null },
+    // Forwarded to ProjectBadge: a worktree listed under its main repository
+    // shows only its own folder.
+    hideParent: { type: Boolean, default: false },
 })
 
 const store = useDataStore()
@@ -74,7 +72,7 @@ function onRowMenuSelect(event) {
                  gone directory is otherwise invisible. The mark is enough here —
                  selecting the row leads to the project home, which spells it
                  out. -->
-            <ProjectBadge :project-id="projectId" :label="label" :fallback-color="fallbackColor" flag-missing-directory />
+            <ProjectBadge :project-id="projectId" :hide-parent="hideParent" flag-missing-directory />
             <span class="selector-item-indicators">
                 <CodeCommentsIndicator :project-ids="[projectId]" />
                 <AggregatedProcessIndicator :project-ids="[projectId]" size="small" />

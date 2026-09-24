@@ -20,7 +20,6 @@ import HelpIconButton from '../help/HelpIconButton.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectDirectoryPath from './ProjectDirectoryPath.vue'
-import WorktreeBadge from './WorktreeBadge.vue'
 import ProjectMark from './ProjectMark.vue'
 
 const props = defineProps({
@@ -93,7 +92,6 @@ const iconHelpId = `project-icon-help-${instanceId}`
 // -- Live header badge --------------------------------------------------------
 // Edit mode shows a live preview of the project's badge next to the title,
 // reflecting the unsaved name/color the user is typing.
-const isWorktreeProject = computed(() => !isCreateMode.value && !!props.project?.worktree_of)
 
 // Leaf folder name of the project's directory — the "unnamed" display fallback
 // (same rule as the store's display name and worktreeLabel).
@@ -815,15 +813,8 @@ defineExpose({
         <div slot="label" class="dialog-title">
             <div class="dialog-title-main">
                 <span class="dialog-title-text">{{ isCreateMode ? 'New Project' : 'Edit Project' }}</span>
-                <WorktreeBadge
-                    v-if="isWorktreeProject"
-                    :project-id="project.id"
-                    :folder-override="previewName"
-                    :color-override="localColor"
-                    class="dialog-title-badge"
-                />
                 <ProjectBadge
-                    v-else-if="!isCreateMode && project"
+                    v-if="!isCreateMode && project"
                     :project-id="project.id"
                     :label="previewName"
                     :color-override="localColor"

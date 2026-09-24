@@ -13,7 +13,6 @@ import { apiFetch } from '../../utils/api'
 import { expandWorktreeTemplate } from '../../utils/worktreePath'
 import DirectoryPickerPopup from '../files/DirectoryPickerPopup.vue'
 import ProjectBadge from './ProjectBadge.vue'
-import WorktreeBadge from './WorktreeBadge.vue'
 import TabBar from '../ui/TabBar.vue'
 
 const emit = defineEmits(['resolved'])
@@ -62,10 +61,6 @@ const pathAutoFill = ref(false)
 const instanceId = useId()
 const formId = `worktree-new-form-${instanceId}`
 
-// True when the parent repo is itself a git worktree: show the worktree badge
-// (main repo + branch folder) instead of the plain project badge, matching how
-// the project renders everywhere else in the UI.
-const isWorktreeParent = computed(() => !!parentProject.value?.worktree_of)
 
 const trimmedBranch = computed(() => localBranch.value.trim())
 
@@ -445,13 +440,8 @@ defineExpose({
         <div slot="label" class="dialog-title">
             <div class="dialog-title-main">
                 <span class="dialog-title-text">Worktree</span>
-                <WorktreeBadge
-                    v-if="isWorktreeParent"
-                    :project-id="parentProject.id"
-                    class="dialog-title-badge"
-                />
                 <ProjectBadge
-                    v-else-if="parentProject"
+                    v-if="parentProject"
                     :project-id="parentProject.id"
                     class="dialog-title-badge"
                 />

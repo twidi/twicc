@@ -362,5 +362,5 @@ const timestampSeconds = computed(() =>
     white-space: nowrap;
     min-width: 6ch;
 }
-.pir__route-project { max-width: 20ch; }
+.pir__route-project { --project-badge-name-max-width: 20ch; }
 </style>

@@ -39,7 +39,6 @@ import ProjectMark from '../components/project/ProjectMark.vue'
 import ProjectSelectorRow from '../components/project/ProjectSelectorRow.vue'
 import WorktreeSelectorRows from '../components/project/WorktreeSelectorRows.vue'
 import WorktreePickerRows from '../components/project/WorktreePickerRows.vue'
-import WorktreeBadge from '../components/project/WorktreeBadge.vue'
 import WorktreeButton from '../components/project/WorktreeButton.vue'
 import WorktreeDialog from '../components/project/WorktreeDialog.vue'
 import ProjectDetailPanel from '../components/project/ProjectDetailPanel.vue'
@@ -53,7 +52,6 @@ import { getSessionGrantsForBookmark } from '../artifact-broker/host'
 import BulkArchiveConfirmDialog from '../components/sidebar/BulkArchiveConfirmDialog.vue'
 import { getUsageRingColor, formatRecentDelta, formatBurnChip, formatExtraUsageAmount } from '../utils/usage'
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree'
-import { projectPathTitle } from '../utils/projectName'
 import { sessionRouteLocation } from '../utils/sessionRoute'
 import { artifactBookmarkRouteLocation } from '../utils/artifactBookmark'
 import CostDisplay from '../components/ui/CostDisplay.vue'
@@ -732,15 +730,6 @@ const selectedProjectColor = computed(() => {
     return project.color || null
 })
 
-// Whether the current single project is a git worktree. When so, the selector
-// trigger renders a <WorktreeBadge> ("<main repo> ⎇ <worktree folder>") instead
-// of the plain label below.
-const isCurrentProjectWorktree = computed(() => !!store.getProject(projectId.value)?.worktree_of)
-
-// Label shown in the selector trigger for a regular (non-worktree) single project.
-const selectedProjectLabel = computed(() => store.getProjectDisplayName(projectId.value))
-// Full directory path on hover when that project is unnamed (shown by folder name only).
-const selectedProjectTitle = computed(() => projectPathTitle(store.getProject(projectId.value)))
 
 // Loading and error states for sessions
 // Only show initial loading spinner when we haven't fetched any sessions yet
@@ -1813,8 +1802,7 @@ function updateSidebarClosedClass(closed) {
                             />
                             <span v-if="isWorkspaceMode" class="project-selector-label"><wa-icon name="layer-group" auto-width :style="activeWorkspace?.color ? { color: activeWorkspace.color } : null"></wa-icon> {{ activeWorkspace?.name }}</span>
                             <span v-else-if="isAllProjectsMode" class="project-selector-label">All Projects</span>
-                            <span v-else-if="isCurrentProjectWorktree" class="project-selector-label"><WorktreeBadge :project-id="projectId" :dot="false" gap="var(--wa-space-2xs)" /></span>
-                            <span v-else class="project-selector-label" :title="selectedProjectTitle">{{ selectedProjectLabel }}</span>
+                            <span v-else class="project-selector-label"><ProjectBadge :project-id="projectId" :dot="false" gap="var(--wa-space-2xs)" /></span>
 
                             <wa-icon slot="end" name="chevron-down" class="project-selector-caret"></wa-icon>
                         </wa-button>

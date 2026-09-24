@@ -26,7 +26,6 @@ import { formatDate } from '../../utils/date'
 import { dateBucketSeparator } from '../../utils/datePresets'
 import { SESSION_TIME_FORMAT } from '../../constants'
 import ProjectBadge from '../project/ProjectBadge.vue'
-import WorktreeBadge from '../project/WorktreeBadge.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import ArtifactBookmarkDialog from './ArtifactBookmarkDialog.vue'
@@ -80,11 +79,6 @@ onBeforeUnmount(() => dataStore.setDisplayedArtifactBookmarkCount(0))
 /** Whether a bookmark is the one currently open in the main pane. */
 function isActive(b) {
     return props.activeBookmarkId != null && String(b.id) === String(props.activeBookmarkId)
-}
-
-/** Whether a bookmark's owning project is a git worktree. */
-function isWorktree(b) {
-    return !!dataStore.getProject(b.project_id)?.worktree_of
 }
 
 /**
@@ -424,8 +418,7 @@ defineExpose({ handleKeyNavigation })
                         :color="dotColor(b)"
                     />
                     <AppTooltip v-if="compactView" :for="`bookmark-dot-${b.id}`">
-                        <WorktreeBadge v-if="isWorktree(b)" :project-id="b.project_id" :dot="false" />
-                        <ProjectBadge v-else :project-id="b.project_id" />
+                        <ProjectBadge :project-id="b.project_id" :dot="false" />
                     </AppTooltip>
                     <!-- File-type icon, before the name (both modes) -->
                     <wa-icon class="bookmark-type" :name="artifactTypeIcon(b.file_ext)"></wa-icon>
@@ -433,8 +426,7 @@ defineExpose({ handleKeyNavigation })
                 </div>
                 <!-- Non-compact: project badge (left) + last-update time (right) -->
                 <div v-if="!compactView" class="bookmark-meta">
-                    <WorktreeBadge v-if="isWorktree(b)" :project-id="b.project_id" class="bookmark-project" />
-                    <ProjectBadge v-else :project-id="b.project_id" class="bookmark-project" />
+                    <ProjectBadge :project-id="b.project_id" class="bookmark-project" />
                     <span class="bookmark-time">
                         <wa-icon auto-width name="clock" variant="regular"></wa-icon>
                         <wa-relative-time
