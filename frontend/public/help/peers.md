@@ -122,25 +122,26 @@ relationship. It also shows when the peer's user wrote the message instead of
 their agent. Large text or attachments require an extra load action before
 TwiCC renders or downloads them.
 
-You can add an optional note for your agent. TwiCC keeps that note separate
-from the peer's message and identifies it as your own text.
-
-You then have four choices:
+You then pick an action in the review's action list:
 
 - place the message in an existing session's composer;
 - create a new draft session with the message in its composer;
 - mark the message done, when you dealt with it yourself or there is nothing
   to do — no agent receives it;
+- reply manually (see below);
 - refuse the message.
 
 Placing a message in a composer marks it as delivered. It still does not send
-the composer or start the agent.
+the composer or start the agent. When you deliver, you can add an optional note
+for your agent. TwiCC keeps that note separate from the peer's message and
+identifies it as your own text.
 
 A refusal carries no words. To explain one, answer with **Reply manually** and
 refuse in the same step.
 
-Any decision can be changed later, from the message's history entry. The
-sender only learns the first one.
+The sender only learns your first decision. Marking done and refusing are
+therefore offered only while the message is pending. A resolved message can
+still be delivered again, from its history entry.
 
 ### Replies and session suggestions
 
@@ -149,8 +150,8 @@ message it answers, and the review can open that message. A message that
 received replies shows who answered it: the peer, their agent, you, or your
 agent.
 
-You can answer a message yourself, with **Reply manually** in the review. TwiCC
-proposes the answered title, prefixed with `Re:`. While the answered message
+You can answer a message yourself, with **Reply manually** in the review's
+action list. TwiCC proposes the answered title, prefixed with `Re:`. While the answered message
 still awaits your decision, the reply form lets you keep it open, mark it done,
 or refuse it in the same step. The choice applies only once the reply reached
 the peer.
@@ -186,9 +187,8 @@ connection failed.
 ### Redelivery and history
 
 A resolved message stays available in the inbox history. The receiving user
-can place it in a composer again, mark it done, or refuse it, whatever the
-earlier decision. This helps after choosing the wrong session or clearing a
-draft.
+can place it in a composer again, whatever the earlier decision. This helps
+after choosing the wrong session or clearing a draft.
 
 TwiCC removes attachment bytes seven days after the latest decision. A new
 decision restarts that delay, until the bytes are removed. A pending message

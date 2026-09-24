@@ -80,14 +80,13 @@ export function shouldShowReplyTargetPreparation(detail, settled) {
         && detail?.reply_target != null
 }
 
-/** Toggle a delivery mode and identify the first allowed existing-picker activation. */
+/** Switch to a delivery mode (`null` closes both pickers) and identify the first
+ *  allowed existing-picker activation. */
 export function deliveryPickerTransition(
-    currentMode,
-    requestedMode,
+    mode,
     existingPickerMounted,
     deliveryBlocked = false,
 ) {
-    const mode = currentMode === requestedMode ? null : requestedMode
     return {
         mode,
         prepareExisting: mode === 'existing' && !existingPickerMounted && !deliveryBlocked,
@@ -98,16 +97,18 @@ export function deliveryPickerTransition(
 /**
  * Choose which resolution actions the review dialog can expose.
  *
- * Every resolution is reversible (design of 2026-09-01): the two delivery
- * actions are always offered (a delivered message can be retargeted), while
- * "done" and "refuse" hide only in their own state — a resolution into the
- * current state is a no-op the backend rejects anyway.
+ * The two delivery actions are always offered: a resolved message can be
+ * placed in a composer again (wrong session picked, draft cleared). "Done"
+ * and "refuse" are answers to the sender, who only ever learns the first
+ * one: offered while the message is pending only, since a later one would
+ * change a local label while reading as an answer.
  */
 export function peerDeliveryActionVisibility(deliveryBlocked, status) {
+    const pending = status === 'pending'
     return {
         delivery: !deliveryBlocked,
-        done: status !== 'done',
-        refusal: status !== 'refused',
+        done: pending,
+        refusal: pending,
     }
 }
 
@@ -132,10 +133,4 @@ export function answeredByLabel(direction, latestReplyAuthor, peerLabel) {
         return human ? `Answered by ${peerLabel}` : `Answered by ${peerLabel}'s agent`
     }
     return human ? 'Answered by you' : 'Answered by your agent'
-}
-
-/** Label the existing-session action from its selection and progress state. */
-export function existingSessionActionLabel(hasSelectedSession, isPrefilling) {
-    if (isPrefilling) return 'Prefilling…'
-    return hasSelectedSession ? 'Prefill session composer' : 'Select a session below'
 }

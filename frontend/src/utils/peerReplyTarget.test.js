@@ -5,7 +5,6 @@ import {
     activePeerResolutionAction,
     chooseReplyTargetSource,
     deliveryPickerTransition,
-    existingSessionActionLabel,
     isReplyTargetPickerEligible,
     PEER_MESSAGE_TITLE_MAX_CHARS,
     recoverReplyTargetPagination,
@@ -145,7 +144,7 @@ test('waits until a browser paint can complete before continuing', async () => {
 
 test('prepares the first existing-session activation without thread state', () => {
     assert.deepEqual(
-        deliveryPickerTransition(null, 'existing', false),
+        deliveryPickerTransition('existing', false),
         {
             mode: 'existing',
             prepareExisting: true,
@@ -156,7 +155,7 @@ test('prepares the first existing-session activation without thread state', () =
 
 test('does not prepare the existing-session picker when delivery is globally blocked', () => {
     assert.deepEqual(
-        deliveryPickerTransition(null, 'existing', false, true),
+        deliveryPickerTransition('existing', false, true),
         {
             mode: 'existing',
             prepareExisting: false,
@@ -174,12 +173,12 @@ test('a global delivery block leaves the agent-free resolutions available', asyn
     )
 })
 
-test('every resolution stays reachable except the current one', async () => {
+test('done and refusal answer a pending message only; delivery stays reachable', async () => {
     const { peerDeliveryActionVisibility } = await import('./peerReplyTarget.js')
     assert.deepEqual(peerDeliveryActionVisibility(false, 'pending'), { delivery: true, done: true, refusal: true })
-    assert.deepEqual(peerDeliveryActionVisibility(false, 'delivered'), { delivery: true, done: true, refusal: true })
-    assert.deepEqual(peerDeliveryActionVisibility(false, 'done'), { delivery: true, done: false, refusal: true })
-    assert.deepEqual(peerDeliveryActionVisibility(false, 'refused'), { delivery: true, done: true, refusal: false })
+    assert.deepEqual(peerDeliveryActionVisibility(false, 'delivered'), { delivery: true, done: false, refusal: false })
+    assert.deepEqual(peerDeliveryActionVisibility(false, 'done'), { delivery: true, done: false, refusal: false })
+    assert.deepEqual(peerDeliveryActionVisibility(false, 'refused'), { delivery: true, done: false, refusal: false })
 })
 
 test('labels who answered a message from its latest reply, by side', async () => {
@@ -194,7 +193,7 @@ test('labels who answered a message from its latest reply, by side', async () =>
 
 test('keeps a mounted existing-session picker warm across mode switches', () => {
     assert.deepEqual(
-        deliveryPickerTransition('existing', 'new', true),
+        deliveryPickerTransition('new', true),
         {
             mode: 'new',
             prepareExisting: false,
@@ -202,7 +201,7 @@ test('keeps a mounted existing-session picker warm across mode switches', () => 
         },
     )
     assert.deepEqual(
-        deliveryPickerTransition('new', 'existing', true),
+        deliveryPickerTransition('existing', true),
         {
             mode: 'existing',
             prepareExisting: false,
@@ -210,7 +209,7 @@ test('keeps a mounted existing-session picker warm across mode switches', () => 
         },
     )
     assert.deepEqual(
-        deliveryPickerTransition('existing', 'existing', true),
+        deliveryPickerTransition(null, true),
         {
             mode: null,
             prepareExisting: false,
@@ -239,12 +238,6 @@ test('identifies the one resolution button that owns busy progress', () => {
     assert.equal(activePeerResolutionAction(true, true, 'new'), 'refuse')
     assert.equal(activePeerResolutionAction(true, false, null), null)
     assert.equal(activePeerResolutionAction(true, false, null, true), 'done')
-})
-
-test('labels the existing-session action before selection and while prefilling', () => {
-    assert.equal(existingSessionActionLabel(false, false), 'Select a session below')
-    assert.equal(existingSessionActionLabel(true, false), 'Prefill session composer')
-    assert.equal(existingSessionActionLabel(true, true), 'Prefilling…')
 })
 
 test('proposes the parent subject with a single Re: prefix', () => {

@@ -48,7 +48,6 @@ import {
     answeredByLabel,
     chooseReplyTargetSource,
     deliveryPickerTransition,
-    existingSessionActionLabel,
     isReplyTargetPickerEligible,
     peerDeliveryActionVisibility,
     recoverReplyTargetPagination,
@@ -124,6 +123,10 @@ const scopeId = ref(ALL_PROJECTS_ID)
 // button sends — no accidental one-click delivery.
 const selectedSessionId = ref(null)
 const markingDone = ref(false)
+// The dialog stays mounted between openings (App.vue): a fresh action select
+// per opening guarantees it starts on the placeholder, whatever the previous
+// opening left in the element's own state.
+const actionSelectKey = ref(0)
 const activeResolutionAction = computed(() =>
     activePeerResolutionAction(busy.value, confirmingRefuse.value, mode.value, markingDone.value),
 )
@@ -145,8 +148,8 @@ const isPending = computed(() => isInbound.value && detail.value?.status === 'pe
 // the wrong session, or cleared the prefilled draft. A delivered message stays
 // re-routable — the peer already got its "delivered" answer, so nothing changes
 // for them. A REFUSED one never reopens: that answer stands.
-// Every resolution is reversible (design of 2026-09-01): any inbound message
-// can be (re)delivered, marked done or refused. "Redeliverable" keeps its
+// Any inbound message can be (re)delivered; marking done and refusing answer
+// a pending one only (see `peerDeliveryActionVisibility`). "Redeliverable" keeps its
 // narrow meaning — a DELIVERED row being retargeted — for the wording and
 // the backend's explicit `redeliver` opt-in.
 const isRedeliverable = computed(() => isInbound.value && detail.value?.status === 'delivered')
@@ -523,8 +526,13 @@ const showReplyTargetWarning = computed(() =>
 const showDirectParentHint = computed(() =>
     replyTargetSettled.value && replyToDirectParent.value,
 )
+// Only while it can still lead somewhere: another chosen action (new session,
+// refusal, done) has nothing to do with the session picker.
 const showReplyTargetPreparation = computed(() =>
     !deliveryGloballyBlocked.value
+    && (mode.value === null || mode.value === 'existing')
+    && !confirmingRefuse.value
+    && !busy.value
     && (
         shouldShowReplyTargetPreparation(detail.value, targetHydrationSettled.value)
         || (existingPickerPreparing.value && mode.value === 'existing')
@@ -537,6 +545,43 @@ const sessionRows = computed(() => {
     if (!existingPickerMounted.value) return []
     return buildSessionRows(scopeId.value, sessionFilter.value, replyTargetSession.value)
 })
+
+// The rows read the store, which only holds what the sidebar loaded for its
+// own frame: a scope the owner never opened would show nothing. The picker
+// loads its scope's first page itself, then the next ones on demand (scroll
+// to the end, or the "Load more" button when the list does not scroll) — the
+// same paginated `loadSessions` the sidebar uses, so both share one cursor.
+const scopeLoadError = ref(false)
+const scopeSessionsLoading = computed(() => dataStore.areSessionsLoading(scopeId.value))
+const scopeHasMoreSessions = computed(() =>
+    !dataStore.areProjectSessionsFetched(scopeId.value) || dataStore.hasMoreSessions(scopeId.value),
+)
+
+async function loadScopeSessions({ nextPage = false } = {}) {
+    const id = scopeId.value
+    if (dataStore.areSessionsLoading(id)) return
+    // `loadSessions` on a fetched scope loads its NEXT page: only an explicit
+    // "more" asks for that.
+    if (dataStore.areProjectSessionsFetched(id) && (!nextPage || !dataStore.hasMoreSessions(id))) return
+    scopeLoadError.value = false
+    try {
+        await dataStore.loadSessions(id)
+    } catch {
+        if (scopeId.value === id) scopeLoadError.value = true
+    }
+}
+
+watch([scopeId, existingPickerMounted], ([, mounted]) => {
+    scopeLoadError.value = false
+    if (mounted) void loadScopeSessions()
+})
+
+function onPickerScroll(event) {
+    const el = event.target
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) {
+        void loadScopeSessions({ nextPage: true })
+    }
+}
 
 const selectedSession = computed(() =>
     sessionRows.value.find(r => r.session.id === selectedSessionId.value)?.session || null
@@ -596,11 +641,6 @@ const newSessionDeliveryState = computed(() =>
         pickedProjectId.value ? NO_COMPATIBLE_PROVIDER_ERROR : '',
     ),
 )
-const existingSessionActionText = computed(() => existingSessionActionLabel(
-    !!selectedSession.value,
-    activeResolutionAction.value === 'existing',
-))
-
 function isCurrentOpen(generation, messageId) {
     return generation === openGeneration
         && props.open
@@ -770,6 +810,15 @@ async function initializeReplyTarget(loadedDetail, generation, messageId) {
     }
 
     targetHydrationSettled.value = true
+    // The lookup above is async: the owner may have picked an action in the
+    // meantime. The suggestion only lands where it still belongs — on no
+    // action yet, or on an existing-session picker still left untouched —
+    // and never replaces a choice they made.
+    if (mode.value === 'existing') {
+        if (selectedSessionId.value != null || scopeId.value !== autoScopeId) return
+    } else if (mode.value !== null || confirmingRefuse.value || busy.value) {
+        return
+    }
     scopeId.value = target.project_id
     selectedSessionId.value = targetId
     mode.value = 'existing'
@@ -806,6 +855,7 @@ watch(() => [props.open, props.messageId], async ([open, messageId]) => {
     existingPickerMountPromise = null
     targetHydrationSettled.value = false
     confirmingRefuse.value = false
+    actionSelectKey.value++
 
     let loadedDetail
     try {
@@ -851,11 +901,11 @@ watch(() => [props.open, props.messageId], async ([open, messageId]) => {
     await initializeReplyTarget(loadedDetail, generation, messageId)
 }, { immediate: true, flush: 'sync' })
 
-/** Toggle a delivery mode. The existing picker mounts once per dialog and
- *  keeps its scope, filter, selection, rows, and scroll while hidden. */
+/** Switch the delivery mode (`null` closes both pickers). The existing picker
+ *  mounts once per dialog and keeps its scope, filter, selection, rows, and
+ *  scroll while hidden. */
 async function setMode(next) {
     const transition = deliveryPickerTransition(
-        mode.value,
         next,
         existingPickerMounted.value,
         deliveryGloballyBlocked.value,
@@ -865,6 +915,71 @@ async function setMode(next) {
     if (transition.prepareExisting) {
         await ensureExistingPickerMounted(openGeneration, props.messageId)
     }
+}
+
+// The action select: one list instead of a row of buttons. Its value is read
+// from the state each action already owns (open picker, refusal confirmation,
+// running "done"), so it never drifts from what the dialog shows — and falls
+// back to the placeholder once that state ends (Keep, a failed "done").
+const actionSelectRef = ref(null)
+const selectedAction = computed(() => {
+    if (markingDone.value) return 'done'
+    if (confirmingRefuse.value) return 'refuse'
+    return mode.value || ''
+})
+
+// Three groups — delivery, the agent-free answers (done, reply), refusal —
+// split by a divider only between two groups that both have an option: never
+// at an edge, never two in a row.
+const actionDividers = computed(() => {
+    const hasDelivery = deliveryActionVisibility.value.delivery
+    const hasMiddle = deliveryActionVisibility.value.done || canReply.value
+    const hasRefusal = deliveryActionVisibility.value.refusal
+    return {
+        afterDelivery: hasDelivery && (hasMiddle || hasRefusal),
+        beforeRefusal: hasMiddle && hasRefusal,
+    }
+})
+
+// The panels an action opens below the select. The select is often the last
+// line in view, so a panel would open out of sight and the choice would look
+// like it did nothing: scroll the dialog body until the panel shows — whole
+// when it fits, its top part otherwise.
+const existingPanelRef = ref(null)
+const newPanelRef = ref(null)
+const refusePanelRef = ref(null)
+
+async function revealActionPanel(panelRef) {
+    await nextTick()
+    panelRef.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+}
+
+async function onActionChange(event) {
+    if (event.target !== actionSelectRef.value) return
+    const action = event.target.value
+    if (action === 'existing' || action === 'new') {
+        await setMode(action)
+        // The existing picker may take a paint to mount: scroll only if the
+        // owner did not move to another action meanwhile.
+        if (mode.value === action) {
+            await revealActionPanel(action === 'existing' ? existingPanelRef : newPanelRef)
+        }
+    } else if (action === 'refuse') {
+        await setMode(null)
+        confirmingRefuse.value = true
+        await revealActionPanel(refusePanelRef)
+    } else if (action === 'done') {
+        await setMode(null)
+        await markDone()
+    } else if (action === 'reply') {
+        await setMode(null)
+        openReplyComposer()
+    }
+    // An action that leaves no state behind (reply, a failed "done") keeps
+    // `selectedAction` unchanged, so Vue has nothing to patch: put the
+    // element back in line by hand.
+    await nextTick()
+    if (actionSelectRef.value) actionSelectRef.value.value = selectedAction.value
 }
 
 function errorText(payload) {
@@ -1340,13 +1455,99 @@ function onHide(event) {
                     {{ NO_COMPATIBLE_PROVIDER_ERROR }}
                 </wa-callout>
                 <template v-else>
-                    <wa-callout v-if="showReplyTargetWarning" variant="warning" size="small">
-                        This message is part of a thread, but its session is not available for selection.
-                        Choose another session, or deliver to a new one.
-                    </wa-callout>
-                    <p v-else-if="showDirectParentHint" class="pr-explainer">
-                        In reply to a message you wrote directly — no session to propose.
-                        Choose any session, or deliver to a new one.
+                    <!-- The current status concerns every action; what a
+                         delivery does is explained with the delivery pickers. -->
+                    <p v-if="isRedeliverable || isResolved" class="pr-explainer">
+                        <template v-if="isRedeliverable">This message was already delivered; delivering it
+                        again is allowed.</template><template v-else>This message was
+                        already {{ detail.status }}; it can still be delivered — the sender keeps the
+                        first answer it was told.</template>
+                    </p>
+                </template>
+
+                <!-- Every answer to the message in one list: five buttons side
+                     by side read as five equal, competing calls. Delivery
+                     opens its picker below; Done and Reply act at once; Refuse
+                     asks for confirmation. Done and Refuse answer a pending
+                     message only: the sender never learns a later answer. -->
+                <div class="pr-actions">
+                    <label class="pr-actions__label" for="pr-action-select">What's next?</label>
+                    <div class="pr-actions__row">
+                        <wa-select
+                            id="pr-action-select" ref="actionSelectRef" :key="actionSelectKey"
+                            size="small" class="pr-actions__select"
+                            placeholder="Pick an action…"
+                            :value="selectedAction" :disabled="busy"
+                            @change="onActionChange"
+                        >
+                            <wa-option
+                                v-if="deliveryActionVisibility.delivery"
+                                value="existing" :disabled="!contentAllowsDelivery"
+                            >
+                                <wa-icon slot="start" name="comments"></wa-icon>
+                                Deliver to an existing session
+                            </wa-option>
+                            <wa-option
+                                v-if="deliveryActionVisibility.delivery"
+                                value="new" :disabled="!contentAllowsDelivery"
+                            >
+                                <wa-icon slot="start" name="plus"></wa-icon>
+                                Deliver to a new session
+                            </wa-option>
+                            <wa-divider v-if="actionDividers.afterDelivery"></wa-divider>
+                            <!-- Not gated on attachment loading: that gate
+                                 exists for bytes reaching an agent, and Done
+                                 reaches none. -->
+                            <wa-option v-if="deliveryActionVisibility.done" value="done">
+                                <wa-icon slot="start" name="check"></wa-icon>
+                                Mark as done without reply
+                            </wa-option>
+                            <!-- Opens the direct composer, threaded on this
+                                 message; resolves nothing by itself. -->
+                            <wa-option v-if="canReply" value="reply">
+                                <wa-icon slot="start" name="reply"></wa-icon>
+                                Reply manually
+                            </wa-option>
+                            <wa-divider v-if="actionDividers.beforeRefusal"></wa-divider>
+                            <wa-option
+                                v-if="deliveryActionVisibility.refusal"
+                                value="refuse" class="pr-actions__refuse"
+                            >
+                                <wa-icon slot="start" name="ban"></wa-icon>
+                                Refuse this message
+                            </wa-option>
+                        </wa-select>
+                        <span
+                            v-if="activeResolutionAction === 'done'"
+                            class="pr-actions__status" role="status" aria-live="polite"
+                        >
+                            <wa-spinner></wa-spinner>
+                            Marking…
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Only a delivery carries the note to an agent: shown for
+                     the two delivery actions, between the choice and its
+                     picker, with what a delivery does. The typed text
+                     survives switching between them. -->
+                <template v-if="deliveryActionVisibility.delivery && (mode === 'existing' || mode === 'new')">
+                    <!-- Why no thread session is proposed: only meaningful
+                         while picking an existing session. -->
+                    <template v-if="mode === 'existing'">
+                        <wa-callout v-if="showReplyTargetWarning" variant="warning" size="small">
+                            This message is part of a thread, but its session is not available for selection.
+                            Choose another session, or deliver to a new one.
+                        </wa-callout>
+                        <p v-else-if="showDirectParentHint" class="pr-explainer">
+                            In reply to a message you wrote directly — no session to propose.
+                            Choose any session, or deliver to a new one.
+                        </p>
+                    </template>
+                    <p class="pr-explainer">
+                        Delivering does not send anything: the message is placed in the chosen
+                        session's input (an existing one, or a new draft) — you review it, adjust it
+                        if needed, and send it yourself.
                     </p>
                     <div class="pr-note">
                         <label class="pr-note__label" for="pr-note-input">Add a message for your agent (optional)</label>
@@ -1358,65 +1559,7 @@ function onHide(event) {
                             @input="note = $event.target.value"
                         ></wa-textarea>
                     </div>
-
-                    <p class="pr-explainer">
-                        <template v-if="isRedeliverable">This message was already delivered; delivering it
-                        again is allowed. </template><template v-else-if="isResolved">This message was
-                        already {{ detail.status }}; any decision can be changed later — the sender
-                        keeps the first one it was told. </template>Delivering does not send anything:
-                        the message is placed in the chosen session's input (an existing one, or a new
-                        draft) — you review it, adjust it if needed, and send it yourself.
-                    </p>
                 </template>
-
-                <!-- The whole point of the dialog: filled brand, never a quiet
-                     outline. The picked one stays filled, the other steps back
-                     to an outline so the choice is readable. Done and Refuse
-                     are the two answers that reach no agent; each hides in its
-                     own state only — every resolution is reversible. -->
-                <div
-                    class="pr-actions"
-                    :class="{ 'pr-actions--no-delivery': !deliveryActionVisibility.delivery }"
-                >
-                    <wa-button
-                        v-if="deliveryActionVisibility.delivery"
-                        variant="brand" :appearance="mode === 'new' ? 'outlined' : 'accent'"
-                        :disabled="busy || !contentAllowsDelivery"
-                        @click="setMode('existing')"
-                    >
-                        <wa-icon name="comments" slot="start"></wa-icon>
-                        Deliver to existing session
-                    </wa-button>
-                    <wa-button
-                        v-if="deliveryActionVisibility.delivery"
-                        variant="brand" :appearance="mode === 'existing' ? 'outlined' : 'accent'"
-                        :disabled="busy || !contentAllowsDelivery"
-                        @click="setMode('new')"
-                    >
-                        <wa-icon name="plus" slot="start"></wa-icon>
-                        Deliver to new session
-                    </wa-button>
-                    <!-- Not gated on attachment loading: that gate exists for
-                         bytes reaching an agent, and Done reaches none. -->
-                    <wa-button
-                        v-if="deliveryActionVisibility.done"
-                        variant="neutral" appearance="outlined"
-                        :disabled="busy"
-                        :aria-busy="activeResolutionAction === 'done' ? 'true' : 'false'"
-                        @click="markDone"
-                    >
-                        <wa-spinner v-if="activeResolutionAction === 'done'" slot="start"></wa-spinner>
-                        <wa-icon v-else name="check" slot="start"></wa-icon>
-                        {{ activeResolutionAction === 'done' ? 'Marking…' : 'Done' }}
-                    </wa-button>
-                    <wa-button
-                        v-if="deliveryActionVisibility.refusal"
-                        size="small" variant="danger" appearance="outlined"
-                        class="pr-actions__refuse"
-                        :disabled="busy"
-                        @click="confirmingRefuse = true"
-                    >Refuse</wa-button>
-                </div>
 
                 <div
                     v-if="showReplyTargetPreparation"
@@ -1426,7 +1569,7 @@ function onHide(event) {
                     <span>Preparing session selection…</span>
                 </div>
 
-                <wa-callout v-if="confirmingRefuse" variant="warning" size="small">
+                <wa-callout v-if="confirmingRefuse" ref="refusePanelRef" variant="warning" size="small">
                     <div class="pr-confirm-body">
                         <span>Refuse this message? The sender will see it as refused.</span>
                         <!-- A refusal carries no words. Rather than a reason
@@ -1434,8 +1577,8 @@ function onHide(event) {
                              already does it — and resolves the message in the
                              same gesture (its "Refuse it" choice). -->
                         <span v-if="canReply" class="pr-confirm__hint">
-                            To explain why, use <strong>Reply manually</strong> at the bottom
-                            of this dialog and pick <strong>Refuse it</strong> there.
+                            To explain why, pick <strong>Reply manually</strong> in the action
+                            list above and choose <strong>Refuse it</strong> there.
                         </span>
                         <span class="pr-confirm__actions">
                             <wa-button
@@ -1457,7 +1600,7 @@ function onHide(event) {
                 <!-- 'New session' mode: the same project selector as every
                      new-session flow (badges, named/tree split, ws priority). -->
                 <template v-if="deliveryActionVisibility.delivery && mode === 'new'">
-                    <div class="pr-new-session">
+                    <div ref="newPanelRef" class="pr-new-session">
                         <wa-select
                             v-model="pickedProjectId"
                             size="small" placeholder="Pick a project…"
@@ -1504,19 +1647,25 @@ function onHide(event) {
                 <div
                     v-if="deliveryActionVisibility.delivery && existingPickerMounted"
                     v-show="mode === 'existing'"
+                    ref="existingPanelRef"
                     class="pr-existing-session"
                 >
                     <div class="pr-existing-action">
-                        <wa-button
-                            size="small" variant="brand"
-                            :disabled="busy || existingSessionDeliveryState.disabled"
-                            :aria-busy="activeResolutionAction === 'existing' ? 'true' : 'false'"
-                            @click="deliverToSession(selectedSession)"
-                        >
-                            <wa-spinner v-if="activeResolutionAction === 'existing'" slot="start"></wa-spinner>
-                            <wa-icon v-else name="pen-to-square" slot="start"></wa-icon>
-                            {{ existingSessionActionText }}
-                        </wa-button>
+                        <div class="pr-existing-action__row">
+                            <wa-button
+                                size="small" variant="brand"
+                                :disabled="busy || existingSessionDeliveryState.disabled"
+                                :aria-busy="activeResolutionAction === 'existing' ? 'true' : 'false'"
+                                @click="deliverToSession(selectedSession)"
+                            >
+                                <wa-spinner v-if="activeResolutionAction === 'existing'" slot="start"></wa-spinner>
+                                <wa-icon v-else name="pen-to-square" slot="start"></wa-icon>
+                                {{ activeResolutionAction === 'existing' ? 'Delivering…' : 'Create draft message' }}
+                            </wa-button>
+                            <!-- Why the button is greyed: a click in the list only
+                                 selects, and nothing is selected yet. -->
+                            <span v-if="!selectedSession" class="pr-existing-action__hint">(Pick a session first)</span>
+                        </div>
                         <wa-callout
                             v-if="existingSessionDeliveryState.error"
                             variant="warning" size="small"
@@ -1575,7 +1724,7 @@ function onHide(event) {
                          icons, colors, heights and active-session highlight.
                          Its plain left click only emits `select` (no navigation);
                          the session-actions menu is hidden via CSS below. -->
-                    <div class="pr-picker">
+                    <div class="pr-picker" @scroll="onPickerScroll">
                         <template v-for="row in sessionRows" :key="row.session.id">
                             <SidebarListSeparator v-if="row.separator" v-bind="row.separator" />
                             <SessionListItem
@@ -1587,7 +1736,29 @@ function onHide(event) {
                                 @select="selectedSessionId = row.session.id"
                             />
                         </template>
-                        <p v-if="!sessionRows.length" class="pr-empty">No matching session.</p>
+                        <div
+                            v-if="scopeSessionsLoading"
+                            class="pr-picker-more" role="status" aria-live="polite"
+                        >
+                            <wa-spinner></wa-spinner>
+                            Loading sessions…
+                        </div>
+                        <div v-else-if="scopeLoadError" class="pr-picker-more">
+                            Could not load sessions.
+                            <wa-button size="small" appearance="plain" @click="loadScopeSessions({ nextPage: true })">
+                                Try again
+                            </wa-button>
+                        </div>
+                        <template v-else>
+                            <p v-if="!sessionRows.length" class="pr-empty">No matching session.</p>
+                            <!-- Also reachable when the rows do not fill the
+                                 list, where no scroll can reach the end. -->
+                            <div v-if="scopeHasMoreSessions" class="pr-picker-more">
+                                <wa-button size="small" appearance="plain" @click="loadScopeSessions({ nextPage: true })">
+                                    Load more sessions
+                                </wa-button>
+                            </div>
+                        </template>
                     </div>
                 </div>
 
@@ -1605,14 +1776,6 @@ function onHide(event) {
         </div>
 
         <div slot="footer" class="pr-footer">
-            <!-- Reply opens the direct composer, threaded on this message; it
-                 never delivers or refuses — the trust-gate actions above stay
-                 the only resolutions. -->
-            <wa-button
-                v-if="canReply"
-                appearance="outlined" :disabled="busy"
-                @click="openReplyComposer"
-            >Reply manually</wa-button>
             <wa-button :disabled="busy" @click="emit('close')">Close</wa-button>
         </div>
     </wa-dialog>
@@ -1749,19 +1912,49 @@ function onHide(event) {
 /* Three kinds of text share this dialog and must not read alike: the routing
    line is metadata (quiet, small), this is a FORM LABEL (normal colour, at
    text size), and the explainer below is a side note (quiet, italic). */
-.pr-note { display: flex; flex-direction: column; gap: var(--wa-space-2xs); margin: var(--wa-space-m) 0 var(--wa-space-s); }
+.pr-note { display: flex; flex-direction: column; gap: var(--wa-space-2xs); margin: 0 0 var(--wa-space-s); }
 .pr-note__label { font-weight: var(--wa-font-weight-semibold); color: var(--wa-color-text-normal); }
+/* Label and select share one line, and wrap only when it is too narrow. */
 .pr-actions {
     display: flex;
-    gap: var(--wa-space-s);
     flex-wrap: wrap;
     align-items: center;
+    gap: var(--wa-space-2xs) var(--wa-space-s);
     margin-bottom: var(--wa-space-s);
 }
-/* Refusing is a rare, destructive answer: kept away from the two delivery
-   buttons so it is never the one clicked by reflex. */
-.pr-actions__refuse { margin-inline-start: auto; }
-.pr-actions--no-delivery .pr-actions__refuse { margin-inline-start: 0; }
+.pr-actions__label { font-weight: var(--wa-font-weight-semibold); color: var(--wa-color-text-normal); }
+.pr-actions__row {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    min-width: 0;
+}
+/* As wide as the shown text (placeholder or picked action), not as the row:
+   the host and its display input shrink to their content, and the open list
+   takes its own width back so no option is cut. */
+.pr-actions__select {
+    width: auto;
+    max-width: 100%;
+    &::part(display-input) {
+        field-sizing: content;
+        width: auto;
+    }
+    &::part(listbox) {
+        width: max-content;
+        min-width: 100%;
+        max-width: calc(100vw - 4rem);
+    }
+}
+/* At rest only: an outer rule beats the option's own `:host` colors, so the
+   hover and keyboard-current states keep theirs (red on the brand fill would
+   be unreadable). */
+.pr-actions__refuse:not(:hover, :state(current)) { color: var(--wa-color-danger-60); }
+.pr-actions__status {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    color: var(--wa-color-text-quiet);
+}
 .pr-preparing {
     display: flex;
     align-items: center;
@@ -1776,6 +1969,17 @@ function onHide(event) {
     align-items: flex-start;
     gap: var(--wa-space-xs);
     margin-bottom: var(--wa-space-s);
+}
+/* The hint sits right of the button, and wraps below only when too narrow. */
+.pr-existing-action__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wa-space-2xs) var(--wa-space-s);
+}
+.pr-existing-action__hint {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
 }
 .pr-existing-action .pr-action-error,
 .pr-existing-action .pr-target-warning { align-self: stretch; }
@@ -1809,6 +2013,14 @@ function onHide(event) {
    the session-actions "…" menu is out of place in a delivery picker. */
 .pr-picker :deep(.session-menu) { display: none !important; }
 .pr-empty { color: var(--wa-color-text-quiet); padding: var(--wa-space-s); margin: 0; }
+.pr-picker-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--wa-space-xs);
+    padding: var(--wa-space-xs);
+    color: var(--wa-color-text-quiet);
+}
 .pr-new-session {
     display: flex;
     gap: var(--wa-space-xs);

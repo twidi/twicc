@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Search** — When no message contains all your words, sessions that match at least one of them now show up, marked as partial matches, instead of no result at all.
 - **Long sessions** — A session that keeps working is no longer stopped after 10 hours.
 - **Command palette** — Keep typing past a command's name to filter its entries, such as `sess twicc` to find a session — no need to open the command first.
+- **Peer messages** — Choosing what to do with a received message is now easier.
 - **Peer inbox** — The text filter now keeps only the messages that contain every word you type, in their subject or their text, instead of matching scattered letters.
 - **Claude Agent SDK** — Upgrade from 0.2.152 to 0.2.158 (bundled Claude Code CLI: 2.1.259 → 2.1.280)
 - **Codex runtime** — Update from v0.153.4 to v0.155.1.
