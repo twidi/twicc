@@ -6,9 +6,7 @@ argument-hint: <session_id|self> {settings|title|annotations|archive|unarchive|p
 
 # TwiCC Update Session
 
-Eleven sub-commands: `settings`, `title`, `annotations`, `archive`, `unarchive`, `pin <MODE>`, `unpin`, `hide`, `unhide`, `mute`, `notify`. To stop the live agent without touching the row, use `$TWICC session <SESSION_ID> stop` (skill: `twicc-session`). To apply the same change to several sessions at once (every sub-command except `title`), use `$TWICC update-sessions` (skill: `twicc-update-sessions`).
-
-All sub-commands share the `--timeout SECONDS` output flag (default 30).
+Change one existing session without sending a message. This file is the index; each sub-command has its own file next to it.
 
 ## When to use
 
@@ -19,6 +17,7 @@ All sub-commands share the `--timeout SECONDS` output flag (default 30).
 - Pin to project / workspace / globally, or unpin → `pin <MODE>` / `unpin`.
 - Hide from all listings and broadcasts / unhide → `hide` / `unhide`.
 - Suppress or restore finished-working notifications → `mute` / `notify`.
+- Several sessions at once (every sub-command except `title`) → `$TWICC update-sessions` (skill: `twicc-update-sessions`).
 
 ## How to invoke
 
@@ -33,138 +32,17 @@ TWICC=${TWICC_BIN:-$(command -v twicc 2>/dev/null)}
 
 Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never `"$TWICC" args`): it may expand to multiple words, which quoting would break.
 
-## Usage
-
-### Session id argument
-
-Every sub-command takes a session id as its first positional argument:
-
-- `SESSION_ID` — id of the session to update.
-- `self` — the current TwiCC session.
-
-### `settings`
+## Common to all sub-commands
 
 ```bash
-$TWICC update-session '<SESSION_ID>' settings [OPTIONS]
+$TWICC update-session <SESSION_ID|self> <SUB-COMMAND> [ARGS] [--timeout SECONDS]
 ```
 
-**Patch mode** (no `--preset`): only explicitly passed flags are written; everything else keeps its current value. Pass `--unset <field>` to reset a field to NULL (= user defined default). At least one flag or `--unset` is required.
+- The first argument is `SESSION_ID` (the session to update) or `self` (the current TwiCC session).
+- `--timeout SECONDS` — seconds to wait for the server's response (default 30). The request is not cancelled: the update may still apply after it.
+- You are in TwiCC — on success, link to the session: `[link text](/project/{project_id}/session/{session_id})`.
 
-**Replace mode** (`--preset NAME`): every settings field is rewritten. The preset defines some fields; absent fields become NULL. Per-flag options and `--unset` override the preset.
-
-Agent settings flags (all optional; use `$TWICC info models agent-settings presets` to discover the supported models, valid agent settings values per provider and the presets, — skill: `twicc-info`):
-
-- `--model VALUE` — Claude Code: `fable`, `opus`, `sonnet`, `fable-5`, `opus-5`, `opus-4.8`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `sonnet-4.6`, `sonnet-4.5`. Codex: `gpt-astra`, `gpt-sol`, `gpt-terra`, `gpt-luna`, `gpt`, `gpt-sol-5.6`, `gpt-luna-5.6`.
-- `--effort VALUE` — Claude Code: `low`, `medium`, `high`, `xhigh`, `max`. Codex: `low`, `medium`, `high`, `xhigh`, `max` (`max` needs a GPT-6 or GPT-5.6 model; silently demoted otherwise).
-- `--permission-mode VALUE` — Claude Code: `default`, `auto`, `acceptEdits`, `plan`, `dontAsk`, `bypassPermissions`. Codex: `read_only`, `strict`, `auto`, `autonomous`, `auto_review`, `yolo`.
-- `--thinking / --no-thinking` — Claude Code only.
-- `--claude-in-chrome / --no-claude-in-chrome` — Claude Code only (Allows to manipulate browser tabs, take screenshots, etc.).
-- `--fast-mode / --no-fast-mode` — Supported Claude Code and Codex models; increases credit usage.
-- `--context-max VALUE` — Claude Code: `200k` or `1m`. Codex: `272k` (fixed by the model; a divergent value is silently pinned to its window).
-- `--question-widget / --no-question-widget` — Claude Code (`AskUserQuestion`) and Codex (`request_user_input`): decide whether the agent may ask questions through a UI widget the user answers by clicking, instead of plain text.
-- `--unset TOKEN` (repeatable) — reset a field to NULL. Accepted tokens: `model`, `effort`, `permission-mode`, `thinking`, `claude-in-chrome`, `fast-mode`, `context-max`, `question-widget` (a token the session's provider doesn't support is silently ignored).
-- `--preset NAME` — apply a saved preset (replace mode). `__defaults__` resets all fields to the user-configured defaults. Use `$TWICC info presets` to list available presets (skill: `twicc-info`).
-
-### Aliases
-
-Some settings also accept provider-agnostic aliases, resolved to the session's provider:
-- `--model` — `max`/`strongest` → top family, `medium`/`balanced` → middle family, `min`/`fastest`/`cheapest` → lightest family.
-- `--effort`, `--context-max` — `max` → highest/largest, `min` → lowest/smallest.
-- `--permission-mode` — `min`/`strict`/`safe` → most-locked (non-interactive), `max`/`open`/`full`/`yolo`/`bypass` → most permissive (non-interactive), `auto` → balanced (interactive).
-
-A flag the session's provider doesn't support (e.g. `--thinking` on Codex) is silently ignored (no-op).
-
-**Untrusted projects.** If the session's project is *untrusted* (or unknown trust), `--permission-mode` resolves against the restricted subset — `bypassPermissions`/`yolo` are unavailable, `max` → the most permissive *allowed* mode (Claude Code `acceptEdits`, Codex `auto_review`), and an out-of-subset value is clamped to the project's untrusted default with a note on stderr. See `twicc info agent-settings` → `permission_mode_if_untrusted`.
-
-**How settings reach a live process:** if a session currently has a process attached (a running agent), changes are propagated immediately per field category:
-- *Live* (`permission_mode` on Claude Code) — applied immediately.
-- *Idle* (`model`, `context_max` on Claude Code; `model`, `effort`, `permission_mode`, `context_max`, `fast_mode` on Codex) — applied on next `user_turn`.
-- *Startup* (`effort`, `thinking`, `claude_in_chrome`, `fast_mode`, `question_widget` on Claude Code) — applied on the next restart: the agent is stopped (immediately if at `user_turn`, or at the end of its current `assistant_turn` if working), so the next message you send restarts it with the new settings. If currently `awaiting_user_input`, the pending dialog is lost.
-- *Startup on Codex* (`question_widget`) — **no automatic restart**. The value is stored, the running process keeps the old one. To apply it: `$TWICC session <ID> stop` (skill: `twicc-session`), then send a message — the resumed thread picks up the new value. A session with no live process needs nothing.
-
-### `title`
-
-```bash
-$TWICC update-session '<SESSION_ID>' title '<NEW_TITLE>'
-```
-
-Trimmed; non-empty; ≤ 200 characters. The title is also written to the provider's own session store.
-
-### `annotations`
-
-```bash
-$TWICC update-session '<SESSION_ID>' annotations <OPERATION>...
-```
-
-Operations are applied left-to-right:
-
-- `clear` — replace annotations with `{}`.
-- `replace-file:PATH` — replace annotations with a JSON object file.
-- `merge-file:PATH` — recursively merge a JSON object file.
-- `set:KEY=VALUE` — set a scalar value; dotted keys are supported.
-- `unset:KEY` — remove a key; dotted keys are supported and missing paths are ignored.
-
-`set:` parses `true`, `false`, `null`, numbers, and strings. Use `merge-file:` or `replace-file:` for list or object values.
-
-### `archive` / `unarchive`
-
-```bash
-$TWICC update-session '<SESSION_ID>' archive
-$TWICC update-session '<SESSION_ID>' unarchive
-```
-
-`archive` kills the live agent, and auto-unpins if `autoUnpinOnArchive` is enabled (default: on). `unarchive` flips the flag; no agent restart.
-
-### `pin` / `unpin`
-
-```bash
-$TWICC update-session '<SESSION_ID>' pin <MODE>
-$TWICC update-session '<SESSION_ID>' unpin
-```
-
-`MODE` — `project`, `workspace`, or `all`. Switching scope is just another `pin`. Idempotent.
-
-### `hide` / `unhide`
-
-```bash
-$TWICC update-session '<SESSION_ID>' hide
-$TWICC update-session '<SESSION_ID>' unhide
-```
-
-`hide` requires a non-interactive `permission_mode` (Claude Code: `bypassPermissions`/`dontAsk`; Codex: `yolo`/`strict`; alias `open` or `strict`) and `question_widget` disabled (both providers). If not met, update `settings` first. `unhide` has no preconditions.
-
-### `mute` / `notify`
-
-```bash
-$TWICC update-session '<SESSION_ID>' mute
-$TWICC update-session '<SESSION_ID>' notify
-```
-
-`mute` suppresses only the session's finished-working notifications. Questions and approvals still notify. `notify` restores the per-session finished-working notification path, but global notification settings still apply. Both commands are independent of hidden visibility and do not restart the agent.
-
-## Errors
-
-### Local (exit 1) — common to all sub-commands
-
-- `is_subagent` — subagents cannot be updated directly; target the parent session.
-- `session_not_found`
-- `session_stale`
-- `project_no_directory`
-- `provider_disabled`
-
-### Local (exit 1) — sub-command specific
-
-- `settings`: `unknown_unset_field`, `invalid_choice`, `invalid_format`, `unset_conflict`, `no_op`.
-- `title`: `invalid_title` — empty after trim.
-- `annotations`: `invalid_annotation_operation`, `invalid_annotation`, `invalid_annotation_path`, `annotation_path_conflict`, `annotation_non_scalar`, `invalid_annotations_file`, `no_op`.
-- `pin`: `invalid_pin_mode` — MODE not in `{project, workspace, all}`.
-- `hide`: `hidden_constraint_violation` — non-interactive permission_mode or question_widget constraint not met.
-
-### Server (exit 3)
-
-Same codes, re-checked server-side. Additionally `invalid_title` (title too long), `invalid_annotations`, and `manager_busy` (transient, `settings` only; retry).
-
-## Output format
+### Output format
 
 ```json
 {"status":"updated","session_id":"...","provider":"...","project_id":"...","request_uuid":"..."}
@@ -186,31 +64,28 @@ Same codes, re-checked server-side. Additionally `invalid_title` (title too long
 - `4` — Server error
 - `5` — Timeout
 
-## Examples
+### Errors
 
-```bash
-$TWICC update-session 4a8352fb-... settings --model sonnet
-$TWICC update-session 4a8352fb-... settings --effort high --unset model
-$TWICC update-session 4a8352fb-... settings --preset 'deep think' --effort low
-$TWICC update-session 4a8352fb-... settings --model opus
-# → {"status":"updated","session_id":"...","provider":"claude_code","project_id":"...","request_uuid":"..."}
-$TWICC update-session 4a8352fb-... title 'Better title'
-$TWICC update-session 4a8352fb-... annotations set:role=reviewer unset:temporary
-$TWICC update-session 4a8352fb-... annotations set:note="Needs backend review"
-$TWICC update-session 4a8352fb-... annotations unset:foo set:foo.point=bar
-$TWICC update-session 4a8352fb-... annotations replace-file:/tmp/base.json merge-file:/tmp/extra.json
-$TWICC update-session 4a8352fb-... annotations clear
-$TWICC update-session 4a8352fb-... archive
-$TWICC update-session 4a8352fb-... unarchive
-$TWICC update-session 4a8352fb-... pin project
-$TWICC update-session 4a8352fb-... pin all
-$TWICC update-session 4a8352fb-... unpin
-$TWICC update-session 4a8352fb-... hide
-$TWICC update-session 4a8352fb-... unhide
-$TWICC update-session 4a8352fb-... mute
-$TWICC update-session 4a8352fb-... notify
-$TWICC update-session self annotations set:role=worker
-```
+Local (exit 1), on every sub-command:
+
+- `is_subagent` — subagents cannot be updated directly; target the parent session.
+- `session_not_found`, `session_stale`, `project_no_directory`, `provider_disabled`.
+
+Server (exit 3): every local code — the common ones above and each sub-command file's own — re-checked server-side, plus the server-only codes each file lists.
+
+## Sub-commands
+
+**ALWAYS READ THE SUB-COMMAND'S FILE BEFORE YOU CALL IT.** It holds the arguments, the sub-command's own errors, the pitfalls, and any result presentation beyond the common rules above. The files sit next to this `SKILL.md`.
+
+| Sub-command | Purpose | File |
+|---|---|---|
+| `settings` | Change model, effort, permission mode and other agent settings (patch or preset). | `settings.md` |
+| `title` | Rename the session. | `title.md` |
+| `annotations` | Edit the free-form annotations with ordered operations. | `annotations.md` |
+| `archive` / `unarchive` | Archive (stops the agent) or unarchive. | `archive.md` |
+| `pin` / `unpin` | Pin to project / workspace / all, or unpin. | `pin.md` |
+| `hide` / `unhide` | Hide from all listings and broadcasts, or unhide. | `hide.md` |
+| `mute` / `notify` | Suppress or restore finished-working notifications. | `mute.md` |
 
 ## Related commands
 
@@ -219,9 +94,3 @@ $TWICC update-session self annotations set:role=worker
 - `$TWICC session <session_id> stop` — stop the agent without touching the row. Skill: `twicc-session`.
 - `$TWICC send-message <session_id>` — send a message (settings unchanged). Skill: `twicc-send-message`.
 - `$TWICC session <session_id>` — one session's row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
-
-## How to present results
-
-1. On success, give a clickable link: `[link text](/project/{project_id}/session/{session_id})`.
-2. On `no_op` / `unset_conflict`, the error message is self-explanatory.
-3. Mention agent restart only when relevant (startup settings changed).

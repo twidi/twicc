@@ -22,7 +22,7 @@ import typer
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS_DIR = ROOT / "src/twicc/agent/plugin/twicc/skills"
-SESSIONS_SKILL = SKILLS_DIR / "twicc-sessions/SKILL.md"
+SESSIONS_WAIT_DOC = SKILLS_DIR / "twicc-sessions/wait-reply.md"
 CLI_DOC = ROOT / "SKILLS-AND-CLI.md"
 
 FLAG = re.compile(r"(?<![\w-])--[A-Za-z0-9][\w-]*")
@@ -77,8 +77,10 @@ def _filters() -> set[str]:
 def _copyable_spans() -> list[tuple[str, int, str]]:
     """Every invocation or signature of this command a reader could copy."""
     found = []
-    for path in [*sorted(SKILLS_DIR.glob("*/SKILL.md")), CLI_DOC]:
-        label = f"{path.parent.name}/{path.name}" if path != CLI_DOC else path.name
+    # Every markdown file of every skill: a skill may document a sub-command in
+    # its own file next to its `SKILL.md`.
+    for path in [*sorted(SKILLS_DIR.rglob("*.md")), CLI_DOC]:
+        label = path.name if path == CLI_DOC else path.relative_to(SKILLS_DIR).as_posix()
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             stripped = line.strip()
             spans = CODE_SPAN.findall(stripped)
@@ -100,7 +102,7 @@ def _filter_sentences() -> dict[str, str]:
     sentences = {
         "sessions wait-reply --help": docstring[start:docstring.index(".", start)],
     }
-    for label, path in (("twicc-sessions/SKILL.md", SESSIONS_SKILL),
+    for label, path in (("twicc-sessions/wait-reply.md", SESSIONS_WAIT_DOC),
                         ("SKILLS-AND-CLI.md", CLI_DOC)):
         text = path.read_text(encoding="utf-8")
         i = text.index("Filters:")
@@ -114,7 +116,7 @@ def test_every_flag_the_documents_show_is_one_the_command_has():
 
     # An extraction that selects nothing passes everything below it.
     published_by = {label for label, _, _ in spans}
-    assert published_by >= {"twicc-sessions/SKILL.md", "SKILLS-AND-CLI.md"}, published_by
+    assert published_by >= {"twicc-sessions/wait-reply.md", "SKILLS-AND-CLI.md"}, published_by
 
     wrong = [
         (label, number, flag, span)

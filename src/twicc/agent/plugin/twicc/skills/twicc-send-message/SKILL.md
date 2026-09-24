@@ -52,6 +52,15 @@ $TWICC send-message [OPTIONS] '<SESSION_ID|parent>' ['<PROMPT>']
 
 To message a sibling or descendant whose id you don't know yet, use `$TWICC topology self` first and pick the target node (skill: `twicc-topology`).
 
+### Delivery timing
+
+The message is delivered immediately. The recipient picks it up based on its current state:
+
+- **`user_turn`** — starts a new turn right away.
+- **`assistant_turn`** — delivered immediately; the agent reads it as soon as possible, typically before finishing its current turn (real-time steering, mid-flight redirects, reminders).
+- **`dead`** — the session is resumed automatically. A session stopped by timeout, manual kill, or any other reason will come back to life on receiving a message. This means there is no need to check a session's state before sending — `user_turn`, `assistant_turn`, and `dead` all work transparently.
+- **`awaiting_user_input`** — the only case that fails (exit 3). A CLI message cannot unblock a pending request, but `session <id> answer-questions` clears a **question**, and the send then goes through. To avoid the case entirely, create orchestration sessions with `--hidden` (which enforces a non-interactive `permission_mode` and disables the question widget), making `awaiting_user_input` impossible.
+
 ## Errors
 
 ### Local (exit 1)
@@ -109,15 +118,6 @@ $TWICC send-message 4a8352fb-1674-41c0-8a85-0a5a3e4e623a 'Hello'
 $TWICC send-message parent 'I finished the sub-task you asked for.'
 # From inside an agent: targets the session that spawned it;
 ```
-
-## Delivery timing
-
-The message is delivered immediately. The recipient picks it up based on its current state:
-
-- **`user_turn`** — starts a new turn right away.
-- **`assistant_turn`** — delivered immediately; the agent reads it as soon as possible, typically before finishing its current turn (real-time steering, mid-flight redirects, reminders).
-- **`dead`** — the session is resumed automatically. A session stopped by timeout, manual kill, or any other reason will come back to life on receiving a message. This means there is no need to check a session's state before sending — `user_turn`, `assistant_turn`, and `dead` all work transparently.
-- **`awaiting_user_input`** — the only case that fails (exit 3). A CLI message cannot unblock a pending request, but `session <id> answer-questions` clears a **question**, and the send then goes through. To avoid the case entirely, create orchestration sessions with `--hidden` (which enforces a non-interactive `permission_mode` and disables the question widget), making `awaiting_user_input` impossible.
 
 ## Following up
 

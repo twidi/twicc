@@ -23,7 +23,8 @@ import typer
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS_DIR = ROOT / "src/twicc/agent/plugin/twicc/skills"
-SESSION_SKILL = SKILLS_DIR / "twicc-session/SKILL.md"
+QUESTIONS_DOC = SKILLS_DIR / "twicc-session/questions.md"
+QUESTIONS_DOC_LABEL = "twicc-session/questions.md"
 CLI_DOC = ROOT / "SKILLS-AND-CLI.md"
 
 FLAG = re.compile(r"(?<![\w-])--[A-Za-z0-9][\w-]*")
@@ -90,6 +91,15 @@ def _numbered(path: Path):
     return list(enumerate(path.read_text(encoding="utf-8").splitlines(), start=1))
 
 
+def _documents() -> list[Path]:
+    """Every markdown file of every skill — sub-command files included — and the CLI reference."""
+    return [*sorted(SKILLS_DIR.rglob("*.md")), CLI_DOC]
+
+
+def _label(path: Path) -> str:
+    return path.name if path == CLI_DOC else path.relative_to(SKILLS_DIR).as_posix()
+
+
 def _copyable_spans(name: str) -> list[tuple[str, int, str]]:
     """Every invocation or signature of ``name`` a reader could copy.
 
@@ -99,21 +109,21 @@ def _copyable_spans(name: str) -> list[tuple[str, int, str]]:
     A bare signature — the bullet that opens with the sub-command name — only
     counts where the surrounding text already says *which* session command it
     belongs to: the CLI reference's session section, and the ``twicc-session``
-    skill, which is about nothing else.
+    skill's ``questions.md``, which documents these three commands and nothing else.
     """
     invocation, signature_starts = COMMANDS[name]
     cli_section = {number for number, _ in _section(
         _numbered(CLI_DOC), "### `twicc session <SESSION_ID> <SUBCOMMAND>`")}
 
     found = []
-    for path in [*sorted(SKILLS_DIR.glob("*/SKILL.md")), CLI_DOC]:
-        label = f"{path.parent.name}/{path.name}" if path != CLI_DOC else path.name
+    for path in _documents():
+        label = _label(path)
         for number, line in _numbered(path):
             stripped = line.strip()
             spans = CODE_SPAN.findall(stripped)
             if stripped.startswith("$TWICC"):  # a fenced block carries no backticks
                 spans.append(stripped)
-            own_section = path == SESSION_SKILL or (path == CLI_DOC and number in cli_section)
+            own_section = path == QUESTIONS_DOC or (path == CLI_DOC and number in cli_section)
             for span in spans:
                 if invocation.search(span) or (
                     own_section and span.startswith(signature_starts)
@@ -144,8 +154,8 @@ def _mentions(name: str) -> list[tuple[str, int, str]]:
     sentence. Exactness matters — `answer-questions` must not match `answer`.
     """
     found = []
-    for path in [*sorted(SKILLS_DIR.glob("*/SKILL.md")), CLI_DOC]:
-        label = f"{path.parent.name}/{path.name}" if path != CLI_DOC else path.name
+    for path in _documents():
+        label = _label(path)
         for number, line in _numbered(path):
             for span in CODE_SPAN.findall(line):
                 if span.strip() == name:
@@ -170,7 +180,7 @@ def test_a_copyable_read_invocation_uses_nothing_but_its_options():
     spans = _copyable_spans("pending-requests")
     # An extraction that selects nothing passes every assertion below it.
     assert {label for label, _, _ in spans} >= {
-        "twicc-session/SKILL.md", "SKILLS-AND-CLI.md",
+        QUESTIONS_DOC_LABEL, "SKILLS-AND-CLI.md",
     }, spans
 
     real = _real_options("pending-requests")
@@ -187,7 +197,7 @@ def test_a_copyable_read_invocation_uses_nothing_but_its_options():
 def test_a_copyable_write_invocation_uses_nothing_but_its_options(command):
     spans = _copyable_spans(command)
     assert {label for label, _, _ in spans} >= {
-        "twicc-session/SKILL.md", "SKILLS-AND-CLI.md",
+        QUESTIONS_DOC_LABEL, "SKILLS-AND-CLI.md",
     }, spans
 
     real = _real_options(command)

@@ -6,10 +6,7 @@ argument-hint: <project> [--name X|--unset-name] [--color X|--unset-color] [--ar
 
 # TwiCC Update Project
 
-Patch an existing project. Two forms:
-
-- **Flat patch** — `name`, `color`, `archived`, `default_provider`, `worktree_directory`, and the saved `browser_urls` are mutable; all flags applied atomically. The directory (and therefore the id) is immutable. There is no delete: use `--archive` to hide a project from default listings instead.
-- **`settings` sub-command** — edit one provider's bundle inside the project's `default_agent_settings` (the defaults that seed NEW sessions created in this project; never affects existing sessions).
+Patch an existing project. Two forms: the **flat patch** (the project's own fields) and the **`settings` sub-command** (the agent-settings defaults of NEW sessions in this project).
 
 ## When to use
 
@@ -30,17 +27,19 @@ TWICC=${TWICC_BIN:-$(command -v twicc 2>/dev/null)}
 
 Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never `"$TWICC" args`): it may expand to multiple words, which quoting would break.
 
-## Usage — flat patch
+## Usage
+
+`PROJECT` — directory path (absolute or relative) or project ID, for both forms. **Drop the leading dash** on ids — the CLI re-adds it. Prefer paths.
+
+### Flat patch
 
 ```bash
 $TWICC update-project '<PROJECT>' [OPTIONS]
 ```
 
-### Arguments
+`name`, `color`, `archived`, `default_provider`, `worktree_directory`, and the saved `browser_urls` are mutable; all flags are applied atomically. The directory (and therefore the id) is immutable. There is no delete: use `--archive` to hide a project from default listings instead.
 
-- `PROJECT` — directory path (absolute or relative) or project ID. **Drop the leading dash** on ids — the CLI re-adds it. Prefer paths.
-
-### Options
+#### Options
 
 All patch flags are optional but at least one is required. They cannot be combined with the `settings` sub-command.
 
@@ -63,15 +62,15 @@ All patch flags are optional but at least one is required. They cannot be combin
 - `--unset-default-browser-url` — Clear ALL saved URLs (back to inherit). Mutually exclusive with the other browser-URL flags.
 - `--timeout SECONDS` — Seconds to wait for the server's response (default 30).
 
-## Usage — agent settings defaults
+### `settings` — agent-settings defaults
 
 ```bash
 $TWICC update-project '<PROJECT>' settings --provider <PROVIDER> [OPTIONS]
 ```
 
-Edits one provider's bundle in `default_agent_settings`. Patch semantics: only the fields you touch change; other fields — and the other providers' bundles — are untouched. A field absent from the bundle inherits from the parent chain (worktree main repo / path ancestors), then the global default.
+Edits one provider's bundle in `default_agent_settings`: the defaults that seed NEW sessions created in this project. It never affects existing sessions. Patch semantics: only the fields you touch change; other fields — and the other providers' bundles — are untouched. A field absent from the bundle inherits from the parent chain (worktree main repo / path ancestors), then the global default.
 
-### Options
+#### Options
 
 - `--provider VALUE` — **Required.** Provider whose bundle to edit (`claude_code`, `codex`). A disabled provider is accepted (a project may keep defaults for it).
 - `--model VALUE` — Default model (provider-specific value, e.g. `opus`, `gpt`; aliases `max`/`min` resolve per provider).

@@ -82,6 +82,18 @@ JSON object keyed by provider:
 - `period_costs.*.capped` — `true` if the estimate was capped (quota exhausted before period end).
 - `period_costs.*.cutoff_at` — when the cap was hit (ISO 8601), or `null`.
 
+## Examples
+
+```bash
+$TWICC usage
+$TWICC usage | jq '.claude_code.five_hour_utilization'
+$TWICC usage | jq 'map_values({five_hour_burn_rate, seven_day_burn_rate})'
+```
+
+## Related commands
+
+- `$TWICC info` — the registered providers and which ones are disabled. Skill: `twicc-info`.
+
 ## How to present results
 
 1. Summarize per provider; focus on 5-hour and 7-day quotas.

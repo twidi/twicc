@@ -13,6 +13,10 @@ twicc/
     │   └── SKILL.md
     ├── twicc-send-message/
     │   └── SKILL.md
+    ├── twicc-session/       # A split skill (see "Split skills")
+    │   ├── SKILL.md         # Index
+    │   ├── messages.md      # One file per sub-command
+    │   └── ...
     └── ...                  # One subdirectory per skill
 ```
 
@@ -30,7 +34,7 @@ The rules below are derived from the full skill set written for TwiCC. **Read se
 
 ### Section order
 
-Every skill follows this order (omit sections that don't apply):
+Every single-file skill follows this order (omit sections that don't apply). A skill may add a section of its own when its content needs one (e.g. `### Delivery timing` under `## Usage` in the sending skills). A split skill follows the orders given in "Split skills" below.
 
 1. Frontmatter (YAML)
 2. H1 title
@@ -101,7 +105,7 @@ Do **not** add a "Prerequisite: the server must be running" section — it adds 
 
 Use **bullet lists**, never tables, for both options and exit codes.
 
-For multi-subcommand skills, use `### subcommand-name` subsections, each with its own bash block.
+For multi-subcommand skills in a single file, use `### subcommand-name` subsections, each with its own bash block. A split skill gives each sub-command its own file instead.
 
 ### Errors
 
@@ -169,6 +173,50 @@ You are in TwiCC — link to a session: `[link text](/project/{project_id}/sessi
 
 ---
 
+## Split skills
+
+An agent pays for the whole `SKILL.md` each time it loads the skill. A big skill therefore splits into a short **index** `SKILL.md` and **one file per sub-command** next to it; the agent reads only the file it needs. Reference: `twicc-session`.
+
+### When to split
+
+- The skill has sub-commands, or independent topics (`twicc-info` sections, `twicc-create-session` option groups).
+- **And** a single `SKILL.md` would exceed ~16 000 characters (~4 500 tokens). Below that, keep one file.
+
+Split skills today: `twicc-session`, `twicc-sessions`, `twicc-info`, `twicc-create-session`, `twicc-update-session`, `twicc-update-sessions`.
+
+### The index `SKILL.md`
+
+1. Frontmatter — `description` still lists every capability: it drives the skill's selection.
+2. H1 title
+3. One-sentence lead that says the file is the index
+4. `## When to use`
+5. `## How to invoke` (identical in every skill)
+6. `## Common to all sub-commands` — only what really is common: the id argument, shared flags (`--timeout`), the selection model, and the output, exit codes and errors when they are the same for every sub-command
+7. `## Sub-commands` — the sentence **"ALWAYS READ THE SUB-COMMAND'S FILE BEFORE YOU CALL IT."**, then a table `Sub-command | Purpose | File` (one line of purpose each)
+8. `## Related commands` — for the skill as a whole
+
+Adapt to the unit when the split is not by sub-command:
+
+- `twicc-info` (split by section): "section" in the headings and the sentence; the index also keeps the examples and presentation rules that span several sections.
+- `twicc-create-session` (split by topic): the index keeps the base command in the single-file order (`Usage`, `Output format`, `Errors`, `Examples`), then `## Topics`, `Related commands`, `How to present results`.
+
+The sentence after the capitals says what the file holds and what stays in the index — never claim the index holds nothing when it holds common rules.
+
+### A sub-command file
+
+- **Name:** the sub-command, lowercase (`wait-reply.md`). A pair that toggles one flag shares one file (`archive.md` for `archive` / `unarchive`). The default action of a command without a sub-command name gets a descriptive name (`row.md`, `list.md`).
+- **Header:** `# \`<command signature>\` — <short purpose>`, then one line: the purpose, `MCP tool: \`mcp__twicc__...\``, and "Read `SKILL.md` first: it resolves `$TWICC`."
+- **Sections**, in this order, omitting the empty ones: `## Usage`, `## Output format` (with `### Exit codes` when specific), `## Errors` when specific, the skill's own sections, `## Examples`, `## Related commands`, `## How to present results`. No `When to use` or `How to invoke`: the index holds them.
+- **Self-contained:** each file carries its own pitfalls, examples, related commands (sibling files as "File: `x.md`", other skills as "Skill: `twicc-x`") and presentation rules. Say a rule once in the index or once in a file; point at it rather than repeat it.
+
+### Checks after a change
+
+- The documentation tests (`tests/test_*_documentation.py`) scan **every** `*.md` of every skill, so a flag written in a sub-command file is checked like one in a `SKILL.md`. A test that pins a text reads the file that now holds it.
+- Rewording while moving text loses facts in ways that read naturally: a rule narrowed or broadened, a qualifier dropped ("only", "oldest", "X included"), the condition of one field leaking onto its neighbour when two sentences merge. Compare the result with the previous version, fact by fact, before shipping it.
+- Avoid position words about transcript lines ("above", "below", "lower"): the CLI uses them in both directions. Write "before" / "past".
+
+---
+
 ## What to leave out
 
 | Avoid | Why |
@@ -203,5 +251,7 @@ When in doubt: trim, then check whether anything essential was lost. If not, the
 | Read-only, single action | ~40–60 lines |
 | Write command (create/update/delete) | ~80–120 lines |
 | Multi-subcommand | ~120–160 lines |
+| Split skill: index `SKILL.md` | ~50–110 lines |
+| Split skill: one sub-command file | ~25–90 lines |
 
 These are soft targets. Precision matters more than brevity — never drop information that an agent needs to call the command correctly. But if you find yourself writing more than 200 lines, look for implementation details, repeated prose, or tables that can be collapsed into lists.

@@ -19,6 +19,9 @@ what says so.
 Five documents, not one: the four skills that publish an invocation, this
 repo's CLI reference, and the Typer command itself — whose docstring is the MCP
 tool description and whose ``help=`` strings are the MCP parameter descriptions.
+The ``twicc-session`` skill documents each sub-command in its own file next to
+its ``SKILL.md``; this command's is ``wait-reply.md``, and every markdown file
+of every skill is scanned, not only the ``SKILL.md`` ones.
 """
 
 from __future__ import annotations
@@ -31,7 +34,8 @@ import typer
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS_DIR = ROOT / "src/twicc/agent/plugin/twicc/skills"
-SESSION_SKILL = SKILLS_DIR / "twicc-session/SKILL.md"
+WAIT_DOC = SKILLS_DIR / "twicc-session/wait-reply.md"
+WAIT_DOC_LABEL = "twicc-session/wait-reply.md"
 CLI_DOC = ROOT / "SKILLS-AND-CLI.md"
 
 FLAG = re.compile(r"(?<![\w-])--[A-Za-z0-9][\w-]*")
@@ -51,7 +55,7 @@ CROSS_REFERENCES = {"--wait-reply", "--transition"}
 # of these is a deliberate act: re-read the sentence first, because the last
 # three times the number went up it was `--blocked` written `--wait-blocked`.
 SANCTIONED = {
-    "twicc-session/SKILL.md": {"--wait-reply": 7, "--transition": 0},
+    WAIT_DOC_LABEL: {"--wait-reply": 6, "--transition": 0},
     "SKILLS-AND-CLI.md": {"--wait-reply": 2, "--transition": 0},
     "session wait-reply --help": {"--wait-reply": 3, "--transition": 0},
     "--from help": {"--wait-reply": 1, "--transition": 0},
@@ -124,8 +128,8 @@ def _copyable_spans() -> list[tuple[str, int, str]]:
     cli_section = {number for number, _ in _session_section_of_the_cli_doc()}
 
     found = []
-    for path in [*sorted(SKILLS_DIR.glob("*/SKILL.md")), CLI_DOC]:
-        label = f"{path.parent.name}/{path.name}" if path != CLI_DOC else path.name
+    for path in _documents():
+        label = _label(path)
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             stripped = line.strip()
             spans = CODE_SPAN.findall(stripped)
@@ -142,13 +146,22 @@ def _is_full_signature(label: str, span: str) -> bool:
     """The two spans that claim to list every option, anchored rather than guessed.
 
     Inferring it from "more than one bracket group" made the shape of a
-    sentence decide: the skill's summary bullet shows `[--from N]` alone on
-    purpose, and giving it a second bracket turned it into a signature that
-    then had to grow the other three.
+    sentence decide: a summary bullet showing `[--from N]` alone on purpose,
+    given a second bracket, turned into a signature that then had to grow the
+    other three.
     """
     if "[--" not in span:
         return False
     return span.startswith("$TWICC session") or (label == "SKILLS-AND-CLI.md" and span.startswith("wait-reply [--"))
+
+
+def _documents() -> list[Path]:
+    """Every markdown file of every skill — sub-command files included — and the CLI reference."""
+    return [*sorted(SKILLS_DIR.rglob("*.md")), CLI_DOC]
+
+
+def _label(path: Path) -> str:
+    return path.name if path == CLI_DOC else path.relative_to(SKILLS_DIR).as_posix()
 
 
 def _session_section_of_the_cli_doc() -> list[tuple[int, str]]:
@@ -165,15 +178,11 @@ def _prose_sources() -> list[tuple[str, list[tuple[int, str]]]]:
     Lines keep their number so a failure names the line to open. A ``help=``
     string has no line, and carries 0: its label already points at it.
     """
-    skill = _numbered(SESSION_SKILL)
     cli_section = _session_section_of_the_cli_doc()
 
     sources = [
-        (
-            "twicc-session/SKILL.md",
-            [(number, line) for number, line in skill if line.startswith("- `wait-reply ")]
-            + _section(skill, "### Wait-reply — "),
-        ),
+        # The whole file: it documents this command and nothing else.
+        (WAIT_DOC_LABEL, _numbered(WAIT_DOC)),
         ("SKILLS-AND-CLI.md",
          [(n, line) for n, line in cli_section if line.startswith("- `wait-reply ")]),
         ("session wait-reply --help", [(0, _command().help or "")]),
@@ -193,7 +202,7 @@ def test_a_copyable_invocation_uses_nothing_but_this_command_s_options():
     # five documents publish an invocation today; losing one is a finding, not
     # a green run.
     assert published_by >= {
-        "twicc-session/SKILL.md", "twicc-create-session/SKILL.md",
+        WAIT_DOC_LABEL, "twicc-create-session/wait-reply.md",
         "twicc-send-message/SKILL.md", "twicc-send-messages/SKILL.md",
         "SKILLS-AND-CLI.md",
     }, published_by
@@ -220,7 +229,7 @@ def test_a_full_signature_shows_exactly_the_real_options():
         for label, number, span in _copyable_spans()
         if _is_full_signature(label, span)
     ]
-    # The skill's fenced one and the CLI reference's bullet. A floor, not an
+    # The sub-command file's fenced one and the CLI reference's bullet. A floor, not an
     # equality: counting them made a summary bullet gaining a second bracket
     # read as a full signature, and the shortest repair was to bump the number.
     assert len(signatures) >= 2, signatures
@@ -267,7 +276,7 @@ def test_the_documented_numbers_are_read_from_the_code():
     from twicc.cli._wait_reply import AGENT_FLUSH_SECONDS
 
     default = _real_default("wait_timeout")
-    assert f"`--wait-timeout` (default {default:.0f} s)" in SESSION_SKILL.read_text(encoding="utf-8")
+    assert f"`--wait-timeout` (default {default:.0f} s)" in WAIT_DOC.read_text(encoding="utf-8")
     assert f"Default {default:.0f}," in _real_help("wait_timeout")
 
     # The flush window is quoted in four places and named in none of them, so
@@ -276,7 +285,7 @@ def test_the_documented_numbers_are_read_from_the_code():
     # sentence is an edit, a fifth sentence quoting a stale number is a defect.
     window = f"~{AGENT_FLUSH_SECONDS:.0f} s flush window"
     for label, text in (
-        ("skill", SESSION_SKILL.read_text(encoding="utf-8")),
+        ("skill", WAIT_DOC.read_text(encoding="utf-8")),
         ("CLI reference", CLI_DOC.read_text(encoding="utf-8")),
         ("docstring", cli_session.wait_reply.__doc__),
     ):
@@ -332,7 +341,7 @@ def _refusal_clauses() -> dict[str, str]:
     """The sentence each document uses to list them, and only that sentence.
 
     Scoped to the sentence rather than the line it sits on: the docstring is
-    one "line" and the skill's is a paragraph, so a flag dropped from the list
+    one "line" and a document's may be a long bullet, so a flag dropped from the list
     would still be found further along and the check would pass.
     """
     clauses = {}
@@ -403,7 +412,7 @@ def test_all_three_documents_carry_that_clause():
     """The loop above skips a source that has no clause, so something has to
     say the clause is still there at all."""
     assert set(_refusal_clauses()) == {
-        "twicc-session/SKILL.md", "SKILLS-AND-CLI.md", "session wait-reply --help",
+        WAIT_DOC_LABEL, "SKILLS-AND-CLI.md", "session wait-reply --help",
     }
 
 
@@ -417,7 +426,7 @@ RULE = ("strictly after", "not a boundary")
 RETIRED = ("at or before that moment", "select the same lines", "mean the same thing")
 
 
-RULE_SOURCES = ("twicc-session/SKILL.md", "SKILLS-AND-CLI.md",
+RULE_SOURCES = (WAIT_DOC_LABEL, "SKILLS-AND-CLI.md",
                 "session wait-reply --help", "--since help")
 
 

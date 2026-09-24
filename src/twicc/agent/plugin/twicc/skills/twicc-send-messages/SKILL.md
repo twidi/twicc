@@ -8,8 +8,6 @@ argument-hint: '[SESSION_ID...] [--message <text>] [--spawned-by X|--descendants
 
 Batch sibling of `send-message`: delivers the SAME message to every targeted session in one call, with the same selection model as `update-sessions`. For a single recipient (or to reply to your `parent`), use `send-message` (skill: `twicc-send-message`).
 
-**Each send starts or resumes an agent** — real work and token spend. A batch can cold-start many stopped sessions at once. And like the singular command it is async by default (`--wait-reply` below makes it wait): a per-id `sent` means "handed to the agent", not "the agent finished" — chain with `--wait-reply` (see Following up).
-
 ## When to use
 
 - Broadcast a steering correction to a set of children: "the spec changed, the API base is now /v2 — re-check your work."
@@ -54,6 +52,17 @@ Selection is identical to `update-sessions` (skill: `twicc-update-sessions`): a 
 - `--no-reply-text` — report that the answers arrived without returning their text; each `line_num` is still there to fetch one. Requires `--wait-reply`.
 
 If neither ids nor a filiation scope is given, the command errors (exit 1). An empty resolved set is not an error: `results` is `{}` and the command exits 0.
+
+### Delivery timing
+
+Each recipient picks the message up based on its current state, as with `send-message` (skill: `twicc-send-message`):
+
+- **`user_turn`** — starts a new turn right away.
+- **`assistant_turn`** — the agent reads it as soon as possible, typically before finishing its current turn.
+- **`dead`** — the session is resumed automatically, so one batch can restart many stopped sessions at once.
+- **`awaiting_user_input`** — that recipient alone is `rejected` with code `awaiting_user_input`; the others still receive the message.
+
+So there is no need to check the recipients' states before sending.
 
 ## Errors
 
