@@ -1640,7 +1640,7 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
             'artifact-comment-monitor', 'artifact-autoreact-ledger',
             'bridge-session', 'observer-ref', 'fork-context-ref',
             'marble-origami-commit', 'marble-origami-snapshot',
-            'marble-origami-reset',
+            'marble-origami-reset', 'cost-state',
         ):
             return ItemKind.SYSTEM
 
