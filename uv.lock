@@ -1509,7 +1509,7 @@ wheels = [
 
 [[package]]
 name = "twicc"
-version = "1.94.2"
+version = "1.94.3"
 source = { editable = "." }
 dependencies = [
     { name = "apprise" },

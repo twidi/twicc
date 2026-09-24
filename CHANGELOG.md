@@ -4,7 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). As a small deviation, each release opens with a one-line **Summary** recapping its highlights, and some entries include illustrative screenshots in nested sub-lists.
 
-## [Unreleased]
+## [1.94.3] - 2026-09-24
+
+### Summary
+
+- **v1.94.3: Opus 5.5 & GPT-6 Sol/Luna** — new Claude and Codex models, a smarter model picker, and a CLI/RPC migration planned for October 1.
 
 ### Added
 
@@ -13,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- **TwiCC CLI and RPC API** — BREAKING: Many changes. Existing scripts keep working until October 1, 2026, then the new behavior applies. See **Settings → Help → CLI / RPC migration of October 1, 2026**.
+- **TwiCC CLI and RPC API** — **BREAKING**: Many changes. Existing scripts keep working until October 1, 2026, then the new behavior applies. See **Settings → Help → CLI / RPC migration of October 1, 2026**.
 - **GPT-5.5 leaves Codex** — GPT-5.5 retires on October 4, 2026. The model pickers now show the date, and sessions still on it move to GPT-5.6 Terra on the day.
 - **Model & effort picker** — Scores now come from Artificial Analysis evaluations and follow three controls: Task type, Task difficulty and Cost / Speed.
 - **Search** — When no message contains all your words, sessions that match at least one of them now show up, marked as partial matches, instead of no result at all.
