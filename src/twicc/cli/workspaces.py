@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc workspaces`` subcommand."""
 
-from twicc.cli._output import emit_list, pagination_notice, resolve_limit
+from twicc.cli._output import PAGINATED_DEFAULT_LIMIT, emit_list, pagination_notice, resolve_limit
 
 
 def main(*, limit: int | None = None, offset: int = 0, archived: bool = False,
@@ -12,7 +12,7 @@ def main(*, limit: int | None = None, offset: int = 0, archived: bool = False,
     """
     # No django.setup() in this command — it reads workspaces.json from disk — so
     # the notice reaches stderr but writes no log line on the terminal path.
-    paginated = pagination_notice("workspaces", paginated, default_limit=20)
+    paginated = pagination_notice("workspaces", paginated, default_limit=PAGINATED_DEFAULT_LIMIT)
 
     from twicc.workspaces import read_workspaces
 
@@ -23,7 +23,7 @@ def main(*, limit: int | None = None, offset: int = 0, archived: bool = False,
 
     # The catalogue is a plain in-memory list read from workspaces.json, so the
     # total costs nothing — no query to weigh, unlike the DB-backed listings.
-    limit = resolve_limit(limit, paginated=paginated, default=20)
+    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
     total = len(workspaces)
     workspaces = workspaces[offset : offset + limit]
 

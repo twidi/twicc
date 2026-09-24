@@ -18,7 +18,7 @@ common, useful combinations to start from. When none fits, compose your own.
   `send-message <sibling_id>` / `send-messages --siblings self`, or pull a peer) —
   no rule forces every exchange through the parent. See `patterns/peer-coordination.md`.
 - **Synchronization** — when you move on: barrier (wait for all,
-  `sessions wait-reply <CHILD_ID>... --since 2000-01-01`), phase gate (wait on one
+  `sessions wait-reply <CHILD_ID>...`), phase gate (wait on one
   batch, named by its ids only, validate, then advance), first-wins
   (`--wait-first`, then stop the losers by explicit id or scoped `sessions stop`),
   or continuous (no barrier — you watch and steer as they run).

@@ -4,7 +4,8 @@ The waiting itself is ``_wait_reply``'s, already covered from the singular and
 from ``send-messages``. What is new here is everything around it:
 
 - **the cursors.** A send hands each recipient's back; nothing is sent here, so
-  each session starts above its own ``last_line``, or above the instant
+  each session starts after its last user message — above its own
+  ``last_line`` while its compute is not current — or above the instant
   ``--since`` names, translated per session. One cursor shared across a batch
   would let a chatty session close a quiet one's wait.
 - **the selection.** The listing's filters, with explicit ids unioned on top —
@@ -166,9 +167,10 @@ def test_an_empty_selection_is_not_an_error(project, capsysbinary, loop):
 # ---------------------------------------------------------------------------
 
 
-def test_each_session_starts_above_its_own_last_line(project, capsysbinary, loop):
+def test_sessions_whose_compute_is_not_current_start_above_their_own_last_line(project, capsysbinary, loop):
     """One cursor for the batch would let a chatty session close a quiet
-    one's wait: line 40 is a different place in every transcript."""
+    one's wait: line 40 is a different place in every transcript. The rows
+    have no `compute_version`, so the compute-window fallback applies."""
     make_session(project, "a", last_line=40)
     make_session(project, "b", last_line=7)
 
@@ -521,8 +523,9 @@ def test_active_and_state_are_mutually_exclusive(project, capsysbinary):
 def test_the_batch_survives_a_broken_wait(project, capsysbinary, monkeypatch):
     """N sessions means N times the queries, so this is the command most
     exposed to a locked database over a long poll. Losing the payload would
-    take the cursors with it, and a re-run reads each current last line —
-    skipping whatever arrived in between."""
+    take the cursors with it; a re-run resumes, except for a session whose
+    compute is not current — which is what this test's rows are, so the
+    cursors it returns are the ones to resume from."""
     make_session(project, "a", last_line=40)
     make_session(project, "b", last_line=7)
 

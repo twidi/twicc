@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import os
 import sys
 from datetime import datetime
 
@@ -81,12 +82,12 @@ def emit_error(message: str, *, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
-#: Page size ``--paginated`` falls back to when the caller passes no ``--limit``.
-#: The flag promises a page and a "does another follow?" answer, which only means
-#: something if the page is actually bounded — so it supplies its own bound rather
-#: than inheriting a per-command default (or, on ``session messages`` / ``content``,
-#: no default at all).
-PAGINATED_DEFAULT_LIMIT = 50
+#: The page size of every listing (from 2026-10-01 for ``session content`` /
+#: ``messages``, which return everything by default until then), and the one
+#: ``--paginated`` supplies when the caller passes no ``--limit``: the flag
+#: promises a page and a "does another follow?" answer, which only means
+#: something if the page is actually bounded.
+PAGINATED_DEFAULT_LIMIT = 20
 
 
 def resolve_limit(limit: int | None, *, paginated: bool, default: int | None) -> int | None:
@@ -103,6 +104,8 @@ def resolve_limit(limit: int | None, *, paginated: bool, default: int | None) ->
     return PAGINATED_DEFAULT_LIMIT if paginated else default
 
 
+_NOTICE_LOGGER = logging.getLogger("twicc.cli.cutover")
+
 #: Local wall-clock instant at which the bare listing shape and the full session
 #: payload stop being the defaults. Naive on purpose: "midnight on the 1st"
 #: means midnight where the instance runs, not in UTC — the announcement and the
@@ -110,7 +113,30 @@ def resolve_limit(limit: int | None, *, paginated: bool, default: int | None) ->
 #: edit here; nothing else in the codebase encodes it. Design:
 #: docs/plans/2026-09-08-pagination-cutover-design.md and
 #: docs/plans/2026-09-23-session-listing-slim-cutover-design.md
-LISTING_CUTOVER = datetime(2026, 10, 1)  # noqa: DTZ001 — local time, as announced
+#: TWICC_LISTING_CUTOVER (undocumented, tests only) replaces it when set; see
+#: docs/plans/2026-09-23-cli-consistency-before-cutover-design.md, section 8.
+_BUILT_IN_LISTING_CUTOVER = datetime(2026, 10, 1)  # noqa: DTZ001 — local time, as announced
+LISTING_CUTOVER_ENV = "TWICC_LISTING_CUTOVER"
+
+
+def _listing_cutover_from_env(default: datetime) -> datetime:
+    raw = os.environ.get(LISTING_CUTOVER_ENV, "").strip()
+    if not raw:
+        return default
+    try:
+        value = datetime.fromisoformat(raw)
+    except ValueError:
+        value = None
+    if value is None or value.tzinfo is not None:
+        _NOTICE_LOGGER.warning(
+            "Ignoring %s=%r: expected a naive ISO date or date-time; using %s.",
+            LISTING_CUTOVER_ENV, raw, default.isoformat(),
+        )
+        return default
+    return value
+
+
+LISTING_CUTOVER = _listing_cutover_from_env(_BUILT_IN_LISTING_CUTOVER)
 
 
 def listing_cutover_passed(now: datetime | None = None) -> bool:
@@ -134,8 +160,6 @@ def listing_cutover_passed(now: datetime | None = None) -> bool:
 _notices: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
     "cutover_notices", default=None
 )
-
-_NOTICE_LOGGER = logging.getLogger("twicc.cli.cutover")
 
 
 def _in_mcp_call() -> bool:
@@ -163,10 +187,12 @@ def pagination_notice(command: str, paginated: bool, *, default_limit: int | Non
 
     ``command`` is the full CLI path (``"session content"``, not ``"content"``)
     so the message names something the reader can paste back. ``default_limit``
-    is what the command already hands to :func:`resolve_limit`; ``50`` means its
-    page size is not changing, which exempts ``share`` from that clause without
-    a special case. ``shape`` is ``"object"`` for the one listing whose current
-    output is not a bare array.
+    is what the command already hands to :func:`resolve_limit`; a default equal
+    to :data:`PAGINATED_DEFAULT_LIMIT` means the page size is not changing, so
+    the notice names the shape alone. ``shape`` is ``"object"`` for the one listing whose current
+    output is not a bare array, ``"lookup"`` for a batch lookup (``{"items":
+    [...]}`` with no ``pagination``) and ``"peers"`` for ``peers`` (its list moves
+    from ``peers`` to ``items``); those two never carry the page-size clause.
     """
     if listing_cutover_passed():
         return True
@@ -176,7 +202,11 @@ def pagination_notice(command: str, paginated: bool, *, default_limit: int | Non
         return paginated
 
     when = LISTING_CUTOVER.strftime("%Y-%m-%d")
-    if shape == "object":
+    if shape == "lookup":
+        change = f"`{command}` returns {{\"items\": [...]}} instead of a bare array"
+    elif shape == "peers":
+        change = "`peers` returns its list under `items` instead of `peers`"
+    elif shape == "object":
         change = (
             f"`{command}` renames `hits` to `items` and `total_hits` to "
             "`pagination.total`, moves `limit`/`offset` under `pagination`"
@@ -186,7 +216,7 @@ def pagination_notice(command: str, paginated: bool, *, default_limit: int | Non
             f"`{command}` returns {{\"items\": [...], \"pagination\": {{...}}}} "
             "instead of a bare array"
         )
-    if default_limit != PAGINATED_DEFAULT_LIMIT:
+    if shape in ("array", "object") and default_limit != PAGINATED_DEFAULT_LIMIT:
         change += f", and pages at {PAGINATED_DEFAULT_LIMIT} by default"
     message = (
         f"twicc: from {when}, {change}. Pass --paginated now to get that shape "
@@ -207,7 +237,9 @@ def slim_notice(command: str, slim: bool, full: bool, *, kind: str = "listing") 
     :func:`pagination_notice`: placed first, it would turn ``--full`` into a
     no-op past the date. ``command`` is the full CLI path, as for :func:`pagination_notice`.
     ``kind`` is ``"topology"`` for the one command whose change is its
-    ``process`` block, its sessions being reduced already.
+    ``process`` block, its sessions being reduced already, and ``"whoami"`` for
+    the one whose flagless call keeps its own object (not a session row) until
+    the cutover.
     """
     if slim and full:
         raise ValueError("slim and full are mutually exclusive.")
@@ -228,6 +260,14 @@ def slim_notice(command: str, slim: bool, full: bool, *, kind: str = "listing") 
             f"`{command}` reduces each node's `process` block to {{\"state\"}} by "
             "default. Pass --full to get the full session and process block on "
             "every node"
+        )
+    elif kind == "whoami":
+        change = (
+            "`whoami` returns the `session self` payload — the session row with its "
+            "`process` block inside, reduced by default — instead of its current "
+            "object (`session_id` becomes `id`, `agent_settings.<field>` becomes "
+            "`<field>`, `current_working_directory` becomes `git_directory`). Pass "
+            "--full to get that row in full"
         )
     else:
         change = (
@@ -338,24 +378,31 @@ _CUTOVER_DATE = LISTING_CUTOVER.strftime("%Y-%m-%d")
 #: tool descriptions the day the migration is over.
 CUTOVER_NOTICE = cutover_help(
     f"DEPRECATION: from {_CUTOVER_DATE} this returns {{items, pagination}} instead "
+    "of a bare array. Pass --paginated now to get that shape today. ",
+    "",
+)
+
+#: Same, for the two commands whose flagless page size also changes on the date.
+CUTOVER_NOTICE_PAGED = cutover_help(
+    f"DEPRECATION: from {_CUTOVER_DATE} this returns {{items, pagination}} instead "
     f"of a bare array, and pages at {PAGINATED_DEFAULT_LIMIT} by default. Pass "
     "--paginated now to get that shape today. ",
     "",
 )
 
-#: Same, for the one listing whose current shape is already an object.
+#: Same as :data:`CUTOVER_NOTICE`, for the one listing whose current shape is
+#: already an object (``search``).
 CUTOVER_NOTICE_OBJECT = cutover_help(
     f"DEPRECATION: from {_CUTOVER_DATE} this renames `hits` to `items` and "
-    "`total_hits` to `pagination.total`, moves `limit`/`offset` under "
-    f"`pagination`, and pages at {PAGINATED_DEFAULT_LIMIT} by default. Pass "
-    "--paginated now to get that shape today. ",
+    "`total_hits` to `pagination.total`, and moves `limit`/`offset` under "
+    "`pagination`. Pass --paginated now to get that shape today. ",
     "",
 )
 
 PAGINATED_HELP = cutover_help(
     "Wrap the result in {items, pagination} with limit/offset/total/has_more, "
     "so a caller knows whether another page follows. Without an explicit --limit "
-    f"the page size becomes {PAGINATED_DEFAULT_LIMIT}, so the answer always describes a "
+    f"the page size is {PAGINATED_DEFAULT_LIMIT}, so the answer always describes a "
     f"real page. Off by default until {_CUTOVER_DATE}, when the envelope becomes "
     "the only shape and this flag turns into an accepted no-op.",
     "Accepted and ignored: the envelope is the default. Kept so scripts that "
@@ -372,30 +419,32 @@ def limit_help(noun: str, default: int | None, *, suffix: str = "") -> str:
     """
     shown = "no limit" if default is None else str(default)
     before = f"Max number of {noun} to return (default: {shown}"
-    # `share` already pages at 50, so the flag changes nothing for it.
+    # A command whose default equals the constant: the flag changes nothing for it.
     before += ")." if default == PAGINATED_DEFAULT_LIMIT else f"; {PAGINATED_DEFAULT_LIMIT} with --paginated)."
     after = f"Max number of {noun} to return (default: {PAGINATED_DEFAULT_LIMIT})."
     return cutover_help(before + suffix, after + suffix)
 
 
 SLIM_HELP = cutover_help(
-    "Return a reduced projection of each session: identity, state, cost, and the "
-    "has_* flags telling you what else is there. Drops the payloads you can fetch "
-    "per session (tasks, plan, goals, layout), the redundant timestamps and paths, "
-    "and the agent-settings bundle. About 60% lighter. Off by default until "
-    f"{_CUTOVER_DATE}, when it becomes the default and this flag turns into an "
-    "accepted no-op.",
+    "Return a reduced projection of each session: every field except the "
+    "payloads you fetch per session (tasks, plan_paths, goals, layout), the "
+    "redundant timestamps (mtime, last_started_at, last_updated_at, "
+    "last_stopped_at, last_viewed_at), the cost breakdown (self_cost, "
+    "subagents_cost), slug, browser_url and compute_version_up_to_date; its "
+    f"`process` block is {{state}} (null on a subagent). Off by default until {_CUTOVER_DATE}, when it "
+    "becomes the default and this flag turns into an accepted no-op.",
     "Accepted and ignored: the reduced projection is the default. Kept so scripts "
     "that migrated during the deprecation window keep working untouched.",
 )
 
 FULL_HELP = cutover_help(
-    "Return the full session payload — the same fields as `session <id>`. It is "
+    "Return the full session payload — every field of the session payload. It is "
     f"the default until {_CUTOVER_DATE}; pass --full now to keep it after that "
     "date. Mutually exclusive with --slim.",
-    "Return the full session payload — the same fields as `session <id>` — "
-    "instead of the default reduced projection: identity, state, cost, and the "
-    "has_* flags telling you what else is there. Mutually exclusive with --slim.",
+    "Return the full session payload — every field of the session payload — "
+    "instead of the default reduced projection, which drops the per-session "
+    "payloads, the redundant timestamps, the cost breakdown, slug, browser_url "
+    "and compute_version_up_to_date. Mutually exclusive with --slim.",
 )
 
 TOPOLOGY_SLIM_HELP = cutover_help(
@@ -407,8 +456,11 @@ TOPOLOGY_SLIM_HELP = cutover_help(
 )
 
 _TOPOLOGY_FULL_LEAD = (
-    "Emit the full session serialization for every node — the fields "
-    "`session <id>` returns, minus its `process` block, which sits at "
+    "Emit the full serializer payload for every node — agent settings as stored, "
+    "`artifacts_dir` as the serializer reports it (set only once the backend has "
+    "seen an artifact, so always `null` from a terminal), none of the CLI-added "
+    "keys (`project_directory`, `scratch_dir`, `orchestration_scratch_dir`, "
+    "`question_widget`) — minus its `process` block, which sits at "
     "`nodes[].process` — and that full `process` block. Disabled by default: each "
     "node's `session` carries a reduced subset (id, project_id, provider, title, "
     "annotations, spawned_by, spawn_root, created_at, last_new_content_at, "
@@ -440,12 +492,82 @@ SESSIONS_GET_IDS_HELP = cutover_help(
     ),
 )
 
-#: Prepended to the help of the three session listings while the full payload is
-#: still their default. Empty afterwards, like :data:`CUTOVER_NOTICE`.
+#: Prepended to the help of the session commands whose default becomes the
+#: reduced projection (``sessions``, ``sessions get``, ``session agents``,
+#: ``session <id>``) while the full payload is still their default. Empty
+#: afterwards, like :data:`CUTOVER_NOTICE`.
 SLIM_CUTOVER_NOTICE = cutover_help(
     f"DEPRECATION: from {_CUTOVER_DATE} this returns the reduced session projection "
     "by default (what --slim returns today). Pass --full to keep the full payload. ",
     "",
+)
+
+#: Prepended to the help of the three batch lookups while they still return a
+#: bare array. Empty afterwards, like :data:`CUTOVER_NOTICE`.
+LOOKUP_CUTOVER_NOTICE = cutover_help(
+    f"DEPRECATION: from {_CUTOVER_DATE} this returns {{items}} instead of a bare "
+    "array. Pass --paginated now to get that shape today. ",
+    "",
+)
+
+#: Same, for ``peers``, whose list sits under ``peers`` today.
+PEERS_CUTOVER_NOTICE = cutover_help(
+    f"DEPRECATION: from {_CUTOVER_DATE} this returns its list under {{items}} "
+    "instead of {peers}. Pass --paginated now to get that shape today. ",
+    "",
+)
+
+LOOKUP_ENVELOPE_HELP = cutover_help(
+    "Wrap the result in {items} — no pagination: one entry per id asked. Off by "
+    f"default until {_CUTOVER_DATE}, when it becomes the only shape and this flag "
+    "an accepted no-op.",
+    "Accepted and ignored: the result is always wrapped in {items}.",
+)
+
+PEERS_ENVELOPE_HELP = cutover_help(
+    "Wrap the result in {items} — no pagination: every approved peer. Off by "
+    f"default until {_CUTOVER_DATE}, when it becomes the only shape and this flag "
+    "an accepted no-op.",
+    "Accepted and ignored: the result is always wrapped in {items}.",
+)
+
+#: Prepended to the help of ``whoami`` while its flagless call still returns its
+#: own object. Empty afterwards, like :data:`CUTOVER_NOTICE`.
+WHOAMI_CUTOVER_NOTICE = cutover_help(
+    f"DEPRECATION: from {_CUTOVER_DATE} this returns the `session self` payload "
+    "(the session row, reduced by default, with its `process` block inside) "
+    "instead of the current object. Pass --slim or --full now to get that shape "
+    "today. ",
+    "",
+)
+
+WHOAMI_HELP = cutover_help(
+    "Print details of the session that owns the calling process, found by "
+    f"walking the PID ancestry. Without --slim or --full, until {_CUTOVER_DATE}: "
+    "a JSON object with session_id, title, project_id, project_directory, "
+    "current_working_directory, artifacts_dir, scratch_dir, "
+    "orchestration_scratch_dir (only inside an orchestration), the resolved "
+    "agent_settings, the serializer payload of the session, and the nine-field `process` row. "
+    "With --slim or --full: the `session self` payload — the session row, "
+    "reduced or in full, with its `process` block inside. From a plain terminal, "
+    "this command exits 1.",
+    "Print the session that owns the calling process, found by walking the PID "
+    "ancestry: the `session self` payload — the session row, reduced by default "
+    "(--full for every field), with its `process` block inside. From a plain "
+    "terminal, this command exits 1.",
+)
+
+WHOAMI_SLIM_HELP = cutover_help(
+    "Return the `session self` payload, reduced. Without --slim or --full, this "
+    f"command returns its current object until {_CUTOVER_DATE}.",
+    "Return the `session self` payload, reduced (the default).",
+)
+
+WHOAMI_FULL_HELP = cutover_help(
+    "Return the `session self` payload in full — every field of the session "
+    "payload. Without --slim or --full, this command returns its current object "
+    f"until {_CUTOVER_DATE}.",
+    "Return the `session self` payload in full — every field of the session payload.",
 )
 
 #: Same, for ``topology``, whose change is its ``process`` block.

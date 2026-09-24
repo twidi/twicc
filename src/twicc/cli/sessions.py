@@ -1,6 +1,8 @@
 """CLI implementation for the ``twicc sessions`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit, slim_notice
+from twicc.cli._output import (
+    PAGINATED_DEFAULT_LIMIT, emit_error, emit_list, pagination_notice, resolve_limit, slim_notice,
+)
 
 
 def build_filtered_queryset(
@@ -226,7 +228,7 @@ def main(
     import django
 
     django.setup()
-    paginated = pagination_notice("sessions", paginated, default_limit=20)
+    paginated = pagination_notice("sessions", paginated, default_limit=PAGINATED_DEFAULT_LIMIT)
     slim = slim_notice("sessions", slim, full)
 
 
@@ -251,12 +253,13 @@ def main(
         load_process_rows,
         resolve_listing_twicc_pid,
     )
-    from twicc.core.serializers import serialize_session, slim_session
+    from twicc.cli._session_payload import cli_session_payloads
+    from twicc.core.serializers import slim_session
 
-    limit = resolve_limit(limit, paginated=paginated, default=20)
+    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
     total = qs.count() if paginated else None
     sessions = qs[offset : offset + limit]
-    data = [serialize_session(s) for s in sessions]
+    data = cli_session_payloads(sessions)
     if slim:
         data = [slim_session(row) for row in data]
 

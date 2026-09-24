@@ -34,9 +34,9 @@ $TWICC search '<query>' [OPTIONS]
 
 ### Options
 
-- `--limit N` — max hits (default: 20; 50 with `--paginated`).
+- `--limit N` — max hits (default: 20).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. **Before 2026-10-01 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size is **20**. **Before 2026-10-01 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
 - `--project <PROJECT>` — scope hits to a project (path or id; **drop the leading dash** on ids). A normal project also includes its git worktrees' sessions (a worktree's sessions belong to its main repository); a worktree project is scoped to its own only. Mutually exclusive with `--workspace`. Combines (AND) with the query and every other filter. For an arbitrary set of unrelated projects, use `project_id:` query terms instead.
 - `--workspace ID` — scope hits to all projects in the given workspace, each member project's git worktrees included. Mutually exclusive with `--project`.
 - `--include-hidden` — include hits from hidden sessions (excluded by default).
@@ -124,7 +124,7 @@ $TWICC search 'bug' --annotation priority:in:high,critical --annotation status:e
 ## Related commands
 
 - `$TWICC session <session_id> content <line_num>` — fetch the full item at a search result's `line_num`. Skill: `twicc-session`.
-- `$TWICC session <session_id>` — full session metadata. Skill: `twicc-session`.
+- `$TWICC session <session_id>` — one session's row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
 - `$TWICC topology <ID|self>` — discover the spawned-session tree before scoping search. Skill: `twicc-topology`.
 - `$TWICC sessions --project <PROJECT>` — browse sessions in the same project. Skill: `twicc-sessions`.
 - `$TWICC project <PROJECT>` — project details. Skill: `twicc-project`.

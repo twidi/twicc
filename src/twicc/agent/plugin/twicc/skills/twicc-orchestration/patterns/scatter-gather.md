@@ -16,7 +16,7 @@ and you are doing divide-and-conquer instead.)
 1. Split into N pieces where no piece needs another's output.
 2. Spawn one executor worker per piece (`create-session --hidden`), each briefed
    with its piece, skills to load, report-back, and `--annotation task_id=<k>`.
-3. Barrier: `sessions wait-reply <CHILD_ID>... --since 2000-01-01 --wait-timeout 300`,
+3. Barrier: `sessions wait-reply <CHILD_ID>... --wait-timeout 300`,
    repeated for the ids still on `timeout`.
 4. Collect each result (push as it lands, or pull `session <id> messages --tail 1`;
    bulky → its scratch file).

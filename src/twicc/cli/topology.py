@@ -11,7 +11,7 @@ from twicc.cli._process_state import load_process_rows, serialize_compact_proces
 # Fields kept in each ``nodes[].session`` block by default. The caller can opt
 # into the full ``serialize_session()`` shape with ``--full``; the slim
 # shape is enough to render the tree and identify nodes, and any other field can
-# be recovered for a specific node via ``twicc session <id>``. The synthetic
+# be recovered for a specific node via ``twicc session <id> --full``. The synthetic
 # ``directory`` field (``git_directory`` falling back to ``cwd``) is added on
 # top of these by ``_slim_session``.
 TOPOLOGY_SESSION_FIELDS = (

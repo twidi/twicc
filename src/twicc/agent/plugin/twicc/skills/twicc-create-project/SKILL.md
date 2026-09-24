@@ -72,11 +72,10 @@ Same codes plus `directory_creation_failed` — `--create-directory` set but `mk
 
 - `0` — Project created
 - `1` — Local validation error
-- `2` — TwiCC server not running
+- `2` — TwiCC server not running, or bad CLI usage (unknown option, missing argument; the error message tells them apart)
 - `3` — Server rejected
 - `4` — Server error
 - `5` — Timeout
-- `64` — Bad CLI usage
 
 ## Examples
 

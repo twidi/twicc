@@ -18,8 +18,8 @@ def test_selection_matches_the_skill_surface():
         assert not any(p.split("/")[0] == banned for p in paths)
     # Everything else from the RPC registry is present — except, past
     # 2026-10-01, the retired `process` / `processes` routes, which RPC keeps
-    # (they answer with their removal error) and MCP drops. Read on the real
-    # clock: MCP_EXCLUDED_ROOTS is evaluated at import.
+    # (they answer with their removal error) and MCP drops. Read on the
+    # effective cutover: MCP_EXCLUDED_ROOTS is evaluated at import.
     excluded = {"settings"}
     if listing_cutover_passed():
         excluded |= {"process", "processes"}

@@ -66,7 +66,7 @@ $TWICC peer-message <MESSAGE_ID>
 
 - `0` — Found
 - `1` — Unknown message_id
-- `64` — Bad CLI usage
+- `2` — Bad CLI usage (unknown option, missing argument)
 
 ## Examples
 

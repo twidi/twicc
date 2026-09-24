@@ -22,11 +22,13 @@ ensure_env_loaded()
 
 from twicc.cli._drop_request.project import derive_project_id  # noqa: E402
 from twicc.cli._output import (  # noqa: E402
-    CUTOVER_NOTICE, CUTOVER_NOTICE_OBJECT, FULL_HELP, PAGINATED_HELP,
+    CUTOVER_NOTICE, CUTOVER_NOTICE_OBJECT, CUTOVER_NOTICE_PAGED, FULL_HELP, LOOKUP_CUTOVER_NOTICE,
+    LOOKUP_ENVELOPE_HELP, PAGINATED_DEFAULT_LIMIT, PAGINATED_HELP, PEERS_CUTOVER_NOTICE,
     SESSIONS_GET_IDS_HELP, SLIM_CUTOVER_NOTICE, SLIM_HELP, TOPOLOGY_CUTOVER_NOTICE,
-    TOPOLOGY_FULL_HELP, TOPOLOGY_SLIM_HELP, emit_error, limit_help, listing_cutover_passed,
-    refuse_if_removed, removal_help, removed_command,
+    TOPOLOGY_FULL_HELP, TOPOLOGY_SLIM_HELP, WHOAMI_CUTOVER_NOTICE, WHOAMI_HELP, emit_error,
+    limit_help, listing_cutover_passed, refuse_if_removed, removal_help, removed_command,
 )
+from twicc.cli._session_group import HELP_REQUESTED, SessionGroup  # noqa: E402
 from twicc.version import get_version  # noqa: E402
 
 # Ensure Django settings are discoverable for all subcommands that call django.setup().
@@ -83,7 +85,7 @@ app.add_typer(projects_app)
 @projects_app.callback(invoke_without_command=True)
 def _projects_default(
     ctx: typer.Context,
-    limit: int = typer.Option(None, help=limit_help("projects", 20)),
+    limit: int = typer.Option(None, help=limit_help("projects", PAGINATED_DEFAULT_LIMIT)),
     offset: int = typer.Option(0, help="Skip first N projects."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived projects."),
@@ -99,7 +101,15 @@ def _projects_default(
                   paginated=paginated)
 
 
-@projects_app.command(name="get")
+@projects_app.command(
+    name="get",
+    help=LOOKUP_CUTOVER_NOTICE + (
+        "Look up projects by id or path (placeholder for missing, includes archived).\n\n"
+        "Unlike ``twicc projects``, ``get`` takes no filter flags: when the "
+        "caller names the projects it cares about, the archived-by-default "
+        "filter would only blur the meaning of the placeholder rows."
+    ),
+)
 def _projects_get(
     project_ids: list[str] = typer.Argument(
         ...,
@@ -118,6 +128,7 @@ def _projects_get(
             "projects."
         ),
     ),
+    paginated: bool = typer.Option(False, "--paginated", help=LOOKUP_ENVELOPE_HELP),
 ) -> None:
     """Look up projects by id or path (placeholder for missing, includes archived).
 
@@ -127,7 +138,7 @@ def _projects_get(
     """
     from twicc.cli.projects_get import main as projects_get_main
 
-    projects_get_main([derive_project_id(pid)[0] for pid in project_ids])
+    projects_get_main([derive_project_id(pid)[0] for pid in project_ids], paginated=paginated)
 
 
 @app.command()
@@ -156,7 +167,7 @@ app.add_typer(workspaces_app)
 @workspaces_app.callback(invoke_without_command=True)
 def _workspaces_default(
     ctx: typer.Context,
-    limit: int = typer.Option(None, help=limit_help("workspaces", 20)),
+    limit: int = typer.Option(None, help=limit_help("workspaces", PAGINATED_DEFAULT_LIMIT)),
     offset: int = typer.Option(0, help="Skip first N workspaces."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived workspaces."),
@@ -170,7 +181,15 @@ def _workspaces_default(
     workspaces_main(limit=limit, offset=offset, archived=include_archived, paginated=paginated)
 
 
-@workspaces_app.command(name="get")
+@workspaces_app.command(
+    name="get",
+    help=LOOKUP_CUTOVER_NOTICE + (
+        "Look up workspaces by id (placeholder for missing, includes archived).\n\n"
+        "Unlike ``twicc workspaces``, ``get`` takes no filter flags: when the "
+        "caller names the workspaces it cares about, the archived-by-default "
+        "filter would only blur the meaning of the placeholder rows."
+    ),
+)
 def _workspaces_get(
     workspace_ids: list[str] = typer.Argument(
         ...,
@@ -185,6 +204,7 @@ def _workspaces_get(
             "explicit ids."
         ),
     ),
+    paginated: bool = typer.Option(False, "--paginated", help=LOOKUP_ENVELOPE_HELP),
 ) -> None:
     """Look up workspaces by id (placeholder for missing, includes archived).
 
@@ -194,7 +214,7 @@ def _workspaces_get(
     """
     from twicc.cli.workspaces_get import main as workspaces_get_main
 
-    workspaces_get_main(workspace_ids)
+    workspaces_get_main(workspace_ids, paginated=paginated)
 
 
 @app.command()
@@ -226,7 +246,7 @@ def _sessions_default(
         ),
     ),
     workspace: str = typer.Option(None, "--workspace", help="Filter by workspace ID (only sessions of projects in that workspace, worktrees included). Mutually exclusive with --project."),
-    limit: int = typer.Option(None, help=limit_help("sessions", 20)),
+    limit: int = typer.Option(None, help=limit_help("sessions", PAGINATED_DEFAULT_LIMIT)),
     slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
     full: bool = typer.Option(False, "--full", help=FULL_HELP),
     provider: str = typer.Option(
@@ -372,16 +392,20 @@ def _sessions_default(
 
 @sessions_app.command(
     "stop",
-    help="Stop the agents behind selected sessions (only those actually running).",
+    help=(
+        "Stop the agents behind selected sessions (only those actually running). "
+        "A bare call is refused; the calling session is never stopped."
+    ),
 )
 def _sessions_stop(
     session_ids: list[str] = typer.Argument(
         None, metavar="[SESSION_ID...]",
         help=(
-            "Sessions to stop. Omit them to select with the filters below — a "
-            "bare `sessions stop` stops every running session, which is bounded "
-            "by what is alive, not by how many sessions exist. Named ids are "
-            "added to the filters' selection (unioned)."
+            "Sessions to stop. Omit them to select with the filters below; at "
+            "least one id or one filter is required — a bare call is refused. "
+            "The calling session is never stopped (`skipped_self`); use "
+            "`session self stop`. Named ids are added to the filters' selection "
+            "(unioned)."
         ),
     ),
     timeout: int = typer.Option(
@@ -422,6 +446,9 @@ def _sessions_stop(
     has nothing to stop, so the selection is always a subset of
     ``sessions --active``. Hidden sessions are included — skipping them would
     quietly spare the orchestration workers, which are hidden by convention.
+    A bare call (no id, no filter) is refused, and the calling session is never
+    stopped: it is reported ``skipped_self``. The output is
+    ``{summary, results}``.
     """
     from twicc.cli.sessions_stop import main as sessions_stop_main
 
@@ -451,8 +478,8 @@ def _sessions_wait_reply(
     since: str = typer.Option(
         None, "--since",
         help=(
-            "Start each session above the instant instead of above its "
-            "current last line: only a line written strictly after it counts, "
+            "Start each session above the instant instead of after its last "
+            "user message: only a line written strictly after it counts, "
             "and an out-of-order timestamp can only push the cursor lower, "
             "never past a line. A line with no timestamp is not a boundary. "
             "ISO 8601 "
@@ -461,7 +488,8 @@ def _sessions_wait_reply(
             "for its midnight. No offset means UTC. There is no --from here: "
             "a line number belongs to one transcript and means something "
             "else in every other, which is why an instant is what addresses "
-            "a batch."
+            "a batch. After `send-messages` without --wait-reply, pass an "
+            "instant taken before the send."
         ),
     ),
     wait_timeout: float = typer.Option(
@@ -526,7 +554,10 @@ def _sessions_wait_reply(
     """Block until several sessions conclude, past their own cursors.
 
     The plural of `session <ID> wait-reply`, on sessions nobody just messaged:
-    spawned earlier, steered from the UI, or messaged by someone else. One
+    spawned earlier, steered from the UI, or messaged by someone else — or ones
+    you messaged with `send-messages` without `--wait-reply` (then pass `--since`
+    an instant taken before the send, or wait on each with `session <id>
+    wait-reply --from <last_line>`). One
     loop polls them all and one budget covers the batch, so it costs a
     wall-clock wait, not N of them.
 
@@ -547,10 +578,12 @@ def _sessions_wait_reply(
     with no filter would poll every session TwiCC has indexed until the
     deadline, so at least one id or one filter is required.
 
-    Each session starts above its own current last line — "tell me the next
-    thing each of them says" — or above the instant --since names, translated
-    per session. There is no --from: line 42 is a different place in every
-    transcript.
+    Each session starts after its own last user message — so an answer already
+    given is returned — (its current last line while its compute is not
+    current), or above the instant --since names, translated per session.
+    There is no --from: line 42 is a different place in every transcript.
+    After `send-messages` without --wait-reply, pass --since an instant taken
+    before the send.
 
     Returns `summary` + `results`, one `reply` block per id — the block the
     singular returns. A named id with a live process but no indexed transcript
@@ -568,11 +601,9 @@ def _sessions_wait_reply(
     fit in one code; branch on `summary.all_replied` or on each `outcome`. Exit
     1 on a local refusal, before anything is waited on.
 
-    Resuming a timed-out batch: pass --since the instant the batch started and
-    each cursor is placed from that instant, so nothing stamped after it is
-    missed. That is what --since is for. Without
-    it, re-running re-reads each current last line and silently skips an answer
-    that arrived in between; the per-session alternative is each block's
+    Resuming a timed-out batch: re-running resumes, except for a session whose
+    compute is not current; `--since <the instant the batch started>` resumes
+    in every case. The per-session alternative is each block's
     `since_line_num` handed to `session <ID> wait-reply --from`.
     """
     from twicc.cli.sessions_wait_reply import main as sessions_wait_reply_main
@@ -596,7 +627,7 @@ def _sessions_wait_reply(
     name="get",
     # An explicit help, not the docstring: the deprecation prefix must precede
     # it, and the help is also the MCP tool description.
-    help=SLIM_CUTOVER_NOTICE + (
+    help=LOOKUP_CUTOVER_NOTICE + SLIM_CUTOVER_NOTICE + (
         "Look up sessions by id (placeholder for missing, includes subagents).\n\n"
         "Unlike ``twicc sessions``, ``get`` takes no filter flags: when the "
         "caller names the sessions it cares about, layering archived / "
@@ -612,6 +643,7 @@ def _sessions_get(
     ),
     slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
     full: bool = typer.Option(False, "--full", help=FULL_HELP),
+    paginated: bool = typer.Option(False, "--paginated", help=LOOKUP_ENVELOPE_HELP),
 ) -> None:
     """Look up sessions by id (placeholder for missing, includes subagents)."""
     if slim and full:
@@ -619,12 +651,13 @@ def _sessions_get(
 
     from twicc.cli.sessions_get import main as sessions_get_main
 
-    sessions_get_main(session_ids, slim=slim, full=full)
+    sessions_get_main(session_ids, slim=slim, full=full, paginated=paginated)
 
 
 session_app = typer.Typer(
     name="session",
-    help="Inspect a session.",
+    cls=SessionGroup,
+    help=SLIM_CUTOVER_NOTICE + "Inspect a session.",
     invoke_without_command=True,
 )
 app.add_typer(session_app)
@@ -633,19 +666,55 @@ app.add_typer(session_app)
 @session_app.callback(invoke_without_command=True)
 def _session_default(
     ctx: typer.Context,
-    session_id: str = typer.Argument(help="The session ID (for normal sessions or agents) to look up."),
+    session_id: str = typer.Argument(help=(
+        "The session ID (for normal sessions or agents) to look up, or 'self' "
+        "(your own session) or 'parent' (the session that spawned you)."
+    )),
+    slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
+    full: bool = typer.Option(False, "--full", help=FULL_HELP),
 ) -> None:
     """Show a single session as JSON."""
+    if ctx.invoked_subcommand is not None and (slim or full):
+        emit_error(
+            "Error: --slim / --full apply to `session <id>` alone, not to "
+            f"`{ctx.invoked_subcommand}`.",
+            code=2,
+        )
+    if slim and full:
+        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
+    if ctx.invoked_subcommand == "wait-reply" and session_id == "self" and not ctx.meta.get(HELP_REQUESTED):
+        # The caller is mid-turn while this runs: its own answer cannot come
+        # before the deadline, so the wait could only ever end on `timeout`.
+        emit_error(
+            "Error: a session cannot wait on its own reply: `session self wait-reply` "
+            "would block until its --wait-timeout.",
+            code=1,
+        )
+    if not ctx.resilient_parsing:
+        from twicc.cli._session_keywords import (
+            SELF_PARENT_KEYWORDS,
+            resolve_session_keyword,
+            resolve_session_keyword_quietly,
+        )
+
+        if ctx.meta.get(HELP_REQUESTED):
+            # A `--help` token may also be an option's value (`content
+            # --contains --help`): resolve when possible, never refuse.
+            session_id = resolve_session_keyword_quietly(session_id, allowed=SELF_PARENT_KEYWORDS)
+        else:
+            session_id = resolve_session_keyword(
+                session_id, param_name="SESSION_ID", allowed=SELF_PARENT_KEYWORDS,
+            )
     ctx.obj = session_id
     if ctx.invoked_subcommand is not None:
         return
 
     from twicc.cli.session import main as session_main
 
-    session_main(session_id)
+    session_main(session_id, slim=slim, full=full)
 
 
-@session_app.command(help=CUTOVER_NOTICE + "Show session item(s) content as JSON.")
+@session_app.command(help=CUTOVER_NOTICE_PAGED + "Show session item(s) content as JSON.")
 def content(
     ctx: typer.Context,
     range: str = typer.Argument(None, help="Line number or range (e.g. '5' or '10-20'). Optional when --contains, --limit/--offset or --tail is given."),
@@ -670,7 +739,7 @@ def content(
                     tail=tail, paginated=paginated)
 
 
-@session_app.command(help=CUTOVER_NOTICE + "Show all user/assistant messages of a session as JSON (cross-provider).")
+@session_app.command(help=CUTOVER_NOTICE_PAGED + "Show all user/assistant messages of a session as JSON (cross-provider).")
 def messages(
     ctx: typer.Context,
     range: str = typer.Option(None, "--range", help="Restrict to a line number or range (e.g. '5' or '10-20')."),
@@ -720,8 +789,10 @@ def _session_wait_reply(
             "that consumed a line (`replied`, `provider_error`) or the "
             "`since_line_num` of one that did not — resuming a "
             "`provider_error` from `since_line_num` re-matches the same "
-            "error forever. Omitted, it is the session's current last line — "
-            "\"tell me the next thing it says\"."
+            "error forever. Omitted, the wait starts after the session's last "
+            "user message (its current last line while its compute is not "
+            "current). After `send-message` without --wait-reply, pass the "
+            "`last_line` it returned."
         ),
     ),
     since: str = typer.Option(
@@ -759,8 +830,10 @@ def _session_wait_reply(
 
     The same wait `--wait-reply` runs on the commands that send, on a session
     nobody just messaged: one spawned earlier, steered from the UI, or
-    messaged by someone else. Nothing is sent, so the cursor is named rather
-    than read off a send.
+    messaged by someone else — or one you messaged yourself without
+    `--wait-reply` (then pass `--from` the `last_line` the send returned).
+    Nothing is sent by this command: pass the cursor, or it defaults to after
+    the last user message.
 
     It ends on an answer — the message closing a turn — or on a pending
     request, a tool approval or a question only a human can clear. Both are
@@ -784,7 +857,9 @@ def _session_wait_reply(
     the error the provider wrote — resumes from its `line_num`; every other
     one resumes from its `since_line_num`, which nothing consumed. Getting
     this backwards on a `provider_error` re-matches the same error forever.
-    Omitted, the cursor is the session's current last line.
+    Omitted, the wait starts after the session's last user message (its
+    current last line while its compute is not current). After `send-message`
+    without --wait-reply, pass the `last_line` it returned.
 
     `outcome` is `replied` (the message closing the turn),
     `awaiting_user_input` (a pending request), `ended` (the turn is over and
@@ -940,7 +1015,7 @@ def _session_cancel_questions(
 @session_app.command(help=CUTOVER_NOTICE + SLIM_CUTOVER_NOTICE + "List subagents of a session as JSON.")
 def agents(
     ctx: typer.Context,
-    limit: int = typer.Option(None, help=limit_help("subagents", 20)),
+    limit: int = typer.Option(None, help=limit_help("subagents", PAGINATED_DEFAULT_LIMIT)),
     slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
     full: bool = typer.Option(False, "--full", help=FULL_HELP),
     offset: int = typer.Option(0, help="Skip first N subagents."),
@@ -973,7 +1048,7 @@ def plan(
 @session_app.command(help=CUTOVER_NOTICE + "List the session's workflows as JSON (Claude Code only).")
 def workflows(
     ctx: typer.Context,
-    limit: int = typer.Option(None, help=limit_help("workflows", 20)),
+    limit: int = typer.Option(None, help=limit_help("workflows", PAGINATED_DEFAULT_LIMIT)),
     offset: int = typer.Option(0, help="Skip first N workflows."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     result: bool = typer.Option(
@@ -1064,7 +1139,7 @@ def _artifacts_default(
             "everywhere. Independent of --project / --workspace."
         ),
     ),
-    limit: int = typer.Option(None, help=limit_help("bookmarks", 20)),
+    limit: int = typer.Option(None, help=limit_help("bookmarks", PAGINATED_DEFAULT_LIMIT)),
     offset: int = typer.Option(0, help="Skip first N bookmarks."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
@@ -1190,7 +1265,7 @@ def _share_default(
     session: str = typer.Option(None, "--session", help="Filter by session id; accepts 'self' and 'parent'."),
     project: str = typer.Option(None, "--project", help="Filter by project (worktrees included)."),
     include_revoked: bool = typer.Option(False, "--include-revoked", help="Include revoked shares."),
-    limit: int = typer.Option(None, help=limit_help("shares", 50)), offset: int = typer.Option(0),
+    limit: int = typer.Option(None, help=limit_help("shares", PAGINATED_DEFAULT_LIMIT)), offset: int = typer.Option(0),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
 ) -> None:
     """List shares as JSON (default action; read-only, direct DB)."""
@@ -1902,7 +1977,7 @@ def search(
             "member's git worktrees included. Mutually exclusive with --project."
         ),
     ),
-    limit: int = typer.Option(None, help=limit_help("session groups", 20)),
+    limit: int = typer.Option(None, help=limit_help("session groups", PAGINATED_DEFAULT_LIMIT)),
     offset: int = typer.Option(0, help="Skip first N session groups."),
     paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
     include_hidden: bool = typer.Option(False, "--include-hidden", help="Include hidden sessions in search results."),
@@ -2049,7 +2124,7 @@ app.add_typer(token_app)
 # ``whoami`` resolves the TwiCC session owning the calling process via PID
 # ancestry. The function performs lazy Django setup inside its body.
 from twicc.cli.whoami import whoami_cmd  # noqa: E402
-app.command("whoami")(whoami_cmd)
+app.command("whoami", help=WHOAMI_CUTOVER_NOTICE + WHOAMI_HELP)(whoami_cmd)
 
 
 # ``create-workspace`` / ``update-workspace`` / ``delete-workspace`` write
@@ -2093,7 +2168,17 @@ app.add_typer(settings_app)
 # ``peer:send``). Relationship management (add/verify/accept/revoke) is
 # deliberately NOT on the CLI — human-only, web UI REST only.
 from twicc.cli.peers import peers_cmd  # noqa: E402
-app.command(name="peers")(peers_cmd)
+app.command(
+    name="peers",
+    help=PEERS_CUTOVER_NOTICE + (
+        "List peer instances approved for cross-instance messaging.\n\n"
+        "Peers are other TwiCC instances the user has paired with (friend-request "
+        "flow, managed in the web UI only). Use this to resolve a peer's id or "
+        "exact name before ``twicc peer-send``. Output includes ``active`` peers "
+        "(messageable) and ``broken`` ones (revoked/unreachable — listed so a "
+        "failing send can be explained instead of \"peer unknown\")."
+    ),
+)(peers_cmd)
 
 from twicc.cli.peer_message import peer_message_cmd  # noqa: E402
 app.command(name="peer-message")(peer_message_cmd)

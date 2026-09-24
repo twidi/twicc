@@ -181,11 +181,10 @@ Same codes, re-checked server-side. Additionally `invalid_title` (title too long
 
 - `0` — Update applied (or a no-op for this provider)
 - `1` — Local validation error
-- `2` — TwiCC server not running
+- `2` — TwiCC server not running, or bad CLI usage (unknown option, missing argument; the error message tells them apart)
 - `3` — Server rejected
 - `4` — Server error
 - `5` — Timeout
-- `64` — Bad CLI usage
 
 ## Examples
 
@@ -219,7 +218,7 @@ $TWICC update-session self annotations set:role=worker
 - `$TWICC info [models|agent-settings|presets]` — discover providers, models, agent-settings values and presets before editing a session. Skill: `twicc-info`.
 - `$TWICC session <session_id> stop` — stop the agent without touching the row. Skill: `twicc-session`.
 - `$TWICC send-message <session_id>` — send a message (settings unchanged). Skill: `twicc-send-message`.
-- `$TWICC session <session_id>` — full metadata. Skill: `twicc-session`.
+- `$TWICC session <session_id>` — one session's row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
 
 ## How to present results
 

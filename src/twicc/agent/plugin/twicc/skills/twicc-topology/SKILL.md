@@ -41,7 +41,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 ### Options
 
 - `--processes / --no-processes` — include compact live process state when a TwiCC backend is running. Defaults to `--processes`; if no backend is running, topology is still returned with process data marked unavailable.
-- `--full` — emit the full session serialization for every node — the fields `$TWICC session <ID>` returns, minus its `process` block, which topology carries per node as `nodes[].process` — and the full five-field `process` block. Off by default: each `nodes[].session` block carries only the slim subset listed below. Use this only when you actually need extra fields for every node; otherwise call `$TWICC session <ID>` for the few nodes you care about. `--full-sessions` is a deprecated alias of `--full`.
+- `--full` — emit the full serializer payload for every node — agent settings as stored, `artifacts_dir` as the serializer reports it (set only once the backend has seen an artifact, so always `null` from a terminal), none of the CLI-added keys (`project_directory`, `scratch_dir`, `orchestration_scratch_dir`, `question_widget`) — minus its `process` block, which topology carries per node as `nodes[].process` — and the full five-field `process` block. Off by default: each `nodes[].session` block carries only the slim subset listed below. Use this only when you actually need extra fields for every node; otherwise call `$TWICC session <ID> --full` for the few nodes you care about. `--full-sessions` is a deprecated alias of `--full`.
 - `--slim` — reduce each node's `process` block to `{state}`. **Before 2026-10-01 the block keeps its five fields by default and `--slim` opts in; from that date `{state}` is the default and `--slim` is an accepted no-op.** Until then a call with neither flag (and with processes requested) prints a one-line notice on stderr (in the RPC `warnings` key; never on MCP). Mutually exclusive with `--full` / `--full-sessions` (exit `2`).
 - `--annotation KEY[OP]VALUE` — annotate every node with a `matches_annotations` boolean indicating whether that node's `annotations` match the expression. The full tree is always preserved (no pruning). Repeatable; multiple flags are AND-combined. Five operators:
   - `KEY=VALUE` — annotation key equals VALUE.
@@ -126,7 +126,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 - `tree` — nested id-only tree for traversal.
 - `nodes` — node data in tree pre-order; the root is first.
 - `nodes[].id` — same value as `nodes[].session.id`, exposed for direct indexing.
-- `nodes[].session` — slim session payload by default (fields shown above); pass `--full` to get the full shape for every node — the fields `$TWICC session <ID>` returns, minus its `process` block, which lives at `nodes[].process` here. With `--full`, the synthetic `directory` field is **not** added: use `git_directory` / `cwd` directly.
+- `nodes[].session` — slim session payload by default (fields shown above); pass `--full` to get the full serializer payload for every node — agent settings as stored, `artifacts_dir` as the serializer reports it (always `null` from a terminal), none of the CLI-added keys (`project_directory`, `scratch_dir`, `orchestration_scratch_dir`, `question_widget`) — minus its `process` block, which lives at `nodes[].process` here. With `--full`, the synthetic `directory` field is **not** added: use `git_directory` / `cwd` directly.
 - `nodes[].session.directory` — resolved working directory: `git_directory` when known, else `cwd`. Slim payload only.
 - `nodes[].direct_child_count` — immediate spawned children.
 - `nodes[].descendant_count` — spawned descendants across all levels.
@@ -140,8 +140,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 
 - `0` — Success
 - `1` — Session not found, `self` could not resolve, or the target is a provider-internal subagent
-- `2` — `--slim` with `--full` / `--full-sessions`, or an invalid `--annotation`
-- `64` — Bad CLI usage
+- `2` — Bad CLI usage: `--slim` with `--full` / `--full-sessions`, an invalid `--annotation`, an unknown option or a missing argument
 
 ## Examples
 
@@ -161,7 +160,7 @@ $TWICC topology self --siblings
 - `$TWICC sessions --spawned-by <ID|self>` — list direct children. Skill: `twicc-sessions`.
 - `$TWICC sessions --spawned-by <ID|self> --active` — list children with a live process. Skill: `twicc-sessions`.
 - `$TWICC send-message <SESSION_ID>` — message a discovered session. Skill: `twicc-send-message`.
-- `$TWICC session <SESSION_ID>` — inspect full metadata for one node. Skill: `twicc-session`.
+- `$TWICC session <SESSION_ID>` — inspect one node's session row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
 
 ## How to present results
 

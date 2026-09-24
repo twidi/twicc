@@ -196,11 +196,10 @@ Always pass it to a child you drive yourself. A widget answer travels on the UI 
 
 - `0` — Session created
 - `1` — Local validation error
-- `2` — TwiCC server not running
+- `2` — TwiCC server not running, or bad CLI usage (unknown option, missing argument; the error message tells them apart)
 - `3` — Server rejected
 - `4` — Server error
 - `5` — Timeout
-- `64` — Bad CLI usage
 
 ## Examples
 
@@ -225,9 +224,9 @@ A `created` status only means the session started and the prompt was handed to t
 
 **Map spawned work:** `$TWICC topology self` shows the full spawned-session tree rooted at your top-level ancestor, with compact process state for every node (skill: `twicc-topology`).
 
-**Wait for the answer later:** `$TWICC sessions wait-reply <SESSION_ID>... --since 2000-01-01` waits until each child answers or blocks on a pending request (skill: `twicc-sessions`). Any instant before the spawn works for a child never messaged since; never pass today's date — a bare date is midnight UTC, and a future instant misses an answer already given. Exit 0 whatever the outcomes: read `summary.all_replied` and each `outcome`.
+**Wait for the answer later:** `$TWICC sessions wait-reply <SESSION_ID>...` waits until each child answers or blocks on a pending request (skill: `twicc-sessions`). Each wait starts after the child's last user message, so an answer already given is returned (except while a session's compute is not current — e.g. right after a TwiCC restart: then pass `--since` an instant before the spawn or the send). Exit 0 whatever the outcomes: read `summary.all_replied` and each `outcome`.
 
-**Check state (snapshot):** `process.state` from `$TWICC sessions get <SESSION_ID>` (skill: `twicc-sessions`) — `session <ID>` exits 1 until the watcher indexes the new session:
+**Check state (snapshot):** `process.state` from `$TWICC sessions get <SESSION_ID>` (skill: `twicc-sessions`) — `session <ID>` exits 1 until the watcher writes the new session's row:
 - `assistant_turn` → still working.
 - `awaiting_user_input` → blocked on a pending request. Do NOT call `send-message`: it is refused. Read what is being asked with `$TWICC session <ID> pending-requests` — **not** `messages`, which does not carry it. A `question` you answer with `answer-questions`; anything else needs the user in the UI.
 - `user_turn` → done; fetch the reply with `$TWICC session <ID> messages --tail 1`.
@@ -245,7 +244,7 @@ A `created` status only means the session started and the prompt was handed to t
 - `$TWICC sessions --spawned-by self --active` — track sessions you spawned (`sessions get <ID>` for one spawned seconds ago). Skill: `twicc-sessions`.
 - `$TWICC topology self` — map the spawned-session tree around you. Skill: `twicc-topology`.
 - `$TWICC update-session <session_id> settings` — change agent settings. Skill: `twicc-update-session`.
-- `$TWICC session <session_id>` — full metadata. Skill: `twicc-session`.
+- `$TWICC session <session_id>` — one session's row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
 - `$TWICC sessions --project <PROJECT>` — browse sessions in the project. Skill: `twicc-sessions`.
 
 ## How to present results

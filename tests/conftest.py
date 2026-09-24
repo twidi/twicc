@@ -43,6 +43,15 @@ def no_real_notification_delivery(monkeypatch):
     monkeypatch.setattr(apprise.Apprise, "async_notify", _swallow)
 
 
+@pytest.fixture(autouse=True)
+def fresh_project_directory_cache(monkeypatch):
+    """The CLI session payload reads project directories through a module-level
+    cache (twicc.projects._project_directories); give each test its own."""
+    from twicc import projects
+
+    monkeypatch.setattr(projects, "_project_directories", {})
+
+
 @pytest.fixture
 def db_setup(db):
     """Fixture that provides database access and creates test data helpers."""

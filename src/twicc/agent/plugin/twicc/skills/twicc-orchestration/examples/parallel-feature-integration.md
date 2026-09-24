@@ -12,7 +12,7 @@ and verifies → refuter tries to break the result.
 2. Spawn producer workers per slice with `--annotation role=producer --annotation slice=<name>`.
    If overlap is likely, producers write patch plans or scratch diffs instead of applying.
 3. Barrier on the producers' ids only:
-   `sessions wait-reply <PRODUCER_ID>... --since 2000-01-01 --wait-timeout 300`.
+   `sessions wait-reply <PRODUCER_ID>... --wait-timeout 300`.
 4. Pull producer outputs and spawn one executor integrator:
    `--annotation role=integrator`, briefed with the accepted producer outputs and target checks.
 5. The integrator applies changes in one working tree, resolves conflicts, runs checks, and reports one result.

@@ -120,7 +120,7 @@ def listing(name, project, capsysbinary, **flags):
 
 def assert_full(name, rows):
     for row in rows:
-        assert "cwd" in row, "a field only the full payload carries"
+        assert "layout" in row, "a field only the full payload carries"
         if name == "session agents":
             assert row["process"] is None
         else:
@@ -187,10 +187,10 @@ def test_after_the_three_listings_share_one_key_set(after, tree, capsysbinary):
 
 
 def test_the_notice_date_is_read_at_call_time(tree, capsysbinary, monkeypatch):
-    """`sessions get` has no pagination notice, so the date can only come from
-    the slim one — built from the pinned constant, not the import-time string."""
+    """`paginated=True` silences the lookup notice, so the date can only come
+    from the slim one — built from the pinned constant, not the import-time string."""
     monkeypatch.setattr(_output, "LISTING_CUTOVER", datetime(2199, 3, 4))  # noqa: DTZ001
-    _, err = listing("sessions get", tree, capsysbinary)
+    _, err = listing("sessions get", tree, capsysbinary, paginated=True)
     assert "2199-03-04" in err
     assert LISTING_NOTICE in err
 
@@ -313,6 +313,8 @@ def test_no_full_sessions_never_cancels_full(after, tree):
     ["sessions", "get", "slim-root", "--slim", "--full"],
     ["session", "slim-root", "agents", "--slim", "--full"],
     ["topology", "slim-root", "--slim", "--full"],
+    ["session", "slim-root", "--slim", "--full"],
+    ["whoami", "--slim", "--full"],
 ])
 def test_slim_and_full_are_mutually_exclusive(tree, argv):
     from twicc.rpc.invoker import invoke
@@ -347,7 +349,7 @@ def test_rpc_carries_both_notices_in_order(before, tree):
     ["topology", "slim-root"],
 ])
 def test_mcp_is_never_notified(before, tree, argv):
-    """Neither command has a pagination notice that could mask the slim one."""
+    """MCP silences every notice: `sessions get`'s lookup notice and slim notice, and `topology`'s."""
     from twicc.mcp.identity import mcp_call
     from twicc.rpc.invoker import invoke
 
@@ -364,15 +366,20 @@ def test_the_flags_reach_the_mcp_schema():
     from twicc.rpc.generator import build_registry
 
     registry = build_registry()
-    for path in ("sessions", "sessions/get", "session/agents", "topology"):
+    for path in ("sessions", "sessions/get", "session/agents", "topology", "session"):
         params = {p.name: p for p in registry[path].params}
         for flag in ("slim", "full"):
             assert params[flag].is_flag and params[flag].json_type == "boolean", (path, flag)
+    assert {"slim", "full"}.isdisjoint(p.name for p in registry["session/messages"].params)
     assert registry["topology"].json_schema["properties"]["full_sessions"]["type"] == "boolean"
+    from twicc.mcp.tools import tools_by_name
+
+    props = tools_by_name()["whoami"].json_schema["properties"]
+    assert props["slim"]["type"] == props["full"]["type"] == "boolean"
 
 
 def test_the_help_texts_match_the_side_of_the_cutover_we_are_on():
-    """Evaluated at import, so no fixture can flip them: read the real clock.
+    """Evaluated at import, so no fixture can flip them: read the effective cutover.
 
     Asserts a fixed substring, never ``SLIM_CUTOVER_NOTICE in description`` —
     past the date the constant is ``""``, which every string contains.
@@ -381,15 +388,41 @@ def test_the_help_texts_match_the_side_of_the_cutover_we_are_on():
 
     described = {t.name: t.description for t in iter_mcp_tools()}
     ids_help = tools_by_name()["sessions_get"].json_schema["properties"]["session_ids"]["description"]
-    announcing = {"sessions", "sessions_get", "session_agents"}
+    announcing = {"sessions", "sessions_get", "session_agents", "session"}
 
     if _output.listing_cutover_passed():
         assert not any(LISTING_NOTICE in described[n] for n in announcing)
         assert not described["topology"].startswith("DEPRECATION")
+        assert not described["whoami"].startswith("DEPRECATION")
         assert "reduced projection" in ids_help
     else:
         for name in announcing:
             assert "reduced session projection by default" in described[name], name
         assert described["sessions_get"].startswith("DEPRECATION")
         assert described["topology"].startswith("DEPRECATION")
+        assert described["whoami"].startswith("DEPRECATION")
+        assert "`session self` payload" in described["whoami"]
         assert "the full session metadata or a placeholder" in ids_help
+
+
+NEW_SLIM_FIELDS = {
+    "last_line", "cwd", "git_directory", "project_directory", "artifacts_dir",
+    "scratch_dir", "orchestration_scratch_dir", "compacted", "hybrid",
+    "permission_mode", "selected_model", "effort", "thinking_enabled",
+    "claude_in_chrome", "fast_mode", "question_widget",
+}
+DROPPED_FIELDS = {
+    "tasks", "plan_paths", "goals", "layout", "last_started_at", "last_updated_at",
+    "last_stopped_at", "last_viewed_at", "mtime", "self_cost", "subagents_cost",
+    "slug", "browser_url", "compute_version_up_to_date",
+}
+
+
+def test_the_reduced_projection_keeps_everything_but_the_dropped_fields(tree, capsysbinary):
+    assert NEW_SLIM_FIELDS <= set(SESSION_LISTING_FIELDS)
+    assert "context_max" in SESSION_LISTING_FIELDS
+    slim_rows, _ = listing("sessions", tree, capsysbinary, slim=True)
+    full_rows, _ = listing("sessions", tree, capsysbinary, full=True)
+    for slim_row, full_row in zip(slim_rows, full_rows, strict=True):
+        assert set(full_row) - set(slim_row) == DROPPED_FIELDS
+        assert set(slim_row["process"]) == {"state"}

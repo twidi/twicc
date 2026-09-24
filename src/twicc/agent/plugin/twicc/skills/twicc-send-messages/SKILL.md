@@ -88,9 +88,8 @@ Per-id `status`: `sent`, `rejected`, `failed`, `timeout`, or `validation_error`.
 
 - `0` — batch ran and at least one message was sent (or the resolved set was empty)
 - `1` — local argument error
-- `2` — TwiCC server not running
+- `2` — TwiCC server not running, or bad CLI usage (unknown option, missing argument; the error message tells them apart)
 - `6` — resolved set was non-empty but no message was sent
-- `64` — bad CLI usage
 
 ## Examples
 
@@ -116,9 +115,11 @@ $TWICC send-messages --spawned-by self --message '<TEXT>' --wait-reply
 
 Each entry gains a `reply` block (`outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text`, `error` on `wait_failed`), and the summary gains `replied` / `all_replied`. `replied` counts `outcome: replied` and nothing else: a recipient that ended on `awaiting_user_input` concluded, but is not counted, so `all_replied` can be `false` with every recipient done. `outcome` is `replied`, `awaiting_user_input` (a pending request), `provider_error`, `ended`, `timeout`, `backend_gone`, `wait_failed`, or `pending` (cut short by `--wait-first`).
 
-**A timeout is not a failure** and nothing is lost: the agents keep working, and each entry carries its own cursor to resume from — `line_num` when its ending consumed a line (`replied`, `provider_error`), `since_line_num` otherwise. Resume each one with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`): a batch needs one cursor per recipient, so the per-session resume is the exact one. For one wait over all of them instead, `$TWICC sessions wait-reply --since <the instant the batch started>` (skill: `twicc-sessions`) — without `--since` it re-reads each current last line and skips what arrived in between. The exit code never reflects the wait, only whether the sends went out.
+**A timeout is not a failure** and nothing is lost: the agents keep working, and each entry carries its own cursor to resume from — `line_num` when its ending consumed a line (`replied`, `provider_error`), `since_line_num` otherwise. Resume each one with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`): a batch needs one cursor per recipient, so the per-session resume is the exact one. For one wait over all of them instead, `$TWICC sessions wait-reply <SESSION_ID>... --since <the instant the batch started>` (skill: `twicc-sessions`). Re-running resumes, except for a session whose compute is not current; `--since <the instant the batch started>` resumes in every case. The exit code never reflects the wait, only whether the sends went out.
 
-Without `--wait-reply`:
+**Known limit (Claude Code), rare and accepted.** A message sent while a Claude session is busy is queued by Claude and recorded as a queued command, not as a user message. Every wait for an answer — `--wait-reply` included, with a cursor or the default — returns the first final message past its cursor, which is then the running turn's closing message. Usually that turn read the queued message and its closing message covers it; in the rare case where the queued message runs as a turn of its own afterwards, the wait returns an answer that does not cover it. In an orchestration, message a session once it has finished, not while it works.
+
+Without `--wait-reply`, **never follow the send with a wait without a cursor** — the default cursor could land before a message not indexed yet and return the previous answer. Pass `sessions wait-reply <SESSION_ID>...` `--since` an **instant taken before this command** (an ISO 8601 instant, e.g. from `date -u +%Y-%m-%dT%H:%M:%SZ`; no offset means UTC; a bare date means its midnight UTC), or pass each `session <SESSION_ID> wait-reply` `--from` the `last_line` of its entry. `--since` / `--from` exist only on those two wait commands, not on this one, whose `--wait-reply` reads the cursors server-side.
 
 - `$TWICC sessions get <SESSION_ID>...` — whether each recipient still runs (`process.state`). Skill: `twicc-sessions`.
 - `$TWICC session <SESSION_ID> messages --tail 1` — read a reply by hand. Skill: `twicc-session`.
@@ -128,7 +129,7 @@ This closes the orchestration loop: `create-session` → … → `send-messages 
 ## Related commands
 
 - `$TWICC send-message <id|parent> <text>` — message one session, or reply to your parent. Skill: `twicc-send-message`.
-- `$TWICC sessions wait-reply <SESSION_ID>... --since <INSTANT>` — await a batch messaged without `--wait-reply`. Skill: `twicc-sessions`.
+- `$TWICC sessions wait-reply <SESSION_ID>... --since <INSTANT>` — await a batch messaged without `--wait-reply`, with an instant taken before the send. Skill: `twicc-sessions`.
 - `$TWICC update-sessions settings --spawned-by self ...` — change settings of the same batch (e.g. before re-prompting). Skill: `twicc-update-sessions`.
 - `$TWICC topology self` — discover the ids in your spawn tree. Skill: `twicc-topology`.
 

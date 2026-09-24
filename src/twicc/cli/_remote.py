@@ -47,6 +47,7 @@ from twicc.cli._drop_request.prompt import (
 )
 from twicc.cli._drop_request.remote_scheme import has_remote_scheme, remote_scheme_path
 from twicc.cli._local_only import LOCAL_ONLY_COMMANDS
+from twicc.cli._session_group import SessionGroup
 from twicc.rpc.generator import CommandSpec, build_registry
 from twicc.rpc.invoker import get_command
 from twicc.rpc.schema import ParamSpec
@@ -99,11 +100,12 @@ class Resolved(NamedTuple):
 #   so both belong here. (On ``topology`` ``siblings`` is a boolean flag, never
 #   a ``self`` / ``parent`` string, so listing it here can't misfire there.)
 # - Session-id positionals (Click param name ``session_id``). ``send-message``,
-#   ``update-session`` and ``topology`` truly RESOLVE ``self`` / ``parent`` from
-#   the local session, so they must be rejected over --remote. ``session`` and
-#   ``process`` (plus ``process stop`` / ``process wait``) treat the id literally
-#   (a session *named* "self" — implausible), so rejecting them is conservative
-#   but harmless: such an id is meaningless against a remote anyway.
+#   ``update-session``, ``topology`` and ``session`` (with its subcommands)
+#   truly RESOLVE ``self`` / ``parent`` from the local session, so they must be
+#   rejected over --remote. ``process`` (plus ``process stop`` / ``process
+#   wait``) treats the id literally (a session *named* "self" — implausible), so
+#   rejecting it is conservative but harmless: such an id is meaningless against
+#   a remote anyway.
 # - Variadic session-id positionals: ``processes stop`` (``session_ids``),
 #   ``processes wait`` (``items`` — a mixed list of ids and statuses),
 #   ``update-sessions`` (``session_ids`` — every batch sub-command) and
@@ -137,6 +139,8 @@ HOST_BOUND_PARAMS: frozenset[str] = frozenset(
 )
 
 _HOST_BOUND_KEYWORDS = frozenset({"self", "parent"})
+
+_SESSION_GROUP_FLAG_MISUSE = "--slim / --full apply to `session <id>` alone, not to `{sub}`."
 
 
 def _make_context(cmd: click.Command, args: list[str], parent: click.Context | None) -> click.Context:
@@ -230,6 +234,21 @@ def _navigate(argv: list[str]) -> tuple[str, dict]:
             # (invoke_without_command). Its own params are the bound values.
             merged.update(ctx.params)
             break
+
+        if isinstance(cmd, SessionGroup):
+            # The refusal only when a registered subcommand follows, as the
+            # local SessionGroup does (step 5); anything else falls through to
+            # the generic "unknown command" below, as Click reports it locally
+            # (step 6).
+            run_end = 0
+            while run_end < len(remaining) and remaining[run_end] in ("--slim", "--full"):
+                run_end += 1
+            if run_end and run_end < len(remaining) and remaining[run_end] in cmd.commands:
+                # `session X --full agents`: resilient mode left the run in place.
+                raise RemoteUsageError(_SESSION_GROUP_FLAG_MISUSE.format(sub=remaining[run_end]))
+            if (ctx.params.get("slim") or ctx.params.get("full")) and remaining[0] in cmd.commands:
+                # `session --full X agents`: the group took the flag, a subcommand follows.
+                raise RemoteUsageError(_SESSION_GROUP_FLAG_MISUSE.format(sub=remaining[0]))
 
         name, sub, rest = cmd.resolve_command(ctx, remaining)
         if sub is None:

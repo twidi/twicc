@@ -110,22 +110,22 @@ def serialize_network_denial(denial):
     }
 
 
-#: The reduced projection a listing returns by default (or with ``--slim``
-#: before the cutover). Lives next to the serializer on
-#: purpose: a new field gets classified the moment it is added, instead of
-#: silently landing in the full payload and never being reconsidered.
+#: The reduced projection that ``sessions``, ``sessions get``, ``session agents``,
+#: ``session <id>`` and ``whoami`` return by default from the cutover (or with
+#: ``--slim`` before it). Lives next to the serializer on purpose: a new field
+#: gets classified the moment it is added, instead of silently landing in the
+#: full payload and never being reconsidered.
 #:
-#: The rule for what stays: identity, the state a caller filtered on, and the
-#: ``has_*`` flags that say where to look next. What goes: the blobs a caller
-#: can fetch per session (``tasks``, ``plan_paths``, ``goals``, ``layout``), the
-#: four extra timestamps ``last_new_content_at`` already answers for, the paths
-#: ``project_id`` already encodes, and the agent-settings bundle, which only
-#: matters when you are about to act on one session.
+#: The rule: everything except what is verbose or of no use to a caller — the
+#: per-session blobs (``tasks``, ``plan_paths``, ``goals``, ``layout``), the
+#: redundant timestamps ``last_new_content_at`` already answers for (``mtime``,
+#: ``last_started_at``, ``last_updated_at``, ``last_stopped_at``,
+#: ``last_viewed_at``), the cost breakdown (``self_cost``, ``subagents_cost``),
+#: ``slug``, ``browser_url`` and ``compute_version_up_to_date``.
 #:
 #: Distinct from ``TOPOLOGY_SESSION_FIELDS`` (``twicc/cli/topology.py``) and
 #: deliberately so: a tree carries no visibility state, a flat listing needs
-#: it. Merging them would make a 332-node topology 17% heavier to serve a
-#: listing concern.
+#: it. Merging them would make every topology node carry listing-only fields.
 SESSION_LISTING_FIELDS = (
     # Identity, filiation included: ``parent_session_id`` is what tells a
     # subagent apart from a session — including in the ``process`` block the
@@ -141,6 +141,15 @@ SESSION_LISTING_FIELDS = (
     "mute_on_user_turn",
     # "there is more here" — each replaces a payload the caller can fetch
     "has_artifacts", "has_plan", "has_workflows", "has_tasks", "has_goals",
+    # Detail a caller acts on: where the session runs and writes, and the
+    # agent settings it runs with. Four of these (project_directory,
+    # scratch_dir, orchestration_scratch_dir, question_widget) come from the
+    # CLI enrichment (twicc/cli/_session_payload.py), which runs before this
+    # projection.
+    "last_line", "cwd", "git_directory", "project_directory", "artifacts_dir",
+    "scratch_dir", "orchestration_scratch_dir", "compacted", "hybrid",
+    "permission_mode", "selected_model", "effort", "thinking_enabled",
+    "claude_in_chrome", "fast_mode", "question_widget",
 )
 
 

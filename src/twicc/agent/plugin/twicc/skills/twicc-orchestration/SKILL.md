@@ -88,16 +88,16 @@ Avoid the interactive modes: they pause for per-tool approvals or questions, and
 Only ever wait on the children **you** spawned in normal synchronization — never on grandchildren. Each level pilots its own children; a manager's subtree is the manager's responsibility, not yours. Use `--descendants` only for exceptional cleanup of a subtree you intentionally abort.
 
 ```bash
-$TWICC sessions wait-reply <CHILD_ID>... --since 2000-01-01 --wait-timeout 300
+$TWICC sessions wait-reply <CHILD_ID>... --wait-timeout 300
 $TWICC topology self
 ```
 
-**Name the children's ids** (from each `create-session` result): a child spawned seconds ago matches no filter yet, while a named one is waited on as soon as it runs. `--since 2000-01-01` fits children never messaged since their spawn — any instant before the spawn works. Never pass today's date: a bare date is midnight UTC, a future instant puts the cursor on the last line, and an answer already given is missed. For a later round, use `send-messages --wait-reply`, or the instant captured before that send (`date -u +%Y-%m-%dT%H:%M:%SZ` from a shell).
+**Name the children's ids** (from each `create-session` result): a child spawned seconds ago matches no filter yet, while a named one is waited on as soon as it runs. The wait starts after each child's last user message, so an answer already given is returned (except while a session's compute is not current — e.g. right after a TwiCC restart: then pass `--since` an instant before the spawn or the send). For a later round, use `send-messages --wait-reply`, or pass `--since` the instant captured before that send (`date -u +%Y-%m-%dT%H:%M:%SZ` from a shell). **A send without `--wait-reply` is never followed by a wait without a cursor:** after `send-messages`, pass `sessions wait-reply` `--since` an instant taken before the send, or wait on each child with `session <ID> wait-reply --from <last_line>` (the `last_line` its entry returned); after `send-message`, `session <ID> wait-reply --from <last_line>`. `--since` is an ISO 8601 instant (no offset means UTC; a bare date means its midnight UTC); `--since` / `--from` exist only on the two wait commands, not on `create-session`, `send-message` or `send-messages`.
 
 The call exits 0 whatever the outcomes: read each `results[id].outcome`.
 
 - `replied`, `awaiting_user_input` — done (for the second, read `session <ID> pending-requests`).
-- `timeout` — repeat the same call, same `--since`, naming only those ids. This is how a wait longer than 300 s is written: keep each `--wait-timeout` ≤ 300.
+- `timeout` — repeat the same call, naming only those ids. Re-running resumes, except for a session whose compute is not current; `--since <the instant the batch started>` resumes in every case. This is how a wait longer than 300 s is written: keep each `--wait-timeout` ≤ 300.
 - `wait_failed` — the wait broke, the child still runs: repeat the same way. `backend_gone` — repeat once TwiCC is back.
 - `ended`, `provider_error`, `unknown_session` — final: a repeat returns them at once. Re-message, re-spawn, or report.
 - `pending` — only with `--wait-first`: not concluded yet, wait on it again.
@@ -126,7 +126,7 @@ Annotations are short key/value tags on a session (free-form JSON). They are **s
 What they buy you:
 
 - **An overview at a glance.** `topology self` and `sessions --spawn-tree self` carry each node's annotations, so you — and the user, on request — see who does what and where it stands without reading any transcript. The user reads the same map visually: any session in the tree has a read-only **Orchestration** tab in the UI (titles, status, cost, annotations, timing) — point the user there to follow progress (its URL is a session's URL with `/orchestration` appended, e.g. `/project/<project_id>/session/<session_id>/orchestration`).
-- **Filtering by predicate.** `sessions`, `search`, and `topology` accept `--annotation KEY=VALUE` (also `!=`, `:exists`, `:in:a,b`). Pair it with a filiation scope: `sessions --spawned-by self --annotation status=blocked` lists your blocked children. A barrier on an annotation subset (`job=review`) names **only that subset's ids** — `sessions wait-reply <REVIEW_IDS>... --since 2000-01-01`: a child spawned seconds ago matches no filter yet, and named ids are unioned with the filters, never narrowed by them.
+- **Filtering by predicate.** `sessions`, `search`, and `topology` accept `--annotation KEY=VALUE` (also `!=`, `:exists`, `:in:a,b`). Pair it with a filiation scope: `sessions --spawned-by self --annotation status=blocked` lists your blocked children. A barrier on an annotation subset (`job=review`) names **only that subset's ids** — `sessions wait-reply <REVIEW_IDS>...`: a child spawned seconds ago matches no filter yet, and named ids are unioned with the filters, never narrowed by them.
 
 Useful keys (free — conventions, not rules):
 
@@ -169,11 +169,11 @@ A session goes `starting → assistant_turn → user_turn`, then `dead` when its
 Use process controls as scoped operations:
 
 - List your direct children with `$TWICC sessions --spawned-by self --slim`: each row carries its `process.state`, and `--active` keeps the ones still running (`user_turn` counts: loaded and idle, not gone). Narrow with `--annotation status=blocked`. A child spawned seconds ago is not listed until its transcript is indexed: **name its id** — `$TWICC sessions get <ID>` returns it with its live `process` block.
-- Wait on direct children with `$TWICC sessions wait-reply <CHILD_ID>... --since 2000-01-01` (see *Wait only on your direct children*).
+- Wait on direct children with `$TWICC sessions wait-reply <CHILD_ID>...` (see *Wait only on your direct children*).
 - Stop selected children with `$TWICC sessions stop <ID>... --timeout <N>`, or with `--spawned-by self --annotation status=cancelled`.
 - Abort a subtree deliberately with `$TWICC sessions stop <manager_id> --descendants <manager_id> --timeout <N>`; `--descendants` excludes the target, and named ids are unioned with the scope, so the manager stops too.
 
-**`sessions stop` has no guardrail.** A bare call stops every running session, you included. `parent`, `--spawn-tree` and `--siblings` reach beyond your children (`--spawn-tree self` includes you): use them only when that is the intent. Use `--annotation` only with a filiation scope; alone it selects across every tree.
+**`sessions stop` refuses a bare call and never stops you**: the calling session is reported `skipped_self` (stop yourself with `session self stop`). `parent`, `--spawn-tree` and `--siblings` still reach beyond your children (`--spawn-tree self` selects you, reported `skipped_self`): use them only when that is the intent. Use `--annotation` only with a filiation scope; alone it still selects across every tree.
 
 For exact command recipes (barriers, scoped waits, races, batch stops, subtree aborts), read `control-cookbook.md` only when you need to operate live processes.
 
@@ -207,7 +207,7 @@ Workers don't orchestrate, so they can ignore this.
 - `$TWICC session <ID> messages` — pull a child's transcript. Skill: `twicc-session`.
 - `$TWICC topology self` — map your spawn tree. Skill: `twicc-topology`.
 - `$TWICC sessions --spawned-by self --active` — track your direct children. Skill: `twicc-sessions`.
-- `$TWICC sessions wait-reply <ID>... --since <INSTANT>` / `sessions stop <ID>...` — wait on or stop child batches. Skill: `twicc-sessions`.
+- `$TWICC sessions wait-reply <ID>...` / `sessions stop <ID>...` — wait on or stop child batches. Skill: `twicc-sessions`.
 - `$TWICC update-session <ID> annotations` — set tracking annotations on one session. Skill: `twicc-update-session`.
 - `$TWICC update-sessions annotations --spawned-by self --op ...` — tag (or hide / archive) several children in one call. Skill: `twicc-update-sessions`.
 - `$TWICC whoami` — your own session id, settings, and permission mode. Skill: `twicc-whoami`.

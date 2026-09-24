@@ -60,7 +60,9 @@ def send_message_cmd(
             "'timeout', 'backend_gone', or 'wait_failed'. Only a line "
             "written after this message counts, so the previous turn's "
             "answer is not returned in its place. The exit code never "
-            "changes: the message was sent either way, so read `outcome`."
+            "changes: the message was sent either way, so read `outcome`. "
+            "Without it, a separate wait must pass --from with the "
+            "`last_line` this command returns."
         ),
     ),
     wait_timeout: float = typer.Option(

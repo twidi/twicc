@@ -160,11 +160,13 @@ def test_failure_contract_fires_at_each_call_site(monkeypatch, keyword, current,
         ["artifacts", "unbookmark", "KEYWORD", "f.html"],
         ["share", "create", "session", "KEYWORD"],
         ["share", "--session", "KEYWORD"],
+        ["session", "KEYWORD"],
+        ["session", "KEYWORD", "messages"],
     ],
 )
 def test_remote_preflight_rejects_every_keyword_call_site_before_http(
         monkeypatch, keyword, argv_template):
-    """§14 remote row: both keywords fail at all four real command shapes."""
+    """§14 remote row: both keywords fail at every real command shape."""
     from twicc.cli import _remote
 
     def fail_if_client_constructed(*args, **kwargs):
@@ -175,6 +177,38 @@ def test_remote_preflight_rejects_every_keyword_call_site_before_http(
     assert _remote.maybe_forward([
         "--remote", "https://remote.example", *argv,
     ]) == 2
+
+
+@pytest.mark.parametrize("argv", [
+    ["session", "--full", "abc", "agents"],
+    ["session", "abc", "--full", "agents"],
+    ["session", "abc", "--slim", "messages"],
+])
+def test_remote_refuses_a_group_flag_before_a_subcommand(argv):
+    from twicc.cli._remote import RemoteUsageError, resolve_command
+
+    with pytest.raises(RemoteUsageError, match="apply to `session <id>` alone"):
+        resolve_command(argv)
+
+
+@pytest.mark.parametrize("argv", [
+    ["session", "abc", "--full"],
+    ["session", "--full", "abc"],
+])
+def test_remote_accepts_the_group_flag_on_the_bare_call(argv):
+    from twicc.cli._remote import resolve_command
+
+    resolved = resolve_command(argv)
+    assert resolved.path == "session"
+    assert resolved.params["full"] is True
+
+
+def test_remote_reports_an_unknown_token_after_the_flag_as_unknown():
+    from twicc.cli._remote import RemoteUsageError, resolve_command
+
+    with pytest.raises(RemoteUsageError, match="unknown command") as exc:
+        resolve_command(["session", "abc", "--full", "bogus"])
+    assert "apply to `session <id>` alone" not in str(exc.value)
 
 
 def test_remote_preflight_allows_explicit_share_session_id():

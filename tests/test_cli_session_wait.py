@@ -1,15 +1,17 @@
-"""``twicc session <ID> wait-reply`` — waiting on a session nobody just prodded.
+"""``twicc session <ID> wait-reply`` — waiting on a session nobody just prodded
+— or one you messaged yourself without ``--wait-reply`` (then pass ``--from``
+the ``last_line`` the send returned).
 
 Every other wait rides on a command that triggered the turn, so its cursor
-falls out of the send. Here nothing was sent: the caller names the line to
-start above, which is the ``line_num`` or ``since_line_num`` a previous wait
-handed back. That is the whole point — it is what makes a timed-out wait
+falls out of the send. Here nothing was sent by this command: the caller names
+the cursor, or it defaults to after the last user message. A named line is the
+``line_num`` or ``since_line_num`` a previous wait handed back. That is the whole point — it is what makes a timed-out wait
 resumable, and a batch of five that timed out needs five cursors, not one.
 
 The race that killed ``process wait --transition`` does not apply. That
 marker was read too late and then never moved again; a cursor is monotonic,
-and a session that has simply gone idle is observable — it reports ``ended``
-rather than hanging to the deadline.
+and a session that has simply gone idle is observable — with no answer past
+the cursor, it reports ``ended`` rather than hanging to the deadline.
 """
 
 from __future__ import annotations
@@ -106,9 +108,10 @@ def test_an_explicit_cursor_finds_an_answer_already_there(session, capsysbinary)
     assert code == 0
 
 
-def test_the_cursor_defaults_to_the_session_s_last_line(session, capsysbinary):
-    """"Tell me the next thing it says": the answer below the cursor belongs
-    to a turn the caller is not waiting for."""
+def test_a_session_whose_compute_is_not_current_starts_at_its_last_line(session, capsysbinary):
+    """The fixture row has no `compute_version`, so the compute-window fallback
+    applies: the cursor is the current last line, and the answer below it
+    belongs to a turn the caller is not waiting for."""
     running(session)
     answer(session, 5, "old news")  # below last_line=10
 

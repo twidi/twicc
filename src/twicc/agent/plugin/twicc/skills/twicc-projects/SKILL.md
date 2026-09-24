@@ -34,19 +34,21 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 $TWICC projects [OPTIONS]
 ```
 
-- `--limit N` — max results (default: 20; 50 with `--paginated`).
+- `--limit N` — max results (default: 20).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. **Before 2026-10-01 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size is **20**. **Before 2026-10-01 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
 - `--include-archived` — include archived projects (excluded by default).
 - `--workspace ID` — only projects belonging to this workspace.
 
 ### Batch lookup
 
 ```bash
-$TWICC projects get <PROJECT> [<PROJECT>...]
+$TWICC projects get <PROJECT> [<PROJECT>...] [--paginated]
 ```
 
 Each `PROJECT` is a directory path or a project ID (**drop the leading dash** on ids — the CLI re-adds it). Returns one entry per value in input order (duplicates collapsed). No filter flags — archived projects are returned like active ones.
+
+- `--paginated` — wrap the result in `{"items": [...]}` — **no `pagination`**: one entry per value asked, nothing to page. **Before 2026-10-01 the result is a bare array and the flag opts in; from that date `{"items": [...]}` is the only shape and the flag is an accepted no-op.** Until then a call without it prints a one-line notice on stderr (in the RPC envelope's `warnings`; never on MCP).
 
 ## Output format
 
@@ -81,11 +83,22 @@ Each `PROJECT` is a directory path or a project ID (**drop the leading dash** on
 
 Same shape per entry, plus a `known` boolean. When `known: false`, all other fields are `null`.
 
+Before 2026-10-01 (without `--paginated`), a bare array:
+
 ```json
 [
   {"id": "-home-twidi-dev-myproject", "name": "My Project", ..., "known": true},
   {"id": "-typo-or-unknown", "name": null, ..., "known": false}
 ]
+```
+
+From 2026-10-01, or with `--paginated` now, the same entries under `items` (no `pagination`):
+
+```json
+{"items": [
+  {"id": "-home-twidi-dev-myproject", "name": "My Project", ..., "known": true},
+  {"id": "-typo-or-unknown", "name": null, ..., "known": false}
+]}
 ```
 
 ### Fields

@@ -2,7 +2,7 @@
 title: "CLI / RPC migration of October 1, 2026"
 ---
 
-On **October 1, 2026**, three changes to the `twicc` CLI and the `/rpc/` API
+On **October 1, 2026**, these changes to the `twicc` CLI and the `/rpc/` API
 take effect together. Scripts and integrations that read their output must be
 updated. This page lists every change and its replacement, so that you, or an
 agent you point at this page, can update a script.
@@ -13,9 +13,10 @@ on the terminal (a script run with `TZ=UTC` switches at UTC midnight), the
 TwiCC backend for `/rpc/` and the MCP tools. With `--remote`, the clock and
 the version of the remote instance decide.
 
-**You can migrate today.** Every new behaviour is available now through a
+**You can migrate today.** Every dated change is available now through a
 flag, and each flag keeps working after the date. A script that passes them
-behaves the same on both sides of the switch.
+behaves the same on both sides of the switch. A few changes apply now,
+without a flag: see "Changed now, without a notice".
 
 **Agents on the MCP tools need nothing.** They read the new parameters and
 descriptions from the tool schemas and adapt on their own. The behaviour
@@ -30,27 +31,31 @@ script.
 
 ## How to find what is affected
 
-Until the date, an affected call still returns what it always did, plus one
-notice line per change it is affected by (a bare `sessions` call gets two):
+Until the date, an affected call still returns what it always did — except
+the changes listed in "Changed now, without a notice" (the `share` page size,
+`artifacts_dir`, the effective agent settings, the new keys) — plus one notice
+line per change it is affected by (a flagless `sessions`, `sessions get` or
+`session agents` call gets two):
 
 - on the terminal, on **stderr**, starting with `twicc:`;
 - over `/rpc/`, in a **`warnings`** key of the response envelope.
 
 Run your scripts once and look for these notices. They name the command, the
-date, and what to pass instead. A call that prints none is not affected.
+date, and what to pass instead. A call that prints none is not affected by a
+dated change; the changes of "Changed now, without a notice" print no notice.
 
 ## 1. Listings return a page envelope
 
 The commands that return a list stop returning a bare JSON array. They return
-an object, and they page at **50** by default.
+an object. Every listing pages at **20** by default.
 
 | Command | Default page today | From October 1 |
 |---|---|---|
-| `projects`, `workspaces`, `sessions`, `artifacts` | 20 | 50 |
-| `session <id> agents`, `session <id> workflows` | 20 | 50 |
-| `search` | 20 | 50 |
-| `share` | 50 | 50 |
-| `session <id> content`, `session <id> messages` | **everything** | **50** |
+| `projects`, `workspaces`, `sessions`, `artifacts` | 20 | 20 |
+| `session <id> agents`, `session <id> workflows` | 20 | 20 |
+| `search` | 20 | 20 |
+| `share` | 20 (it was 50: changed now) | 20 |
+| `session <id> content`, `session <id> messages` | **everything** | **20** |
 
 Before:
 
@@ -63,37 +68,38 @@ From October 1:
 ```json
 {
   "items": [ {"id": "…"}, {"id": "…"} ],
-  "pagination": {"limit": 50, "offset": 0, "total": 134, "has_more": true}
+  "pagination": {"limit": 20, "offset": 0, "total": 134, "has_more": true}
 }
 ```
 
-- **Migrate now:** pass `--paginated`. You get the envelope and the 50-item
+- **Migrate now:** pass `--paginated`. You get the envelope and the 20-item
   page today. From October 1 the flag is accepted and does nothing.
 - **Read the items:** `jq '.[]'` becomes `jq '.items[]'`.
 - **Read everything:** loop on `--offset` while `pagination.has_more` is
   `true`, or pass an explicit `--limit`.
 - **`session content` and `session messages`** returned every item when no
-  `--limit` was given. They now return 50. Pass `--limit` (or `--tail N`) if
+  `--limit` was given. They now return 20. Pass `--limit` (or `--tail N`) if
   you read them whole. `session <id> content` with no selector used to be
   refused; it now returns the first page.
 - **`search`** already returned an object. It renames `hits` to `items` and
   `total_hits` to `pagination.total`, and moves `limit` / `offset` under
   `pagination`. The other keys, `query` included, stay at the top level.
-- **Unchanged:** the batch lookups keep returning a bare array, one entry per
-  id you named — `sessions get`, `projects get`, `workspaces get`.
+- **The batch lookups and `peers`** return `items` too, without
+  `pagination`: see section 3.
 
-## 2. Session listings return a reduced projection
+## 2. Session commands return a reduced projection
 
-The commands that return **several sessions** stop returning every field of
-each session. They return a reduced projection, about 60% lighter. The
-commands that return **one** session (`session <id>`, `whoami`) are
-unchanged.
+The commands that return sessions stop returning every field of each
+session. They return a reduced projection: every field except the verbose
+ones and the ones of no use to a caller.
 
 | Command | From October 1 |
 |---|---|
 | `sessions` | reduced projection |
 | `sessions get <ids>` | reduced projection, placeholders included |
 | `session <id> agents` | reduced projection |
+| `session <id>` | reduced projection |
+| `whoami` | the `session self` payload, reduced (see below) |
 | `topology` | sessions already reduced; the `process` block of each node becomes `{"state": …}` |
 
 The reduced projection keeps: `id`, `project_id`, `provider`, `title`,
@@ -101,17 +107,19 @@ The reduced projection keeps: `id`, `project_id`, `provider`, `title`,
 `last_new_content_at`, `context_usage`, `context_max`, `total_cost`,
 `user_message_count`, `model`, `git_branch`, `archived`, `hidden`, `pinned`,
 `stale`, `unavailable_reason`, `mute_on_user_turn`, `has_artifacts`,
-`has_plan`, `has_workflows`, `has_tasks`, `has_goals`, and a `process` block
+`has_plan`, `has_workflows`, `has_tasks`, `has_goals`, `last_line`, `cwd`,
+`git_directory`, `project_directory`, `artifacts_dir`, `scratch_dir`,
+`orchestration_scratch_dir`, `compacted`, `hybrid`, the agent settings
+(`permission_mode`, `selected_model`, `effort`, `thinking_enabled`,
+`claude_in_chrome`, `fast_mode`, `question_widget`), and a `process` block
 reduced to `{"state": …}` (`null` on a subagent row, which has no process of
 its own).
 
-It drops: `last_line`, `mtime`, `last_started_at`, `last_updated_at`,
-`last_stopped_at`, `last_viewed_at`, `slug`, `compute_version_up_to_date`,
-`self_cost`, `subagents_cost`, `cwd`, `git_directory`, the agent settings
-(`permission_mode`, `selected_model`, `effort`, `thinking_enabled`,
-`claude_in_chrome`, `fast_mode`), `compacted`, `layout`, `browser_url`,
-`tasks`, `plan_paths`, `goals`, `hybrid`, `artifacts_dir`, and the `id`,
-`started_at`, `last_state_change_at`, `pid` of the `process` block.
+It drops: `mtime`, `last_started_at`, `last_updated_at`, `last_stopped_at`,
+`last_viewed_at`, `slug`, `compute_version_up_to_date`, `self_cost`,
+`subagents_cost`, `layout`, `browser_url`, `tasks`, `plan_paths`, `goals`,
+and the `id`, `started_at`, `last_state_change_at`, `pid` of the `process`
+block.
 
 - **Keep the full payload:** pass `--full`. It works today and stays after the
   date.
@@ -121,9 +129,54 @@ It drops: `last_line`, `mtime`, `last_started_at`, `last_updated_at`,
 - **`topology`:** `--full` gives every node its full session and its
   five-field `process` block. `--full-sessions` still works, as an alias of
   `--full`.
-- **One session in detail:** `twicc session <id>` still returns everything.
+- **One session:** `twicc session <id>` takes `--slim` and `--full` too,
+  before or after the id (`session <id> --full` or `session --full <id>`),
+  never before a subcommand (`session <id> --full agents` exits `2`; write
+  `session <id> agents --full`). It also accepts `self` (your own session)
+  and `parent` (the session that spawned you).
+- **`whoami`** takes `--slim` and `--full` today. With a flag, and from
+  October 1 without one, it returns exactly what `session self` returns with
+  the same flag: the session row with its `process` block inside. Until then
+  a flagless `whoami` keeps its current object. **Pass `--slim` or `--full`
+  now**, so a script reads the same keys on both sides of the date. The
+  removed keys are read from:
 
-## 3. `process` and `processes` stop working
+  - `session_id` → `id`
+  - `title`, `project_id`, `project_directory`, `artifacts_dir`,
+    `scratch_dir` → same names
+  - `orchestration_scratch_dir` → same name, `null` instead of absent outside
+    an orchestration
+  - `current_working_directory` → `git_directory`
+  - `agent_settings.<field>` → `<field>` (effective values)
+  - `session.<field>` → `<field>` (with `--full` for the fields the reduced
+    projection drops)
+  - `process` (nine fields) → `process`: `{"state": …}`, or five fields
+    (`id`, `state`, `started_at`, `last_state_change_at`, `pid`) with
+    `--full`; `provider`, `session_id`, `session_title`, `project_id` are the
+    row's own `provider`, `id`, `title`, `project_id`
+
+  So `whoami | jq .process.pid` needs `--full`.
+
+## 3. Batch lookups and `peers` return `items`
+
+The commands that read several objects by id, and `peers`, return their
+entries under `items`, like the listings — but with **no `pagination`**: a
+lookup returns exactly one entry per id you named, `peers` every approved
+peer.
+
+| Command | Today | From October 1 |
+|---|---|---|
+| `sessions get <ids>` | `[ {…}, … ]` | `{"items": [ {…}, … ]}` |
+| `projects get <ids>` | `[ … ]` | `{"items": [ … ]}` |
+| `workspaces get <ids>` | `[ … ]` | `{"items": [ … ]}` |
+| `peers` | `{"peers": [ … ]}` | `{"items": [ … ]}` |
+
+- **Migrate now:** pass `--paginated`. You get `{"items": […]}` today. From
+  October 1 the flag is accepted and does nothing.
+- **Read the entries:** `jq '.[]'` becomes `jq '.items[]'`; for `peers`,
+  `jq '.peers[]'` becomes `jq '.items[]'`.
+
+## 4. `process` and `processes` stop working
 
 The seven commands below are deprecated until the date. From October 1 they
 **exit `64`** with an error naming their replacement. Over `/rpc/`, their
@@ -148,13 +201,15 @@ its parent's process.
 ### Reading state
 
 - `process <id>` exited `1` when nothing ran. `session <id>` exits `0` and
-  reports `"process": {"state": "dead", …}`. Test `process.state`, not the
-  exit code.
+  reports `"process": {"state": "dead"}` (from October 1 without `--full`;
+  `--full` adds `id`, the timestamps and `pid`). Test `process.state`, not
+  the exit code.
 - A session spawned seconds ago may not be in the database yet (no session
   row), or may have a row with no user message yet. `session <id>` exits `1`
-  on both, and `sessions --active` does not list them. Use
-  `sessions get <id>`: with no row it returns a `known: false` placeholder
-  that still carries the live `process` block.
+  when there is no row (a row with no user message is returned), and
+  `sessions --active` lists neither. Use `sessions get <id>`: with no row it
+  returns a `known: false` placeholder that still carries the live `process`
+  block.
 - **The keys change.** `processes`, `processes get` and `process <id>`
   returned a process row. The session commands return a session row with a
   `process` block:
@@ -167,7 +222,7 @@ its parent's process.
   - `id` (the process run id) → `process.id`
   - `started_at`, `last_state_change_at`, `pid` → the same names under
     `process` (from October 1, `process.id` and these three need `--full`
-    on `sessions` and `sessions get`; `session <id>` always carries them)
+    on `sessions`, `sessions get` and `session <id>`)
   - `session_known` (`processes get`) → `known` (`sessions get`)
 
   **The top-level `id` changes meaning:** it was the process run id, it is
@@ -182,18 +237,26 @@ its parent's process.
 SIGKILL) and `--timeout` as before. `sessions stop` selects more widely than
 `processes stop`:
 
-- **A bare `sessions stop` stops every running session, the caller
-  included.** `processes stop` refused a bare call. Never run it with an
-  empty id list by accident.
+- **A bare `sessions stop` is refused** (exit `1`), as `processes stop`
+  refused one: pass at least one id or one filter. "Stop everything running"
+  is written on purpose: `sessions stop --state starting --state
+  assistant_turn --state awaiting_user_input --state user_turn`.
+- **`sessions stop` never stops the caller.** Named (`self` included) or
+  selected by a filter, the calling session is reported with the status
+  `skipped_self`; `session self stop` stops it.
 - It accepts `--spawned-by parent`, `--descendants parent`, `--spawn-tree`
   and `--siblings`, which `processes stop` refused, and `--annotation`
   without a filiation scope. Pair `--annotation` with `--spawned-by` or
   `--descendants`. It also takes `--project`, `--workspace`, `--provider`
   and `--state`.
-- Filters select only **running** sessions: the result has one entry per
+- Filters select only **running** sessions: `results` has one entry per
   running session, not one per session in the scope (named ids are always
   reported). `processes stop --descendants X` listed every session of the
   subtree.
+- **The output is `{summary, results}`**, where `processes stop` returned an
+  array: `summary` holds `total`, `succeeded` (`status: stopped`), `failed`
+  (every other status) and `all_succeeded`; `results` is an object keyed by
+  session id, each value the entry `processes stop` gave for that id.
 - Named ids are **added** to what the filters select:
   `sessions stop <MANAGER_ID> --descendants <MANAGER_ID>` stops a manager and
   its subtree.
@@ -207,11 +270,21 @@ replacement for that: waiting on `starting`, `assistant_turn`, `user_turn` or
 or a pending request (a tool approval or a question) that only a human can
 clear.
 
+**The simplest form is `--wait-reply` on the command that sends**
+(`create-session`, `send-message`, `send-messages`): it reads its cursor
+server-side and needs nothing from you. **A send without `--wait-reply` is
+never followed by a wait without a cursor:** after `send-message`, pass
+`session <id> wait-reply --from <last_line>` the `last_line` the send
+returned; after `send-messages`, pass `sessions wait-reply --since` an
+instant taken before the send, or one `session <id> wait-reply --from
+<last_line>` per id. `--from` and `--since` exist only on the two wait
+commands (`sessions wait-reply` takes `--since` only), not on
+`create-session`, `send-message` or `send-messages`.
+
 Replacements:
 
 - `processes wait <ids> user_turn dead --timeout N`, on sessions spawned for
-  this wait → `sessions wait-reply <ids> --since 2000-01-01 --wait-timeout N`
-  (see "The cursor" below before reusing it on older sessions).
+  this wait → `sessions wait-reply <ids> --wait-timeout N`.
 - `processes wait … --first` → `sessions wait-reply … --wait-first`.
 - `process <id> wait user_turn` right after `create-session` →
   `create-session --wait-reply`.
@@ -224,16 +297,18 @@ Replacements:
 
 Details:
 
-- **The cursor.** Without `--since` (or `--from`), each session starts above
-  its current last line: an answer written before the wait started is
-  missed, and that session reports `ended` (or `timeout` if its turn is
-  still running). For sessions spawned for this wait and not messaged since,
-  pass **`--since 2000-01-01`**. On a session that already had turns, that
-  instant returns its **first** answer ever: pass an instant just before the
-  message you are waiting on, or `--from` a line number. Never pass today's
-  date: a bare date means midnight UTC, and ahead of UTC it can be in the
-  future. To resume one session, pass `--from <since_line_num>` with the
-  cursor a previous wait returned.
+- **The cursor.** Without `--since` (or `--from`), each session starts
+  **after its last user message**, so an answer written before the wait
+  started is returned. While a session's compute is not current — e.g.
+  right after a TwiCC restart, until the background compute reaches it —
+  it starts at its current last line instead: an answer written before the
+  wait is then missed (`ended`), so pass `--since` an instant before the
+  spawn or the send. After a send without `--wait-reply`, pass `--since` an
+  instant taken before the send, or `--from` the `last_line` the send
+  returned. `--since` is an ISO 8601 instant (`2026-09-30T14:05:00+00:00`;
+  no offset means UTC; a bare date means its midnight UTC). To resume one
+  session, pass `--from <since_line_num>` with the cursor a previous wait
+  returned.
 - **The result.** `sessions wait-reply` returns `summary` and `results`,
   an **object keyed by session id** (the old `processes wait` returned an
   array). Each value is a reply block: `outcome`, `line_num`, `is_final`,
@@ -261,7 +336,9 @@ Details:
 - **`--wait-first`** also stops on `awaiting_user_input`. In a race, check
   `outcome == "replied"` before you call a winner.
 - **Longer than 300 s.** Keep `--wait-timeout` at 300 or less and repeat the
-  call with the same `--since`, naming only the ids still to wait on: those
+  call. Re-running resumes, except for a session whose compute is not
+  current; `--since <the instant the batch started>` resumes in every case.
+  Name only the ids still to wait on: those
   whose `outcome` is `timeout` or `wait_failed`, and those on `backend_gone`
   once TwiCC is back. `ended`, `provider_error` and `unknown_session` are
   final: the same call returns them again (`ended` after its ~5 s flush
@@ -273,6 +350,49 @@ Details:
   name the ids you just spawned. Named ids are added to what the filters
   select, never narrowed by them: to wait on a subset, name only that
   subset.
+- **Known limit (Claude Code), rare and accepted.** A message sent while a
+  Claude session is busy is queued by Claude and recorded as a queued
+  command, not as a user message. Every wait for an answer — `--wait-reply`
+  included, with a cursor or the default — returns the first final message
+  past its cursor, which is then the running turn's closing message.
+  Usually that turn read the queued message and its closing message covers
+  it; in the rare case where the queued message runs as a turn of its own
+  afterwards, the wait returns an answer that does not cover it. Message a
+  session once it has finished, not while it works.
+
+## Changed now, without a notice
+
+Nothing released breaks before October 1: a change that only adds (a new
+key, a new flag, a new keyword, an error that becomes an answer) applies now,
+and everything else waits for the date and is announced by a notice. Three
+changes of released values are exceptions and apply now, without a notice:
+
+- **`share` pages at 20** by default (it was 50). Pass `--limit 50` to keep
+  the old page.
+- **`artifacts_dir` is always the session's folder path** on `sessions`,
+  `sessions get`, `session <id>` and `session <id> agents` (it was `null`
+  until an artifact existed). Over `/rpc/` and MCP `has_artifacts` says
+  whether the folder holds anything; from a terminal `has_artifacts` is
+  always `false`, so check the folder itself. A `sessions get` placeholder
+  keeps `artifacts_dir: null`.
+- **The agent settings are effective values** on the same commands: the
+  stored value, else the current default (`question_widget` `true` when not
+  chosen), where they were the stored value, often `null`. A subagent row
+  keeps its stored values, mostly `null`: it runs inside its parent's
+  process.
+
+Additive changes, applied now:
+
+- The keys `project_directory`, `scratch_dir`, `orchestration_scratch_dir`
+  and `question_widget` on `sessions`, `sessions get` (`null` on a
+  placeholder), `session <id>`, `session <id> agents` and `whoami` with a
+  flag — not on `topology` nodes, nor in the `session` sub-object of a
+  flagless `whoami`.
+- `session self` and `session parent` (and their subcommands, e.g.
+  `session self stop`).
+- `session <id>` answers for a row with no user message yet (it exited `1`).
+- `--slim` / `--full` on `session <id>` and `whoami`; `--paginated` on
+  `sessions get`, `projects get`, `workspaces get` and `peers`.
 
 ## `/rpc/` specifics
 
@@ -289,19 +409,24 @@ Details:
 
 ## Checklist for a script
 
-1. Replace every `twicc process …` / `twicc processes …` call (section 3).
+1. Replace every `twicc process …` / `twicc processes …` call (section 4).
 2. For each listing, pass `--paginated` now **and** read `.items`, looping on
    `pagination.has_more` or passing an explicit `--limit` (section 1).
 3. For `session content` / `session messages`, also pass `--limit` if you
-   need more than 50 items.
+   need more than 20 items.
 4. For `search`, pass `--paginated` and read `items` and `pagination.total`
    instead of `hits` and `total_hits`.
-5. For `sessions`, `sessions get`, `session <id> agents` and `topology`, pass
-   `--full` if you read a field the reduced projection drops, or the `pid`
-   and timestamps of the `process` block; otherwise pass `--slim` (section 2).
-6. Where a script read `process` / `processes` output, map the keys (section
-   3, "Reading state"), and test `outcome` instead of the exit code of a
+5. For `sessions`, `sessions get`, `session <id>`, `session <id> agents` and
+   `topology`, pass `--full` if you read a field the reduced projection
+   drops, or the `pid` and timestamps of the `process` block; otherwise pass
+   `--slim` (section 2).
+6. For `sessions get`, `projects get`, `workspaces get` and `peers`, pass
+   `--paginated` and read `.items` (section 3). For `whoami`, pass `--slim`
+   or `--full` and read the new keys (`id`, `git_directory`, the agent
+   settings at the top level; section 2).
+7. Where a script read `process` / `processes` output, map the keys (section
+   4, "Reading state"), and test `outcome` instead of the exit code of a
    wait.
-7. Run the script before the date. No notice must remain: no stderr line
+8. Run the script before the date. No notice must remain: no stderr line
    starting with `twicc: from` or `` twicc: `twicc ``, and no `warnings` key
    in `/rpc/` responses.

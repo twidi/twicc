@@ -31,14 +31,14 @@ A manager has to spawn children and report up. Through the `$TWICC` CLI that nee
 Report to your parent with `send-message parent`; your parent may also pull you at any time. For bulky output — e.g. a synthesis you build from your workers' results — write it to the shared scratch space and point to it in a short message (see `twicc-orchestration`). Track your direct children with `$TWICC sessions --spawned-by self --active --slim`. Wait only on **your own direct children**, never grandchildren, named by id:
 
 ```bash
-$TWICC sessions wait-reply <CHILD_ID>... --since 2000-01-01 --wait-timeout 300
+$TWICC sessions wait-reply <CHILD_ID>... --wait-timeout 300
 ```
 
-Repeat the same call, same `--since`, naming only the ids whose `results[id].outcome` is `timeout`; the other outcomes and the `--since` choice are in `twicc-orchestration` (*Wait only on your direct children*).
+Repeat the same call, naming only the ids whose `results[id].outcome` is `timeout`. Re-running resumes, except for a session whose compute is not current; `--since <the instant the batch started>` resumes in every case. The other outcomes and the later-round cursor are in `twicc-orchestration` (*Wait only on your direct children*).
 
 ## Handle failures locally first
 
-If a child fails, deal with it yourself first — retry, re-split, or spawn a replacement. If you intentionally abort selected children, stop them by id (`$TWICC sessions stop <ID>... --timeout 30`) or with a scoped batch such as `$TWICC sessions stop --spawned-by self --annotation status=cancelled --timeout 30` — never bare, which stops every running session, you included. Escalate to your parent (`send-message parent`) only when the mandate is genuinely blocked.
+If a child fails, deal with it yourself first — retry, re-split, or spawn a replacement. If you intentionally abort selected children, stop them by id (`$TWICC sessions stop <ID>... --timeout 30`) or with a scoped batch such as `$TWICC sessions stop --spawned-by self --annotation status=cancelled --timeout 30` — a bare call is refused, and `sessions stop` never stops you (`skipped_self`). Escalate to your parent (`send-message parent`) only when the mandate is genuinely blocked.
 
 ## Same as a leader, except…
 
@@ -51,7 +51,7 @@ Everything else mirrors `twicc-orchestration-leader`: how you decompose, brief, 
 - `$TWICC send-messages --spawned-by self --message <TEXT>` — broadcast the same message to several of your children at once. Skill: `twicc-send-messages`.
 - `$TWICC topology self` — map your subtree. Skill: `twicc-topology`.
 - `$TWICC sessions --spawned-by self --slim` — track your direct children: each row carries its `process` block, finished ones included (`dead`); `--active` narrows to the ones still running. Careful: `user_turn` counts as active (the agent is loaded and idle), so a worker that just finished is still `--active`; `--state assistant_turn` is the one that means "still generating". A child spawned seconds ago is not listed yet: `sessions get <ID>`. Skill: `twicc-sessions`.
-- `$TWICC sessions wait-reply <ID>... --since <INSTANT>` / `sessions stop <ID>...` — wait on or stop direct child batches.
+- `$TWICC sessions wait-reply <ID>...` / `sessions stop <ID>...` — wait on or stop direct child batches.
 - `$TWICC session <ID> messages` — pull a child's transcript. Skill: `twicc-session`.
 - `$TWICC update-session <ID> annotations` — set tracking annotations on one session. Skill: `twicc-update-session`.
 - `$TWICC update-sessions annotations --spawned-by self --op ...` — tag (or hide / archive) several children in one call. Skill: `twicc-update-sessions`.

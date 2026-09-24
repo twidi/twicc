@@ -49,8 +49,9 @@ def make_run(sid):
 
 
 def test_an_unknown_id_is_reported_not_dropped(project, db):
-    """One entry per input id is the contract both commands publish: a caller
-    zips its ids against the output."""
+    """One entry per input id is the contract of the shared function:
+    `processes stop` emits the list as is, `sessions stop` re-keys it by id
+    under `results`."""
     result = _stop_batch.stop_session_ids(
         ["ghost"], timeout=1, force=False, twicc_pid=TWICC_PID,
     )
@@ -89,8 +90,8 @@ def test_a_stale_session_is_refused_with_its_own_status(project, db):
 
 
 def test_the_output_follows_the_input_order(project, db):
-    """A caller aligns the array with the ids it passed; reordering breaks
-    every `zip(ids, output)` silently."""
+    """`processes stop` emits this list as is and `sessions stop` keys it
+    under `results` in the same order, so a reordering breaks both."""
     result = _stop_batch.stop_session_ids(
         ["c", "a", "b"], timeout=1, force=False, twicc_pid=TWICC_PID,
     )
@@ -137,3 +138,44 @@ def test_a_row_from_another_instance_does_not_count_as_known(project, db):
     )
 
     assert result[0]["session_known"] is False
+
+
+def test_the_caller_is_skipped_before_any_submission(project, monkeypatch):
+    """No drop is submitted for the caller; its entry says where to go instead."""
+    make_session(project, "me")
+
+    def no_submit(payload, *, kind):
+        raise AssertionError(f"nothing may be submitted here, got {payload}")
+
+    monkeypatch.setattr("twicc.cli._drop_request.transport.submit", no_submit)
+    [entry] = _stop_batch.stop_session_ids(
+        ["me"], timeout=1, force=False, twicc_pid=TWICC_PID, caller_id="me",
+    )
+    assert entry["status"] == "skipped_self"
+    assert entry["request_uuid"] is None
+    assert "`session self stop`" in entry["error"]
+    assert entry["session_known"] is True
+
+
+def test_processes_stop_passes_no_caller(project, monkeypatch, capsysbinary):
+    """The retired command keeps stopping the caller until its removal."""
+    from twicc.cli import processes_stop
+
+    monkeypatch.setattr("twicc.cli._drop_request.transport.ensure_server_available", lambda: None)
+    monkeypatch.setattr(
+        "twicc.cli._twicc_info.resolve_live_twicc", lambda: type("I", (), {"pid": TWICC_PID})(),
+    )
+    # A real caller, so a mutant that resolved it and passed `caller_id=`
+    # would be seen (with no caller it would pass `None` and survive).
+    me = make_session(project, "me")
+    monkeypatch.setattr("twicc.cli._drop_request.whoami.resolve_current_session", lambda: me)
+    seen = {}
+
+    def fake_stop(ids, **kwargs):
+        seen.update(kwargs, ids=list(ids))
+        return []
+
+    monkeypatch.setattr("twicc.cli._stop_batch.stop_session_ids", fake_stop)
+    processes_stop.stop_cmd(["me"], timeout=5)
+    assert seen["ids"] == ["me"], "the caller reaches the stopper"
+    assert "caller_id" not in seen

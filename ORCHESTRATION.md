@@ -55,7 +55,7 @@ Orchestration uses only the two **non-interactive** extremes of each provider �
 
 ## Annotations: a map of the tree
 
-Annotations are short key/value tags (free-form JSON) on a session. They turn a tree of opaque sessions into something an orchestrator — and, on request, the user — can read at a glance, because `topology self` and `sessions --spawn-tree self` carry each node's annotations, and `sessions` / `search` / `topology` can filter by them. An annotation is paired with a filiation scope, e.g. `sessions --spawned-by self --annotation status=blocked` for direct children. A barrier on an annotated subset names only that subset's ids (`sessions wait-reply <REVIEW_IDS> --since 2000-01-01`): a child spawned seconds ago matches no filter yet, and named ids are unioned with the filters, never narrowed by them.
+Annotations are short key/value tags (free-form JSON) on a session. They turn a tree of opaque sessions into something an orchestrator — and, on request, the user — can read at a glance, because `topology self` and `sessions --spawn-tree self` carry each node's annotations, and `sessions` / `search` / `topology` can filter by them. An annotation is paired with a filiation scope, e.g. `sessions --spawned-by self --annotation status=blocked` for direct children. A barrier on an annotated subset names only that subset's ids (`sessions wait-reply <REVIEW_IDS>`): a child spawned seconds ago matches no filter yet, and named ids are unioned with the filters, never narrowed by them.
 
 Conventional keys (free, not enforced):
 
@@ -86,11 +86,11 @@ A session goes `starting → assistant_turn → user_turn`, then `dead` when its
 `sessions stop` and `sessions wait-reply` accept `--annotation` alone, across every tree: use them scoped, on a node's own children or subtree.
 
 - **Observing the direct children** with `sessions --spawned-by self --active`, or narrowing them with `sessions --spawned-by self --annotation status=blocked`. A child spawned seconds ago is not listed yet: `sessions get <id>` reads it.
-- **Waiting for the direct children** with `sessions wait-reply <child ids> --since 2000-01-01 --wait-timeout 300`, named by id. When only a phase or role should participate, name only that subset's ids. The call exits `0` whatever the outcomes: a child still on `timeout` is waited on again (same `--since`, only those ids); `ended`, `provider_error` and `unknown_session` are final.
+- **Waiting for the direct children** with `sessions wait-reply <child ids> --wait-timeout 300`, named by id: each wait starts after the child's last user message, so an answer already given is returned (except while a session's compute is not current — e.g. right after a TwiCC restart: then pass `--since` an instant before the spawn or the send). When only a phase or role should participate, name only that subset's ids. The call exits `0` whatever the outcomes: a child still on `timeout` is waited on again (the same call, only those ids — re-running resumes, except for a session whose compute is not current; `--since <the instant the batch started>` resumes in every case); `ended`, `provider_error` and `unknown_session` are final.
 - **Stopping a selected batch** with `sessions stop --spawned-by self --annotation status=cancelled --timeout <N>`, or explicit session ids when the losing or runaway children are known exactly.
 - **Cleaning up a subtree**, only when it is intentionally aborted: `sessions stop <manager_id> --descendants <manager_id> --timeout <N>` stops the manager plus its proper descendants (the id and the scope are unioned).
 
-`sessions stop` has no guardrail: a bare call stops every running session, the caller included, and `parent`, `--spawn-tree` or `--siblings` reach beyond a node's own children.
+`sessions stop` refuses a bare call and never stops the caller (reported `skipped_self`; `session self stop` stops it), but `parent`, `--spawn-tree` or `--siblings` still reach beyond a node's own children, and `--annotation` alone still selects across every tree.
 
 ## Patterns
 

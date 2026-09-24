@@ -105,11 +105,10 @@ Symmetrically: an incoming message that opens with this header comes from anothe
 
 - `0` — Message sent
 - `1` — Local validation error
-- `2` — TwiCC server not running
+- `2` — TwiCC server not running, or bad CLI usage (unknown option, missing argument; the error message tells them apart)
 - `3` — Server rejected
 - `4` — Server error
 - `5` — Timeout
-- `64` — Bad CLI usage
 
 ## Examples
 
@@ -148,13 +147,15 @@ It adds a `reply` block: `outcome`, `line_num`, `is_final`, `since_line_num`, `w
 
 **Only a line written after your message counts.** `since_line_num` is the transcript cursor, read server-side the instant the agent took it, so the *previous* turn's closing message is not returned in its place — the trap a separate wait started after the send falls into. Chaining `--wait-reply` calls is safe by construction: each one returns only once the answer is indexed, so the next cursor is always past it. A timeout is not a failure: the agent keeps working, and that cursor is what you resume from — with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`), the command that takes one. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. The exit code only ever says whether the message was sent.
 
+**Known limit (Claude Code), rare and accepted.** A message sent while a Claude session is busy is queued by Claude and recorded as a queued command, not as a user message. Every wait for an answer — `--wait-reply` included, with a cursor or the default — returns the first final message past its cursor, which is then the running turn's closing message. Usually that turn read the queued message and its closing message covers it; in the rare case where the queued message runs as a turn of its own afterwards, the wait returns an answer that does not cover it. In an orchestration, message a session once it has finished, not while it works.
+
 `since_line_num: 0` on a `replied` means no cursor came back (a backend older than the flag). The wait then started from the top of the turn, so check the answer is the one you expected.
 
 An agent that blocks on a click **during** the turn ends the wait, with `outcome: awaiting_user_input`. Read it with `$TWICC session <SESSION_ID> pending-requests` (skill: `twicc-session`). An entry whose `kind` is `question` you can answer yourself, with `answer-questions` — the plain read already carries the question ids and options, so **never pass `--raw` to answer**. Anything else is the user's to clear in the UI; `--raw` is how you tell them what it is about, and it returns the whole payload, diff included. A target already blocked when you send is a different case: it is refused outright (exit 3, above).
 
 Without `--wait-reply`:
 
-- Wait later: `$TWICC session <SESSION_ID> wait-reply --from <LAST_LINE>`, with the `last_line` of the send result as the cursor. Exit `0` on `replied` / `awaiting_user_input`, `5` on `timeout` / `ended` / `provider_error`, `2` on `backend_gone`, `1` on a refusal or `wait_failed`. Skill: `twicc-session`.
+- Wait later: `$TWICC session <SESSION_ID> wait-reply --from <LAST_LINE>`, with the `last_line` of the send result as the cursor. **Never follow a send without `--wait-reply` by a wait without a cursor**: the default cursor (after the last user message) could land before your message is indexed and return the previous answer. `--from` and `--since` (an ISO 8601 instant; no offset means UTC; a bare date means its midnight UTC) exist only on `session <ID> wait-reply` (both) and `sessions wait-reply` (`--since` only) — not on this command, whose `--wait-reply` reads the cursor server-side. Exit `0` on `replied` / `awaiting_user_input`, `5` on `timeout` / `ended` / `provider_error`, `2` on `backend_gone`, `1` on a refusal or `wait_failed`. Skill: `twicc-session`.
 - Check state (snapshot): `process.state` from `$TWICC session <SESSION_ID>` — still working, blocked, or done? Skill: `twicc-session`.
 - Read the reply: `$TWICC session <SESSION_ID> messages --tail 1`.
 
@@ -169,7 +170,7 @@ Without `--wait-reply`:
 - `$TWICC update-session <session_id> settings` — change agent settings before sending. Skill: `twicc-update-session`.
 - `$TWICC session <session_id> stop` — stop the live agent. Skill: `twicc-session`.
 - `$TWICC sessions --state awaiting_user_input` — find sessions blocked on user input. Skill: `twicc-sessions`.
-- `$TWICC session <session_id>` — full session metadata. Skill: `twicc-session`.
+- `$TWICC session <session_id>` — one session's row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
 - `$TWICC sessions --project <PROJECT>` — find session ids. Skill: `twicc-sessions`.
 
 ## How to present results

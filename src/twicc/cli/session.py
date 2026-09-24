@@ -7,7 +7,7 @@ import orjson
 import typer
 
 from twicc.cli._output import (
-    emit_error, emit_json, emit_list, pagination_notice, resolve_limit, slim_notice,
+    PAGINATED_DEFAULT_LIMIT, emit_error, emit_json, emit_list, pagination_notice, resolve_limit, slim_notice,
 )
 
 
@@ -65,38 +65,56 @@ def _slice_window(seq, total: int, *, limit: int | None, offset: int, tail: int 
     return seq[offset:]
 
 
-def main(session_id: str) -> None:
-    """Fetch a single session by ID and print its JSON representation to stdout.
+def build_session_payload(session, *, slim: bool) -> dict:
+    """The row `session <id>` emits: enriched, projected, then its process block.
 
-    Carries the same ``process`` block ``sessions`` puts on every row, built by
-    the same helper: the two commands take the same argument and name the same
-    thing, so answering the live state on one and omitting it on the other
-    sent a caller after a single session through the listing to get it.
+    Shared with `whoami` (new shape), which already holds the row.
     """
-    import django
-
-    django.setup()
-
     from twicc.cli._process_state import (
         attach_process_blocks,
         load_process_rows,
         resolve_listing_twicc_pid,
     )
-    from twicc.core.serializers import serialize_session
+    from twicc.cli._session_payload import cli_session_payloads
+    from twicc.core.serializers import slim_session
 
-    session = _get_session(session_id)
-    data = serialize_session(session)
-
-    # A subagent's answer is known by construction — it runs inside its
-    # parent's process — so nothing is read for one, as `session <ID> agents`
-    # already does for a whole page of them.
+    data = cli_session_payloads([session])[0]
+    if slim:
+        data = slim_session(data)
+    # A subagent runs inside its parent's process: nothing to read for one,
+    # not even the pid.
     rows = (
-        {} if data["parent_session_id"] is not None
-        else load_process_rows([data["id"]], resolve_listing_twicc_pid())
+        {} if session.parent_session_id is not None
+        else load_process_rows([session.id], resolve_listing_twicc_pid())
     )
-    attach_process_blocks([data], rows, slim=False)
+    attach_process_blocks([data], rows, slim=slim)
+    return data
 
-    emit_json(data)
+
+def main(session_id: str, *, slim: bool = False, full: bool = False) -> None:
+    """Print one session row: any ``Session`` row with that id, as ``sessions get``.
+
+    Carries the same ``process`` block ``sessions`` puts on every row, built by
+    the same helper: the two commands take the same argument and name the same
+    thing, so answering the live state on one and omitting it on the other
+    sent a caller after a single session through the listing to get it.
+
+    Reduced by default from the cutover (full plus a notice before it);
+    ``--full`` / ``--slim`` choose. The transcript readers (content, messages,
+    agents, plan, workflows, workflow) keep ``_get_session``; this reads
+    metadata, which exists as soon as the row does.
+    """
+    import django
+
+    django.setup()
+    slim = slim_notice("session", slim, full)
+
+    from twicc.core.models import Session
+
+    session = Session.objects.filter(id=session_id).first()
+    if session is None:
+        emit_error(f"Error: session '{session_id}' not found.", code=1)
+    emit_json(build_session_payload(session, slim=slim))
 
 
 def content(
@@ -373,11 +391,12 @@ def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
     import django
 
     django.setup()
-    paginated = pagination_notice("session agents", paginated, default_limit=20)
+    paginated = pagination_notice("session agents", paginated, default_limit=PAGINATED_DEFAULT_LIMIT)
     slim = slim_notice("session agents", slim, full)
 
+    from twicc.cli._session_payload import cli_session_payloads
     from twicc.core.models import Session
-    from twicc.core.serializers import serialize_session, slim_session
+    from twicc.core.serializers import slim_session
 
     session = _get_session(session_id)
 
@@ -385,16 +404,16 @@ def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
         emit_error(f"Error: session '{session_id}' is a subagent, not a parent session.", code=1)
 
     qs = Session.objects.filter(parent_session_id=session_id).order_by("-mtime")
-    limit = resolve_limit(limit, paginated=paginated, default=20)
+    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
     total = qs.count() if paginated else None
-    data = [serialize_session(s) for s in qs[offset : offset + limit]]
+    data = cli_session_payloads(qs[offset : offset + limit])
     if slim:
         data = [slim_session(row) for row in data]
 
     # Every row here is a subagent, which runs inside its parent's process and
-    # never owns a ProcessRun row. The answer is known without asking, so this
-    # resolves no pid and runs no query — but it still emits the key, so the
-    # three listing commands keep one projection.
+    # never owns a ProcessRun row. The answer is known without asking, so the
+    # `process` block resolves no pid and runs no query — but it still emits the
+    # key, so the three listing commands keep one projection.
     for row in data:
         row["process"] = None
 
@@ -413,7 +432,8 @@ def plan(session_id: str, *, list_docs: bool = False, doc_path: str | None = Non
       or its resolved absolute path — never an arbitrary filesystem path.
     - ``--list``: every tracked document, newest first, each entry enriched
       with its resolved ``abs_path`` and fresh ``exists`` (the same entries
-      the default session view carries in ``plan_paths``, minus ``abs_path``).
+      as the ``plan_paths`` field of ``session <ID> --full``, minus
+      ``abs_path``).
     """
     import os
 
@@ -529,14 +549,14 @@ def workflows(session_id: str, *, limit: int | None = None, offset: int = 0,
     import django
 
     django.setup()
-    paginated = pagination_notice("session workflows", paginated, default_limit=20)
+    paginated = pagination_notice("session workflows", paginated, default_limit=PAGINATED_DEFAULT_LIMIT)
 
     from twicc.core.models import Workflow
 
     session = _get_session(session_id)
 
     qs = Workflow.objects.filter(session_id=session_id).order_by("-updated_at")
-    limit = resolve_limit(limit, paginated=paginated, default=20)
+    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
     total = qs.count() if paginated else None
     data = [_workflow_envelope(w, session.cutoff) for w in qs[offset : offset + limit]]
 
@@ -574,21 +594,24 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
     The same wait ``--wait-reply`` runs on the commands that send, which is
     why it carries the same name: it ends on an answer or on a pending request,
     whichever comes first. Those rides on a command that triggered the turn, so
-    their cursor falls out of the send. Here nothing was sent: the caller names
-    the line to start above, which is the ``line_num`` or ``since_line_num`` a
-    previous wait already handed back. That is what makes a timed-out wait
-    resumable.
+    their cursor falls out of the send. Here nothing was sent by this command:
+    the caller names the cursor, or it defaults to after the last user message.
+    A named line is the ``line_num`` or ``since_line_num`` a previous wait
+    already handed back. That is what makes a timed-out wait resumable.
 
     ``since`` names the same cursor as an instant instead of a line. A line
     number belongs to one session and nothing else, so it cannot address a
     batch; an instant addresses any number of them the same way.
 
-    Omitted, the cursor is the session's current ``last_line`` — "tell me the
-    next thing it says". The race that killed ``--transition`` does not apply:
-    a marker read too late never moves again, but a session that is simply
-    idle is observable, and reports ``ended`` rather than hanging — after the
-    loop's ~5 s flush window, which is what lets it tell a finished turn from
-    one about to speak.
+    Omitted, the cursor goes after the session's last user message, so an
+    answer already given is returned; while the session's compute is not
+    current, it is its current ``last_line``. After a send without
+    ``--wait-reply``, pass ``--from`` the ``last_line`` the send returned. The
+    race that killed ``--transition`` does not apply: a marker read too late
+    never moves again, but a session that is simply idle is observable, and an
+    idle session with no answer past the cursor reports ``ended`` rather than
+    hanging — after the loop's ~5 s flush window, which is what lets it tell a
+    finished turn from one about to speak.
     """
     import django
 
@@ -599,6 +622,7 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
         BACKEND_GONE,
         REPLIED,
         WAIT_FAILED,
+        default_wait_cursors,
         wait_for_reply_or_degrade,
     )
 
@@ -633,7 +657,7 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
     elif from_line is not None:
         cursor = from_line
     else:
-        cursor = session.last_line
+        cursor = default_wait_cursors([session])[session.id]
 
     reply = wait_for_reply_or_degrade(
         session_id, since_line_num=cursor, timeout=timeout, want_text=want_text,

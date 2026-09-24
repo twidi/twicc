@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc search`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit
+from twicc.cli._output import PAGINATED_DEFAULT_LIMIT, emit_error, emit_list, pagination_notice, resolve_limit
 
 
 def main(
@@ -40,7 +40,7 @@ def main(
     # search, not only the ones that touch the DB. shape="object" selects the
     # text naming the key renames — search is the one listing whose current
     # output is not a bare array.
-    paginated = pagination_notice("search", paginated, default_limit=20, shape="object")
+    paginated = pagination_notice("search", paginated, default_limit=PAGINATED_DEFAULT_LIMIT, shape="object")
 
     if (
         spawned_by in ("self", "parent")
@@ -70,7 +70,7 @@ def main(
     except RuntimeError as e:
         emit_error(str(e), code=1)
 
-    limit = resolve_limit(limit, paginated=paginated, default=20)
+    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
 
     annotation_filters = None
     if annotation:

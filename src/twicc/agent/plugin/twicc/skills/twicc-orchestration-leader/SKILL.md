@@ -45,15 +45,15 @@ Decide the visibility, notification, and permission policy up front. Propagate i
 - Wait only on **your direct children**, named by id:
 
 ```bash
-$TWICC sessions wait-reply <CHILD_ID>... --since 2000-01-01 --wait-timeout 300
+$TWICC sessions wait-reply <CHILD_ID>... --wait-timeout 300
 $TWICC topology self
 ```
 
-Repeat the same call, same `--since`, naming only the ids whose `results[id].outcome` is `timeout`; the other outcomes and the `--since` choice are in `twicc-orchestration` (*Wait only on your direct children*).
+Repeat the same call, naming only the ids whose `results[id].outcome` is `timeout`. Re-running resumes, except for a session whose compute is not current; `--since <the instant the batch started>` resumes in every case. The other outcomes and the later-round cursor are in `twicc-orchestration` (*Wait only on your direct children*).
 
 ## Handle failures
 
-When a child fails or escalates: retry it, re-split the work, re-delegate to a fresh child, or bring the question back to the user. A manager's internal failures are the manager's job — you deal with the manager's deliverable, not its subtree. If you intentionally abort selected children, stop them by id (`$TWICC sessions stop <ID>... --timeout 30`) or with a scoped batch such as `$TWICC sessions stop --spawned-by self --annotation status=cancelled --timeout 30` — never bare, which stops every running session, you included.
+When a child fails or escalates: retry it, re-split the work, re-delegate to a fresh child, or bring the question back to the user. A manager's internal failures are the manager's job — you deal with the manager's deliverable, not its subtree. If you intentionally abort selected children, stop them by id (`$TWICC sessions stop <ID>... --timeout 30`) or with a scoped batch such as `$TWICC sessions stop --spawned-by self --annotation status=cancelled --timeout 30` — a bare call is refused, and `sessions stop` never stops you (`skipped_self`).
 
 ## Report and finish
 
@@ -68,7 +68,7 @@ The shared scratch is internal plumbing of your tree, not a place the user can b
 - `$TWICC create-session <PROMPT>` — spawn a manager or worker. Skill: `twicc-create-session`.
 - `$TWICC topology self` — map and cost your tree. Skill: `twicc-topology`.
 - `$TWICC sessions --spawned-by self --slim` — track your direct children: each row carries its `process` block, finished ones included (`dead`); `--active` narrows to the ones still running. Careful: `user_turn` counts as active (the agent is loaded and idle), so a worker that just finished is still `--active`; `--state assistant_turn` is the one that means "still generating". A child spawned seconds ago is not listed yet: `sessions get <ID>`. Skill: `twicc-sessions`.
-- `$TWICC sessions wait-reply <ID>... --since <INSTANT>` / `sessions stop <ID>...` — wait on or stop direct child batches.
+- `$TWICC sessions wait-reply <ID>...` / `sessions stop <ID>...` — wait on or stop direct child batches.
 - `$TWICC session <ID> messages` — pull a child's transcript. Skill: `twicc-session`.
 - `$TWICC send-message <ID> <TEXT>` — steer or follow up one child. Skill: `twicc-send-message`.
 - `$TWICC send-messages --spawned-by self --message <TEXT>` — broadcast the same steer/correction to a whole batch of children. Skill: `twicc-send-messages`.

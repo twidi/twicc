@@ -16,7 +16,7 @@ Shape: star per phase · push/pull + scoped wait · gated waves · merge/advance
 1. Define phase names (`plan`, `audit`, `implement`, `verify`) and the pass/fail gate.
 2. Spawn phase workers with `--annotation phase=<name>` and task-specific metadata.
 3. Wait only on that phase, naming only its workers' ids:
-   `sessions wait-reply <PHASE_ID>... --since 2000-01-01 --wait-timeout 300`.
+   `sessions wait-reply <PHASE_ID>... --wait-timeout 300`.
 4. Pull/collect outputs and validate the gate.
 5. If accepted, start the next phase; if rejected, re-run only the failed slice or stop the phase batch.
 

@@ -24,7 +24,7 @@ whole goal and answers to the user; a manager holds one slice and answers to its
 2. Per piece, pick the mode and brief it (mandate, skills to load, report-back —
    see the hub's briefing): atomic → worker; nested → manager.
 3. Barrier on your direct children, named by id:
-   `sessions wait-reply <CHILD_ID>... --since 2000-01-01 --wait-timeout 300`.
+   `sessions wait-reply <CHILD_ID>... --wait-timeout 300`.
    If this level runs several annotated batches, name only the ids of the batch
    you wait on (e.g. the ones spawned with `--annotation phase=audit`).
 4. Collect each deliverable (push as it lands, or pull `session <id> messages --tail 1`;

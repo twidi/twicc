@@ -121,11 +121,11 @@ Same codes, re-checked under the DB write lock.
 
 - `0` — Update applied (or silent no-op)
 - `1` — Local validation error
-- `2` — TwiCC server not running
+- `2` — TwiCC server not running, or bad CLI usage (unknown option, missing argument; the error message tells them apart)
 - `3` — Server rejected
 - `4` — Server error
 - `5` — Timeout
-- `64` — Bad CLI usage (including flat flags mixed with the `settings` sub-command)
+- `64` — A flat flag combined with the `settings` sub-command (e.g. `update-project --archive <PROJECT> settings`)
 
 ## Examples
 

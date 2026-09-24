@@ -129,9 +129,8 @@ Per-id `status`: `updated`, `noop` (nothing to apply for that session's provider
 
 - `0` — batch ran and at least one session was updated or skipped as a no-op (or the resolved set was empty)
 - `1` — local argument error
-- `2` — TwiCC server not running
+- `2` — TwiCC server not running, or bad CLI usage (unknown option, missing argument; the error message tells them apart)
 - `6` — resolved set was non-empty but no session was updated or skipped
-- `64` — bad CLI usage
 
 ## Examples
 
@@ -155,7 +154,7 @@ $TWICC update-sessions settings --descendants self --preset 'deep think'
 
 - `$TWICC update-session <id|self> <op>` — update one session (and the only place for `title`). Skill: `twicc-update-session`.
 - `$TWICC send-messages [SESSION_ID...] --message <text>` — send the same message to several sessions (same selection model, plus a `--siblings self` peer broadcast this command does not have). Skill: `twicc-send-messages`.
-- `$TWICC sessions stop [SESSION_ID...]` — batch-stop live agents; its selection is wider than this command's (bare call, `parent`, `--spawn-tree`, `--siblings`, `--annotation` alone), and can stop you too. Skill: `twicc-sessions`.
+- `$TWICC sessions stop [SESSION_ID...]` — batch-stop live agents; its selection is wider than this command's (`parent`, `--spawn-tree`, `--siblings`, `--annotation` alone), though it refuses a bare call and never stops you (`skipped_self`). Skill: `twicc-sessions`.
 - `$TWICC sessions` — browse / filter sessions to pick the ids to update. Skill: `twicc-sessions`.
 - `$TWICC topology <id|self>` — see the spawn tree before targeting `--descendants` / `--spawned-by`. Skill: `twicc-topology`.
 

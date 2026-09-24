@@ -7,8 +7,9 @@ never a replacement for it. The two had a copy each, with identical error
 messages, and had already drifted apart on which states they refuse.
 
 What stays per-command is what they do with the selection, and what they refuse:
-``stop`` is bounded by the live process set and can afford a bare call, while a
-bare wait would poll every indexed session until its deadline.
+``stop`` is narrowed to the live process set; both refuse a bare call — a bare
+stop would stop every running session, a bare wait would poll every indexed
+session until its deadline.
 """
 
 from __future__ import annotations

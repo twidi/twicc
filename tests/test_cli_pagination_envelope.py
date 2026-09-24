@@ -27,9 +27,10 @@ from twicc.core.models import Project, Session, SessionItem, SessionType, Share
 def _before_the_pagination_cutover(monkeypatch):
     """Pin the clock below ``LISTING_CUTOVER``.
 
-    These tests assert the pre-cutover shape (a bare array, and the per-command
-    default page size). Past the date both change, so without this they would go
-    red on 2026-10-01 for a reason that has nothing to do with what they cover.
+    These tests assert the pre-cutover shape (a bare array, and, for `session
+    content` / `messages`, the default page size). Past the date both change, so
+    without this they would go red on 2026-10-01 for a reason that has nothing
+    to do with what they cover.
     The pinned value is naive, like the constant it replaces.
     """
     from twicc.cli import _output
@@ -314,22 +315,10 @@ def test_the_flag_forces_a_page_size_where_there_was_none(project, capsysbinary)
     make_messages(session, 60)
     cli_session.messages(session.id, paginated=True)
     payload = read(capsysbinary)
-    assert len(payload["items"]) == 50
+    assert len(payload["items"]) == 20
     assert payload["pagination"] == {
-        "limit": 50, "offset": 0, "total": 60, "has_more": True,
+        "limit": 20, "offset": 0, "total": 60, "has_more": True,
     }
-
-
-def test_the_flag_overrides_a_command_s_own_default(project, capsysbinary):
-    """``sessions`` defaults to 20 without the flag and 50 with it."""
-    make_sessions(project, 60)
-    cli_sessions.main(project=project.id)
-    assert len(read(capsysbinary)) == 20
-
-    cli_sessions.main(project=project.id, paginated=True)
-    payload = read(capsysbinary)
-    assert len(payload["items"]) == 50
-    assert payload["pagination"]["limit"] == 50
 
 
 def test_an_explicit_limit_always_wins(project, capsysbinary):
@@ -361,7 +350,7 @@ def test_content_accepts_the_flag_as_its_only_selector(project, capsysbinary):
     make_items(session, 60)
     cli_session.content(session.id, paginated=True)
     payload = read(capsysbinary)
-    assert len(payload["items"]) == 50
+    assert len(payload["items"]) == 20
     assert payload["pagination"]["total"] == 60
 
 
@@ -421,15 +410,16 @@ def test_content_tail_is_a_selector_on_its_own(project, capsysbinary):
     assert len(read(capsysbinary)) == 2
 
 
-def test_processes_empty_scope_reports_the_same_window(project, capsysbinary):
+def test_processes_empty_scope_reports_the_same_window(project, capsysbinary, monkeypatch):
     """The empty-scope early exit must not report a bare `limit: null`."""
     from twicc.cli import processes as cli_processes
 
+    monkeypatch.setattr("twicc.cli._twicc_info.resolve_live_twicc_or_exit", lambda: type("I", (), {"pid": 4242})())
     cli_processes.main(spawned_by="pg-missing-session", paginated=True)
     payload = read(capsysbinary)
     assert payload["items"] == []
     assert payload["pagination"] == {
-        "limit": 50, "offset": 0, "total": 0, "has_more": False,
+        "limit": 20, "offset": 0, "total": 0, "has_more": False,
     }
 
 

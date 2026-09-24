@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc projects`` subcommand."""
 
-from twicc.cli._output import emit_error, emit_list, pagination_notice, resolve_limit
+from twicc.cli._output import PAGINATED_DEFAULT_LIMIT, emit_error, emit_list, pagination_notice, resolve_limit
 
 
 def main(
@@ -15,7 +15,7 @@ def main(
     import django
 
     django.setup()
-    paginated = pagination_notice("projects", paginated, default_limit=20)
+    paginated = pagination_notice("projects", paginated, default_limit=PAGINATED_DEFAULT_LIMIT)
 
     from twicc.core.models import Project
     from twicc.core.serializers import serialize_project
@@ -38,7 +38,7 @@ def main(
             emit_error(f"Error: workspace '{workspace}' not found.", code=1)
         qs = qs.filter(id__in=ws.get("projectIds", []))
 
-    limit = resolve_limit(limit, paginated=paginated, default=20)
+    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
     total = qs.count() if paginated else None
     projects = list(qs[offset : offset + limit])
 

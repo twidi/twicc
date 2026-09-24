@@ -16,7 +16,7 @@ by the Typer wrapper, not here — incoming ids are already normalized.
 
 from __future__ import annotations
 
-from twicc.cli._output import emit_json
+from twicc.cli._output import emit_json, pagination_notice
 
 
 # Cached null-filled template for the placeholder shape. Derived lazily
@@ -45,7 +45,7 @@ def _build_placeholder_template() -> dict:
     return template
 
 
-def main(project_ids: list[str]) -> None:
+def main(project_ids: list[str], *, paginated: bool = False) -> None:
     """Emit one JSON entry per project_id (placeholder when missing).
 
     ``project_ids`` must already be normalized (leading dash). The
@@ -54,6 +54,7 @@ def main(project_ids: list[str]) -> None:
     import django
 
     django.setup()
+    paginated = pagination_notice("projects get", paginated, default_limit=None, shape="lookup")
 
     from twicc.core.models import Project
     from twicc.core.serializers import serialize_project
@@ -62,7 +63,8 @@ def main(project_ids: list[str]) -> None:
     from twicc.workspaces import read_workspaces
 
     # Dedupe while preserving caller order: the output mirrors the input
-    # 1-to-1 so scripts can zip(ids, output) without re-mapping.
+    # 1-to-1 so scripts can zip(ids, output) (output["items"] from 2026-10-01,
+    # or with --paginated) without re-mapping.
     unique_ids: list[str] = []
     seen: set[str] = set()
     for pid in project_ids:
@@ -112,4 +114,4 @@ def main(project_ids: list[str]) -> None:
             entry["known"] = True
         results.append(entry)
 
-    emit_json(results)
+    emit_json({"items": results} if paginated else results)

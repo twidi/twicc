@@ -10,16 +10,16 @@ Wait for the children you spawned, not grandchildren. Name their ids (from each
 `create-session` result): a child spawned seconds ago matches no filter yet.
 
 ```bash
-$TWICC sessions wait-reply <CHILD_ID>... --since 2000-01-01 --wait-timeout 300
+$TWICC sessions wait-reply <CHILD_ID>... --wait-timeout 300
 ```
 
-`--since 2000-01-01` fits children never messaged since their spawn; for a later
-round, pass the instant captured before that send. Never today's date: a bare
-date is midnight UTC, and a future instant misses an answer already given.
+For a later round, pass `--since` the instant captured before that send.
 
 Exit 0 whatever the outcomes: read each `results[id].outcome`. Repeat the same
-call, same `--since`, naming only the ids still on `timeout` (or `wait_failed`);
-`ended`, `provider_error` and `unknown_session` are final. Never loop on
+call, naming only the ids still on `timeout` (or `wait_failed`). Re-running
+resumes, except for a session whose compute is not current; `--since <the
+instant the batch started>` resumes in every case. `ended`, `provider_error`
+and `unknown_session` are final. Never loop on
 `summary.concluded == summary.total`: it counts `replied` and
 `awaiting_user_input` only.
 
@@ -35,7 +35,7 @@ To wait on one phase, wave, role, or attempt set, name **only that subset's
 ids** — the ones you spawned for it:
 
 ```bash
-$TWICC sessions wait-reply <AUDIT_ID>... --since 2000-01-01 --wait-timeout 300
+$TWICC sessions wait-reply <AUDIT_ID>... --wait-timeout 300
 ```
 
 An `--annotation phase=audit` filter adds nothing here: it misses a child not
@@ -47,15 +47,15 @@ subset: the filters do not narrow them.
 Wait for one child to answer, validate it, then stop the losers:
 
 ```bash
-$TWICC sessions wait-reply <ATTEMPT_ID>... --since 2000-01-01 --wait-first --wait-timeout 300
+$TWICC sessions wait-reply <ATTEMPT_ID>... --wait-first --wait-timeout 300
 $TWICC sessions stop <LOSER_ID>... --timeout 30
 ```
 
 `--wait-first` also stops on `awaiting_user_input`: declare a winner only on
 `outcome == "replied"`. When the first conclusion is `awaiting_user_input`,
 answer that session and wait again, or wait again naming only the other ids —
-the same call with the same `--since` returns the blocked session at once. A
-winner that finished before the call is seen only with `--since`.
+the same call returns the blocked session at once. The default cursor returns
+a winner that finished before the call (except while a session's compute is not current — e.g. right after a TwiCC restart: then pass `--since` an instant before the spawn or the send).
 
 If you tagged losers after validation:
 
@@ -80,10 +80,11 @@ $TWICC sessions stop <SESSION_ID>... --timeout 30
 $TWICC sessions stop --spawned-by self --annotation status=cancelled --timeout 30
 ```
 
-`sessions stop` has no guardrail: never call it bare (it stops every running
-session, you included). `parent`, `--spawn-tree` and `--siblings` reach beyond
-your children; use them only when that is the intent. Pair `--annotation` with
-a filiation scope.
+`sessions stop` refuses a bare call and never stops you: the calling session
+is reported `skipped_self` (stop yourself with `session self stop`).
+`parent`, `--spawn-tree` and `--siblings` still reach beyond your children; use
+them only when that is the intent. Pair `--annotation` with a filiation scope:
+alone, it still selects across every tree.
 
 ## Abort a subtree
 

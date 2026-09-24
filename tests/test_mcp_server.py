@@ -5,8 +5,9 @@ import asyncio
 import pytest
 
 from twicc import paths
+from twicc.cli import _output
 from twicc.mcp import server as mcp_server
-from datetime import UTC
+from datetime import UTC, datetime
 
 
 @pytest.fixture
@@ -30,12 +31,14 @@ def test_call_tool_runs_command_and_returns_envelope():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_call_tool_whoami_uses_bound_identity(isolated_data_dir):
+def test_call_tool_whoami_uses_bound_identity(isolated_data_dir, monkeypatch):
     import os
 
     import orjson
 
     from twicc.core.models import Project, Session
+
+    monkeypatch.setattr(_output, "LISTING_CUTOVER", datetime(2200, 1, 1))  # noqa: DTZ001
 
     # whoami refuses to run without a live backend sidecar: write one pointing
     # at this (alive) test process.
@@ -50,6 +53,29 @@ def test_call_tool_whoami_uses_bound_identity(isolated_data_dir):
     result = asyncio.run(mcp_server.dispatch_tool("whoami", {}, session_id=session.id))
     assert result["exit_code"] == 0
     assert result["result"]["session"]["id"] == session.id
+
+
+@pytest.mark.django_db(transaction=True)
+def test_call_tool_whoami_after_the_date_is_the_session_self_row(isolated_data_dir, monkeypatch):
+    import os
+
+    import orjson
+
+    from twicc.core.models import Project, Session
+
+    monkeypatch.setattr(_output, "LISTING_CUTOVER", datetime(2000, 1, 1))  # noqa: DTZ001
+    (isolated_data_dir / "twicc.info.json").write_bytes(
+        orjson.dumps({"pid": os.getpid(), "port": 3500, "started_at": "2026-07-06T00:00:00Z"}),
+    )
+    project = Project.objects.create(id="-tmp-p3", directory="/tmp/p3", name="p3")
+    session = Session.objects.create(
+        id="33333333-3333-3333-3333-333333333333", project=project,
+        provider="claude_code", file_path="p3.jsonl",
+    )
+    result = asyncio.run(mcp_server.dispatch_tool("whoami", {}, session_id=session.id))
+    assert result["exit_code"] == 0, result
+    assert result["result"]["id"] == session.id
+    assert set(result["result"]["process"]) == {"state"}
 
 
 @pytest.mark.django_db(transaction=True)

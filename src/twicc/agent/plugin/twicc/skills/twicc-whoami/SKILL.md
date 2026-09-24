@@ -5,7 +5,19 @@ description: Return the details of the session that owns the calling process. Us
 
 # TwiCC Whoami
 
-Identify the TwiCC session you are running in. Returns a JSON object with `session_id`, `title`, `project_id`, `project_directory`, `current_working_directory` (resolved from tool_use activity — may differ from `project_directory` when working in a worktree or another repo), `artifacts_dir` and `scratch_dir` (the session's own working directories, already joined with the session id), `orchestration_scratch_dir` (the shared scratch folder, present only when the session is part of an orchestration tree), the resolved `agent_settings`, the full `session` payload (what `$TWICC session <ID>` returns, minus its `process` block), and the matching `process` row — nine fields (`id`, `provider`, `session_id`, `session_title`, `project_id`, `state`, `started_at`, `last_state_change_at`, `pid`), not that block's compact five. Exits 1 if not running inside a TwiCC agent.
+Identify the TwiCC session you are running in. Exits 1 if not running inside a TwiCC agent.
+
+**Two shapes, dated.** With `--slim` or `--full` — usable now — and from 2026-10-01 without a flag, it returns the `session self` payload: the session row (reduced, or in full with `--full`) with its `process` block inside, exactly what `$TWICC session self` returns with the same flag. **Until 2026-10-01 a call with neither flag keeps its current object**: `session_id`, `title`, `project_id`, `project_directory`, `current_working_directory` (resolved from tool_use activity — may differ from `project_directory` when working in a worktree or another repo), `artifacts_dir` and `scratch_dir` (the session's own working directories, already joined with the session id), `orchestration_scratch_dir` (the shared scratch folder, present only when the session is part of an orchestration tree), the resolved `agent_settings`, the `session` sub-object (the serializer payload of the session), and the matching `process` row — nine fields (`id`, `provider`, `session_id`, `session_title`, `project_id`, `state`, `started_at`, `last_state_change_at`, `pid`), not that block's compact five. That flagless call prints a one-line notice on stderr in a terminal (never on MCP). **Pass `--slim` or `--full` now**, so a script reads the same keys on both sides of the date.
+
+Where the old keys are read from in the new shape:
+
+- `session_id` → `id`
+- `title`, `project_id`, `project_directory`, `artifacts_dir`, `scratch_dir` → same names
+- `orchestration_scratch_dir` → same name, `null` instead of absent outside an orchestration
+- `current_working_directory` → `git_directory`
+- `agent_settings.<field>` → `<field>` (effective: the stored value, else the current default)
+- `session.<field>` → `<field>` (with `--full` for the fields the reduced projection drops)
+- `process` (nine fields) → `process`: `{state}`, or five fields (`id`, `state`, `started_at`, `last_state_change_at`, `pid`) with `--full`; `provider`, `session_id`, `session_title`, `project_id` are the row's own `provider`, `id`, `title`, `project_id`
 
 ## When to use
 
@@ -27,8 +39,11 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 ## Usage
 
 ```bash
-$TWICC whoami    # emit a single JSON object describing the calling session
+$TWICC whoami [--slim | --full]    # emit a single JSON object describing the calling session
 ```
+
+- `--slim` — the `session self` payload, reduced (the default from 2026-10-01).
+- `--full` — the `session self` payload in full — every field of the session payload.
 
 ### Self-aware shortcuts
 
@@ -38,13 +53,14 @@ Commands that accept `self` resolve the calling session on their own. On `$TWICC
 
 - `0` — Session resolved.
 - `1` — No session found in PID ancestry.
+- `2` — `--slim` and `--full` passed together (checked before the lookup, so also outside a session).
 
 ## Examples
 
 ```bash
-MY_SESSION_ID=$($TWICC whoami | jq -r .session_id)
-MY_MODEL=$($TWICC whoami | jq -r .agent_settings.selected_model)
-MY_PID=$($TWICC whoami | jq -r .process.pid)
+MY_SESSION_ID=$($TWICC whoami --slim | jq -r .id)
+MY_MODEL=$($TWICC whoami --slim | jq -r .selected_model)
+MY_PID=$($TWICC whoami --full | jq -r .process.pid)
 MY_ARTIFACTS_DIR=$($TWICC whoami | jq -r .artifacts_dir)
 MY_SCRATCH_DIR=$($TWICC whoami | jq -r .scratch_dir)
 ```

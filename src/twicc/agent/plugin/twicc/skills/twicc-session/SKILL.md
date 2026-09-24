@@ -1,17 +1,17 @@
 ---
 name: twicc-session
 description: Inspect, wait on, unblock, or stop a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, list/inspect its workflows, see what it is waiting on and answer its question, or stop its live agent. Use when you or the user want to examine a session, read conversation content, explore subagent activity, block until it answers, unblock a session waiting on a human, or stop its agent.
-argument-hint: <session_id> [content|messages|agents|plan|wait-reply|pending-requests|answer-questions|cancel-questions|stop|workflows|workflow]
+argument-hint: <session_id|self|parent> [--slim|--full] [content|messages|agents|plan|wait-reply|pending-requests|answer-questions|cancel-questions|stop|workflows|workflow]
 ---
 
 # TwiCC Session
 
 Inspect, wait on, unblock, or stop a single session. Twelve sub-commands:
 
-- Default — full session metadata, `process` block included (the live state, `null` on a subagent).
+- Default — the session row, `process` block included (the live state, `null` on a subagent): full until 2026-10-01, reduced from that date; `--full` / `--slim` choose. `self` / `parent` name your own session / its spawner.
 - `content [LINE_OR_RANGE] [--contains TEXT ...] [--limit N] [--offset N] [--tail N] [--paginated]` — raw JSONL items by line number and/or content substring(s) (provider-specific schema).
 - `messages [--contains TEXT ...]` — user/assistant messages only, uniform shape across providers.
-- `wait-reply [--from N]` — block until this session concludes past the cursor. Use it on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. `--from` is the `line_num` or `since_line_num` a previous wait returned, so a wait that timed out can be resumed exactly where it stopped; omitted, it is the session's current last line. `--since` names that same cursor as an ISO 8601 instant instead, for when you have a time and not a line number. An idle session concludes with `ended` rather than hanging, but not instantly: the loop waits out a ~5 s flush window before it can tell a finished turn from one about to speak, so a `--wait-timeout` below that always reports `timeout`. Two endings, and no flag chooses between them: an answer — the message closing a turn — or a **pending request**, which only a human can clear. An answer arriving in the same poll wins. Exactly what `--wait-reply` does on the commands that send, which is why it carries the same name. Also takes `--wait-timeout` (default 300 s) and `--no-reply-text`. **Exit code:** `0` answered or blocked, `5` neither came, `2` TwiCC stopped, `1` a local refusal — a bad `--from` or `--since`, the two cursors passed together, a non-positive `--wait-timeout`, an id with no session and no live process, or the wait itself breaking. So `$TWICC session <ID> wait-reply && …` chains, and a `1` is worth reading before retrying.
+- `wait-reply [--from N]` — block until this session concludes past the cursor. Use it on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else — or one you messaged yourself without `--wait-reply` (then pass `--from` the `last_line` the send returned). `--from` is the `line_num` or `since_line_num` a previous wait returned, so a wait that timed out can be resumed exactly where it stopped; omitted, the wait starts after the session's last user message (its current last line while its compute is not current). `--since` names that same cursor as an ISO 8601 instant instead, for when you have a time and not a line number. An answer already past the cursor is returned at once; an idle session with no answer past the cursor concludes with `ended` rather than hanging, but not instantly: the loop waits out a ~5 s flush window before it can tell a finished turn from one about to speak, so a `--wait-timeout` below that always reports `timeout`. Two endings, and no flag chooses between them: an answer — the message closing a turn — or a **pending request**, which only a human can clear. An answer arriving in the same poll wins. Exactly what `--wait-reply` does on the commands that send, which is why it carries the same name. Also takes `--wait-timeout` (default 300 s) and `--no-reply-text`. **Exit code:** `0` answered or blocked, `5` neither came, `2` TwiCC stopped, `1` a local refusal — a bad `--from` or `--since`, the two cursors passed together, a non-positive `--wait-timeout`, an id with no session and no live process, or the wait itself breaking. So `$TWICC session <ID> wait-reply && …` chains, and a `1` is worth reading before retrying.
 - `pending-requests [--raw]` — what this session's live agent is waiting on, answerable or not.
 - `answer-questions [--request-id ID] [--choice 'ID=VALUE']` — answer the question it is waiting on.
 - `cancel-questions [--request-id ID]` — decline it.
@@ -45,13 +45,17 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 
 ## Usage
 
-### Default — session metadata
+### Default — the session row
 
 ```bash
-$TWICC session <SESSION_ID>
+$TWICC session <SESSION_ID|self|parent> [--slim|--full]
 ```
 
-Works for regular sessions and subagents. The same row `sessions get <SESSION_ID>` returns for one id, `process` block included, minus its `known` flag — reach for that one for several ids, for the reduced projection, or for an id this one refuses: an id with no row at all comes back as a `known: false` placeholder, and a session with no user message — one still being computed, or one that never had a user turn at all — comes back in full with `known: true`; both exit 1 here.
+Works for regular sessions and subagents, and for any session row — one with no user message yet included (a session still being computed, or one that never had a user turn). `self` is your own session, `parent` the session that spawned you. The same row `sessions get <SESSION_ID>` returns for one id, `process` block included, minus its `known` flag — reach for that one for several ids. Exits 1 when no session row has that id, or when `self` / `parent` cannot be resolved (a structured `validation_error` on stdout).
+
+`--slim` / `--full` choose the projection, as on `sessions`, and go before or after the id (`session <ID> --full` or `session --full <ID>`) — never before a subcommand: `session <ID> --full agents` is refused (exit 2), the subcommand takes its own flag (`session <ID> agents --full`). **Before 2026-10-01 the full row is the default and `--slim` opts in; from that date the reduced projection is the default and `--slim` is an accepted no-op** — `--full` keeps working on both sides. Until then a call with neither flag prints a one-line notice on stderr (in the RPC envelope's `warnings` key; never on MCP). Mutually exclusive (exit `2`).
+
+With `--full` (the default before 2026-10-01):
 
 ```json
 {
@@ -83,38 +87,50 @@ Works for regular sessions and subagents. The same row `sessions get <SESSION_ID
   "archived": false,
   "pinned": null,
   "permission_mode": "default",
-  "selected_model": null,
-  "effort": null,
-  "thinking_enabled": null,
+  "selected_model": "opus",
+  "effort": "high",
+  "thinking_enabled": true,
   "claude_in_chrome": false,
   "fast_mode": false,
   "context_max": 200000,
+  "question_widget": true,
   "compacted": false,
   "hidden": false,
   "spawned_by": null,
   "spawn_root": null,
   "annotations": {"role": "reviewer"},
+  "project_directory": "/home/twidi/dev/myproject",
+  "artifacts_dir": "/home/twidi/.twicc/artifacts/abc123-def456",
+  "scratch_dir": "/home/twidi/.twicc/scratch/abc123-def456",
+  "orchestration_scratch_dir": null,
   "process": {"id": 5847, "state": "assistant_turn",
               "started_at": "2026-09-20T10:43:57.327194+00:00",
               "last_state_change_at": "2026-09-20T10:44:45.240981+00:00", "pid": 3501299}
 }
 ```
 
+The reduced projection (the default from 2026-10-01, `--slim` before) is the one `sessions` returns — see the example in the `twicc-sessions` skill — with `process: {state}`.
+
 #### Key fields
 
 - `last_line` — total item count; use as the upper bound for `content` ranges.
 - `provider` — `"claude_code"` or `"codex"`. Determines item schema for `content`.
-- `slug` — provider short id (e.g. Codex subagent nickname), or `null`.
+- `slug` — provider short id (e.g. Codex subagent nickname), or `null`. `--full` only.
 - `parent_session_id` — `null` for regular sessions, set for subagents.
 - `model` — `{"raw": "...", "family": "...", "version": "..."}`.
 - `context_max` / `context_usage` — max context window and current usage in tokens.
 - `compacted` — whether the session has been compacted at least once.
 - `last_new_content_at` — most recent item appended.
-- `last_viewed_at` — when the user last opened the session in TwiCC.
+- `last_viewed_at` — when the user last opened the session in TwiCC. `--full` only.
 - `hidden` — whether the session is hidden from all listings and broadcasts.
 - `spawned_by` — session ID that spawned this session, or `null`.
 - `spawn_root` — root session ID for the spawned-session tree, or `null` before a session joins one.
 - `annotations` — free-form JSON object attached at session creation.
+- `project_directory` — the project's directory (`null` for a project with none).
+- `artifacts_dir` — **always** the session's artifacts folder, the place to write, even before anything is in it. Over MCP / RPC `has_artifacts` says whether it holds anything; from a terminal `has_artifacts` is always `false`, so check the folder itself.
+- `scratch_dir` — the session's own scratch folder.
+- `orchestration_scratch_dir` — the shared scratch folder of an orchestration tree (the `scratch_dir` annotation), `null` outside an orchestration.
+- Agent settings (`permission_mode`, `selected_model`, `effort`, `thinking_enabled`, `claude_in_chrome`, `fast_mode`, `context_max`, `question_widget`) — effective: the stored value, else the current default (`question_widget` `true` when not chosen); stored values on a subagent, mostly `null`.
 - `process` — the live process, the same block `sessions` puts on every row: `state` is one of `starting`, `assistant_turn`, `awaiting_user_input` (blocked on a user click), `user_turn`, or `dead`. `dead` means TwiCC runs no process for this session — most sessions it indexes it never started — and it is also the answer when no backend is running. `null` on a subagent, which has no process of its own.
 
 ### Content — raw items
@@ -141,7 +157,7 @@ The range and the window answer different questions and stack. The range is an a
 
 **To reach the end of a filtered result, use `--tail`.** A filtered result has no line address, so without it you would need a first call to learn `total`, and the session can grow in between. Under `--tail N` the reported window is the range it covers (`offset = total - N`) and `has_more` means matches remain **before** it.
 
-`--paginated` adds the `{items, pagination}` envelope and caps the page at **50** when no `--limit` is given, so `total` tells you how many items match before you pull them all. **Before 2026-10-01 that capping is opt-in; from that date it is the only behaviour**, so a call with no `--limit` returns a page rather than every item in the session. It also counts as a selector on its own — `content --paginated` is a valid browse entry point, since a bounded page cannot dump the session.
+`--paginated` adds the `{items, pagination}` envelope and caps the page at **20** when no `--limit` is given, so `total` tells you how many items match before you pull them all. **Before 2026-10-01 that capping is opt-in; from that date it is the only behaviour**, so a call with no `--limit` returns a page rather than every item in the session. It also counts as a selector on its own — `content --paginated` is a valid browse entry point, since a bounded page cannot dump the session.
 
 `--contains` is **case-insensitive** and matches the **raw JSONL string** (the verbatim line as stored). Consequences: it also matches JSON keys (e.g. `"role"`, `"type"`), and embedded newlines are escaped (`\n`), so a query spanning a line break won't match. This is the only way to substring-search across all raw items (tool_use/tool_result included).
 
@@ -176,16 +192,16 @@ User + assistant messages only, uniform shape across providers. No tool calls, n
 - `--role user|assistant` — keep only one side.
 - `--contains TEXT` — keep only messages whose text contains the substring. Repeatable and **AND-combined** (a message must contain every term). **Case-insensitive.** Unlike `content`'s `--contains` (which matches the raw JSONL), this matches the extracted `text` shown below — no JSON keys, no tool noise. Applied **before** `--tail`/`--limit`/`--offset`, so paging windows the matching messages.
 - `--is-final true|false|null` — keep only messages whose `is_final` field (see below) has one of these values. Repeatable and **OR-combined** — the opposite of `--contains`, because a message carries a single value, so an AND would always be empty. Omit it and nothing is filtered: **`null` is only ever dropped when you ask for a set without it.** Passing all three is the identity — exactly the no-flag answer. Applied **before** `--tail`/`--limit`/`--offset`.
-- `--limit N` — cap results. **Before 2026-10-01 a call without it returns every message; from that date it pages at 50**, so pass it (or `--tail`) whenever you need more, and read `has_more`.
+- `--limit N` — cap results. **Before 2026-10-01 a call without it returns every message; from that date it pages at 20**, so pass it (or `--tail`) whenever you need more, and read `has_more`.
 - `--offset N` — skip first N messages (default: 0).
 - `--tail N` — return the last N messages. Mutually exclusive with `--limit`/`--offset`.
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. Without an explicit `--limit` the page size becomes **50** instead of "everything". **Before 2026-10-01 that is opt-in; from that date it is the only behaviour**, so an unfiltered call returns a page rather than the whole session. With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. When nothing filters after extraction — no `--contains`, and no `--is-final` (or one listing all three values, which filters nothing) — `total` counts raw items, a few of which extract to nothing and are dropped, so `has_more` can be a rare false positive, never a false negative.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`. Without an explicit `--limit` the page size is **20** instead of "everything". **Before 2026-10-01 that is opt-in; from that date it is the only behaviour**, so an unfiltered call returns a page rather than the whole session. With `--tail N` the reported window is the range it covers, and `has_more` means messages remain **before** it. When nothing filters after extraction — no `--contains`, and no `--is-final` (or one listing all three values, which filters nothing) — `total` counts raw items, a few of which extract to nothing and are dropped, so `has_more` can be a rare false positive, never a false negative.
 
 ```json
 {"items": [
   {"line_num": 3, "text": "Hello, can you help me?", "role": "user", "timestamp": "2025-03-10T14:30:00+00:00", "is_final": null},
   {"line_num": 4, "text": "Sure — what do you need?", "role": "assistant", "timestamp": "2025-03-10T14:30:02+00:00", "is_final": true}
- ], "pagination": {"limit": 50, "offset": 0, "total": 2, "has_more": false}}
+ ], "pagination": {"limit": 20, "offset": 0, "total": 2, "has_more": false}}
 ```
 
 `is_final` separates the assistant message that **closes a turn** from the ones it emits between tool calls (a long turn usually has several: talk, run a tool, talk, run a tool, then answer). `true` = the closing one, `false` = an intermediate one, `null` = unknown. A user message is always `null`; an assistant message is `null` when the provider left no marker on that line or wrote one TwiCC does not recognise.
@@ -222,8 +238,8 @@ $TWICC session <ID> messages --tail 1
 **Why neither filter here.** `--is-final true` spans the **whole session**, not the current turn, so mid-turn it returns the closing message of a *previous* turn — an answer to an older question, which reads as perfectly valid. Measured live: last user message at line 956, agent still writing at line 1228, and `--role assistant --is-final true --tail 1` returned line **953**. And `--role assistant` alone hides a trailing user message, bringing the same staleness back in the window before the agent's first line.
 
 Other patterns:
-- The session's answers, without the commentary: `messages --role assistant --is-final true --tail N` (spanning the session is what you want here — but a bare call pages at **50 oldest**, so ask for the end explicitly, or page with `--limit`/`--offset` and read `has_more`)
-- Only the intermediate chatter, for debugging: `messages --role assistant --is-final false --tail N` (same 50-page cap as above)
+- The session's answers, without the commentary: `messages --role assistant --is-final true --tail N` (spanning the session is what you want here — but a bare call pages at **20 oldest**, so ask for the end explicitly, or page with `--limit`/`--offset` and read `has_more`)
+- Only the intermediate chatter, for debugging: `messages --role assistant --is-final false --tail N` (same 20-page cap as above)
 - Last N exchanges: `messages --tail N`
 - Focused window from search: `messages --range A-B`
 - Messages mentioning a term: `messages --contains "auth"`
@@ -235,7 +251,7 @@ Other patterns:
 $TWICC session '<SESSION_ID>' wait-reply [--from N] [--since INSTANT] [--wait-timeout N] [--no-reply-text]
 ```
 
-The same wait `--wait-reply` runs on the commands that send — an answer or a pending request, whichever comes first — on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else. When you sent the message yourself, use `send-message --wait-reply` instead — it reads its own cursor server-side and needs nothing from you.
+The same wait `--wait-reply` runs on the commands that send — an answer or a pending request, whichever comes first — on a session **you did not just message**: one spawned earlier, steered from the UI, or messaged by someone else — or one you messaged yourself without `--wait-reply` (then pass `--from` the `last_line` the send returned). When you send the message yourself, the simplest form is `send-message --wait-reply` — it reads its own cursor server-side and needs nothing from you. **A send without it is never followed by a wait without a cursor:** after `send-message`, pass `--from` the `last_line` it returned. `--from` and `--since` exist here and on `sessions wait-reply` (`--since` only) — not on `create-session`, `send-message` or `send-messages`, which read their cursor server-side.
 
 **`--from` is the cursor**, and choosing it right is the whole of using this command. Only a line strictly past it counts.
 
@@ -244,11 +260,11 @@ The same wait `--wait-reply` runs on the commands that send — an answer or a p
 | `replied` | its **`line_num`** — its `since_line_num` still points below the answer and would return the same one again |
 | `provider_error` | its **`line_num`** too: the error is a line in the transcript, so resuming below it re-matches the same one forever |
 | `timeout`, `ended`, `backend_gone`, `wait_failed`, `awaiting_user_input` | its **`since_line_num`** — nothing was consumed |
-| nothing yet (first call) | omit it: the cursor becomes the session's current last line, "tell me the next thing it says" |
+| nothing yet (first call) | omit it: the cursor goes after the session's last user message: an answer already given is returned (except while a session's compute is not current — e.g. right after a TwiCC restart: then pass `--since` an instant before the spawn or the send) |
 
 **`--since` is that same cursor as an instant**, mutually exclusive with `--from`: the wait starts just below the first line stamped strictly after that moment. A timestamp that goes backwards — they are not monotonic — can only push the cursor lower, never past a line; a line carrying no timestamp is not a boundary, and one below the boundary is not re-scanned. Use it when you have a time and not a `line_num` — "did it say anything since I left" — or when the same moment must address several sessions, which a line number cannot: line 42 is a different place in every transcript. ISO 8601: `2026-09-19T05:38:20+00:00` — exactly what `session messages` returns, so a timestamp goes straight back in — and also `2026-09-19 05:38:20` or a bare `2026-09-19` for its midnight. **No offset means UTC**, which is what this CLI stores and prints, so a timestamp pasted back from any of its output lands exactly where it came from. An instant older than the session starts the wait above the first stamped line rather than failing.
 
-A session with a live process but no indexed transcript yet — just spawned — is waited on from line 0, or from `--from` if given; `--since` does not apply to it. With no session and no live process, the command exits `1`.
+A session with a live process but no indexed transcript yet — just spawned — is waited on from line 0, or from `--from` if given; `--since` does not apply to it. With no session and no live process, the command exits `1`. `session self wait-reply` is refused (exit `1`): you are mid-turn while it runs, so your own answer could never come before the deadline.
 
 Returns `{"session_id": ..., "reply": {...}}`, the `reply` block being the one `--wait-reply` returns: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (dropped by `--no-reply-text`), `error` on `wait_failed`. A block is the `outcome`, never a field beside it: there is one place to read it.
 
@@ -263,7 +279,9 @@ $TWICC session 4a8352fb-... wait-reply --since 2026-09-19T05:38:20+00:00
 # Anything said after that moment, without knowing a line number.
 ```
 
-An idle session ends rather than hanging, but only after a ~5 s flush window: below that, `--wait-timeout` can only report `timeout`.
+An answer already past the cursor is returned at once. An idle session with no answer past the cursor ends rather than hanging, but only after a ~5 s flush window: below that, `--wait-timeout` can only report `timeout`.
+
+**Known limit (Claude Code), rare and accepted.** A message sent while a Claude session is busy is queued by Claude and recorded as a queued command, not as a user message. Every wait for an answer — the send's own `--wait-reply` included, with `--from` or the default cursor — returns the first final message past its cursor, which is then the running turn's closing message. Usually that turn read the queued message and its closing message covers it; in the rare case where the queued message runs as a turn of its own afterwards, the wait returns an answer that does not cover it. In an orchestration, message a session once it has finished, not while it works.
 
 ### Pending request — what the session is waiting on
 
@@ -378,7 +396,7 @@ $TWICC session <SESSION_ID> plan --list
 
 The session's plan-like documents: the native Claude plan (what *plan mode* writes) plus detected plans/specs/handoffs/notes... written by the session or its subagents — **both providers**.
 
-Without argument: the content of the **most recently updated** tracked document (not necessarily the native plan), as `{path, abs_path, content}`. Errors (exit 1) when the session tracks none — the default view's `plan_paths` field tells you up front.
+Without argument: the content of the **most recently updated** tracked document (not necessarily the native plan), as `{path, abs_path, content}`. Errors (exit 1) when the session tracks none — `plan --list`, or `plan_paths` in `session <ID> --full`, tells you up front.
 
 With a `PATH` argument: the content of that document. Matched against the tracked entries only (never an arbitrary filesystem path): give the stored `path` exactly as shown by `--list` (project-relative when the doc lives under the project, absolute otherwise) or its resolved absolute path. Errors (exit 1) on unknown path or missing file.
 
@@ -390,7 +408,7 @@ With a `PATH` argument: the content of that document. Matched against the tracke
                  "abs_path": "/abs/path/to/docs/plans/feature-plan.md"}, ...]}
 ```
 
-`source` is `detected`, `subagent` (written by a subagent), or `claude_plan` (the native plan); `abs_path` is always resolved (worktree-aware). The default view's `plan_paths` field carries the same entries (without `abs_path`), so you rarely need `--list` after fetching the session.
+`source` is `detected`, `subagent` (written by a subagent), or `claude_plan` (the native plan); `abs_path` is always resolved (worktree-aware). `plan_paths` in `session <ID> --full` carries the same entries (without `abs_path`), so you rarely need `--list` after fetching the session.
 
 ### Workflows — list runs
 
@@ -417,6 +435,9 @@ One workflow, by the `id` from `workflows`. Errors (exit 1) when unknown.
 
 ```bash
 $TWICC session abc123-def456
+$TWICC session abc123-def456 --full
+$TWICC session self --slim
+$TWICC session parent messages --tail 1
 $TWICC session abc123 content 5
 $TWICC session abc123 content 10-20
 $TWICC session abc123 content --contains "TypeError"

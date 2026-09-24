@@ -37,10 +37,11 @@ def fresh_placeholder_template(monkeypatch):
     """Drop ``sessions_get``'s cached placeholder between tests.
 
     It is a module global built ONCE per process from ``Session.objects.first()``
-    — and this file is the only place in the suite that calls ``sessions get``
-    with an empty ``Session`` table, where the build degrades to ``{"id": None}``
-    (``sessions_get.py:38-42``). Without this reset that degraded template
-    leaks into every later test in the process, and a test in ANOTHER file
+    — and this file, like `tests/test_cli_session_payload.py`, calls ``sessions
+    get`` with an empty ``Session`` table, where the build degrades to
+    ``{"id": None}`` plus ``CLI_ENRICHED_KEYS`` (``sessions_get.py:38-42``).
+    Without this reset that degraded template leaks into every later test in
+    the process, and a test in ANOTHER file
     fails with an unrelated message. Found by an adversarial review, not by the
     suite, which passes only because of file ordering.
     """
@@ -282,7 +283,7 @@ def test_the_three_listings_share_one_slim_key_set(project, live_backend, capsys
 
 
 def test_a_subagent_listing_asks_the_database_nothing(project, live_backend, capsysbinary):
-    """The answer is known by construction, so no pid is resolved and no row read."""
+    """The answer is known by construction, so no pid is resolved and no `ProcessRun` row read."""
     parent = make_session(project)
     make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
 
@@ -701,7 +702,7 @@ def test_it_is_the_same_block_the_listing_builds(project, live_backend, capsysbi
 
     cli_sessions_get.main(["s1"], full=True)
     from_listing = read(capsysbinary)[0]["process"]
-    cli_session.main("s1")
+    cli_session.main("s1", full=True)
     from_singular = read_one(capsysbinary)["process"]
 
     assert from_singular == from_listing
@@ -727,7 +728,7 @@ def test_a_subagent_is_null_here_as_well(project, live_backend, capsysbinary):
 
 
 def test_a_subagent_asks_nothing_at_all_here_either(project, live_backend, capsysbinary, monkeypatch):
-    """No query, and no pid resolution either.
+    """No `ProcessRun` query, and no pid resolution either.
 
     Resolving the pid is not a query: it reads `twicc.info.json` and calls
     `psutil.pid_exists`, so `CaptureQueriesContext` cannot see it. Hoisting

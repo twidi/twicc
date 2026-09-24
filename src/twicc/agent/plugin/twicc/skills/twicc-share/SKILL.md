@@ -47,9 +47,9 @@ $TWICC share [--kind session|artifact] [--session ID|self|parent] [--project PRO
 - `--session ID|self|parent` — filter both session and artifact shares by their owning session.
 - `--project PROJECT` — filter both kinds by project, with worktree-aware scope.
 - `--include-revoked` — include revoked rows.
-- `--limit N` — maximum rows, default 50.
+- `--limit N` — maximum rows, default 20.
 - `--offset N` — rows to skip, default 0.
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size becomes **50**. **Before 2026-10-01 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
+- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size is **20**. **Before 2026-10-01 the flag is opt-in and a call without it keeps its shape (its default page is 20 now, it was 50); from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
 
 ### Show
 
@@ -240,11 +240,10 @@ On rejection:
 
 - `0` — Success
 - `1` — Local validation error
-- `2` — TwiCC server not running or remote misuse
+- `2` — TwiCC server not running, remote misuse, or bad CLI usage (unknown option, missing argument; the error message tells them apart)
 - `3` — Server rejected
 - `4` — Server error
 - `5` — Timeout
-- `64` — Bad CLI usage
 
 ## Examples
 

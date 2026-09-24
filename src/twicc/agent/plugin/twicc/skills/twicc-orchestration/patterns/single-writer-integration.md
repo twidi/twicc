@@ -18,7 +18,7 @@ Shape: star → one integrator · files + pull/push · barrier then integration 
 
 1. Split the work into slices and decide which slices may only propose.
 2. Spawn producers with `--annotation role=producer` and a scratch-file deliverable.
-3. Barrier on the producers' ids only: `sessions wait-reply <PRODUCER_ID>... --since 2000-01-01 --wait-timeout 300`.
+3. Barrier on the producers' ids only: `sessions wait-reply <PRODUCER_ID>... --wait-timeout 300`.
 4. Pull producer outputs and spawn or appoint one integrator with `--annotation role=integrator`.
 5. Integrator applies the selected changes, runs checks, writes the final report, and reports up.
 

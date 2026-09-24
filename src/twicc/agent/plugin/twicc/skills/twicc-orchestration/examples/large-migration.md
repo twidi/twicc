@@ -11,7 +11,7 @@ then advances.
    `--annotation phase=migrate --annotation wave=<n> --annotation status=working`.
 3. For each wave, spawn at most K executor workers, one module/package per worker.
 4. Wait for that wave, naming only its ids:
-   `sessions wait-reply <WAVE_ID>... --since 2000-01-01 --wait-timeout 300`.
+   `sessions wait-reply <WAVE_ID>... --wait-timeout 300`.
 5. Pull results and run the gate yourself, or spawn a verifier session for it:
    tests, lints, smoke checks, focused review, or manual review.
 6. If a worker is hung, tag it `status=runaway` and stop the scoped batch:

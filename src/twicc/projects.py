@@ -106,6 +106,37 @@ def get_project_directory(project_id: str) -> str | None:
     return _project_directories.get(project_id)
 
 
+def project_directories_cached(project_ids: Iterable[str]) -> dict[str, str | None]:
+    """Directory of each project, read through the module cache.
+
+    A cached key answers without a query, a stored ``None`` included: the test
+    is key membership, never ``.get()``, which cannot tell a miss from a hit.
+    The misses cost ONE query, and each row found is stored with a single-key
+    assignment (atomic under the GIL, never ``clear()``), so a concurrent
+    ``load_project_directories`` rebuild costs at most one extra read of the
+    same value. An id with no ``Project`` row maps to ``None`` and is not stored.
+    """
+    found: dict[str, str | None] = {}
+    misses: list[str] = []
+    for project_id in dict.fromkeys(project_ids):
+        try:
+            found[project_id] = _project_directories[project_id]
+        except KeyError:
+            misses.append(project_id)
+    if misses:
+        for project_id, directory in Project.objects.filter(id__in=misses).values_list("id", "directory"):
+            _project_directories[project_id] = directory
+            found[project_id] = directory
+        for project_id in misses:
+            found.setdefault(project_id, None)
+    return found
+
+
+def project_directory_cached(project_id: str) -> str | None:
+    """One-id form of :func:`project_directories_cached`."""
+    return project_directories_cached([project_id])[project_id]
+
+
 def get_project_git_root(project_id: str) -> str | None:
     """Get cached git_root for a project."""
     return _project_git_roots.get(project_id)

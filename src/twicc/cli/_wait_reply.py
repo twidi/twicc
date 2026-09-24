@@ -36,7 +36,10 @@ pass the session's ``last_line``, read server-side the instant the message was
 handed to the agent, which is what keeps them from returning the previous
 turn's answer. A batch carries one cursor per recipient: they are not at the
 same line, and a shared one would let a chatty session close a quiet one's
-wait.
+wait. ``session <id> wait-reply`` takes ``--from`` / ``--since``, ``sessions
+wait-reply`` takes ``--since`` only (a line number belongs to one transcript);
+both default to :func:`default_wait_cursors` (after the last user message, the
+current ``last_line`` while the compute is not current).
 """
 
 from __future__ import annotations
@@ -110,6 +113,44 @@ def degraded_reply(cursor: int, waited: float, exc: BaseException) -> dict:
     return _empty_reply(WAIT_FAILED, cursor, waited) | {
         "error": f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__,
     }
+
+
+def default_wait_cursors(sessions) -> dict[str, int]:
+    """The cursor a wait starts from when neither --from nor --since is given.
+
+    Strictly after the session's last user message (0 when it has none): the
+    answer to the last thing it was told is returned even if it came before
+    the wait. A session whose compute is not current keeps its ``last_line``:
+    its ``kind`` values may predate its newest lines (initial sync,
+    compute-version bump, Codex legacy rollout), and the anchor would land on
+    an older message — a missed answer, never a wrong one. One query for the
+    ready ones, on ``idx_session_kind_line``.
+    """
+    from django.db.models import Max
+
+    from twicc.core.enums import ItemKind
+    from twicc.core.models import SessionItem
+    from twicc.core.serializers import session_compute_ready
+
+    cursors: dict[str, int] = {}
+    ready: list[str] = []
+    for session in sessions:
+        if session_compute_ready(session):
+            cursors[session.id] = 0
+            ready.append(session.id)
+        else:
+            cursors[session.id] = session.last_line
+    if ready:
+        rows = (
+            SessionItem.objects
+            .filter(session_id__in=ready, kind=ItemKind.USER_MESSAGE)
+            .values("session_id")
+            .annotate(last=Max("line_num"))
+            .values_list("session_id", "last")
+        )
+        for session_id, last in rows:
+            cursors[session_id] = last
+    return cursors
 
 
 def wait_for_reply_or_degrade(

@@ -14,9 +14,9 @@ is ``twicc → bash → claude(B) → backend Python → …``. ``agent_pid``
 of B is closer than A in the chain, so we resolve to B. Each level
 of nesting works the same way.
 
-Returns the resolved ``Session`` (full row, so callers can serialise
-what ``twicc session <ID>`` returns, minus the ``process`` block it
-joins on) or ``None`` when no match
+Returns the resolved ``Session`` (full row, so callers can build the
+session payload — ``twicc session <ID>`` does it through
+``build_session_payload``) or ``None`` when no match
 is found in the ancestry (e.g. a human running ``twicc`` from a
 plain terminal).
 """

@@ -142,7 +142,10 @@ def send_messages_cmd(
             "request leaves `all_replied` false. Only entries that were actually "
             "sent are waited on. One shared deadline covers the batch (see "
             "--wait-timeout): the sessions are waited on in parallel, so it "
-            "is a wall-clock budget, not N x timeout."
+            "is a wall-clock budget, not N x timeout. Without it, a separate "
+            "wait must pass `sessions wait-reply` "
+            "an instant taken before this command (--since), or `session <id> "
+            "wait-reply` the `last_line` of each entry (--from)."
         ),
     ),
     wait_timeout: float = typer.Option(

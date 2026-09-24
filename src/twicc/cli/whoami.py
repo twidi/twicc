@@ -4,39 +4,74 @@ from __future__ import annotations
 
 import typer
 
-from twicc.cli._output import emit_json
+from twicc.cli._output import (
+    WHOAMI_FULL_HELP, WHOAMI_SLIM_HELP, emit_error, emit_json, listing_cutover_passed, slim_notice,
+)
 
 
-def whoami_cmd() -> None:
+def whoami_cmd(
+    slim: bool = typer.Option(False, "--slim", help=WHOAMI_SLIM_HELP),
+    full: bool = typer.Option(False, "--full", help=WHOAMI_FULL_HELP),
+) -> None:
     """Print details of the session that owns the calling process.
 
     Walks the PID ancestry from the current process upward and matches
-    against the live agents tracked by TwiCC. When a match is found,
-    prints a JSON object with: ``session_id``, ``title``, ``project_id``,
-    ``project_directory``, ``current_working_directory`` (resolved
-    from tool_use paths, may differ from ``project_directory`` when
-    the agent works in a worktree or other repo), ``artifacts_dir`` and
-    ``scratch_dir`` (the session's own working directories, already
-    joined with the session id), ``orchestration_scratch_dir`` (the
-    shared scratch folder, present only when the session is part of an
-    orchestration tree), the resolved ``agent_settings``, the full
-    ``session`` payload (what ``twicc session <ID>`` returns, minus its
-    ``process`` block), and the matching ``process`` row with nine fields
-    (``provider``, ``session_id``, ``session_title`` and ``project_id`` on top of
-    the compact block's five).
+    against the live agents tracked by TwiCC.
+
+    With ``--slim`` or ``--full`` — and from the cutover without a flag — it
+    prints the ``session self`` payload: the session row (reduced, or in full
+    with ``--full``) with its ``process`` block inside, built by
+    :func:`twicc.cli.session.build_session_payload`.
+
+    Without a flag, until the cutover, it prints its historical object:
+    ``session_id``, ``title``, ``project_id``, ``project_directory``,
+    ``current_working_directory`` (resolved from tool_use paths, may differ
+    from ``project_directory`` when the agent works in a worktree or other
+    repo), ``artifacts_dir`` and ``scratch_dir`` (the session's own working
+    directories, already joined with the session id),
+    ``orchestration_scratch_dir`` (the shared scratch folder, present only when
+    the session is part of an orchestration tree), the resolved
+    ``agent_settings``, the ``session`` sub-object (the serializer payload,
+    without the CLI enrichment ``session <ID>`` adds), and the matching
+    ``process`` row with nine fields (``provider``, ``session_id``,
+    ``session_title`` and ``project_id`` on top of the compact block's five).
 
     Useful from inside a session's Bash tool to discover the session's
     own identity (the agent doesn't otherwise know its TwiCC session_id).
     From a plain terminal, this command exits 1 with a clear message —
     by design, ``whoami`` is only meaningful inside an active session.
     """
+    # First: the refusal wins outside a session and records no notice.
+    if slim and full:
+        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
+
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import django
 
     django.setup()
 
-    from twicc.agent.states import AgentState
     from twicc.cli._drop_request.whoami import resolve_current_session
+
+    session = resolve_current_session()
+    if session is None:
+        msg = (
+            "No TwiCC session found in PID ancestry. whoami is only "
+            "meaningful from inside an active agent session."
+        )
+        typer.echo(msg, err=True)
+        raise typer.Exit(1)
+
+    # Read before slim_notice, which only returns a boolean.
+    legacy = not slim and not full and not listing_cutover_passed()
+    slim = slim_notice("whoami", slim, full, kind="whoami")
+    if not legacy:
+        from twicc.cli.session import build_session_payload
+
+        emit_json(build_session_payload(session, slim=slim))
+        return
+
+    # The historical object, unchanged until the cutover.
+    from twicc.agent.states import AgentState
     from twicc.cli._process_state import (
         serialize_dead_process_row,
         serialize_process_row,
@@ -47,15 +82,6 @@ def whoami_cmd() -> None:
     from twicc.paths import get_session_artifacts_dir, get_session_scratch_dir
     from twicc.pending_titles import get_pending_title
     from twicc.providers.helpers import AgentSettings, get_provider_helpers
-
-    session = resolve_current_session()
-    if session is None:
-        msg = (
-            "No TwiCC session found in PID ancestry. whoami is only "
-            "meaningful from inside an active agent session."
-        )
-        typer.echo(msg, err=True)
-        raise typer.Exit(1)
 
     helpers = get_provider_helpers(session.provider)
     resolved_settings = helpers.resolve_agent_settings(AgentSettings.from_session(session))

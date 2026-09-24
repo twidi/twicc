@@ -5,7 +5,7 @@ commands work with a notice until ``LISTING_CUTOVER`` and refuse to run from
 then on (exit 64), on every channel. Pinned values are **naive**, like the
 constant. What is evaluated at import (help texts, ``hidden=``,
 ``MCP_EXCLUDED_ROOTS``) cannot be moved by a fixture: those assertions read the
-real clock, and the "after the restart" tests patch the cached registry.
+effective cutover, and the "after the restart" tests patch the cached registry.
 """
 
 from __future__ import annotations
@@ -250,7 +250,7 @@ def test_mcp_after_the_restart_names_the_replacement(after, monkeypatch):
 def test_mcp_before_the_date_the_pre_check_is_inert(before, monkeypatch):
     """With the tool listed, as it is until the first restart past the date.
 
-    The registry is built at import from the real clock, so from 2026-10-01 it
+    The registry is built at import from the effective cutover, so from 2026-10-01 it
     no longer holds `processes`: the tool is put back explicitly, or this test
     would go red on that day for a reason unrelated to what it checks.
     """
@@ -339,7 +339,24 @@ def test_session_stop_answers_the_same_on_both_sides(monkeypatch, no_backend, pr
     assert "was removed" not in (after_date.error or "")
 
 
-def test_whoami_still_serves_its_nine_field_process_row(after, live_backend, project, monkeypatch, capsysbinary):
+def test_after_the_date_whoami_full_carries_the_session_s_own_identity(
+        after, live_backend, project, monkeypatch, capsysbinary):
+    from twicc.cli.whoami import whoami_cmd
+
+    session = _session(project, "rm-me")
+    _live_run(session.id)
+    monkeypatch.setattr(
+        "twicc.cli._drop_request.whoami.resolve_current_session", lambda: session,
+    )
+    whoami_cmd(slim=False, full=True)
+    data = orjson.loads(capsysbinary.readouterr().out)
+    assert set(data["process"]) == {"id", "state", "started_at", "last_state_change_at", "pid"}
+    assert {"provider", "id", "title", "project_id"} <= set(data)
+    assert data["id"] == session.id
+
+
+def test_before_the_date_whoami_still_serves_its_nine_field_process_row(
+        before, live_backend, project, monkeypatch, capsysbinary):
     from twicc.cli.whoami import whoami_cmd
 
     session = _session(project, "rm-me")
@@ -351,7 +368,7 @@ def test_whoami_still_serves_its_nine_field_process_row(after, live_backend, pro
         "twicc.cli._twicc_info.resolve_live_twicc_or_exit",
         lambda: type("I", (), {"pid": TWICC_PID})(),
     )
-    whoami_cmd()
+    whoami_cmd(slim=False, full=False)
     process = orjson.loads(capsysbinary.readouterr().out)["process"]
     assert set(process) == {
         "id", "state", "started_at", "last_state_change_at", "pid",
@@ -372,12 +389,31 @@ def test_telemetry_keeps_the_group_of_retired_tools(monkeypatch):
     assert groups["process_stop"] == snapshot.MCP_TOOL_GROUPS["process"]
 
 
-# --- help texts, on the real side of the cutover -----------------------------
+# --- help texts, on the effective side of the cutover ------------------------
+
+
+RETIRED_ROW = re.compile(r"^(?:│ |  )process(es)?\s", re.MULTILINE)
+
+
+@pytest.mark.parametrize("width", ["70", "80", "200"])
+def test_the_top_help_lists_the_retired_rows_only_before_the_date(width):
+    """Import-time help: two-sided on the effective cutover. A wrapped
+    description line starting with the word `process` must not read as a row."""
+    from typer.testing import CliRunner
+
+    from twicc.cli import app
+
+    top_help = CliRunner().invoke(app, ["--help"], env={"COLUMNS": width}).output
+    rows = {m.group(0).split()[-1] for m in RETIRED_ROW.finditer(top_help)}
+    if _output.listing_cutover_passed():
+        assert rows == set(), top_help
+    else:
+        assert rows == {"process", "processes"}, top_help
 
 
 def test_the_help_texts_match_the_side_of_the_cutover_we_are_on():
-    """Evaluated at import: read the real clock. A known false positive under a
-    plugin that forces the constant, like the pagination descriptions test."""
+    """Evaluated at import: read the effective cutover (the real clock, or
+    `TWICC_LISTING_CUTOVER`, which moves the import-time values too)."""
     from typer.testing import CliRunner
 
     from twicc.cli import app
@@ -388,7 +424,7 @@ def test_the_help_texts_match_the_side_of_the_cutover_we_are_on():
 
     if _output.listing_cutover_passed():
         assert not set(RETIRED_MCP_TOOLS) & set(tools_by_name())
-        assert not re.search(r"^\s*│?\s*process(es)?\s", top_help, re.MULTILINE)
+        assert not RETIRED_ROW.search(top_help)
     else:
         for tool, command in RETIRED_MCP_TOOLS.items():
             assert described[tool].startswith("DEPRECATION"), tool

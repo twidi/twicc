@@ -1,4 +1,7 @@
-"""``twicc sessions wait-reply`` — wait on several sessions nobody just messaged.
+"""``twicc sessions wait-reply`` — wait on several sessions nobody just messaged —
+or ones you messaged with ``send-messages`` without ``--wait-reply`` (then pass
+``--since`` an instant taken before the send, or wait on each with ``session
+<id> wait-reply --from <last_line>``).
 
 The plural of ``session <ID> wait-reply``, and the same loop: one poll drives
 every session, one wall-clock budget covers the batch, and each concludes on
@@ -7,8 +10,10 @@ that loop; the difference here is where the cursors come from.
 
 **The cursors.** A send hands back the line it was taken at, so
 ``send-messages`` knows where each recipient starts. Nothing is sent here, so
-each session starts above its own ``last_line`` — "tell me the next thing each
-of them says" — or above the instant ``--since`` names. There is deliberately
+each session starts after its own last user message, so an answer already
+given is returned (above its current ``last_line`` while its compute is not
+current, :func:`~twicc.cli._wait_reply.default_wait_cursors`), or above the
+instant ``--since`` names. There is deliberately
 no ``--from``: a line number belongs to one transcript and means something
 else in every other, which is the whole reason ``--since`` exists.
 
@@ -23,8 +28,7 @@ message, and is the one most likely to speak. Archived ones are always out and
 
 The fifth difference is the empty case: a bare call would wait on every session
 TwiCC has ever indexed, so at least one id or one filter is required.
-``sessions stop`` can afford a bare call because the live process set bounds
-it; nothing bounds this one.
+``sessions stop`` refuses a bare call too.
 """
 
 from __future__ import annotations
@@ -63,7 +67,7 @@ def main(
         reject_conflicting_scopes,
         resolve_explicit_ids,
     )
-    from twicc.cli._wait_reply import degraded_reply, wait_for_replies
+    from twicc.cli._wait_reply import default_wait_cursors, degraded_reply, wait_for_replies
     from twicc.cli.session import _cursor_at, _parse_instant
     from twicc.cli.sessions import build_filtered_queryset
     from twicc.core.models import Session
@@ -77,8 +81,9 @@ def main(
     # Refused rather than honoured, as `sessions stop` refuses it: `dead` is
     # "no TwiCC process", so those sessions have nothing to say. It is also the
     # one filter that would lift the refusal below while selecting every
-    # unarchived session there is — each polled for the ~5 s flush window
-    # before concluding `ended`, to produce a payload that says nothing.
+    # unarchived session there is: each would be polled, and one with no answer
+    # past its cursor waits out the ~5 s flush window before concluding `ended`,
+    # to produce a payload that says nothing.
     if state and DEAD_VIRTUAL_STATE in state:
         emit_error(
             "Error: --state dead selects sessions with no process, which will "
@@ -100,7 +105,8 @@ def main(
     # The one place this command refuses what the listing allows. A listing with
     # no filter shows a page; a wait with no filter would poll every session
     # ever indexed — the live ones to the deadline, the rest for the flush
-    # window — to hand back thousands of blocks nobody asked about.
+    # window — or answered at once when an answer already sits past their
+    # cursor — to hand back thousands of blocks nobody asked about.
     if not explicit and not has_filter:
         emit_error(
             "Error: sessions wait-reply needs at least one session id or one "
@@ -147,6 +153,7 @@ def main(
         live_unindexed = live_session_ids(
             load_process_rows(missing, resolve_listing_twicc_pid())
         )
+    defaults = default_wait_cursors(rows.values()) if instant is None else {}
     cursors = {}
     for sid in targets:
         session = rows.get(sid)
@@ -158,9 +165,7 @@ def main(
             # the two queries. Reported rather than dropped: the caller must be
             # able to align the result with what they asked for.
             continue
-        cursors[sid] = (
-            _cursor_at(session, instant) if instant is not None else session.last_line
-        )
+        cursors[sid] = _cursor_at(session, instant) if instant is not None else defaults[sid]
 
     started = time.monotonic()
     try:

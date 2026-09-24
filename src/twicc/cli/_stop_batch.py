@@ -1,9 +1,12 @@
 """The shared machinery behind ``processes stop`` and ``sessions stop``.
 
-Both commands answer "stop these agents"; they differ only in how they choose
-the ids. The drop-per-id submission, the per-id pre-check, the single-deadline
-poll loop and the outcome shape live here so the two cannot drift into
-reporting the same operation differently.
+Both commands answer "stop these agents"; they differ in how they choose the
+ids and in the envelope they emit. The drop-per-id submission, the per-id
+pre-check, the single-deadline poll loop and the per-id **entry** live here so
+the two cannot drift into reporting the same operation differently; each
+command shapes its envelope (``processes stop`` a bare array until its removal,
+``sessions stop`` ``{summary, results}``), and only ``sessions stop`` passes
+``caller_id``.
 
 The selection stays at the call site: ``processes stop`` takes explicit ids
 plus filiation scopes, ``sessions stop`` takes the whole ``sessions`` filter
@@ -29,11 +32,17 @@ _LOOKUP_CODE_TO_SKIP_STATUS = {
 }
 
 
-def stop_session_ids(unique_ids, *, timeout: int, force: bool, twicc_pid: int) -> list[dict]:
+def stop_session_ids(
+    unique_ids, *, timeout: int, force: bool, twicc_pid: int, caller_id: str | None = None,
+) -> list[dict]:
     """Stop every id, and return one outcome per id in the given order.
 
     Idempotent by construction: asking to stop a session whose process is
     already gone still reports ``status="stopped"``.
+
+    ``caller_id`` is the calling session, never stopped: its entry gets
+    ``status="skipped_self"`` and an ``error`` pointing to ``session self
+    stop``, and no drop is submitted for it. ``None`` skips nothing.
     """
     from twicc.cli._drop_request import transport
     from twicc.cli._drop_request.session_lookup import (
@@ -87,6 +96,14 @@ def stop_session_ids(unique_ids, *, timeout: int, force: bool, twicc_pid: int) -
             "error": None,
         }
         outcomes[sid] = entry
+
+        if sid == caller_id:
+            entry["status"] = "skipped_self"
+            entry["error"] = (
+                "The calling session is never stopped by `sessions stop`; "
+                "use `session self stop`."
+            )
+            continue
 
         try:
             resolved = lookup_session(sid)
@@ -150,6 +167,6 @@ def stop_session_ids(unique_ids, *, timeout: int, force: bool, twicc_pid: int) -
         for _, sub in initial_drops:
             sub.cleanup()
 
-    # --- Emit JSON array in input order ----------------------------------
+    # --- Return the entries in input order (each command shapes its envelope) ---
 
     return [outcomes[sid] for sid in unique_ids]

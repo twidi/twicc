@@ -2,21 +2,24 @@
 
 The command stops agents, so the interesting part is not the stopping (that
 mechanism is shared with ``processes stop`` and already covered) but **who
-ends up in the batch**. Three rules decide it, and each one is a way the
+ends up in the batch**. Four rules decide it, and each one is a way the
 command could quietly do too much or too little:
 
 - only sessions that actually have a process — a stopped one has nothing to
-  stop, which is what makes a bare ``sessions stop`` bounded by what is alive
-  rather than by how many sessions exist;
+  stop; a bare call (no id, no filter) is refused, and the live-set
+  narrowing still bounds any filtered call by what is alive rather than by
+  how many sessions exist;
 - hidden ones included, because the orchestration workers are hidden by
   convention and "stop everything running" that spares them is a lie;
-- explicit ids bypass the filters, as in ``sessions get``.
+- explicit ids bypass the filters, as in ``sessions get``;
+- the calling session is never stopped: it is reported ``skipped_self``.
 """
 
 from __future__ import annotations
 
 import orjson
 import pytest
+import typer
 from django.utils import timezone
 
 from twicc.agent.states import AgentState
@@ -30,6 +33,13 @@ TWICC_PID = 4242
 @pytest.fixture
 def project(db):
     return Project.objects.create(id="stop-project", directory="/tmp/stop")
+
+
+@pytest.fixture(autouse=True)
+def no_caller(monkeypatch):
+    """The suite may run inside a TwiCC session, whose PID ancestry would
+    otherwise resolve a real caller. The `caller` fixture overrides it."""
+    monkeypatch.setattr("twicc.cli._drop_request.whoami.resolve_current_session", lambda: None)
 
 
 @pytest.fixture
@@ -48,11 +58,14 @@ def server(monkeypatch):
     )
     seen: dict = {}
 
-    def fake_stop(ids, *, timeout, force, twicc_pid):
+    def fake_stop(ids, *, timeout, force, twicc_pid, caller_id=None):
         # Record every argument: recording only `ids` and `force` left
         # `timeout` and `twicc_pid` unasserted, and two mutants alive.
-        seen.update(ids=list(ids), timeout=timeout, force=force, pid=twicc_pid)
-        return [{"session_id": sid, "status": "stopped"} for sid in ids]
+        seen.update(ids=list(ids), timeout=timeout, force=force, pid=twicc_pid, caller_id=caller_id)
+        return [
+            {"session_id": sid, "status": "skipped_self" if sid == caller_id else "stopped"}
+            for sid in ids
+        ]
 
     monkeypatch.setattr("twicc.cli._stop_batch.stop_session_ids", fake_stop)
     return seen
@@ -79,21 +92,33 @@ def run(capsysbinary, *args, **kwargs):
     return orjson.loads(capsysbinary.readouterr().out)
 
 
+def results(payload):
+    return list(payload["results"].values())
+
+
 # ---------------------------------------------------------------------------
 # Who ends up in the batch
 # ---------------------------------------------------------------------------
 
 
-def test_a_bare_call_stops_everything_running(project, server, capsysbinary):
-    """And only that: the blast radius is the live set, not the listing."""
+def test_a_bare_call_is_refused_before_the_server_check(project, monkeypatch, capsysbinary):
+    def boom():
+        raise AssertionError("a bad call must be named before the server is checked")
+
+    monkeypatch.setattr("twicc.cli._drop_request.transport.ensure_server_available", boom)
+    with pytest.raises(typer.Exit) as exc:
+        sessions_stop.main([], timeout=30)
+    assert exc.value.exit_code == 1
+    assert "needs at least one session id or one filter" in capsysbinary.readouterr().err.decode()
+
+
+def test_stop_everything_running_is_written_on_purpose(project, server, capsysbinary):
     make_session(project, "busy")
     make_run("busy")
     make_session(project, "idle")
     make_run("idle", AgentState.USER_TURN)
     make_session(project, "gone")
-
-    run(capsysbinary)
-
+    run(capsysbinary, state=["starting", "assistant_turn", "awaiting_user_input", "user_turn"])
     assert set(server["ids"]) == {"busy", "idle"}
 
 
@@ -103,7 +128,9 @@ def test_a_stopped_session_is_not_in_the_batch(project, server, capsysbinary):
     make_session(project, "stopped")
     make_run("stopped", AgentState.DEAD)
 
-    assert run(capsysbinary) == []
+    assert run(capsysbinary, project=project.id) == {
+        "summary": {"total": 0, "succeeded": 0, "failed": 0, "all_succeeded": True}, "results": {},
+    }
     assert "ids" not in server
 
 
@@ -113,7 +140,7 @@ def test_hidden_sessions_are_stopped_too(project, server, capsysbinary):
     make_session(project, "worker", hidden=True)
     make_run("worker")
 
-    run(capsysbinary)
+    run(capsysbinary, project=project.id)
 
     assert server["ids"] == ["worker"]
 
@@ -124,7 +151,7 @@ def test_an_archived_session_is_still_reachable_by_id(project, server, capsysbin
     make_session(project, "filed", archived=True)
     make_run("filed")
 
-    run(capsysbinary)
+    run(capsysbinary, project=project.id)
 
     assert server["ids"] == ["filed"]
 
@@ -190,7 +217,7 @@ def test_force_travels_to_the_stopper(project, server, capsysbinary):
     make_session(project, "wedged")
     make_run("wedged")
 
-    run(capsysbinary, force=True)
+    run(capsysbinary, force=True, project=project.id)
 
     assert server["force"] is True
 
@@ -216,9 +243,10 @@ def test_a_non_positive_timeout_is_refused(project, server, capsysbinary):
     import typer
 
     with pytest.raises(typer.Exit) as exc:
-        sessions_stop.main([], timeout=0)
+        sessions_stop.main([], timeout=0, project="stop-project")
 
     assert exc.value.exit_code == 1
+    assert "--timeout must be > 0" in capsysbinary.readouterr().err.decode()
 
 
 def test_no_backend_means_nothing_to_stop(project, monkeypatch, capsysbinary):
@@ -232,7 +260,7 @@ def test_no_backend_means_nothing_to_stop(project, monkeypatch, capsysbinary):
     monkeypatch.setattr("twicc.cli._twicc_info.resolve_live_twicc", lambda: None)
 
     with pytest.raises(typer.Exit) as exc:
-        sessions_stop.main([], timeout=30)
+        sessions_stop.main([], timeout=30, project="stop-project")
 
     assert exc.value.exit_code == 2
 
@@ -276,7 +304,7 @@ def test_the_live_set_is_narrowed_in_sql_not_in_python(project, server, capsysbi
     make_session(project, "busy")
     make_run("busy")
 
-    run(capsysbinary)
+    run(capsysbinary, project=project.id)
 
     assert server["ids"] == ["busy"]
 
@@ -291,7 +319,7 @@ def test_a_session_whose_transcript_is_not_indexed_yet_is_stopped(project, serve
     )
     make_run("fresh", AgentState.STARTING)
 
-    run(capsysbinary)
+    run(capsysbinary, project=project.id)
 
     assert server["ids"] == ["fresh"]
 
@@ -311,7 +339,7 @@ def test_every_filter_reaches_the_query(project, server, kwargs, capsysbinary):
     and for a scope filter, the mutant stops strictly MORE than asked.
 
     Only one of these selects the session; the rest must select nothing. A
-    filter that is silently dropped turns its case into a bare stop.
+    filter that is silently dropped turns its case into a stop of everything running.
     """
     make_session(project, "busy")
     make_run("busy")
@@ -327,7 +355,7 @@ def test_every_filter_reaches_the_query(project, server, kwargs, capsysbinary):
         "stop-project": ["busy"],
         "other-project": ["elsewhere"],
     }.get(kwargs.get("project"), [])
-    assert [e["session_id"] for e in result] == expected
+    assert [e["session_id"] for e in results(result)] == expected
 
 
 def test_an_unknown_workspace_is_refused(project, server, capsysbinary):
@@ -392,7 +420,7 @@ def test_the_timeout_and_the_pid_reach_the_stopper(project, server, capsysbinary
     make_session(project, "busy")
     make_run("busy")
 
-    run(capsysbinary, timeout=7)
+    run(capsysbinary, timeout=7, project=project.id)
 
     assert server["timeout"] == 7
     assert server["pid"] == TWICC_PID
@@ -418,6 +446,68 @@ def test_an_unreachable_server_is_refused_before_anything_is_selected(
     )
 
     with pytest.raises(typer.Exit) as exc:
-        sessions_stop.main([], timeout=30)
+        sessions_stop.main([], timeout=30, project="stop-project")
 
     assert exc.value.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# The caller, and the output shape
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def caller(project, monkeypatch):
+    me = make_session(project, "me")
+    make_run("me")
+    monkeypatch.setattr("twicc.cli._drop_request.whoami.resolve_current_session", lambda: me)
+    return me
+
+
+@pytest.mark.parametrize("how", ["named", "self", "spawn-tree"])
+def test_the_caller_is_skipped_not_stopped(project, server, caller, capsysbinary, how):
+    # In the caller's tree, so `--spawn-tree self` selects both (the filter
+    # matches spawn_root_id = me OR pk = me, src/twicc/cli/sessions.py:83).
+    make_session(project, "other", spawned_by=caller, spawn_root=caller)
+    make_run("other")
+    if how == "spawn-tree":
+        payload = run(capsysbinary, spawn_tree="self")
+    else:
+        payload = run(capsysbinary, "me" if how == "named" else "self", "other")
+    assert server["caller_id"] == "me"
+    assert payload["results"]["me"]["status"] == "skipped_self"
+    assert payload["results"]["other"]["status"] == "stopped"
+    assert payload["summary"] == {"total": 2, "succeeded": 1, "failed": 1, "all_succeeded": False}
+
+
+def test_no_caller_skips_nothing(project, server, capsysbinary):
+    make_session(project, "busy")
+    make_run("busy")
+    payload = run(capsysbinary, project=project.id)
+    assert server["caller_id"] is None
+    # The stub reports `skipped_self` only for its `caller_id`: with none,
+    # every entry is `stopped` (fails today on the list-shaped output).
+    assert {e["status"] for e in results(payload)} == {"stopped"}
+
+
+def test_the_summary_counts_every_non_stopped_status_as_failed(project, server, monkeypatch, capsysbinary):
+    statuses = ["stopped", "timeout", "skipped_unknown", "rejected"]
+    monkeypatch.setattr(
+        "twicc.cli._stop_batch.stop_session_ids",
+        lambda ids, **kw: [{"session_id": sid, "status": s} for sid, s in zip(ids, statuses, strict=True)],
+    )
+    payload = run(capsysbinary, "a", "b", "c", "d")
+    assert payload["summary"] == {"total": 4, "succeeded": 1, "failed": 3, "all_succeeded": False}
+    assert list(payload["results"]) == ["a", "b", "c", "d"]
+
+
+def test_each_result_is_the_per_id_entry_unchanged(project, server, monkeypatch, capsysbinary):
+    """`results` re-keys the entries; it never drops or renames a field."""
+    entry = {
+        "session_id": "a", "session_known": True, "status": "stopped",
+        "request_uuid": "req-1", "provider": "claude_code",
+        "session_title": "A title", "project_id": project.id, "error": None,
+    }
+    monkeypatch.setattr("twicc.cli._stop_batch.stop_session_ids", lambda ids, **kw: [dict(entry)])
+    payload = run(capsysbinary, "a")
+    assert payload["results"] == {"a": entry}
