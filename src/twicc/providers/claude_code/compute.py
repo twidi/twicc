@@ -19,7 +19,7 @@ from typing import ClassVar, NamedTuple
 
 from django.db.models import Q
 
-from twicc.context_injection import INSTRUCTION_BLOCK_MARKER
+from twicc.context_injection import GOAL_CLEAR_ARGS, INSTRUCTION_BLOCK_MARKER
 from twicc.core.enums import ItemKind, Provider
 from twicc.core.models import Session, SessionItem, SessionType
 from twicc.paths import get_artifacts_dir
@@ -200,10 +200,6 @@ class ParsedCommand(NamedTuple):
 _RE_COMMAND_NAME = re.compile(r'<command-name>(.*?)</command-name>', re.DOTALL)
 _RE_COMMAND_MESSAGE = re.compile(r'<command-message>(.*?)</command-message>', re.DOTALL)
 _RE_COMMAND_ARGS = re.compile(r'<command-args>(.*?)</command-args>', re.DOTALL)
-
-# ``/goal`` arguments that clear the active goal (the CLI's clear aliases). A
-# clear emits no ``goal_status`` attachment, so it's detected from the command.
-_GOAL_CLEAR_ARGS = frozenset({"clear", "stop", "off", "reset", "none", "cancel"})
 
 
 def _goal_args_from_command_text(text: str) -> str | None:
@@ -1088,7 +1084,7 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
                     cmd_text = ''
                 args = _goal_args_from_command_text(cmd_text)
                 if args:
-                    if args.lower() in _GOAL_CLEAR_ARGS:
+                    if args.lower() in GOAL_CLEAR_ARGS:
                         return GoalEvent(cleared=True)
                     return GoalEvent(objective=args, state=GOAL_STATE_ACTIVE, raw_state='unmet')
             return None
@@ -1099,7 +1095,7 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
                 if (
                     command is not None
                     and command.name.lstrip('/') == 'goal'
-                    and (command.args or '').strip().lower() in _GOAL_CLEAR_ARGS
+                    and (command.args or '').strip().lower() in GOAL_CLEAR_ARGS
                 ):
                     return GoalEvent(cleared=True)
         return None

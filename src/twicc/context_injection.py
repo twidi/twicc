@@ -296,22 +296,31 @@ _GOAL_INSTRUCTION = (
 
 # A ``/goal`` invocation that actually carries an argument: the command token is
 # exactly ``/goal`` (not e.g. ``/goalkeeper``), followed by whitespace and at
-# least one non-whitespace character. A bare ``/goal`` — or ``/goal`` trailed by
-# only whitespace — gets no instruction. Leading whitespace is tolerated to
-# mirror :func:`apply_pending_context`'s slash-command check.
-_GOAL_COMMAND_RE = re.compile(r"\s*/goal\s+\S")
+# least one non-whitespace character (captured as the argument). A bare
+# ``/goal`` — or ``/goal`` trailed by only whitespace — gets no instruction.
+# Leading whitespace is tolerated to mirror :func:`apply_pending_context`'s
+# slash-command check.
+_GOAL_COMMAND_RE = re.compile(r"\s*/goal\s+(\S.*)", re.DOTALL)
+
+# ``/goal`` arguments that clear the active goal (the Claude Code CLI's clear
+# aliases, matched case-insensitively against the WHOLE argument).
+GOAL_CLEAR_ARGS = frozenset({"clear", "stop", "off", "reset", "none", "cancel"})
 
 
 def apply_goal_instruction(text: str) -> str:
     """Append the ``<twicc:instruction>`` block when ``text`` is ``/goal <args>``.
 
     Returns ``text`` unchanged for anything that is not a ``/goal`` command with
-    a non-empty argument (see :data:`_GOAL_COMMAND_RE`). Provider-agnostic; the
-    caller folds it in at the same send-time chokepoint as
+    a non-empty argument (see :data:`_GOAL_COMMAND_RE`), and for a clear
+    (``/goal clear`` and its aliases, see :data:`GOAL_CLEAR_ARGS`): the CLI only
+    recognizes a clear when the argument is exactly an alias, so an appended
+    block would turn it into a new goal whose condition is "clear". Provider-
+    agnostic; the caller folds it in at the same send-time chokepoint as
     :func:`apply_pending_context`. The block rides this single message only; the
     ingestion strip keeps it out of the stored copy. See the module docstring.
     """
-    if not _GOAL_COMMAND_RE.match(text):
+    match = _GOAL_COMMAND_RE.match(text)
+    if match is None or match.group(1).strip().lower() in GOAL_CLEAR_ARGS:
         return text
     return f"{text}\n<{INSTRUCTION_TAG_NAME}>{_GOAL_INSTRUCTION}</{INSTRUCTION_TAG_NAME}>"
 
