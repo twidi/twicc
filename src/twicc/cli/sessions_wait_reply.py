@@ -45,6 +45,7 @@ def main(
     active: bool = False,
     only_hidden: bool = False,
     want_text: bool = True,
+    wait_background: bool = False,
     project: str | None = None,
     workspace: str | None = None,
     spawned_by: str | None = None,
@@ -171,6 +172,7 @@ def main(
     try:
         replies = wait_for_replies(
             cursors, timeout=timeout, want_text=want_text, first=first,
+            wait_background=wait_background,
         ) if cursors else {}
     except BaseException as exc:  # noqa: BLE001 - deliberate, as in `send-messages`
         # N sessions means N times the queries, so this command is the one most

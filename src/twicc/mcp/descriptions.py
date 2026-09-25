@@ -24,8 +24,9 @@ update_session_settings.
 
 Asynchronous by default: "sent" only means the agent received the message. Pass wait_reply to wait until the \
 session concludes (an answer, or a pending request only a human can clear) and get the answer back in the same \
-call. The wait covers the turn THIS message triggers, never the previous one. To check whether a session still \
-runs, read process.state from session or sessions_get.""",
+call. The wait covers the turn THIS message triggers, never the previous one. With wait_background, a final \
+message read while background work runs does not count: the first one read once it has ended does. To check \
+whether a session still runs, read process.state from session or sessions_get.""",
     "send-messages": """Send the same message to several sessions at once.
 
 Selection: session_ids UNIONED with spawned_by / descendants / siblings / annotation. message may be omitted when \
@@ -35,26 +36,28 @@ attach is given. Output is keyed by session id, with a summary. A per-session fa
 Asynchronous by default: "sent" only means the agent received the message. Pass wait_reply to wait until the \
 recipients conclude (an answer, or a pending request only a human can clear) and get each answer back; each \
 recipient is waited from its own cursor, never its previous turn. wait_first stops at the first recipient to \
-conclude.
+conclude. With wait_background, a final message read while a \
+recipient's background work runs does not count.
 
 Each send starts or resumes an agent (real work, token spend): a batch can cold-start many stopped sessions.""",
     "session/wait-reply": """Block until a session concludes, past a cursor. Sends nothing.
 
-Use it on a session nobody just messaged, or one you messaged without wait_reply (then pass from_line = the \
-last_line the send returned).
+For a session nobody just messaged, or one messaged without wait_reply (then from_line = the send's last_line).
 
-It ends on an answer (the message closing a turn) or a pending request only a human can clear; an answer wins a tie.
+It ends on an answer (the message closing a turn) or a pending request only a human can clear; an answer wins a tie. \
+wait_background: a final read during background work does not count.
 
 Cursor: from_line (a line number, strictly past it) or since (an ISO 8601 instant), mutually exclusive. Omitted: \
-after the last user message. A just-spawned, not-yet-indexed session is waited from line 0.
+after the last user message. A just-spawned, unindexed session: from line 0.
 
 outcome: `replied`, `awaiting_user_input`, `ended` (crash, interruption, empty answer), `timeout`, \
 `provider_error`, `backend_gone`, `wait_failed`. To resume, pass as from_line: after `replied` or \
 `provider_error`, its `line_num`; after any other outcome, its `since_line_num`.
 
-Exit 0 answered or blocked, 5 timeout, 2 TwiCC stopped, 1 local refusal or broken wait.""",
+Exit 0 answered or blocked, 5 timeout, 2 TwiCC stopped, 1 refusal or broken wait.""",
     "sessions/wait-reply": """Block until several sessions conclude, each past its own cursor. Sends nothing. One \
-wait_timeout covers the whole batch. Each ends like session_wait_reply. wait_first stops at the first one.
+wait_timeout covers the whole batch. Each ends like session_wait_reply. wait_first stops at the first one. \
+wait_background applies per session.
 
 Selection: the sessions listing filters, with session_ids UNIONED on top. At least one id or filter is required. \
 Hidden always included, archived always excluded, state=dead refused.

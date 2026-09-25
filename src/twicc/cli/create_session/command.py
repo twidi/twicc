@@ -16,6 +16,7 @@ from twicc.cli._drop_request.help_strings import (
     preset_help,
     provider_help,
 )
+from twicc.cli._wait_reply import WAIT_BACKGROUND_HELP
 
 # Default ceiling for ``--wait-reply``. 300 s is the limit MCP callers are
 # asked to respect, so the default is safe there without anyone opting in.
@@ -278,6 +279,11 @@ def create_session_cmd(
             "context. Requires --wait-reply."
         ),
     ),
+    wait_background: bool = typer.Option(
+        False,
+        "--wait-background",
+        help=WAIT_BACKGROUND_HELP + " Requires --wait-reply.",
+    ),
 ) -> None:
     """Create a new session.
 
@@ -295,6 +301,8 @@ def create_session_cmd(
     with the result, in one call. That is the way to collect a worker's
     output; to check whether it is still running, read `process.state` from
     "twicc session <SESSION_ID>" or "twicc sessions get <SESSION_ID>...".
+    With --wait-background, a final read during background work does not
+    count.
     """
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import os
@@ -332,7 +340,8 @@ def create_session_cmd(
     wait_errors: list[ValidationError] = []
     if not wait_reply:
         for flag, given in (("--wait-timeout", wait_timeout is not None),
-                            ("--no-reply-text", no_reply_text)):
+                            ("--no-reply-text", no_reply_text),
+                            ("--wait-background", wait_background)):
             if given:
                 wait_errors.append(ValidationError(
                     flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
@@ -593,6 +602,7 @@ def create_session_cmd(
             since_line_num=0,
             timeout=wait_timeout,
             want_text=not no_reply_text,
+            wait_background=wait_background,
         )
         emit_json(final)
         raise typer.Exit(0)

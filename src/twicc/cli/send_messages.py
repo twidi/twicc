@@ -36,6 +36,7 @@ import time
 import typer
 
 from twicc.cli._drop_request.help_strings import NO_EXPAND_HELP, PROMPT_INCLUDE_HINT
+from twicc.cli._wait_reply import WAIT_BACKGROUND_HELP
 
 
 def send_messages_cmd(
@@ -183,6 +184,18 @@ def send_messages_cmd(
             "Requires --wait-reply."
         ),
     ),
+    wait_background: bool = typer.Option(
+        False,
+        "--wait-background",
+        help=(
+            WAIT_BACKGROUND_HELP
+            + " Applied to each recipient on its own; with --wait-first, the "
+            "first recipient to conclude under that rule ends the batch, and a "
+            "'pending' recipient carries its last ignored final message like a "
+            "'timeout' one. "
+            "Requires --wait-reply."
+        ),
+    ),
 ) -> None:
     # The MCP tool uses a short description instead: twicc/mcp/descriptions.py (keep in sync).
     """Send the same message to several sessions at once.
@@ -195,7 +208,10 @@ def send_messages_cmd(
     answer back with the result. Each is waited from its own cursor, read when
     its agent takes the message, so the previous turn's closing message is not
     returned in its place. --wait-first stops at the first recipient
-    to conclude instead of waiting for every one. That is the way to collect answers; to
+    to conclude instead of waiting for every one. With --wait-background, a
+    final message read while background work runs does not count: each
+    recipient's first final message read once that work has ended is
+    returned. That is the way to collect answers; to
     check whether sessions are still running, read `process.state` from
     "twicc sessions get <SESSION_ID>...".
 
@@ -307,7 +323,8 @@ def send_messages_cmd(
     if not wait_reply:
         for flag, given in (("--wait-timeout", wait_timeout is not None),
                             ("--no-reply-text", no_reply_text),
-                            ("--wait-first", wait_first)):
+                            ("--wait-first", wait_first),
+                            ("--wait-background", wait_background)):
             if given:
                 wait_errors.append(ValidationError(
                     flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
@@ -347,6 +364,7 @@ def send_messages_cmd(
                 timeout=budget,
                 want_text=not no_reply_text,
                 first=wait_first,
+                wait_background=wait_background,
             )
         except BaseException as exc:  # noqa: BLE001 - deliberate
             # The sends already succeeded. A locked database or a Ctrl-C during

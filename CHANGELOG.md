@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Background shells** — A new status (green terminal icon) shows when the provider reports that the agent has finished its turn but a shell it started is still running. Such sessions are no longer stopped automatically.
 - **Background work in the CLI, skills, RPC API and MCP** — A session's process information now tells what still runs in the background (subagents, shells…), whatever the session's state.
+- **Wait for background work** — The commands (CLI, skills, RPC API and MCP) that wait for an agent's reply can now also wait until its background work is over, and return the answer that follows it.
 
 ### Changed
 

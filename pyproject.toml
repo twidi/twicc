@@ -173,6 +173,8 @@ ignore = [
 # of it. Both are false here, and only here.
 "tests/test_mcp_abuse.py" = ["F401", "F811"]
 "tests/test_mcp_oauth_compatibility.py" = ["F401", "F811"]
+# Same pattern: `fast_loop` and `live_twicc` from `test_wait_reply.py` are autouse.
+"tests/test_wait_background.py" = ["F401", "F811"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "twicc.settings_test"

@@ -259,25 +259,26 @@ def test_the_flags_travel_from_the_command_line(session, monkeypatch):
 
     seen: dict = {}
 
-    def probe(session_id, *, from_line, since, timeout, want_text):
+    def probe(session_id, *, from_line, since, timeout, want_text, wait_background):
         # ``session_id`` too: ``ctx.obj`` is the only wiring that carries the
         # positional id down from the group callback, and the direct-call
         # tests bypass the wrapper entirely. Recorded but unasserted, a
         # hardcoded id would wait on the wrong session with the suite green.
         seen.update(session_id=session_id, from_line=from_line, since=since,
-                    timeout=timeout, want_text=want_text)
+                    timeout=timeout, want_text=want_text,
+                    wait_background=wait_background)
         raise typer.Exit(0)
 
     monkeypatch.setattr("twicc.cli.session.wait_reply", probe)
 
     result = CliRunner().invoke(app, [
         "session", "sw-session", "wait-reply",
-        "--from", "42", "--wait-timeout", "7", "--no-reply-text",
+        "--from", "42", "--wait-timeout", "7", "--no-reply-text", "--wait-background",
     ])
 
     assert result.exit_code == 0, result.output
     assert seen == {"session_id": "sw-session", "from_line": 42, "since": None,
-                    "timeout": 7.0, "want_text": False}
+                    "timeout": 7.0, "want_text": False, "wait_background": True}
 
 
 def test_the_defaults_are_the_documented_ones(session, monkeypatch):
@@ -287,13 +288,14 @@ def test_the_defaults_are_the_documented_ones(session, monkeypatch):
 
     seen: dict = {}
 
-    def probe(session_id, *, from_line, since, timeout, want_text):
+    def probe(session_id, *, from_line, since, timeout, want_text, wait_background):
         # ``session_id`` too: ``ctx.obj`` is the only wiring that carries the
         # positional id down from the group callback, and the direct-call
         # tests bypass the wrapper entirely. Recorded but unasserted, a
         # hardcoded id would wait on the wrong session with the suite green.
         seen.update(session_id=session_id, from_line=from_line, since=since,
-                    timeout=timeout, want_text=want_text)
+                    timeout=timeout, want_text=want_text,
+                    wait_background=wait_background)
         raise typer.Exit(0)
 
     monkeypatch.setattr("twicc.cli.session.wait_reply", probe)
@@ -302,7 +304,7 @@ def test_the_defaults_are_the_documented_ones(session, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert seen == {"session_id": "sw-session", "from_line": None, "since": None,
-                    "timeout": 300.0, "want_text": True}
+                    "timeout": 300.0, "want_text": True, "wait_background": False}
 
 
 def test_the_payload_names_the_session_it_waited_on(session, capsysbinary):
@@ -694,7 +696,7 @@ def test_the_instant_travels_from_the_command_line(session, monkeypatch):
 
     seen: dict = {}
 
-    def probe(session_id, *, from_line, since, timeout, want_text):
+    def probe(session_id, *, from_line, since, timeout, want_text, wait_background):
         seen.update(session_id=session_id, from_line=from_line, since=since)
         raise typer.Exit(0)
 

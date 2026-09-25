@@ -5,16 +5,17 @@ Create the session and wait for its answer in one call, or track and read it lat
 ## Usage
 
 ```bash
-$TWICC create-session "<PROMPT>" --wait-reply [--wait-timeout N] [--no-reply-text]
+$TWICC create-session "<PROMPT>" --wait-reply [--wait-timeout N] [--no-reply-text] [--wait-background]
 ```
 
 Keeps going after the session is created, until it answers, and adds a `reply` block to the result. One command instead of create, poll, read — and no window in which the answer can slip past you.
 
 - `--no-reply-text` — drops `text`, keeps `line_num`: when you only need the go-ahead, not the payload in your context. The key is **absent**, never `null`.
 - `--wait-timeout N` — caps the wait, whatever ends it. Default **300 s**, the ceiling MCP callers are asked to respect; an MCP client may itself give up on a tool silent that long, so over MCP pass a shorter value and come back. From a shell, raise it freely for a long first turn. It cannot be disabled; nothing caps how high you set it.
-- `--wait-timeout` and `--no-reply-text` require `--wait-reply`: passing them alone is an error, not a no-op.
+- `--wait-background` — a final message read while background work runs behind the agent (`background_work_in_progress` not `null`: a subagent, background shell, Monitor, scheduled wake-up or goal) does not count; the first final message read once that work has ended is the answer. A wait started or resumed after the work ended therefore counts the final messages already written. An idle agent with that work still running keeps the wait open; once a final message was ignored, an alive idle agent keeps it open until the next one comes, however late; a dead agent ends it (`ended`, carrying the ignored answer). Claude Code reopens a turn when a background shell ends. Codex answers after a process ends only if the agent waited for it within its turn: a process it left running on purpose brings no new answer, so such a wait ends in `timeout` with the last answer attached. On `timeout`, the last ignored final message comes back (`line_num`, `text` unless `--no-reply-text`) with the current `background_work_in_progress`; to wait for the next answer, resume with `session <ID> wait-reply --from <its line_num> --wait-background` (from that `line_num`, not `since_line_num`). A pending request still ends the wait at once and carries no ignored final message: resuming from its `since_line_num` re-reads the final messages already written.
+- `--wait-timeout`, `--no-reply-text` and `--wait-background` require `--wait-reply`: passing them alone is an error, not a no-op.
 - A **pending request** (a tool approval or a question, which only a human can clear) ends the wait too, with `outcome: awaiting_user_input`: no line arrives until someone clicks. An answer arriving in the same poll wins.
-- The wait reads the **transcript**, not the process state. A session held busy by a Monitor, a live subagent or a pending wake-up has written its answer long before it goes idle; this reports it at once instead of hours later.
+- Without `--wait-background`, the wait reads the **transcript**, not the process state. A session held busy by a Monitor, a live subagent or a pending wake-up has written its answer long before it goes idle; this reports it at once instead of hours later.
 
 ## Output format
 
@@ -29,11 +30,11 @@ Keeps going after the session is created, until it answers, and adds a `reply` b
 
 | `outcome` | Meaning | What `reply` carries |
 |---|---|---|
-| `replied` | the message closing the turn | that message |
+| `replied` | the message closing the turn | that message; with `--wait-background`, the first one read once the background work has ended |
 | `awaiting_user_input` | a pending request — a tool approval, or a question you can answer yourself | read it with `session <ID> pending-requests`, then `answer-questions` if it is a question |
 | `provider_error` | the provider refused the turn (quota, outage) — your request was not the problem and retrying now fails the same way | the error line |
 | `ended` | the turn is over and nothing closed it — a crash, an interruption, an answer whose text was empty, or one whose provider marker is missing (`is_final: null`) | the last thing it said, or `line_num: null` |
-| `timeout` | the deadline passed | the last thing it said, if any; resume from `since_line_num` |
+| `timeout` | the deadline passed | the last thing it said, if any; resume from `since_line_num`. With `--wait-background`, the last ignored final message, plus `background_work_in_progress` (what still runs); resume from its `line_num` to wait for the next answer |
 | `backend_gone` | TwiCC stopped or restarted mid-wait | nothing — the session may well be fine, you just cannot see it from here |
 | `wait_failed` | the wait itself broke (a locked DB, a Ctrl-C) — the session is unaffected | nothing, plus an `error` string |
 
@@ -51,7 +52,7 @@ The agent stays blocked until someone clears it. Read it with `$TWICC session <S
 
 **Not a failure**: the agent keeps working and the session is intact — only the waiting stopped. Expect it on a worker whose first turn runs long: raise `--wait-timeout`, or take the `session_id` and come back later.
 
-Resume with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`), the command that takes a cursor. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise.
+Resume with `$TWICC session <SESSION_ID> wait-reply --from <CURSOR>` (skill: `twicc-session`), the command that takes a cursor. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. To resume a wait that had `--wait-background`, pass the flag again, and pass the ignored final message's `line_num` when the ending carries one: a wait resumed from `since_line_num` after the work ended counts that message.
 
 ## Following up
 
@@ -80,6 +81,7 @@ Read `process.state` from `$TWICC sessions get <SESSION_ID>` (skill: `twicc-sess
 
 ```bash
 $TWICC create-session --title 'Review last commit' --wait-reply --wait-timeout 120 'Review the last commit and report the risks'
+$TWICC create-session --title 'Audit src' --wait-reply --wait-background --wait-timeout 300 'Audit src/ and report the risks'
 $TWICC session 01a0c4d2-... wait-reply --from 19 --wait-timeout 60
 # Resumes past the answer read at line 19: only a later line counts.
 ```
