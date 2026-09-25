@@ -51,6 +51,10 @@ def _agent(
     agent._subagent_hold_active = False
     agent._manual_compaction = False
     agent._goal_continuation_active = False
+    agent._background_work_refresh_task = None
+    agent._background_work_dirty = False
+    agent._published_background_work = None
+    agent._background_work_callback = None
     agent._current_turn = None
     agent._broadcast_process_label = AsyncMock()
     agent._notify_state_change = AsyncMock()

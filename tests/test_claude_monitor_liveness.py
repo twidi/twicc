@@ -36,6 +36,11 @@ def _agent() -> ClaudeCodeAgent:
     agent.session_id = "session-1"
     agent._live_monitor_tasks = set()
     agent._live_background_tasks = {}
+    agent._live_shell_tasks = {}
+    agent._background_work_refresh_task = None
+    agent._background_work_dirty = False
+    agent._published_background_work = None
+    agent._background_work_callback = None
     agent._pending_wakeup_at = None
     agent._waiting_label_active = False
     agent._broadcast_process_label = AsyncMock()

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 
 import orjson
@@ -42,6 +43,8 @@ from twicc.providers.sessions_watcher import (
     get_session_by_id,
 )
 
+from .canonical import ended_command_process_id
+from .compute import announced_running_process_id, rollout_line_epoch
 from .compute import get_compute as _get_compute
 from .initial_sync import extract_session_meta, is_session_file
 from .migration_gate import is_migrating, request_rebuild
@@ -244,6 +247,87 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             self._check_goal_continuation_end(manager, session.id, list(new_line_nums)),
             name=f"goal-continuation-check-{session.id}",
         )
+
+    async def _after_any_new_lines_synced(self, session, new_line_nums) -> None:
+        # Background shells the SDK stream cannot report, read off the
+        # rollout of the thread that ran them — the session's own, or a
+        # subagent's (it runs in its parent's app-server, and its items only
+        # ever reach its own turn's stream):
+        # - any thread: a completed ``CommandExecution`` item, the end of a
+        #   process that may have outlived its turn (the stream has stopped
+        #   listening by then) — gated on any agent tracking a live shell;
+        # - a subagent's thread: the outputs announcing a process still
+        #   running, the only start signal its parent can get — gated on the
+        #   parent agent being live.
+        # Fire-and-forget like the goal check.
+        if not new_line_nums:
+            return
+        from .agent.manager import get_codex_agent_manager
+        try:
+            manager = get_codex_agent_manager()
+        except KeyError:
+            return
+        parent_id = getattr(session, "parent_session_id", None)
+        owner_id = parent_id if parent_id and manager.has_agent(parent_id) else None
+        if owner_id is None and not manager.has_live_shells():
+            return
+        asyncio.create_task(
+            self._relay_shell_events(manager, session.id, owner_id, list(new_line_nums)),
+            name=f"shell-events-relay-{session.id}",
+        )
+
+    async def _relay_shell_events(
+        self, manager, session_id: str, owner_id: str | None, new_line_nums: list[int],
+    ) -> None:
+        """Relay the processes these lines announce as running or as ended.
+
+        Starts are read only when ``owner_id`` (the live parent of this
+        subagent session) is given. Starts go out before ends: a process
+        announced and ended within the same batch nets out, whatever order
+        Codex wrote the two lines in.
+        """
+        def _events() -> tuple[dict[str, float], list[str]]:
+            started: dict[str, float] = {}
+            ended: list[str] = []
+            rows = SessionItem.objects.filter(
+                session_id=session_id, line_num__in=new_line_nums,
+            ).order_by("line_num").values_list("content", flat=True)
+            for content in rows:
+                if not content:
+                    continue
+                is_end = '"CommandExecution"' in content
+                # Cheap pre-filter on the three shapes announcing a process.
+                is_start = owner_id is not None and (
+                    "session_id" in content or "SESSION_ID=" in content
+                    or "Process running with session ID" in content
+                )
+                if not (is_end or is_start):
+                    continue
+                try:
+                    parsed = orjson.loads(content)
+                except orjson.JSONDecodeError:
+                    continue
+                if is_end and (process_id := ended_command_process_id(parsed)) is not None:
+                    ended.append(process_id)
+                    continue
+                if not is_start:
+                    continue
+                announced = announced_running_process_id(parsed)
+                if announced is None or str(announced) in started:
+                    continue
+                # When the announcement was written: the start came shortly
+                # before, which bounds where the agent looks for its process.
+                started[str(announced)] = rollout_line_epoch(parsed) or time.time()
+            return started, ended
+
+        try:
+            started, ended = await sync_to_async(_events)()
+            if started and owner_id is not None:
+                await manager.notify_shells_started(owner_id, session_id, started)
+            if ended:
+                await manager.notify_shells_exited(session_id, ended)
+        except Exception:
+            logger.exception("Shell events relay failed for session %s", session_id)
 
     async def _check_goal_continuation_end(self, manager, session_id: str, new_line_nums: list[int]) -> None:
         """Settle a parked ``/goal`` continuation if any fresh line is a goal stop.

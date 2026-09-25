@@ -60,6 +60,10 @@ def _agent(stopped: list[str] | None = None) -> CodexAgent:
     # A manual /compact owns the status line while it runs, so the label
     # composition consults it (see ``current_status_label``).
     agent._manual_compaction = False
+    agent._background_work_refresh_task = None
+    agent._background_work_dirty = False
+    agent._published_background_work = None
+    agent._background_work_callback = None
     agent._broadcast_process_label = AsyncMock()
     agent._prune_finished_subagents = AsyncMock(
         side_effect=lambda: [agent._live_subagents.pop(sid, None) for sid in (stopped or [])]
@@ -202,6 +206,10 @@ class TestPruningAgainstTheWatcher:
         agent._subagent_wait_label_active = False
         agent._subagent_hold_active = False
         agent._manual_compaction = False
+        agent._background_work_refresh_task = None
+        agent._background_work_dirty = False
+        agent._published_background_work = None
+        agent._background_work_callback = None
         agent._broadcast_process_label = AsyncMock()
 
         asyncio.run(agent._refresh_subagent_wait_label())

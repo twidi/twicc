@@ -38,7 +38,7 @@ $TWICC sessions [OPTIONS]
 
 ### Projection: `--slim` / `--full`
 
-- `--slim` — the reduced row: every field except the payloads you fetch per session (`tasks`, `plan_paths`, `goals`, `layout` — the flags `has_tasks`, `has_goals`, `has_plan`, `has_artifacts`, `has_workflows` say what there is to fetch), the redundant timestamps (`mtime`, `last_started_at`, `last_updated_at`, `last_stopped_at`, `last_viewed_at`), the cost breakdown (`self_cost`, `subagents_cost`), `slug`, `browser_url` and `compute_version_up_to_date`. Its `process` block is `{state}`.
+- `--slim` — the reduced row: every field except the payloads you fetch per session (`tasks`, `plan_paths`, `goals`, `layout` — the flags `has_tasks`, `has_goals`, `has_plan`, `has_artifacts`, `has_workflows` say what there is to fetch), the redundant timestamps (`mtime`, `last_started_at`, `last_updated_at`, `last_stopped_at`, `last_viewed_at`), the cost breakdown (`self_cost`, `subagents_cost`), `slug`, `browser_url` and `compute_version_up_to_date`. Its `process` block is `{state, background_work_in_progress}`.
 - `--full` — the full payload, the one `session <ID> --full` returns.
 - **Default: `--full` before 2026-10-01, `--slim` from that date** (`--slim` then becomes an accepted no-op; `--full` keeps working on both sides). Until then a call with neither flag prints a one-line notice on stderr (RPC envelope: `warnings` key; never on MCP), next to the `--paginated` one.
 - Mutually exclusive (exit `2`). `sessions get` takes them too, placeholders included.
@@ -72,17 +72,21 @@ The reduced projection (`--slim` before 2026-10-01, the default from that date):
     "orchestration_scratch_dir": null, "compacted": false, "hybrid": false,
     "permission_mode": "default", "selected_model": "opus", "effort": "high", "thinking_enabled": true,
     "claude_in_chrome": false, "fast_mode": false, "question_widget": true,
-    "process": {"state": "user_turn"}
+    "process": {"state": "user_turn", "background_work_in_progress": null}
   }
 ]
 ```
 
-With `--full` (the default before 2026-10-01), each row is the full payload (`session <ID> --full`): the fields above plus `mtime`, `last_started_at` / `last_updated_at` / `last_stopped_at` / `last_viewed_at`, `slug`, `compute_version_up_to_date`, `self_cost` / `subagents_cost`, `layout`, `browser_url`, `tasks`, `plan_paths`, `goals` — and a five-field `process` block.
+With `--full` (the default before 2026-10-01), each row is the full payload (`session <ID> --full`): the fields above plus `mtime`, `last_started_at` / `last_updated_at` / `last_stopped_at` / `last_viewed_at`, `slug`, `compute_version_up_to_date`, `self_cost` / `subagents_cost`, `layout`, `browser_url`, `tasks`, `plan_paths`, `goals` — and a six-field `process` block.
 
 ### The `process` block
 
-- Every row carries it: `{state}` in the reduced projection; plus `id`, `started_at`, `last_state_change_at`, `pid` with `--full`.
+- Every row carries it: `{state, background_work_in_progress}` in the reduced projection; plus `id`, `started_at`, `last_state_change_at`, `pid` with `--full`.
 - `state` — `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn` or `dead`. Note `awaiting_user_input`, the non-obvious stop: the agent is blocked on a human, not working.
+- `background_work_in_progress` — what still runs behind the agent, **whatever `state` says**; `null` when nothing does (always on `dead`). Else `{"subagents": N, "shells": N, "monitors": N, "scheduled_wakeup_at": ISO-8601 or null, "goal": bool}`:
+  - `subagents` — live subagents. `shells` — shell commands still running, the session's or its subagents' (a dev server, a long build). Claude Code counts only backgrounded ones. Codex counts every command whose process has not exited, one it is still polling mid-turn included; a subagent's command counts once its first output reports it still running. `monitors` — Claude Code `Monitor` tools. `scheduled_wakeup_at` — a pending Claude Code `ScheduleWakeup`. `goal` — a Codex `/goal` continuation.
+  - `user_turn` with `shells > 0`: the turn is over, a shell still runs. TwiCC never auto-stops an idle session in that case (stopping it would kill the shell).
+  - `assistant_turn` while the agent itself is silent: TwiCC keeps a turn open for live subagents, Monitors or a pending wake-up. The final answer may already be written; the agent may speak again when they finish.
 - It answers **what TwiCC is running**. `dead` = no TwiCC-managed process: also the answer for the many sessions TwiCC indexed but never started (a `claude` run straight from a terminal keeps generating and still reads `dead`), and for a TwiCC not running at all (an agent does not outlive its backend).
 - `null` for one case only: a subagent, which runs inside its parent's process; `parent_session_id` identifies those.
 

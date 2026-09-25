@@ -1356,6 +1356,16 @@ class ProcessRun(models.Model):
     # disambiguates. Maintained by :meth:`BaseAgentManager._persist_process_run_transition`
     # via ``bool(agent.pending_requests)``, forced to ``False`` on ``DEAD``.
     awaiting_user_input = models.BooleanField(default=False)
+    # What still runs behind the agent, whatever ``state`` says — live
+    # subagents, background shells, Monitors, a pending scheduled wake-up, a
+    # Codex ``/goal`` continuation — as built by
+    # :func:`twicc.agent.states.build_background_work`. ``None`` when nothing
+    # does. Orthogonal to ``state``: a background shell keeps running in
+    # ``USER_TURN``. Written on every state transition by
+    # :meth:`BaseAgentManager._persist_process_run_transition` and between
+    # transitions by :meth:`BaseAgentManager._persist_background_work`;
+    # forced to ``None`` on ``DEAD``.
+    background_work_in_progress = models.JSONField(null=True, blank=True, default=None)
 
     class Meta:
         indexes = [

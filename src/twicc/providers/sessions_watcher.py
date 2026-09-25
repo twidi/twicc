@@ -370,6 +370,21 @@ class BaseSessionsWatcher:
         """
         return
 
+    async def _after_any_new_lines_synced(
+        self,
+        session: Session,
+        new_line_nums: list[int],
+    ) -> None:
+        """Hook fired once per live batch of fresh lines, subagent files included.
+
+        Unlike :meth:`_after_new_lines_synced` (top-level files only), this
+        one also sees subagent transcripts — for signals whose owner is a live
+        agent whatever file carries them (Codex: a subagent's background
+        shell exiting, written to the subagent's own rollout). Default:
+        no-op. Same rules: live path only, never block the ingest path.
+        """
+        return
+
     async def maybe_handle_special_change(
         self,
         path: Path,
@@ -710,6 +725,9 @@ class BaseSessionsWatcher:
                 await self._after_new_lines_synced(
                     session, list(new_line_nums), list(tool_result_updates),
                 )
+            # Signals that may come from any transcript, a subagent's
+            # included (Codex background shells).
+            await self._after_any_new_lines_synced(session, list(new_line_nums))
 
             # Refresh session to get computed values
             session = await refresh_session(session)

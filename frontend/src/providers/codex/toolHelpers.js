@@ -20,7 +20,7 @@
  * for the exec_command family.
  */
 
-import { PROVIDER, PROCESS_STATE } from '../../constants'
+import { PROVIDER } from '../../constants'
 import { BaseToolHelpers } from '../baseHelpers'
 import { capitalize } from '../utils/format'
 import { formatRelativePath, fileIconFor, resolveAbsolutePath } from '../utils/path'
@@ -34,6 +34,7 @@ import {
     summarizeCodeModeCalls,
 } from './codeModeDisplay'
 import { parseApplyPatchEnvelope } from './parsePatch'
+import { isExecChainRunning } from './execRunning'
 import { getTodoDescription } from '../../utils/todoList'
 import { formatToolNameForHeader, humanizeToolSegment } from '../../utils/toolNames'
 
@@ -1044,32 +1045,14 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // set on ``ToolResultLink.extra``. ``Max``-aggregated across
         // links so any closing chunk flips the whole tool to "done".
         if (FUNCTION_CALL_EXEC_TOOLS.has(name) || name === CODE_MODE_EXEC_TOOL_NAME) {
-            const extra = options?.toolState?.extra
-            if (extra) {
-                // ``extra`` is the JSON string set by
-                // :meth:`compute_link_extra` — parse defensively so the
-                // shell never crashes on unexpected shapes (live race,
-                // malformed payload).
-                try {
-                    const parsed = typeof extra === 'string' ? JSON.parse(extra) : extra
-                    if (parsed?.is_terminated) return false
-                } catch {
-                    // Malformed extra → fall through to the liveness gate.
-                }
-            }
-            // No ``is_terminated`` signal yet. A chained ``exec_command``
-            // only advances while the agent is working: each ``write_stdin``
-            // poll runs inside the same ASSISTANT_TURN. Once the session is
-            // back to USER_TURN — turn finished or soft-interrupted — no
-            // closing ``Process exited`` / ``aborted by user`` chunk will
-            // ever come (an interrupt mid-chain leaves the last chunk
-            // reporting ``Process running``), so the tool can't be running
-            // anymore; without this gate the spinner spins forever. We only
-            // trust an explicit USER_TURN — null/unknown (process not yet
-            // synced, or dead/historical, which ``isStaleToolUse`` already
-            // handles) keeps the prior "assume running" behaviour.
-            if (options?.processState === PROCESS_STATE.USER_TURN) return false
-            return true
+            // Status from the chain's closing link (``extra.is_terminated``,
+            // set by ``compute_link_extra``), gated on the session's
+            // liveness — see ``isExecChainRunning``.
+            return isExecChainRunning({
+                extra: options?.toolState?.extra,
+                processState: options?.processState,
+                backgroundShells: options?.backgroundShells,
+            })
         }
         return super.isToolRunning(name, input, options)
     }

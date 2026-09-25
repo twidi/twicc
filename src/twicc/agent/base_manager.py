@@ -568,6 +568,7 @@ class BaseAgentManager:
 
         session_id = agent.session_id
         self._agents[session_id] = agent
+        agent._background_work_callback = self._persist_background_work
         ephemeral_runs.mark_registered(session_id)
 
         now = timezone.now()
@@ -646,6 +647,13 @@ class BaseAgentManager:
         if not getattr(agent, "ephemeral", False):
             await self._persist_process_run_transition(agent, info.state)
         await self._broadcast_info(info)
+        # The broadcast carried this snapshot. If the work changed while the
+        # persist was awaited (a refresh may even have published the newer
+        # value, which the broadcast just overwrote on the front), publish
+        # the current one again.
+        agent.note_background_work_published(info.background_work_in_progress)
+        if agent.background_work_snapshot() != info.background_work_in_progress:
+            agent._schedule_background_work_refresh()
         if info.state == AgentState.DEAD:
             # Cancel any background pending-title work, if any: once the
             # agent is gone there's nothing left to converge on the provider
@@ -957,6 +965,48 @@ class BaseAgentManager:
         except Exception as e:
             logger.error("Error broadcasting state change: %s", type(e).__name__ if info.extra and info.extra.get("ephemeral") else e)
 
+    async def _persist_background_work(
+        self, agent: BaseAgent, snapshot: dict | None,
+    ) -> None:
+        """Mirror a background-work change onto the agent's ProcessRun row.
+
+        The agent's refresh path (:meth:`BaseAgent._publish_background_work`)
+        calls this between state transitions — a shell ending in ``USER_TURN``
+        changes nothing else. Only ``background_work_in_progress`` is written:
+        a full :meth:`_persist_process_run_transition` would bump
+        ``last_state_change_at`` for a state that did not change. The value
+        written is the agent's snapshot read once the lock is held, not
+        ``snapshot``: writes queue behind the lock, and a queued older value
+        must not land after a newer one. No-op without a row (ephemeral run,
+        or a DEAD row already deleted).
+        """
+        if agent.process_run is None or getattr(agent, "ephemeral", False):
+            return
+
+        from twicc.core.models import ProcessRun
+        from twicc.logging_context import provider_log_context
+
+        pr_pk = agent.process_run.pk
+
+        async def _persist() -> None:
+            current = agent.background_work_snapshot()
+            await asyncio.to_thread(
+                lambda: ProcessRun.objects.filter(pk=pr_pk).update(
+                    background_work_in_progress=current,
+                )
+            )
+            if agent.process_run is not None:
+                agent.process_run.background_work_in_progress = current
+
+        with provider_log_context(agent.provider):
+            try:
+                await run_under_db_write_lock(_persist)
+            except Exception as e:
+                logger.error(
+                    "Error persisting background work on process run %s for session %s: %s",
+                    pr_pk, agent.session_id, e,
+                )
+
     async def _persist_process_run_transition(
         self, agent: BaseAgent, state: AgentState,
     ) -> None:
@@ -988,6 +1038,11 @@ class BaseAgentManager:
         explicit state transitions and on pending-request add/remove,
         because :meth:`BaseAgent._await_pending_request` invokes
         ``_notify_state_change`` at both moments.
+
+        ``background_work_in_progress`` receives the agent's background-work
+        snapshot read once the lock is held (forced to ``None`` on ``DEAD``).
+        Between transitions, :meth:`_persist_background_work` keeps it
+        current.
 
         The helper read + write are grouped under a single
         ``run_under_db_write_lock`` acquire so no other writer can race
@@ -1025,12 +1080,14 @@ class BaseAgentManager:
         with provider_log_context(agent.provider):
             if state != AgentState.DEAD:
                 async def _persist_update() -> None:
+                    background_work = agent.background_work_snapshot()
                     await asyncio.to_thread(
                         lambda: ProcessRun.objects.filter(pk=pr_pk).update(
                             state=state_value,
                             last_state_change_at=now,
                             agent_pid=agent_pid,
                             awaiting_user_input=awaiting,
+                            background_work_in_progress=background_work,
                         )
                     )
                     if agent.process_run is not None:
@@ -1038,6 +1095,7 @@ class BaseAgentManager:
                         agent.process_run.last_state_change_at = now
                         agent.process_run.agent_pid = agent_pid
                         agent.process_run.awaiting_user_input = awaiting
+                        agent.process_run.background_work_in_progress = background_work
 
                 try:
                     await run_under_db_write_lock(_persist_update)
@@ -1059,12 +1117,15 @@ class BaseAgentManager:
                     )
                 )
                 if keep:
+                    # A dead agent's children died with it.
+                    background_work = None
                     await asyncio.to_thread(
                         lambda: ProcessRun.objects.filter(pk=pr_pk).update(
                             state=state_value,
                             last_state_change_at=now,
                             agent_pid=agent_pid,
                             awaiting_user_input=awaiting,
+                            background_work_in_progress=background_work,
                         )
                     )
                     if agent.process_run is not None:
@@ -1072,6 +1133,7 @@ class BaseAgentManager:
                         agent.process_run.last_state_change_at = now
                         agent.process_run.agent_pid = agent_pid
                         agent.process_run.awaiting_user_input = awaiting
+                        agent.process_run.background_work_in_progress = background_work
                 else:
                     await asyncio.to_thread(lambda: agent.process_run.delete())
                     agent.process_run = None
@@ -1293,6 +1355,10 @@ class BaseAgentManager:
 
         - ``STARTING``: ``PROCESS_TIMEOUT_STARTING`` (default 60s) — stuck startup.
         - ``USER_TURN``: ``PROCESS_TIMEOUT_USER_TURN`` (default 30min) — idle.
+          Never while a background shell still runs: stopping the agent kills
+          its process tree, shell included — a dev server or a long build the
+          agent left running on purpose. The countdown restarts from the last
+          activity once the last shell ends.
         - ``ASSISTANT_TURN``: ``PROCESS_TIMEOUT_ASSISTANT_TURN`` (default 3h)
           of inactivity. There is deliberately NO cap on a turn's total
           duration: a turn that keeps producing SDK events is working, and
@@ -1316,6 +1382,8 @@ class BaseAgentManager:
             return None
 
         if agent.state == AgentState.USER_TURN:
+            if agent.background_shell_count():
+                return None
             timeout = getattr(settings, "PROCESS_TIMEOUT_USER_TURN", 30 * 60)
             elapsed = current_time - agent.last_activity
             if elapsed > timeout:

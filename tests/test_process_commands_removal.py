@@ -350,7 +350,7 @@ def test_after_the_date_whoami_full_carries_the_session_s_own_identity(
     )
     whoami_cmd(slim=False, full=True)
     data = orjson.loads(capsysbinary.readouterr().out)
-    assert set(data["process"]) == {"id", "state", "started_at", "last_state_change_at", "pid"}
+    assert set(data["process"]) == {"id", "state", "background_work_in_progress", "started_at", "last_state_change_at", "pid"}
     assert {"provider", "id", "title", "project_id"} <= set(data)
     assert data["id"] == session.id
 

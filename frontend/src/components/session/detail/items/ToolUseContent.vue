@@ -446,6 +446,10 @@ const helperOptions = computed(() => {
         // orphaned by a soft interrupt, has no closing chunk to flip
         // ``extra.is_terminated`` (see ``CodexToolHelpers.isToolRunning``).
         processState: dataStore.getProcessState(props.sessionId)?.state ?? null,
+        // Background shells the agent still runs, whatever its state — a
+        // Codex process left running past its turn keeps its card spinning
+        // until its own end event lands (see ``CodexToolHelpers.isToolRunning``).
+        backgroundShells: dataStore.getProcessState(props.sessionId)?.background_work_in_progress?.shells ?? 0,
         // The link's own slug is resolved when the link is *created*, so it
         // is null whenever the subagent's transcript had not been parsed yet
         // — systematically on Codex multi-agent v2, where the parent

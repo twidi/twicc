@@ -4766,6 +4766,9 @@ export const useDataStore = defineStore('data', {
                     // Backend truth when it carries one, else the label already
                     // on screen (see `keptLabel`).
                     label: extra.label ?? keptLabel,
+                    // Always recomputed by the backend for the snapshot, so its
+                    // absence means "nothing runs in the background".
+                    background_work_in_progress: extra.background_work_in_progress || null,
                 }
 
                 // Auto-unarchive: running and archived are mutually exclusive.
@@ -4860,6 +4863,10 @@ export const useDataStore = defineStore('data', {
                         // arrives while a turn is held for background work
                         // learns why instead of showing a bare "thinking".
                         label: p.label || null,
+                        // What still runs behind the agent (subagents,
+                        // background shells, …), whatever `state` says.
+                        // Recomputed for every snapshot; null when nothing.
+                        background_work_in_progress: p.background_work_in_progress || null,
                     }
 
                     // Auto-unarchive: running and archived are mutually exclusive.

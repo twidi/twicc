@@ -431,8 +431,9 @@ SLIM_HELP = cutover_help(
     "redundant timestamps (mtime, last_started_at, last_updated_at, "
     "last_stopped_at, last_viewed_at), the cost breakdown (self_cost, "
     "subagents_cost), slug, browser_url and compute_version_up_to_date; its "
-    f"`process` block is {{state}} (null on a subagent). Off by default until {_CUTOVER_DATE}, when it "
-    "becomes the default and this flag turns into an accepted no-op.",
+    "`process` block is {state, background_work_in_progress} (null on a subagent). "
+    f"Off by default until {_CUTOVER_DATE}, when it becomes the default and this "
+    "flag turns into an accepted no-op.",
     "Accepted and ignored: the reduced projection is the default. Kept so scripts "
     "that migrated during the deprecation window keep working untouched.",
 )
@@ -448,11 +449,12 @@ FULL_HELP = cutover_help(
 )
 
 TOPOLOGY_SLIM_HELP = cutover_help(
-    "Reduce each node's `process` block to `{state}`. Each node's `session` is "
-    f"already the reduced subset. Off by default until {_CUTOVER_DATE}, when it "
-    "becomes the default and this flag turns into an accepted no-op.",
-    "Accepted and ignored: each node's `process` block is reduced to `{state}` by "
-    "default.",
+    "Reduce each node's `process` block to `{state, background_work_in_progress}`. "
+    "Each node's `session` is already the reduced subset. Off by default until "
+    f"{_CUTOVER_DATE}, when it becomes the default and this flag turns into an "
+    "accepted no-op.",
+    "Accepted and ignored: each node's `process` block is reduced to "
+    "`{state, background_work_in_progress}` by default.",
 )
 
 _TOPOLOGY_FULL_LEAD = (
@@ -468,11 +470,11 @@ _TOPOLOGY_FULL_LEAD = (
 )
 
 TOPOLOGY_FULL_HELP = cutover_help(
-    f"{_TOPOLOGY_FULL_LEAD}. Its `process` block keeps its five fields until "
-    f"{_CUTOVER_DATE}; from that date it is `{{state}}` alone. Mutually exclusive "
-    "with --slim.",
-    f"{_TOPOLOGY_FULL_LEAD}, and its `process` block is `{{state}}` alone. "
-    "Mutually exclusive with --slim.",
+    f"{_TOPOLOGY_FULL_LEAD}. Its `process` block keeps its six fields until "
+    f"{_CUTOVER_DATE}; from that date it is `{{state, background_work_in_progress}}` "
+    "alone. Mutually exclusive with --slim.",
+    f"{_TOPOLOGY_FULL_LEAD}, and its `process` block is "
+    "`{state, background_work_in_progress}` alone. Mutually exclusive with --slim.",
 )
 
 _SESSIONS_GET_IDS_HELP = (
@@ -573,8 +575,8 @@ WHOAMI_FULL_HELP = cutover_help(
 #: Same, for ``topology``, whose change is its ``process`` block.
 TOPOLOGY_CUTOVER_NOTICE = cutover_help(
     f"DEPRECATION: from {_CUTOVER_DATE} each node's `process` block is reduced to "
-    "`{state}` by default. Pass --full to get the full session and process block "
-    "on every node. ",
+    "`{state, background_work_in_progress}` by default. Pass --full to get the full "
+    "session and process block on every node. ",
     "",
 )
 

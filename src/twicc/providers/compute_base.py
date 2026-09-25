@@ -1404,7 +1404,12 @@ class BaseSessionCompute:
         return None
 
     def compute_link_extra(
-        self, parsed_json: dict, tool_name: str, *, session_id: str | None = None,
+        self,
+        parsed_json: dict,
+        tool_name: str,
+        *,
+        session_id: str | None = None,
+        tool_use_id: str | None = None,
     ) -> str | None:
         """
         Compute the ``ToolResultLink.extra`` JSON payload for this result.
@@ -1422,6 +1427,11 @@ class BaseSessionCompute:
         flag a user-ended tool — denied, cancelled, or interrupted — as
         terminated when the JSONL trailer says nothing of the sort).
         Providers that don't need it ignore the kwarg.
+
+        ``tool_use_id`` is the id of the tool_use the link attaches to, AFTER
+        :meth:`remap_tool_result_id` (or its live twin) rebound it — which may
+        differ from the result's own id (Codex: a poll rebound to the call
+        that started the process). ``None`` when a caller does not know it.
 
         Aggregation across multiple links of the same ``tool_use_id`` is
         handled downstream via ``Max`` — providers must therefore produce
@@ -1821,7 +1831,7 @@ class BaseSessionCompute:
                 tool_name = tool_use_entries[tool_use_id]
 
                 extra = self.compute_link_extra(
-                    parsed_json, tool_name, session_id=session_id,
+                    parsed_json, tool_name, session_id=session_id, tool_use_id=tool_use_id,
                 )
                 # Per-tool error refinement (e.g. Codex's spawn_agent whose
                 # output is a JSON ``{"agent_id": ...}`` on success and a
@@ -2693,7 +2703,7 @@ class BaseSessionCompute:
                 tu_line_num = tu_entry.line_num
                 tu_name = tu_entry.tool_name
                 extra = self.compute_link_extra(
-                    parsed, tu_name, session_id=session_id,
+                    parsed, tu_name, session_id=session_id, tool_use_id=tool_result_ref,
                 )
                 error = analysis.tool_result_error
                 # Same per-tool error refinement as the live path

@@ -214,21 +214,35 @@ def load_process_rows(session_ids, twicc_pid: int | None) -> dict:
 def serialize_compact_process(row, *, slim: bool = False) -> dict:
     """Serialize one process row for a payload that already identifies the session.
 
-    Five fields instead of :func:`serialize_process_row`'s nine: ``provider``,
+    Six fields instead of :func:`serialize_process_row`'s nine: ``provider``,
     ``session_id``, ``session_title`` and ``project_id`` are dropped because
     the session payload this rides on already carries them, in both
-    projections. ``slim`` narrows further to ``state`` alone.
+    projections. ``slim`` narrows further to ``state`` and
+    ``background_work_in_progress``.
+
+    ``background_work_in_progress`` is what still runs behind the agent,
+    whatever ``state`` says (see
+    :func:`twicc.agent.states.build_background_work`): a background shell
+    keeps running in ``user_turn``. ``None`` when nothing does, and always
+    ``None`` for ``state="dead"``. Always present, so the shape never depends
+    on the value.
 
     ``row=None`` means "the table was read and holds nothing for this session"
     → ``state="dead"`` with the row-bound fields null. It does NOT mean "could
     not read": that case is the caller's, and it emits no block at all.
     """
     state = project_virtual_state(row)
+    background_work = (
+        row.background_work_in_progress
+        if row is not None and state != DEAD_VIRTUAL_STATE
+        else None
+    ) or None
     if slim:
-        return {"state": state}
+        return {"state": state, "background_work_in_progress": background_work}
     return {
         "id": row.pk if row is not None else None,
         "state": state,
+        "background_work_in_progress": background_work,
         "started_at": (
             row.started_at.isoformat() if row is not None and row.started_at else None
         ),

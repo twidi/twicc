@@ -2171,6 +2171,7 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         tool_name: str,
         *,
         session_id: str | None = None,  # noqa: ARG002 — kept for signature compat
+        tool_use_id: str | None = None,  # noqa: ARG002 — kept for signature compat
     ) -> str | None:
         """Return the JSON ``ToolResultLink.extra`` payload for this result.
 

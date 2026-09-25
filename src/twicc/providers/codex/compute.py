@@ -45,7 +45,12 @@ are migrated to the same shape). The readers live in :mod:`.canonical`.
   intentionally not a result — see the ``response_item.web_search_call``
   rule below. Every other completed item (``Reasoning``,
   ``CommandExecution``, ``Plan``, ``FunctionCallOutput``, …) duplicates a
-  raw ``response_item`` TwiCC already reads and stays ``SYSTEM``.
+  raw ``response_item`` TwiCC already reads and stays ``SYSTEM``. One
+  exception keeps its ``SYSTEM`` kind but also acts as a tool result: the
+  ``CommandExecution`` of an exited unified-exec process, rebound by its
+  ``process_id`` to the call that started it and closing its chain (the
+  only end signal of a process left running past its turn — see
+  :func:`_command_execution_end`).
 - ``item_completed`` / ``ImageGeneration`` (native hosted call) or
   ``Extension`` with ``kind == "image_gen.generation"`` (what the migration
   emits) → ``IMAGE`` (-> ``ALWAYS``). Codex writes it right after
@@ -179,6 +184,7 @@ import html
 import logging
 import os
 import re
+import time
 from datetime import datetime
 from typing import ClassVar, NamedTuple
 
@@ -214,6 +220,7 @@ from .canonical import (
     canonical_call_id,
     canonical_result_item,
     completed_item,
+    ended_command_process_id,
     image_generation,
     user_message_is_visible,
     user_message_text,
@@ -1025,9 +1032,11 @@ def _event_msg_call_id(parsed_json: dict) -> str | None:
     Only ``FileChange`` and ``McpToolCall`` qualify (see
     :func:`canonical.canonical_result_item`); ``CommandExecution`` is
     excluded because shell transcripts are rebuilt from the
-    ``function_call_output`` chain. ``response_item`` lines are filtered
-    out at the wrapper level. Returns the call_id for a matching item,
-    else ``None``.
+    ``function_call_output`` chain — an exited process's item is still a
+    result, but a closing marker paired by ``process_id``, not by call_id
+    (see :func:`_command_execution_end`). ``response_item`` lines are
+    filtered out at the wrapper level. Returns the call_id for a matching
+    item, else ``None``.
     """
     return canonical_call_id(parsed_json)
 
@@ -1114,22 +1123,174 @@ _CODE_MODE_EXEC_COMMAND_ID_RE = re.compile(r"(?:^|\n)SESSION_ID=(\d+)(?=\n|$)")
 
 
 def _code_mode_exec_command_id_from_output(output: object) -> int | None:
-    """Extract the nested unified-exec id printed by the canonical wrapper.
+    """Extract the id of a nested unified-exec process still running.
 
-    The GPT-5.6 wrapper prints ``SESSION_ID=<id>`` when nested
-    ``exec_command`` returned a background process. The line lives in the
-    code-mode output body, after the ``Script ...`` header.
+    Returns the id the code-mode output body announces for a process the
+    nested ``exec_command`` / ``write_stdin`` left running, ``None`` when
+    it announces none (or an exited one). The script's own status header is
+    irrelevant here: a script ``completed`` as soon as the nested call
+    yielded, while its process may run on. Three body shapes are read:
+
+    - ``SESSION_ID=<id>`` on its own line: GPT-5.6's canonical wrapper.
+    - The nested result printed raw (``text(r)``): a single JSON object
+      whose ``session_id`` announces a running process. An exited one
+      carries ``exit_code`` instead.
+    - The direct-call trailer ``Process running with session ID <id>``,
+      when the script printed the nested output text.
     """
     parsed = parse_code_mode_output(output)
     if parsed is None:
         return None
     matches = list(_CODE_MODE_EXEC_COMMAND_ID_RE.finditer(parsed.body))
-    if not matches:
+    if matches:
+        try:
+            return int(matches[-1].group(1))
+        except ValueError:
+            return None
+    body = parsed.body.strip()
+    if body.startswith("{"):
+        try:
+            nested = orjson.loads(body)
+        except orjson.JSONDecodeError:
+            nested = None
+        if isinstance(nested, dict):
+            session_id = nested.get("session_id")
+            if (
+                isinstance(session_id, int)
+                and not isinstance(session_id, bool)
+                and nested.get("exit_code") is None
+            ):
+                return session_id
+            return None
+    status = parse_exec_command_status(parsed.body)
+    if status.exec_command_id is not None and not status.is_terminated:
+        return status.exec_command_id
+    return None
+
+
+# How far apart, in seconds, an owner-less process end and a later output
+# announcing the same process may be for the announcement to count as stale
+# (see ``CodexSessionCompute._ended_processes``). The real gap is a few
+# milliseconds; the margin covers slow writes, not id reuse (minutes apart).
+_ENDED_PROCESS_WINDOW_SECONDS = 30.0
+# Cap on the processes tracked per session: a process killed without an end
+# event would otherwise stay forever. Far above any real concurrency.
+_MAX_TRACKED_PROCESSES = 500
+
+
+def rollout_line_epoch(parsed_json: dict) -> float | None:
+    """Epoch seconds of a rollout line's ``timestamp``, or ``None``."""
+    timestamp = parsed_json.get("timestamp")
+    if not isinstance(timestamp, str) or not timestamp:
         return None
     try:
-        return int(matches[-1].group(1))
+        return datetime.fromisoformat(timestamp).timestamp()
     except ValueError:
         return None
+
+
+def announced_running_process_id(parsed_json: dict) -> int | None:
+    """Return the unified-exec process a tool output announces as still running.
+
+    Reads a ``response_item`` ``function_call_output`` /
+    ``custom_tool_call_output``: a code-mode output through
+    :func:`_code_mode_exec_command_id_from_output`, a direct ``exec_command``
+    / ``write_stdin`` output through its ``Process running with session ID
+    <id>`` trailer. ``None`` for any other line, and for an output reporting
+    an exit.
+    """
+    if parsed_json.get("type") != _TYPE_RESPONSE_ITEM:
+        return None
+    payload = _payload(parsed_json)
+    if payload is None or payload.get("type") not in _TOOL_RESULT_PAYLOAD_TYPES:
+        return None
+    output = payload.get("output")
+    if parse_code_mode_output(output) is not None:
+        return _code_mode_exec_command_id_from_output(output)
+    if not isinstance(output, str):
+        return None
+    status = parse_exec_command_status(output)
+    if status.is_terminated:
+        return None
+    return status.exec_command_id
+
+
+def _output_reports_process_exit(parsed_json: dict) -> bool:
+    """Whether a tool output reports that its unified-exec process exited.
+
+    A direct ``exec_command`` / ``write_stdin`` trailer ``Process exited with
+    code N``, or a code-mode body carrying the nested result's ``exit_code``
+    (raw JSON) or that same trailer.
+    """
+    if parsed_json.get("type") != _TYPE_RESPONSE_ITEM:
+        return False
+    payload = _payload(parsed_json)
+    if payload is None or payload.get("type") not in _TOOL_RESULT_PAYLOAD_TYPES:
+        return False
+    output = payload.get("output")
+    parsed = parse_code_mode_output(output)
+    if parsed is None:
+        return isinstance(output, str) and parse_exec_command_status(output).is_terminated
+    body = parsed.body.strip()
+    if body.startswith("{"):
+        try:
+            nested = orjson.loads(body)
+        except orjson.JSONDecodeError:
+            nested = None
+        if isinstance(nested, dict):
+            exit_code = nested.get("exit_code")
+            return isinstance(exit_code, int) and not isinstance(exit_code, bool)
+    return parse_exec_command_status(parsed.body).is_terminated
+
+
+# When this process (the backend) started. The live owner map starts empty
+# with it, so an owner-less end of a process that started BEFORE may have an
+# owner this map never saw — the only case worth a DB lookup.
+_PROCESS_STARTED_AT = time.time()
+
+
+def _command_execution_predates_backend(parsed_json: dict) -> bool:
+    """Whether the process an end event closes started before this backend.
+
+    Start = the line's timestamp minus the item's ``duration``. ``False``
+    when either is missing: the DB lookup is then skipped, as for the
+    thousands of short commands that exited inside their own call.
+    """
+    ended_at = rollout_line_epoch(parsed_json)
+    item = completed_item(parsed_json) or {}
+    duration = item.get("duration")
+    secs = duration.get("secs") if isinstance(duration, dict) else None
+    if ended_at is None or not isinstance(secs, (int, float)) or isinstance(secs, bool):
+        return False
+    return ended_at - secs < _PROCESS_STARTED_AT
+
+
+def _command_execution_end(parsed_json: dict) -> tuple[str, int, int | None] | None:
+    """Return ``(item_id, process_id, exit_code)`` for an ended ``CommandExecution``.
+
+    Codex writes this canonical item when a unified-exec process exits —
+    also long after the turn that started it ended, when nobody polls it
+    any more. Its ``id`` is a synthesized ``exec-<uuid>`` that pairs with
+    no tool call; its ``process_id`` is the ``session_id`` the owning call's
+    output announced, which is how :meth:`CodexSessionCompute.remap_tool_result_id`
+    (and its live twin) rebind it to that call, as the result that closes it.
+    ``None`` for any other line, and for an item without a usable id.
+    """
+    process_id = ended_command_process_id(parsed_json)
+    if process_id is None:
+        return None
+    try:
+        process_id_int = int(process_id)
+    except ValueError:
+        return None
+    item = completed_item(parsed_json) or {}
+    item_id = item.get("id")
+    if not isinstance(item_id, str) or not item_id:
+        return None
+    exit_code = item.get("exit_code")
+    if not isinstance(exit_code, int) or isinstance(exit_code, bool):
+        exit_code = None
+    return item_id, process_id_int, exit_code
 
 
 def _subagent_notification_text(parsed_json: dict) -> str | None:
@@ -1959,6 +2120,23 @@ class CodexSessionCompute(BaseSessionCompute):
         # / MCP tool name), recency as fallback. Bounded (last 50
         # entries) and freed in :meth:`end_session_compute`.
         self._code_exec_targets: dict[str, list[tuple[str, CodeModeScriptTargets]]] = {}
+        # {session_id: {process_id: owner_call_id}}. For every unified-exec
+        # process an output announced as still running, the call that owns
+        # it — the FIRST one to announce it, resolved through the remap
+        # hooks (a poll rebound to its exec keeps the exec as owner). That
+        # call's card stays open until the process's own ``CommandExecution``
+        # end event, which this map rebinds to it by exact key (see
+        # :meth:`_note_process_announcement` / :meth:`_take_process_owner`).
+        # Evicted when the end event lands. Kept in memory on both paths,
+        # batch and live: a process never outlives the backend that runs its
+        # agent, so a restart losing the live copy loses nothing.
+        self._process_owners: dict[str, dict[int, str]] = {}
+        # {session_id: {process_id: ended_at (epoch seconds)}}. End events
+        # that found no owner: Codex may write one a few milliseconds BEFORE
+        # the output announcing the process (it exited between the nested
+        # call's yield and the output write). An announcement close enough
+        # in time to such an end is already stale and opens nothing.
+        self._ended_processes: dict[str, dict[int, float]] = {}
         # {session_id: {completion key: spawn_agent_call_id}}. Batch-only
         # side-table letting the subagent's completion line rebind onto
         # the originating ``spawn_agent`` ``ToolResultLink`` chain
@@ -2072,6 +2250,8 @@ class CodexSessionCompute(BaseSessionCompute):
         self._exec_command_maps[session_id] = {}
         self._code_cell_maps[session_id] = {}
         self._code_exec_targets[session_id] = []
+        self._process_owners[session_id] = {}
+        self._ended_processes[session_id] = {}
         self._agent_id_to_spawn_call_id[session_id] = {}
         self._prev_total_tokens[session_id] = 0
         self._plan_prefix_states[session_id] = _PlanPrefixState(last_mode="default")
@@ -2087,10 +2267,86 @@ class CodexSessionCompute(BaseSessionCompute):
         self._exec_command_maps.pop(session_id, None)
         self._code_cell_maps.pop(session_id, None)
         self._code_exec_targets.pop(session_id, None)
+        self._process_owners.pop(session_id, None)
+        self._ended_processes.pop(session_id, None)
         self._agent_id_to_spawn_call_id.pop(session_id, None)
         self._prev_total_tokens.pop(session_id, None)
         self._plan_prefix_states.pop(session_id, None)
         self._goal_context_states.pop(session_id, None)
+
+    def _note_process_announcement(
+        self, session_id: str, parsed_json: dict, owner_call_id: str,
+    ) -> None:
+        """Record ``owner_call_id`` as the owner of the process this output announces.
+
+        Called by both remap hooks with the RESOLVED owner, so a poll rebound
+        to the call that started its process names that call. The first
+        announcer wins: later polls of the same process change nothing. An
+        announcement that follows an owner-less end of the same process
+        closely is stale (the process is already gone) and records nothing.
+        """
+        process_id = announced_running_process_id(parsed_json)
+        if process_id is None or not owner_call_id:
+            return
+        ended = self._ended_processes.get(session_id)
+        if ended:
+            ended_at = ended.pop(process_id, None)
+            if ended_at is not None:
+                announced_at = rollout_line_epoch(parsed_json)
+                if announced_at is None or abs(announced_at - ended_at) <= _ENDED_PROCESS_WINDOW_SECONDS:
+                    return
+        owners = self._process_owners.setdefault(session_id, {})
+        if process_id in owners:
+            return
+        owners[process_id] = owner_call_id
+        if len(owners) > _MAX_TRACKED_PROCESSES:
+            owners.pop(next(iter(owners)))
+
+    def _take_process_owner(self, session_id: str, parsed_json: dict) -> str | None:
+        """Pop the owner of the process an end event closes, or record the end.
+
+        ``None`` for a line that is not an ended ``CommandExecution``, and for
+        a process no output announced — most of them: a command that exited
+        inside its own call. That end is remembered for a while, in case the
+        announcing output is written just after it (see
+        ``_ended_processes``).
+        """
+        end = _command_execution_end(parsed_json)
+        if end is None:
+            return None
+        process_id = end[1]
+        owner = self._process_owners.get(session_id, {}).pop(process_id, None)
+        # Remembered whether it had an owner or not: an output still saying
+        # "running" written just after the end must not register it again.
+        ended_at = rollout_line_epoch(parsed_json) or time.time()
+        ended = self._ended_processes.setdefault(session_id, {})
+        for stale_id, stale_at in list(ended.items()):
+            if ended_at - stale_at > _ENDED_PROCESS_WINDOW_SECONDS:
+                del ended[stale_id]
+        ended[process_id] = ended_at
+        return owner
+
+    def _release_process_owner_on_exit(
+        self, session_id: str, parsed_json: dict, owner_call_id: str,
+    ) -> None:
+        """Forget ``owner_call_id``'s processes when its own chain reports an exit.
+
+        The output of the poll that observed the exit carries no process id,
+        only the exit. Without this, a process that ended with no
+        ``CommandExecution`` item (killed on an interrupt) would keep a stale
+        owner, and a later process reusing its id would bind to the old card.
+        """
+        if not _output_reports_process_exit(parsed_json):
+            return
+        owners = self._process_owners.get(session_id)
+        if not owners:
+            return
+        for process_id in [pid for pid, owner in owners.items() if owner == owner_call_id]:
+            del owners[process_id]
+
+    def has_process_owner(self, session_id: str, process_id: int) -> bool:
+        """Whether an output of ``session_id`` announced ``process_id`` as running."""
+        return process_id in self._process_owners.get(session_id, {})
 
     def _release_exec_command_for_call(
         self, session_id: str, call_id: str
@@ -2126,6 +2382,24 @@ class CodexSessionCompute(BaseSessionCompute):
                 cell_map.pop(cell_id, None)
 
     def remap_tool_result_id(
+        self,
+        parsed_json: dict,
+        naive_tool_use_id: str,
+        *,
+        session_id: str,
+        tool_use_map: dict[str, ToolUseEntry],
+    ) -> str:
+        """Resolve the owning call (:meth:`_resolve_tool_result_id`), then note
+        the process the output announces as running against that owner (see
+        :meth:`_note_process_announcement`)."""
+        resolved = self._resolve_tool_result_id(
+            parsed_json, naive_tool_use_id, session_id=session_id, tool_use_map=tool_use_map,
+        )
+        self._release_process_owner_on_exit(session_id, parsed_json, resolved)
+        self._note_process_announcement(session_id, parsed_json, resolved)
+        return resolved
+
+    def _resolve_tool_result_id(
         self,
         parsed_json: dict,
         naive_tool_use_id: str,
@@ -2240,6 +2514,9 @@ class CodexSessionCompute(BaseSessionCompute):
            run their nested calls synchronously, so recency is right in
            practice).
 
+        An exited process's ``CommandExecution`` needs no heuristic: its
+        ``process_id`` is an exact key into ``_process_owners``.
+
         Falls back to identity when the line isn't such an event, the
         call_id doesn't carry the nested ``exec-`` prefix, or nothing is
         registered.
@@ -2251,6 +2528,10 @@ class CodexSessionCompute(BaseSessionCompute):
         payload = completed_item(parsed_json)
         if payload is None:
             return naive_tool_use_id
+        if _command_execution_end(parsed_json) is not None:
+            # Exact key this time: the process id the owning call's output
+            # announced (see ``_process_owners``).
+            return self._take_process_owner(session_id, parsed_json) or naive_tool_use_id
         records = self._code_exec_targets.get(session_id)
         if not records:
             return naive_tool_use_id
@@ -2320,7 +2601,25 @@ class CodexSessionCompute(BaseSessionCompute):
         session_id: str,
         item: SessionItem,
     ) -> str:
-        """Live equivalent of :meth:`remap_tool_result_id` (no in-memory map).
+        """Live twin of :meth:`remap_tool_result_id`: resolve the owning call
+        (:meth:`_resolve_tool_result_id_live`), then note the process the
+        output announces as running against that owner."""
+        resolved = self._resolve_tool_result_id_live(
+            parsed_json, naive_tool_use_id, session_id=session_id, item=item,
+        )
+        self._release_process_owner_on_exit(session_id, parsed_json, resolved)
+        self._note_process_announcement(session_id, parsed_json, resolved)
+        return resolved
+
+    def _resolve_tool_result_id_live(
+        self,
+        parsed_json: dict,
+        naive_tool_use_id: str,
+        *,
+        session_id: str,
+        item: SessionItem,
+    ) -> str:
+        """Live equivalent of :meth:`_resolve_tool_result_id` (DB lookups).
 
         Three unrelated chains converge here, mirroring the batch hook:
 
@@ -2352,6 +2651,10 @@ class CodexSessionCompute(BaseSessionCompute):
           custom_tool_call via :meth:`_lookup_orphan_end_exec_call_id`
           (declared-target match on the statically-extracted script —
           patch paths / MCP tool name — recency fallback).
+        - an exited process's ``CommandExecution`` (``exec-`` prefixed
+          too): rebound by its ``process_id`` through the in-memory
+          ``_process_owners`` map — the call whose output announced that
+          process as running (no DB lookup).
 
         Falls back to identity at every step that can't be resolved so
         other tools' result rows are unaffected.
@@ -2375,6 +2678,19 @@ class CodexSessionCompute(BaseSessionCompute):
         if parsed_json.get("type") == _TYPE_EVENT_MSG:
             payload = completed_item(parsed_json)
             if payload is not None and naive_tool_use_id.startswith("exec-"):
+                command_end = _command_execution_end(parsed_json)
+                if command_end is not None:
+                    # Same in-memory owner map as the batch path. Only a
+                    # process started before this backend (whose announcement
+                    # the fresh map never saw) pays a DB lookup;
+                    # ``extract_tool_result_info`` already dropped the others
+                    # nobody announced.
+                    owner = self._take_process_owner(session_id, parsed_json)
+                    if owner is not None:
+                        return owner
+                    return self._lookup_exec_command_call_id(
+                        session_id, item.line_num, command_end[1], naive_tool_use_id,
+                    )
                 if payload.get("type") == "FileChange":
                     return self._lookup_orphan_end_exec_call_id(
                         session_id, item.line_num, naive_tool_use_id,
@@ -2562,15 +2878,17 @@ class CodexSessionCompute(BaseSessionCompute):
         ``cell ID 23``, and a still-running ``wait`` output repeats the
         same header on a ``function_call_output``), so each candidate is
         re-verified by parsing its output and comparing the exact cell
-        id. Returns ``fallback`` when nothing matches, so the live link
-        is still created (just under the naive id).
+        id. The NEWEST match wins: cell ids are small counters a new
+        app-server run starts over, and a ``wait`` polls the latest cell to
+        carry its id. Returns ``fallback`` when nothing matches, so the live
+        link is still created (just under the naive id).
         """
         marker = f"Script running with cell ID {cell_id}"
         candidates = SessionItem.objects.filter(
             session_id=session_id,
             line_num__lt=max_line_num,
             content__contains=marker,
-        ).order_by('line_num')
+        ).order_by('-line_num')
         for candidate in candidates.iterator(chunk_size=10):
             try:
                 parsed = orjson.loads(candidate.content)
@@ -2601,20 +2919,38 @@ class CodexSessionCompute(BaseSessionCompute):
         """Resolve the exec_command call_id that owns ``exec_command_id``.
 
         Searches either a direct output's ``Process running with session ID
-        <id>`` marker or a code-mode output's canonical ``SESSION_ID=<id>``
-        line. The latter is accepted only when its call_id belongs to a
-        tier-1 ``exec`` wrapper around ``exec_command``.
-        Returns ``fallback`` when nothing is found, so the live link is
-        still created (just under the naive id).
+        <id>`` marker or a code-mode output announcing ``<id>`` as still
+        running (any shape :func:`_code_mode_exec_command_id_from_output`
+        reads: ``SESSION_ID=<id>``, the raw nested JSON result, the direct
+        trailer). Either is accepted only when its call_id belongs to the
+        call that STARTED the process — a direct ``exec_command``, or a tier-1
+        ``exec`` wrapper around it — never to a poll (``write_stdin``) that
+        merely reports it still running.
+
+        The NEWEST announcement before ``max_line_num`` wins: Codex reuses
+        process ids within a session, and the latest process to carry this id
+        is the one a later line talks about. Returns ``fallback`` when nothing
+        is found, so the live link is still created (just under the naive id).
         """
         direct_marker = f"Process running with session ID {exec_command_id}"
         code_mode_marker = f"SESSION_ID={exec_command_id}"
+        # The raw nested JSON result sits JSON-escaped inside the stored
+        # line: ``\"session_id\":<id>`` (or with a space after the colon
+        # when the script pretty-printed it). A pre-filter only — every
+        # candidate is re-parsed below.
+        json_markers = (
+            f'\\"session_id\\":{exec_command_id}',
+            f'\\"session_id\\": {exec_command_id}',
+        )
         candidates = SessionItem.objects.filter(
             session_id=session_id,
             line_num__lt=max_line_num,
         ).filter(
-            Q(content__contains=direct_marker) | Q(content__contains=code_mode_marker)
-        ).order_by('line_num')
+            Q(content__contains=direct_marker)
+            | Q(content__contains=code_mode_marker)
+            | Q(content__contains=json_markers[0])
+            | Q(content__contains=json_markers[1])
+        ).order_by('-line_num')
         for candidate in candidates.iterator(chunk_size=10):
             try:
                 parsed = orjson.loads(candidate.content)
@@ -2631,8 +2967,17 @@ class CodexSessionCompute(BaseSessionCompute):
             if not isinstance(call_id, str) or not call_id:
                 continue
             output = payload.get("output")
-            if isinstance(output, str) and direct_marker in output:
-                return call_id
+            if isinstance(output, str) and parse_code_mode_output(output) is None:
+                # Anchored trailer match (a bare substring test would take
+                # ``… ID 9762`` for ``… ID 97625``), then the owner check.
+                status = parse_exec_command_status(output)
+                if status.exec_command_id == exec_command_id and not status.is_terminated:
+                    owner_payload = self._lookup_tool_call_payload(
+                        session_id, candidate.line_num, call_id
+                    )
+                    if owner_payload is not None and _tool_use_name(owner_payload) == "exec_command":
+                        return call_id
+                    continue
             if _code_mode_exec_command_id_from_output(output) != exec_command_id:
                 continue
             owner_payload = self._lookup_tool_call_payload(
@@ -3291,7 +3636,9 @@ class CodexSessionCompute(BaseSessionCompute):
             # ``is_tool_result_item`` branch (-> DEBUG_ONLY). Every other
             # completed item (Reasoning, CommandExecution, Plan, WebSearch,
             # …) duplicates a raw ``response_item`` TwiCC already reads
-            # and stays SYSTEM.
+            # and stays SYSTEM — an exited process's CommandExecution
+            # included: SYSTEM is DEBUG_ONLY too, and its role as the
+            # closing result of a shell chain is ``is_tool_result_item``'s.
             if _event_msg_call_id(parsed_json) is not None:
                 return None
 
@@ -3657,6 +4004,12 @@ class CodexSessionCompute(BaseSessionCompute):
         #   :meth:`create_agent_link_from_tool_result` the lines it
         #   considers tool_result-ish — this is the gate that lets the
         #   v2 ``(call_id, agent_id)`` pair through to the AgentLink.
+        # - canonical ``CommandExecution`` item of an exited process (see
+        #   :func:`_command_execution_end`): the closing result of the call
+        #   that started the process, rebound to it by ``process_id``. The
+        #   only end signal of a process left running past its turn. An
+        #   unresolvable one (a process that exited inside its own call,
+        #   whose id no output announced) simply creates no link.
         # All of them are routed to DEBUG_ONLY; the front uses the tool's
         # ``isToolRunning`` hook to know when the chain is complete.
         wrapper_type = parsed_json.get("type")
@@ -3672,6 +4025,8 @@ class CodexSessionCompute(BaseSessionCompute):
             )
         if wrapper_type == _TYPE_EVENT_MSG:
             if _parse_sub_agent_activity_started(parsed_json) is not None:
+                return True
+            if _command_execution_end(parsed_json) is not None:
                 return True
             return canonical_result_item(parsed_json) is not None
         return False
@@ -3799,9 +4154,26 @@ class CodexSessionCompute(BaseSessionCompute):
                 # (the ``Script failed`` status header).
                 error_text = _code_mode_output_error(output)
         elif wrapper_type == _TYPE_EVENT_MSG:
-            call_id = _event_msg_call_id(parsed_json)
-            item = canonical_result_item(parsed_json)
-            error_text = _event_msg_payload_error(item or {})
+            command_end = _command_execution_end(parsed_json)
+            if command_end is not None:
+                # An exited process's closing result: the naive id is the
+                # synthesized ``exec-<uuid>``, rebound by ``process_id``.
+                call_id, process_id, exit_code = command_end
+                if (
+                    not self.has_process_owner(session_id, process_id)
+                    and not _command_execution_predates_backend(parsed_json)
+                ):
+                    # Nobody announced it (it exited inside its own call —
+                    # the common case): nothing to close, so skip the link
+                    # search and its scans. Remembered in case its
+                    # announcement is written just after.
+                    self._take_process_owner(session_id, parsed_json)
+                    return None
+                error_text = f"Exit code {exit_code}" if exit_code else None
+            else:
+                call_id = _event_msg_call_id(parsed_json)
+                item = canonical_result_item(parsed_json)
+                error_text = _event_msg_payload_error(item or {})
         else:
             return None
         if not isinstance(call_id, str) or not call_id:
@@ -4169,11 +4541,14 @@ class CodexSessionCompute(BaseSessionCompute):
         tool_name: str,
         *,
         session_id: str | None = None,
+        tool_use_id: str | None = None,
     ) -> str | None:
         """Return the JSON ``ToolResultLink.extra`` payload for this result.
 
-        Three shapes contribute today:
+        Four shapes contribute today:
 
+        - An exited process's ``CommandExecution`` item, rebound to the
+          call that started it: always ``{"is_terminated": true}``.
         - ``exec_command`` / ``write_stdin`` ``function_call_output``
           rows whose trailer reports ``Process exited`` produce
           ``{"is_terminated": true}``. Other rows in the same chain
@@ -4184,7 +4559,8 @@ class CodexSessionCompute(BaseSessionCompute):
         - Code-mode ``exec`` result rows (the exec's own output plus
           rebound ``wait`` chunks) follow the same chained logic, keyed
           on the script status header instead of the unified-exec
-          trailer.
+          trailer — unless the body announces a nested process still
+          running, which keeps the chain open.
         - ``apply_patch`` canonical ``FileChange`` item rows produce
           ``{"lines_added": N, "lines_removed": M, "files": [...]}``
           so the front can show the per-tool badge.
@@ -4231,6 +4607,12 @@ class CodexSessionCompute(BaseSessionCompute):
         per-tool ``+N -M`` summary badge; the per-file breakdown is
         provided for future surfaces (it is not consumed yet today).
         """
+        # An exited process's ``CommandExecution``, rebound to the call that
+        # started it (``exec`` in code mode, ``exec_command`` otherwise):
+        # the process is gone, whatever any earlier chunk said.
+        if _command_execution_end(parsed_json) is not None:
+            return orjson.dumps({"is_terminated": True}).decode()
+
         # ``spawn_agent``: ``is_terminated`` is flagged either on the
         # ``<subagent_notification>`` user message (the canonical
         # end-of-spawn signal — emitted whether the subagent
@@ -4321,6 +4703,17 @@ class CodexSessionCompute(BaseSessionCompute):
         # user termination, same signal-based check as exec_command —
         # flips ``is_terminated``; a ``Script running with cell ID <id>``
         # header keeps the spinner on until a wait chunk closes the cell.
+        # A final script status is not enough when the body announces a
+        # nested process still running: the script ended once the nested
+        # ``exec_command`` / ``write_stdin`` yielded, the process did not.
+        # Its end comes later — a poll reporting an exit, or the process's
+        # own ``CommandExecution`` item (handled at the top). Only for the
+        # card that event will reach, though: the registered owner of that
+        # process (see ``_process_owners``, filled by the remap hooks just
+        # before this runs). Any other card announcing it (a multi-call
+        # script polling someone else's process, an already-ended process)
+        # closes on its script status as before — nothing would close it
+        # later.
         if tool_name == _CODE_MODE_EXEC_TOOL:
             if parsed_json.get("type") != _TYPE_RESPONSE_ITEM:
                 return None
@@ -4334,8 +4727,17 @@ class CodexSessionCompute(BaseSessionCompute):
                 and _user_terminated_tool_reason(session_id, call_id) is not None
             )
             if not user_terminated:
-                parsed = parse_code_mode_output(payload.get("output"))
+                output = payload.get("output")
+                parsed = parse_code_mode_output(output)
                 if parsed is None or parsed.status == "running":
+                    return None
+                process_id = _code_mode_exec_command_id_from_output(output)
+                if (
+                    process_id is not None
+                    and session_id is not None
+                    and tool_use_id is not None
+                    and self._process_owners.get(session_id, {}).get(process_id) == tool_use_id
+                ):
                     return None
             return orjson.dumps({"is_terminated": True}).decode()
 
@@ -4611,6 +5013,27 @@ class CodexSessionCompute(BaseSessionCompute):
                     has_tool_result=True,
                     tool_result_id=event_call_id,
                     tool_result_error=_event_msg_payload_error(item or {}),
+                    tool_use_entries=_EMPTY_TOOL_USE_ENTRIES,
+                    task_tool_uses=_EMPTY_TASK_TOOL_USES,
+                    file_paths=_EMPTY_FILE_PATHS,
+                    has_prefix=False,
+                    has_suffix=False,
+                    tool_result_agent_info=None,
+                )
+
+            # An exited process's ``CommandExecution``: the result closing
+            # the call that started it, rebound by ``process_id`` in
+            # :meth:`remap_tool_result_id` (naive id: its ``exec-<uuid>``).
+            command_end = _command_execution_end(parsed_json)
+            if command_end is not None:
+                item_id, _process_id, exit_code = command_end
+                return ContentAnalysis(
+                    has_visible_content=False,
+                    text_content=None,
+                    is_system_xml=False,
+                    has_tool_result=True,
+                    tool_result_id=item_id,
+                    tool_result_error=f"Exit code {exit_code}" if exit_code else None,
                     tool_use_entries=_EMPTY_TOOL_USE_ENTRIES,
                     task_tool_uses=_EMPTY_TASK_TOOL_USES,
                     file_paths=_EMPTY_FILE_PATHS,

@@ -49,9 +49,11 @@ from openai_codex.generated.v2_all import (
     ThreadTokenUsageUpdatedNotification,
 )
 
+import psutil
 from asgiref.sync import sync_to_async
 
 from twicc.agent import AgentState, BaseAgent, PendingRequest, SendDeliveryError, StateChangeCallback
+from twicc.agent.states import build_background_work
 from twicc.context_injection import apply_pending_context
 from twicc.core.enums import Provider
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
@@ -267,6 +269,67 @@ def _agent_message_item(payload: Any) -> Any | None:
 _SUB_AGENT_ACTIVITY_ITEM_TYPE = "subAgentActivity"
 _COLLAB_AGENT_TOOL_CALL_ITEM_TYPE = "collabAgentToolCall"
 _COLLAB_WAIT_TOOL = "wait"
+# How long a relayed process end keeps a late announcement of the same
+# process from reviving it (see ``CodexAgent._recently_ended_shells``).
+_RECENTLY_ENDED_SHELL_SECONDS = 60.0
+
+
+# Long-lived app-server helpers that may start after the first command and
+# never end with one (the code-mode host starts with the first ``exec``):
+# never taken for a command's process.
+_APP_SERVER_HELPER_MARKERS = ("codex-code-mode-host",)
+# A tracked shell younger than this is never reconciled away: its process
+# may not be spawned yet.
+_SHELL_RECONCILE_MIN_AGE_SECONDS = 10.0
+# Slack before the first shell's start when looking for command processes:
+# psutil's creation times are rounded to the whole boot second, and Codex
+# may stamp ``startedAtMs`` after the spawn.
+_SHELL_PROBE_MARGIN_SECONDS = 5.0
+# A relayed subagent start is only known from the output announcing it,
+# written after the spawn plus the call's yield (up to ~30 s) plus the relay
+# lag: its process is assumed to have started this long before.
+_RELAYED_SHELL_START_MARGIN_SECONDS = 60.0
+
+
+def command_processes_may_run(app_server_pid: int, since: float) -> bool | None:
+    """Whether any process may still run a unified-exec command.
+
+    Codex runs each command as a direct child of its app-server (``bash -lc
+    <cmd>``, or ``<cmd>`` itself once bash exec'ed it), next to MCP servers
+    started before any command and a few helpers. A candidate is a live,
+    non-helper direct child created at or after ``since`` — the first
+    tracked shell's start. ``False`` proves every tracked shell is gone;
+    ``True`` proves nothing (the candidate may be one of them, or a
+    subagent's late MCP server), so the caller keeps them all. ``None`` on a
+    process-table error, and ``True`` on a child it may not inspect: a doubt
+    keeps the shells. Blocking (``psutil``): run it in a thread.
+
+    A command that backgrounds a process and exits (``bash -lc 'server &'``)
+    leaves no direct child behind, but no tracked shell either: Codex writes
+    its end the moment bash exits (observed: ~50 ms, exit code 0), and the
+    backgrounded process does not survive its session (observed with and
+    without output redirection). Known limit, on the safe side: any later
+    non-helper child (a subagent's MCP server) keeps the probe at ``True``
+    for the agent's lifetime, disabling this safety net.
+    """
+    try:
+        children = psutil.Process(app_server_pid).children(recursive=False)
+    except psutil.Error:
+        return None
+    for child in children:
+        try:
+            if child.create_time() < since or child.status() == psutil.STATUS_ZOMBIE:
+                continue
+            if any(marker in " ".join(child.cmdline()) for marker in _APP_SERVER_HELPER_MARKERS):
+                continue
+        except psutil.NoSuchProcess:
+            continue
+        except psutil.Error:
+            return True
+        return True
+    return False
+
+
 _SUB_AGENT_STARTED_KIND = "started"
 _SUB_AGENT_INTERRUPTED_KIND = "interrupted"
 _SUB_AGENT_COMPLETED_KIND = "completed"
@@ -434,6 +497,39 @@ class CodexAgent(BaseAgent):
         #   ``_run_turn`` keeps ASSISTANT_TURN instead of settling idle —
         #   the Codex mirror of Claude Code's background-agents hold.
         self._live_subagents: dict[str, str] = {}
+        # Unified-exec processes still running, ``(thread_id, process_id) ->
+        # start time`` (epoch seconds). Codex runs every shell command as
+        # a process the model may leave behind — its ``exec_command`` call
+        # returns after a short yield, and the process keeps running, across
+        # turn ends too. So this counts every process in flight, including a
+        # command the agent is still polling within its turn. Sources:
+        #
+        # - our own thread: the live ``commandExecution`` items
+        #   (``item/started`` adds, ``item/completed`` removes);
+        # - a subagent's thread (same app-server process, so its shells die
+        #   with ours too — hence the thread id in the key): its items never
+        #   reach our stream (the SDK routes them to the subagent's own turn),
+        #   so the watcher relays the outputs of its rollout that announce a
+        #   running process (:meth:`notify_shells_started`);
+        # - any thread, a process that exits after its turn: only the rollout
+        #   records it, the watcher relays its ``CommandExecution`` end
+        #   (:meth:`notify_shells_exited`).
+        #
+        # A process killed without an end event (an interrupt, Codex's own
+        # process cap) is dropped once the app-server runs no command process
+        # at all any more (:meth:`drop_gone_shells`, from the manager's idle
+        # check). Never holds
+        # ASSISTANT_TURN; reported as background work and blocks the idle
+        # auto-stop.
+        self._live_shells: dict[tuple[str, str], float] = {}
+        # Start of the first shell this agent ever tracked: app-server
+        # children older than that (MCP servers) are never a command's
+        # process (see :func:`command_processes_may_run`).
+        self._first_shell_started_at: float | None = None
+        # Keys whose end was relayed recently, ``key -> monotonic time``: a
+        # subagent's announcement written just after its process's end (it
+        # exited between yield and output write) must not revive it.
+        self._recently_ended_shells: dict[tuple[str, str], float] = {}
         # True while the "waiting for N subagents" process label is the
         # one on screen. Set when a ``wait`` collaboration call starts,
         # cleared when it completes. A ``process_state`` broadcast (turn
@@ -763,7 +859,9 @@ class CodexAgent(BaseAgent):
         # or subagent hold: from here ``_run_turn`` owns the state, so drop the
         # flags (the watcher signals must not flip us out of this turn). The
         # hold re-decides at this turn's own end.
-        self._goal_continuation_active = False
+        if self._goal_continuation_active:
+            self._goal_continuation_active = False
+            self._schedule_background_work_refresh()
         self._subagent_hold_active = False
         # Each turn decides anew whether it delivered a plan (see
         # ``_prompt_plan_implementation``).
@@ -964,8 +1062,147 @@ class CodexAgent(BaseAgent):
         if kind == _SUB_AGENT_STARTED_KIND:
             agent_path = getattr(inner, "agent_path", None)
             self._live_subagents[thread_id] = agent_path if isinstance(agent_path, str) else ""
+            self._schedule_background_work_refresh()
         elif kind in (_SUB_AGENT_INTERRUPTED_KIND, _SUB_AGENT_COMPLETED_KIND):
-            self._live_subagents.pop(thread_id, None)
+            if self._live_subagents.pop(thread_id, None) is not None:
+                self._schedule_background_work_refresh()
+
+    def _note_command_execution(self, method: str, payload: Any) -> None:
+        """Update the live-shell set from one ``commandExecution`` item event.
+
+        Our own thread's items only: a subagent's never reach this stream
+        (see ``_live_shells``). Items without a ``processId`` never started a
+        process and are ignored.
+        """
+        if method not in ("item/started", "item/completed"):
+            return
+        item = getattr(payload, "item", None)
+        if item is None:
+            return
+        inner = getattr(item, "root", item)
+        if getattr(inner, "type", None) != "commandExecution":
+            return
+        process_id = getattr(inner, "process_id", None)
+        if process_id is None or process_id == "":
+            return
+        if getattr(payload, "thread_id", None) not in (None, self.session_id):
+            return
+        key = (self.session_id, str(process_id))
+        if method == "item/started":
+            started_at_ms = getattr(payload, "started_at_ms", None)
+            started_at = started_at_ms / 1000 if isinstance(started_at_ms, (int, float)) else time.time()
+            self._track_shell(key, started_at)
+            self._schedule_background_work_refresh()
+        elif self._forget_shell(key):
+            self._schedule_background_work_refresh()
+
+    def _forget_shell(self, key: tuple[str, str]) -> bool:
+        return self._live_shells.pop(key, None) is not None
+
+    def _track_shell(self, key: tuple[str, str], started_at: float) -> None:
+        self._live_shells[key] = started_at
+        if self._first_shell_started_at is None or started_at < self._first_shell_started_at:
+            self._first_shell_started_at = started_at
+
+    def _prune_recently_ended_shells(self) -> None:
+        cutoff = time.monotonic() - _RECENTLY_ENDED_SHELL_SECONDS
+        for key, ended_at in list(self._recently_ended_shells.items()):
+            if ended_at < cutoff:
+                del self._recently_ended_shells[key]
+
+    async def notify_shells_started(self, thread_id: str, processes: dict[str, float]) -> None:
+        """Relay from the watcher: a subagent's outputs announced these processes.
+
+        ``processes`` maps each process id to the epoch time of the output
+        announcing it; the start is taken as
+        ``_RELAYED_SHELL_START_MARGIN_SECONDS`` before, so the process-table
+        probe never takes the real, earlier spawn for someone else's.
+        Idempotent: a
+        poll re-announcing a tracked process changes nothing, and a process
+        whose end was relayed a moment ago stays gone.
+        """
+        self._prune_recently_ended_shells()
+        added = []
+        for process_id, announced_at in processes.items():
+            key = (thread_id, process_id)
+            if key in self._live_shells or key in self._recently_ended_shells:
+                continue
+            self._track_shell(key, announced_at - _RELAYED_SHELL_START_MARGIN_SECONDS)
+            added.append(process_id)
+        if added:
+            self._logger.debug(
+                "Codex session %s: background shell(s) %s of subagent %s started (%d live)",
+                self.session_id, ", ".join(added), thread_id, len(self._live_shells),
+            )
+            self._schedule_background_work_refresh()
+
+    async def notify_shells_exited(self, thread_id: str, process_ids: list[str]) -> None:
+        """Relay from the watcher: these processes of ``thread_id`` exited.
+
+        The only end signal for a process that outlives its turn (Codex writes
+        its completed ``CommandExecution`` item to the rollout, but no stream
+        is listening any more), and for any subagent's process. Recorded even
+        for a process not tracked (yet): its announcement may be written
+        just after. Idempotent — the live ``item/completed`` of an in-turn
+        exit already dropped the entry.
+        """
+        self._prune_recently_ended_shells()
+        now = time.monotonic()
+        changed = False
+        for process_id in process_ids:
+            key = (thread_id, process_id)
+            self._recently_ended_shells[key] = now
+            if self._forget_shell(key):
+                changed = True
+        if changed:
+            self._logger.debug(
+                "Codex session %s: background shell(s) %s of thread %s exited (%d live)",
+                self.session_id, ", ".join(process_ids), thread_id, len(self._live_shells),
+            )
+            self._schedule_background_work_refresh()
+
+    def has_live_shells(self) -> bool:
+        """Whether any unified-exec process is still tracked as running."""
+        return bool(self._live_shells)
+
+    def shell_probe(self) -> tuple[int, float] | None:
+        """``(app_server_pid, since)`` for :func:`command_processes_may_run`, or ``None``.
+
+        Read on the loop; the probe itself runs in a thread.
+        """
+        pid = self.get_pid()
+        if pid is None or not self._live_shells or self._first_shell_started_at is None:
+            return None
+        return pid, self._first_shell_started_at - _SHELL_PROBE_MARGIN_SECONDS
+
+    def drop_gone_shells(self, probed_at: float) -> bool:
+        """Drop the shells a probe at ``probed_at`` proved gone; on the loop only.
+
+        The safety net for a process killed without an end event (an
+        interrupt, Codex's own cap on open processes): the probe found no
+        candidate process at all, so none of the shells tracked by then can
+        still run. A shell started less than
+        ``_SHELL_RECONCILE_MIN_AGE_SECONDS`` before the probe is kept (its
+        process may not be spawned yet), and so is one tracked after it.
+        Returns whether anything was dropped; the caller publishes.
+        """
+        cutoff = probed_at - _SHELL_RECONCILE_MIN_AGE_SECONDS
+        dropped = [key for key, started_at in list(self._live_shells.items()) if started_at <= cutoff]
+        for key in dropped:
+            self._forget_shell(key)
+        if dropped:
+            self._logger.info(
+                "Codex session %s: dropped %d tracked shell(s), no command process runs any more (%s)",
+                self.session_id, len(dropped), ", ".join(f"{t}:{p}" for t, p in dropped),
+            )
+        return bool(dropped)
+
+    def current_background_work(self) -> dict | None:
+        return build_background_work(
+            subagents=len(self._live_subagents),
+            shells=len(self._live_shells),
+            goal=self._goal_continuation_active,
+        )
 
     async def _refresh_subagent_wait_label(self) -> None:
         """Say the parent blocks on ``wait_agent``, with a count when there is one.
@@ -1062,6 +1299,8 @@ class CodexAgent(BaseAgent):
             return
         for session_id in stopped:
             self._live_subagents.pop(session_id, None)
+        if stopped:
+            self._schedule_background_work_refresh()
 
     async def _try_arm_subagent_hold(self) -> bool:
         """Hold ASSISTANT_TURN at an idle boundary when spawned subagents still run.
@@ -1135,6 +1374,7 @@ class CodexAgent(BaseAgent):
                 changed = True
         if not changed or self.state == AgentState.DEAD:
             return
+        self._schedule_background_work_refresh()
 
         if self._current_turn is not None:
             if self._subagent_wait_label_active:
@@ -2142,6 +2382,8 @@ class CodexAgent(BaseAgent):
         payload_thread_id = getattr(payload, "thread_id", None)
         if payload_thread_id is not None and payload_thread_id != self.session_id:
             return
+
+        self._note_command_execution(method, payload)
 
         if method == "thread/tokenUsage/updated":
             if self.ephemeral and isinstance(payload, ThreadTokenUsageUpdatedNotification):

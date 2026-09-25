@@ -57,8 +57,10 @@ logger = logging.getLogger(__name__)
 #   the LLM-facing output string of a standard / custom function call.
 # - ``event_msg.item_completed`` carrying a canonical ``FileChange`` or
 #   ``McpToolCall`` item (see :mod:`.canonical`). ``CommandExecution``
-#   items are intentionally not results: we reconstruct shell transcripts
-#   from the chain of function_call_output rows instead.
+#   items are intentionally not *returned* as results: we reconstruct shell
+#   transcripts from the chain of function_call_output rows instead. An
+#   exited process's item is linked to its call (it closes the chain, see
+#   ``codex.compute._command_execution_end``) but carries no body to show.
 _TYPE_RESPONSE_ITEM = "response_item"
 _TYPE_EVENT_MSG = "event_msg"
 _RESPONSE_TOOL_RESULT_PAYLOAD_TYPES = frozenset({"function_call_output", "custom_tool_call_output"})

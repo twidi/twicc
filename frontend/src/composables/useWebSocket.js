@@ -7,6 +7,7 @@ import { useWebSocket as useVueWebSocket, useDebounceFn, useThrottleFn } from '@
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { applySessionItemsAdded } from './wsSessionItems'
+import { applyBackgroundWork } from './wsProcessState'
 import { useSharesStore } from '../stores/shares'
 import { useAuthStore } from '../stores/auth'
 import { useReconciliation } from './useReconciliation'
@@ -1483,6 +1484,7 @@ export function useWebSocket() {
                     extra: msg.extra,
                     stopping: msg.stopping,
                     label: msg.label,
+                    background_work_in_progress: msg.background_work_in_progress,
                 })
                 // Ensure the session is present in data.sessions so the cross-filter
                 // active block (sessions with a running process) can surface it
@@ -1508,6 +1510,9 @@ export function useWebSocket() {
                 }
                 break
             }
+            case 'process_background_work':
+                applyBackgroundWork(store.processStates, msg)
+                break
             case 'manual_compaction_done': {
                 // Codex finished a manually-triggered /compact. No real
                 // user_message JSONL line is ever produced for the command, so

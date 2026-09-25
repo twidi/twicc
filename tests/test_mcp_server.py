@@ -75,7 +75,7 @@ def test_call_tool_whoami_after_the_date_is_the_session_self_row(isolated_data_d
     result = asyncio.run(mcp_server.dispatch_tool("whoami", {}, session_id=session.id))
     assert result["exit_code"] == 0, result
     assert result["result"]["id"] == session.id
-    assert set(result["result"]["process"]) == {"state"}
+    assert set(result["result"]["process"]) == {"state", "background_work_in_progress"}
 
 
 @pytest.mark.django_db(transaction=True)

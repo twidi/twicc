@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Async callback invoked when the agent transitions between states.
 StateChangeCallback = Callable[["BaseAgent"], Coroutine[Any, Any, None]]
+BackgroundWorkCallback = Callable[["BaseAgent", "dict | None"], Coroutine[Any, Any, None]]
 
 
 class BaseAgent:
@@ -117,6 +118,17 @@ class BaseAgent:
         # the DEAD callback under ``run_under_db_write_lock`` have committed.
         self._dead_callback_done_event = asyncio.Event()
         self._state_change_callback: StateChangeCallback | None = None
+
+        # Background-work publication (see ``_schedule_background_work_refresh``).
+        # The callback is the manager's persistence hook, attached at
+        # registration. ``_published_background_work`` is the last snapshot
+        # the front and the ``ProcessRun`` row were given, so a refresh that
+        # changes nothing costs nothing.
+        self._background_work_callback: BackgroundWorkCallback | None = None
+        self._published_background_work: dict | None = None
+        self._background_work_refresh_task: asyncio.Task[None] | None = None
+        self._background_work_dirty = False
+        self._background_work_broadcast_failures = 0
 
         # Set once a stop (``kill_agent``) has been requested, surfaced via
         # ``get_info().stopping`` so the front's "stopping" spinner survives a
@@ -544,6 +556,7 @@ class BaseAgent:
             pending_requests=self.pending_requests,
             stopping=self._stop_requested,
             label=self.current_status_label(),
+            background_work_in_progress=self.background_work_snapshot(),
             extra={"ephemeral": True, "ephemeral_draft_id": self.ephemeral_draft_id} if getattr(self, "ephemeral", False) else {},
         )
 
@@ -562,6 +575,135 @@ class BaseAgent:
         it changes — one source, computed the same way on both paths.
         """
         return None
+
+    # ------------------------------------------------------------------
+    # Background work
+    # ------------------------------------------------------------------
+
+    # Delay between a background-work change and its publication. Codex
+    # announces every shell command — a one-second ``ls`` included — with a
+    # start/end pair a few milliseconds apart; coalescing them keeps those
+    # from costing a broadcast and a DB write each.
+    BACKGROUND_WORK_DEBOUNCE_SECONDS: ClassVar[float] = 0.5
+    # Retries of a failed ``process_background_work`` broadcast, one per
+    # debounce period.
+    BACKGROUND_WORK_BROADCAST_RETRIES: ClassVar[int] = 3
+
+    def current_background_work(self) -> dict | None:
+        """Provider hook: what still runs behind this agent right now.
+
+        Return :func:`~twicc.agent.states.build_background_work`'s snapshot,
+        recomputed from the provider's live bookkeeping on every call (never a
+        stored copy, same rule as :meth:`current_status_label`). Default:
+        nothing.
+
+        Providers call :meth:`_schedule_background_work_refresh` whenever that
+        bookkeeping changes, so the front and the ``ProcessRun`` row follow.
+        """
+        return None
+
+    def background_work_snapshot(self) -> dict | None:
+        """The background work to report, or ``None``.
+
+        :meth:`current_background_work`, filtered: a DEAD agent runs nothing
+        (its children died with its process), and an ephemeral run reports
+        nothing — it has no ``ProcessRun`` row, no visible session, and must
+        not escape the idle auto-stop through a leaked shell.
+        """
+        if self.state == AgentState.DEAD or getattr(self, "ephemeral", False):
+            return None
+        return self.current_background_work()
+
+    def background_shell_count(self) -> int:
+        """Number of background shells still running (``0`` when none)."""
+        snapshot = self.background_work_snapshot()
+        return snapshot["shells"] if snapshot else 0
+
+    def note_background_work_published(self, snapshot: dict | None) -> None:
+        """Record that ``snapshot`` reached the front and the ``ProcessRun`` row.
+
+        Called by the manager after a state transition persisted and broadcast
+        the snapshot through the regular path, so the next refresh compares
+        against what consumers actually hold.
+        """
+        self._published_background_work = snapshot
+
+    def _schedule_background_work_refresh(self) -> None:
+        """Publish the background-work snapshot soon, if it changed.
+
+        Sync on purpose, so bookkeeping sites (often sync helpers) can call it
+        freely. Changes landing while a refresh is pending or in flight are
+        folded into it: the refresh loops until no change arrived during its
+        own publication. A no-op for an ephemeral run, which never reports
+        any (see :meth:`background_work_snapshot`).
+        """
+        if getattr(self, "ephemeral", False):
+            return
+        self._background_work_dirty = True
+        task = self._background_work_refresh_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop (sync unit tests driving bookkeeping directly).
+            # Nothing can be published without one; the next state change
+            # carries the snapshot anyway.
+            return
+        self._background_work_refresh_task = loop.create_task(
+            self._run_background_work_refresh(),
+            name=f"background-work-refresh-{self.session_id}",
+        )
+
+    async def _run_background_work_refresh(self) -> None:
+        while self._background_work_dirty:
+            await asyncio.sleep(self.BACKGROUND_WORK_DEBOUNCE_SECONDS)
+            self._background_work_dirty = False
+            await self._publish_background_work()
+
+    async def _publish_background_work(self) -> None:
+        """Push the current snapshot to the front and the ``ProcessRun`` row.
+
+        A dedicated ``process_background_work`` message rather than a
+        ``process_state`` re-broadcast: the front rebuilds its whole process
+        object on ``process_state`` (dropping the live tool list), which a
+        shell starting mid-turn must not do. Snapshots (``process_state``,
+        ``active_processes``) still carry the value through ``get_info``.
+        """
+        snapshot = self.background_work_snapshot()
+        previous = self._published_background_work
+        if snapshot == previous:
+            return
+        self._published_background_work = snapshot
+        try:
+            await self._broadcast_stream_event({
+                "type": "process_background_work",
+                "session_id": self.session_id,
+                "background_work_in_progress": snapshot,
+            })
+        except Exception as e:
+            # Forget the publication and retry it a few times (the row is
+            # still written below). Past the limit, the next change or state
+            # transition carries the value anyway.
+            self._published_background_work = previous
+            self._background_work_broadcast_failures += 1
+            self._logger.error(
+                "Error broadcasting background work for session %s (attempt %d): %s",
+                self.session_id, self._background_work_broadcast_failures, e, exc_info=True,
+            )
+            if self._background_work_broadcast_failures <= self.BACKGROUND_WORK_BROADCAST_RETRIES:
+                self._schedule_background_work_refresh()
+        else:
+            self._background_work_broadcast_failures = 0
+        if self._background_work_callback is None:
+            return
+        try:
+            await self._background_work_callback(self, snapshot)
+        except Exception as e:
+            self._logger.error(
+                "Error persisting background work for session %s: %s",
+                self.session_id, e, exc_info=True,
+            )
 
     def mark_stopping(self) -> bool:
         """Flag that a stop has been requested so ``get_info`` reports it.
