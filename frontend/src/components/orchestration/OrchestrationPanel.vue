@@ -27,6 +27,7 @@ import CostDisplay from '../ui/CostDisplay.vue'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { agentForestCost } from '../../utils/agentTreeMetrics'
+import { idleWithShellsSuffix, userTurnBackgroundShellCount } from '../../utils/backgroundWork'
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
@@ -126,7 +127,15 @@ function summarizeActivity(buckets) {
     if (present.length === 1) return `All ${present[0].label}`
     return present.map(b => `${b.count} ${b.label}`).join(' · ')
 }
-const activitySummary = computed(() => summarizeActivity(activity.value))
+// Idle sessions are not all equal: one may still run a background shell
+// behind its finished turn. Counted apart, after the breakdown.
+const idleWithShellsCount = computed(() =>
+    (topology.value?.nodes ?? []).filter(n => userTurnBackgroundShellCount(n.process) > 0).length,
+)
+const activitySummary = computed(() => {
+    const summary = summarizeActivity(activity.value)
+    return summary ? `${summary}${idleWithShellsSuffix(idleWithShellsCount.value)}` : summary
+})
 // The agent equivalent. An agent has only two states — it works, or it is done
 // — so the same phrasing yields "All working", "All stopped", or the mix.
 const agentActivitySummary = computed(() => summarizeActivity([

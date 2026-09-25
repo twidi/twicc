@@ -744,8 +744,8 @@ export class BaseProviderHelpers {
     // ``context`` is a plain object the popover assembles per render. Common
     // fields callers may set: ``effectiveModel``, ``isStarting``,
     // ``isContextMaxForced``, ``selectedValue``, ``defaultValue``,
-    // ``processStateName``, ``hasMessageText``, ``hasCrons``. Hooks should
-    // ignore keys they don't need.
+    // ``processStateName``, ``hasMessageText``, ``hasCrons``,
+    // ``backgroundShells``. Hooks should ignore keys they don't need.
 
     /**
      * Human label for a setting field — used as the row's ``<label>`` in the
@@ -1026,8 +1026,9 @@ export class BaseProviderHelpers {
      * Copy of the warning shown in the popover when applying the pending
      * changes will require a process stop/restart. ``context`` carries
      * ``processStateName`` ('assistant_turn' / 'user_turn' / etc.),
-     * ``hasMessageText`` (boolean) and ``hasCrons`` (boolean). Default uses
-     * the provider's ``label`` for the agent's display name.
+     * ``hasMessageText`` (boolean), ``hasCrons`` (boolean) and
+     * ``backgroundShells`` (number, ``background_work_in_progress.shells``).
+     * Default uses the provider's ``label`` for the agent's display name.
      */
     getStartupWarningText(context) {
         const label = this.constructor.label ?? 'Agent'

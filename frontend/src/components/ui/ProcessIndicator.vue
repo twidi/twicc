@@ -8,8 +8,11 @@
  * - user_turn: check icon (green)
  * - dead: warning triangle (red)
  *
- * When `hasActiveCrons` is true and state is user_turn, shows a clock icon
- * instead of the check to indicate scheduled cron work is pending.
+ * In user_turn, the check gives way to what still runs behind the finished
+ * turn: a terminal icon when `backgroundShells` > 0 (a shell the agent left
+ * running), else a clock icon when `hasActiveCrons` is
+ * true (scheduled cron work is pending). Neither is animated: the agent is
+ * not working.
  *
  * The `animateStates` prop controls which states are animated (the working
  * robot is animated, see styles/robot-working.css).
@@ -52,6 +55,15 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    /**
+     * Number of background shells still running behind the agent
+     * (`background_work_in_progress.shells`).
+     * - user_turn: shows a terminal icon instead of the check (wins over crons)
+     */
+    backgroundShells: {
+        type: Number,
+        default: 0,
+    },
 })
 
 /**
@@ -68,9 +80,11 @@ const baseIconName = computed(() => {
 
 /**
  * The effective icon to display.
+ * user_turn + background shells: terminal replaces check.
  * user_turn + active crons: clock replaces check.
  */
 const effectiveIconName = computed(() => {
+    if (props.state === 'user_turn' && props.backgroundShells > 0) return 'terminal'
     if (props.state === 'user_turn' && props.hasActiveCrons) return 'clock'
     return baseIconName.value
 })

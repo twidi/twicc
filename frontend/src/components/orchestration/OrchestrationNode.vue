@@ -19,6 +19,7 @@ import ProjectBadge from '../project/ProjectBadge.vue'
 import { getProviderHelpers, getProviderStore } from '../../providers'
 import { formatDate, formatDuration } from '../../utils/date'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
+import { backgroundShellsRunningPhrase, userTurnBackgroundShellCount } from '../../utils/backgroundWork'
 import { useSettingsStore } from '../../stores/settings'
 
 const settingsStore = useSettingsStore()
@@ -129,7 +130,12 @@ const hasAnnotations = computed(() => {
 
 const status = computed(() => {
     const state = nodeData.value?.process?.state ?? 'dead'
-    return PROCESS_STATUS[state] ?? PROCESS_STATUS.dead
+    const base = PROCESS_STATUS[state] ?? PROCESS_STATUS.dead
+    // A finished turn with a shell the agent left running:
+    // terminal icon, same static green, and the label says what still runs.
+    const shells = userTurnBackgroundShellCount(nodeData.value?.process)
+    if (shells) return { ...base, icon: 'terminal', label: `${base.label} — ${backgroundShellsRunningPhrase(shells)}` }
+    return base
 })
 
 // Lifecycle dates. ``created_at`` is the session's creation; ``last_new_content_at``

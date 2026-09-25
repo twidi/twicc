@@ -393,6 +393,45 @@ export function insertDaySeparators(visualItems) {
     return result
 }
 
+/**
+ * Build the static status line shown at the very bottom of a USER_TURN session
+ * (background shells still running, active crons) as a ready-made visual item.
+ *
+ * Appended AFTER computeVisualItems, the block flags and the day separators on
+ * purpose: it is visible in every display mode (conversation included), never
+ * takes a conversation detail toggle, and never changes the flags of the item
+ * above it — the last message keeps its `isBlockEnd`, hence its timestamp. The
+ * card styling (SessionItem.vue) draws it as the closing row of the last
+ * assistant block, or as its own card right after a user message.
+ *
+ * `backgroundStatusKey` is a top-level signature of the lines: the stabilizer
+ * (visualItemEqual) skips `_parsedContent`, so without it a count change would
+ * reuse the cached item and never re-render.
+ *
+ * @param {Array<{kind: string, text: string}>} lines - From buildBackgroundWorkStatusLines.
+ * @param {Object|null} previousItem - The visual item it follows, if any.
+ * @returns {Object|null} The visual item, or null when there are no lines.
+ */
+export function makeBackgroundWorkStatusItem(lines, previousItem) {
+    if (!lines?.length) return null
+    const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.BACKGROUND_WORK_STATUS
+    const item = {
+        lineNum,
+        content: null,
+        kind: 'assistant_message',
+        syntheticKind,
+        groupHead: null,
+        groupTail: null,
+        externallyGrouped: false,
+        timestamp: null,
+        isBlockStart: !previousItem || previousItem.kind === 'user_message' || !!previousItem.isDaySeparator,
+        isBlockEnd: true,
+        backgroundStatusKey: JSON.stringify(lines),
+    }
+    setParsedContent(item, { type: 'assistant', syntheticKind, lines })
+    return item
+}
+
 export function visualItemEqual(a, b) {
     if (a === b) return true
     if (!a || !b) return false

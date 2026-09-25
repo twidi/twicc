@@ -101,6 +101,8 @@ export const SYNTHETIC_ITEM = {
     STREAMING_BLOCK: { baseLineNum: -1000, kind: 'streaming-block' },
     WORKING_ASSISTANT_MESSAGE: { lineNum: -500, kind: 'working-assistant-message' },
     EPHEMERAL_RESULT: { lineNum: -400, kind: 'ephemeral-result' },
+    // Static USER_TURN status line (background shells, active crons), always last.
+    BACKGROUND_WORK_STATUS: { lineNum: -300, kind: 'background-work-status' },
 }
 
 /**

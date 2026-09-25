@@ -6,7 +6,8 @@ import { saveEphemeralControl, deleteEphemeralControl, loadEphemeralControls } f
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { toRaw } from 'vue'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
-import { computeVisualItems, visualItemEqual, insertDaySeparators } from '../utils/visualItems'
+import { computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem } from '../utils/visualItems'
+import { backgroundWorkStatusKey, buildBackgroundWorkStatusLines } from '../utils/backgroundWork'
 import { DISPLAY_LEVEL, DISPLAY_MODE, INITIAL_ITEMS_COUNT, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
 import { getProviderHelpers, getProviderStore, getToolHelpers } from '../providers'
 import { getSessionCutoffMs, isSessionUnread } from '../utils/sessions'
@@ -3302,9 +3303,24 @@ export const useDataStore = defineStore('data', {
             // inter-block boundaries) when the message-timestamps setting is on.
             // Runs after the block flags are set (it relies on isBlockEnd) and
             // before stabilization so separators get stable references too.
-            const renderItems = settingsStore.areMessageTimestampsShown
+            let renderItems = settingsStore.areMessageTimestampsShown
                 ? insertDaySeparators(visualItems)
                 : visualItems
+
+            // Static status line at the very bottom of a USER_TURN session: a
+            // background shell the agent left running and/or
+            // active crons. The turn is over, so no robot, no animation — just
+            // what still runs. Appended last, after the flags and separators
+            // (see makeBackgroundWorkStatusItem). Kept in sync by setProcessState,
+            // setActiveProcesses and the process_background_work handler, which
+            // recompute when backgroundWorkStatusKey changes.
+            const statusItem = isLaunchedEphemeral(this.sessions[sessionId])
+                ? null
+                : makeBackgroundWorkStatusItem(
+                    buildBackgroundWorkStatusLines(processState, Date.now() / 1000),
+                    renderItems[renderItems.length - 1] || null,
+                )
+            if (statusItem) renderItems = [...renderItems, statusItem]
 
             // Stabilize visual item references: reuse cached objects when properties
             // haven't changed, so Vue sees the same reference and skips re-render.
@@ -4695,6 +4711,10 @@ export const useDataStore = defineStore('data', {
          */
         setProcessState(sessionId, projectId, state, extra = {}) {
             const previousState = this.processStates[sessionId]?.state
+            // Signature of the USER_TURN bottom status line (background shells,
+            // active crons) before the update — see the recompute at the end.
+            const nowSeconds = Date.now() / 1000
+            const previousBackgroundStatusKey = backgroundWorkStatusKey(this.processStates[sessionId], nowSeconds)
             const wasAssistantTurn = previousState === PROCESS_STATE.ASSISTANT_TURN
             const wasStarting = previousState === PROCESS_STATE.STARTING
             // Keep an in-flight "stopping" flag across non-dead transitions so
@@ -4801,6 +4821,13 @@ export const useDataStore = defineStore('data', {
             const isAssistantTurn = state === PROCESS_STATE.ASSISTANT_TURN
             if (wasAssistantTurn !== isAssistantTurn || wasStarting !== isStarting) {
                 this.recomputeVisualItems(sessionId)
+            } else if (
+                // Same for the USER_TURN bottom status line: a cron added or
+                // removed, a stop (user_turn → dead) — only for a rendered list.
+                this.localState.sessionVisualItems[sessionId]
+                && backgroundWorkStatusKey(this.processStates[sessionId], nowSeconds) !== previousBackgroundStatusKey
+            ) {
+                this.recomputeVisualItems(sessionId)
             }
         },
 
@@ -4823,10 +4850,17 @@ export const useDataStore = defineStore('data', {
             // unrelated event recomputes it (the "frozen until manual reload"
             // reconnect bug). Collect them now; recompute after the rebuild.
             const sessionsToRecompute = new Set(Object.keys(this.localState.streamingBlocks))
+            // Signatures of the USER_TURN bottom status lines (background
+            // shells, active crons) before the rebuild: a session whose line
+            // appears, changes or goes away is recomputed too.
+            const nowSeconds = snapshotAt / 1000
+            const previousBackgroundStatusKeys = new Map()
             for (const [sid, st] of Object.entries(this.processStates)) {
                 if (st.state === PROCESS_STATE.ASSISTANT_TURN || st.state === PROCESS_STATE.STARTING) {
                     sessionsToRecompute.add(sid)
                 }
+                const key = backgroundWorkStatusKey(st, nowSeconds)
+                if (key !== null) previousBackgroundStatusKeys.set(sid, key)
             }
 
             // Clear existing states and rebuild from server data
@@ -4887,6 +4921,12 @@ export const useDataStore = defineStore('data', {
             // Only sessions with a cached visual list can be showing a stale
             // synthetic item, so skip the rest (recomputeVisualItems would
             // otherwise materialise an empty entry for never-rendered sessions).
+            // Also recompute every session whose USER_TURN bottom status line
+            // appeared, changed or went away with the rebuild.
+            for (const sid of new Set([...previousBackgroundStatusKeys.keys(), ...Object.keys(this.processStates)])) {
+                const key = backgroundWorkStatusKey(this.processStates[sid], nowSeconds)
+                if (key !== (previousBackgroundStatusKeys.get(sid) ?? null)) sessionsToRecompute.add(sid)
+            }
             for (const sid of sessionsToRecompute) {
                 if (this.localState.sessionVisualItems[sid]) {
                     this.recomputeVisualItems(sid)

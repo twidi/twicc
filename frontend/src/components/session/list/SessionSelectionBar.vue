@@ -19,6 +19,7 @@ import { useDataStore } from '../../../stores/data'
 import { useSessionSelectionStore } from '../../../stores/sessionSelection'
 import { markSessionReadState, cancelSessionViewedThrottle } from '../../../composables/useWebSocket'
 import { stopSessionProcessUnconfirmed, isStoppable } from '../../../composables/useStopSessionProcess'
+import { backgroundShellCount, batchStopConfirmationMessage } from '../../../utils/backgroundWork'
 import { canToggleSessionReadState, isSessionUnread } from '../../../utils/sessions'
 import AppTooltip from '../../ui/AppTooltip.vue'
 
@@ -100,7 +101,7 @@ const draftTargets = computed(() =>
 // ═══════════════════════════════════════════════════════════════════════════
 
 // null when closed. Shape: { mode: 'archive' | 'stop' | 'delete-drafts',
-//                            sessionIds, processCount, cronCount }
+//                            sessionIds, processCount, cronCount, shellCount }
 const confirmState = ref(null)
 
 const confirmLabel = computed(() => {
@@ -114,18 +115,9 @@ const confirmLabel = computed(() => {
 
 const confirmMessage = computed(() => {
     if (!confirmState.value) return ''
-    const { mode, processCount, cronCount } = confirmState.value
-    const parts = []
-    if (mode === 'archive' && processCount > 0) {
-        parts.push(`${processCount} running process${processCount > 1 ? 'es' : ''} will be stopped.`)
-    }
-    if ((mode === 'archive' || mode === 'stop') && cronCount > 0) {
-        parts.push(`${cronCount} active cron job${cronCount > 1 ? 's' : ''} will be cancelled.`)
-    }
-    if (mode === 'delete-drafts') {
-        parts.push('This cannot be undone.')
-    }
-    return parts.join(' ')
+    const { mode, processCount, cronCount, shellCount } = confirmState.value
+    if (mode === 'delete-drafts') return 'This cannot be undone.'
+    return batchStopConfirmationMessage({ mode, processCount, cronCount, shellCount })
 })
 
 const confirmButtonLabel = computed(() => {
@@ -176,42 +168,44 @@ function runConfirmed() {
 // Batch actions
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Count stoppable processes and their active crons among sessions. */
+/** Count stoppable processes, their active crons and background shells among sessions. */
 function batchProcessStats(sessionsList) {
     let processCount = 0
     let cronCount = 0
+    let shellCount = 0
     for (const s of sessionsList) {
         const ps = store.getProcessState(s.id)
         if (isStoppable(ps)) {
             processCount++
             cronCount += ps.active_crons?.length || 0
+            shellCount += backgroundShellCount(ps)
         }
     }
-    return { processCount, cronCount }
+    return { processCount, cronCount, shellCount }
 }
 
 function requestArchive() {
     const targets = archiveTargets.value
-    const { processCount, cronCount } = batchProcessStats(targets)
+    const { processCount, cronCount, shellCount } = batchProcessStats(targets)
     if (processCount === 0) {
         for (const s of targets) {
             store.setSessionArchived(s.project_id, s.id, true)
         }
         return
     }
-    confirmState.value = { mode: 'archive', sessionIds: targets.map(s => s.id), processCount, cronCount }
+    confirmState.value = { mode: 'archive', sessionIds: targets.map(s => s.id), processCount, cronCount, shellCount }
 }
 
 function requestStop() {
     const targets = stopTargets.value
-    const { processCount, cronCount } = batchProcessStats(targets)
-    if (cronCount === 0) {
+    const { processCount, cronCount, shellCount } = batchProcessStats(targets)
+    if (cronCount === 0 && shellCount === 0) {
         // Mirrors the single-session flow: stopping only confirms when active
-        // crons would be lost.
+        // crons would be lost or background shells killed.
         for (const s of targets) stopSessionProcessUnconfirmed(s.id)
         return
     }
-    confirmState.value = { mode: 'stop', sessionIds: targets.map(s => s.id), processCount, cronCount }
+    confirmState.value = { mode: 'stop', sessionIds: targets.map(s => s.id), processCount, cronCount, shellCount }
 }
 
 function handleActionSelect(event) {
@@ -249,6 +243,7 @@ function handleActionSelect(event) {
             sessionIds: draftTargets.value.map(s => s.id),
             processCount: 0,
             cronCount: 0,
+            shellCount: 0,
         }
     }
 }

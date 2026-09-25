@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { getProcessStateNotificationEffects } from './processStateNotifications.js'
+import { getProcessStateNotificationEffects, getUserTurnNotificationText } from './processStateNotifications.js'
 
 
 const options = {
@@ -70,4 +70,36 @@ test('the toast switch gates only the user-turn toast', () => {
     assert.equal(effects.playUserTurnSound, true)
     assert.equal(effects.sendUserTurnBrowser, true)
     assert.equal(effects.showPendingRequestToast, true)
+})
+
+
+test('user-turn notification text: unchanged without background shells', () => {
+    assert.deepEqual(
+        getUserTurnNotificationText({ providerLabel: 'Claude' }),
+        { title: 'Claude finished working', detail: null },
+    )
+    assert.deepEqual(
+        getUserTurnNotificationText({ providerLabel: 'Codex', backgroundShells: 0 }),
+        { title: 'Codex finished working', detail: null },
+    )
+})
+
+
+test('user-turn notification text: a running shell means the turn, not the work, finished', () => {
+    assert.deepEqual(
+        getUserTurnNotificationText({ providerLabel: 'Claude', backgroundShells: 1 }),
+        { title: 'Claude finished its turn', detail: '1 background shell still running' },
+    )
+    assert.deepEqual(
+        getUserTurnNotificationText({ providerLabel: 'Codex', backgroundShells: 3 }),
+        { title: 'Codex finished its turn', detail: '3 background shells still running' },
+    )
+})
+
+
+test('user-turn notification text: ephemeral sessions keep their title', () => {
+    assert.deepEqual(
+        getUserTurnNotificationText({ providerLabel: 'Claude', backgroundShells: 1, ephemeral: true }),
+        { title: 'Ephemeral session finished', detail: '1 background shell still running' },
+    )
 })

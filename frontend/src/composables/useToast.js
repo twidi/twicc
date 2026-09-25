@@ -178,6 +178,7 @@ function custom(componentOrOptions, options = {}) {
  * @param {string} [options.type='info'] - Notification type: 'success', 'error', 'warning', 'info'
  * @param {string} [options.title] - Toast title (header)
  * @param {string} [options.errorMessage] - Optional error message to display below session title
+ * @param {string} [options.detail] - Optional neutral detail line below session title
  * @param {number} [options.duration] - Duration in ms
  * @param {boolean} [options.dismissOnVisit] - Auto-close once the user views the session
  * @param {boolean} [options.dismissOnRead] - Auto-close once the session has no unread content
@@ -192,6 +193,7 @@ function session(sessionId, options = {}) {
         props: {
             sessionId,
             ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
+            ...(options.detail ? { detail: options.detail } : {}),
             ...(options.dismissOnVisit ? { dismissOnVisit: true } : {}),
             ...(options.dismissOnRead ? { dismissOnRead: true } : {}),
             ...(options.userTurnToast ? { userTurnToast: true } : {}),

@@ -22,7 +22,7 @@ import { truncateTitle } from '../utils/truncate'
 import { peerMessageRouting, peerRoutingText } from '../utils/peerMessageRouting'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
 import { compareVersions } from '../utils/version'
-import { getProcessStateNotificationEffects } from '../utils/processStateNotifications.js'
+import { getProcessStateNotificationEffects, getUserTurnNotificationText } from '../utils/processStateNotifications.js'
 import { buildTitleSuggestionRequest } from '../utils/titleSuggestion.js'
 
 // Lazy (async) toast body for peer events — toast.custom detects a component
@@ -785,7 +785,13 @@ function notifyProcessStateChange(msg, previousState, route) {
     const providerLabel = getProviderLabel(msg.provider)
     const ephemeral = msg.extra?.ephemeral === true
     const localSession = ephemeral ? useDataStore().getSession(sessionId) : null
-    const finishedTitle = ephemeral ? 'Ephemeral session finished' : `${providerLabel} finished working`
+    // A background shell left running turns "finished working"
+    // into "finished its turn", plus a detail line counting what still runs.
+    const { title: finishedTitle, detail: finishedDetail } = getUserTurnNotificationText({
+        providerLabel,
+        backgroundShells: msg.background_work_in_progress?.shells,
+        ephemeral,
+    })
     if (ephemeral && !localSession) return
     if (localSession) msg = { ...msg, session_title: localSession.title || 'Ephemeral session' }
     const isViewingSession = route?.params?.sessionId === sessionId
@@ -810,6 +816,7 @@ function notifyProcessStateChange(msg, previousState, route) {
         toast.session(sessionId, {
             type: 'info',
             title: finishedTitle,
+            detail: finishedDetail,
             duration: 15000,
             dismissOnVisit: true,
             dismissOnRead: true,
@@ -825,7 +832,7 @@ function notifyProcessStateChange(msg, previousState, route) {
     if (effects.sendUserTurnBrowser) {
         sendBrowserNotification(
             finishedTitle,
-            buildNotificationBody(msg),
+            finishedDetail ? `${buildNotificationBody(msg)}\n${finishedDetail}` : buildNotificationBody(msg),
         )
     }
 
@@ -1511,7 +1518,13 @@ export function useWebSocket() {
                 break
             }
             case 'process_background_work':
-                applyBackgroundWork(store.processStates, msg)
+                // Recompute only when the USER_TURN bottom status line
+                // changes, and only for a rendered list (a recompute would
+                // otherwise materialise an empty entry).
+                if (applyBackgroundWork(store.processStates, msg)
+                    && store.localState.sessionVisualItems[msg.session_id]) {
+                    store.recomputeVisualItems(msg.session_id)
+                }
                 break
             case 'manual_compaction_done': {
                 // Codex finished a manually-triggered /compact. No real

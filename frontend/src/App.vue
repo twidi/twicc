@@ -809,6 +809,7 @@ const toastTheme = computed(() => {
         :open="pendingConfirmation !== null"
         :mode="pendingConfirmation?.mode ?? 'stop'"
         :cron-count="pendingConfirmation?.cronCount ?? 0"
+        :shell-count="pendingConfirmation?.shellCount ?? 0"
         @confirm="confirmPendingStop"
         @cancel="cancelPendingStop"
     />

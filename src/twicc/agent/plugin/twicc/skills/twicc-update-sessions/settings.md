@@ -17,7 +17,7 @@ $TWICC update-sessions settings [SESSION_ID...] [FLAGS] [--spawned-by X|--descen
 
 ### When changes apply
 
-- Claude Code startup settings (`effort`, `thinking`, `claude-in-chrome`, `fast-mode`, `question-widget`) apply on the next restart.
+- Claude Code startup settings (`effort`, `thinking`, `claude-in-chrome`, `fast-mode`, `question-widget`) apply on the next restart. A session still running background shells (`process.background_work_in_progress.shells > 0`) is not restarted until the last one ends or the process is stopped.
 - Codex Fast mode applies on its next turn.
 - No agent is interrupted mid-turn.
 - Codex `question-widget` is a startup setting with **no automatic restart**: run `$TWICC sessions stop <ids>` (skill: `twicc-sessions`), then `$TWICC send-messages <ids>` (skill: `twicc-send-messages`) to apply the new value.

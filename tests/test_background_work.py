@@ -598,3 +598,201 @@ def test_the_watcher_relays_a_subagent_s_process_starts_to_its_parent():
         "codex-1", "codex-child", {"555": started_at, "777": started_at},
     )
     manager.notify_shells_exited.assert_awaited_once_with("codex-child", ["777"])
+
+
+# ---------------------------------------------------------------------------
+# Claude Code: a restart that would kill background shells waits for them
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db(transaction=True)
+class TestDeferredSettings:
+    def _setup(self, shells: int):
+        from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
+        from twicc.providers.helpers import AgentSettings, get_provider_helpers
+
+        project = Project.objects.create(id="bg-settings-project")
+        session = Session.objects.create(
+            id="claude-1", project=project, provider=Provider.CLAUDE_CODE, file_path="c.jsonl",
+        )
+        helpers = get_provider_helpers(Provider.CLAUDE_CODE)
+        current = helpers.enforce_agent_settings_consistency(
+            helpers.resolve_agent_settings(AgentSettings.from_session(session)),
+        )
+        # A startup setting now differs in the DB from what the agent runs with.
+        Session.objects.filter(id=session.id).update(effort="max" if current.effort != "max" else "low")
+
+        agent = _claude_agent()
+        agent.state = AgentState.USER_TURN
+        agent.agent_settings = current
+        agent.process_run = None
+        agent.project_id = project.id
+        agent.interrupt_or_kill = AsyncMock()
+        for index in range(shells):
+            agent._live_shell_tasks[f"b{index}"] = True
+        manager = ClaudeCodeAgentManager.__new__(ClaudeCodeAgentManager)
+        manager._pending_after_restart = {}
+        manager._deferred_settings_tasks = {}
+        manager._agents = {agent.session_id: agent}
+        manager._lock = asyncio.Lock()
+        manager.DEFERRED_SETTINGS_GRACE_SECONDS = 0
+        return manager, agent
+
+    def test_the_restart_waits_while_a_shell_runs(self):
+        manager, agent = self._setup(shells=1)
+        asyncio.run(manager._apply_pending_settings(agent))
+        agent.interrupt_or_kill.assert_not_awaited()
+
+    def test_without_shells_the_restart_happens(self):
+        manager, agent = self._setup(shells=0)
+        asyncio.run(manager._apply_pending_settings(agent))
+        agent.interrupt_or_kill.assert_awaited_once_with(reason="apply-settings")
+
+    def test_what_needs_no_restart_still_applies_while_shells_run(self):
+        manager, agent = self._setup(shells=1)
+        agent.apply_live_settings = AsyncMock()
+        # An idle setting (the model) changes too, next to the startup one.
+        Session.objects.filter(id="claude-1").update(
+            selected_model="sonnet" if agent.agent_settings.selected_model != "sonnet" else "opus",
+        )
+        asyncio.run(manager._apply_pending_settings(agent))
+        agent.interrupt_or_kill.assert_not_awaited()
+        agent.apply_live_settings.assert_awaited_once()
+
+    def test_the_last_shell_ending_applies_what_waited(self):
+        manager, agent = self._setup(shells=1)
+        manager._apply_pending_settings = AsyncMock()
+
+        async def run():
+            await manager._after_background_work_change(agent)  # a shell still runs
+            assert manager._deferred_settings_tasks == {}
+            agent._live_shell_tasks.clear()
+            await manager._after_background_work_change(agent)
+            await manager._deferred_settings_tasks["claude-1"]
+
+        asyncio.run(run())
+        manager._apply_pending_settings.assert_awaited_once_with(agent)
+        assert manager._deferred_settings_tasks == {}
+
+    def test_a_new_agent_on_the_session_gets_its_own_check(self):
+        manager, agent = self._setup(shells=0)
+        manager.DEFERRED_SETTINGS_GRACE_SECONDS = 60
+        manager._apply_pending_settings = AsyncMock()
+        successor = _claude_agent()
+        successor.state = AgentState.USER_TURN
+
+        async def run():
+            await manager._after_background_work_change(agent)
+            first = manager._deferred_settings_tasks["claude-1"]
+            await manager._after_background_work_change(agent)  # same agent: deduped
+            assert manager._deferred_settings_tasks["claude-1"] is first
+            manager._agents["claude-1"] = successor
+            manager.DEFERRED_SETTINGS_GRACE_SECONDS = 0
+            await manager._after_background_work_change(successor)
+            second = manager._deferred_settings_tasks["claude-1"]
+            assert second is not first
+            await asyncio.gather(first, second, return_exceptions=True)
+            assert first.cancelled()
+
+        asyncio.run(run())
+        manager._apply_pending_settings.assert_awaited_once_with(successor)
+        assert manager._deferred_settings_tasks == {}
+
+    @pytest.mark.parametrize("change", ["turn_started", "agent_replaced", "shell_started"])
+    def test_the_deferred_apply_rechecks_under_the_lock(self, change):
+        """A turn the shell's end woke up, a new agent, a new shell: all win."""
+        manager, agent = self._setup(shells=0)
+        manager._apply_pending_settings = AsyncMock()
+
+        async def run():
+            await manager._after_background_work_change(agent)
+            if change == "turn_started":
+                agent.state = AgentState.ASSISTANT_TURN
+            elif change == "agent_replaced":
+                manager._agents["claude-1"] = _claude_agent()
+            else:
+                agent._live_shell_tasks["b9"] = True
+            await manager._deferred_settings_tasks["claude-1"]
+
+        asyncio.run(run())
+        manager._apply_pending_settings.assert_not_awaited()
+
+    def test_a_send_with_a_startup_change_does_not_kill_the_shells(self, monkeypatch):
+        from twicc.providers.helpers import AgentSettings
+
+        manager, agent = self._setup(shells=1)
+        agent.apply_live_settings = AsyncMock()
+        agent.send = AsyncMock(return_value=True)
+        monkeypatch.setattr(manager, "_check_ephemeral_readonly", lambda session_id: None)
+        requested = AgentSettings.from_session(Session.objects.get(id="claude-1"))
+
+        delivered = asyncio.run(manager.send_to_session(
+            "claude-1", "bg-settings-project", "/tmp", "hello", requested, cancel_cron_restart=False,
+        ))
+
+        assert delivered is True
+        agent.interrupt_or_kill.assert_not_awaited()
+        agent.apply_live_settings.assert_awaited_once()
+        agent.send.assert_awaited_once()
+
+
+@pytest.mark.parametrize(("shells", "title"), [
+    (0, "Codex finished working"),
+    (1, "Codex finished its turn — 1 background shell still running"),
+    (2, "Codex finished its turn — 2 background shells still running"),
+])
+def test_the_external_notification_says_when_a_shell_still_runs(shells, title):
+    from unittest.mock import patch
+
+    from twicc import external_notifications
+
+    settings = {"externalNotificationTargets": [{
+        "url": "json://example.test", "enabled": True, "tested": True, "awayOnly": False,
+        "notifyUserTurn": True, "notifyPendingRequest": True,
+    }]}
+    info = AgentInfo(
+        session_id="bg-notify", project_id="p", provider=Provider.CODEX,
+        state=AgentState.USER_TURN, previous_state=AgentState.ASSISTANT_TURN,
+        started_at=1.0, state_changed_at=2.0, last_activity=2.0,
+        background_work_in_progress=build_background_work(shells=shells),
+    )
+    spawned = []
+    external_notifications._last_seen.clear()
+    with patch.object(external_notifications, "read_synced_settings", return_value=settings), \
+            patch.object(external_notifications, "get_provider_helpers", return_value=SimpleNamespace(LABEL="Codex")), \
+            patch.object(external_notifications, "_send", new=lambda urls, title, body: (urls, title, body)), \
+            patch.object(external_notifications, "_spawn", spawned.append):
+        external_notifications.notify_agent_event(info, "Session", "Project", None, False)
+    external_notifications._last_seen.clear()
+
+    assert [sent[1] for sent in spawned] == [title]
+
+
+
+@pytest.mark.django_db
+class TestCronSerialization:
+    def _cron(self, **kwargs):
+        from datetime import UTC, datetime, timedelta
+
+        from twicc.core.models import SessionCron
+
+        created = datetime.now(UTC) - timedelta(hours=3)
+        defaults = {
+            "provider": Provider.CLAUDE_CODE, "cron_id": "c1", "session_id": "s", "cron_expr": "*/5 * * * *",
+            "recurring": True, "prompt": "p", "created_at": created, "next_fire": created + timedelta(minutes=5),
+        }
+        defaults.update(kwargs)
+        return SessionCron(**defaults)
+
+    def test_a_recurring_cron_reports_its_upcoming_run(self):
+        now = time.time()
+        next_fire = self._cron().serialize()["next_fire"]
+        assert now < next_fire <= now + 5 * 60 + 1
+
+    def test_a_one_shot_cron_keeps_its_stored_run(self):
+        cron = self._cron(recurring=False)
+        assert cron.serialize()["next_fire"] == cron.next_fire.timestamp()
+
+    def test_an_unparsable_expression_keeps_the_stored_first_run(self):
+        cron = self._cron(cron_expr="not a cron")
+        assert cron.serialize()["next_fire"] == cron.next_fire.timestamp()

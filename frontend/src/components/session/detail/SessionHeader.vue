@@ -4,7 +4,13 @@ import { useElementSize, onClickOutside } from '@vueuse/core'
 import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
 import { formatDate } from '../../../utils/date'
-import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES, DISPLAY_MODE } from '../../../constants'
+import { PROCESS_STATE, PROCESS_STATE_COLORS, DISPLAY_MODE } from '../../../constants'
+import {
+    archiveStopLabel,
+    backgroundShellCount,
+    processStateTooltip,
+    userTurnBackgroundShellCount,
+} from '../../../utils/backgroundWork'
 import { getProviderHelpers, getProviderLabel, getProviderIcon } from '../../../providers'
 import ProviderIcon from '../../ui/ProviderIcon.vue'
 import { getAgentDisplay } from '../../../utils/agentLabel'
@@ -195,8 +201,13 @@ const processState = computed(() => store.getProcessState(props.sessionId))
 /** Whether the process has active cron jobs. */
 const hasActiveCrons = computed(() => processState.value?.active_crons?.length > 0)
 
-/** Number of active cron jobs (for tooltip). */
-const activeCronCount = computed(() => processState.value?.active_crons?.length || 0)
+/** Background shells still running behind a finished turn (terminal icon). */
+const userTurnBackgroundShells = computed(() => userTurnBackgroundShellCount(processState.value))
+
+/** Process-state tooltip: state, background shells, active crons. */
+const processTooltip = computed(() =>
+    processState.value ? processStateTooltip(providerLabel.value, processState.value) : ''
+)
 
 /**
  * Get the color for a process state.
@@ -405,7 +416,7 @@ function openRenameDialog({ showHint = false } = {}) {
 /**
  * Archive the current session.
  * Also stops the process if running — archived and running are mutually exclusive.
- * If the process has active crons, the composable shows the confirmation dialog.
+ * If the process has active crons or background shells, the composable shows the confirmation dialog.
  */
 function handleArchive() {
     if (!session.value || session.value.archived || (session.value.draft || session.value.ephemeral)) return
@@ -606,7 +617,7 @@ defineExpose({
                 >
                     <wa-icon name="box-archive" label="Archive"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="!session.archived && !session.draft && !session.ephemeral" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? `Archive session (it will stop the ${providerLabel} process)` : 'Archive session' }}</AppTooltip>
+                <AppTooltip v-if="!session.archived && !session.draft && !session.ephemeral" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) : 'Archive session' }}</AppTooltip>
 
                 <!-- Rename button (only for main session) -->
                 <wa-button
@@ -732,6 +743,7 @@ defineExpose({
                     class="compact-process-indicator"
                     :state="processState.state"
                     :has-active-crons="hasActiveCrons"
+                    :background-shells="userTurnBackgroundShells"
                     size="small"
                     :animate-states="animateStates"
                 />
@@ -854,10 +866,11 @@ defineExpose({
                             :id="`session-header-${sessionId}-process-indicator`"
                             :state="processState.state"
                             :has-active-crons="hasActiveCrons"
+                            :background-shells="userTurnBackgroundShells"
                             size="small"
                             :animate-states="animateStates"
                         />
-                        <AppTooltip :for="`session-header-${sessionId}-process-indicator`">{{ providerLabel }} state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
+                        <AppTooltip :for="`session-header-${sessionId}-process-indicator`">{{ processTooltip }}</AppTooltip>
 
                         <div class="meta-actions">
                             <wa-button

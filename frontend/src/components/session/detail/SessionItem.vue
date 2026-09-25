@@ -13,6 +13,7 @@ import CodexReasoning from './items/codex/Reasoning.vue'
 import CodexImageGeneration from './items/codex/ImageGeneration.vue'
 import UnknownEntry from './items/UnknownEntry.vue'
 import FailedSendBanner from './items/FailedSendBanner.vue'
+import BackgroundWorkStatus from './items/BackgroundWorkStatus.vue'
 import MessageTimestamp from './items/MessageTimestamp.vue'
 import AppTooltip from '../../ui/AppTooltip.vue'
 import CodeCommentsIndicator from '../../ui/CodeCommentsIndicator.vue'
@@ -131,6 +132,10 @@ const isEffectiveDebug = computed(() => dataStore.getEffectiveDisplayMode(props.
 // regular user-message rendering.
 const isFailedSend = computed(() => props.syntheticKind === SYNTHETIC_ITEM.FAILED_USER_MESSAGE.kind)
 
+// USER_TURN bottom status line (background shells, active crons): provider-
+// agnostic, rendered here rather than through the provider message renderers.
+const isBackgroundWorkStatus = computed(() => props.syntheticKind === SYNTHETIC_ITEM.BACKGROUND_WORK_STATUS.kind)
+
 // Timestamp (date/time) shown at the very bottom of the LAST item of each
 // conversation block (the one rendered with `.is-block-end`), so a multi-item
 // turn carries a single timestamp at its end rather than one per message.
@@ -222,7 +227,8 @@ function toggleJsonView() {
 
         <!-- Formatted view based on kind -->
         <template v-else>
-            <template v-if="sessionProvider === PROVIDER.CLAUDE_CODE">
+            <BackgroundWorkStatus v-if="isBackgroundWorkStatus" :lines="content?.lines || []" />
+            <template v-else-if="sessionProvider === PROVIDER.CLAUDE_CODE">
                 <ClaudeCodeMessage
                     v-if="kind === 'user_message' || kind === 'assistant_message'"
                     :data="content"
@@ -854,6 +860,13 @@ wa-details.item-details {
     .virtual-scroller-item:has( > .session-item[data-kind="assistant_message"] > .text-content:last-child)
     + .virtual-scroller-item > .session-item[data-kind="assistant_message"] > .text-content:nth-child(2) {
         padding-top: var(--wa-space-xl);
+    }
+    /* The USER_TURN background-work status line under a timestamped message:
+       the time keeps its own line (see MessageTimestamp), the status starts
+       below it. */
+    .virtual-scroller-item:has( > .session-item > .message-timestamp:last-child)
+    + .virtual-scroller-item > .session-item[data-synthetic-kind="background-work-status"] > .text-content:nth-child(2) {
+        padding-top: var(--wa-space-s);
     }
 }
 

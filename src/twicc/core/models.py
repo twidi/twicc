@@ -1426,14 +1426,27 @@ class SessionCron(models.Model):
         return f"Cron[{self.provider}] {self.cron_id} ({kind}) on session {self.session_id}"
 
     def serialize(self) -> dict:
-        """Serialize for WebSocket transmission (matches the format expected by the frontend)."""
+        """Serialize for WebSocket transmission (matches the format expected by the frontend).
+
+        ``next_fire`` is the UPCOMING run: the stored column is the first fire,
+        written at creation and never moved forward, so for a recurring cron
+        the next occurrence after now is computed here.
+        """
+        next_fire = self.next_fire
+        if self.recurring:
+            try:
+                next_fire = next(cron_occurrences(self.cron_expr, datetime.now(UTC)))
+            except Exception:
+                # Same leniency as ``last_fire``: an unparsable expression
+                # keeps the stored first fire.
+                pass
         return {
             "id": self.cron_id,
             "cron_expr": self.cron_expr,
             "recurring": self.recurring,
             "prompt": self.prompt,
             "created_at": self.created_at.timestamp(),
-            "next_fire": self.next_fire.timestamp(),
+            "next_fire": next_fire.timestamp(),
         }
 
     JITTER_SAFETY_MARGIN = timedelta(minutes=1)

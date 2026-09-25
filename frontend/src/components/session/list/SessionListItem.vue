@@ -17,7 +17,13 @@ import { formatDate } from '../../../utils/date'
 import { sessionRouteLocation } from '../../../utils/sessionRoute'
 import { projectPathTitle } from '../../../utils/projectName'
 import { canToggleSessionReadState, isSessionUnread } from '../../../utils/sessions'
-import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES, SESSION_TIME_FORMAT } from '../../../constants'
+import { PROCESS_STATE, PROCESS_STATE_COLORS, SESSION_TIME_FORMAT } from '../../../constants'
+import {
+    archiveStopLabel,
+    backgroundShellCount,
+    processStateTooltip,
+    userTurnBackgroundShellCount,
+} from '../../../utils/backgroundWork'
 import { markSessionReadState, cancelSessionViewedThrottle } from '../../../composables/useWebSocket'
 import { stopSessionProcess } from '../../../composables/useStopSessionProcess'
 import { useDragHover } from '../../../composables/useDragHover'
@@ -134,8 +140,19 @@ const pendingRequest = computed(() => store.getPendingRequests(props.session.id)
 /** Whether the process has active cron jobs. */
 const hasActiveCrons = computed(() => processState.value?.active_crons?.length > 0)
 
-/** Number of active cron jobs (for tooltip). */
-const activeCronCount = computed(() => processState.value?.active_crons?.length || 0)
+/** Background shells still running behind a finished turn (terminal icon). */
+const userTurnBackgroundShells = computed(() => userTurnBackgroundShellCount(processState.value))
+
+/** Process-state tooltip: state, background shells, active crons. */
+const processTooltip = computed(() =>
+    processState.value ? processStateTooltip(providerLabel.value, processState.value) : ''
+)
+
+/** Archive entry label: says the process stops, and which shells it kills. */
+const archiveLabel = computed(() => canStop.value
+    ? archiveStopLabel('Archive', providerLabel.value, backgroundShellCount(processState.value))
+    : 'Archive'
+)
 
 /** Project for this session — single lookup. */
 const project = computed(() => store.getProject(props.session.project_id))
@@ -397,7 +414,7 @@ function handleMenuSelect(event) {
         }
         store.deleteDraftSession(session.id)
     } else if (action === 'archive') {
-        // Delegates to the composable: it handles the active-crons confirmation
+        // Delegates to the composable: it handles the crons / background shells confirmation
         // and the combined kill+archive in one place.
         stopSessionProcess(session.id, { archive: true })
     } else if (action === 'unarchive') {
@@ -495,7 +512,7 @@ function handleMenuSelect(event) {
                     name="eye"
                     class="compact-unread-indicator"
                 ></wa-icon>
-                <AppTooltip v-if="compactView && hasUnread" :for="`compact-unread-${session.id}`">New content to read<template v-if="processState"> · {{ providerLabel }} state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></template></AppTooltip>
+                <AppTooltip v-if="compactView && hasUnread" :for="`compact-unread-${session.id}`">New content to read<template v-if="processState"> · {{ processTooltip }}</template></AppTooltip>
                 <!-- Compact mode: pending request indicator (takes priority over process indicator) -->
                 <wa-icon
                     v-if="compactView && !hasUnread && pendingRequest"
@@ -510,11 +527,12 @@ function handleMenuSelect(event) {
                     :id="`compact-process-indicator-${session.id}`"
                     :state="processState.state"
                     :has-active-crons="hasActiveCrons"
+                    :background-shells="userTurnBackgroundShells"
                     size="small"
                     :animate-states="animateStates"
                     class="compact-process-indicator"
                 />
-                <AppTooltip v-if="compactView && processState && !session.ephemeral && !hasUnread && !pendingRequest" :for="`compact-process-indicator-${session.id}`">{{ providerLabel }} state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
+                <AppTooltip v-if="compactView && processState && !session.ephemeral && !hasUnread && !pendingRequest" :for="`compact-process-indicator-${session.id}`">{{ processTooltip }}</AppTooltip>
             </div>
             <!-- Project badge line (hidden in compact mode, dot is shown inline instead) -->
             <!-- When unread + no process: show unread indicator on the project line (right-aligned) -->
@@ -570,16 +588,17 @@ function handleMenuSelect(event) {
                         name="eye"
                         class="unread-indicator"
                     ></wa-icon>
-                    <AppTooltip v-if="hasUnread" :for="`process-unread-${session.id}`">New content to read · {{ providerLabel }} state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
+                    <AppTooltip v-if="hasUnread" :for="`process-unread-${session.id}`">New content to read · {{ processTooltip }}</AppTooltip>
                     <ProcessIndicator
                         v-else
                         :id="`process-indicator-${session.id}`"
                         :state="processState.state"
                         :has-active-crons="hasActiveCrons"
+                        :background-shells="userTurnBackgroundShells"
                         size="small"
                         :animate-states="animateStates"
                     />
-                    <AppTooltip v-if="!hasUnread" :for="`process-indicator-${session.id}`">{{ providerLabel }} state: {{ PROCESS_STATE_NAMES[processState.state] }}<template v-if="activeCronCount"> ({{ activeCronCount }} active cron{{ activeCronCount > 1 ? 's' : '' }})</template></AppTooltip>
+                    <AppTooltip v-if="!hasUnread" :for="`process-indicator-${session.id}`">{{ processTooltip }}</AppTooltip>
                 </span>
             </div>
             <!-- Meta row (not shown for draft sessions, hidden in compact mode) -->
@@ -652,7 +671,7 @@ function handleMenuSelect(event) {
             </wa-dropdown-item>
             <wa-dropdown-item v-if="!session.draft && !session.ephemeral && !session.archived" value="archive">
                 <wa-icon slot="icon" name="box-archive"></wa-icon>
-                {{ canStop ? `Archive (it will stop the ${providerLabel} process)` : 'Archive' }}
+                {{ archiveLabel }}
             </wa-dropdown-item>
             <wa-dropdown-item v-if="session.archived" value="unarchive">
                 <wa-icon slot="icon" name="box-open"></wa-icon>

@@ -1006,6 +1006,15 @@ class BaseAgentManager:
                     "Error persisting background work on process run %s for session %s: %s",
                     pr_pk, agent.session_id, e,
                 )
+            await self._after_background_work_change(agent)
+
+    async def _after_background_work_change(self, agent: BaseAgent) -> None:
+        """Hook run after a background-work change was persisted between transitions.
+
+        Default: nothing. Claude Code applies the startup settings a
+        background shell held back once the last one ends.
+        """
+        return
 
     async def _persist_process_run_transition(
         self, agent: BaseAgent, state: AgentState,
@@ -1356,7 +1365,7 @@ class BaseAgentManager:
         - ``STARTING``: ``PROCESS_TIMEOUT_STARTING`` (default 60s) — stuck startup.
         - ``USER_TURN``: ``PROCESS_TIMEOUT_USER_TURN`` (default 30min) — idle.
           Never while a background shell still runs: stopping the agent kills
-          its process tree, shell included — a dev server or a long build the
+          its process tree, shell included — whatever the
           agent left running on purpose. The countdown restarts from the last
           activity once the last shell ends.
         - ``ASSISTANT_TURN``: ``PROCESS_TIMEOUT_ASSISTANT_TURN`` (default 3h)

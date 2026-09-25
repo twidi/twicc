@@ -1474,7 +1474,7 @@ class ClaudeCodeAgent(BaseAgent):
           and a guaranteed terminal notification — they hold ASSISTANT_TURN.
         - ``local_bash``: every Bash call, kept with its ``is_backgrounded``
           flag in ``_live_shell_tasks``. A background shell may legitimately
-          outlive the whole conversation (dev servers, tails), so it never
+          outlive the whole conversation, so it never
           holds ASSISTANT_TURN; it is reported as background work and blocks
           the idle auto-stop. A Monitor is a ``local_bash`` task too, but has
           its own collection (see ``_update_live_monitor_tasks``) and is kept

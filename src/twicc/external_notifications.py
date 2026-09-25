@@ -145,12 +145,20 @@ def _detect_and_send(
     events: list[tuple[str, str]] = []
 
     # --- Transition to USER_TURN: "<Provider> finished working" ---
+    # With a shell left running the work is not over: only
+    # the turn is — same wording as the in-app toast.
     if (
         not mute_on_user_turn
         and info.state == AgentState.USER_TURN
         and (previous is None or previous[0] != AgentState.USER_TURN)
     ):
-        events.append((f"{label} finished working", "notifyUserTurn"))
+        shells = (info.background_work_in_progress or {}).get("shells") or 0
+        if shells:
+            plural = "s" if shells > 1 else ""
+            title = f"{label} finished its turn — {shells} background shell{plural} still running"
+        else:
+            title = f"{label} finished working"
+        events.append((title, "notifyUserTurn"))
 
     # --- Pending request count grew: "<Provider> needs your attention" ---
     previous_pending_count = previous[1] if previous else 0

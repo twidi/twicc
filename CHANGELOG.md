@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Background shells** — A new status (green terminal icon) shows when the provider reports that the agent has finished its turn but a shell it started is still running. Such sessions are no longer stopped automatically.
+- **Background work in the CLI, skills, RPC API and MCP** — A session's process information now tells what still runs in the background (subagents, shells…), whatever the session's state.
+
 ### Changed
 
 - **New logo** — TwiCC gets its own robot, with a bit more soul.

@@ -52,7 +52,7 @@ If the session has a process attached (a running agent), changes propagate immed
 
 - *Live* (`permission_mode` on Claude Code) — applied immediately.
 - *Idle* (`model`, `context_max` on Claude Code; `model`, `effort`, `permission_mode`, `context_max`, `fast_mode` on Codex) — applied on next `user_turn`.
-- *Startup* (`effort`, `thinking`, `claude_in_chrome`, `fast_mode`, `question_widget` on Claude Code) — applied on the next restart. The agent is stopped (immediately if at `user_turn`, or at the end of its current `assistant_turn` if working), so the next message you send restarts it with the new settings. If currently `awaiting_user_input`, the pending dialog is lost.
+- *Startup* (`effort`, `thinking`, `claude_in_chrome`, `fast_mode`, `question_widget` on Claude Code) — applied on the next restart. The agent is stopped (immediately if at `user_turn`, or at the end of its current `assistant_turn` if working), so the next message you send restarts it with the new settings. Exception: while the session still runs background shells (`process.background_work_in_progress.shells > 0`), the stop waits until the last one ends or the process is stopped — a restart would kill them. If currently `awaiting_user_input`, the pending dialog is lost.
 - *Startup on Codex* (`question_widget`) — **no automatic restart**. The value is stored; the running process keeps the old one. To apply it: `$TWICC session <ID> stop` (skill: `twicc-session`), then send a message — the resumed thread picks up the new value. A session with no live process needs nothing.
 
 ## Errors

@@ -32,6 +32,11 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    /** Neutral detail line below the session title (e.g. "1 background shell still running") */
+    detail: {
+        type: String,
+        default: null,
+    },
     /** When true, auto-dismiss once the user is viewing this session */
     dismissOnVisit: {
         type: Boolean,
@@ -122,9 +127,9 @@ onUnmounted(() => {
  *
  * Goes through the shared stop flow rather than archiving directly: the
  * session behind a toast is typically still running, so archiving it stops
- * its process — and that must show the active-crons confirmation like every
- * other archive gesture. The dialog is mounted globally in App.vue, so
- * dismissing the toast right away does not cancel it.
+ * its process — and that must show the crons / background shells
+ * confirmation like every other archive gesture. The dialog is mounted
+ * globally in App.vue, so dismissing the toast right away does not cancel it.
  */
 function archiveSession() {
     const s = session.value
@@ -163,6 +168,7 @@ function goToSession() {
             <span class="session-toast-label">Session:</span>
             <span class="session-toast-title">{{ sessionTitle }}</span>
         </span>
+        <span v-if="detail" class="session-toast-detail">{{ detail }}</span>
         <span v-if="parsedError" class="session-toast-error" :title="errorMessage">
             {{ parsedError.summary }}<span v-if="parsedError.status" class="error-status"> ({{ parsedError.status }})</span>
         </span>
@@ -212,6 +218,10 @@ function goToSession() {
 
 .session-toast-title {
     font-weight: 700;
+}
+
+.session-toast-detail {
+    opacity: 0.8;
 }
 
 .session-toast-error {

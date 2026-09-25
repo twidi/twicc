@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useDataStore } from '../../../../stores/data'
 import { getProviderLabel, getToolHelpers } from '../../../../providers'
 import ProcessIndicator from '../../../ui/ProcessIndicator.vue'
+import AgentStatusLine from './AgentStatusLine.vue'
 
 const props = defineProps({
     label: { type: String, default: null },
@@ -104,7 +105,7 @@ function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, t
 </script>
 
 <template>
-    <div class="working-assistant-message text-content">
+    <AgentStatusLine class="working-assistant-message text-content">
         <wa-icon
             v-if="isAwaiting"
             name="hand"
@@ -113,18 +114,10 @@ function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, t
         <ProcessIndicator v-else :state="processState" size="small" :animate-states="['starting', 'assistant_turn']" />
         <span v-if="plainPhrase !== null">{{ providerLabel }} is {{ plainPhrase }}...</span>
         <span v-else>{{ providerLabel }} is <template v-for="(group, gi) in phraseGroups" :key="gi"><template v-if="gi > 0 && gi === phraseGroups.length - 1"> and </template><template v-else-if="gi > 0">, </template><template v-if="phraseGroups.length > 1"><strong>{{ group.verb }}</strong></template><template v-else>{{ group.verb }}</template><template v-if="group.targets"> (<template v-for="(t, ti) in group.targets" :key="`${gi}-${ti}`"><template v-if="ti > 0">, </template><code>{{ t }}</code></template>)</template></template>...</span>
-    </div>
+    </AgentStatusLine>
 </template>
 
 <style scoped>
-.working-assistant-message {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-s);
-    font-style: italic;
-    font-size: var(--wa-font-size-m);
-}
-
 code {
     background: var(--wa-color-neutral-fill-quiet);
     border-radius: var(--wa-border-radius-s);

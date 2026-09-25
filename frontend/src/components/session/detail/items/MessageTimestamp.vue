@@ -48,6 +48,11 @@ const fullLabel = computed(() => formatFullDateTime(timestampMs.value))
     cursor: default;
     --offset: calc(-1 * var(--card-spacing) / 2);
     margin-right: var(--offset);
-    margin-bottom: var(--offset);
+    /* Sink into the card's bottom padding — which only the card's LAST row has
+       (--content-card-end-item, SessionItem.vue; unset outside assistant cards,
+       hence the 1). A block-end message followed by a row of the same card (the
+       USER_TURN background-work status line) has no bottom padding: sinking
+       there would draw the time over that row. */
+    margin-bottom: calc(var(--offset) * var(--content-card-end-item, 1));
 }
 </style>

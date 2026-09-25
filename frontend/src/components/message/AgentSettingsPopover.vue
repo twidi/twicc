@@ -22,6 +22,7 @@ import HelpTextLink from '../help/HelpTextLink.vue'
 import ProviderIcon from '../ui/ProviderIcon.vue'
 import PermissionModeIcon from '../ui/PermissionModeIcon.vue'
 import { buildSwitchRows } from '../../utils/agentSwitchRows'
+import { backgroundShellCount } from '../../utils/backgroundWork'
 
 const props = defineProps({
     for: { type: String, required: true },
@@ -256,6 +257,7 @@ const startupSettingsWarning = computed(() => {
         processStateName: processState.value?.state ?? null,
         hasMessageText: Boolean(props.messageText.trim()),
         hasCrons: (processState.value?.active_crons?.length ?? 0) > 0,
+        backgroundShells: backgroundShellCount(processState.value),
     })
 })
 

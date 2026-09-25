@@ -7,9 +7,11 @@
  * 1. Pending request: hand icon (waiting for user response)
  * 2. Unread sessions: eye icon
  * 3. Assistant turn: robot icon (the agent is actively working)
- * 4. Active crons: clock icon
- * 5. Active processes (none of the above): green check
- * 6. Nothing active: no indicator
+ * 4. Background shells in a user_turn session: terminal icon (turn over, but
+ *    a shell the agent left running still runs)
+ * 5. Active crons: clock icon
+ * 6. Active processes (none of the above): green check
+ * 7. Nothing active: no indicator
  *
  * Used in project cards, workspace cards, detail panels, and project selectors
  * to quickly identify which projects/workspaces require attention.
@@ -17,6 +19,7 @@
 import { computed, useId } from 'vue'
 import { useDataStore } from '../../stores/data'
 import { isSessionUnread } from '../../utils/sessions'
+import { aggregatedBackgroundSuffix, userTurnBackgroundShellCount } from '../../utils/backgroundWork'
 import AppTooltip from './AppTooltip.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
 
@@ -73,6 +76,7 @@ const processInfo = computed(() => {
     let pendingRequestCount = 0
     let hasAssistantTurn = false
     let activeCronCount = 0
+    let backgroundShellCount = 0
 
     for (const [sessionId, ps] of Object.entries(dataStore.processStates)) {
         if (ps.synthetic || dataStore.sessions[sessionId]?.hidden) continue
@@ -81,9 +85,12 @@ const processInfo = computed(() => {
         pendingRequestCount += ps.pending_requests?.length || 0
         if (ps.state === 'assistant_turn') hasAssistantTurn = true
         activeCronCount += ps.active_crons?.length || 0
+        // Only user_turn shells: in any other state the session is working
+        // (or starting) anyway, which the robot already says.
+        backgroundShellCount += userTurnBackgroundShellCount(ps)
     }
 
-    return { processCount, pendingRequestCount, hasAssistantTurn, activeCronCount }
+    return { processCount, pendingRequestCount, hasAssistantTurn, activeCronCount, backgroundShellCount }
 })
 
 /** Number of sessions with unread content across all projects. */
@@ -102,13 +109,15 @@ const unreadCount = computed(() => {
 })
 
 /**
- * Priority cascade: pending_request > unread > assistant_turn > crons > active_process > nothing.
+ * Priority cascade: pending_request > unread > assistant_turn > background_shells > crons > active_process > nothing.
+ * Shells beat crons, as in ProcessIndicator.
  */
 const displayMode = computed(() => {
     const info = processInfo.value
     if (info.pendingRequestCount > 0) return 'pending_request'
     if (unreadCount.value > 0) return 'unread'
     if (info.hasAssistantTurn) return 'assistant_turn'
+    if (info.backgroundShellCount > 0) return 'background_shells'
     if (info.activeCronCount > 0) return 'crons'
     if (info.processCount > 0) return 'active_process'
     return null
@@ -117,7 +126,7 @@ const displayMode = computed(() => {
 /** State to pass to ProcessIndicator for the three process-based display modes. */
 const processIndicatorState = computed(() => {
     if (displayMode.value === 'assistant_turn') return 'assistant_turn'
-    return 'user_turn' // crons and active_process both render as user_turn variants
+    return 'user_turn' // background_shells, crons and active_process render as user_turn variants
 })
 
 // Tooltip text
@@ -126,25 +135,26 @@ const tooltipText = computed(() => {
     const mode = displayMode.value
 
     const sessionLabel = `${info.processCount} active session${info.processCount !== 1 ? 's' : ''}`
-    const cronSuffix = info.activeCronCount > 0
-        ? ` (${info.activeCronCount} active cron${info.activeCronCount > 1 ? 's' : ''})`
-        : ''
+    const backgroundSuffix = aggregatedBackgroundSuffix({
+        shells: info.backgroundShellCount,
+        crons: info.activeCronCount,
+    })
 
     if (mode === 'pending_request') {
         const pendingLabel = info.pendingRequestCount === 1
             ? 'Pending request'
             : `${info.pendingRequestCount} pending requests`
-        return `${pendingLabel} · ${sessionLabel}${cronSuffix}`
+        return `${pendingLabel} · ${sessionLabel}${backgroundSuffix}`
     }
 
     if (mode === 'unread') {
         const unreadLabel = `${unreadCount.value} unread session${unreadCount.value !== 1 ? 's' : ''}`
         return info.processCount > 0
-            ? `${unreadLabel} · ${sessionLabel}${cronSuffix}`
+            ? `${unreadLabel} · ${sessionLabel}${backgroundSuffix}`
             : unreadLabel
     }
 
-    return `${sessionLabel}${cronSuffix}`
+    return `${sessionLabel}${backgroundSuffix}`
 })
 
 // Unique ID for this instance
@@ -170,7 +180,7 @@ const animateStates = ['assistant_turn']
             </span>
             <AppTooltip :for="indicatorId">{{ tooltipText }}</AppTooltip>
         </template>
-        <!-- Process states: assistant_turn / crons / active_process -->
+        <!-- Process states: assistant_turn / background_shells / crons / active_process -->
         <template v-else>
             <ProcessIndicator
                 :id="indicatorId"
@@ -178,6 +188,7 @@ const animateStates = ['assistant_turn']
                 :size="size"
                 :animate-states="animateStates"
                 :has-active-crons="displayMode === 'crons'"
+                :background-shells="displayMode === 'background_shells' ? processInfo.backgroundShellCount : 0"
             />
             <AppTooltip :for="indicatorId">{{ tooltipText }}</AppTooltip>
         </template>
