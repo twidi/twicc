@@ -1,3 +1,5 @@
+import { rm } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
@@ -26,6 +28,22 @@ const injectBrowserCompanion = {
     },
 }
 
+// README-only media: Vite copies every public/ file into the build, but
+// public/screenshots/ is only used by the README (through GitHub URLs, which
+// also keep old PyPI pages working). Drop it from the build output so it does
+// not ship in the wheel.
+let buildOutDir
+const dropReadmeOnlyAssets = {
+    name: 'twicc-drop-readme-only-assets',
+    apply: 'build',
+    configResolved(config) {
+        buildOutDir = resolve(config.root, config.build.outDir)
+    },
+    async closeBundle() {
+        await rm(resolve(buildOutDir, 'screenshots'), { recursive: true, force: true })
+    },
+}
+
 export default defineConfig(({ command }) => ({
     plugins: [
         vue({
@@ -36,6 +54,7 @@ export default defineConfig(({ command }) => ({
             }
         }),
         injectBrowserCompanion,
+        dropReadmeOnlyAssets,
     ],
     // Use /static/ base only for production build (Django serves static files)
     // In dev mode, use root path

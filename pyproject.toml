@@ -91,6 +91,12 @@ artifacts = [
 artifacts = [
     "src/twicc/static/**",
 ]
+# Media used only by the README / project page: kept in the repository, never
+# shipped (the demo video alone is ~10 MB).
+exclude = [
+    "/frontend/public/screenshots",
+    "/docs/media",
+]
 
 # Build hook (hatch_build.py) runs npm ci + npm run build before packaging so
 # the wheel and sdist both pick up the built frontend assets.

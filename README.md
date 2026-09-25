@@ -4,35 +4,13 @@
 
 One self-hosted web interface for both [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Anthropic) and [Codex](https://openai.com/codex/) (OpenAI): browse your projects and sessions, run agents and follow them live, track costs and quotas, and stay in control of your AI coding work — from your desktop or your phone.
 
-## Screenshots
+## Demo
 
-> Home — your workspaces, each grouping related projects, with live activity and session counts at a glance:
+> An 80-second tour: Claude Code and Codex side by side, live tool calls, approvals and questions, your own layout, your phone, orchestration, sharing, and more:
 
-![Home with workspaces](https://raw.githubusercontent.com/twidi/twicc/main/frontend/public/screenshots/home-with-workspaces.webp)
+https://github.com/user-attachments/assets/6f845593-5555-4cea-9cfb-0ce4b4d113ca
 
-> Workspace overview — sessions in the sidebar, plus stats on sessions, message turns and costs:
-
-![Workspace overview](https://raw.githubusercontent.com/twidi/twicc/main/frontend/public/screenshots/workspace-home.webp)
-
-> A session in a custom dockable layout: chat, files, git and terminal, side by side:
-
-![Session in a dockable layout](https://raw.githubusercontent.com/twidi/twicc/main/frontend/public/screenshots/session-view.webp)
-
-> Follow an agent live — every tool call, thinking step and diff, with the git panel alongside:
-
-![Following an agent live](https://raw.githubusercontent.com/twidi/twicc/main/frontend/public/screenshots/tools-view.webp)
-
-> Dock and tab panes as you like — here a file editor next to an integrated terminal:
-
-![Tabbed and docked panes](https://raw.githubusercontent.com/twidi/twicc/main/frontend/public/screenshots/session-tabs-view.webp)
-
-> Settings, synced across your devices: theme, providers, layouts, notifications and more:
-
-![Settings](https://raw.githubusercontent.com/twidi/twicc/main/frontend/public/screenshots/settings-view.webp)
-
-> Pick a model and reasoning effort in seconds:
-
-https://github.com/user-attachments/assets/65033859-ed67-42fc-8b64-fa13204659da
+▶ No player above? [Watch the demo video on GitHub](https://github.com/twidi/twicc#demo).
 
 [![Crafted with love](https://img.shields.io/badge/crafted_with-love-red?style=social&logo=githubsponsors&logoColor=red)](https://github.com/sponsors/twidi)
 [![PyPI version](https://img.shields.io/pypi/v/twicc?logo=pypi&logoColor=blue&style=social)](https://pypi.org/project/twicc/)
