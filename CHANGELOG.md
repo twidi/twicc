@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **New logo** — TwiCC gets its own robot, with a bit more soul.
 
+### Fixed
+
+- **Docked panels on medium screens** — Opening a panel over the conversation no longer shifts the layout and leaves an empty strip on the right.
+
 ## [1.94.3] - 2026-09-24
 
 ### Summary
