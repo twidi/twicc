@@ -86,7 +86,7 @@ function onShow(event) { emit('select', event.detail.name) }
     z-index: 11;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: clip; /* not a scroll container — see .session-layout */
     background: var(--wa-color-surface-default, #fff);
     box-shadow: var(--wa-shadow-l, 0 10px 40px rgba(0, 0, 0, 0.35));
     --overlay-border: var(--divider-size) solid var(--wa-color-surface-border, rgba(0, 0, 0, 0.12));
@@ -143,7 +143,7 @@ function onShow(event) { emit('select', event.detail.name) }
     flex: 1;
     min-height: 0;
     min-width: 0;
-    overflow: hidden;
+    overflow: clip; /* not a scroll container — see .session-layout */
     display: flex;
     flex-direction: column;
 }

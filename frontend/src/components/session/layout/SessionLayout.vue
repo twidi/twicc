@@ -774,7 +774,12 @@ onBeforeUnmount(() => {
     flex: 1;
     min-height: 0;
     min-width: 0;
-    overflow: hidden;
+    /* clip, not hidden: a hidden box is still a scroll container, so a scrollIntoView()/focus()
+       deep inside (or the browser itself) can scroll it — here sideways, since the gutters'
+       invisible measurement mirrors overflow the right edge. The user has no way to scroll it
+       back: the whole layout stays shifted with a blank strip. Same rule on the frame boxes of
+       DockRegion and LayoutOverlay. */
+    overflow: clip;
 }
 /* While dragging a resize splitter, neutralize iframe panes (HTML/PDF previews): an iframe is a
    separate browsing context that would otherwise capture pointermove/up as soon as the pointer

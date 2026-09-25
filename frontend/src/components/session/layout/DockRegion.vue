@@ -178,7 +178,7 @@ function onEmptyBarDblClick(event) {
     isolation: isolate;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: clip; /* not a scroll container — see SessionLayout's .session-layout */
     background: var(--wa-color-surface-default, transparent);
     min-width: 0;
     min-height: 0;
@@ -270,7 +270,7 @@ function onEmptyBarDblClick(event) {
     flex: 1;
     min-height: 0;
     min-width: 0;
-    overflow: hidden;
+    overflow: clip; /* not a scroll container — see SessionLayout's .session-layout */
     display: flex;
     flex-direction: column;
 }

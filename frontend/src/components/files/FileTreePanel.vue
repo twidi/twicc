@@ -498,6 +498,41 @@ function getFocusedIndex(items) {
 }
 
 /**
+ * Offset that brings [start, end] into [viewStart, viewEnd] on one axis, following
+ * the `scrollIntoView` 'nearest' rule.
+ */
+function nearestScrollDelta(start, end, viewStart, viewEnd) {
+    const size = end - start
+    const view = viewEnd - viewStart
+    const startOut = start < viewStart
+    const endOut = end > viewEnd
+    if (startOut && endOut) return 0
+    if ((startOut && size < view) || (endOut && size > view)) return start - viewStart
+    if ((startOut && size > view) || (endOut && size < view)) return end - viewEnd
+    return 0
+}
+
+/**
+ * Scroll a tree item into view inside the tree's own scroller ONLY.
+ *
+ * Never use `Element.scrollIntoView()` here: it also scrolls every scrollable
+ * ancestor, `overflow: hidden` ones included. Tree rows are far wider than the
+ * tree (`.file-tree-node` is `width: 1000%`), so Firefox aligns their left edge
+ * and scrolls the session layout sideways — the whole layout shifts and leaves
+ * a blank strip the user cannot scroll back.
+ */
+function scrollItemIntoTree(el) {
+    const container = treeContainerRef.value
+    if (!container || !el) return
+    const box = container.getBoundingClientRect()
+    const item = el.getBoundingClientRect()
+    const top = box.top + container.clientTop
+    const left = box.left + container.clientLeft
+    container.scrollTop += nearestScrollDelta(item.top, item.bottom, top, top + container.clientHeight)
+    container.scrollLeft += nearestScrollDelta(item.left, item.right, left, left + container.clientWidth)
+}
+
+/**
  * Set focus to a specific item element: update focusedPath, scroll into view,
  * and move DOM focus.
  */
@@ -505,7 +540,7 @@ function focusItem(el) {
     if (!el) return
     focusedPath.value = el.dataset.path
     nextTick(() => {
-        el.scrollIntoView({ block: 'nearest' })
+        scrollItemIntoTree(el)
         el.focus({ preventScroll: true })
     })
     // Auto-open: select the file automatically when navigating to it
@@ -693,7 +728,7 @@ function handleTreeKeydown(event) {
                 if (parentEl && parentEl.dataset.path) {
                     focusedPath.value = parentEl.dataset.path
                     nextTick(() => {
-                        parentEl.scrollIntoView({ block: 'nearest' })
+                        scrollItemIntoTree(parentEl)
                         parentEl.focus({ preventScroll: true })
                     })
                 }
@@ -881,7 +916,7 @@ async function scrollToPath(absolutePath) {
         await nextTick()
         const el = treeContainerRef.value?.querySelector(`[data-path="${CSS.escape(props.rootPath)}"]`)
         if (el) {
-            el.scrollIntoView({ block: 'nearest' })
+            scrollItemIntoTree(el)
             el.focus({ preventScroll: true })
         }
         return true
@@ -963,7 +998,7 @@ async function scrollToPath(absolutePath) {
     await nextTick()
     const targetEl = treeContainerRef.value?.querySelector(`[data-path="${CSS.escape(absolutePath)}"]`)
     if (targetEl) {
-        targetEl.scrollIntoView({ block: 'nearest' })
+        scrollItemIntoTree(targetEl)
         targetEl.focus({ preventScroll: true })
     }
 
