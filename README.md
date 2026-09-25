@@ -1,4 +1,4 @@
-# TwiCC
+# ![](https://raw.githubusercontent.com/twidi/twicc/main/docs/media/twicc-logo-animated-48.svg) TwiCC
 
 > **T**he **W**eb **I**nterface for **C**laude and **C**odex
 
