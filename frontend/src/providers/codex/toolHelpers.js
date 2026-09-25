@@ -1866,7 +1866,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
     isAgentTool(name) {
         // Activates the shared agent-spawn UI on the tool card: a
         // spinner before the spawn ack lands, then a ``View Agent``
-        // button (with a pulsing robot while the subagent is still
+        // button (with an animated robot while the subagent is still
         // running). The Stop button on the same card is gated by the
         // provider-level ``CodexHelpers.canStopSubagent`` (defined in
         // ``../helpers.js``) since the stop plumbing belongs to the

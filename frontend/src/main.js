@@ -73,6 +73,7 @@ import 'notivue/animations.css'
 
 // CodeMirror search panel overrides (Web Awesome themed)
 import './styles/codemirror-search.css'
+import './styles/robot-working.css'
 
 const app = createApp(App)
 app.use(createPinia())

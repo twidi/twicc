@@ -154,7 +154,7 @@ function mapAgents(list) {
             agentId: a.agentId,
             name: a.label || a.agentId, // label when the engine gives one, else the id
             statusKind: kind,
-            active: kind === 'running', // only a live agent pulses its robot
+            active: kind === 'running', // only a live agent animates its robot
             durationMs: typeof a.durationMs === 'number' ? a.durationMs : null,
             cost: typeof a.cost === 'number' ? a.cost : null,
             promptPreview: a.promptPreview || null,
@@ -418,7 +418,7 @@ function agentsLabel(n) {
                                     appearance="outlined"
                                     @click.stop="viewAgent(ag.agentId)"
                                 >
-                                    <wa-icon v-if="ag.active" slot="start" name="robot" class="wf-agent-running"></wa-icon>
+                                    <wa-icon v-if="ag.active" slot="start" name="robot" class="robot-working"></wa-icon>
                                     <wa-icon v-else-if="ag.statusKind === 'interrupted'" slot="start" name="circle-stop" class="wf-agent-interrupted"></wa-icon>
                                     View Agent
                                 </wa-button>
@@ -665,21 +665,9 @@ function agentsLabel(n) {
     margin-left: auto;
 }
 
-/* The "View Agent" robot pulses while the agent is still running, and is hidden
- * (v-if) once finished — the live "robot pulses while it works" cue
- * (ProcessIndicator's pulse, 1s). */
-.wf-agent-running {
-    animation: pulse 1s ease-in-out infinite;
-}
-
 /* Interrupted agent: a static "stopped" icon in the same slot as the pulsing
  * robot (warning-colored, matching the interrupted badge). */
 .wf-agent-interrupted {
     color: var(--wa-color-warning-50);
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
 }
 </style>

@@ -966,7 +966,7 @@ function handleStopAgent() {
                          flagged terminated by the backend — see
                          isAgentSpawnPending. -->
                     <wa-spinner v-if="isAgentSpawnPending" class="agent-starting-spinner"></wa-spinner>
-                    <!-- Agent started: View Agent button (with pulsing robot
+                    <!-- Agent started: View Agent button (with animated robot
                          if still running). Skipped when the spawn ack failed
                          and no AgentLink was ever created — the error
                          callout below already tells the user what happened,
@@ -982,7 +982,7 @@ function handleStopAgent() {
                             appearance="outlined"
                             @click.stop="navigateToSubagent"
                         >
-                            <wa-icon v-if="isAgentRunning" slot="start" name="robot" class="agent-running-icon" :style="{ color: PROCESS_STATE_COLORS[PROCESS_STATE.ASSISTANT_TURN] }"></wa-icon>
+                            <wa-icon v-if="isAgentRunning" slot="start" name="robot" class="robot-working" :style="{ color: PROCESS_STATE_COLORS[PROCESS_STATE.ASSISTANT_TURN] }"></wa-icon>
                             View Agent
                             <CodeCommentsIndicator slot="end" :count="agentCommentsCount" :show-tooltip="false" class="agent-comments-indicator" />
                         </wa-button>
@@ -1145,9 +1145,6 @@ wa-details.item-details {
         .agent-starting-spinner {
             --indicator-color: var(--wa-color-warning-60);
         }
-        .agent-running-icon {
-            animation: pulse 1s ease-in-out infinite;
-        }
         .agent-comments-indicator, .tool-comments-indicator {
             font-size: var(--wa-font-size-xs);
         }
@@ -1236,11 +1233,6 @@ wa-details.item-details {
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
     margin-bottom: var(--wa-space-xs);
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
 }
 </style>
 

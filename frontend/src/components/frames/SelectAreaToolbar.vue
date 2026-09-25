@@ -88,8 +88,7 @@ const instanceId = useId()
 }
 
 /* Once an element is locked (green frame), the comment button invites the
-   click: brand colour + the same pulse the live-agent robot uses
-   (ProcessIndicator's `pulse`, 1s). */
+   click: brand colour + a 1s opacity pulse. */
 .comment-armed wa-icon {
     color: var(--wa-color-brand-fill-loud);
     animation: pulse 1s ease-in-out infinite;

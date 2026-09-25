@@ -134,7 +134,7 @@ code {
 
 /* Awaiting-user indicator: amber hand with the slow pending pulse (matches the
    session-list pending indicator and the orchestration awaiting state), set
-   apart from the faster blue "thinking" robot pulse. */
+   apart from the blue animated "thinking" robot. */
 .working-assistant-message__awaiting {
     color: var(--wa-color-warning-60);
     font-size: var(--wa-font-size-s);

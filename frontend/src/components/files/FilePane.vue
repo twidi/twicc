@@ -2330,9 +2330,8 @@ function goToNextDiff() {
 }
 
 /* Active-sub-mode indicator: a small brand dot on the folded tools button's
-   top-right corner, pulsing like the live-agent robot (ProcessIndicator's
-   `pulse`, 1s). The dot sits on the wrapper (not the button), so the button's
-   own rest opacity doesn't dim it. */
+   top-right corner, with a 1s opacity pulse. The dot sits on the wrapper (not
+   the button), so the button's own rest opacity doesn't dim it. */
 .preview-tools-wrap {
     position: relative;
     display: inline-flex;

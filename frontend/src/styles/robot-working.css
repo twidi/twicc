@@ -1,0 +1,31 @@
+/* The live-agent robot: the animation of the robot icon while an agent works.
+   Put `robot-working` on the `<wa-icon name="robot">` that shows a working agent.
+   Current animation: small hops with a pause between them. */
+.robot-working {
+    transform-origin: 50% 100%;
+    animation: robot-hop 1.4s ease-in-out infinite;
+}
+
+/* Rest, crouch, jump (stretched), land (squashed), settle — then rest again. */
+@keyframes robot-hop {
+    0%, 45% { transform: translateY(0) scale(1, 1); }
+    52% { transform: translateY(0) scale(1.12, 0.86); }
+    63% { transform: translateY(-28%) scale(0.94, 1.08); animation-timing-function: ease-in; }
+    74% { transform: translateY(0) scale(1.14, 0.84); }
+    82% { transform: translateY(0) scale(0.97, 1.03); }
+    88%, 100% { transform: translateY(0) scale(1, 1); }
+}
+
+/* Set aside: continuous left ↔ right sway (lean + drift), no pause, no hop.
+   Use `animation: robot-sway 0.8s ease-in-out infinite alternate` with
+   `transform-origin: 50% 60%` to bring it back. */
+@keyframes robot-sway {
+    from { transform: translateX(-7%) rotate(-10deg); }
+    to { transform: translateX(7%) rotate(10deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .robot-working {
+        animation: none;
+    }
+}

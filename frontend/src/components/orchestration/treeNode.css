@@ -145,20 +145,11 @@
     font-size: var(--wa-font-size-m);
 }
 
-/* Pulse the live states, matching the indicators used elsewhere: the working
-   robot (ProcessIndicator's ``pulse``, 1s, 1→0.4) and the awaiting-user hand
-   (AggregatedProcessIndicator's ``pending-pulse``, 1.5s, 1→0.3). */
-.orch-status-icon--pulse-work {
-    animation: orch-status-pulse-work 1s ease-in-out infinite;
-}
-
+/* Pulse the awaiting-user hand, matching AggregatedProcessIndicator's
+   ``pending-pulse`` (1.5s, 1→0.3). The working robot is animated instead (global
+   ``robot-working`` class, styles/robot-working.css). */
 .orch-status-icon--pulse-pending {
     animation: orch-status-pulse-pending 1.5s ease-in-out infinite;
-}
-
-@keyframes orch-status-pulse-work {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
 }
 
 @keyframes orch-status-pulse-pending {

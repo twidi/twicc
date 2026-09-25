@@ -11,7 +11,8 @@
  * When `hasActiveCrons` is true and state is user_turn, shows a clock icon
  * instead of the check to indicate scheduled cron work is pending.
  *
- * The `animateStates` prop controls which states have a pulse animation.
+ * The `animateStates` prop controls which states are animated (the working
+ * robot is animated, see styles/robot-working.css).
  */
 import { computed } from 'vue'
 import { PROCESS_STATE, PROCESS_STATE_COLORS } from '../../constants'
@@ -34,8 +35,8 @@ const props = defineProps({
         validator: (value) => ['small', 'medium', 'large'].includes(value)
     },
     /**
-     * Which states should have pulse animation.
-     * Default: only 'assistant_turn' pulses.
+     * Which states should be animated.
+     * Default: only 'assistant_turn' is animated.
      */
     animateStates: {
         type: Array,
@@ -103,7 +104,7 @@ const stateColor = computed(() => PROCESS_STATE_COLORS[props.state] || PROCESS_S
         <wa-icon
             v-else
             class="process-indicator__icon"
-            :class="{ 'process-indicator--animate': shouldAnimate(state) }"
+            :class="{ 'robot-working': shouldAnimate(state) }"
             :name="effectiveIconName"
         ></wa-icon>
     </div>
@@ -154,14 +155,5 @@ const stateColor = computed(() => PROCESS_STATE_COLORS[props.state] || PROCESS_S
     color: var(--process-color);
 }
 
-/* Pulse animation (applied when shouldAnimate is true) */
-.process-indicator--animate {
-    animation: pulse 1s ease-in-out infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-}
 
 </style>

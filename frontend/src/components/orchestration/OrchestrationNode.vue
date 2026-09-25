@@ -42,8 +42,8 @@ const props = defineProps({
 // _process_state.project_virtual_state). ``dead`` here just means "no live
 // process" — the common, expected state for a finished session — so it is
 // neutral grey rather than the alarming red used elsewhere.
-// ``pulse`` mirrors the live indicators used everywhere else: the robot pulses
-// while the agent works (ProcessIndicator's ``pulse``, 1s) and the hand pulses
+// ``pulse`` mirrors the live indicators used everywhere else: the robot is animated
+// while the agent works (``work`` → the shared ``robot-working``) and the hand pulses
 // while a request awaits the user (AggregatedProcessIndicator's ``pending-pulse``,
 // 1.5s). Static states carry no ``pulse``.
 const PROCESS_STATUS = {
@@ -251,7 +251,7 @@ const expanded = ref(true)
                         :title="status.label"
                         :label="status.label"
                         class="orch-status-icon"
-                        :class="status.pulse ? `orch-status-icon--pulse-${status.pulse}` : null"
+                        :class="status.pulse === 'work' ? 'robot-working' : (status.pulse ? `orch-status-icon--pulse-${status.pulse}` : null)"
                     ></wa-icon>
                     <span v-if="isCurrent" class="orch-current-badge">current</span>
                     <span v-if="showCosts" class="orch-cost">

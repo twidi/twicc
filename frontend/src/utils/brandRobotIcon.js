@@ -4,7 +4,7 @@
  * rendered — the default icon library is wrapped, every other icon still
  * resolves to Font Awesome. Unlike a regular icon it is NOT monochrome: the
  * head is always the brand blue and the eyes and mouth always white, whatever
- * the surrounding colour (pulses, being opacity-based, are unchanged).
+ * the surrounding colour. A working agent's robot is animated (styles/robot-working.css).
  */
 import { getIconLibrary, registerIconLibrary } from '@awesome.me/webawesome/dist/components/icon/library.js'
 import { resolvePublicAssetUrl } from './publicAsset'

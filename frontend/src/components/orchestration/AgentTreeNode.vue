@@ -158,7 +158,7 @@ const expanded = ref(true)
                         :title="status.label"
                         :label="status.label"
                         class="orch-status-icon"
-                        :class="status.pulse ? 'orch-status-icon--pulse-work' : null"
+                        :class="status.pulse ? 'robot-working' : null"
                     ></wa-icon>
                     <span v-if="entry?.isBackground" class="atree-badge" title="Launched in the background">background</span>
                     <span v-if="showCosts" class="orch-cost">
