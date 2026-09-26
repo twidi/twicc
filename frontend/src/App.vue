@@ -897,7 +897,8 @@ const toastTheme = computed(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--wa-color-surface-default);
+    /* Full canvas (auras included) — a fixed layer above everything would hide body::before. */
+    background: var(--canvas-background);
     z-index: 10000;
 }
 
@@ -953,9 +954,9 @@ body.sidebar-closed {
     --sidebar-toggle-clearance-y: 3.25rem;
 }
 
+/* Transparent: the canvas (styles/surfaces.css) shows through. */
 .app-container {
     min-height: 100dvh;
-    background: var(--wa-color-surface-default);
     color: var(--wa-color-text-normal);
 }
 

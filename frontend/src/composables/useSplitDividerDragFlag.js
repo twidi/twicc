@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useFramePoolStore } from '../stores/framePool'
 
 /**
@@ -8,23 +8,27 @@ import { useFramePoolStore } from '../stores/framePool'
  * have their own wiring in SessionLayout.vue; this covers the three plain
  * wa-split-panels (project sidebar, FilesPanel tree/content, GitPanel
  * tree/content) whose drags over an iframe are broken today already.
+ *
+ * Also returns the drag state as a ref (`dragging`): wa-split-panel exposes
+ * none, and the project sidebar divider shows its line while dragged.
  */
 export function useSplitDividerDragFlag(splitPanelRef) {
     const pool = useFramePoolStore()
-    let dragging = false
+    const dragging = ref(false)
 
     function onPointerDown(event) {
-        const onDivider = event
-            .composedPath()
-            .some((node) => node?.getAttribute?.('part')?.split(' ').includes('divider'))
-        if (!onDivider) return
-        dragging = true
+        // THIS panel's own divider only (WA exposes it as the `divider` property). A
+        // part="divider" test would also match a nested split panel's divider bubbling up
+        // through this host (e.g. the Files/Git tree splitters inside the project content).
+        const divider = splitPanelRef.value?.divider
+        if (!divider || !event.composedPath().includes(divider)) return
+        dragging.value = true
         pool.beginDividerDrag()
     }
 
     function onPointerEnd() {
-        if (!dragging) return
-        dragging = false
+        if (!dragging.value) return
+        dragging.value = false
         pool.endDividerDrag()
     }
 
@@ -39,4 +43,6 @@ export function useSplitDividerDragFlag(splitPanelRef) {
         window.removeEventListener('pointercancel', onPointerEnd, true)
         onPointerEnd() // never leave the depth stuck if unmounted mid-drag
     })
+
+    return { dragging }
 }

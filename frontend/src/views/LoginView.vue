@@ -143,7 +143,8 @@ async function handleSubmit() {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--wa-color-surface-default);
+    /* Full canvas (auras included) — a fixed layer above everything would hide body::before. */
+    background: var(--canvas-background);
     z-index: 9999;
 }
 

@@ -84,7 +84,8 @@ onUnmounted(() => framePool.setHostMounted(false))
 // Project sidebar split: neutralize iframe pointer-events while its divider is
 // dragged (an iframe would otherwise capture pointermove and freeze the drag).
 const projectSplitRef = ref(null)
-useSplitDividerDragFlag(projectSplitRef)
+// `sidebarResizing` drives the divider line while the sidebar is being resized.
+const { dragging: sidebarResizing } = useSplitDividerDragFlag(projectSplitRef)
 
 // Poll home data during startup so sparklines and project stats update
 // as sessions are indexed by background compute.
@@ -1762,6 +1763,7 @@ function updateSidebarClosedClass(closed) {
         <wa-split-panel
             ref="projectSplitRef"
             class="project-view"
+            :class="{ 'sidebar-resizing': sidebarResizing }"
             :position-in-pixels="DEFAULT_SIDEBAR_WIDTH"
             primary="start"
             snap="125px 200px 300px 400px"
@@ -2623,7 +2625,7 @@ function updateSidebarClosedClass(closed) {
         </aside>
 
         <!-- Main content area -->
-        <main slot="end" class="main-content" :class="{ 'main-content--preview-expanded': previewExpanded }">
+        <main slot="end" class="main-content panel-card" :class="{ 'main-content--preview-expanded': previewExpanded }">
             <div v-show="!isArtifactsMode && sessionId" class="session-content">
                 <router-view v-slot="{ Component }">
                     <KeepAlive :max="settingsStore.getMaxCachedSessions">
@@ -2732,6 +2734,9 @@ function updateSidebarClosedClass(closed) {
 }
 
 .project-view {
+    /* The divider column IS the gap between the sidebar and the content card.
+       Beats App.vue's global `wa-split-panel { --divider-width: … !important }`. */
+    --divider-width: var(--panel-gap) !important;
     height: 100%;
     --min: 20px;
     --max: 500px;
@@ -2742,10 +2747,19 @@ function updateSidebarClosedClass(closed) {
     }
 }
 
-wa-split-panel::part(divider) {
-    /* same color/width as normal dividers */
-    background-color: var(--wa-color-surface-border);
-    width: var(--divider-size);
+/* The divider spans the whole gap and is invisible at rest; its line is a centered
+   background image (not a fill, not ::after — WA uses .divider::after as the hit area),
+   shown at half strength on hover and full while dragging, like the layout splitters.
+   Opacity lives in the color so the slotted touch grip stays fully visible. */
+.project-view::part(divider) {
+    --line: transparent;
+    background: linear-gradient(var(--line), var(--line)) center / var(--divider-size) 100% no-repeat;
+}
+.project-view::part(divider):hover {
+    --line: color-mix(in oklab, var(--wa-color-brand-fill-loud) 50%, transparent);
+}
+.project-view.sidebar-resizing::part(divider) {
+    --line: var(--wa-color-brand-fill-loud);
 }
 /* Divider handle: hidden by default, shown only on touch devices */
 .divider-handle {
@@ -2763,7 +2777,7 @@ wa-split-panel::part(divider) {
 .sidebar {
     --transition-duration: .3s;
     height: 100dvh;
-    background: var(--wa-color-surface-default);
+    background: transparent; /* on the canvas */
     display: flex;
     flex-direction: column;
     position: relative;
@@ -3018,12 +3032,16 @@ wa-dropdown-item:hover .row-menu-trigger,
     flex-direction: column;
 }
 
+/* Commit 1: the whole content area is one floating card (.panel-card in the template
+   gives background, border, radius, shadow). The left gap is the divider column. */
 .main-content {
     flex: 1;
     min-width: 0;
-    height: 100%;
+    height: calc(100% - 2 * var(--panel-gap));
+    margin-block: var(--panel-gap);
+    margin-inline-end: var(--panel-gap);
+    /* With the radius, also clips the pooled iframes (FrameHost lives inside). */
     overflow: hidden;
-    background: var(--wa-color-surface-default);
     z-index: 1;
     /* Containing block for the absolutely-positioned FrameHost, stable in both
        states (container-type below is dropped while a preview is expanded). */
@@ -3583,8 +3601,7 @@ html.wa-dark .usage-lane-time {
         padding: var(--wa-space-xs);
     }
     .sidebar-footer-buttons--with-inbox .sidebar-toggle {
-        bottom: var(--wa-space-xs);
-        left: var(--wa-space-xs);
+        --sidebar-toggle-offset: var(--wa-space-xs);
     }
 }
 
@@ -3608,8 +3625,11 @@ html.wa-dark .usage-lane-time {
 /* Sidebar toggle label */
 .sidebar-toggle {
     position: absolute;
-    bottom: var(--wa-space-s);
-    left: var(--wa-space-s);
+    /* Offset from the footer's corner; --sidebar-toggle-shift adds the panel gap while the
+       desktop sidebar is collapsed, so the floating toggle keeps its distance from the card. */
+    --sidebar-toggle-offset: var(--wa-space-s);
+    bottom: calc(var(--sidebar-toggle-offset) + var(--sidebar-toggle-shift, 0px));
+    left: calc(var(--sidebar-toggle-offset) + var(--sidebar-toggle-shift, 0px));
     z-index: 10;
     cursor: pointer;
 
@@ -3656,6 +3676,15 @@ html.wa-dark .usage-lane-time {
     }
 }
 
+/* Desktop collapsed sidebar: the toggle floats over the content card, which starts one gap
+   in — shift it by that gap. Keyed on the checkbox (the fact that collapses the grid), not on
+   body.sidebar-closed, which goes stale across the 640px breakpoint. */
+@media (width >= 640px) {
+    .project-view-wrapper:has(.sidebar-toggle-checkbox:checked) .sidebar-toggle {
+        --sidebar-toggle-shift: var(--panel-gap);
+    }
+}
+
 /* Media query: mobile behavior - sidebar as overlay */
 @media (width < 640px) {
     /* Use dynamic viewport height on mobile to account for browser chrome */
@@ -3666,15 +3695,26 @@ html.wa-dark .usage-lane-time {
     /* Split panel always shows content at full width, so replace grid of project view by a block, sidebar will be an overlay */
     .project-view {
         display: block;
+        /* The inset comes from padding here: a top margin on .main-content would collapse
+           through this block host and the wrappers, and scroll the page. */
+        padding: var(--panel-gap);
         &::part(divider) {
             display: none;
         }
 
     }
 
+    .main-content {
+        margin: 0;
+        height: 100%;
+    }
+
     /* Sidebar becomes a fixed drawer */
     .sidebar {
         --sidebar-width: min(300px, 80vw);
+        /* The drawer overlays the content: the full canvas (auras included), still opaque
+           (its last layer is the solid canvas color). */
+        background: var(--canvas-background);
         position: absolute;
         left: 0;
         top: 0;
