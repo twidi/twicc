@@ -344,25 +344,21 @@ onUnmounted(cancelPending)
     padding: var(--gutter-padding);
     /* The whole rail is clickable (empty area opens the pointed dock; chips carry their own action). */
     cursor: pointer;
-    background: var(--wa-color-surface-default, transparent); /* match .dock-region */
+    background: transparent; /* on the canvas, like the sidebar */
     z-index: 12; /* above an open overlay backdrop, so gutters stay clickable */
-    --gutter-border: var(--divider-size) solid var(--wa-color-surface-border, rgba(0, 0, 0, 0.12));
 }
-/* Only the center-facing edge is bordered; the three edges on the layout boundary stay bare. */
+/* On the canvas: no border (the gap separates the rail from the cards). */
 .dock-gutter.left {
     flex-direction: column;
     align-items: center;
-    border-right: var(--gutter-border);
 }
 .dock-gutter.right {
     flex-direction: column;
     align-items: center;
-    border-left: var(--gutter-border);
 }
 .dock-gutter.bottom {
     flex-direction: row;
     align-items: center;
-    border-top: var(--gutter-border);
 }
 .g-group {
     display: flex;

@@ -27,6 +27,9 @@ export const useFramePoolStore = defineStore('framePool', {
         //   clipRect ({x,y,width,height}|null) — viewport rect of the owner's
         //     scroll container; FrameHost clip-paths the frame to it so a
         //     scrolled-out placeholder doesn't paint over the pane's chrome,
+        //   cardRect ({x,y,width,height}|null) — viewport rect of the .panel-card
+        //     containing the placeholder; FrameHost rounds the frame corners that are
+        //     flush with it (utils/panelInsets.js),
         //   onLoad (markRaw fn|null),
         //   el (markRaw iframe element|null, set by FrameHost),
         //   overlayEl (markRaw div|null, set by FrameHost),
@@ -62,6 +65,7 @@ export const useFramePoolStore = defineStore('framePool', {
                 visible: false,
                 rect: { x: 0, y: 0, width: 0, height: 0 },
                 clipRect: null,
+                cardRect: null,
                 onLoad: onLoad ? markRaw(onLoad) : null,
                 el: null,
                 overlayEl: null,

@@ -5,7 +5,7 @@
 // NEVER moves in the DOM — so KeepAlive session switches and dock Teleports
 // stop reloading it. Falls back to a plain inline iframe when no host is
 // mounted (contexts outside ProjectView).
-import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, watch } from 'vue'
 import { useElementBounding } from '@vueuse/core'
 import { useFramePoolStore } from '../../stores/framePool'
 
@@ -58,6 +58,7 @@ onActivated(() => {
     activated.value = true
     bounding.update()
     clipBounding.update()
+    resolveCard()
 })
 onDeactivated(() => {
     activated.value = false
@@ -65,6 +66,16 @@ onDeactivated(() => {
 
 const bounding = useElementBounding(placeholderEl)
 const clipBounding = useElementBounding(() => props.clipEl)
+// The floating card (.panel-card) containing the placeholder, so FrameHost can round the
+// frame corners that sit in the card's corners. Re-resolved, never cached for the component's
+// life: a pane moved to another dock keeps this instance (Teleport) but lands in another card.
+const cardEl = shallowRef(null)
+const cardBounding = useElementBounding(cardEl)
+function resolveCard() {
+    const el = placeholderEl.value?.closest('.panel-card') || null
+    if (el !== cardEl.value) cardEl.value = el
+    cardBounding.update()
+}
 const visible = computed(
     () => activated.value && !props.suppressed && bounding.width.value > 0.5 && bounding.height.value > 0.5
 )
@@ -90,7 +101,21 @@ if (pooled) {
     watch(visible, (v) => pool.patch(props.frameId, { visible: v }), { immediate: true })
     watch(
         [bounding.x, bounding.y, bounding.width, bounding.height],
-        ([x, y, width, height]) => pool.setRect(props.frameId, { x, y, width, height })
+        ([x, y, width, height]) => {
+            pool.setRect(props.frameId, { x, y, width, height })
+            // The reliable trigger for a card change: on a KeepAlive return the panel is
+            // Teleported into the recreated dock only after onActivated, and the geometry
+            // epoch may fire first — but the placeholder rect always changes when it lands.
+            resolveCard()
+        }
+    )
+    watch(
+        [cardEl, cardBounding.x, cardBounding.y, cardBounding.width, cardBounding.height],
+        ([el, x, y, width, height]) => {
+            pool.patch(props.frameId, {
+                cardRect: el && width > 0.5 && height > 0.5 ? { x, y, width, height } : null,
+            })
+        }
     )
     // A 0-sized clip container means "not measured yet" (the prop lands one
     // render before the rect does) — treat it as no clipping rather than
@@ -116,6 +141,7 @@ if (pooled) {
         () => {
             bounding.update()
             clipBounding.update()
+            resolveCard()
         },
         { flush: 'post' }
     )
@@ -123,6 +149,7 @@ if (pooled) {
 
 onMounted(() => {
     bounding.update()
+    resolveCard()
     clipBounding.update()
 })
 

@@ -7,6 +7,7 @@
 import { computed, ref, watch } from 'vue'
 import { useElementBounding } from '@vueuse/core'
 import { useFramePoolStore } from '../../stores/framePool'
+import { frameClipPath, frameFlushCorners, visibleRect } from '../../utils/panelInsets'
 
 // NOTE: pool.hostMounted is owned by ProjectView (set in its setup, cleared in
 // its onUnmounted), NOT here — panes can mount before this component does on
@@ -52,16 +53,14 @@ function cellStyle(frame) {
     // so an unclipped overhang would cover the pane's own chrome. Both rects
     // are viewport-based, so the deltas hold for either positioning branch —
     // clip-path resolves against the element's own border box.
-    const clip = frame.clipRect
-    if (clip) {
-        const top = Math.max(0, clip.y - y)
-        const left = Math.max(0, clip.x - x)
-        const right = Math.max(0, x + width - (clip.x + clip.width))
-        const bottom = Math.max(0, y + height - (clip.y + clip.height))
-        if (top || right || bottom || left) {
-            style.clipPath = `inset(${top}px ${right}px ${bottom}px ${left}px)`
-        }
-    }
+    // Plus rounded corners where the visible frame sits in its card's corners
+    // (floating panels): the card's radius does not clip pooled frames, which
+    // are not its DOM descendants. Never for fullscreen frames.
+    const corners = frame.zTier !== 'fullscreen' && frame.cardRect
+        ? frameFlushCorners(visibleRect(frame.rect, frame.clipRect), frame.cardRect)
+        : null
+    const clipPath = frameClipPath(frame.rect, frame.clipRect, corners)
+    if (clipPath) style.clipPath = clipPath
     return style
 }
 
@@ -96,6 +95,11 @@ watch(() => pool.geometryEpoch, () => hostRect.update(), { flush: 'post' })
     position: absolute;
     inset: 0;
     pointer-events: none;
+    /* A cell is sized to its placeholder and trimmed only by clip-path; in a Browser pane's
+       responsive mode it can extend far past the viewport. .main-content now clips with a
+       margin, so the host clips at .main-content's padding box itself. Fixed (fullscreen)
+       cells escape: this is not their containing block. */
+    overflow: clip;
 }
 
 .frame-cell {

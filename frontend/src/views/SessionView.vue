@@ -2251,6 +2251,7 @@ onBeforeUnmount(() => {
         <SessionItemsList
             v-if="isLaunchedEphemeral(session)"
             ref="sessionItemsListRef"
+            class="panel-card"
             :session-id="sessionId"
             :project-id="projectId"
             @needs-title="handleNeedsTitle"
@@ -2437,7 +2438,7 @@ onBeforeUnmount(() => {
         </SessionLayout>
 
         <!-- Session not found (backend returned 404) -->
-        <div v-else-if="sessionLoadError === 'not-found'" class="empty-state">
+        <div v-else-if="sessionLoadError === 'not-found'" class="empty-state panel-card">
             <wa-callout variant="warning" size="small">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                 Session not found
@@ -2445,7 +2446,7 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- Session load failed (network / server error) -->
-        <div v-else-if="sessionLoadError === 'error'" class="empty-state">
+        <div v-else-if="sessionLoadError === 'error'" class="empty-state panel-card">
             <wa-callout variant="danger" size="small">
                 <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
                 Failed to load session
@@ -2453,7 +2454,7 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- Loading state -->
-        <div v-else class="empty-state">
+        <div v-else class="empty-state panel-card">
             <wa-spinner></wa-spinner>
             <span>Loading session...</span>
         </div>
@@ -2619,8 +2620,22 @@ onBeforeUnmount(() => {
     display: flex;
     flex-direction: column;
     height: 100%;
-    overflow: hidden;
+    /* clip, not hidden: nothing scrolls this flex column, and a gap-sized clip margin lets the
+       outer cards' shadows paint into .main-content's padding (see SessionLayout). */
+    overflow: clip;
+    overflow-clip-margin: var(--panel-gap);
     position: relative;
+}
+
+/* The header sits on the canvas: its separators would draw a hairline just above the cards.
+   Invisible but still taking their space (the divider carries the header's bottom spacing). */
+.session-view > .session-header :deep(wa-divider) {
+    visibility: hidden;
+}
+@media (max-height: 900px) {
+    .session-view > .session-header.compact-collapsed {
+        border-bottom-color: transparent;
+    }
 }
 
 .session-view > wa-divider {
@@ -2659,7 +2674,7 @@ onBeforeUnmount(() => {
 .layout-nav-cluster {
     position: absolute;
     top: 0;
-    inset-inline-end: 0;
+    inset-inline-end: var(--panel-corner-inset);
     box-sizing: border-box;
     display: flex;
     align-items: center;
@@ -2672,8 +2687,12 @@ onBeforeUnmount(() => {
 }
 /* Reserve the cluster's width at the end of the nav container: the tab strip (and its end
    scroll chevron, positioned at the container's edge) stops before the fixed cluster. */
+/* Margins, not padding: with overflowing tabs WA sets its own padding on this element and
+   puts the start chevron at its inline start — a margin moves the whole container.
+   measureCenterNav() measures the cluster only, so the reservation adds the corner inset. */
 .session-tabs::part(nav) {
-    margin-inline-end: var(--layout-nav-cluster-w, 0px);
+    margin-inline-start: var(--panel-corner-inset);
+    margin-inline-end: calc(var(--layout-nav-cluster-w, 0px) + var(--panel-corner-inset));
 }
 .layout-winbtn {
     --wa-form-control-padding-inline: 0.3em;
@@ -2800,7 +2819,10 @@ onBeforeUnmount(() => {
     align-items: center;
     justify-content: center;
     gap: var(--wa-space-s);
-    height: 200px;
+    /* A card filling the session view (no header in these states). */
+    flex: 1;
+    min-height: 0;
+    overflow: clip;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-l);
 }

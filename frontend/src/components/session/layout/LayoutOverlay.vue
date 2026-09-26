@@ -6,9 +6,13 @@ import { computed, ref, watchEffect } from 'vue'
 import TabPlacementMenu from './TabPlacementMenu.vue'
 import SessionTabLink from './SessionTabLink.vue'
 import TabBar from '../../ui/TabBar.vue'
+import { insetRectStyle, NO_INSETS } from '../../../utils/panelInsets'
 
 const props = defineProps({
     overlay: { type: Object, required: true }, // { edge, rect:{x,y,w,h}, tabs }
+    // Inner edges of the overlay rect (SessionLayout, panelInsets.innerEdges): the card is
+    // inset by half a panel gap on them.
+    insets: { type: Object, default: () => NO_INSETS },
     activeTabId: { type: String, default: null },
     tabHref: { type: Function, required: true },
     dockOf: { type: Function, required: true }, // tabId -> its current dockId | 'center'
@@ -19,12 +23,7 @@ const emit = defineEmits(['select', 'close', 'place'])
 
 const bodyRef = ref(null)
 
-const style = computed(() => ({
-    left: `${props.overlay.rect.x}px`,
-    top: `${props.overlay.rect.y}px`,
-    width: `${props.overlay.rect.w}px`,
-    height: `${props.overlay.rect.h}px`,
-}))
+const style = computed(() => insetRectStyle(props.overlay.rect, props.insets))
 
 watchEffect((onCleanup) => {
     const el = bodyRef.value
@@ -39,7 +38,7 @@ function onShow(event) { emit('select', event.detail.name) }
 <template>
     <div class="overlay-layer">
         <div class="overlay-backdrop" @click="emit('close')"></div>
-        <div class="layout-overlay" :class="overlay.edge" :style="style" @click.stop>
+        <div class="layout-overlay panel-card" :class="overlay.edge" :style="style" @click.stop>
             <!-- Flex row [scrollable tabs][fixed close], like DockRegion's bar: the close button
                  must stay visible while the tab strip scrolls, and never sit over a tab. -->
             <div class="overlay-topbar">
@@ -80,6 +79,7 @@ function onShow(event) { emit('select', event.detail.name) }
     inset: 0;
     z-index: 8;
     background: rgba(0, 0, 0, 0.2);
+    border-radius: var(--panel-radius); /* follow the outer cards' corners */
 }
 .layout-overlay {
     position: absolute;
@@ -87,9 +87,9 @@ function onShow(event) { emit('select', event.detail.name) }
     display: flex;
     flex-direction: column;
     overflow: clip; /* not a scroll container — see .session-layout */
-    background: var(--wa-color-surface-default, #fff);
+    /* Background, full border and radius come from .panel-card; the stronger shadow overrides
+       the card's: the overlay floats above the other cards. */
     box-shadow: var(--wa-shadow-l, 0 10px 40px rgba(0, 0, 0, 0.35));
-    --overlay-border: var(--divider-size) solid var(--wa-color-surface-border, rgba(0, 0, 0, 0.12));
 }
 /* While a FilePane preview teleported into this overlay is expanded to full-window
    (position:fixed; z-index:1000), the overlay's own z-index:11 stacking context traps it
@@ -100,16 +100,14 @@ function onShow(event) { emit('select', event.detail.name) }
 .layout-overlay:has(.file-pane-preview--fullscreen) {
     z-index: 13;
 }
-/* The overlay peeks from one edge; only its inner edge (toward the escape strip / center) is bordered. */
-.layout-overlay.left { border-right: var(--overlay-border); }
-.layout-overlay.right { border-left: var(--overlay-border); }
-.layout-overlay.bottom { border-top: var(--overlay-border); }
 .overlay-topbar {
     flex: 0 0 auto;
     min-width: 0;
     display: flex;
     align-items: stretch;
     overflow: hidden;
+    /* Keep the first tab and the close button clear of the card's rounded corners. */
+    padding-inline: var(--panel-corner-inset);
 }
 .overlay-tabnav {
     flex: 1 1 auto;

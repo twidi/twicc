@@ -12,6 +12,7 @@ import DockGutter from './DockGutter.vue'
 import LayoutOverlay from './LayoutOverlay.vue'
 import { useFramePoolStore } from '../../../stores/framePool'
 import { dropZoneAt, layoutDropZones } from '../../../utils/layoutDrag'
+import { innerEdges, insetRectStyle, NO_INSETS } from '../../../utils/panelInsets'
 import { DOCK_ICONS, DOCK_LABELS } from './dockMeta'
 
 const props = defineProps({
@@ -64,11 +65,22 @@ const centerStyle = computed(() => {
     // When the center is maximized it fills the whole area (the resolver's region rect is the viewport).
     const r = (isCenterMaximized.value && maximizedRegion.value) || (docking.value && centerRegion.value)
     if (!r) return {}
-    return { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` }
+    // Floating cards: inset by half a gap on the edges facing another region (panelInsets.js).
+    return insetRectStyle(r, innerEdges(r, render.value.viewport))
 })
 
 const overlay = computed(() =>
     render.value.overlays.find((o) => o.edge === openOverlayEdge.value) || null
+)
+
+// Inner edges of each region / of the open overlay (panelInsets.innerEdges), computed once per
+// layout render: built inline in the template they would be new objects on every render of this
+// component (e.g. each pointermove of a tab drag), re-rendering every DockRegion for nothing.
+const regionInsets = computed(() => Object.fromEntries(
+    render.value.regions.map((r) => [r.id, innerEdges(r, render.value.viewport)])
+))
+const overlayInsets = computed(() =>
+    overlay.value ? innerEdges(overlay.value.rect, render.value.viewport) : NO_INSETS
 )
 // The overlay shows the active (route) tab — it's open precisely because that tab is in overlay
 // mode (see useSessionLayout: openOverlayEdge is derived from the route).
@@ -661,7 +673,7 @@ onBeforeUnmount(() => {
         @contextmenu.capture="onCapturedContextMenu"
         @dragstart.capture="onNativeDragStart"
     >
-        <div class="center-slot" :style="centerStyle" v-show="centerVisible">
+        <div class="center-slot panel-card" :style="centerStyle" v-show="centerVisible">
             <slot></slot>
         </div>
 
@@ -669,6 +681,7 @@ onBeforeUnmount(() => {
         <DockRegion
             v-if="maximizedDockRegion"
             :region="maximizedDockRegion"
+            :insets="regionInsets[maximizedDockRegion.id]"
             :active-tab-id="layout.regionActiveTabId(maximizedDockRegion)"
             :focused-tab-id="focusedTabId"
             :tab-href="tabHref"
@@ -689,6 +702,7 @@ onBeforeUnmount(() => {
                 v-for="r in dockRegions"
                 :key="r.id"
                 :region="r"
+                :insets="regionInsets[r.id]"
                 :active-tab-id="layout.regionActiveTabId(r)"
                 :focused-tab-id="focusedTabId"
                 :tab-href="tabHref"
@@ -721,12 +735,14 @@ onBeforeUnmount(() => {
                 title="Drag to resize · double-click to maximize"
                 @pointerdown="onSplitterDown($event, s)"
             >
-                <wa-icon name="grip-lines-vertical" auto-width class="splitter-grip"></wa-icon>
+                <!-- Touch affordance (coarse pointers only): see .panel-grip in styles/surfaces.css. -->
+                <span class="panel-grip" :class="{ horizontal: s.axis === 'h' }" aria-hidden="true"></span>
             </div>
 
             <LayoutOverlay
                 v-if="overlay"
                 :overlay="overlay"
+                :insets="overlayInsets"
                 :active-tab-id="overlayActive"
                 :tab-href="tabHref"
                 :dock-of="layout.dockOf"
@@ -780,6 +796,9 @@ onBeforeUnmount(() => {
        back: the whole layout stays shifted with a blank strip. Same rule on the frame boxes of
        DockRegion and LayoutOverlay. */
     overflow: clip;
+    /* Lets the outer cards' shadows paint into the gap around the layout; only the gap, so the
+       gutters' invisible measurement mirrors stay inside .main-content's padding box. */
+    overflow-clip-margin: var(--panel-gap);
 }
 /* While dragging a resize splitter, neutralize iframe panes (HTML/PDF previews): an iframe is a
    separate browsing context that would otherwise capture pointermove/up as soon as the pointer
@@ -934,8 +953,8 @@ body.sidebar-closed .session-layout :deep(.dock-gutter.left .g-group.end) {
 }
 
 /* Dock resize handles: an invisible hit strip over a column/center or bottom/center boundary. The
-   divider line itself is the adjacent region's border; the ::after is only the grab affordance,
-   revealed on hover and during the drag. Below the gutters (12) and overlay (11) so those win. */
+   boundary is the gap between two cards; the ::after line shows in it on hover and during the
+   drag. Below the gutters (12) and overlay (11) so those win. */
 .layout-splitter {
     position: absolute;
     z-index: 5;
@@ -964,19 +983,4 @@ body.sidebar-closed .session-layout :deep(.dock-gutter.left .g-group.end) {
 .layout-splitter.axis-h::after { left: 0; right: 0; top: 50%; height: var(--divider-size); translate: 0 -50%; }
 .layout-splitter:hover::after { opacity: 0.5; }
 .layout-splitter.dragging::after { opacity: 1; }
-
-/* Touch affordance: a persistent grip centered on the strip (by the strip's grid place-content),
-   mirroring the sidebar splitter's .divider-handle — shown only on coarse-pointer devices where
-   there's no hover. Scaled up so it overflows the thin strip: a pointerdown on it bubbles to the
-   strip and starts the drag, so the grip is a large tap surface. Rotated 90° on the horizontal
-   (axis-h) splitters so the grip lines run along the divider. */
-.splitter-grip {
-    display: none;
-    scale: 3;
-    color: var(--wa-color-surface-border);
-}
-.layout-splitter.axis-h .splitter-grip { rotate: 90deg; }
-@media (pointer: coarse) {
-    .splitter-grip { display: block; }
-}
 </style>

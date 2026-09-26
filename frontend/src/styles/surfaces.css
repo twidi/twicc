@@ -81,6 +81,38 @@ body::before {
     background: var(--canvas-background);
 }
 
+/* Touch affordance for a resizable gap (sidebar divider, layout splitters): a small pill
+   centered in the gap, shown only on coarse-pointer devices, where there is no hover to reveal
+   that the gap can be dragged. Its ::before widens the tap surface around the pill; a
+   pointerdown on it bubbles to the gap's own drag handler. `.horizontal` for a gap between
+   stacked cards. */
+.panel-grip {
+    display: none;
+    position: relative;
+    flex: none;
+    width: 0.1875rem;
+    height: 2.5rem;
+    border-radius: 1rem;
+    background: color-mix(in oklab, var(--wa-color-text-quiet) 45%, transparent);
+}
+.panel-grip::before {
+    content: "";
+    position: absolute;
+    inset: -1rem -0.75rem;
+}
+.panel-grip.horizontal {
+    width: 2.5rem;
+    height: 0.1875rem;
+}
+.panel-grip.horizontal::before {
+    inset: -0.75rem -1rem;
+}
+@media (pointer: coarse) {
+    .panel-grip {
+        display: block;
+    }
+}
+
 /* One floating card. Every card carries this class: it is also the marker the pooled
    iframes look for to round their corners (PersistentFrame). */
 .panel-card {

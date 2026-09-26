@@ -7,6 +7,7 @@ import { computed, ref, watchEffect } from 'vue'
 import TabPlacementMenu from './TabPlacementMenu.vue'
 import SessionTabLink from './SessionTabLink.vue'
 import TabBar from '../../ui/TabBar.vue'
+import { insetRectStyle, NO_INSETS } from '../../../utils/panelInsets'
 
 const props = defineProps({
     region: { type: Object, required: true },
@@ -21,6 +22,9 @@ const props = defineProps({
     maximized: { type: Boolean, default: false },
     registerTarget: { type: Function, required: true },
     unregisterTarget: { type: Function, required: true },
+    // Inner edges of this region's rect (SessionLayout, panelInsets.innerEdges): the card is
+    // inset by half a panel gap on them.
+    insets: { type: Object, default: () => NO_INSETS },
 })
 const emit = defineEmits(['select', 'tab-activate', 'minimize', 'maximize', 'restore', 'place', 'pane-focus'])
 
@@ -31,12 +35,7 @@ const bodyRef = ref(null)
 // regions dim their tab bar to mark them as inactive.
 const isRouteActive = computed(() => props.activeTabId != null && props.activeTabId === props.focusedTabId)
 
-const style = computed(() => ({
-    left: `${props.region.x}px`,
-    top: `${props.region.y}px`,
-    width: `${props.region.w}px`,
-    height: `${props.region.h}px`,
-}))
+const style = computed(() => insetRectStyle(props.region, props.insets))
 const tabs = computed(() => props.region.slots.flatMap((s) => s.tabs))
 const dockIds = computed(() => props.region.slots.map((s) => s.dockId))
 
@@ -98,7 +97,7 @@ function onEmptyBarDblClick(event) {
 </script>
 
 <template>
-    <div class="dock-region" :class="region.kind" :data-rid="region.id" :style="style">
+    <div class="dock-region panel-card" :class="region.kind" :data-rid="region.id" :style="style">
         <!-- Flex row [scrollable tabs][fixed controls], like TerminalPanel's actions bar: the
              window buttons must stay visible while the tab strip scrolls, and never sit over a
              tab — they live beside the scroll area, not inside it. -->
@@ -179,10 +178,9 @@ function onEmptyBarDblClick(event) {
     display: flex;
     flex-direction: column;
     overflow: clip; /* not a scroll container — see SessionLayout's .session-layout */
-    background: var(--wa-color-surface-default, transparent);
+    /* Background, full border, radius and shadow come from .panel-card (styles/surfaces.css). */
     min-width: 0;
     min-height: 0;
-    --dock-border: var(--divider-size) solid var(--wa-color-surface-border, rgba(0, 0, 0, 0.12));
 }
 /* While a FilePane preview inside is expanded to full-window (position:fixed; z-index:1000), drop the
    isolation so the overlay escapes this region and covers the splitters / gutters — otherwise it is
@@ -194,18 +192,6 @@ function onEmptyBarDblClick(event) {
     isolation: auto;
 }
 
-/* Borders sit only on inner edges (facing the center or a sibling divider); edges that touch
-   the layout's outer boundary stay bare. The resolver encodes "both siblings shown" in the
-   region id: left-bottom / right-bottom exist ONLY when the side column is split, so their top
-   border is the divider between the two stacked docks; bottom-right exists ONLY when the bottom
-   is split, and owns the vertical divider toward bottom-left. */
-.dock-region.col-left { border-right: var(--dock-border); }
-.dock-region.col-right { border-left: var(--dock-border); }
-.dock-region.bottom { border-top: var(--dock-border); }
-.dock-region[data-rid="left-bottom"],
-.dock-region[data-rid="right-bottom"] { border-top: var(--dock-border); }
-.dock-region[data-rid="bottom-right"] { border-left: var(--dock-border); }
-
 /* The bar row: the tab strip takes the space and scrolls; the window buttons keep their own
    fixed zone at the end. Stretch aligns the controls' bottom border with the strip's track. */
 .dock-topbar {
@@ -214,6 +200,8 @@ function onEmptyBarDblClick(event) {
     display: flex;
     align-items: stretch;
     overflow: hidden;
+    /* Keep the first tab and the window buttons clear of the card's rounded corners. */
+    padding-inline: var(--panel-corner-inset);
     transition: opacity var(--wa-transition-fast, 0.15s) var(--wa-transition-easing, ease);
 }
 /* Active-region cue: a dock that doesn't own the route dims its tab bar (nav + window buttons; the

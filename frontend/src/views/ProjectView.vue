@@ -1771,7 +1771,7 @@ function updateSidebarClosedClass(closed) {
             @wa-reposition="handleSplitReposition"
         >
             <!-- Divider handle for touch devices -->
-            <wa-icon slot="divider" name="grip-lines-vertical" class="divider-handle"></wa-icon>
+            <span slot="divider" class="panel-grip" aria-hidden="true"></span>
 
             <!-- Sidebar -->
         <aside slot="start" class="sidebar">
@@ -2625,7 +2625,7 @@ function updateSidebarClosedClass(closed) {
         </aside>
 
         <!-- Main content area -->
-        <main slot="end" class="main-content panel-card" :class="{ 'main-content--preview-expanded': previewExpanded }">
+        <main slot="end" class="main-content" :class="{ 'main-content--preview-expanded': previewExpanded }">
             <div v-show="!isArtifactsMode && sessionId" class="session-content">
                 <router-view v-slot="{ Component }">
                     <KeepAlive :max="settingsStore.getMaxCachedSessions">
@@ -2633,12 +2633,12 @@ function updateSidebarClosedClass(closed) {
                     </KeepAlive>
                 </router-view>
             </div>
-            <div v-show="!isArtifactsMode && !sessionId" class="project-detail-content">
+            <div v-show="!isArtifactsMode && !sessionId" class="project-detail-content panel-card">
                 <KeepAlive>
                     <ProjectDetailPanel :project-id="effectiveProjectId" :active="!sessionId" :key="effectiveProjectId" />
                 </KeepAlive>
             </div>
-            <div v-show="isArtifactsMode" class="artifacts-browser-content">
+            <div v-show="isArtifactsMode" class="artifacts-browser-content panel-card">
                 <KeepAlive>
                     <ArtifactsBrowserView
                         :bookmark-id="lastArtifactBookmarkId"
@@ -2753,7 +2753,13 @@ function updateSidebarClosedClass(closed) {
    Opacity lives in the color so the slotted touch grip stays fully visible. */
 .project-view::part(divider) {
     --line: transparent;
-    background: linear-gradient(var(--line), var(--line)) center / var(--divider-size) 100% no-repeat;
+    /* Over the canvas, painted opaque like .main-content (same reason: the divider sits above
+       the sidebar and must hide what spills out of it). Attachments: the line layer scrolls,
+       the two aura layers of --canvas-background are fixed like the canvas behind. */
+    background:
+        linear-gradient(var(--line), var(--line)) center / var(--divider-size) 100% no-repeat,
+        var(--canvas-background);
+    background-attachment: scroll, fixed, fixed;
 }
 .project-view::part(divider):hover {
     --line: color-mix(in oklab, var(--wa-color-brand-fill-loud) 50%, transparent);
@@ -2761,19 +2767,6 @@ function updateSidebarClosedClass(closed) {
 .project-view.sidebar-resizing::part(divider) {
     --line: var(--wa-color-brand-fill-loud);
 }
-/* Divider handle: hidden by default, shown only on touch devices */
-.divider-handle {
-    color: var(--wa-color-surface-border);
-    display: none;
-    scale: 3;
-}
-
-@media (pointer: coarse) {
-    .divider-handle {
-        display: inline;
-    }
-}
-
 .sidebar {
     --transition-duration: .3s;
     height: 100dvh;
@@ -3032,16 +3025,24 @@ wa-dropdown-item:hover .row-menu-trigger,
     flex-direction: column;
 }
 
-/* Commit 1: the whole content area is one floating card (.panel-card in the template
-   gives background, border, radius, shadow). The left gap is the divider column. */
+/* Transparent: the session regions, the project detail and the artifacts browser are the
+   cards. The outer inset is padding (not margin) so cards' shadows paint into it; clip
+   (not hidden: never a scroll container) with a gap-sized margin lets the shadows of cards
+   flush with the left edge paint into the divider column. */
 .main-content {
     flex: 1;
     min-width: 0;
-    height: calc(100% - 2 * var(--panel-gap));
-    margin-block: var(--panel-gap);
-    margin-inline-end: var(--panel-gap);
-    /* With the radius, also clips the pooled iframes (FrameHost lives inside). */
-    overflow: hidden;
+    height: 100%;
+    padding-block: var(--panel-gap);
+    padding-inline-end: var(--panel-gap);
+    overflow: clip;
+    overflow-clip-margin: var(--panel-gap);
+    /* Opaque, painted with the canvas itself (fixed to the viewport, so pixel-identical to
+       body::before): this area is stacked above the sidebar (z-index 1) and must keep hiding
+       what spills out of it — e.g. the button pushed out when the project selector widens on
+       hover/focus/open — while the selector trigger (z-index 11) still shows over it. */
+    background: var(--canvas-background);
+    background-attachment: fixed;
     z-index: 1;
     /* Containing block for the absolutely-positioned FrameHost, stable in both
        states (container-type below is dropped while a preview is expanded). */
@@ -3067,6 +3068,11 @@ wa-dropdown-item:hover .row-menu-trigger,
 .project-detail-content,
 .artifacts-browser-content {
     height: 100%;
+}
+/* Cards: clip (both axes) follows the rounded corners and is not a scroll container. */
+.project-detail-content,
+.artifacts-browser-content {
+    overflow: clip;
 }
 
 .sessions-loading {
@@ -3658,6 +3664,13 @@ html.wa-dark .usage-lane-time {
 
 /* Container query: when sidebar is collapsed (≤ 50px), show expand icon */
 @container sidebar (width <= 50px) {
+    /* Collapsed: the sidebar is only a 0-wide grid column, nothing hides its content, and the
+       header rows (wider than that) would spill over the content. They serve no purpose here;
+       the footer keeps its own rules (the reopen toggle must stay visible). */
+    .sidebar-header {
+        visibility: hidden;
+    }
+
     .sidebar-toggle .icon-collapse {
         display: none;
     }
@@ -3695,9 +3708,6 @@ html.wa-dark .usage-lane-time {
     /* Split panel always shows content at full width, so replace grid of project view by a block, sidebar will be an overlay */
     .project-view {
         display: block;
-        /* The inset comes from padding here: a top margin on .main-content would collapse
-           through this block host and the wrappers, and scroll the page. */
-        padding: var(--panel-gap);
         &::part(divider) {
             display: none;
         }
@@ -3705,8 +3715,9 @@ html.wa-dark .usage-lane-time {
     }
 
     .main-content {
-        margin: 0;
         height: 100%;
+        /* No divider column on mobile: inset on all four sides. */
+        padding: var(--panel-gap);
     }
 
     /* Sidebar becomes a fixed drawer */
