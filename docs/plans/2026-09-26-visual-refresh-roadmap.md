@@ -1,0 +1,422 @@
+# Visual refresh ("Signature") — roadmap, decisions and handoff
+
+Living reference for the whole redesign. Read this first before working on any step: it
+records what was explored, what the user decided (and rejected), how we work, what step 1
+did and learned, and what steps 2–7 are meant to contain. Per-step specs and plans are
+written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
+
+## 1. Status
+
+| Step | Topic | Status |
+|---|---|---|
+| 1 | Canvas + floating panels | **Done** — commits `ddc43644`, `8dbdfd83` on branch `enhanced-ui` |
+| 2 | Depth (layered shadows) | To specify |
+| 3 | Accent-tinted glass overlays | To specify |
+| 4 | Motion tokens + micro-interactions | To specify |
+| 5 | Entrances (virtual-scroll aware) + skeletons | To specify |
+| 6 | Accent glow + live states | To specify |
+| 7 | Secondary screens | To specify |
+
+**No merge into `main` and no pull request until the whole redesign (steps 1–7) is done.**
+We keep iterating on branch `enhanced-ui`.
+
+## 2. Origin
+
+The user found the UI "sad": flat surfaces, almost no animation, nothing that makes you go
+"oh, that's nice". Goal: make it more appealing **without overdoing it**, acting on shared
+components and tokens (there are too many screens to treat one by one).
+
+Constraints given at the start:
+- light and dark schemes, and a user-chosen accent color, must both keep working;
+- the user **may later remove** the theme choice and the accent-color choice (keep
+  everything derived from tokens so either outcome works);
+- sizes are `rem`-based and follow the font-size setting.
+
+Findings on the existing UI (2026-09-26):
+- only 2 Vue `<Transition>` in ~240 components; transitions are Web Awesome defaults
+  (`150ms ease`, buttons only);
+- surfaces are nearly all the same color; shadows are a hard 2px offset;
+- a session shows a blank white screen for seconds while loading.
+
+## 3. The interactive mock (reference)
+
+Location (outside the repo, in the TwiCC artifacts of session
+`2992a814-2ce5-4622-a145-219d5e2fd203`):
+`~/.twicc/artifacts/2992a814-2ce5-4622-a145-219d5e2fd203/ui-directions/`
+(`index.html` + `mock.css` + `app.js`; the user's saved pick in `data/pick.json`).
+Open it from TwiCC's Artifacts tab of that session, or serve the folder locally
+(`python3 -m http.server`) to test in Chrome.
+
+It mocks the session screen, project stats, home, settings popover, command palette,
+question widget, tasks tab, dialog, menu and toasts. A control bar switches scheme, accent,
+font size (14/16/18), direction and each **ingredient** on/off, and has "Try" actions
+(simulate a turn, question, reload/skeleton, palette, settings, dialog, toast, reduced
+motion).
+
+Directions: `Current`, `A · Polish` (motion, micro, enter, type), `B · Depth` (A + depth,
+glow, live), `C · Signature` (B + floating panels, glass, ambient). **The user chose
+C · Signature.**
+
+Each ingredient is one block in `mock.css`, scoped under `.mock.fx-<name>`:
+`fx-motion`, `fx-micro`, `fx-enter`, `fx-depth`, `fx-glow`, `fx-live`, `fx-type`,
+`fx-float`, `fx-glass`, `fx-ambient`. **Use those blocks as the visual reference for the
+matching step** (values are copied in §9 below in case the artifact is lost).
+
+## 4. User decisions and feedback (binding)
+
+From the mock (round 1 pick, round 2 review) and from step 1 reviews:
+
+- **Selected session:** no accent bar on its left. Keep a distinct, **more evident** fill
+  (stronger lit fill, thin accent ring, soft accent shadow, bolder title).
+- **Toasts:** top center (where Notivue shows them), dropping in from the top.
+- **Glass overlays:** transparent + blur is liked, but **tinted with the accent** (like the
+  canvas), never a neutral grey. Applies to dialogs, menus, toasts, palette, settings.
+  Toast glass over the flat header was checked and accepted as is.
+- **Right dock:** right-top and right-bottom are **two separate cards**.
+- **Working badge:** no expanding halo/ripple around the hopping icon; the icon animation is
+  enough.
+- **Dark canvas:** the accent must be visible across the whole canvas, not only in one
+  corner — tuned by the user in several rounds (see §6.3). **The light canvas was right from
+  the start and must not change.**
+- **Bottom-right aura color:** the accent hue rotated by +70° (a neighbouring hue) — kept.
+- **Mobile drawer:** paints the full canvas (auras included), still opaque.
+- **Touch resize grips:** the old ×3-scaled `grip-lines-vertical` icons were heavy and the
+  sidebar one misplaced; replaced by a small pill centered in the gap — approved on mobile.
+- **Floating panels:** approved; done as step 1.
+- The whole "Signature" direction is liked; details beyond these points were accepted as
+  shown in the mock.
+
+## 5. How we work (process rules)
+
+- Spec per step, with an **independent adversarial review loop** (fresh subagent, verifies
+  every claim against the code) until it passes; then an implementation plan with the same
+  review loop; then execution (the user chose **native** execution: the main session
+  implements, one fresh whole-branch reviewer at the end).
+- Everything is checked in the **worktree's own dev instance** (http://localhost:5174,
+  backend 3501; started with `uv run ./devctl.py start` from the worktree). The user
+  reviews each commit in the browser (also on mobile) **before** saying "commit".
+- Commit only on the user's explicit "commit". Conventional commits, descriptive body,
+  `Co-Authored-By` with the running model's name. No CHANGELOG entry unless asked (propose
+  one at the end of the redesign).
+- On the main instance (http://localhost:5173) the user allowed changing the sidebar width
+  (saved locally only). Do not change other state there.
+- Explain choices **in UI terms** (what the user sees and where), never by class names
+  alone — the user does not know every class.
+- Never claim a pre-existing behaviour without proving it on 5173 (the user uses TwiCC all
+  day and will notice).
+
+## 6. Step 1 — canvas + floating panels (done)
+
+Spec: `docs/plans/2026-09-26-floating-panels-design.md`.
+Plan: `docs/plans/2026-09-26-floating-panels-plan.md`.
+Reviews: spec 7 rounds (PASS), plan 2 rounds (PASS), final whole-branch review (0
+critical/important in code; all minors fixed).
+
+### 6.1 What it does
+
+- `frontend/src/styles/surfaces.css` (imported in `main.js` after `transcript-tokens.css`,
+  SPA only) holds every token and the shared classes:
+  - canvas: `--canvas-color`, `--canvas-aura-start/-end`, `--canvas-aura-start-size`,
+    `--canvas-aura-end-size`, `--canvas-aura-end-at`, `--canvas-aura-fade`,
+    `--canvas-background` (auras + color, declared once on `:root`);
+  - panels: `--panel-gap` (0.5rem; 0.25rem under 640px), `--panel-half-gap`,
+    `--panel-radius` (`--wa-border-radius-l`; `-m` under 640px), `--panel-inner-radius`,
+    `--panel-corner-inset`, `--panel-border`, `--panel-shadow`;
+  - `.panel-card` (every card carries it — it is also the marker pooled iframes look for);
+  - `.panel-grip` (touch pill, `.horizontal` variant);
+  - `html` background + `body::before` fixed aura layer.
+- Sidebar on the canvas; the sidebar divider **is** the gap (accent line on hover/drag via
+  `useSplitDividerDragFlag`'s `dragging`, which now filters on the panel's own divider).
+- Session: header on the canvas (its divider/compact border made invisible, space kept);
+  every layout region is a card (center, docks, overlay) inset by half a gap on its inner
+  edges via `utils/panelInsets.js` (`innerEdges`, `insetRectStyle`, computed once per render
+  in `SessionLayout`); rails transparent; overlay backdrop rounded; top bars inset so corner
+  controls are not clipped. The pure resolver (`utils/layoutResolver.js`) is untouched.
+- Project detail, artifacts browser, session fallback views (ephemeral, not found, loading):
+  one card each.
+- Pooled iframes (Browser pane, HTML previews) get rounded corners where they sit in a
+  card's corner (`PersistentFrame` resolves the containing `.panel-card`; `FrameHost` builds
+  the clip-path with `frameFlushCorners` / `frameClipPath`).
+- Clips: `.main-content`, `.session-view` use `overflow: clip` + `overflow-clip-margin` =
+  gap; `.frame-host` clips; **shadow budget**: panel shadow horizontal reach ≤ 4px.
+
+### 6.2 Lessons (do not regress)
+
+- **The content area (`.main-content`) must stay opaque.** It is stacked above the sidebar
+  and is what hides anything spilling out of it (the sidebar is only a grid column; nothing
+  clips it). Making it transparent showed the collapsed sidebar's header buttons over the
+  session title, and the peer button pushed out when the project selector widens. It is now
+  painted with `--canvas-background` + `background-attachment: fixed` (pixel-identical to
+  the canvas behind); the divider part is painted the same way. The project-selector
+  trigger (`z-index: 11`) still shows over it — that overflow on hover/focus/open is
+  **intended** (to read the full name and the menu).
+- Collapsed sidebar: its header rows are hidden (`visibility: hidden` under
+  `@container sidebar (width <= 50px)`); the footer/reopen toggle keep their own rules.
+- Never add `transform`, `filter`, `backdrop-filter`, `contain`, `will-change` or
+  `container-type` to `.main-content`'s branches, `.session-layout`, `.center-slot`,
+  `.dock-region` or `.layout-overlay`: fullscreen file previews are `position: fixed` in
+  place and would be trapped. (Step 3's glass must respect this: blur only on overlays that
+  are not ancestors of panes.)
+- Never move an iframe in the DOM (see CLAUDE.md "Persistent frames").
+
+### 6.3 Final canvas values
+
+Light (unchanged since the first proposal — do not touch):
+`--canvas-color: color-mix(in oklab, brand-95 30%, neutral-95)`; auras `brand-90` at 60% /
+`h+70` at 0.45; sizes `55rem 38rem` / `50rem 36rem`; end aura at `105% 110%`; fade 65%.
+
+Dark (tuned by the user: "¾ between A and B", then bottom-right aura fixed):
+`--canvas-color: color-mix(in oklab, color-mix(in oklab, surface-default, black 26%) 70%, brand-20)`;
+auras `brand-50` at 49% / `h+70` at 0.55; sizes `96rem 70rem` / `88rem 65rem`; end aura at
+`100% 100%` (centered on the corner; outside it, it fell off-screen); fade 80%.
+History: A = 15% tint, 45%/0.34, 55×38/50×36rem, fade 65%; B = 35%, 50%/0.4,
+110×80/100×75rem, 85%.
+
+### 6.4 Accepted limitations
+
+- Safari has no `overflow-clip-margin`: shadows of cards touching the layout's outer edges
+  are clipped there.
+- Tab-drag drop zones use raw resolver rects (off by up to half a gap).
+- The tab track line stops at the corner inset inside a card.
+- Pooled frames with a pane padding under 6px get a rounded corner too.
+- FilesPanel / GitPanel internal splitters keep their old grip icons (inside cards, out of
+  scope).
+
+### 6.5 Not verified in a browser (to check when convenient)
+
+Fullscreen preview from a dock; KeepAlive return with a docked Browser (corners); Firefox
+sideways shift when reopening the Artifacts overlay (commit `63d0d7c5` case); Browser
+responsive stage larger than its pane (no page scrollbar); side overlay opened while a rail
+shows. Code-read OK by the final reviewer.
+
+## 7. Deferred / open topics
+
+- **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
+  sidebar, which now reads as visibly truncated at the sidebar edge) — "to rethink later",
+  user 2026-09-26.
+- Possible removal of the theme and accent-color choices (user idea, undecided).
+- A bundled variable font (Inter / Geist, self-hosted) — would add an npm dependency: the
+  user's call.
+- CHANGELOG entry for the redesign — propose at the end, do not write without asking.
+
+## 8. What the user sees — visual description per topic (validated as a whole)
+
+The user validated the **C · Signature** direction **as a whole** in the mock, not each
+detail one by one. This section describes, in plain visual terms, what each topic looks and
+feels like in that validated mock — the target for each step. Section 4 lists the points the
+user explicitly changed; they override anything here. Section 9 gives the matching values.
+
+### 8.1 Canvas and ambient light (step 1 — done)
+
+- The page background is no longer a plain white/black: it is a **canvas slightly tinted
+  with the accent color**.
+- Two **soft glows** sit on it: one in the top-left corner in the accent color, one in the
+  bottom-right corner in a neighbouring hue (the accent turned by 70°: green → cyan, cyan →
+  blue-violet). They fade into the tinted canvas.
+- In dark mode the tint and the glows are stronger, so the accent reads across the whole
+  background (user-tuned).
+- The sidebar has no background of its own: its sessions sit directly on the canvas.
+
+### 8.2 Floating panels (step 1 — done)
+
+- The working zones are **cards floating on the canvas**: rounded corners, a thin border, a
+  soft shadow cast downward, and a small gap (0.5rem) of canvas around each one.
+- In a session, the chat, each dock (right-top, right-bottom, bottom, left) and the overlay
+  are **separate cards**; the session title bar sits on the canvas above them.
+- Between the sidebar and the content there is no line anymore: the gap is the separator. A
+  thin accent line appears in the gap when hovering it, full strength while dragging.
+- On touch screens, a small rounded pill sits in the middle of every resizable gap.
+- Iframes (Browser, HTML previews) follow the rounded corners of their card.
+
+### 8.3 Depth (step 2)
+
+- Everything that is "on top" of something gets a **soft, layered shadow** instead of the
+  current hard 2px line under it: message cards lift slightly off the chat, buttons look
+  gently raised (with a faint light edge on top), inputs look slightly recessed.
+- Floating things (menus, toasts, dialogs, command palette, settings) get a deeper, wider
+  shadow, clearly above the page.
+- **User messages** get a very faint accent tint, so they read differently from the
+  assistant's cards at a glance.
+- In dark mode, where shadows barely show, raised things get a hair-thin lighter line on
+  their top edge instead.
+- Cards on stats and home lift a little more on hover. The "+x% / −x%" badges become soft
+  filled pills instead of outlined boxes.
+
+### 8.4 Glass overlays (step 3)
+
+- Menus, dialogs, toasts, the command palette and the settings panel become **translucent
+  and blurred**: the content behind shows through, softened.
+- Their tint is **a light wash of the accent color** (never grey), with a faint accent border
+  and a thin highlight on the top edge.
+- The dimmed backdrop behind a dialog is lighter and blurred, slightly tinted, instead of a
+  flat dark veil.
+- Tooltips are slightly translucent too.
+
+### 8.5 Motion (step 4)
+
+- Every hover/press/state change uses the same **smooth timing**, with a subtle **spring**
+  on things that move (slight overshoot, then settle).
+- The **active-tab underline glides** from one tab to the next instead of jumping; same for
+  the segmented controls, the settings section indicator, and the command-palette highlight
+  following the arrow keys.
+- Tool cards (Bash, Edit, Read…) **open and close smoothly** instead of snapping.
+- Collapsing/expanding the sidebar is animated.
+
+### 8.6 Micro-interactions (step 4)
+
+- Buttons **press in** slightly when clicked; snippet chips lift by 1px on hover.
+- Session rows **nudge right** a little on hover; their "⋮" menu slides in.
+- The Send arrow nudges up on hover; "→" arrows nudge right; the settings gear turns a
+  quarter; small icon buttons grow slightly on hover.
+- In the Tasks tab, a completed task's check **pops** in.
+
+### 8.7 Entrances (step 5)
+
+- A new message **fades in while sliding up** a few pixels (user messages slide in from the
+  right). Only messages that arrive live animate — scrolling back never replays them.
+- Menus **pop open from where they were clicked**; dialogs spring in; the command palette
+  drops in; the settings panel grows from its button; closing is a quick fade.
+- Toasts **drop in from the top center** with a small bounce, and fade up when leaving.
+- The session list appears in a quick cascade on load.
+- Instead of a blank screen while a session loads, a **skeleton** (grey card shapes with a
+  moving shimmer) shows where the messages will be.
+- Switching light/dark reveals the new theme in a **growing circle** from the click point.
+
+### 8.8 Accent glow (step 6)
+
+- The main buttons (Send, New session, Create…) get a **subtle vertical gradient** in the
+  accent color, a soft coloured shadow, and a **light sheen** that sweeps across on hover.
+- Focused fields get a **soft accent halo** around them instead of the hard thick outline.
+- The **selected session** in the sidebar is clearly highlighted: a fuller accent-tinted
+  fill that fades to the right, a thin accent outline, a soft accent shadow, a bolder title.
+  **No bar on its left.**
+- The active-tab underline is a small accent gradient that glows slightly.
+- The context-usage ring glows in its colour; usage bars and switches get gradients.
+
+### 8.9 Live states (step 6)
+
+- While the agent works, its "working" card has a **light running around its border** (a
+  comet-like accent streak), the "working" label **shimmers**, and three dots bounce.
+- Unread sessions show a small accent dot that **breathes** gently.
+- The context ring pulses softly while the agent is working.
+- A pending question from the agent shows with a **gradient accent border**.
+- The hopping robot icon of a running session stays as it is — **no expanding halo**.
+
+### 8.10 Typography (step 2 or 4)
+
+- Numbers (times, costs, percentages) keep a **fixed width**, so they stop jittering when
+  they change.
+- Titles are slightly tighter and a bit bolder; sidebar section labels ("Pinned", "Last 24
+  hours") become small uppercase labels with letter spacing.
+- Long message paragraphs avoid lonely last words (`text-wrap: pretty`).
+
+### 8.11 Secondary screens (step 7)
+
+- **Project stats:** the big numbers **count up** when the screen opens; the activity
+  heatmap fills in as a **wave**; the cost sparkline **draws itself** with a soft gradient
+  under it.
+- **Home:** workspace and project cards arrive in a **cascade**; their sparklines draw in;
+  a hovered card **lifts and glows in its workspace's own color**.
+- **Tasks tab:** during a turn, tasks **tick one by one** (check pop, strike-through, the
+  progress bar fills).
+- **Question widget:** slides up from the composer; options are cards with a springy radio;
+  the selected option has an accent outline and glow.
+- **Settings:** the selected section indicator **glides** in the left menu; the content
+  crossfades between sections.
+
+## 9. Steps 2–7 — values (from the mock)
+
+All values below come from `mock.css`; they are starting points, to be adapted to Web
+Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced-motion`
+(the mock collapses all animations/transitions to 0.01ms).
+
+### Step 2 — Depth
+
+- Layered soft shadows instead of the hard 2px offset (light):
+  - `--sh-1: 0 1px 1px oklch(0.25 0.02 275 / .04), 0 1px 3px oklch(0.25 0.02 275 / .07)`
+  - `--sh-2: 0 1px 2px …/.05, 0 4px 12px -2px …/.08, 0 16px 32px -12px …/.12`
+  - `--sh-3: 0 2px 4px oklch(0.2 0.02 275 / .06), 0 12px 28px -4px …/.16, 0 32px 64px -16px …/.24`
+  - `--hl: inset 0 1px 0 oklch(1 0 0 / .6)` (top highlight on buttons)
+- Dark: shadows vanish on dark, so add a 1px top highlight:
+  `--sh-1: 0 1px 2px oklch(0 0 0 / .35), inset 0 1px 0 oklch(1 0 0 / .04)`, `--sh-2` /
+  `--sh-3` similar with `.4/.5` and `.45/.65`, highlight `.05/.06`.
+- Message cards: `--sh-1`; user card with a faint accent tint
+  (`color-mix(brand-fill-quiet 70%, white)`; dark 55% over raised); assistant card on the
+  raised surface; radius `0.875rem` in the mock.
+- Buttons `--sh-1 + --hl`; inputs with a faint inset shadow; composer box `--sh-2`;
+  menus/toasts/dialogs/palette/settings `--sh-3`; tool cards `--sh-1`.
+- Stats/home cards `--sh-1`, `--sh-2` on hover; delta badges become soft filled pills.
+- Watch the **panel shadow budget** (§6.1) for panel cards; message/button shadows are
+  inside cards and not bound by it.
+- Typography (can ride along here or in step 4): tabular numbers, titles
+  `letter-spacing: -0.015/-0.02em`, weight ~650, section labels small caps
+  (`.6875rem`, uppercase, `.07em`), `text-wrap: pretty` on message text.
+
+### Step 3 — Accent-tinted glass overlays
+
+- `--glass-bg` light `color-mix(oklch(0.975 0.028 h) 74%, transparent)`, dark
+  `color-mix(oklch(0.24 0.04 h) 74%, transparent)`; `--glass-border` brand-60 at 22%/28%;
+  top highlight; `backdrop-filter: blur(1.125rem) saturate(1.6)`.
+- Inputs inside glass overlays at 70% surface; menu hover / palette highlight tinted
+  `brand-fill-normal`; dialog backdrop `blur(.375rem)` + faint accent-tinted dim.
+- Targets: `wa-dialog`, dropdown menus, Notivue toasts, command palette, search overlay,
+  settings popover, tooltips (`--c-text` at 82% + blur).
+- Must not add `backdrop-filter` to an ancestor of panes (§6.2).
+
+### Step 4 — Motion + micro-interactions
+
+- Tokens: `--dur-1: 120ms; --dur-2: 200ms; --dur-3: 380ms;`
+  `--ease: cubic-bezier(.2,.8,.2,1); --ease-out: cubic-bezier(.22,1,.36,1);`
+  `--ease-spring: linear(0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%, 0.849 31.5%, 0.937 38.1%, 0.968 41.8%, 0.991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.9%, 1)`;
+  also override `--wa-transition-*`.
+- Sliding tab ink (active tab indicator glides; spring), sliding segmented control and
+  settings-nav indicator, palette highlight gliding with ↑/↓.
+- Animated expand/collapse of tool cards (`grid-template-rows 0fr → 1fr`), sidebar width.
+- Micro: press `scale(.95–.96)` (60ms), snippets lift 1px, session row nudge
+  `translateX(.1875rem)` on hover, kebab slides in, send arrow nudges up, "go" arrows nudge
+  right, settings gear rotates 90°, ghost icon buttons scale 1.12, task check pop.
+
+### Step 5 — Entrances
+
+- New messages: fade + `translateY(.75rem) scale(.985)` + slight blur (user messages from
+  the right), `--dur-3`, staggered 70ms. **Only for messages arriving live — never items
+  re-mounted by the virtual scroller.**
+- Menus pop from their anchor (180ms), dialogs spring in (320ms), backdrop fades + blur,
+  palette drops in, settings pops up from bottom-left, tooltips fade after 250ms, toasts
+  slide down from the top (spring) and fade up on exit.
+- Session list cascade on load (22ms stagger), tab-panel/screen crossfades.
+- **Skeleton** with shimmer instead of the blank screen while a session loads.
+- Theme switch: circular reveal from the click point (View Transitions API).
+
+### Step 6 — Accent glow + live states
+
+- Primary button: vertical accent gradient + inset highlight + coloured soft shadow; sheen
+  sweep on hover; brighter on hover.
+- Focus: soft halo (`0 0 0 .25rem brand/20%` + outer glow) instead of the hard 3px outline.
+- Selected session: gradient fill `brand-fill-normal → brand-fill-quiet`, 1px accent ring,
+  soft accent shadow, bold title (dark: `oklch(0.32 0.07 h) → oklch(0.25 0.05 h / .6)`).
+  **No left bar.**
+- Tab ink: accent gradient + glow; context ring glow; usage bars gradient; switches
+  gradient + glow.
+- Live: working card with a comet running around its border
+  (`@property --angle` + conic-gradient, 2.8s), shimmering "working" label, bouncing dots;
+  breathing unread dot; pulsing context ring while working; question widget with a gradient
+  border. **No expanding halo around the working badge.**
+
+### Step 7 — Secondary screens
+
+- Project stats: numbers count up (1s, ease-out cubic), heatmap cells fill in a wave,
+  sparklines draw themselves with a soft gradient fill, deltas as soft pills.
+- Home: cards cascade in, sparklines draw, hovered card lifts and glows in its workspace
+  color.
+- Tasks tab: tasks tick one by one (check pop, strike-through, progress bar).
+- Question widget (PendingRequestForm): slides up, springy radio, gradient border.
+- Settings: gliding section indicator, content crossfade.
+
+## 10. Environment
+
+- Worktree: `/home/twidi/dev/twicc-poc/.worktrees/enhanced-ui`, branch `enhanced-ui`
+  (from `main` at `43402928`).
+- Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
+  http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
+- Tests: `cd frontend && node --test` (449 at the end of step 1).
