@@ -1,6 +1,6 @@
 // Optional live updates for a mode="live" session share (Phase 5). Connects to
 // ws/share/<token>/, appends filtered items into the shim store, refreshes meta.
-export function connectShareLive({ tokenPath, sessionId, onItems, onMeta, onToolState, onProcessState, onAgentLink, onAgentStopped, onAgentIdle, onClosed }) {
+export function connectShareLive({ tokenPath, sessionId, onItems, onMeta, onToolState, onProcessState, onAgentLink, onAgentStopped, onAgentIdle, onAgentRunState, onAgentInteraction, onClosed }) {
     const wsBase = location.origin.replace(/^http/, 'ws')
     const token = tokenPath.replace(/^\/share\//, '').replace(/\/+$/, '')
     let ws = null, closed = false, backoff = 1000
@@ -16,6 +16,8 @@ export function connectShareLive({ tokenPath, sessionId, onItems, onMeta, onTool
             else if (msg.type === 'share_agent_idle') onAgentIdle?.(msg)
             else if (msg.type === 'share_agent_stopped') onAgentStopped?.(msg)
             else if (msg.type === 'share_agent_link') onAgentLink?.(msg.link)
+            else if (msg.type === 'share_agent_run_state') onAgentRunState?.(msg)
+            else if (msg.type === 'share_agent_interaction') onAgentInteraction?.(msg)
             else if (msg.type === 'share_closed') { closed = true; onClosed?.() }
         }
         ws.onopen = () => { backoff = 1000 }

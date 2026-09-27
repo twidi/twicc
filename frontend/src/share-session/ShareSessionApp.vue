@@ -89,6 +89,8 @@ function onPopState(e) {
 
 if (ready.value && meta.include_subagents) {
     provide('openSubagent', openSubagent)
+    // On at setup only; a live share_meta may turn it off for good (onMeta).
+    store.runStatesAvailable = true
     const linkFetch = store.beginAgentFetch(meta.session_id)
     api.fetchSubagents().then((links) => {
         store.applyAgentSnapshot(meta.session_id, links, linkFetch)
@@ -98,6 +100,7 @@ if (ready.value && meta.include_subagents) {
     }).catch(() => {})
 }
 provide('sessionActive', ref(true))
+provide('sharedSessionId', meta.session_id)
 // A snapshot (or a share closed under the viewer) is a frozen transcript: no tool
 // can be running, so the reused tree drops its running spinners / result polling.
 // Live shares keep the real state (tool-states fetch + WS share_tool_state).
@@ -122,6 +125,9 @@ onMounted(() => {
             // viewer's current mode so the select never sits on a now-invalid value.
             onMeta: (m) => {
                 Object.assign(meta, m)
+                // include_subagents turned off live: no run state is relayed any
+                // more, so stop reading the stored ones (never back on before reload).
+                if (store.runStatesAvailable && !m.include_subagents) store.disableRunStates(meta.session_id)
                 store.setSession({ ...store.getSession(meta.session_id),
                     last_started_at: meta.last_started_at, last_stopped_at: meta.last_stopped_at,
                 })
@@ -138,6 +144,8 @@ onMounted(() => {
             // the tool card's "View Agent" resolves it).
             onAgentIdle: (msg) => store.markAgentIdle(msg.agent_session_id, msg.agent_stopped_at, msg.root_session_id),
             onAgentStopped: (msg) => store.markAgentStopped(msg.agent_session_id, msg.stopped_at, msg.root_session_id),
+            onAgentRunState: (msg) => store.setAgentRunState(msg),
+            onAgentInteraction: (msg) => store.setAgentInteraction(msg),
             onAgentLink: (link) => {
                 if (!link?.agent_id) return
                 store.addAgentLink(meta.session_id, link)

@@ -1,4 +1,5 @@
-import { agentLinkState, setAgentLink, markAgentStopped, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine } from '../../utils/agentLinkIndex'
+import { agentLinkState, setAgentLink, markAgentStopped, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, runStateFromPayload, interactionFromPayload, setAgentRunState, setAgentInteraction, effectiveAgentRun } from '../../utils/agentLinkIndex'
+import { getSessionCutoffMs } from '../../utils/sessions'
 // Read-only mirror of the SPA data store for the share bundle. Only the surface
 // the reused transcript components actually touch is implemented; anything else
 // throws in dev so drift is caught, and no-ops the write surface (failed sends,
@@ -37,6 +38,10 @@ export const useDataStore = defineStore('shareData', {
         ...agentLinkState(),          // id -> { toolId: { agentId, isBackground, toolUseLineNum, slug } }
         toolStates: {},          // id -> { toolId: {...} }
         liveTurns: {},           // id -> bool (live share: root session in assistant_turn)
+        // include_subagents was on at setup and has stayed on since (design §7.3):
+        // turned on by ShareSessionApp's setup, off for good by disableRunStates.
+        runStatesAvailable: false,
+        connectionEpoch: 0,      // the app store's reconnect counter; a share re-fetches nothing on reopen (§7.3)
         _cache: {},              // id -> Map for visual-item stabilization
     }),
     getters: {
@@ -59,6 +64,17 @@ export const useDataStore = defineStore('shareData', {
         getAgentLinkInfo: (s) => (id) => s.agentLinkIndex[id] || null,
         getRootAgentToolUseLineNum: (s) => (root, id) => rootAgentToolLine(s, root, id),
         getAgentLink: (s) => (id, toolId) => s.agentLinks[id]?.[toolId],
+        // ── Agent runs (share) ──
+        // Raw stored entries, as in the app store; readers gate on runStatesAvailable.
+        getAgentRunState: (s) => (agentId) => s.agentRunStates[agentId] || null,
+        getAgentInteraction: (s) => (sessionId, toolId) => s.agentInteractions[sessionId]?.[toolId] || null,
+        // No synthetic process state here: the run state plus its root's cutoff.
+        isAgentRunning: (s) => (agentId) => {
+            const entry = s.agentRunStates[agentId]
+            return !!(s.runStatesAvailable && entry
+                && effectiveAgentRun(entry, getSessionCutoffMs(s.sessions[entry.rootSessionId])).running)
+        },
+        // ── end agent runs ──
         getAgentToolUseLineNum: (s) => (parentId, subId) => {
             const links = s.agentLinks[parentId]
             if (!links) return null
@@ -299,7 +315,7 @@ export const useDataStore = defineStore('shareData', {
                 agentId: link.agent_id, rootSessionId: root, isBackground: link.is_background,
                 toolUseLineNum: link.tool_use_line_num, slug: link.agent_slug ?? null,
                 startedAt: link.started_at ?? null, stoppedAt: link.stopped_at ?? null,
-                agentStoppedAt: link.agent_stopped_at ?? null, running: link.running,
+                agentStoppedAt: link.agent_stopped_at ?? null,
                 displayName: link.display_name ?? null,
             })
         },
@@ -310,6 +326,33 @@ export const useDataStore = defineStore('shareData', {
             this.liveTurns[sessionId] = !!active
             this.recomputeVisualItems(sessionId)
         },
+        // ── Agent runs (share) ──
+        /**
+         * Store a ``share_agent_run_state`` payload with a live stamp, whatever
+         * ``runStatesAvailable`` says (reads are gated, not writes).
+         * @param {Object} msg - ``{root_session_id, agent_session_id, running, run_started_at, run_background, runs}``
+         */
+        setAgentRunState(msg) {
+            setAgentRunState(this, msg.agent_session_id, runStateFromPayload(msg, msg.root_session_id))
+        },
+        /**
+         * Store a ``share_agent_interaction`` payload with a live stamp.
+         * @param {Object} msg - ``{root_session_id, owner_session_id, agent_session_id, tool_use_id, tool_use_line_num, kind, opens_run, started_at}``
+         */
+        setAgentInteraction(msg) {
+            setAgentInteraction(this, interactionFromPayload(msg, msg.agent_session_id, msg.root_session_id))
+        },
+        /**
+         * A live ``share_meta`` turned ``include_subagents`` off: stop reading run
+         * states until reload, and bump the root's fetch generation so a setup
+         * snapshot still in flight is discarded (design §7.3).
+         * @param {string} root
+         */
+        disableRunStates(root) {
+            this.runStatesAvailable = false
+            beginAgentFetch(this, root)
+        },
+        // ── end agent runs ──
 
         // ── No-op write surface (statically imported by reused components) ──
         registerOutgoingSend() {}, removeFailedSend() {}, restoreDraftAttachments() {},
