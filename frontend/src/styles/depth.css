@@ -1,0 +1,128 @@
+/* Depth — layered soft shadows, visual refresh step 2.
+   Design: docs/plans/2026-09-26-depth-design.md.
+   Shared by the SPA (main.js), the share viewer (share-session/main.js) and the artifact
+   shell (artifact-shell/main.js): nothing here may depend on another app stylesheet.
+
+   Declaration order matters (both blocks match <html>): light tokens on :root, dark
+   overrides on .wa-dark (same specificity, later wins). Unlayered, so they beat the
+   theme's @layer wa-theme declarations. Every token is a valid box-shadow list (never
+   `none`), so tokens combine with commas. */
+
+:root {
+    /* Level 1: resting on a card (buttons, stat/home cards, question options). */
+    --depth-1:
+        0 1px 1px oklch(0.25 0.02 275 / 0.04),
+        0 1px 3px oklch(0.25 0.02 275 / 0.07);
+    /* Level 2: stands out (message composer, hovered home card). */
+    --depth-2:
+        0 1px 2px oklch(0.25 0.02 275 / 0.05),
+        0 4px 12px -2px oklch(0.25 0.02 275 / 0.08),
+        0 16px 32px -12px oklch(0.25 0.02 275 / 0.12);
+    /* Level 3: floats above the page (menus, dialogs, popovers, toasts, pickers). */
+    --depth-3:
+        0 2px 4px oklch(0.2 0.02 275 / 0.06),
+        0 12px 28px -4px oklch(0.2 0.02 275 / 0.16),
+        0 32px 64px -16px oklch(0.2 0.02 275 / 0.24);
+    /* Downward level 1 for chat cards and tool cards: nothing above, a negligible
+       0.0625rem on the sides (its faintest edge), 0.1875rem below (--depth-card-reach). */
+    --depth-card:
+        0 0.0625rem 0.125rem -0.0625rem oklch(0.25 0.02 275 / 0.10),
+        0 0.125rem 0.1875rem -0.125rem oklch(0.25 0.02 275 / 0.12);
+    /* How far --depth-card reaches below its box. Keep in sync with --depth-card (both
+       schemes use the same geometry). */
+    --depth-card-reach: 0.1875rem;
+    /* Raised buttons: a touch more than level 1, which barely shows on a small control. */
+    --depth-button:
+        0 1px 2px oklch(0.25 0.02 275 / 0.08),
+        0 2px 4px -1px oklch(0.25 0.02 275 / 0.1);
+    /* Light top edge of a raised button. Dark: a fainter one, added to the edge line
+       --depth-1 already carries there. */
+    --depth-highlight: inset 0 1px 0 oklch(1 0 0 / 0.6);
+    /* Hair-thin light top line on raised things in dark mode; nothing in light. */
+    --depth-edge: 0 0 transparent;
+    /* Recessed text field. */
+    --depth-inset: inset 0 1px 2px oklch(0.25 0.02 275 / 0.06);
+}
+
+.wa-dark {
+    /* Inset layer first: keeps level 1 → level 2 hover transitions interpolable (a
+       box-shadow transition pairs layers by position and snaps on an inset/outer pair). */
+    --depth-1:
+        inset 0 1px 0 oklch(1 0 0 / 0.04),
+        0 1px 2px oklch(0 0 0 / 0.35);
+    --depth-2:
+        inset 0 1px 0 oklch(1 0 0 / 0.05),
+        0 1px 2px oklch(0 0 0 / 0.4),
+        0 8px 24px -6px oklch(0 0 0 / 0.5);
+    --depth-3:
+        inset 0 1px 0 oklch(1 0 0 / 0.06),
+        0 2px 6px oklch(0 0 0 / 0.45),
+        0 24px 56px -12px oklch(0 0 0 / 0.65);
+    --depth-card:
+        0 0.0625rem 0.125rem -0.0625rem oklch(0 0 0 / 0.45),
+        0 0.125rem 0.1875rem -0.125rem oklch(0 0 0 / 0.35);
+    --depth-button:
+        inset 0 1px 0 oklch(1 0 0 / 0.04),
+        0 1px 2px oklch(0 0 0 / 0.45),
+        0 2px 4px -1px oklch(0 0 0 / 0.35);
+    --depth-highlight: inset 0 1px 0 oklch(1 0 0 / 0.06);
+    --depth-edge: inset 0 1px 0 oklch(1 0 0 / 0.04);
+    --depth-inset: inset 0 1px 2px oklch(0 0 0 / 0.3);
+}
+
+/* Web Awesome's own shadows follow the levels: wa-card rests at level 1; every consumer
+   of m (dropdown, submenu, select listbox, color picker) and of l (dialog, drawer,
+   popover) is a floating layer, so both map to level 3. .wa-invert is listed because
+   every theme re-declares --wa-shadow-* there (toasts, tooltips); var(--depth-*) then
+   resolves to the page scheme, inherited from <html> — right for a shadow cast on the
+   page. Placed after the .wa-dark block. */
+:root,
+.wa-invert {
+    --wa-shadow-s: var(--depth-1);
+    --wa-shadow-m: var(--depth-3);
+    --wa-shadow-l: var(--depth-3);
+}
+
+/* Global rules below are wrapped in :where() (specificity 0 + ::part), so any unlayered
+   component rule that sets its own box-shadow on the same part wins. Being unlayered they
+   beat every layered Web Awesome rule; the only layered ones that shadow these parts are
+   the awesome theme's button and field rules, hence the awesome exclusion (that theme's
+   controls keep their hard shadows: its press effect depends on them). */
+
+/* Buttons: gently raised. Not: plain, outlined/filled buttons joined in a group (a shadow
+   per segment breaks the group; solid accent groups such as "New session" + its menu are
+   raised), buttons of an inverted box (toasts — the page-scheme highlight would draw a
+   bright line), the sidebar rows (session, artifact bookmark; the selected row is step 6),
+   and the plain↔framed toggles (raised only when on would read backwards).
+   Each wa-button:is(…):not(…) compound stays on one line: a line break between :is() and
+   :not() would be a descendant combinator and target what is inside the buttons. */
+:where(
+    :root:not(.wa-theme-awesome) wa-button:is([appearance*='outlined'], [appearance*='filled']):not(wa-button-group wa-button, .wa-invert wa-button, .session-item, .bookmark-item, .filters-toggle, .autoattach-button)
+)::part(base) {
+    box-shadow: var(--depth-button), var(--depth-highlight);
+}
+/* Solid accent buttons: the top light is a translucent white line, which reads as a lighter
+   step of whatever color the button actually has (brand, neutral, danger… or a component's
+   own background) — a plain white line reads too bright on a colored fill. */
+:where(
+    :root:not(.wa-theme-awesome) wa-button[appearance='accent']:not(.wa-invert wa-button, .layout-winbtn)
+)::part(base) {
+    box-shadow: var(--depth-button), inset 0 1px 0 oklch(1 0 0 / 0.2);
+}
+
+/* Split buttons (a solid button + the arrow of its menu, in a wa-button-group): Web Awesome
+   separates solid segments with a 1px see-through gap, which shows whatever lies behind
+   (the session list scrolling under the sidebar's New session button). No gap; the arrow
+   carries the separator instead, a translucent light line on its own color. */
+wa-button-group:has(> wa-button[appearance='accent'])::part(base) {
+    gap: 0;
+}
+wa-button-group > wa-dropdown > wa-button[slot='trigger'][appearance='accent']::part(base) {
+    border-inline-start: 1px solid oklch(1 0 0 / 0.55);
+}
+
+/* Text fields: slightly recessed. The focus ring is an outline, so it is unaffected. */
+:where(:root:not(.wa-theme-awesome) :is(wa-input, wa-textarea))::part(base),
+:where(:root:not(.wa-theme-awesome) wa-select)::part(combobox) {
+    box-shadow: var(--depth-inset);
+}

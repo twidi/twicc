@@ -50,8 +50,8 @@ defineExpose({ focus })
             <wa-button
                 id="bookmark-options-button"
                 slot="trigger"
-                variant="neutral"
-                appearance="filled-outlined"
+                variant="brand"
+                appearance="outlined"
                 size="small"
             >
                 <wa-icon name="sliders"></wa-icon>
@@ -105,6 +105,12 @@ defineExpose({ focus })
     &:hover {
         z-index: 10;
         min-width: min(10rem, calc(100vw - 100px));
+    }
+    /* Painted with the canvas (fixed, so pixel-identical to the canvas behind): it reads as
+       tinted like the sidebar, yet stays opaque when it widens over its neighbours. */
+    &::part(base) {
+        background: var(--canvas-background);
+        background-attachment: fixed;
     }
 }
 

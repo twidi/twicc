@@ -48,6 +48,12 @@ import { toast } from '../../composables/useToast'
 import { useProviderActivation } from '../../composables/useProviderActivation'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
 
+const props = defineProps({
+    // The trigger floats over scrolling content on the home page, where it must be opaque
+    // (solid `accent`); in the sidebar footer it sits on the canvas (`outlined`).
+    triggerAppearance: { type: String, default: 'outlined' },
+})
+
 const router = useRouter()
 const store = useSettingsStore()
 const dataStore = useDataStore()
@@ -1265,7 +1271,7 @@ function onChangelogClose() {
 </script>
 
 <template>
-    <wa-button id="settings-trigger" variant="neutral" appearance="filled-outlined" size="small">
+    <wa-button id="settings-trigger" variant="brand" :appearance="props.triggerAppearance" size="small">
         <wa-icon name="gear"></wa-icon><span>Settings</span>
         <!-- Last stop for the peer count: see the container query below. -->
         <PeerInboxBadge :count="peersStore.inboxCount" class="settings-trigger-badge" />

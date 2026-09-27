@@ -37,6 +37,11 @@
     --panel-shadow:
         0 1px 2px oklch(0.25 0.02 275 / 0.06),
         0 6px 10px -6px oklch(0.25 0.02 275 / 0.14);
+    /* The layout overlay (and the headers' overflow panels) float above the other cards:
+       deeper than --panel-shadow, same horizontal budget (≤ 4px per layer: blur + spread). */
+    --panel-overlay-shadow:
+        0 2px 4px oklch(0.2 0.02 275 / 0.08),
+        0 14px 18px -14px oklch(0.2 0.02 275 / 0.28);
 }
 
 .wa-dark {
@@ -54,6 +59,9 @@
     --panel-shadow:
         0 1px 2px oklch(0 0 0 / 0.4),
         0 6px 10px -6px oklch(0 0 0 / 0.55);
+    --panel-overlay-shadow:
+        0 2px 4px oklch(0 0 0 / 0.45),
+        0 14px 18px -14px oklch(0 0 0 / 0.7);
 }
 
 @media (width < 640px) {

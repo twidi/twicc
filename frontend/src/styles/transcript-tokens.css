@@ -4,8 +4,11 @@
    tree depends on globally must live here, not in App.vue's scoped-file <style>. */
 :root {
     --base-user-assistant-card-color: var(--wa-color-gray-95);
-    --user-card-base-color: oklch(from var(--base-user-assistant-card-color) calc(l + 0.015) c h);
-    --assistant-card-base-color: oklch(from var(--base-user-assistant-card-color) calc(l + 0.03) c h);
+    /* User messages carry a faint accent tint, so they read apart from the agent's cards. */
+    --user-card-base-color: color-mix(in oklab, var(--wa-color-brand-fill-quiet) 70%, white);
+    /* Light: the agent's cards sit on the raised surface (white), set apart by their border
+       and soft shadow. Dark keeps the lifted-surface formula below. */
+    --assistant-card-base-color: var(--wa-color-surface-raised);
     --main-shadow-size: var(--wa-shadow-offset-y-s);
 
     /* Code font alias used by tool cards (ToolUseContent, ApplyPatch…). WA has no
@@ -15,6 +18,8 @@
 }
 .wa-dark {
     --base-user-assistant-card-color: var(--wa-color-surface-raised);
+    --user-card-base-color: color-mix(in oklab, var(--wa-color-brand-fill-quiet) 55%, var(--wa-color-surface-raised));
+    --assistant-card-base-color: oklch(from var(--base-user-assistant-card-color) calc(l + 0.03) c h);
 }
 
 /* Override WA 3.3's "box-sizing: inherit" from @layer wa-native: native <details>

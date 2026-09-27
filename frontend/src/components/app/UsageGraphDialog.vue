@@ -1426,7 +1426,7 @@ function onTabShow(event) {
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-normal);
     white-space: nowrap;
-    box-shadow: var(--wa-shadow-s);
+    box-shadow: var(--depth-2);
 }
 
 .usage-chart-tooltip-row {

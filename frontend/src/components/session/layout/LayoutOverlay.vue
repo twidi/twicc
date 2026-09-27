@@ -88,8 +88,9 @@ function onShow(event) { emit('select', event.detail.name) }
     flex-direction: column;
     overflow: clip; /* not a scroll container — see .session-layout */
     /* Background, full border and radius come from .panel-card; the stronger shadow overrides
-       the card's: the overlay floats above the other cards. */
-    box-shadow: var(--wa-shadow-l, 0 10px 40px rgba(0, 0, 0, 0.35));
+       the card's: the overlay floats above the other cards. Not --wa-shadow-l (level 3): its
+       48px side reach would be cut flat by the layout's clip in the gap. */
+    box-shadow: var(--panel-overlay-shadow);
 }
 /* While a FilePane preview teleported into this overlay is expanded to full-window
    (position:fixed; z-index:1000), the overlay's own z-index:11 stacking context traps it

@@ -2338,6 +2338,13 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
     overflow-y: auto;
 }
 
+/* The composer stands out (level 2) instead of the recessed look of other fields. The
+   footer (.session-footer, a scroll container) cuts the faint tail of this shadow 4px
+   above and at the side padding. The awesome theme keeps its own field look. */
+:root:not(.wa-theme-awesome) .message-input wa-textarea::part(base) {
+    box-shadow: var(--depth-2);
+}
+
 .message-input-toolbar {
     display: flex;
     align-items: center;

@@ -33,8 +33,8 @@ const tooltip = computed(() =>
         class="view-switch"
         :class="{ 'view-switch__icons--artifacts': isArtifactsMode }"
         size="small"
-        appearance="filled-outlined"
-        variant="neutral"
+        appearance="outlined"
+        variant="brand"
         @click="emit('toggle')"
     >
         <wa-icon name="slash" class="view-switch__icon view-switch__icon--slash"></wa-icon>

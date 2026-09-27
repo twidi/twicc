@@ -734,7 +734,7 @@ function formatAverage(value, isCost) {
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-normal);
     white-space: nowrap;
-    box-shadow: var(--wa-shadow-s);
+    box-shadow: var(--depth-2);
 }
 
 .sparkline-tooltip-separator {

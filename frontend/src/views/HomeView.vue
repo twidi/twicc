@@ -157,8 +157,8 @@ onBeforeUnmount(() => {
         </main>
 
         <div class="home-settings">
-            <PeerInboxButton />
-            <SettingsPopover />
+            <PeerInboxButton appearance="accent" />
+            <SettingsPopover trigger-appearance="accent" />
         </div>
 
         <ProjectEditDialog ref="createDialogRef" @saved="handleProjectCreated" />

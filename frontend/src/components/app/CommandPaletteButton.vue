@@ -33,8 +33,8 @@ const shortcut = computed(() => (settingsStore.isMac ? '⌘K' : 'Ctrl+K'))
     <wa-button
         :id="buttonId"
         class="command-palette-button"
-        variant="neutral"
-        appearance="filled-outlined"
+        variant="brand"
+        appearance="outlined"
         size="small"
         @click="openPalette"
     >

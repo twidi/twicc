@@ -239,7 +239,7 @@ html, body { height: 100%; margin: 0; }
     inset: 0;
     margin-inline: calc(50% - 50vw);
     background: var(--wa-color-surface-default);
-    box-shadow: var(--wa-shadow-m);
+    box-shadow: var(--depth-2);
     z-index: -1;
     pointer-events: none;
 }

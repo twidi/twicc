@@ -61,7 +61,8 @@ defineProps({
 .sls-line {
     flex: 1;
     height: 0;
-    border-top: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+    /* The sidebar provides an accent-based color; elsewhere (dialogs) the surface border. */
+    border-top: var(--wa-border-width-s) solid var(--sidebar-divider-color, var(--wa-color-surface-border));
 }
 
 .sls-label {

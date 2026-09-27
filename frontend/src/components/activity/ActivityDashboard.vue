@@ -255,7 +255,7 @@ const periods = computed(() => {
                                 <wa-tag
                                     v-if="period.mainTrend"
                                     :variant="period.mainTrend.variant"
-                                    appearance="outlined"
+                                    appearance="filled" pill
                                 >
                                     <wa-icon
                                         :name="period.mainTrend.direction === 'up' ? 'arrow-up' : 'arrow-down'"
@@ -264,7 +264,7 @@ const periods = computed(() => {
                                     {{ period.mainTrend.value }}%
                                 </wa-tag>
                                 <template v-if="!period.isTotal">
-                                    <wa-tag v-if="!period.mainTrend" :id="`na-main-${mode}-${period.key}`" variant="neutral" appearance="outlined">N/A</wa-tag>
+                                    <wa-tag v-if="!period.mainTrend" :id="`na-main-${mode}-${period.key}`" variant="neutral" appearance="filled" pill>N/A</wa-tag>
                                     <AppTooltip v-if="!period.mainTrend" :for="`na-main-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
                                 </template>
                             </div>
@@ -293,7 +293,7 @@ const periods = computed(() => {
                                     <wa-tag
                                         v-if="period.sub1Trend"
                                         :variant="period.sub1Trend.variant"
-                                        appearance="outlined"
+                                        appearance="filled" pill
                                         size="small"
                                     >
                                         <wa-icon
@@ -303,7 +303,7 @@ const periods = computed(() => {
                                         {{ period.sub1Trend.value }}%
                                     </wa-tag>
                                     <template v-if="!period.isTotal">
-                                        <wa-tag v-if="!period.sub1Trend" :id="`na-sub1-${mode}-${period.key}`" variant="neutral" appearance="outlined" size="small">N/A</wa-tag>
+                                        <wa-tag v-if="!period.sub1Trend" :id="`na-sub1-${mode}-${period.key}`" variant="neutral" appearance="filled" pill size="small">N/A</wa-tag>
                                         <AppTooltip v-if="!period.sub1Trend" :for="`na-sub1-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
                                     </template>
                                 </div>
@@ -325,7 +325,7 @@ const periods = computed(() => {
                                     <wa-tag
                                         v-if="period.sub2Trend"
                                         :variant="period.sub2Trend.variant"
-                                        appearance="outlined"
+                                        appearance="filled" pill
                                         size="small"
                                     >
                                         <wa-icon
@@ -335,7 +335,7 @@ const periods = computed(() => {
                                         {{ period.sub2Trend.value }}%
                                     </wa-tag>
                                     <template v-if="!period.isTotal">
-                                        <wa-tag v-if="!period.sub2Trend" :id="`na-sub2-${mode}-${period.key}`" variant="neutral" appearance="outlined" size="small">N/A</wa-tag>
+                                        <wa-tag v-if="!period.sub2Trend" :id="`na-sub2-${mode}-${period.key}`" variant="neutral" appearance="filled" pill size="small">N/A</wa-tag>
                                         <AppTooltip v-if="!period.sub2Trend" :for="`na-sub2-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
                                     </template>
                                 </div>
@@ -377,6 +377,11 @@ h3 > span {
 
 wa-card {
     min-width: 16rem;
+    /* Lifts to level 2 on hover (rests at level 1 through --wa-shadow-s). No translate:
+       the cards are not clickable. */
+    &:hover {
+        box-shadow: var(--depth-2);
+    }
 }
 
 .kpi-label {

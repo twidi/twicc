@@ -15,6 +15,12 @@ import { usePeerSystemConfigured } from '../../composables/usePeerSystemConfigur
 import AppTooltip from '../ui/AppTooltip.vue'
 import PeerInboxBadge from './PeerInboxBadge.vue'
 
+const props = defineProps({
+    // Solid `accent` where the button floats over scrolling content (home page); `outlined`
+    // on the sidebar canvas.
+    appearance: { type: String, default: 'outlined' },
+})
+
 const peersStore = usePeersStore()
 const buttonId = useId()
 
@@ -31,8 +37,8 @@ function openInbox() {
         <wa-button
             :id="buttonId"
             class="peer-inbox-button"
-            variant="neutral"
-            appearance="filled-outlined"
+            variant="brand"
+            :appearance="props.appearance"
             size="small"
             @click="openInbox"
         >

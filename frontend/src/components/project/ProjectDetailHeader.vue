@@ -525,7 +525,8 @@ function handleUnarchive() {
         right: 0;
         z-index: 20;
         background: var(--wa-color-surface-default);
-        box-shadow: var(--wa-shadow-s);
+        /* Same token as the session header's overflow panel, so both headers look alike. */
+        box-shadow: var(--panel-overlay-shadow);
         border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
 
         /* Hidden by default */

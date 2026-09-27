@@ -149,7 +149,7 @@ function handleMenuSelect(event) {
 
 .project-card:hover {
     transform: translateY(-2px);
-    box-shadow: var(--wa-shadow-m);
+    box-shadow: var(--depth-2);
 }
 
 .project-info {

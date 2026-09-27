@@ -2597,7 +2597,7 @@ function updateSidebarClosedClass(closed) {
                 >
                     <!-- Sidebar Toggle button (label for hidden checkbox, wa-button inside for styling) -->
                     <label for="sidebar-toggle-state" class="sidebar-toggle" id="sidebar-toggle-label">
-                        <wa-button id="sidebar-toggle-button" variant="neutral" appearance="filled-outlined" size="small">
+                        <wa-button id="sidebar-toggle-button" variant="brand" appearance="outlined" size="small">
                             <wa-icon class="icon-collapse" name="angles-left"></wa-icon>
                             <wa-icon class="icon-expand" name="angles-right"></wa-icon>
                         </wa-button>
@@ -2609,7 +2609,7 @@ function updateSidebarClosedClass(closed) {
                     <AppTooltip for="sidebar-toggle-label">Toggle sidebar (Alt+Shift+B)</AppTooltip>
 
                     <!-- Placeholder to occupy the same space a the sidebar toggle button that is absolute for goot reasons -->
-                    <wa-button variant="neutral" appearance="filled-outlined" size="small" style="visibility: hidden; pointer-events: none"><wa-icon name="angles-left"></wa-icon></wa-button>
+                    <wa-button variant="brand" appearance="outlined" size="small" style="visibility: hidden; pointer-events: none"><wa-icon name="angles-left"></wa-icon></wa-button>
 
                     <!-- Opens the command palette (mouse/touch access to the Cmd/Ctrl+K
                          shortcut); folds away on its own when the sidebar is too narrow. -->
@@ -2829,7 +2829,10 @@ function updateSidebarClosedClass(closed) {
 
 .project-selector-trigger {
     width: 100%;
-    background: var(--wa-color-surface-default);
+    /* Painted with the canvas (fixed, so pixel-identical to the canvas behind): it reads as
+       tinted like the sidebar, yet stays opaque when it widens over the peer button. */
+    background: var(--canvas-background);
+    background-attachment: fixed;
     &::part(base) {
         justify-content: space-between;
     }
@@ -2985,10 +2988,22 @@ wa-dropdown-item:hover .row-menu-trigger,
     pointer-events: auto;
 }
 
+/* Separators on the sidebar canvas: the neutral surface border barely shows on the tinted
+   canvas, so they take an accent-based color. Inherited by the list's section labels
+   (SidebarListSeparator) and the quota rows. */
+.sidebar {
+    --sidebar-divider-color: color-mix(in oklab, var(--wa-color-brand-border-normal), var(--wa-color-brand-border-loud));
+}
+
 .sidebar wa-divider {
     flex-shrink: 0;
     --width: var(--divider-size);
     --spacing: 0;
+}
+/* Not the separators inside the dropdown menus (project selector, new session): those
+   sit on the menu's own surface. */
+.sidebar wa-divider:not(wa-dropdown wa-divider, .quota-tooltip-divider) {
+    --color: var(--sidebar-divider-color);
 }
 
 /* When the sidebar list (sessions or artifacts) holds at least one item, the
@@ -3125,11 +3140,6 @@ wa-dropdown-item:hover .row-menu-trigger,
         display: flex;
         align-items: center;
         gap: var(--wa-space-xs);
-    }
-
-    /* Visual separator between main button and dropdown trigger */
-    & wa-dropdown wa-button::part(base) {
-        border-left: 1px solid rgba(255, 255, 255, 0.3);
     }
 
     /* Limit dropdown menu height: set the variable directly on #menu (via ::part)
@@ -3313,7 +3323,7 @@ wa-dropdown-item:hover .row-menu-trigger,
     position: relative;
 }
 .usage-quota + .usage-quota {
-    border-top: 1px solid var(--wa-color-neutral-border-quiet);
+    border-top: 1px solid var(--sidebar-divider-color);
 }
 
 /* Hover-safe bridge for the interactive quota tooltips.

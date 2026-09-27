@@ -771,6 +771,9 @@ const toastTheme = computed(() => {
         ...(isDark ? lightTheme : slateTheme),
         '--nv-width': '100%',
         '--nv-min-width': '30rem',
+        // Level 3, cast on the page: resolves with the page scheme even inside the
+        // .wa-invert box (slateTheme has no shadow of its own, lightTheme a faint one).
+        '--nv-shadow': 'var(--depth-3)',
     }
 })
 </script>

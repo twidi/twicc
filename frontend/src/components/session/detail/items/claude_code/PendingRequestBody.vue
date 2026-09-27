@@ -1349,7 +1349,7 @@ usePendingRequestDraft({
 
     border-color: var(--border-color);
     background: var(--background-color);
-    box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) 0 0 var(--border-color);
+    box-shadow: var(--depth-1);
     &:hover {
         --border-color: oklch(from var(--border-color-base)calc(l + 0.025) c h);
         --background-color: oklch(from var(--background-color-base)calc(l + 0.025) c h);
@@ -1500,7 +1500,7 @@ wa-textarea.auto-focused:focus-within::part(base) {
 
     border-color: var(--border-color);
     background: var(--background-color);
-    box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) 0 0 var(--border-color);
+    box-shadow: var(--depth-1);
     &:hover {
         /* use new css color syntax to make border-color and background color 10% lighter */
         --border-color: oklch(from var(--border-color-base)calc(l + 0.025) c h);

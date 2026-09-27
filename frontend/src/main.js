@@ -11,6 +11,8 @@ import '@awesome.me/webawesome/dist/styles/themes/default.css'
 import '@awesome.me/webawesome/dist/styles/themes/shoelace.css'
 // Shared transcript CSS tokens (also imported by the share bundle — design §8.8).
 import './styles/transcript-tokens.css'
+// Depth tokens (also imported by the share bundle and the artifact shell).
+import './styles/depth.css'
 // Canvas + floating-panel tokens (SPA only — the share bundle does not import it).
 import './styles/surfaces.css'
 import '@awesome.me/webawesome/dist/components/badge/badge.js'

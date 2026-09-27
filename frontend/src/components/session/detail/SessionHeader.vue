@@ -1434,7 +1434,8 @@ wa-divider {
            it reproduces that space itself. */
         padding-bottom: var(--wa-space-xs);
         background: var(--wa-color-surface-default);
-        box-shadow: var(--wa-shadow-s);
+        /* Spans the whole width of .session-view, clipped at the gap: keep the panel budget. */
+        box-shadow: var(--panel-overlay-shadow);
         border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
 
         /* Hidden by default */

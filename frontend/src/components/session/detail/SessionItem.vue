@@ -496,7 +496,18 @@ function toggleJsonView() {
     --user-card-border-color: oklch(from var(--user-card-bg-color) calc(l / 1.05) c h);
     background-color: var(--user-card-bg-color);
     border-color: var(--user-card-border-color);
-    box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) var(--wa-shadow-blur-s) var(--wa-shadow-spread-s) var(--user-card-border-color);
+    box-shadow: var(--depth-card), var(--depth-edge);
+}
+
+/* Tinted blocks (quotes, colon blocks) alternate their fill with depth (MarkdownContent.vue).
+   The user card is itself accent-tinted, so in it the alternation starts one step later:
+   the first level sits on the plain surface, the next one takes the tint. */
+.session-items .session-item[data-kind="user_message"] .markdown-body {
+    --md-tint-fill: var(--wa-color-surface-default);
+    --md-tint-fill-alt: var(--wa-color-brand-fill-quiet);
+}
+.wa-dark .session-items .session-item[data-kind="user_message"] .markdown-body {
+    --md-tint-fill-alt: var(--wa-color-brand-fill-normal);
 }
 
 .session-items {
@@ -569,8 +580,11 @@ function toggleJsonView() {
         --assistant-card-top-spacing: 0;
         --assistant-card-bottom-spacing: 0;
 
-        /* by default no shadow because default style is only for "inner" (not last) rows */
-        --assistant-card-shadow: none;
+        /* by default no shadow because default style is only for "inner" (not last) rows.
+           A transparent layer, not `none`: the row's box-shadow is a list (shadow, edge). */
+        --assistant-card-shadow: 0 0 transparent;
+        /* Dark-mode top edge: only on the first row (set with the top radius below). */
+        --assistant-card-edge: 0 0 transparent;
 
         /* To be able to apply some style differently on components for items at start/middle/end */
         --content-card-start-item: 0;
@@ -590,7 +604,8 @@ function toggleJsonView() {
             border-color: var(--assistant-card-border-color);
             border-style: var(--wa-panel-border-style);
             padding-inline: var(--card-spacing);
-            --assistant-card-default-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) var(--wa-shadow-blur-s) var(--wa-shadow-spread-s) var(--assistant-card-border-color);
+            /* Downward only: a side reach would be cut flat at the top of the last row. */
+            --assistant-card-default-shadow: var(--depth-card);
 
             border-radius:
                 var(--assistant-card-border-top-left-radius)
@@ -610,7 +625,7 @@ function toggleJsonView() {
                 var(--assistant-card-bottom-spacing)
                 var(--assistant-card-spacing);
 
-            box-shadow: var(--assistant-card-shadow);
+            box-shadow: var(--assistant-card-shadow), var(--assistant-card-edge);
 
         }
     }
@@ -629,6 +644,7 @@ function toggleJsonView() {
                 --assistant-card-border-top-right-radius: var(--assistant-card-border-radius);
                 --assistant-card-border-top-width: var(--assistant-card-border-width);
                 --assistant-card-top-spacing: var(--assistant-card-spacing);
+                --assistant-card-edge: var(--depth-edge);
             }
         }
     }
@@ -652,7 +668,10 @@ function toggleJsonView() {
                 --assistant-card-border-bottom-width: var(--assistant-card-border-width);
                 --assistant-card-bottom-spacing: var(--assistant-card-spacing);
                 --assistant-card-shadow: var(--assistant-card-default-shadow);
-                margin-bottom: calc(var(--main-shadow-size) + 1px); /* For the shadow to appear on the last element with virtual scroller "cropping" if we don't have this */;
+                /* For the shadow to appear on the last element with virtual scroller "cropping" if
+                   we don't have this. max(): --depth-card reaches further than the theme's shadow
+                   offset in the default and shoelace themes. */
+                margin-bottom: calc(max(var(--main-shadow-size), var(--depth-card-reach)) + 1px);
             }
         }
     }
@@ -696,6 +715,11 @@ wa-details {
         }
     }
 }
+/* A tool card joined to the next one casts no shadow: only the last card of a run does.
+   Needs .item-details to beat `wa-details.item-details::part(base)` below (0,1,3 > 0,1,2). */
+wa-details.item-details:has(+ wa-details)::part(base) {
+    box-shadow: 0 0 transparent;
+}
 /* Same but in different items */
 .session-items {
     .virtual-scroller-item:has(wa-details.item-details:last-child) {
@@ -709,6 +733,7 @@ wa-details {
                     border-bottom-left-radius: 0;
                     border-bottom-right-radius: 0;
                     border-bottom-width: 0;
+                    box-shadow: 0 0 transparent;
                 }
             }
         }
@@ -743,6 +768,11 @@ wa-details.item-details {
     --spacing-bottom: calc(var(--content-card-not-end-item, 1) * var(--spacing));
     padding-top: var(--spacing-top);
     padding-bottom: var(--spacing-bottom);
+    /* Downward only, like chat cards: the next card of a joined run touches its top edge.
+       No dark top edge (it would draw a seam at each join). */
+    &::part(base) {
+        box-shadow: var(--depth-card);
+    }
     --header-padding: 6px;
 
     &::part(content) {
