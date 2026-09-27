@@ -13,6 +13,10 @@ import TodoContent from '../session/detail/items/TodoContent.vue'
 
 const props = defineProps({
     sessionId: { type: String, required: true },
+    // True while the pane is on screen (tab shown, session active). Gates the check pop
+    // of a task that becomes completed: an animation started while hidden would only
+    // play later, when the pane is shown again.
+    active: { type: Boolean, default: false },
 })
 
 const store = useDataStore()
@@ -26,7 +30,12 @@ const tasks = computed(() => store.getSessionTasks(props.sessionId))
             <span>No tasks</span>
         </div>
         <div v-else class="task-scroll">
-            <TodoContent :todos="tasks.items" :explanation="tasks.explanation" />
+            <TodoContent
+                :key="sessionId"
+                :todos="tasks.items"
+                :explanation="tasks.explanation"
+                :animate="active"
+            />
         </div>
     </div>
 </template>

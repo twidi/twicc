@@ -2338,6 +2338,17 @@ function onChangelogClose() {
     gap: var(--wa-space-s);
 }
 
+/* A quarter turn of the gear on hover. 600ms, longer than the motion tokens: a slow turn
+   reads as a flourish. */
+#settings-trigger > wa-icon[name='gear'] {
+    transition: rotate 600ms var(--motion-ease-out);
+}
+@media (hover: hover) {
+    #settings-trigger:hover > wa-icon[name='gear'] {
+        rotate: calc(90deg * var(--motion-amount));
+    }
+}
+
 .settings-popover {
     --max-width: 90vw;
     --arrow-size: 16px;

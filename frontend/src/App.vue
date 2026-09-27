@@ -795,7 +795,7 @@ const toastTheme = computed(() => {
     <!-- Version mismatch: non-dismissible reload dialog -->
     <wa-dialog :open="versionMismatchDetected || undefined" without-header @wa-hide.prevent>
         <div class="version-reload-content">
-            <BrandLogo :size="56" animated />
+            <BrandLogo :size="56" animated busy />
             <p class="version-reload-text">TwiCC has been updated, reloading…</p>
         </div>
     </wa-dialog>
@@ -803,7 +803,7 @@ const toastTheme = computed(() => {
     <!-- Connecting overlay: shown while waiting for backend during auth check retry -->
     <div v-if="isConnecting" class="connecting-backdrop">
         <div class="connecting-content">
-            <BrandLogo :size="56" animated />
+            <BrandLogo :size="56" animated busy />
             <p class="connecting-text">Connecting to server...</p>
         </div>
     </div>

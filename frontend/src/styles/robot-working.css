@@ -24,8 +24,9 @@
     to { transform: translateX(7%) rotate(10deg); }
 }
 
+/* Reduced motion: no hop, but the robot still shows the agent is busy (motion.css). */
 @media (prefers-reduced-motion: reduce) {
     .robot-working {
-        animation: none;
+        animation: motion-status-pulse 1.4s ease-in-out infinite;
     }
 }

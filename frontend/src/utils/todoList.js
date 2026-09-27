@@ -109,6 +109,38 @@ export function getTodoDescription(todos) {
 }
 
 /**
+ * Indices of the todos that became completed between two snapshots of the same list.
+ *
+ * An index counts when `nextTodos[i]` is completed, `previousTodos[i]` exists and is not,
+ * and both items have the same identity (`content` when both have one, else `activeForm`,
+ * else the index alone). The identity check stops a false positive when an item is
+ * inserted before others and statuses shift by index.
+ *
+ * @param {Array<{status: string, content?: string, activeForm?: string}>|null|undefined} previousTodos
+ * @param {Array<{status: string, content?: string, activeForm?: string}>|null|undefined} nextTodos
+ * @returns {Set<number>}
+ */
+export function findNewlyCompleted(previousTodos, nextTodos) {
+    const indices = new Set()
+    if (!Array.isArray(previousTodos) || !Array.isArray(nextTodos)) return indices
+    const shared = Math.min(previousTodos.length, nextTodos.length)
+    for (let i = 0; i < shared; i++) {
+        const previous = previousTodos[i]
+        const next = nextTodos[i]
+        if (!previous || !next) continue
+        if (next.status !== 'completed' || previous.status === 'completed') continue
+        if (sameTodoIdentity(previous, next)) indices.add(i)
+    }
+    return indices
+}
+
+function sameTodoIdentity(a, b) {
+    if (typeof a.content === 'string' && typeof b.content === 'string') return a.content === b.content
+    if (typeof a.activeForm === 'string' && typeof b.activeForm === 'string') return a.activeForm === b.activeForm
+    return true
+}
+
+/**
  * Find the last element matching a predicate (Array.findLast polyfill-safe).
  */
 function findLast(arr, predicate) {

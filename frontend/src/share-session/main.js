@@ -29,6 +29,7 @@ import '@awesome.me/webawesome/dist/components/popover/popover.js'
 import '../styles/transcript-tokens.css'
 import '../styles/depth.css'
 import '../styles/glass.css'
+import '../styles/motion.css'
 import ShareSessionApp from './ShareSessionApp.vue'
 import ShareDocApp from './ShareDocApp.vue'
 import ShareRecentApp from './ShareRecentApp.vue'   // 3.20

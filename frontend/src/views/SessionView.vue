@@ -2529,7 +2529,10 @@ onBeforeUnmount(() => {
 
             <Teleport v-if="isToolTabPresent('tasks')" :to="toolTarget('tasks')" :disabled="!toolTarget('tasks')">
                 <div class="layout-tool-wrap" v-show="layout.isToolPanelVisible('tasks')">
-                    <TaskPane :session-id="session.id" />
+                    <TaskPane
+                        :session-id="session.id"
+                        :active="isActive && isToolTabShown('tasks')"
+                    />
                 </div>
             </Teleport>
 

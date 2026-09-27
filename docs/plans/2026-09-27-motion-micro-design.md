@@ -50,7 +50,7 @@ declarations (`0.1s`–`0.25s`, `ease`) in 61 files, Web Awesome theme defaults 
 2. Web Awesome components follow the same timing without per-component edits.
 3. With the OS reduced-motion setting, every movement this step adds is gone; fades and
    status indicators stay (§4.3).
-4. Small feedback effects on buttons, snippet chips, session rows, the settings gear,
+4. Small feedback effects on buttons, snippet chips, the settings gear,
    "go" arrows, the Send icon, and a completed task's check.
 
 ## 3. Out of scope
@@ -251,7 +251,7 @@ above its button rule).
     alone breaks the group's joined edges (for example the sidebar's "New session" split
     button in single-project mode);
   - `.session-item`, `.bookmark-item`: the sidebar rows are full-width buttons; a
-    shrinking row reads as a glitch. Session rows get the nudge of §5.4 instead; artifact
+    shrinking row reads as a glitch. Session rows get no movement at all (§5.4); artifact
     bookmark rows get no effect in this step.
 
 **Buttons inside Web Awesome components.** Some components render a `wa-button` in their
@@ -340,38 +340,13 @@ stays.
 
 ### 5.4 Session rows — `SessionListItem.vue`
 
-What the user sees: hovering a row shifts it 3px to the right (spring), except the
-row of the current (open) session. Rows checked in multi-select mode shift like the
-others. The "⋮" button sits 4px further right at rest and slides into place when
-the row is hovered, when it is the current session's row, or when its menu is open.
-
-```css
-.session-item {
-    transition: translate var(--motion-dur-2) var(--motion-ease-spring);
-}
-@media (hover: hover) {
-    .session-item-wrapper:not(.session-item-wrapper--active):hover .session-item {
-        translate: calc(0.1875rem * var(--motion-amount)) 0;
-    }
-    .session-menu-trigger {
-        translate: calc(0.25rem * var(--motion-amount)) 0;
-    }
-    .session-item-wrapper:hover .session-menu-trigger,
-    .session-item-wrapper--active .session-menu-trigger,
-    .session-menu[open] .session-menu-trigger {
-        translate: none;
-    }
-}
-```
-
-- `.session-menu-trigger`'s existing `transition: opacity 0.15s` becomes
-  `opacity var(--motion-dur-2) var(--motion-ease), translate var(--motion-dur-2)
-  var(--motion-ease-spring)`. Its opacity levels are unchanged.
-- On touch screens (no hover) the "⋮" stays in place: no offset.
-- The list is virtualized; `translate` does not change the measured height, so the
-  virtual scroller is unaffected. The wrapper's inline padding (`--wa-space-2xs`) leaves
-  room for the 3px shift.
-- The keyboard highlight and multi-select styles are unchanged.
+**Removed after the user's browser review (2026-09-27).** The first version shifted a
+hovered row 3px to the right and slid the "⋮" into place from a 4px offset. In use the
+"⋮" drifted left of its place and the effect did not please the user: "on retire ça
+complètement". Session rows get no hover movement; `SessionListItem.vue` is unchanged by
+this step. A test guards that its styles declare no `translate` (§7). The row still
+gets no press (§5.1), and the "⋮" icon keeps the global icon grow of §5.2 like every
+icon-only plain button.
 
 ### 5.5 Send icon — `MessageInput.vue`
 
@@ -602,8 +577,8 @@ stays still, as today. Without reduced motion nothing changes.
     `@media (hover: hover)`, the press as `scale`, the only `transform` left being
     `transform: none` on `.snippet-btn:active` and `.snippet-btn.snippet-disabled:active`,
     the `padding-block-start: 1px` / `margin-block-start: -1px` pair in the
-    `width < 40rem` container query), `SessionListItem.vue` (row `translate` excluding
-    `--active`, "⋮" rest offset and reset, both inside `@media (hover: hover)`),
+    `width < 40rem` container query), `SessionListItem.vue` (no `translate` declared:
+    §5.4 was removed),
     `MessageInput.vue` (Send icon rule inside the `width < 25rem` container query,
     directly in `.message-input-actions`, not inside the three-button group),
     `SettingsPopover.vue` (gear `rotate` on hover), `TodoContent.vue` (the
@@ -632,8 +607,7 @@ stays still, as today. Without reduced motion nothing changes.
    "Diff mode" toggle (icon + label) does not grow its icon.
 3. Snippet chips: rise on hover, press still shrinks; in a narrow composer the lifted chip
    is not cut.
-4. Sidebar: hovering rows shifts them, the current session's row does not move; the "⋮"
-   slides in.
+4. Sidebar: hovering a session row moves neither the row nor its "⋮" (§5.4).
 5. Narrow composer: the Send icon rises on hover.
 6. Home "All N sessions" / "Artifacts", tip toast "Next tip", changelog "Next": the arrow
    moves right.
@@ -649,7 +623,7 @@ stays still, as today. Without reduced motion nothing changes.
    `120ms`.
 10. Reduced motion emulated (Chrome DevTools rendering panel; Firefox
     `ui.prefersReducedMotion = 1` in `about:config`): none of the §5 effects moves
-    (press, icon grow, snippet lift, row nudge, "⋮" slide, Send, go arrows, gear, check
+    (press, icon grow, snippet lift, Send, go arrows, gear, check
     pop); hover color fades and status pulses/spinners still play; a working agent's
     robot and a pending workflow's hourglass pulse in opacity instead of hopping; the
     logo of the version-mismatch dialog pulses (show it by adding the `open` attribute
@@ -659,8 +633,7 @@ stays still, as today. Without reduced motion nothing changes.
     of an HTML artifact): a button press sinks.
 12. Touch: with touch emulation that makes `(hover: hover)` false (Chrome device mode
     with a touch device, Firefox responsive design mode with touch simulation) or on the
-    Android phone: after a tap, no row stays shifted, no icon stays grown, the "⋮" is in
-    place.
+    Android phone: after a tap, no icon stays grown, no chip stays lifted.
 
 ## 9. Limitations
 

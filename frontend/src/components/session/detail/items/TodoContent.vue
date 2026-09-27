@@ -1,5 +1,6 @@
 <script setup>
-import { getDetail } from '../../../../utils/todoList'
+import { ref, watch } from 'vue'
+import { findNewlyCompleted, getDetail } from '../../../../utils/todoList'
 
 // Provider-agnostic todo/plan renderer. Each ``todos`` entry must carry
 // ``status`` plus at least one of ``content`` / ``activeForm`` (see
@@ -9,7 +10,11 @@ import { getDetail } from '../../../../utils/todoList'
 // ``explanation`` is an optional preamble shown above the list. Only
 // Codex's ``update_plan`` populates it today (no equivalent in Claude
 // Code's TodoWrite); kept optional so other providers can ignore it.
-defineProps({
+//
+// ``animate`` enables the check pop of a task that becomes completed while
+// the list is on screen. Only the Tasks pane passes it (while shown); the
+// timeline blocks hold a fixed snapshot and never pop.
+const props = defineProps({
     todos: {
         type: Array,
         required: true,
@@ -18,7 +23,36 @@ defineProps({
         type: String,
         default: null,
     },
+    animate: {
+        type: Boolean,
+        default: false,
+    },
 })
+
+// Indices whose check is popping. Grown by union, never replaced: the store
+// hands a new array on every session_updated broadcast, even with no change,
+// and a replacement would cut a running pop. Not immediate: a first render
+// never pops.
+const popping = ref(new Set())
+
+watch(() => props.todos, (newValue, oldValue) => {
+    if (props.animate) {
+        for (const index of findNewlyCompleted(oldValue, newValue)) popping.value.add(index)
+    }
+    // An item that leaves `completed` during its pop loses its icon (v-if), and
+    // neither animationend nor animationcancel is guaranteed: drop it here.
+    for (const index of [...popping.value]) {
+        if (newValue?.[index]?.status !== 'completed') popping.value.delete(index)
+    }
+})
+
+watch(() => props.animate, (animate) => {
+    if (!animate) popping.value.clear()
+})
+
+function onPopEnd(index) {
+    popping.value.delete(index)
+}
 </script>
 
 <template>
@@ -34,6 +68,9 @@ defineProps({
                 v-if="todo.status === 'completed'"
                 name="check"
                 class="todo-item-icon todo-item-icon-completed"
+                :class="{ 'todo-item-icon--pop': popping.has(i) }"
+                @animationend="onPopEnd(i)"
+                @animationcancel="onPopEnd(i)"
             ></wa-icon>
             <wa-icon
                 v-else-if="todo.status === 'in_progress'"
@@ -85,6 +122,20 @@ defineProps({
 
 .todo-item-icon-completed {
     color: var(--wa-color-success-60);
+}
+
+/* Check pop of a task that just became completed. 420ms: the mock's value. Under reduced
+   motion the amount is 0, so the keyframe moves nothing but still ends (animationend
+   cleans the popping set). */
+.todo-item-icon--pop {
+    animation: todo-check-pop 420ms var(--motion-ease-spring) both;
+}
+
+@keyframes todo-check-pop {
+    from {
+        scale: calc(1 - var(--motion-amount));
+        rotate: calc(-30deg * var(--motion-amount));
+    }
 }
 
 .todo-item-icon-in-progress {

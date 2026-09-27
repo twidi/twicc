@@ -9,13 +9,15 @@
 // With `animated` (full robot only), the robot plays a loop: level → leans
 // (and drifts) right → leans (and drifts) left → jumps back to the centre,
 // straightening up in the air → lands level and blinks. Antenna and ears follow with a bit of inertia. Disabled for users who
-// ask for reduced motion.
+// ask for reduced motion. With `busy` too (the logo stands for a wait), reduced motion
+// gets a soft opacity pulse instead, so the wait still reads as alive.
 import { computed } from 'vue'
 
 const props = defineProps({
     // Displayed size in CSS pixels (the logo is square).
     size: { type: Number, default: 32 },
     animated: { type: Boolean, default: false },
+    busy: { type: Boolean, default: false },
 })
 
 const SMALL_LOGO_MAX_SIZE = 24
@@ -38,7 +40,7 @@ const isSmall = computed(() => props.size < SMALL_LOGO_MAX_SIZE)
     <span
         v-else
         class="brand-logo"
-        :class="{ 'brand-logo--animated': animated }"
+        :class="{ 'brand-logo--animated': animated, 'brand-logo--busy': busy }"
         :style="{ width: `${size}px`, height: `${size}px` }"
         aria-hidden="true"
     >
@@ -213,6 +215,10 @@ span.brand-logo {
 @media (prefers-reduced-motion: reduce) {
     .brand-logo--animated :is(.tilt, .hop, .shadow, .antenna, .eyes, .ear-left, .ear-right) {
         animation: none;
+    }
+    /* Keyframe in motion.css (global). */
+    .brand-logo--busy {
+        animation: motion-status-pulse 1.4s ease-in-out infinite;
     }
 }
 </style>

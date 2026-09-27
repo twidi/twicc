@@ -624,8 +624,9 @@ function agentsLabel(n) {
     80%           { transform: translateY(0) scaleY(1); }
 }
 
+/* Reduced motion: an opacity pulse instead of the hop (keyframe in motion.css, global). */
 @media (prefers-reduced-motion: reduce) {
-    .wf-row .wf-status-pending { animation: none; }
+    .wf-row .wf-status-pending { animation: motion-status-pulse 1s ease-in-out infinite; }
 }
 
 .wf-row-body {

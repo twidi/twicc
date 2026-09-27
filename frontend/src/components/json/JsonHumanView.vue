@@ -986,7 +986,7 @@ const readDiffEditorRefs = reactive({})
                                         :name="diffSplitMode[pair.baseName] ? 'code-compare' : 'pen'"
                                         variant="classic"
                                     ></wa-icon>
-                                    {{ diffSplitMode[pair.baseName] ? 'Diff mode' : 'Old/new mode' }}
+                                    <span>{{ diffSplitMode[pair.baseName] ? 'Diff mode' : 'Old/new mode' }}</span>
                                 </wa-button>
                             </div>
                             <!-- Diff editor mode (default) — v-show keeps the DiffEditor alive

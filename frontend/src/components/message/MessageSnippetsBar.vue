@@ -226,6 +226,10 @@ button {
         overflow-x: auto;
         scrollbar-width: none; /* Firefox */
         -webkit-overflow-scrolling: touch;
+        /* overflow-x: auto also clips vertically: room for the hover lift of a chip,
+           net zero on the layout. */
+        padding-block-start: 1px;
+        margin-block-start: -1px;
     }
     .message-snippets-bar::-webkit-scrollbar {
         display: none; /* Chrome/Safari */
@@ -293,7 +297,9 @@ button {
     height: 1.75rem;
     border-radius: var(--wa-border-radius-s);
     cursor: pointer;
-    transition: background-color 0.1s, border-color 0.1s, transform 0.1s;
+    transition: background-color 0.1s, border-color 0.1s,
+        scale var(--motion-dur-1) var(--motion-ease),
+        translate var(--motion-dur-2) var(--motion-ease-spring);
     touch-action: manipulation;
     -webkit-user-select: none;
     user-select: none;
@@ -310,12 +316,15 @@ button {
 @media (hover: hover) {
     .snippet-btn:hover {
         background: color-mix(in srgb, var(--wa-color-surface-raised), var(--wa-color-mix-hover));
+        translate: 0 calc(-1px * var(--motion-amount));
     }
 }
 
 .snippet-btn:active {
     background: color-mix(in srgb, var(--wa-color-surface-raised), var(--wa-color-mix-active));
-    transform: scale(0.95);
+    scale: calc(1 - 0.05 * var(--motion-amount));
+    /* Cancels the awesome theme's press on native buttons (a 4px downward translate). */
+    transform: none;
 }
 
 /* ── Disabled snippets ────────────────────────────────────────────── */
@@ -327,11 +336,13 @@ button {
 @media (hover: hover) {
     .snippet-btn.snippet-disabled:hover {
         background: var(--wa-color-surface-raised);
-        transform: none;
+        scale: none;
+        translate: none;
     }
 }
 
 .snippet-btn.snippet-disabled:active {
+    scale: none;
     transform: none;
 }
 

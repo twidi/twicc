@@ -2504,6 +2504,17 @@ body.sidebar-closed .message-input-toolbar {
                 display: none;
             }
         }
+
+        /* Here, not in the group above: nested there it would need a .send-button inside
+           a .send-button. */
+        .send-button > wa-icon {
+            transition: translate var(--motion-dur-2) var(--motion-ease-spring);
+        }
+        @media (hover: hover) {
+            .send-button:not([disabled]):hover > wa-icon {
+                translate: 0 calc(-0.125rem * var(--motion-amount));
+            }
+        }
     }
 }
 
