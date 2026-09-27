@@ -1566,7 +1566,9 @@ export function useWebSocket() {
                 break
             }
             case 'agent_link_created':
-            case 'agent_stopped': {
+            case 'agent_stopped':
+            case 'agent_interaction':
+            case 'agent_run_state': {
                 handleAgentEvent(store, msg)
                 break
             }
@@ -1583,17 +1585,9 @@ export function useWebSocket() {
                 break
             }
             case 'tool_state': {
-                // Update tool state for spinner/running display
+                // Update tool state for spinner/running display. No agent decision
+                // here any more: run state comes from agent_run_state (§8.1).
                 store.setToolState(msg.session_id, msg.tool_use_id, msg.result_count, msg.completed_at, msg.error || null, msg.extra || null, Array.isArray(msg.tool_result_line_nums) ? msg.tool_result_line_nums : [])
-
-                // For agent tools: remove synthetic process state when done
-                const agentLink = store.getAgentLink(msg.session_id, msg.tool_use_id)
-                if (agentLink) {
-                    const requiredCount = agentLink.isBackground ? 2 : 1
-                    if (msg.result_count >= requiredCount) {
-                        store.markAgentStopped(agentLink.agentId, msg.completed_at || null, agentLink.rootSessionId)
-                    }
-                }
                 break
             }
             case 'active_processes':
