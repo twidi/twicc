@@ -335,6 +335,18 @@ test('Entry after an error with the Result section closed: no request; opening t
     assert.equal(calls.length, 2, 'no ticker after the retry fails')
 })
 
+test('Entry on a finished card with its rows and no failed fetch: no request', async () => {
+    const { s, calls, clock } = await mountLoaded({ count: 1 })
+    assert.equal(clock.liveIntervals(), 0)
+    for (const knob of ['open', 'active']) {
+        s[knob] = false
+        await flush()
+        s[knob] = true
+        await flush()
+    }
+    assert.equal(calls.length, 1)
+})
+
 test('no flicker: a loaded card never returns to loading, with rows or with 0 rows, across deactivation', async () => {
     for (const rows of [[{ row: 1 }], []]) {
         const { api, s, calls, clock } = await mount({ state: { running: true } })
@@ -504,6 +516,7 @@ test('transient error on a count change: the next tick succeeds and the row show
     await flush()
     assert.equal(api.resultData.value.length, 2)
     assert.equal(api.lastSettleFailed.value, false)
+    assert.equal(api.resultError.value, null, 'the success clears the error text')
     assert.equal(clock.liveIntervals(), 0)
 })
 
@@ -583,6 +596,12 @@ test('error streak with rows kept: the note after 3 failures, cleared by a succe
     await clock.advance(3000)
     calls.at(-1).resolve([{ ack: true }])
     await flush()
+    assert.equal(api.refreshNote.value, false)
+    // The success reset the streak: one more failure is a streak of 1, no note.
+    await clock.advance(3000)
+    calls.at(-1).reject()
+    await flush()
+    assert.equal(api.errorStreak.value, 1)
     assert.equal(api.refreshNote.value, false)
 })
 
