@@ -15,6 +15,7 @@
 import { PROVIDER, AGENT_TOOL_NAMES } from '../../constants'
 import { getTodoDescription, isValidTodos } from '../../utils/todoList'
 import { BaseToolHelpers } from '../baseHelpers'
+import { agentControlHeaderLabel, agentControlExpectedCount } from './agentControlTools'
 import { capitalize } from '../utils/format'
 import { formatRelativePath, fileIconFor } from '../utils/path'
 
@@ -323,7 +324,14 @@ export class ClaudeCodeToolHelpers extends BaseToolHelpers {
         return lower.replace(/[aeiou]+$/, '') + 'ing'
     }
 
-    getHeaderLabel(name) {
+    getHeaderLabel(name, input, options) {
+        // A control card (``SendMessage`` / ``TaskStop`` / ``TaskOutput``
+        // targeting an agent) reads its action label first — the default
+        // Task labels below stay reserved for shell calls (71 of 75
+        // ``TaskStop`` and all 28 ``TaskOutput`` calls target shells, and
+        // must not read "Stop agent" / "Agent output").
+        const controlLabel = agentControlHeaderLabel(name, options?.agentInteraction)
+        if (controlLabel) return controlLabel
         if (name === 'TodoWrite') return 'Todo'
         // TaskCreate / TaskUpdate / TaskGet / TaskList keep their raw names —
         // the operation is informative on its own and a flat ``Task`` header
@@ -559,7 +567,13 @@ export class ClaudeCodeToolHelpers extends BaseToolHelpers {
         return Object.keys(rest).length > 0 ? rest : null
     }
 
-    getExpectedResultCount(name, input, _options) {
+    getExpectedResultCount(name, input, options) {
+        // A control card's own rule: ``SendMessage`` that opens a run
+        // expects the ack and the run's end signal (2); every other
+        // control call expects 1 — so a resumed run's second row is
+        // fetched live (today ``SendMessage`` was always 1).
+        const controlCount = agentControlExpectedCount(name, options?.agentInteraction)
+        if (controlCount !== null) return controlCount
         if (name === MONITOR_TOOL_NAME) return 1
         // Claude Code's Bash tool emits two tool_result events when launched
         // with ``run_in_background``: one for the start, one for the final
@@ -568,6 +582,10 @@ export class ClaudeCodeToolHelpers extends BaseToolHelpers {
     }
 
     getRequiredResultCountForDisplay(name, input, options) {
+        // Control cards always display at 1 row, even when their expected
+        // count is 2, so the ack ("Resuming agent …") shows at once instead
+        // of hiding behind "Result not yet available" for the whole run.
+        if (options?.agentInteraction) return 1
         if (name === MONITOR_TOOL_NAME) return 1
         return this.getExpectedResultCount(name, input, options)
     }

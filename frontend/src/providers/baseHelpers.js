@@ -1502,22 +1502,6 @@ export class BaseToolHelpers {
     }
 
     /**
-     * Whether a subagent going idle in its own transcript ends the spawn
-     * tool's "agent running" state, on top of the usual rule (the spawn tool
-     * collected all of its expected results).
-     *
-     * Default false: on Claude Code the tool_result IS the completion, and a
-     * subagent resumed through SendMessage carries an older stop timestamp
-     * that must not stop the fresh run. Codex multi-agent v2 overrides it —
-     * a subagent that answers its parent through ``send_message`` stays alive
-     * and never produces the second result the rule waits for, so its own
-     * ``task_complete`` is the only thing that ever says "done".
-     */
-    agentRunEndsOnSubagentIdle() {
-        return false
-    }
-
-    /**
      * Whether the shell should auto-open the details for this tool when the
      * item arrives live via WebSocket and the user has ``settings.showDiffs``
      * enabled. Default: false.
