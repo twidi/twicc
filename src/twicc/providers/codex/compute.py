@@ -184,6 +184,7 @@ import html
 import logging
 import os
 import re
+import sys
 import time
 from datetime import datetime
 from typing import ClassVar, NamedTuple
@@ -192,7 +193,7 @@ import orjson
 from django.db.models import Q
 
 from twicc.core.enums import ItemKind, Provider
-from twicc.core.models import SessionItem
+from twicc.core.models import AgentInteractionKind, SessionItem, SessionType
 from twicc.paths import get_artifacts_dir
 from twicc.pricing import calculate_line_context_usage
 from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalEvent
@@ -204,6 +205,7 @@ from twicc.providers.compute_base import (
     _EMPTY_TASK_TOOL_USES,
     _EMPTY_TOOL_USE_ENTRIES,
     BaseSessionCompute,
+    BatchAgentSignals,
     BatchAgentState,
     ContentAnalysis,
     INSERT_SCREENSHOT_TAG_RE,
@@ -214,7 +216,25 @@ from twicc.providers.compute_base import (
 )
 
 from .agent.original_files_cache import pop_original_files
-from .agent_runs import parse_sub_agent_activity
+from .agent_runs import (
+    END_STATUS_COMPLETED,
+    END_STATUS_OWNER_TURN_ABORTED,
+    END_STATUS_TURN_COMPLETE,
+    INTERACTION_KIND_BY_TOOL,
+    ForkFields,
+    SubAgentActivity,
+    agents_with_file_runs,
+    attribute_completed,
+    attribute_final_answer,
+    evidence_from_batch_state,
+    file_open_runs,
+    fork_fields,
+    is_task_complete,
+    line_ordinal,
+    owner_turn_abort_turn_id,
+    parse_sub_agent_activity,
+    task_started_turn_id,
+)
 from .canonical import (
     agent_message_text,
     build_twicc_agent_message,
@@ -522,6 +542,16 @@ _SPAWN_AGENT_TOOL_NAMES = frozenset({
 # signal is addressed by.
 _SUB_AGENT_ACTIVITY_ITEM_TYPE = "SubAgentActivity"
 _SUB_AGENT_ACTIVITY_STARTED_KIND = "started"
+# The other kinds, read by the agent-run hook (design §6.2): ``completed``
+# ends a run; ``interacted`` / ``interrupted`` mark a control call reaching
+# its target (their ``id`` is that call's ``call_id``).
+_SUB_AGENT_ACTIVITY_COMPLETED_KIND = "completed"
+_SUB_AGENT_ACTIVITY_CONTROL_KINDS = frozenset({"interacted", "interrupted"})
+
+# Reference line of the batch ``FINAL_ANSWER`` attribution: after every row
+# the loop built so far (all from earlier lines when the rebind runs), so the
+# §5.6 rules answer exactly as at the answer's own line.
+_AFTER_BATCH_ROWS = sys.maxsize
 
 # Envelope of an inter-agent message, as persisted in the *receiving*
 # thread (``response_item.agent_message``, multi-agent v2). The first
@@ -2156,6 +2186,18 @@ class CodexSessionCompute(BaseSessionCompute):
         # :meth:`_agent_id_map` to tolerate the live path that never
         # calls ``begin_session_compute``.
         self._agent_id_to_spawn_call_id: dict[str, dict[str, str]] = {}
+        # Batch-only file facts of the agent-run hook
+        # (:meth:`collect_agent_run_signals`, design §6.2), filled as the
+        # loop passes the lines; the live twin reads the same facts from
+        # the ``SessionItem`` rows. Initialised by
+        # :meth:`begin_session_compute`, freed by :meth:`end_session_compute`.
+        # - {session_id: {turn_id: line of its ``task_started``}}: finds the
+        #   aborted turn's start for the owner-abort cut (§5.2). A turn id
+        #   seen twice keeps its newest line.
+        # - {session_id: ForkFields}: the line-1 ``session_meta`` fork fields
+        #   of the copied-history gate (§5.2).
+        self._turn_started_lines: dict[str, dict[str, int]] = {}
+        self._fork_fields: dict[str, ForkFields] = {}
         # {session_id: last seen ``info.total_token_usage.total_tokens``}.
         # Updated by :meth:`compute_item_cost_and_usage` on every
         # billable token_count event. The cumulative total advances only
@@ -2246,6 +2288,8 @@ class CodexSessionCompute(BaseSessionCompute):
         self._process_owners[session_id] = {}
         self._ended_processes[session_id] = {}
         self._agent_id_to_spawn_call_id[session_id] = {}
+        self._turn_started_lines[session_id] = {}
+        self._fork_fields[session_id] = ForkFields(None, None)
         self._prev_total_tokens[session_id] = 0
         self._plan_prefix_states[session_id] = _PlanPrefixState(last_mode="default")
         self._goal_context_states[session_id] = _GoalContextState(initialized=True)
@@ -2263,6 +2307,8 @@ class CodexSessionCompute(BaseSessionCompute):
         self._process_owners.pop(session_id, None)
         self._ended_processes.pop(session_id, None)
         self._agent_id_to_spawn_call_id.pop(session_id, None)
+        self._turn_started_lines.pop(session_id, None)
+        self._fork_fields.pop(session_id, None)
         self._prev_total_tokens.pop(session_id, None)
         self._plan_prefix_states.pop(session_id, None)
         self._goal_context_states.pop(session_id, None)
@@ -2434,17 +2480,28 @@ class CodexSessionCompute(BaseSessionCompute):
         reading order stays correct (it had already populated / read the
         map by the time we got here).
 
-        ``batch_state`` (the batch loop's view, ``None`` outside it) is not
-        read yet.
+        The v2 ``FINAL_ANSWER`` goes further when ``batch_state`` (the
+        batch loop's view, ``None`` outside it) is given: the spawn found
+        through the map names the agent, and the file-local attribution
+        of §5.6 picks the run it ends (:meth:`_attribute_final_answer_in_batch`)
+        — a follow-up's answer lands on its ``followup_task`` call. No run
+        found → the spawn, as without ``batch_state``.
         """
-        if (
-            _subagent_notification_text(parsed_json) is not None
-            or _parse_agent_final_answer(parsed_json) is not None
-        ):
+        if _subagent_notification_text(parsed_json) is not None:
             agent_map = self._agent_id_to_spawn_call_id.get(session_id)
             if not agent_map:
                 return naive_tool_use_id
             return agent_map.get(naive_tool_use_id, naive_tool_use_id)
+        if _parse_agent_final_answer(parsed_json) is not None:
+            agent_map = self._agent_id_to_spawn_call_id.get(session_id)
+            spawn_call_id = agent_map.get(naive_tool_use_id) if agent_map else None
+            if spawn_call_id is None:
+                return naive_tool_use_id
+            if batch_state is not None:
+                run_call_id = self._attribute_final_answer_in_batch(batch_state, session_id, spawn_call_id)
+                if run_call_id is not None:
+                    return run_call_id
+            return spawn_call_id
         parent = tool_use_map.get(naive_tool_use_id)
         if parent is None:
             # A ``FileChange`` / ``McpToolCall`` from a
@@ -2480,6 +2537,174 @@ class CodexSessionCompute(BaseSessionCompute):
             ):
                 proc_map.pop(exec_command_id, None)
         return parent_call_id
+
+    def _attribute_final_answer_in_batch(
+        self, batch_state: BatchAgentState, session_id: str, spawn_call_id: str,
+    ) -> str | None:
+        """Return the call a v2 ``FINAL_ANSWER`` ends (§5.6), or ``None``.
+
+        ``spawn_call_id`` is the newest spawn announcing the sender path
+        (``_agent_id_map``); its link names the agent. The rebind runs
+        before the current line's result link and hook, so every row of
+        ``batch_state`` is from an earlier line: :data:`_AFTER_BATCH_ROWS`
+        as the reference line gives the rules the answer of the line itself.
+        ``None`` (no link, no candidate) → the caller keeps the spawn.
+        """
+        agent_id = next(
+            (
+                link["agent_id"] for link in batch_state.all_agent_links.values()
+                if link["session_id"] == session_id and link["tool_use_id"] == spawn_call_id
+            ),
+            None,
+        )
+        if agent_id is None:
+            return None
+        run = attribute_final_answer(
+            evidence_from_batch_state(batch_state, session_id, agent_id), _AFTER_BATCH_ROWS,
+        )
+        return run.tool_use_id if run is not None else None
+
+    def collect_agent_run_signals(
+        self,
+        session_id: str,
+        item: SessionItem,
+        parsed: dict,
+        batch_state: BatchAgentState,
+    ) -> BatchAgentSignals:
+        """Codex agent-run rows of one line, in the batch recompute (design §5.2, §5.6, §6.2).
+
+        - Line 1 and each ``task_started``: kept as file facts (fork fields,
+          ``turn_id`` → line) for the checks below.
+        - ``SubAgentActivity`` ``interacted`` / ``interrupted``: one
+          interaction, ``completed``: one run end on the call §5.6 picks.
+        - Owner turn abort: one ``owner_turn_aborted`` row per file-open run
+          opened in the aborted turn.
+        - ``task_complete`` in a subagent's own file (outside a forked
+          child's copied history): one agent-level ``turn_complete`` row.
+        Every decision reads ``batch_state`` (earlier lines, plus this
+        line's result link), the same evidence the live twin reads from the
+        DB rows below the line.
+        """
+        line = item.line_num
+        at = item.timestamp.isoformat() if item.timestamp else None
+        if line == 1:
+            self._fork_fields[session_id] = fork_fields(parsed)
+        turn_id = task_started_turn_id(parsed)
+        if turn_id is not None:
+            self._turn_started_lines.setdefault(session_id, {})[turn_id] = line
+            return BatchAgentSignals()
+        activity = parse_sub_agent_activity(parsed)
+        if activity is not None:
+            return self._collect_activity_signals(session_id, line, at, activity, batch_state)
+        run_ends: list[dict] = []
+        abort_turn_id = owner_turn_abort_turn_id(parsed)
+        if abort_turn_id is not None:
+            run_ends.extend(self._owner_abort_run_ends(session_id, line, at, abort_turn_id, batch_state))
+        if (
+            batch_state.session_type == SessionType.SUBAGENT
+            and is_task_complete(parsed)
+            and not self._is_copied_history(session_id, parsed)
+        ):
+            run_ends.append({
+                'session_id': session_id,
+                'line_num': line,
+                'tool_use_id': '',
+                'agent_id': session_id,
+                'ended_at': at,
+                'status': END_STATUS_TURN_COMPLETE,
+            })
+        return BatchAgentSignals(run_ends=tuple(run_ends))
+
+    def _collect_activity_signals(
+        self,
+        session_id: str,
+        line: int,
+        at: str | None,
+        activity: SubAgentActivity,
+        batch_state: BatchAgentState,
+    ) -> BatchAgentSignals:
+        """Rows of a ``SubAgentActivity`` line (``started`` writes none: its link is the spawn)."""
+        if activity.kind == _SUB_AGENT_ACTIVITY_COMPLETED_KIND:
+            run = attribute_completed(evidence_from_batch_state(batch_state, session_id, activity.agent_id), line)
+            if run is None:
+                return BatchAgentSignals()
+            return BatchAgentSignals(run_ends=({
+                'session_id': session_id,
+                'line_num': line,
+                'tool_use_id': run.tool_use_id,
+                'agent_id': activity.agent_id,
+                'ended_at': at,
+                'status': END_STATUS_COMPLETED,
+            },))
+        if activity.kind not in _SUB_AGENT_ACTIVITY_CONTROL_KINDS:
+            return BatchAgentSignals()
+        # A duplicated event line: the first one's row stands.
+        if activity.event_id in batch_state.all_agent_interactions:
+            return BatchAgentSignals()
+        # The call in the file, by its qualified name (``wait_agent`` never
+        # enters ``tool_use_map``); no call or another tool → no row.
+        entry = batch_state.tool_use_map.get(activity.event_id)
+        if entry is None:
+            return BatchAgentSignals()
+        kind = INTERACTION_KIND_BY_TOOL.get(entry.tool_name)
+        if kind is None or activity.agent_id in (session_id, batch_state.root_session_id):
+            return BatchAgentSignals()
+        # A resume opens a run when the agent has no file-open run here.
+        opens_run = kind == AgentInteractionKind.RESUME and not file_open_runs(
+            evidence_from_batch_state(batch_state, session_id, activity.agent_id), line,
+        )
+        return BatchAgentSignals(interactions=({
+            'session_id': session_id,
+            'tool_use_line_num': entry.line_num,
+            'event_line_num': line,
+            'tool_use_id': activity.event_id,
+            'agent_id': activity.agent_id,
+            'kind': kind,
+            'opens_run': opens_run,
+            'started_at': at,
+        },))
+
+    def _owner_abort_run_ends(
+        self,
+        session_id: str,
+        line: int,
+        at: str | None,
+        turn_id: str,
+        batch_state: BatchAgentState,
+    ) -> list[dict]:
+        """``owner_turn_aborted`` rows: the file-open runs whose call follows the turn's ``task_started``.
+
+        No ``task_started`` for the turn in this file → no run is cut (§5.2).
+        """
+        started_line = self._turn_started_lines.get(session_id, {}).get(turn_id)
+        if started_line is None:
+            return []
+        rows = []
+        for agent_id in sorted(agents_with_file_runs(batch_state, session_id)):
+            evidence = evidence_from_batch_state(batch_state, session_id, agent_id)
+            for run in file_open_runs(evidence, line):
+                if run.call_line > started_line:
+                    rows.append({
+                        'session_id': session_id,
+                        'line_num': line,
+                        'tool_use_id': run.tool_use_id,
+                        'agent_id': agent_id,
+                        'ended_at': at,
+                        'status': END_STATUS_OWNER_TURN_ABORTED,
+                    })
+        return rows
+
+    def _is_copied_history(self, session_id: str, parsed: dict) -> bool:
+        """True for a forked child's line below ``subagent_history_start_ordinal`` (§5.2).
+
+        Only a forked child (line 1 has ``forked_from_id``) is gated: non-fork
+        children also carry the ordinal field, with real turn ends below it.
+        """
+        fields = self._fork_fields.get(session_id)
+        if fields is None or fields.forked_from_id is None or fields.history_start_ordinal is None:
+            return False
+        ordinal = line_ordinal(parsed)
+        return ordinal is not None and ordinal < fields.history_start_ordinal
 
     def _remap_orphan_end_event(
         self,

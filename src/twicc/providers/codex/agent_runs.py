@@ -22,9 +22,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from twicc.providers.codex.canonical import completed_item
+
+if TYPE_CHECKING:
+    from twicc.providers.compute_base import BatchAgentState
 
 # Qualified name (``collaboration__<name>``) of a Codex control-tool call →
 # the ``AgentInteraction.kind`` its ``interacted`` / ``interrupted`` event
@@ -54,6 +57,16 @@ _ERROR_INFO_USAGE_LIMIT = "usage_limit_exceeded"
 
 RUN_KIND_SPAWN = "spawn"
 RUN_KIND_RESUME = "resume"
+
+# ``AgentInteraction.kind`` values the evidence reads (the model's
+# ``AgentInteractionKind``; this module stays Django-free).
+_INTERACTION_KIND_RESUME = "resume"
+_INTERACTION_KIND_STOP = "stop"
+
+# ``AgentRunEnd.status`` values of the Codex rows (§5.2).
+END_STATUS_COMPLETED = "completed"
+END_STATUS_OWNER_TURN_ABORTED = "owner_turn_aborted"
+END_STATUS_TURN_COMPLETE = "turn_complete"
 
 
 class SubAgentActivity(NamedTuple):
@@ -336,3 +349,78 @@ def attribute_final_answer(ev: FileEvidence, line: int) -> FileRun | None:
         if not _has_completed(ev, run, line) and not _has_final_answer(ev, run, line):
             return run
     return runs[-1] if runs else None
+
+
+# ---------------------------------------------------------------------------
+# Batch evidence (§6.2)
+# ---------------------------------------------------------------------------
+
+
+def _iso_datetime(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def agents_with_file_runs(batch_state: BatchAgentState, session_id: str) -> set[str]:
+    """The agents with at least one run owned by ``session_id``: a spawn or a run-opening resume."""
+    agents = {link["agent_id"] for link in batch_state.all_agent_links.values() if link["session_id"] == session_id}
+    agents.update(
+        row["agent_id"] for row in batch_state.all_agent_interactions.values()
+        if row["session_id"] == session_id and row["kind"] == _INTERACTION_KIND_RESUME and row["opens_run"]
+    )
+    return agents
+
+
+def evidence_from_batch_state(batch_state: BatchAgentState, session_id: str, agent_id: str) -> FileEvidence:
+    """Build the :class:`FileEvidence` of ``agent_id`` in ``session_id`` from the batch loop's dicts.
+
+    ``batch_state`` holds the rows built so far: earlier lines, plus the
+    current line's result link when the hook calls this (the ``FINAL_ANSWER``
+    rebind calls it before that link is written). It reads the spawn links,
+    the run-opening ``resume`` interactions, the ``stop`` interactions with
+    their first non-error result line, the ``completed`` /
+    ``owner_turn_aborted`` rows, and the results of every run call, all
+    owned by ``session_id`` and targeting ``agent_id``. The rules filter them
+    by line, like the live twin reads the DB rows below its line.
+    """
+    runs = [
+        FileRun(link["tool_use_id"], link["tool_use_line_num"], None, RUN_KIND_SPAWN)
+        for link in batch_state.all_agent_links.values()
+        if link["session_id"] == session_id and link["agent_id"] == agent_id
+    ]
+    stops: list[tuple[int, int | None]] = []
+    for row in batch_state.all_agent_interactions.values():
+        if row["session_id"] != session_id or row["agent_id"] != agent_id:
+            continue
+        if row["kind"] == _INTERACTION_KIND_RESUME and row["opens_run"]:
+            runs.append(FileRun(row["tool_use_id"], row["tool_use_line_num"], row["event_line_num"], RUN_KIND_RESUME))
+        elif row["kind"] == _INTERACTION_KIND_STOP:
+            ok_lines = [
+                result["tool_result_line_num"]
+                for result in batch_state.results_by_tool_use.get(row["tool_use_id"], ())
+                if result["session_id"] == session_id and result["error"] is None
+            ]
+            stops.append((row["event_line_num"], min(ok_lines, default=None)))
+    completed_lines: dict[str, list[int]] = {}
+    aborted_lines: dict[str, list[int]] = {}
+    for end in batch_state.all_agent_run_ends.values():
+        if end["session_id"] != session_id or end["agent_id"] != agent_id:
+            continue
+        if end["status"] == END_STATUS_COMPLETED:
+            completed_lines.setdefault(end["tool_use_id"], []).append(end["line_num"])
+        elif end["status"] == END_STATUS_OWNER_TURN_ABORTED:
+            aborted_lines.setdefault(end["tool_use_id"], []).append(end["line_num"])
+    results = {
+        run.tool_use_id: tuple(
+            (result["tool_result_line_num"], _iso_datetime(result["tool_result_at"]))
+            for result in batch_state.results_by_tool_use.get(run.tool_use_id, ())
+            if result["session_id"] == session_id
+        )
+        for run in runs
+    }
+    return FileEvidence(
+        runs=tuple(runs),
+        stops=tuple(stops),
+        completed_lines={tool_use_id: tuple(lines) for tool_use_id, lines in completed_lines.items()},
+        aborted_lines={tool_use_id: tuple(lines) for tool_use_id, lines in aborted_lines.items()},
+        results=results,
+    )
