@@ -8,7 +8,9 @@ serves from it.
 import asyncio
 
 import pytest
+from django.db import connection
 from django.test import AsyncClient
+from django.test.utils import CaptureQueriesContext
 
 from twicc.core.agent_runs import agent_run_states, serialize_runs
 from twicc.core.models import AgentInteractionKind, SessionItem, Share
@@ -141,6 +143,22 @@ def test_frozen_interactions_follow_the_link_filter(root):
     assert rows["a1"]["interactions"] == []
     # Not frozen: every interaction of the tree is listed.
     assert len(entries(root)["a2"]["interactions"]) == 4
+
+
+def test_frozen_snapshot_reads_the_tree_links_once(root):
+    launcher = child(root, "a1")
+    child(root, "a2")
+    link(root, "a1", "tu-spawn-1", line=1, background=True, started_at=t(0))
+    link(launcher, "a2", "tu-spawn-2", line=3, background=True, started_at=t(1))
+    interaction(root, "a2", "tu-msg", line=5, opens_run=True, started_at=t(2))
+
+    with CaptureQueriesContext(connection) as ctx:
+        rows = entries(root, frozen_at_line=12)
+
+    link_queries = [query for query in ctx.captured_queries if 'FROM "core_agentlink"' in query["sql"]]
+    assert len(link_queries) == 1
+    assert set(rows) == {"a1", "a2"}
+    assert rows["a2"]["runs"] == serialize_runs(agent_run_states(root, ["a2"], frozen_at_line=12)["a2"])
 
 
 def test_frozen_root_send_message_decided_after_the_freeze_is_not_a_run(root):

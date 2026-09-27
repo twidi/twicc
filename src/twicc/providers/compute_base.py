@@ -131,6 +131,9 @@ class ToolResultUpdate(NamedTuple):
     # Primary key of the ``ToolResultLink`` row the live sync just created
     # (the stop step leaves it out of its "before" state).
     link_id: int | None = None
+    # Name of the tool whose call the created link answers (live agent-run
+    # hook input; never broadcast).
+    tool_name: str | None = None
 
 
 class AgentStoppedUpdate(NamedTuple):
@@ -144,7 +147,7 @@ class AgentStoppedUpdate(NamedTuple):
     """
     agent_session_id: str
     stopped_at: datetime | None
-    stamped: bool = True
+    stamped: bool
 
 
 class ComputeApplyResult(NamedTuple):
@@ -1474,6 +1477,8 @@ class BaseSessionCompute:
         session_id: str,
         item: SessionItem,
         parsed: dict,
+        *,
+        result_tool_name: str | None = None,
     ) -> LiveAgentSignals:
         """
         Write the agent-run rows this line creates (live) and describe them.
@@ -1482,6 +1487,9 @@ class BaseSessionCompute:
         line's ``create_tool_result_link_live`` and before the agent links
         created from a ``tool_use`` on the same line. The provider writes
         its rows immediately, so a later line of the same batch sees them.
+        ``result_tool_name`` is the tool name of the result link this line
+        just created; ``None`` when it created none (no result, or a link
+        already stored), so a provider may skip a lookup only on a known name.
 
         Default: no rows.
         """
@@ -2043,6 +2051,7 @@ class BaseSessionCompute:
                     error=aggregated['error'],
                     tool_result_line_nums=line_nums,
                     link_id=link.id,
+                    tool_name=tool_name,
                 )
 
         return None
@@ -4020,6 +4029,7 @@ class BaseSessionCompute:
             ).update(**update_fields)
 
             # Tool result links (tool_result items are DEBUG_ONLY)
+            result_tool_name = None
             if self.is_tool_result_item(parsed):
                 # Create/upgrade the agent link BEFORE the result link: on an
                 # async launch ack both happen on the same line, and the
@@ -4032,13 +4042,16 @@ class BaseSessionCompute:
                 tool_result_update = self.create_tool_result_link_live(session.id, item, parsed)
                 if tool_result_update:
                     tool_result_updates.append(tool_result_update)
+                    result_tool_name = tool_result_update.tool_name
                 if wf_update := self.create_workflow_link_from_tool_result(session.id, item, parsed):
                     workflow_link_updates.append(wf_update)
 
             # Provider hook: agent-run evidence of this line, for every item.
             # After this line's tool-result link, before the agent links
             # created from a tool_use on the same line (below).
-            agent_run_signals.add(self.apply_agent_run_signals(session.id, item, parsed))
+            agent_run_signals.add(
+                self.apply_agent_run_signals(session.id, item, parsed, result_tool_name=result_tool_name)
+            )
 
             # For parent sessions: check if this item contains agent-spawning tool_use(s)
             # and try to link them to existing subagents (race condition: subagent file

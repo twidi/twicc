@@ -148,7 +148,7 @@ class ClaudeLiveSpy(ClaudeCodeSessionCompute):
         self.resumed = resumed
         self.seen = {}
 
-    def apply_agent_run_signals(self, session_id, item, parsed):
+    def apply_agent_run_signals(self, session_id, item, parsed, **kwargs):
         self.seen[item.line_num] = {
             "result_link": ToolResultLink.objects.filter(
                 session_id=self.session_id, tool_use_id=self.tool_use_id,

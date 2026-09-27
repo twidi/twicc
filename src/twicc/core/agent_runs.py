@@ -217,6 +217,8 @@ def agent_run_states(
     agent_ids: Iterable[str],
     frozen_at_line: int | None = None,
     exclude: RunStateExclude | None = None,
+    *,
+    frozen_links: tuple[list, set[str]] | None = None,
 ) -> dict[str, AgentRunState]:
     """Compute the run state of each requested agent of ``root``'s tree.
 
@@ -224,6 +226,9 @@ def agent_run_states(
     ``task_id``, ``"main"``, a Monitor id, the root itself) is ``known=False``.
     ``frozen_at_line`` limits the root's evidence and runs to a share's freeze;
     ``exclude`` (stop step only) treats this batch's rows as absent.
+    ``frozen_links`` (snapshot only) is the ``(links, visible)`` pair the
+    caller already built with ``frozen_tree_links`` for the same freeze, so
+    the tree links are read once; omitted, the frozen path reads them.
     """
     from twicc.core.models import (
         AgentInteraction,
@@ -246,7 +251,7 @@ def agent_run_states(
     # 1. Spawn links. The frozen path reads the whole tree once (owner visibility).
     visible: set[str] = set()
     if frozen:
-        tree_links, visible = _frozen_links(root, frozen_at_line)
+        tree_links, visible = frozen_links if frozen_links is not None else _frozen_links(root, frozen_at_line)
         links = [link for link in tree_links if link.agent_id in agent_ids]
     else:
         links = list(tree_links_to(root_id, agent_ids))

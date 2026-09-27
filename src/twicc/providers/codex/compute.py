@@ -2806,6 +2806,8 @@ class CodexSessionCompute(BaseSessionCompute):
         session_id: str,
         item: SessionItem,
         parsed: dict,
+        *,
+        result_tool_name: str | None = None,  # noqa: ARG002 (Codex decides from its own events)
     ) -> LiveAgentSignals:
         """Codex agent-run rows of one line, in the live sync (design §5.2, §5.6, §6.2).
 

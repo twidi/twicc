@@ -21,8 +21,10 @@ TERMINAL_NOTIFICATION_STATUSES = frozenset(
     {"completed", "failed", "stopped", "killed", "cancelled", "canceled"})
 
 # Control tools -> (interaction kind, input field holding the target).
+SEND_MESSAGE_TOOL = "SendMessage"
+
 _CONTROL_TOOLS = {
-    "SendMessage": ("message", "to"),
+    SEND_MESSAGE_TOOL: ("message", "to"),
     "TaskStop": ("stop", "task_id"),
     "TaskOutput": ("output", "task_id"),
 }

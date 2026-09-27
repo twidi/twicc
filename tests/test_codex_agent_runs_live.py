@@ -59,8 +59,8 @@ class RecordingCompute(CodexSessionCompute):
         super().__init__()
         self.live: dict[tuple[str, int], LiveAgentSignals] = {}
 
-    def apply_agent_run_signals(self, session_id, item, parsed):
-        signals = super().apply_agent_run_signals(session_id, item, parsed)
+    def apply_agent_run_signals(self, session_id, item, parsed, **kwargs):
+        signals = super().apply_agent_run_signals(session_id, item, parsed, **kwargs)
         self.live[(session_id, item.line_num)] = signals
         return signals
 

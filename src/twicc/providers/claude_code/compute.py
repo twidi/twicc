@@ -56,6 +56,7 @@ from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalE
 from twicc.providers.plan_docs import DocEditEvent, extract_shell_write_targets, is_plan_doc_path
 from .agent.original_file_cache import pop_original_file
 from .agent_runs import (
+    SEND_MESSAGE_TOOL,
     carries_task_notification,
     control_calls,
     is_plain_interrupt_marker,
@@ -2150,6 +2151,8 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         session_id: str,
         item: SessionItem,
         parsed: dict,
+        *,
+        result_tool_name: str | None = None,
     ) -> LiveAgentSignals:
         # ``item.session`` is the synced session the live loop built the item
         # with (no query); it gives the root id and the session type.
@@ -2183,8 +2186,11 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
                     affected.append(call.target)
 
         # Same first-result decision as the batch hook, on the DB rows (this
-        # line's ToolResultLink is already written).
-        tool_use_id = self._resumed_send_message_result(session_id, parsed)
+        # line's ToolResultLink is already written). A result of another
+        # tool has no ``message`` row to read: skip the query.
+        tool_use_id = None
+        if result_tool_name in (None, SEND_MESSAGE_TOOL):
+            tool_use_id = self._resumed_send_message_result(session_id, parsed)
         if tool_use_id is not None:
             row = AgentInteraction.objects.filter(
                 session_id=session_id, tool_use_id=tool_use_id,

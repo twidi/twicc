@@ -14,6 +14,8 @@ from queue import Queue
 
 import orjson
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from twicc.core.agent_runs import agent_run_states
 from twicc.core.enums import Provider
@@ -569,8 +571,8 @@ class RecordingCompute(ClaudeCodeSessionCompute):
         self.batch[(session_id, item.line_num)] = signals
         return signals
 
-    def apply_agent_run_signals(self, session_id, item, parsed):
-        signals = super().apply_agent_run_signals(session_id, item, parsed)
+    def apply_agent_run_signals(self, session_id, item, parsed, **kwargs):
+        signals = super().apply_agent_run_signals(session_id, item, parsed, **kwargs)
         self.live[(session_id, item.line_num)] = (signals, AgentInteraction.objects.filter(
             session_id=session_id, tool_use_id="tool_send", opens_run=True).exists())
         return signals
@@ -598,6 +600,41 @@ def test_first_result_decides_in_its_own_hook_call(tree, mode, resumed):
         assert signals.changed_interactions == signals.run_interactions
         assert compute.live[(root.id, 6)][0] == type(signals)()
         assert_batch_keeps_live_rows(root)
+
+
+class QueryRecordingCompute(ClaudeCodeSessionCompute):
+    """Records the SQL of each live hook call, per line."""
+
+    def __init__(self):
+        super().__init__()
+        self.queries = {}
+
+    def apply_agent_run_signals(self, session_id, item, parsed, **kwargs):
+        with CaptureQueriesContext(connection) as ctx:
+            signals = super().apply_agent_run_signals(session_id, item, parsed, **kwargs)
+        self.queries[(session_id, item.line_num)] = [query["sql"] for query in ctx.captured_queries]
+        return signals
+
+
+def interaction_queries(sqls):
+    return [sql for sql in sqls if 'FROM "core_agentinteraction"' in sql]
+
+
+def test_success_shaped_result_of_another_tool_skips_the_interaction_lookup(tree):
+    """A non-``SendMessage`` result with the resumed shape costs no ``AgentInteraction`` query (live)."""
+    root, _, _ = tree
+    compute = QueryRecordingCompute()
+    payload = orjson.dumps({"success": True, "message": "Saved"}).decode()
+    play("live", tree, (root, [
+        calls(1, ("tool_mcp", "mcp__notes__save", {"text": "x"})),
+        result("tool_mcp", [{"type": "text", "text": payload}], 2, tool_use_result=[{"type": "text", "text": payload}]),
+        send("tool_send", AGENT, 3),
+        resumed_ack("tool_send", AGENT, 4),
+    ]), compute=compute)
+    assert interaction_queries(compute.queries[(root.id, 2)]) == []
+    # A SendMessage result still reads its row.
+    assert len(interaction_queries(compute.queries[(root.id, 4)])) == 1
+    assert interaction(root, "tool_send").opens_run
 
 
 def test_only_the_first_result_decides(tree, mode):

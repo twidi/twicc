@@ -378,6 +378,13 @@ def test_null_stop_time_returns_an_unstamped_update(claude):
     assert live(claude, root, untimed)[5] == [AgentStoppedUpdate(AGENT, None, False)]
 
 
+def test_stopped_update_has_no_stamped_default():
+    # The broadcast reads ``stopped_at`` of every stamped update: a default of
+    # True would let a caller stamp an update whose time is None.
+    with pytest.raises(TypeError):
+        AgentStoppedUpdate(AGENT, None)
+
+
 # ---------------------------------------------------------------------------
 # ``exclude`` sets
 # ---------------------------------------------------------------------------

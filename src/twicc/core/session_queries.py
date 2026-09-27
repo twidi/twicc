@@ -231,13 +231,14 @@ def build_subagents_state(root, *, frozen_at_line=None, include_metrics=False, d
 
     links = tree_agent_links(root)
     visible = None
+    frozen_links = None
     if frozen_at_line is not None:
-        links, visible = frozen_tree_links(root, links, frozen_at_line)
+        links, visible = frozen_links = frozen_tree_links(root, links, frozen_at_line)
     agent_ids = {link.agent_id for link in links}
     helpers = get_provider_helpers(root.provider)
     return serialize_agent_links(
         links,
-        run_states=agent_run_states(root, agent_ids, frozen_at_line=frozen_at_line),
+        run_states=agent_run_states(root, agent_ids, frozen_at_line=frozen_at_line, frozen_links=frozen_links),
         interactions=tree_interactions(
             root, agent_ids, frozen_at_line=frozen_at_line, visible=visible, display_ceiling=display_ceiling,
         ),
