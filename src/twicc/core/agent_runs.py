@@ -455,3 +455,30 @@ def run_stop_step(root_id: str, affected_agent_ids: Iterable[str], exclude: RunS
         ).update(last_stopped_at=stopped_at, last_updated_at=stopped_at)
         stopped.append(AgentStoppedUpdate(agent_id, stopped_at, stamped=rows > 0))
     return StopStepResult(payloads, stopped)
+
+
+def record_ui_stop(root_id: str, agent_id: str, ended_at: datetime) -> StopStepResult:
+    """Record a successful Stop-button stop as run evidence, then run the stop step (design §5.2, §6.3).
+
+    Writes one ``ui`` ``AgentRunEnd`` on the root (``status = "ui_stopped"``,
+    no line, no call id): a stop record whose time is ``ended_at``, the time
+    the handler sent the stop request (rule 2 closes the runs started at or
+    before it; a run resumed later stays open). The stop step then compares
+    the agent's state without and with that row. One transaction, committed
+    on return; the caller broadcasts the result under the same DB write lock.
+    """
+    from django.db import transaction
+
+    from twicc.core.models import AgentRunEnd, AgentRunEndSource
+
+    with transaction.atomic():
+        row = AgentRunEnd.objects.create(
+            session_id=root_id,
+            line_num=None,
+            source=AgentRunEndSource.UI,
+            agent_id=agent_id,
+            tool_use_id="",
+            status="ui_stopped",
+            ended_at=ended_at,
+        )
+        return run_stop_step(root_id, [agent_id], RunStateExclude(run_end_ids=frozenset({row.id})))

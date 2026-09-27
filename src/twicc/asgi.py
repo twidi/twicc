@@ -8,6 +8,7 @@ messages for sending messages to agent sessions (any provider).
 
 import asyncio
 import logging
+from datetime import datetime
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
@@ -20,6 +21,7 @@ from channels.sessions import SessionMiddlewareStack
 from django.conf import settings
 from django.core.asgi import get_asgi_application
 from django.urls import path
+from django.utils import timezone
 
 from twicc.agent import AgentInfo, serialize_agent_info
 from twicc.auth.local_access import scope_remote_access_blocked
@@ -82,6 +84,20 @@ TITLE_CAPABLE_PROVIDERS = tuple(dict.fromkeys(TITLE_SUGGESTION_MODEL_PROVIDERS.v
 # WebSocket close code for authentication failure.
 # 4000-4999 range is reserved for application use by the WebSocket spec.
 WS_CLOSE_AUTH_FAILURE = 4001
+
+
+def _apply_ui_stop(root_id: str, agent_id: str, ended_at: datetime):
+    """Write the Stop-button ``ui_stopped`` row and run the stop step; ``(project_id, StopStepResult)``.
+
+    ``None`` when the root row is gone (nothing to attach the row to).
+    """
+    from twicc.core.agent_runs import record_ui_stop
+    from twicc.core.models import Session
+
+    project_id = Session.objects.filter(id=root_id).values_list("project_id", flat=True).first()
+    if project_id is None:
+        return None
+    return project_id, record_ui_stop(root_id, agent_id, ended_at)
 
 
 @sync_to_async
@@ -1432,6 +1448,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             )
             return
 
+        # Read before the request, outside any lock: a resume whose ack lands
+        # during the stop round trip or the lock wait starts after it, so the
+        # ui row does not close it (design §5.2).
+        ended_at = timezone.now()
         stopped = await manager.stop_subagent(session_id, subagent_id)
         if not stopped:
             logger.error(
@@ -1439,6 +1459,41 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 subagent_id,
                 session_id,
             )
+            return
+
+        # ``session_id`` is the tree root (the manager checks the subagent's
+        # parent is that session). The row, the stop step and its broadcasts
+        # share one critical section, so no watcher batch can send a newer
+        # ``agent_run_state`` in between.
+        try:
+            await run_under_db_write_lock(
+                lambda: self._record_and_broadcast_ui_stop(session_id, subagent_id, ended_at)
+            )
+        except Exception:
+            logger.exception(
+                "stop_subagent: could not record the stop of subagent %s in session %s", subagent_id, session_id,
+            )
+
+    async def _record_and_broadcast_ui_stop(self, root_id: str, agent_id: str, ended_at: datetime) -> None:
+        """Record a Stop-button stop as run evidence, then broadcast the stop step's outcome.
+
+        Runs under the DB write lock: the transaction commits before the
+        broadcasts. No ``_after_agents_stopped`` hook: it is a watcher method,
+        and only Claude has a Stop button, whose hook is the base no-op.
+        """
+        from twicc.providers.sessions_watcher import broadcast_agent_run_outcome
+
+        applied = await sync_to_async(_apply_ui_stop)(root_id, agent_id, ended_at)
+        if applied is None:
+            return
+        project_id, outcome = applied
+        await broadcast_agent_run_outcome(
+            self.channel_layer,
+            root_session_id=root_id,
+            project_id=project_id,
+            run_state_payloads=outcome.run_state_payloads,
+            stopped_updates=outcome.stopped,
+        )
 
     async def _handle_interrupt_session(self, content: dict) -> None:
         """Handle interrupt_session request from client.
