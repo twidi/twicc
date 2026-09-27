@@ -20,12 +20,12 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple
 
-from django.db.models import Max, Q
+from django.db.models import Max, Q, QuerySet
 
 from twicc.core.enums import Provider
 
 if TYPE_CHECKING:
-    from twicc.core.models import Session
+    from twicc.core.models import AgentLink, Session
     from twicc.providers.compute_base import AgentStoppedUpdate
 
 # Agent-level end statuses read by rule 5 (``tool_use_id == ""``): the Codex
@@ -115,7 +115,7 @@ def owner_filter(root_id: str) -> Q:
     return Q(session_id=root_id) | Q(session__parent_session_id=root_id)
 
 
-def tree_links_to(root_id: str, agent_ids: Iterable[str]):
+def tree_links_to(root_id: str, agent_ids: Iterable[str]) -> QuerySet[AgentLink]:
     """The ``AgentLink`` rows of the root's tree that spawn one of ``agent_ids`` (the tree rule's target scope).
 
     Owned inside the tree (:func:`owner_filter`), never targeting the root.

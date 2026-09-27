@@ -136,7 +136,7 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
         )()
         return dl is not None and dl <= self.ceiling
 
-    async def _call_visible(self, session_id: str, line_num) -> bool:
+    async def _call_visible(self, session_id: str, line_num: int) -> bool:
         """Whether the call item at ``(session_id, line_num)`` is under the ceiling.
 
         Unlike :meth:`_tool_use_visible`, reads the line from the payload: a

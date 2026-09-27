@@ -205,3 +205,45 @@ def test_late_tree_rule_skips_the_batch_own_interactions(claude, monkeypatch):
     ]
     sent = kinds(watched)
     assert sent.index("agent_link_created") < sent.index("agent_interaction")
+
+
+def test_late_tree_rule_sends_an_interaction_once_for_two_new_links(claude, monkeypatch):
+    """Owned by one new agent and targeting the other: both re-sends find it, one message goes out."""
+    root, children, _ = claude
+    watched = Watched(ClaudeCodeSessionsWatcher(), monkeypatch)
+    AgentInteraction.objects.create(
+        session=children[AGENT], tool_use_line_num=7, event_line_num=7, tool_use_id="tool_cross",
+        agent_id=OTHER, kind="message", started_at=at(20),
+    )
+    claude_watch(claude, watched, root, prompt(0), spawn("tool_spawn", 1), ack("tool_spawn", AGENT, 2),
+                 spawn("tool_other", 3), ack("tool_other", OTHER, 4))
+    assert [m["agent_session_id"] for m in watched.sent("agent_link_created")] == [AGENT, OTHER]
+    assert watched.sent("agent_interaction") == [
+        message(root, children[AGENT], "tool_cross", line_num=7, kind="message", opens_run=False,
+                started_at=at(20), agent=OTHER),
+    ]
+
+
+def test_late_tree_rule_resends_on_an_is_background_upgrade(claude, monkeypatch):
+    """The upgrade's ``agent_link_created`` re-sends the interactions with their current row state."""
+    root, children, _ = claude
+    target = children[AGENT]
+    watched = Watched(ClaudeCodeSessionsWatcher(), monkeypatch)
+    claude_watch(claude, watched, root, prompt(0), foreground_spawn("tool_spawn", 1))
+    claude_watch(claude, watched, target, line("user", "work for tool_spawn", 1.5, agentId=AGENT))
+    link = AgentLink.objects.get(agent_id=AGENT)
+    assert not link.is_background
+    claude_watch(claude, watched, children[OTHER], send("tool_sub", AGENT, 10))
+    assert len(watched.sent("agent_interaction")) == 1
+    # The row changed since its last message.
+    AgentInteraction.objects.filter(tool_use_id="tool_sub").update(opens_run=True, started_at=at(15))
+
+    claude_watch(claude, watched, root, ack("tool_spawn", AGENT, 2))
+    assert AgentLink.objects.get(agent_id=AGENT).is_background
+    links = watched.sent("agent_link_created")
+    assert [(m["agent_session_id"], m["is_background"]) for m in links] == [(AGENT, True)]
+    assert watched.sent("agent_interaction") == [
+        message(root, children[OTHER], "tool_sub", line_num=1, kind="message", opens_run=True, started_at=at(15)),
+    ]
+    sent = kinds(watched)
+    assert sent.index("agent_link_created") < sent.index("agent_interaction")
