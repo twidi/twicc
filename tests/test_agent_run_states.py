@@ -253,6 +253,20 @@ def test_tie_break_stop_on_a_later_line_closes(root):
     assert state.stopped_at == t(5)
 
 
+def test_tie_break_reads_non_error_results_only(root):
+    # An error result before the run's opening line does not make the stop "first".
+    link(root, "a1", "tu-spawn", started_at=t(0))
+    result(root, "tu-spawn", line=3, at=t(1))
+    interaction(root, "a1", "tu-stop", kind=AgentInteractionKind.STOP, line=10)
+    interaction(root, "a1", "tu-msg", line=10, opens_run=True, started_at=t(5))
+    result(root, "tu-stop", line=11, at=t(5), error="busy")
+    result(root, "tu-msg", line=12, at=t(5))
+    result(root, "tu-stop", line=13, at=t(5))
+    state = state_of(root, "a1")
+    assert state.running is False
+    assert state.stopped_at == t(5)
+
+
 def test_tie_break_codex_uses_event_line(codex_root):
     link(codex_root, "a1", "call-spawn", started_at=t(0))
     result(codex_root, "call-spawn", line=3, at=t(1))
@@ -754,6 +768,9 @@ def _build_tree(root, agent_count, root_result_count):
                     ended_at=t(9), status="completed")
         for i in range(agent_count)
     ])
+    # A root ui row, so the frozen path reads its freeze time too.
+    AgentRunEnd.objects.create(session=root, source=AgentRunEndSource.UI, agent_id="agent-1",
+                               ended_at=t(10), status="ui_stopped")
 
 
 def _count_queries(root, agent_ids, **kwargs):
@@ -788,11 +805,16 @@ def test_query_budget_is_independent_of_the_tree_size(project, django_assert_num
         agent_run_states(big, ["agent-1"])
 
 
-def test_frozen_query_budget_is_independent_of_the_tree_size(project):
+def test_frozen_query_budget_is_independent_of_the_tree_size(project, django_assert_num_queries,
+                                                             django_assert_max_num_queries):
     small = make_session(project, "small-root")
     _build_tree(small, 5, 20)
     small_count = _count_queries(small, ["agent-1"], frozen_at_line=500_000)
     _drop_tree(small)
     big = make_session(project, "big-root")
     _build_tree(big, 200, 15_000)
-    assert _count_queries(big, ["agent-1"], frozen_at_line=500_000) == small_count
+    with django_assert_num_queries(small_count):
+        state = agent_run_states(big, ["agent-1"], frozen_at_line=500_000)["agent-1"]
+    assert state.known is True
+    with django_assert_max_num_queries(5):
+        agent_run_states(big, ["agent-1"], frozen_at_line=500_000)

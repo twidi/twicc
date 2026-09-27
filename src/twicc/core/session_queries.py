@@ -156,6 +156,23 @@ def tree_agent_links(root):
     return list(AgentLink.objects.filter(Q(session_id=root.id) | Q(session_id__in=owners)).exclude(agent_id=root.id).order_by("id"))
 
 
+def frozen_tree_links(root, links, frozen_at_line):
+    """Keep the tree links visible at a share's freeze, and return the visible agent ids.
+
+    A root-owned link counts when its call line is at or before the freeze; a
+    link owned by an agent counts when that agent is visible. The snapshot and
+    the run model (``core.agent_runs``) share this one filter.
+    """
+    allowed = {link.agent_id for link in links
+               if link.session_id == root.id and link.tool_use_line_num <= frozen_at_line}
+    visible = visible_tree_agent_ids(root.id, links, allowed)
+    links = [link for link in links if link.agent_id in visible and (
+        (link.session_id in visible) if link.session_id != root.id
+        else link.tool_use_line_num <= frozen_at_line
+    )]
+    return links, visible
+
+
 class SpawnRef(NamedTuple):
     """The three fields :func:`spawn_display_names` needs of a link.
 
@@ -208,13 +225,7 @@ def build_subagents_state(root, *, frozen_at_line=None, include_metrics=False):
 
     links = tree_agent_links(root)
     if frozen_at_line is not None:
-        allowed = {link.agent_id for link in links
-                   if link.session_id == root.id and link.tool_use_line_num <= frozen_at_line}
-        visible = visible_tree_agent_ids(root.id, links, allowed)
-        links = [link for link in links if link.agent_id in visible and (
-            (link.session_id in visible) if link.session_id != root.id
-            else link.tool_use_line_num <= frozen_at_line
-        )]
+        links, _visible = frozen_tree_links(root, links, frozen_at_line)
     owners = {link.session_id for link in links}
     results = ToolResultLink.objects.filter(session_id__in=owners)
     if frozen_at_line is not None:

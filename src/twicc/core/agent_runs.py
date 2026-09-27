@@ -112,23 +112,10 @@ def _owner_filter(root_id: str) -> Q:
 
 
 def _frozen_links(root: Session, frozen_at_line: int) -> tuple[list, set[str]]:
-    """The tree's links visible at the freeze, and the visible agent ids.
+    """The tree's links visible at the freeze, and the visible agent ids (the snapshot's filter)."""
+    from twicc.core.session_queries import frozen_tree_links, tree_agent_links
 
-    Same filter as ``build_subagents_state``: a root-owned link counts when its
-    call line is at or before the freeze, a link owned by an agent counts when
-    that agent is visible.
-    """
-    from twicc.core.session_queries import tree_agent_links, visible_tree_agent_ids
-
-    links = tree_agent_links(root)
-    allowed = {link.agent_id for link in links
-               if link.session_id == root.id and link.tool_use_line_num <= frozen_at_line}
-    visible = visible_tree_agent_ids(root.id, links, allowed)
-    links = [link for link in links if link.agent_id in visible and (
-        (link.session_id in visible) if link.session_id != root.id
-        else link.tool_use_line_num <= frozen_at_line
-    )]
-    return links, visible
+    return frozen_tree_links(root, tree_agent_links(root), frozen_at_line)
 
 
 def _freeze_time(root: Session, frozen_at_line: int) -> datetime | None:
