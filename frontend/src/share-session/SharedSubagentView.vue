@@ -16,7 +16,7 @@ const agentLabel = (id) => {
 </script>
 
 <template>
-    <div class="subagent-drawer">
+    <div class="subagent-drawer glass-veil">
         <div class="subagent-backdrop" @click="emit('clear')"></div>
         <div class="subagent-panel">
             <header class="subagent-head">
@@ -36,7 +36,8 @@ const agentLabel = (id) => {
 
 <style scoped>
 .subagent-drawer { position: fixed; inset: 0; z-index: 20; }
-.subagent-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.4); }
+/* The veil is the drawer's glass-veil layer; the backdrop stays as the click target. */
+.subagent-backdrop { position: absolute; inset: 0; }
 .subagent-panel { position: absolute; top: 0; right: 0; bottom: 0; width: min(52rem, 100%);
     background: var(--wa-color-surface-default); box-shadow: -4px 0 24px rgba(0,0,0,.3);
     display: flex; flex-direction: column; overflow: hidden; }

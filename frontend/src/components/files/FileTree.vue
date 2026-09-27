@@ -458,12 +458,14 @@ function onTouchEnd(event) {
     min-width: 100%;
     outline: none;
     position: relative;
-    --node-bg-color: var(--wa-color-surface-default);
+    /* Contextual row tokens: glass surfaces (styles/glass.css) set --row-*; the Files
+       and Git panes keep these fallbacks. */
+    --node-bg-color: var(--row-bg, var(--wa-color-surface-default));
     background-color: var(--node-bg-color);
 }
 
 .node-label:hover {
-    --node-bg-color: var(--wa-color-surface-raised);
+    --node-bg-color: var(--row-hover-bg, var(--wa-color-surface-raised));
 }
 
 .node-label.is-selected .node-name {
@@ -471,11 +473,11 @@ function onTouchEnd(event) {
 }
 
 .node-label.is-selected:hover {
-    --node-bg-color: var(--wa-color-surface-lowered);
+    --node-bg-color: var(--row-active-bg, var(--wa-color-surface-lowered));
 }
 
 .node-label.is-focused {
-    --node-bg-color: var(--wa-color-surface-lowered);
+    --node-bg-color: var(--row-active-bg, var(--wa-color-surface-lowered));
 }
 
 .node-label.is-toggle,

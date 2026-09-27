@@ -28,9 +28,13 @@ import '@awesome.me/webawesome/dist/components/popover/popover.js'
 
 import '../styles/transcript-tokens.css'
 import '../styles/depth.css'
+import '../styles/glass.css'
 import ShareSessionApp from './ShareSessionApp.vue'
 import ShareDocApp from './ShareDocApp.vue'
 import ShareRecentApp from './ShareRecentApp.vue'   // 3.20
+// Glass popovers: cut the body border under the arrow (see glass.css).
+import { installGlassArrowGap } from '../utils/glassArrowGap'
+installGlassArrowGap()
 import { recordShareView } from '../share-recent/recordView'  // 3.19
 
 const el = document.getElementById('twicc-share-data')

@@ -13,6 +13,8 @@ import '@awesome.me/webawesome/dist/styles/themes/shoelace.css'
 import './styles/transcript-tokens.css'
 // Depth tokens (also imported by the share bundle and the artifact shell).
 import './styles/depth.css'
+// Glass overlay tokens and rules (also imported by the share bundle and the artifact shell).
+import './styles/glass.css'
 // Canvas + floating-panel tokens (SPA only — the share bundle does not import it).
 import './styles/surfaces.css'
 import '@awesome.me/webawesome/dist/components/badge/badge.js'
@@ -24,6 +26,9 @@ import '@awesome.me/webawesome/dist/components/comparison/comparison.js'
 import '@awesome.me/webawesome/dist/components/divider/divider.js'
 import '@awesome.me/webawesome/dist/components/icon/icon.js'
 import './utils/brandRobotIcon'
+// Glass popovers: cut the body border under the arrow (see glass.css).
+import { installGlassArrowGap } from './utils/glassArrowGap'
+installGlassArrowGap()
 import '@awesome.me/webawesome/dist/components/progress-bar/progress-bar.js'
 import '@awesome.me/webawesome/dist/components/progress-ring/progress-ring.js'
 import '@awesome.me/webawesome/dist/components/option/option.js'

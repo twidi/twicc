@@ -93,12 +93,12 @@ function onClickHelp(key) {
     padding: 0.5rem;
     border-radius: 0.25rem;
     cursor: pointer;
-    background-color: var(--wa-color-surface-lowered, transparent);
+    background-color: var(--glass-item-rest);
 }
 
 .help-row:hover,
 .help-row:focus-visible {
-    background-color: var(--wa-color-surface-default, #eee);
+    background-color: var(--glass-item-hover);
     outline: none;
 }
 

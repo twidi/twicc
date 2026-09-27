@@ -313,7 +313,7 @@ onBeforeUnmount(() => {
             shift-padding="8"
             class="picker-popup"
         >
-            <div class="picker-panel" @keydown.capture="onPickerKeydown">
+            <div class="picker-panel glass-surface" @keydown.capture="onPickerKeydown">
                 <!-- Header: current path + navigate up -->
                 <div class="picker-header">
                     <wa-button
@@ -373,10 +373,7 @@ onBeforeUnmount(() => {
     max-height: min(25rem, 60dvh);
     display: flex;
     flex-direction: column;
-    background: var(--wa-color-surface-default);
-    border: 1px solid var(--wa-color-surface-border);
     border-radius: var(--wa-border-radius-m);
-    box-shadow: var(--wa-shadow-l);
     overflow: hidden;
 }
 @media (max-height: 640px) {
@@ -389,7 +386,8 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     gap: var(--wa-space-2xs);
-    padding: var(--wa-space-2xs) var(--wa-space-xs);
+    /* --glass-edge-gap (set inside glass surfaces): the focus ring clears the glass border. */
+    padding: calc(var(--wa-space-2xs) + var(--glass-edge-gap, 0px)) var(--wa-space-xs);
     border-bottom: 1px solid var(--wa-color-surface-border);
     flex-shrink: 0;
 }

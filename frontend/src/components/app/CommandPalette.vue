@@ -521,7 +521,7 @@ defineExpose({ open, close })
                 <!-- Root category mode -->
                 <template v-if="!query && !parentCommand">
                     <template v-for="group in commandsByCategory" :key="group.key">
-                        <div class="category-sticky">
+                        <div class="category-sticky glass-sticky">
                             <div class="category-label">{{ group.label }}</div>
                         </div>
                         <div
@@ -620,7 +620,7 @@ defineExpose({ open, close })
                          mode (each under a sticky header naming the parent), or the
                          current parent's items in nested mode (no header). -->
                     <template v-for="section in subItemSections" :key="section.key">
-                        <div v-if="section.parent" class="category-sticky">
+                        <div v-if="section.parent" class="category-sticky glass-sticky">
                             <div class="category-label drill-label">
                                 <wa-icon
                                     :name="section.parent.icon || undefined"
@@ -770,16 +770,11 @@ defineExpose({ open, close })
 
 <style scoped>
 wa-dialog {
-    background: var(--wa-color-surface-default);
     --width: min(720px, calc(100vw - 1rem));
 }
 
 wa-dialog::part(body) {
-    background: var(--wa-color-surface-default);
     padding: 0;
-}
-wa-dialog::part(overlay) {
-    background: rgba(0, 0, 0, 0.4);
 }
 
 .palette-header {
@@ -826,11 +821,11 @@ wa-dialog::part(overlay) {
     transition: background-color 0.1s ease, color 0.1s ease;
 }
 .breadcrumb-back:hover {
-    background: var(--wa-color-surface-lowered);
+    background: var(--glass-item-hover);
     color: var(--wa-color-text-normal);
 }
 .breadcrumb-back:active {
-    background: var(--wa-color-surface-border);
+    background: var(--glass-item-highlight);
 }
 .breadcrumb-back-icon {
     color: var(--wa-color-text-normal);
@@ -849,19 +844,18 @@ wa-divider {
 /* Sticky wrapper: pins the group header to the top of the scroll area while
    its commands scroll past. `container-type: scroll-state` makes it a query
    container so the inner label can react to being stuck (see the scroll-state
-   query below). The wrapper carries the positioning; the label keeps the
-   visual styling. */
+   query below). The wrapper carries the positioning and, through
+   `.glass-sticky`, the blur layer over the rows scrolling under it; the label
+   keeps the visual styling. */
 .category-sticky {
     position: sticky;
     top: 0;
     z-index: 1;
     container-type: scroll-state;
     padding-block: var(--wa-space-xs) var(--wa-space-2xs);
-    background: var(--wa-color-surface-default);
 }
 .category-label {
     padding: var(--wa-space-2xs) var(--wa-space-m);
-    background: var(--wa-color-surface-default);
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-muted);
     text-transform: uppercase;
@@ -917,7 +911,7 @@ wa-divider {
     scroll-margin-top: 2rem;
 }
 .command-item.active {
-    background: var(--wa-color-surface-lowered);
+    background: var(--glass-item-highlight);
 }
 .command-icon {
     width: 1.25em;

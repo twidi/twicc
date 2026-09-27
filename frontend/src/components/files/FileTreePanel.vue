@@ -1502,7 +1502,8 @@ defineExpose({
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .files-search {
-    padding: var(--wa-space-2xs);
+    /* --glass-edge-gap (set inside glass surfaces): the focus ring clears the glass border. */
+    padding: calc(var(--wa-space-2xs) + var(--glass-edge-gap, 0px));
     flex-shrink: 0;
     border-bottom: 1px solid var(--wa-color-surface-border);
     display: flex;

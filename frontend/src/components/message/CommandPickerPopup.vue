@@ -409,7 +409,7 @@ defineExpose({ open, close, isOpen })
         shift-padding="8"
         class="picker-popup"
     >
-        <div class="picker-panel">
+        <div class="picker-panel glass-surface">
             <!-- Search input -->
             <div class="picker-search">
                 <wa-input
@@ -473,10 +473,7 @@ defineExpose({ open, close, isOpen })
     max-height: min(25rem, 50dvh);
     display: flex;
     flex-direction: column;
-    background: var(--wa-color-surface-default);
-    border: 1px solid var(--wa-color-surface-border);
     border-radius: var(--wa-border-radius-m);
-    box-shadow: var(--wa-shadow-l);
     overflow: hidden;
 }
 @media (max-height: 640px) {
@@ -488,7 +485,8 @@ defineExpose({ open, close, isOpen })
 /* ─── Search ──────────────────────────────────────────────────────────── */
 
 .picker-search {
-    padding: var(--wa-space-2xs);
+    /* --glass-edge-gap (set inside glass surfaces): the focus ring clears the glass border. */
+    padding: calc(var(--wa-space-2xs) + var(--glass-edge-gap, 0px));
     border-bottom: 1px solid var(--wa-color-surface-border);
     flex-shrink: 0;
 }
@@ -529,11 +527,11 @@ defineExpose({ open, close, isOpen })
 }
 
 .picker-item:hover {
-    background: var(--wa-color-surface-raised);
+    background: var(--glass-item-hover);
 }
 
 .picker-item.active {
-    background: var(--wa-color-surface-lowered);
+    background: var(--glass-item-highlight);
 }
 
 .item-header {

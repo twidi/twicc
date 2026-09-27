@@ -264,7 +264,7 @@ const timestampSeconds = computed(() =>
     min-height: 0;
 }
 .pir:last-of-type { border-bottom: none; }
-.pir:hover { background: var(--wa-color-surface-raised); }
+.pir:hover { background: var(--glass-item-hover); }
 
 .pir__head {
     display: flex;

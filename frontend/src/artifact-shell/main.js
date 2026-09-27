@@ -10,8 +10,9 @@ import { createApp } from 'vue'
 // Web Awesome: design tokens + ONLY the components the consent prompt uses.
 import '@awesome.me/webawesome/dist/styles/webawesome.css'
 import '@awesome.me/webawesome/dist/styles/themes/default.css'
-// Depth tokens: the consent prompt dialog looks the same here as in the SPA preview.
+// Depth and glass tokens: the consent prompt dialog looks the same here as in the SPA preview.
 import '../styles/depth.css'
+import '../styles/glass.css'
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome/dist/components/button/button.js'
 import '@awesome.me/webawesome/dist/components/callout/callout.js'

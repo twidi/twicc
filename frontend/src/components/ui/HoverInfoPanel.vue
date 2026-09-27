@@ -55,7 +55,7 @@ onBeforeUnmount(() => {
         <div
             ref="rootEl"
             popover="manual"
-            class="hover-info-panel"
+            class="hover-info-panel glass-surface"
             :style="{ left: `${left}px`, top: `${top}px` }"
         >
             <slot />
@@ -73,11 +73,8 @@ onBeforeUnmount(() => {
     margin: 0;
     max-width: 20rem;
     padding: var(--wa-space-s) var(--wa-space-m);
-    border: 1px solid var(--wa-color-surface-border);
     border-radius: var(--wa-border-radius-m);
-    background: var(--wa-color-surface-raised, var(--wa-color-surface-default));
     color: var(--wa-color-text-normal);
-    box-shadow: var(--wa-shadow-l, 0 6px 24px rgba(0, 0, 0, 0.18));
     font-size: var(--wa-font-size-s);
     pointer-events: none;
     overflow: visible;

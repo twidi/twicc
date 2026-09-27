@@ -553,7 +553,7 @@ function formatAverage(value, isCost) {
                     <!-- Hover tooltip (combined: shows all three metrics + averages) -->
                     <div
                         v-if="hoveredIndex !== null && hoveredData && hoveredAverages && !isTouchDevice"
-                        class="sparkline-tooltip"
+                        class="sparkline-tooltip glass-surface"
                         :style="{ left: `${tooltipLeftPct}%`, transform: `translateX(-${tooltipLeftPct}%)` }"
                     >
                         <div v-for="c in combinedCurves" :key="c.key" class="sparkline-tooltip-row">
@@ -619,7 +619,7 @@ function formatAverage(value, isCost) {
                     <!-- Hover tooltip (separate: single metric + relevant averages) -->
                     <div
                         v-if="hoveredIndex !== null && hoveredData && hoveredAverages && !isTouchDevice"
-                        class="sparkline-tooltip"
+                        class="sparkline-tooltip glass-surface"
                         :style="{ left: `${tooltipLeftPct}%`, transform: `translateX(-${tooltipLeftPct}%)` }"
                     >
                         <div class="sparkline-tooltip-value">{{ formatMetricValue(curve.key, hoveredData[curve.key]) }}</div>
@@ -728,13 +728,11 @@ function formatAverage(value, isCost) {
     margin-bottom: var(--wa-space-2xs);
     pointer-events: none;
     z-index: 10;
-    background: var(--wa-color-surface-raised);
     border-radius: var(--wa-border-radius-m);
     padding: var(--wa-space-xs) var(--wa-space-s);
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-normal);
     white-space: nowrap;
-    box-shadow: var(--depth-2);
 }
 
 .sparkline-tooltip-separator {

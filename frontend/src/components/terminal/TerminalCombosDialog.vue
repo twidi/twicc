@@ -676,7 +676,7 @@ defineExpose({ open, close })
 
 .key-capture-input {
     flex: 1;
-    background: var(--wa-color-surface-raised);
+    background: var(--wa-form-control-background-color);
     border: 1px solid var(--wa-color-surface-border);
     border-radius: var(--wa-border-radius-s);
     color: var(--wa-color-text-normal);

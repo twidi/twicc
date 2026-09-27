@@ -161,12 +161,12 @@ function onResetCancel() {
     padding: 0.5rem;
     border-radius: 0.25rem;
     cursor: pointer;
-    background-color: var(--wa-color-surface-lowered, transparent);
+    background-color: var(--glass-item-rest);
 }
 
 .tips-row:hover,
 .tips-row:focus-visible {
-    background-color: var(--wa-color-surface-default, #eee);
+    background-color: var(--glass-item-hover);
     outline: none;
 }
 

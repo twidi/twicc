@@ -369,7 +369,7 @@ wa-dialog > wa-callout { margin-block: var(--wa-space-s); }
 }
 .pi-row:last-of-type { border-bottom: none; }
 .pi-row--clickable { cursor: pointer; }
-.pi-row--clickable:hover { background: var(--wa-color-surface-raised); }
+.pi-row--clickable:hover { background: var(--glass-item-hover); }
 
 .pi-row__icon { color: var(--wa-color-text-quiet); flex-shrink: 0; }
 .pi-row__title { font-weight: 600; flex-shrink: 0; }

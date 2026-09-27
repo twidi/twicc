@@ -1333,7 +1333,7 @@ function onChangelogClose() {
 
                 <!-- Detail: section content -->
                 <div class="settings-detail">
-                    <div class="settings-detail-header" @click="goBackToNav">
+                    <div class="settings-detail-header glass-sticky" @click="goBackToNav">
                         <wa-button
                             variant="neutral"
                             appearance="plain"
@@ -2395,7 +2395,7 @@ function onChangelogClose() {
 }
 
 .settings-nav-item:hover {
-    background: var(--wa-color-surface);
+    background: var(--glass-item-hover);
 }
 
 .settings-nav-item.active {
@@ -2464,16 +2464,20 @@ function onChangelogClose() {
         gap: var(--wa-space-2xs);
         cursor: pointer;
         /* Keep the back affordance reachable while the detail panel scrolls:
-           stick it to the top of the scrolling panel. The opaque popover
-           surface background hides content scrolling underneath; using
-           padding-bottom (rather than margin) keeps that masking area opaque
-           right down to the content, with no transparent strip. z-index sits
-           above the content and the scroll-shadow pseudo-elements (z-index: 2). */
+           stick it to the top of the scrolling panel. Its glass-sticky layer
+           blurs the content scrolling underneath; using padding-bottom (rather
+           than margin) extends that blurred area right down to the content, with
+           no clear strip. z-index sits above the content and the scroll-shadow
+           pseudo-elements (z-index: 2); the top scroll shadow is hidden on narrow
+           screens (see the scroll shadows below), the stuck row already marks
+           the scroll. The row spreads over the panel's padding (negative margins,
+           same padding back, stuck at minus that padding) so, once stuck, it covers
+           the panel edge to edge: no strip of scrolling content above or beside it. */
         position: sticky;
-        top: 0;
+        top: calc(-1 * var(--wa-space-s));
         z-index: 3;
-        background: var(--wa-color-surface-default);
-        padding-bottom: var(--wa-space-s);
+        margin: calc(-1 * var(--wa-space-s)) calc(-1 * var(--wa-space-s)) 0;
+        padding: var(--wa-space-s);
     }
 
     .settings-detail-header-title {
@@ -2565,6 +2569,12 @@ function onChangelogClose() {
         .settings-nav,
         .settings-detail {
             --_panel-pad: var(--wa-space-s);
+        }
+        /* The stuck back row (glass, see above) already marks the scroll; the top
+           shadow would show through it as a dark band. Hidden, not removed: it is
+           an in-flow sticky box, removing it would move the back row up. */
+        .settings-detail::before {
+            visibility: hidden;
         }
     }
 }

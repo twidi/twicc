@@ -2664,7 +2664,7 @@ function updateSidebarClosedClass(closed) {
          `.sidebar` (container-type) would otherwise become its containing
          block. Fixed also keeps it out of the document's scrollable
          overflow, which a sticky/translated box inside the sidebar was not. -->
-    <label for="sidebar-toggle-state" class="sidebar-backdrop"></label>
+    <label for="sidebar-toggle-state" class="sidebar-backdrop glass-veil"></label>
 
     <!-- Shared rename dialog (single instance for sidebar + session header) -->
     <SessionRenameDialog
@@ -3791,9 +3791,16 @@ html.wa-dark .usage-lane-time {
         z-index: 99;
         background: transparent;
         pointer-events: none;
-        /* --transition-duration is declared on .sidebar, which is no longer an
-           ancestor here, so the fallback is what actually applies. */
-        transition: background var(--transition-duration, .3s) ease;
+        /* The veil is the glass-veil blur layer (::before), faded through its opacity. */
+        --glass-veil-opacity: 0;
+    }
+    /* Closed: the layer is hidden once the fade-out ends — a transparent layer with a blur
+       is still composited, visibility removes it. --transition-duration is declared on
+       .sidebar, which is no longer an ancestor here, so the fallback is what actually
+       applies. */
+    .sidebar-backdrop::before {
+        visibility: hidden;
+        transition: opacity var(--transition-duration, .3s) ease, visibility 0s linear var(--transition-duration, .3s);
     }
 
     /* When sidebar is open, button goes back inside */
@@ -3814,7 +3821,11 @@ html.wa-dark .usage-lane-time {
 
         .sidebar-backdrop {
             pointer-events: all;
-            background: rgba(0, 0, 0, 0.5);
+            --glass-veil-opacity: 1;
+        }
+        .sidebar-backdrop::before {
+            visibility: visible;
+            transition-delay: 0s, 0s;
         }
     }
 }

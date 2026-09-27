@@ -763,17 +763,21 @@ onBeforeUnmount(() => {
     window.removeEventListener('twicc:open-peer-compose', openPeerCompose)
 })
 
-// Notivue theme - inverted for contrast (dark theme when app is light, and vice-versa)
+// Notivue theme: glass toasts in the page scheme (styles/glass.css paints the layer).
 const toastTheme = computed(() => {
     const isDark = settingsStore.getEffectiveColorScheme === COLOR_SCHEME.DARK
-    // Invert: use light toast theme when app is dark, and vice-versa
     return {
-        ...(isDark ? lightTheme : slateTheme),
+        // Type accents (success, error, …) readable on the scheme's own glass.
+        ...(isDark ? slateTheme : lightTheme),
         '--nv-width': '100%',
         '--nv-min-width': '30rem',
-        // Level 3, cast on the page: resolves with the page scheme even inside the
-        // .wa-invert box (slateTheme has no shadow of its own, lightTheme a faint one).
-        '--nv-shadow': 'var(--depth-3)',
+        // The glass is painted by the layer below, not by the toast itself.
+        '--nv-global-bg': 'transparent',
+        '--nv-global-fg': 'var(--wa-color-text-normal)',
+        // The border overlay draws the glass border; slateTheme's 1px border goes.
+        '--nv-border-width': '0',
+        // Outer shadow only: the border overlay draws the top edge.
+        '--nv-shadow': 'var(--glass-shadow)',
     }
 })
 </script>
@@ -858,27 +862,18 @@ const toastTheme = computed(() => {
          navigation, enabling parent-terminal attachment. -->
     <TerminalPool v-if="isAppReady" />
 
-    <!-- Toast notification system (theme inverted for contrast).
-         The `.wa-invert` box flips the whole `--wa-color-*` set for every toast,
-         so WA components and semantic tokens used inside toast content match the
-         inverted background without each call site opting in. It sits INSIDE the
-         Notivue slot (not around <Notivue>) so it follows the notifications even
-         if Notivue teleports its root, and uses `display: contents` so it stays
-         out of Notivue's layout and animations. -->
-    <Notivue v-slot="item">
-        <div class="toast-invert wa-invert">
-            <CustomNotification v-if="item.props?.custom" :item="item" :theme="toastTheme" />
-            <Notification v-else :item="item" :theme="toastTheme" />
-        </div>
+    <!-- Toast notification system: glass toasts in the page scheme.
+         Notivue clips its fixed list with an inline clip-path, which would make the
+         list the backdrop root of every toast (their blur layer would blur only the
+         empty list, not the page). The clip only cuts what overflows below the
+         viewport bottom, off-screen anyway, so it is removed. -->
+    <Notivue v-slot="item" :styles="{ list: { clipPath: 'none' } }">
+        <CustomNotification v-if="item.props?.custom" :item="item" :theme="toastTheme" />
+        <Notification v-else :item="item" :theme="toastTheme" />
     </Notivue>
 </template>
 
 <style>
-/* Carries the inverted color tokens for every toast, nothing else. */
-.toast-invert {
-    display: contents;
-}
-
 .version-reload-content {
     display: flex;
     flex-direction: column;

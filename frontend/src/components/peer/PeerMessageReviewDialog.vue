@@ -1475,7 +1475,7 @@ function onHide(event) {
                     <div class="pr-actions__row">
                         <wa-select
                             id="pr-action-select" ref="actionSelectRef" :key="actionSelectKey"
-                            size="small" class="pr-actions__select"
+                            size="small" class="pr-actions__select glass-listbox-direct"
                             placeholder="Pick an action…"
                             :value="selectedAction" :disabled="busy"
                             @change="onActionChange"

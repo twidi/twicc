@@ -548,7 +548,7 @@ defineExpose({ open })
                         placeholder="All projects"
                         size="small"
                         with-clear
-                        class="filter-select"
+                        class="filter-select glass-listbox-direct"
                     >
                         <ProjectMark
                             v-if="filters.projectId && !isWorkspaceFilter"
@@ -589,7 +589,7 @@ defineExpose({ open })
                         placeholder="Any source"
                         size="small"
                         with-clear
-                        class="filter-select"
+                        class="filter-select glass-listbox-direct"
                     >
                         <wa-option value="user">User</wa-option>
                         <wa-option value="assistant">Assistant</wa-option>
@@ -601,7 +601,7 @@ defineExpose({ open })
                         placeholder="Any recent"
                         size="small"
                         with-clear
-                        class="filter-select"
+                        class="filter-select glass-listbox-direct"
                     >
                         <wa-option value="24h">Newer than 24 hours</wa-option>
                         <wa-option value="3d">Newer than 3 days</wa-option>
@@ -619,7 +619,7 @@ defineExpose({ open })
                         placeholder="Any old"
                         size="small"
                         with-clear
-                        class="filter-select"
+                        class="filter-select glass-listbox-direct"
                     >
                         <wa-option value="24h">Older than 24 hours</wa-option>
                         <wa-option value="3d">Older than 3 days</wa-option>
@@ -760,12 +760,7 @@ defineExpose({ open })
 }
 
 .search-overlay::part(body) {
-    background: var(--wa-color-surface-default);
     padding: 0;
-}
-
-.search-overlay::part(overlay) {
-    background: rgba(0, 0, 0, 0.4);
 }
 
 /* ─── Layout ────────────────────────────────────────────────────────────── */
@@ -885,7 +880,7 @@ defineExpose({ open })
 }
 
 .search-result-card.selected {
-    background: var(--wa-color-surface-lowered);
+    background: var(--glass-item-highlight);
 }
 
 .search-result-card.visited {

@@ -1,0 +1,430 @@
+/* Glass — accent-tinted translucent overlays, visual refresh step 3.
+   Design: docs/plans/2026-09-27-glass-design.md.
+   Shared by the SPA (main.js), the share viewer (share-session/main.js) and the artifact
+   shell (artifact-shell/main.js): nothing here may depend on another app stylesheet except
+   depth.css (--depth-3) and the Web Awesome theme tokens.
+
+   Declaration order matters (all blocks match <html>): light tokens on :root, dark
+   overrides on .wa-dark (same specificity, later wins), then the reduced-transparency and
+   no-support overrides on :root (later again, so they win over .wa-dark too). Unlayered,
+   so they beat the themes' @layer wa-theme declarations.
+
+   Only this file declares backdrop-filter, always through a --glass-*-filter token (so the
+   fallbacks turn every blur off), and only on childless boxes: pseudo-elements, the two
+   arrow parts and the opt-in glass-listbox-direct list boxes. A non-none backdrop-filter
+   makes its element the containing block of its position: fixed descendants (Web
+   Awesome's tooltip hover bridge, the submenu safe triangle): surfaces keep their shadow
+   and radius, a ::before layer paints the glass behind the content and an ::after overlay
+   paints the border and the top edge above it. Never target a pane container or an
+   ancestor of panes (design §3, pinned by glass.test.js): fixed fullscreen previews would
+   be trapped.
+
+   Inside glass surfaces, rows and fields read contextual tokens: text fields follow
+   --wa-form-control-background-color (--glass-field-bg), list rows shared with non-glass
+   places read --row-bg / --row-hover-bg / --row-active-bg, highlighted rows use
+   --glass-item-highlight / --glass-item-hover, resting card-like rows --glass-item-rest.
+   A component that paints an opaque background inside a glass surface shows as a patch. */
+
+:root {
+    /* The tint: the accent's lightest step softened toward the raised surface. Derived by
+       mixing palette steps, never by forcing a chroma on the accent hue: a gray accent
+       (wa-brand-gray) has no hue and must stay gray. */
+    --glass-tint: color-mix(in oklab, var(--wa-color-brand-95) 70%, var(--wa-color-surface-raised));
+    --glass-bg: color-mix(in oklab, var(--glass-tint) 74%, transparent);
+    --glass-border: color-mix(in oklab, var(--wa-color-brand-60) 22%, transparent);
+    /* Thin light top edge, drawn by the border overlay. */
+    --glass-highlight: inset 0 1px 0 oklch(1 0 0 / 0.7);
+    /* The surface's cast shadow: level 3, outer layers only (the top edge is the overlay's). */
+    --glass-shadow: var(--depth-3);
+    --glass-filter: blur(1.125rem) saturate(1.6);
+    /* Sticky headers inside a glass surface (content scrolls under them). */
+    --glass-sticky-bg: color-mix(in oklab, var(--glass-tint) 60%, transparent);
+    /* Text fields inside a glass surface. */
+    --glass-field-bg: color-mix(in oklab, var(--wa-color-surface-default) 70%, transparent);
+    /* Highlighted row: menu/option hover, keyboard-selected row. */
+    --glass-item-highlight: color-mix(in oklab, var(--wa-color-brand-fill-normal) 70%, transparent);
+    /* Mouse hover on rows that also have a keyboard-selected state (lighter, so the
+       selection stays distinct). */
+    --glass-item-hover: color-mix(in oklab, var(--wa-color-brand-fill-normal) 45%, transparent);
+    /* Resting card-like row inside a glass surface (settings Tips/Help rows). */
+    --glass-item-rest: color-mix(in oklab, var(--wa-color-surface-default) 45%, transparent);
+    /* The veil behind modal layers: a faint accent-tinted dim, slightly blurred. */
+    --glass-veil: color-mix(in oklab, color-mix(in oklab, var(--wa-color-brand-20) 25%, var(--wa-color-neutral-20)) 22%, transparent);
+    --glass-veil-filter: blur(0.375rem);
+    /* Tooltips: the theme's tooltip color (text-normal), slightly translucent. */
+    --glass-tooltip-bg: color-mix(in oklab, var(--wa-color-text-normal) 82%, transparent);
+    --glass-tooltip-filter: blur(0.5rem);
+}
+
+/* --glass-bg and --glass-sticky-bg are declared once on :root: their var(--glass-tint)
+   resolves on <html>, where .wa-dark also applies, so the dark tint is used in dark mode. */
+.wa-dark {
+    --glass-tint: color-mix(in oklab, var(--wa-color-brand-10) 40%, var(--wa-color-surface-raised));
+    --glass-border: color-mix(in oklab, var(--wa-color-brand-60) 28%, transparent);
+    --glass-highlight: inset 0 1px 0 oklch(1 0 0 / 0.07);
+    /* Dark --depth-3 starts with an inset top line (depth.css): the border overlay draws
+       the edge here, so the surface takes only the outer layers. Keep in sync with
+       --depth-3 dark. */
+    --glass-shadow:
+        0 2px 6px oklch(0 0 0 / 0.45),
+        0 24px 56px -12px oklch(0 0 0 / 0.65);
+    --glass-veil: color-mix(in oklab, color-mix(in oklab, var(--wa-color-brand-05) 30%, black) 50%, transparent);
+}
+
+/* Opaque fallbacks: the tint, the border, the item tokens and the veil color stay (colors,
+   not transparency effects). A translucent surface without blur would hurt readability,
+   hence the no-support fallback. */
+@media (prefers-reduced-transparency: reduce) {
+    :root {
+        --glass-bg: var(--glass-tint);
+        --glass-sticky-bg: var(--glass-tint);
+        --glass-field-bg: var(--wa-color-surface-default);
+        --glass-tooltip-bg: var(--wa-color-text-normal);
+        --glass-filter: none;
+        --glass-veil-filter: none;
+        --glass-tooltip-filter: none;
+    }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    :root {
+        --glass-bg: var(--glass-tint);
+        --glass-sticky-bg: var(--glass-tint);
+        --glass-field-bg: var(--wa-color-surface-default);
+        --glass-tooltip-bg: var(--wa-color-text-normal);
+        --glass-filter: none;
+        --glass-veil-filter: none;
+        --glass-tooltip-filter: none;
+    }
+}
+
+/* The modal veil: what Web Awesome's .dialog::backdrop and the native dialog::backdrop
+   paint. The themes declare it in @layer wa-theme on :root and .wa-dark; this unlayered
+   :root declaration wins on <html>. */
+:root {
+    --wa-color-overlay-modal: var(--glass-veil);
+}
+
+/* Global rules below are wrapped in :where() (specificity 0 + ::part), like depth.css: an
+   unlayered component rule on the same part still wins; being unlayered they beat every
+   layered theme rule. */
+
+/* Tokens inside every glass surface. Children inherit through the flat tree (slotted
+   content inherits from the part that holds its slot): fields and dividers follow. */
+:where(wa-dialog)::part(dialog),
+:where(wa-dropdown)::part(menu),
+:where(wa-dropdown-item)::part(submenu),
+:where(wa-select)::part(listbox),
+:where(wa-popover)::part(body),
+:where(.glass-surface) {
+    --wa-form-control-background-color: var(--glass-field-bg);
+    --wa-color-surface-border: var(--glass-border);
+    /* Contextual row tokens, read (with their current values as fallbacks) by list rows
+       that also live outside glass surfaces — today the file tree. */
+    --row-bg: transparent;
+    --row-hover-bg: var(--glass-item-hover);
+    --row-active-bg: var(--glass-item-highlight);
+    /* Extra inset for controls near the glass edge, so their focus ring clears the border
+       overlay and its light edge (the border rows plus the edge row). */
+    --glass-edge-gap: calc(var(--wa-border-width-s) + 1px);
+}
+
+/* Layered surfaces: the layer draws background and blur; the border overlay draws the
+   glass border and the top edge above the content. No border on the surface: some clip
+   their children at the padding box, which would leave an unblurred ring under a border. */
+:where(wa-dialog)::part(dialog),
+:where(wa-dropdown)::part(menu),
+:where(wa-dropdown-item)::part(submenu),
+:where(wa-select:not(.glass-listbox-direct))::part(listbox),
+:where(wa-popover)::part(body),
+:where(.glass-surface) {
+    background-color: transparent;
+    border: 0;
+    box-shadow: var(--glass-shadow);
+}
+/* The list box scrolls: its layer is anchored to the non-scrolling popup element. */
+:where(wa-select:not(.glass-listbox-direct))::part(listbox) {
+    position: static;
+}
+
+/* Layer anchors (the dialog is fixed, the menu and list box use their popup, the submenu
+   is absolute). A panel whose own rule sets absolute or fixed keeps it. */
+:where(wa-popover)::part(body),
+:where(.glass-surface),
+:where(.Notivue__notification) {
+    position: relative;
+    isolation: isolate;
+}
+
+/* The glass layer. Two rules with the same declarations: a browser that cannot parse a
+   pseudo-element after ::part() drops a whole rule whose selector list contains one, and
+   our own panels and toasts must keep their layer there. The submenu's ::before is Web
+   Awesome's safe triangle, so its layer is the ::after. */
+:where(wa-dialog)::part(dialog)::before,
+:where(wa-dropdown)::part(menu)::before,
+:where(wa-dropdown-item)::part(submenu)::after,
+:where(wa-select:not(.glass-listbox-direct))::part(listbox)::before,
+:where(wa-popover)::part(body)::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background-color: var(--glass-bg);
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
+    pointer-events: none;
+}
+:where(.glass-surface)::before,
+:where(.Notivue__notification)::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background-color: var(--glass-bg);
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
+    pointer-events: none;
+}
+
+/* The border overlay, above the content (edge scrollbars, full-bleed rows and sticky
+   headers paint under it). Split the same way. */
+:where(wa-dialog)::part(dialog)::after,
+:where(wa-dropdown)::part(menu)::after,
+:where(wa-select:not(.glass-listbox-direct))::part(listbox)::after,
+:where(wa-popover)::part(body)::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    border: var(--wa-border-width-s) solid var(--glass-border);
+    border-radius: inherit;
+    /* The top edge: an inset shadow paints inside the border, on the row just below it. */
+    box-shadow: var(--glass-highlight);
+    pointer-events: none;
+}
+:where(.glass-surface)::after,
+:where(.Notivue__notification)::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    border: var(--wa-border-width-s) solid var(--glass-border);
+    border-radius: inherit;
+    box-shadow: var(--glass-highlight);
+    pointer-events: none;
+}
+/* The submenu's two pseudo-elements are taken (safe triangle, layer): inner outline, and
+   the top edge on its layer (where it shares its row with the outline). */
+:where(wa-dropdown-item)::part(submenu) {
+    outline: var(--wa-border-width-s) solid var(--glass-border);
+    outline-offset: calc(-1 * var(--wa-border-width-s));
+}
+:where(wa-dropdown-item)::part(submenu)::after {
+    box-shadow: var(--glass-highlight);
+}
+
+/* The five opt-in select lists wider than their field (search overlay filters, peer
+   message review actions): the popup-anchored layer would be only as wide as the field,
+   so the glass is carried directly. Their options hold no tooltip, dropdown or popover
+   (no fixed descendant to displace). */
+:where(wa-select.glass-listbox-direct)::part(listbox) {
+    background-color: var(--glass-bg);
+    border-color: var(--glass-border);
+    box-shadow: var(--glass-shadow), var(--glass-highlight);
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
+}
+
+/* The popover arrow: childless, so it carries its glass directly. */
+:where(wa-popover)::part(popup__arrow) {
+    background-color: var(--glass-bg);
+    /* Web Awesome draws the arrow's bottom/right borders with --wa-color-surface-border,
+       resolved outside the glass body: match the body's glass border. */
+    border-color: var(--glass-border);
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
+}
+
+/* Tooltips: dark in light mode (light in dark mode), slightly translucent and blurred. */
+:where(wa-tooltip) {
+    /* Read by the arrow (--arrow-color). */
+    --wa-tooltip-background-color: var(--glass-tooltip-bg);
+    /* No border: the body's border is the background color today (the theme declares
+       --wa-tooltip-border-color as var(--wa-tooltip-background-color), resolved on :root to
+       the opaque color); a 0px width drops it and keeps the arrow geometry consistent (the
+       arrow's --popup-border-width reads this token). 0px, never a unitless 0: the value
+       feeds calc() next to lengths, where a bare number makes the arrow invalid. */
+    --wa-tooltip-border-width: 0px;
+}
+/* The body: its color moves to the layer. */
+:where(wa-tooltip)::part(body) {
+    background-color: transparent;
+    position: relative;
+    isolation: isolate;
+}
+:where(wa-tooltip)::part(body)::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background-color: var(--glass-tooltip-bg);
+    backdrop-filter: var(--glass-tooltip-filter);
+    -webkit-backdrop-filter: var(--glass-tooltip-filter);
+    pointer-events: none;
+}
+:where(wa-tooltip)::part(base__arrow) {
+    backdrop-filter: var(--glass-tooltip-filter);
+    -webkit-backdrop-filter: var(--glass-tooltip-filter);
+}
+
+/* The arrow joint: Web Awesome's clip keeps a strip past the arrow's base, which reads as
+   a denser line over a translucent body. Clip at the base diagonal (in the arrow's own
+   coordinates, so it follows the placement rotation), pushed 1px into the body (about
+   0.7px along the diagonal's normal): clipped exactly on it, Firefox antialiases the
+   arrow's first row to half coverage and the page shows through as a line; the small
+   overlap covers that row without a visible denser strip (checked in headless Firefox and
+   Chrome). Put the popover's arrow offset at 0px like the tooltip's (the body has no
+   border of its own any more). Not --wa-panel-border-width on the host: slotted callouts,
+   details and cards read it. */
+:where(wa-tooltip)::part(base__arrow),
+:where(wa-popover)::part(popup__arrow) {
+    clip-path: polygon(calc(0% - 1px) 100%, 100% calc(0% - 1px), 100% 100%);
+}
+:where(wa-popover)::part(popup) {
+    --popup-border-width: 0px;
+}
+
+/* The popover arrow's base: the body's border overlay would draw a line across it,
+   visible through the translucent arrow. utils/glassArrowGap.js publishes, on each
+   Web Awesome reposition, the side the arrow sits on (data-glass-arrow) and the span of
+   its base along that edge (--glass-arrow-gap-start/-end, body pixels). The overlay is
+   masked over that span, in the band of the border plus the light edge row. */
+:where(wa-popover[data-glass-arrow])::part(body)::after {
+    --glass-arrow-band: calc(var(--wa-border-width-s) + 1px);
+    --glass-arrow-gap: linear-gradient(var(--glass-arrow-dir),
+        #000 var(--glass-arrow-gap-start),
+        transparent var(--glass-arrow-gap-start) var(--glass-arrow-gap-end),
+        #000 var(--glass-arrow-gap-end));
+    mask-repeat: no-repeat;
+}
+:where(wa-popover[data-glass-arrow='top'])::part(body)::after,
+:where(wa-popover[data-glass-arrow='bottom'])::part(body)::after {
+    --glass-arrow-dir: to right;
+    mask-image: var(--glass-arrow-gap), linear-gradient(#000, #000);
+    mask-size: 100% var(--glass-arrow-band), 100% calc(100% - var(--glass-arrow-band));
+}
+:where(wa-popover[data-glass-arrow='top'])::part(body)::after {
+    mask-position: top, bottom;
+}
+:where(wa-popover[data-glass-arrow='bottom'])::part(body)::after {
+    mask-position: bottom, top;
+}
+:where(wa-popover[data-glass-arrow='left'])::part(body)::after,
+:where(wa-popover[data-glass-arrow='right'])::part(body)::after {
+    --glass-arrow-dir: to bottom;
+    mask-image: var(--glass-arrow-gap), linear-gradient(#000, #000);
+    mask-size: var(--glass-arrow-band) 100%, calc(100% - var(--glass-arrow-band)) 100%;
+}
+:where(wa-popover[data-glass-arrow='left'])::part(body)::after {
+    mask-position: left, right;
+}
+:where(wa-popover[data-glass-arrow='right'])::part(body)::after {
+    mask-position: right, left;
+}
+
+/* The blurred modal veil. Alone in its rule: a browser without ::part()::backdrop drops
+   only this rule (the veil color still applies). */
+:where(wa-dialog)::part(dialog)::backdrop {
+    backdrop-filter: var(--glass-veil-filter);
+    -webkit-backdrop-filter: var(--glass-veil-filter);
+}
+
+/* Highlighted rows in Web Awesome menus and lists: a translucent accent tint instead of
+   grey. The current option keeps its solid accent; danger items keep their danger fill.
+   A document rule on the host beats the component's own :host(...) rule. */
+@media (hover: hover) {
+    :where(wa-dropdown-item:not([variant='danger'], [disabled], :state(disabled)):hover),
+    :where(wa-option:not([disabled], :state(current)):is(:hover, :state(hover))) {
+        background-color: var(--glass-item-highlight);
+    }
+}
+:where(wa-dropdown-item:not([variant='danger']):focus-visible) {
+    background-color: var(--glass-item-highlight);
+}
+
+/* Collapsible sections inside glass: the outlined wa-details paints an opaque surface. The
+   ancestors are matched in the light DOM, so the chat's tool cards are not affected. */
+:where(wa-dialog, wa-popover, .glass-surface) :where(wa-details:not([appearance='filled'], [appearance='filled-outlined'], [appearance='plain']))::part(base) {
+    background-color: var(--glass-item-rest);
+}
+
+/* A sticky header inside a glass surface: the component keeps its own position: sticky;
+   the layer blurs the rows scrolling under it and the surface's own glass. */
+:where(.glass-sticky) {
+    isolation: isolate;
+}
+:where(.glass-sticky)::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background-color: var(--glass-sticky-bg);
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
+    pointer-events: none;
+}
+
+/* A veil painted by a layer, for a fixed full-screen host with a z-index (a stacking
+   context). Never on the host itself: an element with a backdrop-filter is a backdrop root
+   for its descendants, so a glass panel inside the veil would blur only the veil.
+   --glass-veil-opacity lets a host fade the veil in and out. */
+:where(.glass-veil)::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background-color: var(--glass-veil);
+    backdrop-filter: var(--glass-veil-filter);
+    -webkit-backdrop-filter: var(--glass-veil-filter);
+    opacity: var(--glass-veil-opacity, 1);
+    pointer-events: none;
+}
+
+/* Browsers that cannot style a pseudo-element after ::part() would show the Web Awesome
+   surfaces with no background and no border at all (and a tooltip with white text on
+   nothing): give them opaque fills, a real border, and opaque arrows. Verified in Chrome
+   and Firefox: selector() returns true for `x::part(y)::before`, false for an unknown
+   pseudo-element after ::part(). Both spellings are tested: the production minifier
+   rewrites the rule selectors to the legacy `:before` but leaves this condition as
+   written, so the condition must cover the form that ships.
+   Keep this block LAST: its declarations have the same specificity as the ones they
+   replace (@supports adds no precedence), so they win only by coming later. */
+@supports not (selector(:where(wa-dialog)::part(dialog)::before) and selector(:where(wa-dialog)::part(dialog):before)) {
+    :where(wa-dialog)::part(dialog),
+    :where(wa-dropdown)::part(menu),
+    :where(wa-dropdown-item)::part(submenu),
+    :where(wa-select:not(.glass-listbox-direct))::part(listbox),
+    :where(wa-popover)::part(body) {
+        background-color: var(--glass-tint);
+        /* No layer is left to hide an inset shadow, so the surface carries its top edge. */
+        box-shadow: var(--glass-shadow), var(--glass-highlight);
+    }
+    /* Their ::after border overlay is missing too (the submenu keeps its outline). */
+    :where(wa-dialog)::part(dialog),
+    :where(wa-dropdown)::part(menu),
+    :where(wa-select:not(.glass-listbox-direct))::part(listbox),
+    :where(wa-popover)::part(body) {
+        border: var(--wa-border-width-s) solid var(--glass-border);
+    }
+    :where(wa-tooltip) {
+        --wa-tooltip-background-color: var(--wa-color-text-normal);
+    }
+    :where(wa-tooltip)::part(body) {
+        background-color: var(--wa-color-text-normal);
+    }
+    :where(wa-popover)::part(popup__arrow) {
+        background-color: var(--glass-tint);
+    }
+}

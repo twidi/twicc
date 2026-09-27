@@ -73,7 +73,7 @@
 /* Web Awesome's own shadows follow the levels: wa-card rests at level 1; every consumer
    of m (dropdown, submenu, select listbox, color picker) and of l (dialog, drawer,
    popover) is a floating layer, so both map to level 3. .wa-invert is listed because
-   every theme re-declares --wa-shadow-* there (toasts, tooltips); var(--depth-*) then
+   every theme re-declares --wa-shadow-* there (tooltip content); var(--depth-*) then
    resolves to the page scheme, inherited from <html> — right for a shadow cast on the
    page. Placed after the .wa-dark block. */
 :root,
@@ -91,9 +91,10 @@
 
 /* Buttons: gently raised. Not: plain, outlined/filled buttons joined in a group (a shadow
    per segment breaks the group; solid accent groups such as "New session" + its menu are
-   raised), buttons of an inverted box (toasts — the page-scheme highlight would draw a
-   bright line), the sidebar rows (session, artifact bookmark; the selected row is step 6),
-   and the plain↔framed toggles (raised only when on would read backwards).
+   raised), buttons of an inverted box (tooltip content — the page-scheme highlight would
+   draw a bright line; toasts take the page scheme since step 3, so their buttons are
+   raised), the sidebar rows (session, artifact bookmark; the selected row is step 6), and
+   the plain↔framed toggles (raised only when on would read backwards).
    Each wa-button:is(…):not(…) compound stays on one line: a line break between :is() and
    :not() would be a descendant combinator and target what is inside the buttons. */
 :where(

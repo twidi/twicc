@@ -386,7 +386,7 @@ defineExpose({ isExpanded: expanded })
         <!-- Expanded: comment panel (background is the drag handle) -->
         <div
             v-else
-            class="tsc-panel"
+            class="tsc-panel glass-surface"
             :class="{ dragging: isDragging }"
             @keydown="handleKeydown"
             @pointerdown="onDragPointerDown"
@@ -467,10 +467,7 @@ defineExpose({ isExpanded: expanded })
     width: 20rem;
     max-width: calc(100vw - 2rem);
     padding: var(--wa-space-s);
-    background: var(--wa-color-surface-default);
-    border: 1px solid var(--wa-color-surface-border);
     border-radius: var(--wa-border-radius-m);
-    box-shadow: var(--wa-shadow-l);
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-s);

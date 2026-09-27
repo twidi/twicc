@@ -341,7 +341,7 @@ defineExpose({ open, close, isOpen })
         shift-padding="8"
         class="picker-popup"
     >
-        <div class="picker-panel" @keydown.capture="onPickerKeydown">
+        <div class="picker-panel glass-surface" @keydown.capture="onPickerKeydown">
             <!-- Header: current root path -->
             <div class="picker-header">
                 <span class="picker-path" :title="directory">{{ directory || '...' }}</span>
@@ -413,10 +413,7 @@ defineExpose({ open, close, isOpen })
     max-height: min(25rem, 60dvh);
     display: flex;
     flex-direction: column;
-    background: var(--wa-color-surface-default);
-    border: 1px solid var(--wa-color-surface-border);
     border-radius: var(--wa-border-radius-m);
-    box-shadow: var(--wa-shadow-l);
     overflow: hidden;
 }
 @media (max-height: 640px) {

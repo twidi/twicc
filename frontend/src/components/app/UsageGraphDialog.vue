@@ -1001,7 +1001,7 @@ function onTabShow(event) {
                                 <!-- Hover tooltip -->
                                 <div
                                     v-if="fiveHourHoveredIndex !== null && fhHoveredData"
-                                    class="usage-chart-tooltip"
+                                    class="usage-chart-tooltip glass-surface"
                                     :style="{ left: `${fhTooltipPct}%`, transform: `translateX(-${fhTooltipPct}%)` }"
                                 >
                                     <template v-for="curve in fhCurves" :key="curve.key">
@@ -1108,7 +1108,7 @@ function onTabShow(event) {
                                 <!-- Hover tooltip -->
                                 <div
                                     v-if="sevenDayHoveredIndex !== null && sdHoveredData"
-                                    class="usage-chart-tooltip"
+                                    class="usage-chart-tooltip glass-surface"
                                     :style="{ left: `${sdTooltipPct}%`, transform: `translateX(-${sdTooltipPct}%)` }"
                                 >
                                     <template v-for="curve in sdCurves" :key="curve.key">
@@ -1420,13 +1420,11 @@ function onTabShow(event) {
     margin-bottom: var(--wa-space-2xs);
     pointer-events: none;
     z-index: 10;
-    background: var(--wa-color-surface-raised);
     border-radius: var(--wa-border-radius-m);
     padding: var(--wa-space-xs) var(--wa-space-s);
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-normal);
     white-space: nowrap;
-    box-shadow: var(--depth-2);
 }
 
 .usage-chart-tooltip-row {

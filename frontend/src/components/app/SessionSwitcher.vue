@@ -88,8 +88,8 @@ watch([cursor, visible], async () => {
 
 <template>
     <Teleport to="body">
-        <div v-if="visible" class="switcher-overlay" @mousedown.self="cancel">
-            <div class="switcher-panel" role="listbox" :aria-label="modeLabel">
+        <div v-if="visible" class="switcher-overlay glass-veil" @mousedown.self="cancel">
+            <div class="switcher-panel glass-surface" role="listbox" :aria-label="modeLabel">
                 <div class="switcher-header">
                     <span class="switcher-mode">{{ modeLabel }}</span>
                     <span class="switcher-hint"><kbd>⇧</kbd> to switch</span>
@@ -152,7 +152,6 @@ watch([cursor, visible], async () => {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.4);
     padding: var(--wa-space-l);
 }
 
@@ -161,10 +160,7 @@ watch([cursor, visible], async () => {
     max-height: min(70vh, 560px);
     display: flex;
     flex-direction: column;
-    background: var(--wa-color-surface-default);
-    border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
     border-radius: var(--wa-border-radius-l);
-    box-shadow: var(--wa-shadow-l);
     overflow: hidden;
 }
 
@@ -221,7 +217,7 @@ watch([cursor, visible], async () => {
 }
 
 .switcher-row--active {
-    background: var(--wa-color-brand-fill-quiet);
+    background: var(--glass-item-highlight);
     color: var(--wa-color-brand-on-quiet);
 }
 
