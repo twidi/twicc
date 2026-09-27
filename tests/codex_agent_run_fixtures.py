@@ -33,8 +33,8 @@ PATH_A = "/root/task_a"
 PATH_B = "/root/task_b"
 PATH_C = "/root/task_c"
 PATH_G = "/root/task_a/task_g"
-# Output of an ``interrupt_agent`` call (``followup_task`` / ``send_message``
-# ack with an empty output), as in the 08-11 rollout (line 189).
+# Output of an ``interrupt_agent`` call; ``followup_task`` / ``send_message``
+# acks are empty (08-11 rollout, line 189).
 INTERRUPT_AGENT_OUTPUT = '{"previous_status":"running"}'
 
 
