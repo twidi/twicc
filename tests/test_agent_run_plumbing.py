@@ -173,7 +173,9 @@ def test_live_tuple_appends_three_lists_and_keeps_indexes(tree):
     assert result[2][0].parent_session_id == owner.id
     assert result[5][0].agent_session_id == "ad123"
     assert result[6] is False
-    assert result[7] == [] and result[8] == [] and result[9] == []
+    assert result[7] == [] and result[9] == []
+    # The stop step fills agent_run_state_updates (the recovered link is known).
+    assert [payload["agent_session_id"] for payload in result[8]] == ["ad123"]
 
 
 def test_live_tuple_early_returns_have_ten_elements(tree):

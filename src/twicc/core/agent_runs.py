@@ -26,6 +26,7 @@ from twicc.core.enums import Provider
 
 if TYPE_CHECKING:
     from twicc.core.models import Session
+    from twicc.providers.compute_base import AgentStoppedUpdate
 
 # Agent-level end statuses read by rule 5 (``tool_use_id == ""``): the Codex
 # child's own turn end and the Claude child's user-interrupt marker (§5.2).
@@ -384,3 +385,73 @@ def serialize_run_state(root_id: str, agent_id: str, state: AgentRunState) -> di
         "run_background": state.run_background,
         "runs": serialize_runs(state),
     }
+
+
+class StopStepResult(NamedTuple):
+    """Output of :func:`run_stop_step`, broadcast by ``sessions_watcher.broadcast_agent_run_outcome``."""
+
+    # ``serialize_run_state`` payloads of the affected agents that are ``known``
+    run_state_payloads: list[dict]
+    # one per agent the batch stopped, stamped or not
+    stopped: list[AgentStoppedUpdate]
+
+
+def run_stop_step(root_id: str, affected_agent_ids: Iterable[str], exclude: RunStateExclude) -> StopStepResult:
+    """Turn one batch's run evidence into stamps (design §6.3).
+
+    Two :func:`agent_run_states` calls on the affected agents: without the
+    batch's rows (``exclude``, the state before it) and in full (after it).
+    A run is **closed by the batch** when it is closed after and open or
+    absent before — so two closing pieces of one run in one batch close it
+    once, a run created already closed (late tree rule, ``opens_run`` flip)
+    closes, and a run already closed before is never closed again.
+
+    For each agent with such a run that no longer runs, the stop time is the
+    max non-null ``closed_at`` of those runs. A null time stamps nothing; a
+    time goes through the monotonic guard: a resumable agent whose own file
+    already recorded newer activity is not re-frozen as stopped by an older
+    signal. The update is returned in both cases, even when the guard
+    refuses: the stop hook must fire for every agent this batch stopped.
+    Runs under the caller's transaction, after the synced session's save.
+    """
+    from twicc.core.models import Session
+    from twicc.providers.compute_base import AgentStoppedUpdate
+
+    agent_ids = sorted(set(affected_agent_ids) - {root_id})
+    if not agent_ids:
+        return StopStepResult([], [])
+    root = Session.objects.filter(id=root_id).first()
+    if root is None:
+        return StopStepResult([], [])
+
+    before = agent_run_states(root, agent_ids, exclude=exclude)
+    after = agent_run_states(root, agent_ids)
+
+    payloads: list[dict] = []
+    stopped: list[AgentStoppedUpdate] = []
+    for agent_id in agent_ids:
+        state = after[agent_id]
+        if not state.known:
+            continue
+        payloads.append(serialize_run_state(root_id, agent_id, state))
+        if state.running:
+            continue
+        closed_before = {
+            (run.owner_session_id, run.tool_use_id) for run in before[agent_id].runs if not run.open
+        }
+        closed_now = [
+            run for run in state.runs
+            if not run.open and (run.owner_session_id, run.tool_use_id) not in closed_before
+        ]
+        if not closed_now:
+            continue
+        times = [run.closed_at for run in closed_now if run.closed_at is not None]
+        if not times:
+            stopped.append(AgentStoppedUpdate(agent_id, None, stamped=False))
+            continue
+        stopped_at = max(times)
+        rows = Session.objects.filter(id=agent_id).exclude(
+            last_updated_at__gt=stopped_at,
+        ).update(last_stopped_at=stopped_at, last_updated_at=stopped_at)
+        stopped.append(AgentStoppedUpdate(agent_id, stopped_at, stamped=rows > 0))
+    return StopStepResult(payloads, stopped)

@@ -43,9 +43,11 @@ from django.db import connection, transaction
 from django.db.models import F, Q, QuerySet
 
 from twicc.context_injection import strip_context_blocks_in_place
+from twicc.core.agent_runs import RunStateExclude, StopStepResult, run_stop_step
 from twicc.core.enums import ItemDisplayLevel, ItemKind, Provider
 from twicc.core.models import (
     AgentInteraction,
+    AgentInteractionKind,
     AgentLink,
     AgentRunEnd,
     AgentRunEndSource,
@@ -88,13 +90,16 @@ class SpawnMetaInfo(NamedTuple):
 
 
 class AgentLinkUpdate(NamedTuple):
-    """Describes a new AgentLink creation to broadcast to the frontend."""
+    """Describes a new AgentLink creation (or ``is_background`` upgrade) to broadcast to the frontend."""
     parent_session_id: str
     agent_id: str
     tool_use_id: str
     tool_use_line_num: int
     is_background: bool
     started_at: datetime | None
+    # False on an ``is_background`` upgrade of an existing link: only created
+    # rows are left out of the stop step's "before" state (design §5.4).
+    created: bool = True
 
 
 class WorkflowLinkUpdate(NamedTuple):
@@ -123,12 +128,23 @@ class ToolResultUpdate(NamedTuple):
     # helpers iterate the list to find the row they need. Single-result
     # tools (Claude Code's Edit / Write / …) carry a single-element list.
     tool_result_line_nums: tuple[int, ...] = ()
+    # Primary key of the ``ToolResultLink`` row the live sync just created
+    # (the stop step leaves it out of its "before" state).
+    link_id: int | None = None
 
 
 class AgentStoppedUpdate(NamedTuple):
-    """Describes a subagent session whose process has naturally finished."""
+    """A subagent for which the batch closed a run and that no longer runs (design §6.3).
+
+    ``stopped_at`` is ``None`` when every closed run has a null close time.
+    ``stamped`` is True when ``last_stopped_at`` was written: the monotonic
+    guard refuses a stop older than the agent's own activity, and a null time
+    stamps nothing. Only a stamped update is broadcast as ``agent_stopped``;
+    the stop hook fires for every update.
+    """
     agent_session_id: str
-    stopped_at: datetime
+    stopped_at: datetime | None
+    stamped: bool = True
 
 
 class ComputeApplyResult(NamedTuple):
@@ -1670,16 +1686,13 @@ class BaseSessionCompute:
 
         Only consulted on subagent files, and only by the live path, to keep
         :attr:`Session.last_stopped_at` in step with what the subagent is
-        actually doing. The parent-side rule
-        (:meth:`check_agent_naturally_stopped`, which counts the spawning
-        tool's results) stays the primary signal; this one covers the
-        providers whose subagent can finish a turn without producing that
-        second result — Codex multi-agent v2, where a subagent answering
-        through ``send_message`` stays alive and never emits the
-        ``FINAL_ANSWER`` the parent would pair with its ``spawn_agent``.
+        actually doing. It is a display value only: whether an agent runs
+        is decided by its runs (:func:`twicc.core.agent_runs.agent_run_states`),
+        and the stop step of each live batch stamps the stops it finds
+        there.
 
-        Default: no boundary, so a provider that doesn't override it keeps
-        the parent-side rule as its only source.
+        Default: no boundary, so a provider that doesn't override it leaves
+        ``last_stopped_at`` to the stop step.
         """
         return None
 
@@ -1965,7 +1978,7 @@ class BaseSessionCompute:
                 )
                 if error_override is not None:
                     error = error_override
-                _, created = ToolResultLink.objects.get_or_create(
+                link, created = ToolResultLink.objects.get_or_create(
                     session_id=session_id,
                     tool_use_line_num=candidate.line_num,
                     tool_result_line_num=item.line_num,
@@ -2009,59 +2022,8 @@ class BaseSessionCompute:
                     extra=aggregated['extra'],
                     error=aggregated['error'],
                     tool_result_line_nums=line_nums,
+                    link_id=link.id,
                 )
-
-        return None
-
-    def check_agent_naturally_stopped(
-        self, session_id: str, tool_result_update: ToolResultUpdate
-    ) -> AgentStoppedUpdate | None:
-        """
-        Detect when a subagent has finished after the latest tool_result arrived.
-
-        For non-background agents, 1 tool_result means done. For background
-        agents, 2 tool_results means done. Updates the agent session's
-        ``last_stopped_at`` and ``last_updated_at`` and returns an
-        :class:`AgentStoppedUpdate` for broadcast.
-
-        Pure DB plumbing — no provider hook involved.
-        """
-        agent_link = AgentLink.objects.filter(
-            session_id=session_id,
-            tool_use_id=tool_result_update.tool_use_id,
-        ).first()
-        if agent_link is None:
-            return None
-
-        required_results = 2 if agent_link.is_background else 1
-        if tool_result_update.result_count < required_results:
-            return None
-
-        stopped_at = tool_result_update.completed_at
-        if stopped_at is None:
-            return None
-
-        agent_session_id = agent_link.agent_id
-        # Monotonic guard: never let a stale parent-side stop overwrite a
-        # subagent that has activity NEWER than the stop signal. The case is
-        # real with resumable agents (Claude): the subagent's own file sync
-        # (:meth:`subagent_turn_boundary`) cleared ``last_stopped_at`` on a
-        # wake-up, then the parent's file delivers an older notification —
-        # stamping it would re-freeze a working agent as "stopped". On the
-        # historical flow (agent stops once, notification written after its
-        # last line) the guard is a no-op: ``stopped_at`` is always >= the
-        # subagent's ``last_updated_at`` there.
-        updated = Session.objects.filter(
-            id=agent_session_id,
-        ).exclude(
-            last_updated_at__gt=stopped_at,
-        ).update(last_stopped_at=stopped_at, last_updated_at=stopped_at)
-
-        if updated:
-            return AgentStoppedUpdate(
-                agent_session_id=agent_session_id,
-                stopped_at=stopped_at,
-            )
 
         return None
 
@@ -2108,9 +2070,9 @@ class BaseSessionCompute:
             # The link may pre-exist via the prompt-matching paths, which
             # only see the tool_use input — and the async-by-default CLI
             # dropped the ``run_in_background`` flag there. An async launch
-            # ack must upgrade such a link to background, otherwise
-            # ``check_agent_naturally_stopped`` counts this very ack as the
-            # single result of a foreground agent and stops it immediately.
+            # ack must upgrade such a link to background, otherwise the run
+            # rules (``agent_run_states``) count this very ack as the single
+            # result of a foreground agent and stop it immediately.
             #
             # Restricted to the link's own tool_use: a SendMessage
             # continuation of a finished agent resumes it in the background,
@@ -2139,6 +2101,7 @@ class BaseSessionCompute:
                         tool_use_line_num=link.tool_use_line_num,
                         is_background=True,
                         started_at=link.started_at,
+                        created=False,
                     )
             return None
 
@@ -2235,7 +2198,7 @@ class BaseSessionCompute:
                 existing.is_background = True
                 existing.save(update_fields=["is_background"])
                 return AgentLinkUpdate(existing.session_id, existing.agent_id, existing.tool_use_id,
-                                       existing.tool_use_line_num, True, existing.started_at)
+                                       existing.tool_use_line_num, True, existing.started_at, created=False)
             return None
         _obj, created = AgentLink.objects.get_or_create(
             session_id=link.session_id, agent_id=link.agent_id, tool_use_id=link.tool_use_id,
@@ -2362,25 +2325,19 @@ class BaseSessionCompute:
             tool_use_id=completion.tool_use_id, tool_use_line_num=item.line_num,
             is_background=True, started_at=item.timestamp)
 
-    def apply_queue_completion(self, root_session_id, item, completion):
+    def apply_queue_completion(self, root_session_id, completion) -> AgentLinkUpdate | None:
+        """Recover the spawn link a root-file queue completion proves (design §6.1).
+
+        The completion's stop is not decided here: its ``AgentRunEnd`` row is
+        closing evidence for the stop step at the end of the batch.
+        """
         root = Session.objects.get(id=root_session_id)
         child = Session.objects.filter(id=completion.task_id).first()
-        link = self._resolve_queue_spawn(root, completion)
         if child is not None and child.parent_session_id != root.id:
-            return None, None
-        # A child may not be ingested yet. Its proven spawn is sufficient for
-        # delivering completion evidence; no unrelated session is stamped.
-        if child is None and link is None:
-            return None, None
-        update = self._create_recovered_agent_link(link) if link is not None else None
-        if item.timestamp is None:
-            return update, None
-        if child is not None:
-            changed = Session.objects.filter(id=child.id).exclude(last_updated_at__gt=item.timestamp).update(
-                last_stopped_at=item.timestamp, last_updated_at=item.timestamp)
-            if not changed:
-                return update, None
-        return update, AgentStoppedUpdate(completion.task_id, item.timestamp)
+            return None
+        # A child may not be ingested yet: its proven spawn is enough.
+        link = self._resolve_queue_spawn(root, completion)
+        return self._create_recovered_agent_link(link) if link is not None else None
 
     def _tree_queue_completions(self, root_id):
         for item in SessionItem.objects.filter(session_id=root_id, content__contains="queue-operation").order_by("line_num"):
@@ -3621,7 +3578,7 @@ class BaseSessionCompute:
             ensure_project_git_root(project_id, project_directory)
 
         # 11. Update last_stopped_at for subagents that finished naturally.
-        # Same monotonic guard as check_agent_naturally_stopped: a batch
+        # Same monotonic guard as the live stop step (``run_stop_step``): a batch
         # recompute of the parent must not re-freeze as "stopped" a resumable
         # subagent whose live sync already recorded newer activity.
         agent_stopped = msg.get('agent_stopped')
@@ -3789,7 +3746,6 @@ class BaseSessionCompute:
         agent_link_updates: list[AgentLinkUpdate] = []
         workflow_link_updates: list[WorkflowLinkUpdate] = []
         tool_result_updates: list[ToolResultUpdate] = []
-        agent_stopped_updates: list[AgentStoppedUpdate] = []
 
         # Track if a compact_summary item was found in this batch
         found_compact_summary = False
@@ -4062,19 +4018,17 @@ class BaseSessionCompute:
 
             # Tool result links (tool_result items are DEBUG_ONLY)
             if self.is_tool_result_item(parsed):
-                # Create/upgrade the agent link BEFORE the naturally-stopped
-                # check: on an async launch ack both fire on the same line,
-                # and the check must see the link's final ``is_background``
-                # (an ack upgrading a prompt-matched link would otherwise be
-                # counted as the single result of a foreground agent and
-                # stop it immediately).
+                # Create/upgrade the agent link BEFORE the result link: on an
+                # async launch ack both happen on the same line, and the
+                # agent-run hook below must see the link's final
+                # ``is_background`` (an ack upgrading a prompt-matched link
+                # would otherwise count as the single result of a foreground
+                # agent).
                 if update := self.create_agent_link_from_tool_result(session.id, item, parsed):
                     agent_link_updates.append(update)
                 tool_result_update = self.create_tool_result_link_live(session.id, item, parsed)
                 if tool_result_update:
                     tool_result_updates.append(tool_result_update)
-                    if stopped := self.check_agent_naturally_stopped(session.id, tool_result_update):
-                        agent_stopped_updates.append(stopped)
                 if wf_update := self.create_workflow_link_from_tool_result(session.id, item, parsed):
                     workflow_link_updates.append(wf_update)
 
@@ -4089,11 +4043,8 @@ class BaseSessionCompute:
             if session.type == SessionType.SESSION:
                 completion = self.extract_queue_completion(parsed)
                 if completion is not None:
-                    link_update, stopped_update = self.apply_queue_completion(session.id, item, completion)
-                    if link_update:
+                    if link_update := self.apply_queue_completion(session.id, completion):
                         agent_link_updates.append(link_update)
-                    if stopped_update:
-                        agent_stopped_updates.append(stopped_update)
 
             if item.kind in (ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
                 agent_link_updates.extend(
@@ -4315,6 +4266,13 @@ class BaseSessionCompute:
                 [(event._replace(source='subagent'), ts) for event, ts in plan_doc_events],
             )
 
+        # The stop step, once per batch, AFTER ``session.save``: when the
+        # synced file is the stopped child itself (rule 5), the save would
+        # otherwise overwrite the stamp (design §6.3).
+        stop_step = self._run_live_stop_step(
+            session, agent_link_updates, tool_result_updates, agent_run_signals,
+        )
+
         # Exclude new items from modified_line_nums
         return (
             sorted(new_line_nums),
@@ -4322,9 +4280,73 @@ class BaseSessionCompute:
             agent_link_updates,
             workflow_link_updates,
             tool_result_updates,
-            agent_stopped_updates,
+            stop_step.stopped,
             found_compact_summary,
             [],  # agent_interaction_updates
-            [],  # agent_run_state_updates
+            stop_step.run_state_payloads,
             agent_run_signals.agents_resumed,
         )
+
+    @staticmethod
+    def _run_live_stop_step(
+        session: Session,
+        agent_link_updates: list[AgentLinkUpdate],
+        tool_result_updates: list[ToolResultUpdate],
+        signals,
+    ) -> StopStepResult:
+        """Collect one live batch's affected agents and ``exclude`` rows, then run the stop step.
+
+        ``signals`` is the batch's collector of :class:`LiveAgentSignals`.
+        A fixed number of queries whatever the tree size: two indexed reads
+        over the batch's result calls (plus one for its stop calls), then
+        :func:`~twicc.core.agent_runs.run_stop_step` (design §5.4, §6.3).
+        """
+        affected: set[str] = set(signals.affected_agent_ids)
+        stop_records: set[tuple[str, str]] = set(signals.stop_records)
+
+        # Links: created rows are absent from the "before" state; an
+        # ``is_background`` upgrade changes the run's required count only.
+        created_links: set[tuple[str, str]] = set()
+        for update in agent_link_updates:
+            affected.add(update.agent_id)
+            if update.created:
+                created_links.add((update.parent_session_id, update.tool_use_id))
+
+        # Results written in this batch, all in this session.
+        link_ids = {update.link_id for update in tool_result_updates if update.link_id is not None}
+        result_tool_use_ids = {update.tool_use_id for update in tool_result_updates}
+        if result_tool_use_ids:
+            affected.update(AgentLink.objects.filter(
+                session_id=session.id, tool_use_id__in=result_tool_use_ids,
+            ).values_list("agent_id", flat=True))
+            stop_calls: set[str] = set()
+            for tool_use_id, agent_id, kind in AgentInteraction.objects.filter(
+                session_id=session.id, tool_use_id__in=result_tool_use_ids,
+            ).values_list("tool_use_id", "agent_id", "kind"):
+                affected.add(agent_id)
+                if kind == AgentInteractionKind.STOP:
+                    stop_calls.add(tool_use_id)
+            # A stop call becomes a stop record in this batch when all its
+            # non-error results were written in it (the Claude ``TaskStop``
+            # row predates its result; a Codex row can predate it too).
+            if stop_calls:
+                ok_results: dict[str, list[int]] = {}
+                for link_id, tool_use_id in ToolResultLink.objects.filter(
+                    session_id=session.id, tool_use_id__in=stop_calls, error__isnull=True,
+                ).values_list("id", "tool_use_id"):
+                    ok_results.setdefault(tool_use_id, []).append(link_id)
+                stop_records.update(
+                    (session.id, tool_use_id) for tool_use_id, ids in ok_results.items()
+                    if all(result_id in link_ids for result_id in ids)
+                )
+
+        if not affected:
+            return StopStepResult([], [])
+        exclude = RunStateExclude(
+            agent_links=frozenset(created_links),
+            run_interactions=frozenset(signals.run_interactions),
+            stop_records=frozenset(stop_records),
+            tool_result_link_ids=frozenset(link_ids),
+            run_end_ids=frozenset(signals.run_end_ids),
+        )
+        return run_stop_step(session.parent_session_id or session.id, affected, exclude)

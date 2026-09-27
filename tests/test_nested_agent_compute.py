@@ -146,6 +146,7 @@ def test_live_queue_only_completion_and_missing_child_transport(tree):
     result = live(root, home, queue_entry())
     assert result[2][0].parent_session_id == owner.id
     assert result[5][0].agent_session_id == "ad123"
+    assert not result[5][0].stamped  # the recovered link is created already closed; no child row to stamp
     assert not Session.objects.filter(id="ad123").exists()
 
 
@@ -271,13 +272,31 @@ def test_live_queue_ignores_stale_stop_after_child_activity(tree):
     assert child.last_stopped_at is None
 
 
+def test_live_queue_stale_stop_of_a_linked_child_is_returned_unstamped(tree):
+    """The run closes, the guard refuses the stamp: the update still carries the stop (for the hook)."""
+    from datetime import timedelta
+
+    from twicc.providers.compute_base import AgentStoppedUpdate
+    root, owner, child, home = tree
+    live(owner, home, spawn(), ack())
+    assert AgentLink.objects.get(agent_id=child.id).is_background
+    child.last_updated_at = NOW + timedelta(seconds=10)
+    child.save(update_fields=["last_updated_at"])
+    assert live(root, home, queue_entry())[5] == [AgentStoppedUpdate("ad123", NOW, stamped=False)]
+    child.refresh_from_db()
+    assert child.last_stopped_at is None
+
+
 def test_queue_sendmessage_stops_without_creating_or_upgrading_launch(tree):
+    """A SendMessage with no first result opens no run: its queue end closes nothing."""
+    from twicc.core.models import AgentRunEnd
     root, owner, child, home = tree
     AgentLink.objects.create(session=owner, agent_id=child.id, tool_use_id="original", tool_use_line_num=1)
     data = entry("assistant", [{"type": "tool_use", "id": "continuation", "name": "SendMessage", "input": {"to": child.id}}])
     live(owner, home, data)
     result = live(root, home, queue_entry(tool="continuation"))
-    assert len(result[5]) == 1
+    assert result[5] == []
+    assert AgentRunEnd.objects.filter(agent_id=child.id, tool_use_id="continuation").exists()
     assert result[2] == []
     assert AgentLink.objects.count() == 1
     assert not AgentLink.objects.get().is_background

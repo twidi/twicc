@@ -2505,8 +2505,8 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
     def subagent_turn_boundary(self, parsed_json: dict) -> bool | None:
         """Map a Claude subagent's own lines to its running / idle state.
 
-        Needed because the parent-side counting rule
-        (:meth:`check_agent_naturally_stopped`) only knows how to say
+        Keeps the display value :attr:`Session.last_stopped_at` in step
+        with the subagent's own file: the live stop step only ever stamps
         "stopped", never "working again" — and recent CLIs make background
         agents resumable: a finished agent re-wakes when its own background
         child completes, when the parent messages it, etc. Its file carries
@@ -2623,7 +2623,7 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
 
     # find_open_group_head + compute_item_metadata_live: inherited from base
     # (base implementation calls self.detect_prefix_suffix / self.resolve_git_for_item).
-    # create_tool_result_link_live + check_agent_naturally_stopped +
+    # create_tool_result_link_live + the live stop step +
     # create_agent_link_from_{tool_result,subagent,tool_use}: inherited from base
     # (the base algorithms call provider hooks for the parsing-only bits).
 

@@ -210,13 +210,14 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
     async def _after_agents_stopped(
         self, session_id: str, stopped_agent_ids: list[str],
     ) -> None:
-        # A spawned subagent's completion never reaches the parent's SDK
-        # stream (Codex emits no per-agent completion item there), so this
-        # watcher signal — ``last_stopped_at`` just stamped off the
-        # ``FINAL_ANSWER`` landing in the parent's rollout — is what
-        # releases a live parent parked in the subagent hold (or refreshes
-        # the "waiting for N subagents" count). Fire-and-forget: the
-        # ingest path never blocks on agent state settles.
+        # The batch's stop step closed a run of these children and they no
+        # longer run (``agent_run_states``), whatever the stamp and whatever
+        # file carried the evidence — the root's rollout, or the child's own
+        # turn end (rule 5). ``session_id`` is the tree root, the only
+        # session with a live agent: the relay drops the children from its
+        # running set and releases the subagent hold (or refreshes the
+        # "waiting for N subagents" count). Fire-and-forget: the ingest path
+        # never blocks on agent state settles.
         from .agent.manager import get_codex_agent_manager
         try:
             manager = get_codex_agent_manager()

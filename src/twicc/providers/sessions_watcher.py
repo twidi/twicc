@@ -54,7 +54,7 @@ from twicc.providers.subagent_roots import resolve_flat_parent_id
 from twicc.workspaces import auto_add_project_to_workspaces
 
 if TYPE_CHECKING:
-    from twicc.providers.compute_base import BaseSessionCompute, ToolResultUpdate
+    from twicc.providers.compute_base import AgentStoppedUpdate, BaseSessionCompute, ToolResultUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +234,43 @@ async def broadcast_message(channel_layer, message: dict) -> None:
     )
 
 
+async def broadcast_agent_run_outcome(
+    channel_layer,
+    *,
+    root_session_id: str,
+    project_id: str,
+    run_state_payloads: list[dict],
+    stopped_updates: list[AgentStoppedUpdate],
+) -> None:
+    """Broadcast the output of one stop step (design §6.3).
+
+    ``agent_run_state`` for each payload, always; then, for each stopped
+    agent whose ``last_stopped_at`` was stamped, the child's
+    ``session_updated`` (unless hidden) and ``agent_stopped``. An unstamped
+    update (guard refusal, null stop time) changed nothing to broadcast.
+    The caller fires the stop hook itself when it needs it (the watcher
+    does, the Stop-button handler does not). Sends through this module's
+    ``broadcast_message``, looked up at call time.
+    """
+    for payload in run_state_payloads:
+        await broadcast_message(channel_layer, {**payload, "type": "agent_run_state", "project_id": project_id})
+    for stopped in stopped_updates:
+        if not stopped.stamped:
+            continue
+        stopped_session = await get_session_by_id(stopped.agent_session_id)
+        if stopped_session and not stopped_session.hidden:
+            await broadcast_message(channel_layer, {
+                "type": "session_updated",
+                "session": serialize_session(stopped_session),
+            })
+        await broadcast_message(channel_layer, {
+            "type": "agent_stopped",
+            "agent_session_id": stopped.agent_session_id,
+            "stopped_at": stopped.stopped_at.isoformat(),
+            "root_session_id": root_session_id,
+        })
+
+
 class BaseSessionsWatcher:
     """Provider-agnostic file watcher for JSONL session files.
 
@@ -339,17 +376,18 @@ class BaseSessionsWatcher:
     async def _after_agents_stopped(
         self, session_id: str, stopped_agent_ids: list[str],
     ) -> None:
-        """Hook fired when subagents of ``session_id`` naturally finished.
+        """Hook fired when a live batch stopped subagents of the tree rooted at ``session_id``.
 
-        ``stopped_agent_ids`` are the subagent session ids whose
-        ``last_stopped_at`` was just stamped by
-        ``check_agent_naturally_stopped`` while syncing the parent's file.
-        Default implementation is a no-op. Codex overrides this to release
-        a live parent parked in the subagent hold — a spawned subagent's
-        completion never reaches the parent's SDK stream, so this watcher
-        signal is the only release channel. Live incremental-sync path
-        only; implementations must never block the ingest path on agent
-        locks (fire-and-forget a task instead).
+        ``session_id`` is the tree root's id, whatever file was synced (only
+        the root has a live process; a rule-5 stop comes from the child's own
+        file). ``stopped_agent_ids`` are the agents for which the batch's
+        stop step (``run_stop_step``) closed a run and that no longer run —
+        whether or not their ``last_stopped_at`` was stamped. Default
+        implementation is a no-op. Codex overrides this to drop the children
+        from a live root's set of running subagents and release its subagent
+        hold. Live incremental-sync path only; implementations must never
+        block the ingest path on agent locks (fire-and-forget a task
+        instead).
         """
         return
 
@@ -872,23 +910,20 @@ class BaseSessionsWatcher:
                     })
                     await self._after_tool_result_broadcast(update)
 
-                # Broadcast session_updated for subagents that naturally finished
-                for stopped in agent_stopped_updates:
-                    stopped_session = await get_session_by_id(stopped.agent_session_id)
-                    if stopped_session and not stopped_session.hidden:
-                        await broadcast_message(channel_layer, {
-                            "type": "session_updated",
-                            "session": serialize_session(stopped_session),
-                        })
-                    await broadcast_message(channel_layer, {
-                        "type": "agent_stopped",
-                        "agent_session_id": stopped.agent_session_id,
-                        "stopped_at": stopped.stopped_at.isoformat(),
-                        "root_session_id": session.parent_session_id or session.id,
-                    })
+                # The stop step's outcome: run states, then the stamped stops.
+                # The hook gets the tree root id (only the root has a live
+                # process) and every agent the batch stopped, stamped or not.
+                root_session_id = session.parent_session_id or session.id
+                await broadcast_agent_run_outcome(
+                    channel_layer,
+                    root_session_id=root_session_id,
+                    project_id=parsed.project_id,
+                    run_state_payloads=agent_run_state_updates,
+                    stopped_updates=agent_stopped_updates,
+                )
                 if agent_stopped_updates:
                     await self._after_agents_stopped(
-                        session.id,
+                        root_session_id,
                         [u.agent_session_id for u in agent_stopped_updates],
                     )
 
