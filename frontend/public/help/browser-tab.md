@@ -7,6 +7,14 @@ the project you're working on — right next to the conversation. The page
 runs exactly as it would in a normal browser tab: direct network, live
 reload, service workers. TwiCC doesn't proxy or sandbox it.
 
+**To have an agent set up your dev server,** point it to this page:
+<https://github.com/twidi/twicc/blob/main/frontend/public/help/browser-tab.md>.
+It holds everything needed: framing, cookies, and the companion script.
+The agent also needs the address you reach TwiCC at: the setup messages in
+the tab offer **Add instructions to message** and **Copy instructions for an
+agent**, a ready-made prompt with this page, that address and the companion
+snippet.
+
 ### Opening a page
 
 Type any URL in the address bar. The **Home** button jumps to the saved

@@ -23,6 +23,8 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, useId, wat
 import { hostMessage, isCompanionMessage } from '../../browser-companion/protocol'
 import { isOpen as mediaPreviewOpen } from '../../composables/useMediaPreview'
 import { useCommandRegistry } from '../../composables/useCommandRegistry'
+import { toast } from '../../composables/useToast'
+import { BROWSER_TAB_HELP_PUBLIC_URL } from '../../constants'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { useWorkspacesStore } from '../../stores/workspaces'
@@ -576,6 +578,45 @@ async function copySnippet() {
         }, 1500)
     } catch {
         // Clipboard unavailable (permissions) — the snippet is selectable text.
+    }
+}
+
+// ── Agent setup instructions ---------------------------------------------
+// Ready-made prompt for an agent to set up the dev server (framing, cookies,
+// companion). Built here because only the browser knows the origin TwiCC is
+// really reached through (tunnel, reverse proxy) — the backend, and so the
+// agent, can't tell.
+const insertTextAtCursor = inject('insertTextAtCursor', null)
+const agentInstructionsCopied = ref(false)
+const agentInstructions = computed(() => {
+    const lines = [
+        "Set up my dev server so its pages work in TwiCC's Browser tab (an iframe).",
+        `Follow this guide: ${BROWSER_TAB_HELP_PUBLIC_URL}`,
+        '',
+        `- TwiCC runs at ${window.location.origin}: allow framing from this origin (dev only).`,
+        "- Add the companion script as the first tag of the dev page's <head>:",
+        `  ${companionSnippet.value}`,
+    ]
+    if (currentUrl.value) lines.push(`- Page currently loaded in the Browser tab: ${currentUrl.value}`)
+    return lines.join('\n')
+})
+
+// No focus: the composer may sit behind this pane (docked overlay, mobile).
+// The text lands in the draft either way; the toast confirms it.
+function addAgentInstructionsToMessage() {
+    insertTextAtCursor(agentInstructions.value + '\n', { focus: false })
+    toast.success('Added to message', { duration: 2000 })
+}
+
+async function copyAgentInstructions() {
+    try {
+        await navigator.clipboard.writeText(agentInstructions.value)
+        agentInstructionsCopied.value = true
+        setTimeout(() => {
+            agentInstructionsCopied.value = false
+        }, 1500)
+    } catch {
+        toast.error("Couldn't copy to clipboard")
     }
 }
 
@@ -1223,7 +1264,16 @@ async function makeDefaultSavedUrl(opt) {
                 This site refuses to be embedded ({{ probeResult.reason }}) — the frame
                 below will likely stay blank. Use "Open in a new browser tab" instead, or
                 see the <a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">Browser tab guide</a>
-                to allow framing in dev.
+                to allow framing in dev, or let your agent set it up:
+                <div class="agent-instructions-actions">
+                    <wa-button v-if="insertTextAtCursor" size="small" appearance="outlined" @click="addAgentInstructionsToMessage">
+                        <wa-icon slot="start" name="robot"></wa-icon>
+                        Add instructions to message
+                    </wa-button>
+                    <wa-button size="small" appearance="outlined" @click="copyAgentInstructions">
+                        {{ agentInstructionsCopied ? 'Copied!' : 'Copy instructions for an agent' }}
+                    </wa-button>
+                </div>
             </template>
         </wa-callout>
 
@@ -1248,6 +1298,13 @@ async function makeDefaultSavedUrl(opt) {
                 <div class="companion-hint-actions">
                     <wa-button size="small" appearance="outlined" @click="copySnippet">
                         {{ snippetCopied ? 'Copied!' : 'Copy snippet' }}
+                    </wa-button>
+                    <wa-button v-if="insertTextAtCursor" size="small" appearance="outlined" @click="addAgentInstructionsToMessage">
+                        <wa-icon slot="start" name="robot"></wa-icon>
+                        Add instructions to message
+                    </wa-button>
+                    <wa-button size="small" appearance="outlined" @click="copyAgentInstructions">
+                        {{ agentInstructionsCopied ? 'Copied!' : 'Copy instructions for an agent' }}
                     </wa-button>
                     <wa-button size="small" appearance="plain" @click="snippetDismissed = true">Dismiss</wa-button>
                 </div>
@@ -1290,7 +1347,16 @@ async function makeDefaultSavedUrl(opt) {
                         dev-only settings (allow framing, cookies, the companion
                         script). It's worth reading the
                         <a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">Browser tab guide</a>
-                        first.
+                        first, or let your agent set it up:
+                        <div class="agent-instructions-actions">
+                            <wa-button v-if="insertTextAtCursor" size="small" appearance="outlined" @click="addAgentInstructionsToMessage">
+                                <wa-icon slot="start" name="robot"></wa-icon>
+                                Add instructions to message
+                            </wa-button>
+                            <wa-button size="small" appearance="outlined" @click="copyAgentInstructions">
+                                {{ agentInstructionsCopied ? 'Copied!' : 'Copy instructions for an agent' }}
+                            </wa-button>
+                        </div>
                     </wa-callout>
                 </div>
             </template>
@@ -1492,6 +1558,7 @@ async function makeDefaultSavedUrl(opt) {
 
 .companion-hint-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--wa-space-xs);
 }
 
@@ -1637,6 +1704,15 @@ async function makeDefaultSavedUrl(opt) {
     color: var(--wa-color-brand-fill-loud);
     text-decoration: underline;
     cursor: pointer;
+}
+
+/* "Add instructions to message" / "Copy instructions for an agent" under the
+   setup callouts' text. Wraps: narrow docked panes can't fit both side by side. */
+.agent-instructions-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wa-space-xs);
+    margin-top: var(--wa-space-xs);
 }
 /* ── Save-URL mini dialog ─────────────────────────────────────────────── */
 .browser-save-dialog {

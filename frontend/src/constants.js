@@ -11,6 +11,12 @@
 export const SPONSOR_URL = 'https://github.com/sponsors/twidi'
 
 /**
+ * Public (GitHub) URL of the Browser tab help page — put in the agent setup
+ * instructions the Browser tab generates: an agent can't open TwiCC's in-app help.
+ */
+export const BROWSER_TAB_HELP_PUBLIC_URL = 'https://github.com/twidi/twicc/blob/main/frontend/public/help/browser-tab.md'
+
+/**
  * Number of items to load at start (first N and last N) when viewing a session.
  * Also used during reconciliation to limit how many new items we fetch at once.
  */
