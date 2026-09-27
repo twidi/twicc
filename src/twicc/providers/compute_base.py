@@ -341,6 +341,19 @@ def strip_markdown(text: str) -> str:
     return text
 
 
+def canonical_iso_timestamp(value: str | datetime | None) -> str | None:
+    """Return ``value`` as a UTC ``isoformat()`` string (``+00:00``), or ``None``.
+
+    One canonical form for the agent-run row timestamps, so the batch diff
+    compares a hook's ``...Z`` or non-UTC string equal to the stored value.
+    """
+    if not value:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    return value.astimezone(UTC).isoformat()
+
+
 def parse_timestamp_to_datetime(timestamp: str) -> datetime | None:
     """
     Parse an ISO timestamp string to a UTC-aware :class:`datetime`.
@@ -1410,7 +1423,11 @@ class BaseSessionCompute:
         Called by ``compute_session_metadata`` for every item, after the
         line's tool-result link and agent link are recorded, so
         ``batch_state`` shows them. The orchestrator adds the returned rows
-        before the next line. Batch twin of :meth:`apply_agent_run_signals`.
+        before the next line: it stores a copy of each row dict (never the
+        returned object) and canonicalises ``started_at`` / ``ended_at``
+        (and each ``opens_run`` timestamp) to UTC ``isoformat()``, so a hook
+        may reuse its dicts and emit any ISO form. Batch twin of
+        :meth:`apply_agent_run_signals`.
 
         Default: no rows.
         """
@@ -2624,7 +2641,7 @@ class BaseSessionCompute:
                 'agent_id': row.agent_id,
                 'kind': row.kind,
                 'opens_run': row.opens_run,
-                'started_at': row.started_at.isoformat() if row.started_at else None,
+                'started_at': canonical_iso_timestamp(row.started_at),
             }
 
         def serialize_agent_run_end(row: AgentRunEnd) -> dict:
@@ -2633,7 +2650,7 @@ class BaseSessionCompute:
                 'line_num': row.line_num,
                 'tool_use_id': row.tool_use_id,
                 'agent_id': row.agent_id,
-                'ended_at': row.ended_at.isoformat() if row.ended_at else None,
+                'ended_at': canonical_iso_timestamp(row.ended_at),
                 'status': row.status,
             }
 
@@ -2920,17 +2937,24 @@ class BaseSessionCompute:
             # Provider hook: agent-run evidence of this line. Runs after the
             # line's tool-result link and agent link, so ``batch_state``
             # shows them; its rows are applied before the next line.
+            # The orchestrator owns what it stores: each row is copied (the
+            # loop mutates it later) and its timestamps canonicalised.
             run_signals = self.collect_agent_run_signals(session_id, item, parsed, batch_state)
             for row in run_signals.interactions:
                 # First line wins (compaction duplicates), unlike all_agent_links.
-                all_agent_interactions.setdefault(row['tool_use_id'], row)
+                if row['tool_use_id'] not in all_agent_interactions:
+                    all_agent_interactions[row['tool_use_id']] = {
+                        **row, 'started_at': canonical_iso_timestamp(row.get('started_at')),
+                    }
             for tu_id, started_at in run_signals.opens_run:
                 stored = all_agent_interactions.get(tu_id)
                 if stored is not None:
                     stored['opens_run'] = True
-                    stored['started_at'] = started_at
+                    stored['started_at'] = canonical_iso_timestamp(started_at)
             for row in run_signals.run_ends:
-                all_agent_run_ends[(row['line_num'], row['tool_use_id'])] = row
+                all_agent_run_ends[(row['line_num'], row['tool_use_id'])] = {
+                    **row, 'ended_at': canonical_iso_timestamp(row.get('ended_at')),
+                }
 
             # Prefix/suffix for group state machine
             has_prefix, has_suffix = False, False

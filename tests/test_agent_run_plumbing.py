@@ -7,7 +7,7 @@ batch path turns their rows into ``AgentInteraction`` / ``AgentRunEnd`` diffs.
 Design: ``docs/plans/2026-09-26-subagent-runs-and-control-tools-design.md``
 §6.2 and §7.1.
 """
-import copy
+import os
 from datetime import UTC, datetime
 from queue import Queue
 
@@ -124,8 +124,7 @@ class ClaudeBatchSpy(ClaudeCodeSessionCompute):
             "agent_links": set(batch_state.all_agent_links),
             "interactions": {key: dict(row) for key, row in batch_state.all_agent_interactions.items()},
         }
-        # Fresh copies: the batch stores and mutates the returned row dicts.
-        return copy.deepcopy(self.signals.get(item.line_num, BatchAgentSignals()))
+        return self.signals.get(item.line_num, BatchAgentSignals())
 
 
 class CodexBatchSpy(CodexSessionCompute):
@@ -182,11 +181,20 @@ def test_live_tuple_early_returns_have_ten_elements(tree):
     compute = ClaudeCodeSessionCompute()
     missing = compute.sync_session_items_from_file(root, home / "missing.jsonl")
     assert missing == ([], [], [], [], [], [], False, [], [], [])
+    empty = ([], [], [], [], [], [], False, [], [], [])
     first = live(root, home, entry("user", "hello"))
     assert len(first) == 10
-    root.refresh_from_db()
-    unchanged = compute.sync_session_items_from_file(root, home / root.file_path)
-    assert unchanged == ([], [], [], [], [], [], False, [], [], [])
+    path = home / root.file_path
+    # Same mtime, nothing appended.
+    assert compute.sync_session_items_from_file(root, path) == empty
+    # File touched, nothing appended.
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
+    assert compute.sync_session_items_from_file(root, path) == empty
+    # Only blank lines appended.
+    with path.open("ab") as f:
+        f.write(b"\n  \n")
+    assert compute.sync_session_items_from_file(root, path) == empty
 
 
 def test_live_tuple_carries_agents_resumed(tree):
@@ -347,6 +355,29 @@ def test_batch_first_line_wins_for_duplicate_interactions(tree):
     recompute(root, spy)
     row = AgentInteraction.objects.get()
     assert (row.event_line_num, row.agent_id) == (1, "first")
+
+
+def test_batch_copies_and_canonicalises_hook_rows(tree):
+    root, owner, child, home = tree
+    seed(root, entry("user", "a"), entry("user", "b"))
+    shared = interaction(root, 1)
+    shared["started_at"] = "2026-09-27T14:00:00+02:00"
+    end = run_end(root, 2)
+    end["ended_at"] = "2026-09-27T12:00:00Z"
+    signals = {
+        1: BatchAgentSignals(interactions=(shared,)),
+        2: BatchAgentSignals(opens_run=(("call_x", "2026-09-27T12:05:00Z"),), run_ends=(end,)),
+    }
+    before = (dict(shared), dict(end))
+    first = recompute(root, ClaudeBatchSpy(signals=signals))
+    assert first["agent_interactions_to_create"][0]["started_at"] == LATER.isoformat()
+    assert first["agent_run_ends_to_create"][0]["ended_at"] == NOW.isoformat()
+    second = recompute(root, ClaudeBatchSpy(signals=signals))
+    for key in ("agent_interactions_to_create", "agent_interactions_to_update", "agent_interactions_to_delete",
+                "agent_run_ends_to_create", "agent_run_ends_to_update", "agent_run_ends_to_delete"):
+        assert second[key] == [], key
+    assert (shared, end) == before
+    assert AgentInteraction.objects.get().started_at == LATER
 
 
 def test_ui_run_end_survives_root_recompute(tree):
