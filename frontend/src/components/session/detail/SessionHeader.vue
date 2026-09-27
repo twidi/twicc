@@ -258,8 +258,7 @@ const canStopAgent = computed(() => {
     if (session.value?.ephemeral || !ps || !ps.synthetic || !ps.state || ps.state === PROCESS_STATE.DEAD) return false
     const parentId = session.value?.parent_session_id
     if (!parentId) return false
-    const link = store.getAgentLinkInfo(props.sessionId)
-    if (!link?.isBackground || link.stoppedAt) return false
+    if (!store.isAgentRunning(props.sessionId) || !store.getAgentRunState(props.sessionId)?.runBackground) return false
     // Provider opt-out for backends that don't (or can't) stop a
     // running subagent — see ``BaseProviderHelpers.canStopSubagent``.
     return !!getProviderHelpers(session.value?.provider)?.canStopSubagent()

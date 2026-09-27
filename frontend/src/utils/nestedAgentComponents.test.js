@@ -9,6 +9,9 @@ const source = readFileSync(new URL('../components/session/detail/items/ToolUseC
 function block(start, end) { return source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start))) }
 const template = source.slice(source.indexOf('<template>'))
 
+const headerSource = readFileSync(new URL('../components/session/detail/SessionHeader.vue', import.meta.url), 'utf8')
+function headerBlock(start, end) { return headerSource.slice(headerSource.indexOf(start), headerSource.indexOf(end, headerSource.indexOf(start))) }
+
 test('actual card running indicator reads only the store and the frozen flag', () => {
     // A spawn that predates a root restart still shows the robot when the store
     // says the agent runs (a resumed agent, design §8.3): no stale gate.
@@ -105,6 +108,36 @@ test('actual provided comment context updates when nested owner links arrive', (
     setAgentLink(state, 'launcher', 'nested', { agentId: 'child', rootSessionId: 'root', toolUseLineNum: 60 })
     assert.equal(context.subagentToolLineNum, 115)
 })
+test('actual subagent header Stop gate reads the run state, not the link', () => {
+    const code = headerBlock('const canStopAgent', 'const stoppingProcess')
+    const PROCESS_STATE = { DEAD: 'dead' }
+    const canStop = ({ running, runBackground, linkStoppedAt = null }) => new Function(
+        'computed', 'props', 'processState', 'session', 'store', 'PROCESS_STATE', 'getProviderHelpers',
+        `${code}; return canStopAgent`,
+    )(
+        computed,
+        { mode: 'subagent', sessionId: 'agent' },
+        { value: { synthetic: true, state: 'assistant_turn' } },
+        { value: { ephemeral: false, parent_session_id: 'root', provider: 'claude' } },
+        {
+            isAgentRunning: id => id === 'agent' && running,
+            getAgentRunState: id => (id === 'agent' ? { runBackground, stoppedAt: linkStoppedAt } : null),
+            getAgentLinkInfo: () => ({ isBackground: runBackground, stoppedAt: linkStoppedAt }),
+        },
+        PROCESS_STATE,
+        () => ({ canStopSubagent: () => true }),
+    ).value
+
+    assert.equal(canStop({ running: true, runBackground: true }), true)
+    // The link says stopped; the run state says a background run is live. The run state wins.
+    assert.equal(canStop({ running: true, runBackground: true, linkStoppedAt: '2026-01-01T00:00:00Z' }), true)
+    assert.equal(canStop({ running: true, runBackground: false }), false, 'a foreground run')
+    assert.equal(canStop({ running: false, runBackground: true }), false, 'not running')
+    for (const removed of ['getAgentLinkInfo', 'link?.isBackground', 'link.stoppedAt']) {
+        assert.equal(headerSource.includes(removed), false, `${removed} is gone from SessionHeader.vue`)
+    }
+})
+
 test('actual navigation sends the root route for nested children', () => {
     let target
     const code = block('function navigateToSubagent()', '// --- Workflow link')
