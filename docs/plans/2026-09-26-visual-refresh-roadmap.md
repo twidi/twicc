@@ -85,6 +85,23 @@ From the mock (round 1 pick, round 2 review) and from step 1 reviews:
 - **Floating panels:** approved; done as step 1.
 - The whole "Signature" direction is liked; details beyond these points were accepted as
   shown in the mock.
+- **Firefox parity (2026-09-27, applies to steps 4–7):** the user, TwiCC's main user, uses
+  only Firefox. Firefox must never get a degraded result. Use modern standard CSS where the
+  browser supports it; where Firefox lacks a feature, ship a JavaScript fallback with the
+  same visible result. Gate on feature detection (`CSS.supports()` / `@supports`), never on
+  the user agent, so the CSS path takes over by itself when Firefox ships the feature.
+  Browser checks are done in Firefox first. Measured in Firefox 156 (headless probe): it
+  has `@starting-style` entries, `linear()`, `@property`, anchor positioning, same-document
+  view transitions + `view-transition-class`, `sibling-index()`; it lacks exit transitions
+  to `display: none` (`transition-behavior: allow-discrete` snaps), `overlay`,
+  `interpolate-size` / `calc-size()`, scroll-driven animations and `if()`.
+- **Reduced motion is reduced, not none (2026-09-27, applies to steps 4–7):** under
+  `prefers-reduced-motion: reduce`, remove movement (translations, scales, rotations,
+  spring overshoot, gliding, height animations → final state at once); keep short
+  color / background / opacity fades and status indicators (opacity pulses, spinners);
+  a status indicator whose animation is movement (the working robot's hop, the workflow
+  pending hop) switches to an opacity pulse. No global "kill every animation" rule. Step 4a's `--motion-amount` token
+  (`1`, `0` under reduced motion) multiplies every movement distance.
 
 ## 5. How we work (process rules)
 
