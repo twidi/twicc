@@ -106,8 +106,6 @@ def test_child_idle_is_display_only(tree):
     entry = build_subagents_state(root)[1]
     assert entry["running"] is False
     assert entry["stopped_at"] == ended.isoformat()
-    assert get_provider_helpers("codex").subagent_idle_trusted is True
-    assert get_provider_helpers("claude_code").subagent_idle_trusted is False
 
 
 def test_only_root_cutoff_ends_tree(tree):

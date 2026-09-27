@@ -276,17 +276,10 @@ class BaseProviderHelpers:
 
     provider: ClassVar[Provider]
 
-    # Mirror the frontend agentRunEndsOnSubagentIdle provider gate.
-    subagent_idle_trusted: ClassVar[bool] = False
-
     # Whether a partially answered question has its own outcome. Claude has a
     # native "clarify" tool result for it; Codex has none, so a partial answer
     # there is refused as ``missing_answers`` instead.
     question_partial_supported: ClassVar[bool] = False
-
-    def get_queue_completions(self, items):
-        """Return persisted (child id, launch tool id, timestamp) completions."""
-        return []
 
     def normalize_pending_request(self, pending, *, raw: bool = False) -> dict:
         """Describe one :class:`~twicc.agent.states.PendingRequest` for the CLI.

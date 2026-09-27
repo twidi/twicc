@@ -177,7 +177,6 @@ class CodexHelpers(BaseProviderHelpers):
         task_name = arguments.get("task_name")
         return humanize_identifier(task_name) or None if isinstance(task_name, str) else None
 
-    subagent_idle_trusted: ClassVar[bool] = True
     provider: ClassVar[Provider] = Provider.CODEX
     LABEL: ClassVar[str] = "Codex"
     SYSTEM_PROMPT_STATIC_ADDENDUM: ClassVar[str] = _SYSTEM_PROMPT_STATIC_ADDENDUM

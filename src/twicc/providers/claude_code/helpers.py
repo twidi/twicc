@@ -220,19 +220,6 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
 
         return build_question_response(pending, action=action, answers=answers)
 
-    def get_queue_completions(self, items):
-        from .notifications import parse_queue_completion
-
-        completions = []
-        for item in items:
-            try:
-                parsed = orjson.loads(item.content)
-            except orjson.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict) and (completion := parse_queue_completion(parsed)) is not None:
-                completions.append((completion.task_id, completion.tool_use_id, item.timestamp))
-        return completions
-
     def get_spawn_display_name(self, item, tool_use_id) -> str | None:
         """``Explore — Map session pinning system`` from the ``Task``/``Agent`` call.
 
