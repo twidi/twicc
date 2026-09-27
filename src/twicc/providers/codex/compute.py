@@ -193,7 +193,16 @@ import orjson
 from django.db.models import Q
 
 from twicc.core.enums import ItemKind, Provider
-from twicc.core.models import AgentInteractionKind, SessionItem, SessionType
+from twicc.core.models import (
+    AgentInteraction,
+    AgentInteractionKind,
+    AgentLink,
+    AgentRunEnd,
+    AgentRunEndSource,
+    SessionItem,
+    SessionType,
+    ToolResultLink,
+)
 from twicc.paths import get_artifacts_dir
 from twicc.pricing import calculate_line_context_usage
 from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalEvent
@@ -209,6 +218,7 @@ from twicc.providers.compute_base import (
     BatchAgentState,
     ContentAnalysis,
     INSERT_SCREENSHOT_TAG_RE,
+    LiveAgentSignals,
     ToolResultInfo,
     ToolUseEntry,
     parse_timestamp_to_datetime,
@@ -221,6 +231,10 @@ from .agent_runs import (
     END_STATUS_OWNER_TURN_ABORTED,
     END_STATUS_TURN_COMPLETE,
     INTERACTION_KIND_BY_TOOL,
+    RUN_KIND_RESUME,
+    RUN_KIND_SPAWN,
+    FileEvidence,
+    FileRun,
     ForkFields,
     SubAgentActivity,
     agents_with_file_runs,
@@ -2091,6 +2105,95 @@ def _data_url_image(value: object) -> tuple[str, str] | None:
     return media_type, data
 
 
+def evidence_from_db(session_id: str, agent_id: str, before_line: int) -> FileEvidence:
+    """Build the :class:`FileEvidence` of ``agent_id`` in ``session_id`` from the DB rows below ``before_line``.
+
+    Live twin of :func:`~twicc.providers.codex.agent_runs.evidence_from_batch_state`,
+    with the same filters, so the §5.6 rules take the same decisions:
+
+    - spawns: the ``AgentLink`` rows of the file (``tool_use_line_num``);
+    - the ``resume`` interactions with ``opens_run`` (runs) and the ``stop``
+      interactions, read by their stored ``event_line_num`` (§5.1: never
+      the call line), each stop with its first non-error result line;
+    - the ``completed`` / ``owner_turn_aborted`` transcript run ends (``line_num``);
+    - the results of every run call, error rows included (``tool_result_line_num``).
+
+    Every row is owned by ``session_id``, targets ``agent_id`` and sits on a
+    line below ``before_line``. Batch holds the earlier lines only (plus the
+    current line's result link, which the rules skip as not before their
+    line), so both builders give the rules the same input.
+    """
+    runs = [
+        FileRun(tool_use_id, call_line, None, RUN_KIND_SPAWN)
+        for tool_use_id, call_line in AgentLink.objects.filter(
+            session_id=session_id, agent_id=agent_id, tool_use_line_num__lt=before_line,
+        ).order_by('tool_use_line_num', 'id').values_list('tool_use_id', 'tool_use_line_num')
+    ]
+    stop_rows: list[tuple[str, int]] = []
+    for tool_use_id, call_line, event_line, kind, opens_run in AgentInteraction.objects.filter(
+        session_id=session_id,
+        agent_id=agent_id,
+        event_line_num__lt=before_line,
+        kind__in=(AgentInteractionKind.RESUME, AgentInteractionKind.STOP),
+    ).order_by('event_line_num', 'id').values_list(
+        'tool_use_id', 'tool_use_line_num', 'event_line_num', 'kind', 'opens_run',
+    ):
+        if kind == AgentInteractionKind.RESUME:
+            if opens_run:
+                runs.append(FileRun(tool_use_id, call_line, event_line, RUN_KIND_RESUME))
+        else:
+            stop_rows.append((tool_use_id, event_line))
+
+    results: dict[str, list[tuple[int, datetime | None]]] = {run.tool_use_id: [] for run in runs}
+    first_ok_lines: dict[str, int] = {}
+    result_ids = set(results) | {tool_use_id for tool_use_id, _ in stop_rows}
+    if result_ids:
+        for tool_use_id, line, result_at, error in ToolResultLink.objects.filter(
+            session_id=session_id, tool_use_id__in=result_ids, tool_result_line_num__lt=before_line,
+        ).order_by('tool_result_line_num', 'id').values_list(
+            'tool_use_id', 'tool_result_line_num', 'tool_result_at', 'error',
+        ):
+            if tool_use_id in results:
+                results[tool_use_id].append((line, result_at))
+            if error is None:
+                first_ok_lines.setdefault(tool_use_id, line)
+
+    completed_lines: dict[str, list[int]] = {}
+    aborted_lines: dict[str, list[int]] = {}
+    for tool_use_id, line, status in AgentRunEnd.objects.filter(
+        session_id=session_id,
+        agent_id=agent_id,
+        source=AgentRunEndSource.TRANSCRIPT,
+        line_num__lt=before_line,
+        status__in=(END_STATUS_COMPLETED, END_STATUS_OWNER_TURN_ABORTED),
+    ).order_by('line_num', 'id').values_list('tool_use_id', 'line_num', 'status'):
+        target = completed_lines if status == END_STATUS_COMPLETED else aborted_lines
+        target.setdefault(tool_use_id, []).append(line)
+
+    return FileEvidence(
+        runs=tuple(runs),
+        stops=tuple((event_line, first_ok_lines.get(tool_use_id)) for tool_use_id, event_line in stop_rows),
+        completed_lines={tool_use_id: tuple(lines) for tool_use_id, lines in completed_lines.items()},
+        aborted_lines={tool_use_id: tuple(lines) for tool_use_id, lines in aborted_lines.items()},
+        results={tool_use_id: tuple(rows) for tool_use_id, rows in results.items()},
+    )
+
+
+def _agents_with_file_runs_in_db(session_id: str, before_line: int) -> list[str]:
+    """Live twin of :func:`~twicc.providers.codex.agent_runs.agents_with_file_runs`, below ``before_line``.
+
+    The agents with a spawn link or a run-opening ``resume`` owned by
+    ``session_id``, sorted (the batch walks them sorted too).
+    """
+    agents = set(AgentLink.objects.filter(
+        session_id=session_id, tool_use_line_num__lt=before_line,
+    ).values_list('agent_id', flat=True))
+    agents.update(AgentInteraction.objects.filter(
+        session_id=session_id, kind=AgentInteractionKind.RESUME, opens_run=True, event_line_num__lt=before_line,
+    ).values_list('agent_id', flat=True))
+    return sorted(agents)
+
+
 class CodexSessionCompute(BaseSessionCompute):
     """Concrete :class:`BaseSessionCompute` for Codex sessions.
 
@@ -2180,7 +2283,7 @@ class CodexSessionCompute(BaseSessionCompute):
         # Live mode ignores this map: v1 falls back to
         # ``AgentLink.objects`` (the row is already persisted from the
         # prior sync that processed the spawn ack) and v2 to
-        # :meth:`_lookup_spawn_call_id_for_agent_path` (no model column
+        # :meth:`_lookup_spawn_for_agent_path` (no model column
         # carries an agent path).
         # Initialised by :meth:`begin_session_compute`, freed by
         # :meth:`end_session_compute`. Lazily created on first access in
@@ -2696,6 +2799,172 @@ class CodexSessionCompute(BaseSessionCompute):
             )
         return rows
 
+    def apply_agent_run_signals(
+        self,
+        session_id: str,
+        item: SessionItem,
+        parsed: dict,
+    ) -> LiveAgentSignals:
+        """Codex agent-run rows of one line, in the live sync (design §5.2, §5.6, §6.2).
+
+        Live twin of :meth:`collect_agent_run_signals`, line by line, with
+        the same pure rules: every decision reads :func:`evidence_from_db`
+        (the rows of this file below the line, this line's result link
+        included in the DB but skipped by the rules), and the two file
+        facts come from ``SessionItem`` rows — the aborted turn's
+        ``task_started`` by a scan of this session, the fork fields from
+        line 1 (bulk-created before this pass). The rows are written here,
+        at once, so a later line of the same batch sees them.
+        """
+        if task_started_turn_id(parsed) is not None:
+            return LiveAgentSignals()
+        activity = parse_sub_agent_activity(parsed)
+        if activity is not None:
+            return self._apply_activity_signals(session_id, item, activity)
+        run_end_ids: list[int] = []
+        affected: list[str] = []
+        abort_turn_id = owner_turn_abort_turn_id(parsed)
+        if abort_turn_id is not None:
+            for agent_id, tool_use_id in self._owner_abort_cuts_live(session_id, item.line_num, abort_turn_id):
+                end_id = self._write_run_end(session_id, item, tool_use_id, agent_id, END_STATUS_OWNER_TURN_ABORTED)
+                if end_id is not None:
+                    run_end_ids.append(end_id)
+                    affected.append(agent_id)
+        # ``item.session`` is the synced session the live loop built the item with (no query).
+        if (
+            item.session.type == SessionType.SUBAGENT
+            and is_task_complete(parsed)
+            and not is_copied_history(self._live_fork_fields(session_id), parsed)
+        ):
+            end_id = self._write_run_end(session_id, item, '', session_id, END_STATUS_TURN_COMPLETE)
+            if end_id is not None:
+                run_end_ids.append(end_id)
+                affected.append(session_id)
+        return LiveAgentSignals(run_end_ids=tuple(run_end_ids), affected_agent_ids=tuple(affected))
+
+    def _apply_activity_signals(
+        self,
+        session_id: str,
+        item: SessionItem,
+        activity: SubAgentActivity,
+    ) -> LiveAgentSignals:
+        """Rows of a ``SubAgentActivity`` line, live (``started`` writes none: its link is the spawn)."""
+        line = item.line_num
+        if activity.kind == _SUB_AGENT_ACTIVITY_COMPLETED_KIND:
+            run = attribute_completed(evidence_from_db(session_id, activity.agent_id, line), line)
+            if run is None:
+                return LiveAgentSignals()
+            end_id = self._write_run_end(session_id, item, run.tool_use_id, activity.agent_id, END_STATUS_COMPLETED)
+            if end_id is None:
+                return LiveAgentSignals()
+            return LiveAgentSignals(run_end_ids=(end_id,), affected_agent_ids=(activity.agent_id,))
+        if activity.kind not in _SUB_AGENT_ACTIVITY_CONTROL_KINDS:
+            return LiveAgentSignals()
+        # A duplicated event line: the first one's row stands.
+        if AgentInteraction.objects.filter(session_id=session_id, tool_use_id=activity.event_id).exists():
+            return LiveAgentSignals()
+        # The call in the file, by its qualified name (live can find a
+        # ``wait_agent`` call batch drops: the map gives it no kind either).
+        found = self._lookup_tool_call(session_id, line, activity.event_id)
+        if found is None:
+            return LiveAgentSignals()
+        payload, call_line = found
+        kind = INTERACTION_KIND_BY_TOOL.get(_tool_use_name(payload))
+        session = item.session
+        if kind is None or activity.agent_id in (session_id, session.parent_session_id or session_id):
+            return LiveAgentSignals()
+        # A resume opens a run when the agent has no file-open run here.
+        opens_run = kind == AgentInteractionKind.RESUME and not file_open_runs(
+            evidence_from_db(session_id, activity.agent_id, line), line,
+        )
+        _, created = AgentInteraction.objects.get_or_create(
+            session_id=session_id,
+            tool_use_id=activity.event_id,
+            defaults={
+                'tool_use_line_num': call_line,
+                'event_line_num': line,
+                'agent_id': activity.agent_id,
+                'kind': kind,
+                'opens_run': opens_run,
+                'started_at': item.timestamp,
+            },
+        )
+        if not created:
+            return LiveAgentSignals()
+        key = (session_id, activity.event_id)
+        # A Codex stop's result can precede its ``interrupted`` line (§5.6):
+        # the row is then a stop record from its creation.
+        is_stop_record = kind == AgentInteractionKind.STOP and ToolResultLink.objects.filter(
+            session_id=session_id,
+            tool_use_id=activity.event_id,
+            tool_result_line_num__lt=line,
+            error__isnull=True,
+        ).exists()
+        return LiveAgentSignals(
+            changed_interactions=(key,),
+            run_interactions=(key,) if opens_run else (),
+            stop_records=(key,) if is_stop_record else (),
+            affected_agent_ids=(activity.agent_id,),
+            agents_resumed=((activity.agent_id, activity.agent_path),) if opens_run else (),
+        )
+
+    def _owner_abort_cuts_live(self, session_id: str, line: int, turn_id: str) -> list[tuple[str, str]]:
+        """``(agent_id, run call id)`` of the runs an owner abort at ``line`` cuts, from the DB (§5.2).
+
+        The aborted turn's start is the newest ``task_started`` of ``turn_id``
+        below the line (the batch map keeps the newest line too); none → no cut.
+        """
+        started_line = self._lookup_task_started_line(session_id, line, turn_id)
+        if started_line is None:
+            return []
+        return [
+            (agent_id, run.tool_use_id)
+            for agent_id in _agents_with_file_runs_in_db(session_id, line)
+            for run in owner_abort_cut_runs(evidence_from_db(session_id, agent_id, line), line, started_line)
+        ]
+
+    def _lookup_task_started_line(self, session_id: str, max_line_num: int, turn_id: str) -> int | None:
+        """The newest ``task_started`` line of ``turn_id`` below ``max_line_num`` in the session, or ``None``."""
+        candidates = SessionItem.objects.filter(
+            session_id=session_id,
+            line_num__lt=max_line_num,
+            content__contains=turn_id,
+        ).filter(content__contains=_PAYLOAD_TASK_STARTED).order_by('-line_num').values_list('line_num', 'content')
+        for line_num, content in candidates.iterator(chunk_size=10):
+            try:
+                parsed = orjson.loads(content)
+            except orjson.JSONDecodeError:
+                continue
+            if task_started_turn_id(parsed) == turn_id:
+                return line_num
+        return None
+
+    def _live_fork_fields(self, session_id: str) -> ForkFields:
+        """The session's line-1 ``session_meta`` fork fields, read from its ``SessionItem``."""
+        content = SessionItem.objects.filter(
+            session_id=session_id, line_num=1,
+        ).values_list('content', flat=True).first()
+        if content is None:
+            return ForkFields(None, None)
+        try:
+            parsed = orjson.loads(content)
+        except orjson.JSONDecodeError:
+            return ForkFields(None, None)
+        return fork_fields(parsed) if isinstance(parsed, dict) else ForkFields(None, None)
+
+    def _write_run_end(
+        self, session_id: str, item: SessionItem, tool_use_id: str, agent_id: str, status: str,
+    ) -> int | None:
+        """Write one transcript ``AgentRunEnd`` at the item's line; its id when created, else ``None``."""
+        end, created = AgentRunEnd.objects.get_or_create(
+            session_id=session_id,
+            line_num=item.line_num,
+            tool_use_id=tool_use_id,
+            source=AgentRunEndSource.TRANSCRIPT,
+            defaults={'agent_id': agent_id, 'ended_at': item.timestamp, 'status': status},
+        )
+        return end.id if created else None
+
     def _remap_orphan_end_event(
         self,
         parsed_json: dict,
@@ -2849,8 +3118,11 @@ class CodexSessionCompute(BaseSessionCompute):
         - ``FINAL_ANSWER`` agent message (multi-agent v2): same rebind,
           but the naive id is an agent *path* no model column carries,
           so it goes through
-          :meth:`_lookup_spawn_call_id_for_agent_path` (newest
-          ``SubAgentActivity`` announcing that path).
+          :meth:`_lookup_spawn_for_agent_path` (newest
+          ``SubAgentActivity`` announcing that path), then the §5.6
+          attribution over :func:`evidence_from_db` picks the run it
+          ends (a follow-up's answer lands on its ``followup_task``);
+          no run → the spawn.
         - ``write_stdin`` ``function_call_output``: resolves the parent
           ``exec_command`` through two DB lookups (write_stdin
           arguments → exec_command_id → function_call_output that
@@ -2884,11 +3156,19 @@ class CodexSessionCompute(BaseSessionCompute):
         if _parse_agent_final_answer(parsed_json) is not None:
             # v2: the naive id is an agent *path*, which no model column
             # carries — resolve it through the ``SubAgentActivity``
-            # line that announced the spawn (it holds both the path and
-            # the spawning call_id).
-            return self._lookup_spawn_call_id_for_agent_path(
-                session_id, item.line_num, naive_tool_use_id,
+            # line that announced the spawn (it holds the path, the
+            # spawning call_id and the agent id). No spawn for the path →
+            # the naive id, so the caller still creates a link (under it)
+            # instead of dropping the result.
+            spawn = self._lookup_spawn_for_agent_path(session_id, item.line_num, naive_tool_use_id)
+            if spawn is None:
+                return naive_tool_use_id
+            # §5.6: the run this answer ends, from the DB rows below the
+            # line (this line's own link is not written yet, like batch).
+            run = attribute_final_answer(
+                evidence_from_db(session_id, spawn.agent_id, item.line_num), item.line_num,
             )
+            return run.tool_use_id if run is not None else spawn.call_id
         if parsed_json.get("type") == _TYPE_EVENT_MSG:
             payload = completed_item(parsed_json)
             if payload is not None and naive_tool_use_id.startswith("exec-"):
@@ -2956,15 +3236,22 @@ class CodexSessionCompute(BaseSessionCompute):
     def _lookup_tool_call_payload(
         self, session_id: str, max_line_num: int, naive_tool_use_id: str
     ) -> dict | None:
-        """Find the tool-call payload owning ``naive_tool_use_id``.
+        """Find the tool-call payload owning ``naive_tool_use_id`` (:meth:`_lookup_tool_call` without its line)."""
+        found = self._lookup_tool_call(session_id, max_line_num, naive_tool_use_id)
+        return found[0] if found is not None else None
+
+    def _lookup_tool_call(
+        self, session_id: str, max_line_num: int, call_id: str
+    ) -> tuple[dict, int] | None:
+        """Find the tool call owning ``call_id`` below ``max_line_num``: ``(payload, line_num)``.
 
         Direct ``function_call`` and code-mode ``custom_tool_call`` shapes
-        qualify; text merely containing the id is rejected.
+        qualify; text merely containing the id is rejected. Newest line first.
         """
         candidates = SessionItem.objects.filter(
             session_id=session_id,
             line_num__lt=max_line_num,
-            content__contains=naive_tool_use_id,
+            content__contains=call_id,
         ).order_by('-line_num')
         for candidate in candidates.iterator(chunk_size=10):
             try:
@@ -2978,26 +3265,25 @@ class CodexSessionCompute(BaseSessionCompute):
                 continue
             if payload.get("type") not in _TOOL_CALL_PAYLOAD_TYPES:
                 continue
-            if payload.get("call_id") != naive_tool_use_id:
+            if payload.get("call_id") != call_id:
                 continue
-            return payload
+            return payload, candidate.line_num
         return None
 
-    def _lookup_spawn_call_id_for_agent_path(
+    def _lookup_spawn_for_agent_path(
         self,
         session_id: str,
         max_line_num: int,
         agent_path: str,
-    ) -> str:
-        """Resolve a multi-agent v2 agent path to its ``spawn_agent`` call_id.
+    ) -> _SubAgentSpawn | None:
+        """Resolve a multi-agent v2 agent path to the spawn that announced it.
 
         Live counterpart of the batch ``_agent_id_to_spawn_call_id``
         side-table: walks back to the canonical ``SubAgentActivity`` item
         line that announced the spawn (newest first — an agent path can
         be reused by a later spawn once the previous holder is gone) and
-        returns the ``event_id`` it carries. Returns ``agent_path``
-        unchanged when nothing matches, so the caller still creates a
-        link (just under the naive id) instead of dropping the result.
+        returns its spawn call id and agent id. ``None`` when nothing
+        matches.
         """
         candidates = SessionItem.objects.filter(
             session_id=session_id,
@@ -3011,8 +3297,8 @@ class CodexSessionCompute(BaseSessionCompute):
                 continue
             spawn = _parse_sub_agent_activity_started(parsed)
             if spawn is not None and spawn.agent_path == agent_path:
-                return spawn.call_id
-        return agent_path
+                return spawn
+        return None
 
     def _lookup_orphan_end_exec_call_id(
         self,
