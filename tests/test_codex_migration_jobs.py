@@ -10,7 +10,11 @@ from django.db import IntegrityError
 
 from twicc.core.enums import Provider
 from twicc.core.models import (
+    AgentInteraction,
+    AgentInteractionKind,
     AgentLink,
+    AgentRunEnd,
+    AgentRunEndSource,
     Project,
     Session,
     SessionItem,
@@ -207,6 +211,35 @@ def test_replace_history_resets_structure_but_keeps_compute_stale(session):
     assert session.compute_version == old_compute_version
     assert session.unavailable_reason is None
     assert session.stale is False
+
+
+def test_replace_history_drops_the_sessions_interactions_and_transcript_run_ends(session):
+    """Stale rows would keep their old lines (first line wins) and keep closing
+    runs through rule 4 after the re-ingest (design §7.1)."""
+    other = Session.objects.create(
+        id="migration-jobs-other", project=session.project, provider=Provider.CODEX, file_path="other.jsonl",
+    )
+    for owner in (session, other):
+        AgentInteraction.objects.create(
+            session=owner, tool_use_line_num=1, event_line_num=2, tool_use_id="call-send",
+            agent_id="child-1", kind=AgentInteractionKind.MESSAGE, opens_run=True,
+        )
+        AgentRunEnd.objects.create(
+            session=owner, line_num=3, source=AgentRunEndSource.TRANSCRIPT, agent_id="child-1",
+            tool_use_id="call-send", status="completed",
+        )
+    # Only transcript rows are history (a Codex session never has ui rows: no Stop button).
+    AgentRunEnd.objects.create(
+        session=session, source=AgentRunEndSource.UI, agent_id="child-1", status="ui_stopped",
+    )
+    job = ReplaceCodexHistoryJob(Provider.CODEX, session.id, [(1, "new")], 10, 1, 3.0, _future())
+
+    _apply_replace_codex_history_job(job)
+
+    assert not AgentInteraction.objects.filter(session=session).exists()
+    assert list(AgentRunEnd.objects.filter(session=session).values_list("source", flat=True)) == ["ui"]
+    assert AgentInteraction.objects.filter(session=other).count() == 1
+    assert AgentRunEnd.objects.filter(session=other).count() == 1
 
 
 def test_replace_history_failure_leaves_the_offset_zero_repair_marker(session):

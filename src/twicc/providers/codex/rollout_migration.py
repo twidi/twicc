@@ -12,7 +12,16 @@ import orjson
 from django.db import transaction
 
 from twicc.core.enums import Provider
-from twicc.core.models import AgentLink, Session, SessionItem, Share, ToolResultLink
+from twicc.core.models import (
+    AgentInteraction,
+    AgentLink,
+    AgentRunEnd,
+    AgentRunEndSource,
+    Session,
+    SessionItem,
+    Share,
+    ToolResultLink,
+)
 from twicc.provider_homes import codex_home
 
 from .bin import make_codex_config, resolve_codex_command
@@ -350,6 +359,9 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     Session.objects.select_for_update().get(id=job.session_id)
     ToolResultLink.objects.filter(session_id=job.session_id).delete()
     AgentLink.objects.filter(session_id=job.session_id).delete()
+    # Stale run rows would keep their old lines and keep closing runs (rule 4).
+    AgentInteraction.objects.filter(session_id=job.session_id).delete()
+    AgentRunEnd.objects.filter(session_id=job.session_id, source=AgentRunEndSource.TRANSCRIPT).delete()
     SessionItem.objects.filter(session_id=job.session_id).delete()
     Session.objects.filter(id=job.session_id).update(
         last_offset=0, last_line=0, tasks={}, search_version=None,

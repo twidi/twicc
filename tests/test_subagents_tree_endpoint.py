@@ -6,8 +6,18 @@ import orjson
 import pytest
 from django.test import AsyncClient
 
-from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType, ToolResultLink
+from twicc.core.models import (
+    AgentLink,
+    AgentRunEnd,
+    AgentRunEndSource,
+    Project,
+    Session,
+    SessionItem,
+    SessionType,
+    ToolResultLink,
+)
 from twicc.core.session_queries import build_subagents_state
+from twicc.providers.claude_code.agent_runs import TERMINAL_NOTIFICATION_STATUSES
 from twicc.providers.helpers import get_provider_helpers
 
 NOW = datetime(2026, 8, 8, 12, tzinfo=UTC)
@@ -40,8 +50,12 @@ def tree(transactional_db, settings):
 
 
 def queue(root, child, tool="spawn-child", line=120, timestamp=NOW, status="completed"):
+    """A queued task notification, with the ``AgentRunEnd`` the Claude batch writes for a terminal one."""
     xml = (f"<task-notification><task-id>{child.id}</task-id><tool-use-id>{tool}</tool-use-id>"
            f"<status>{status}</status><result>done</result></task-notification>")
+    if status in TERMINAL_NOTIFICATION_STATUSES:
+        AgentRunEnd.objects.create(session=root, line_num=line, source=AgentRunEndSource.TRANSCRIPT,
+            agent_id=child.id, tool_use_id=tool, ended_at=timestamp, status=status)
     return SessionItem.objects.create(session=root, line_num=line, timestamp=timestamp,
         content=orjson.dumps({"type": "queue-operation", "operation": "enqueue", "content": xml}).decode())
 
@@ -70,10 +84,11 @@ def test_completion_identity_latest_and_nonterminal(tree):
     queue(root, child, line=123, timestamp=NOW)
     entry = build_subagents_state(root)[1]
     assert entry["running"] is False
-    assert entry["stopped_at"] == later.isoformat()
+    # The earliest closing evidence is the run's close time (design §5.4).
+    assert entry["stopped_at"] == NOW.isoformat()
 
 
-def test_child_idle_is_provider_gated(tree):
+def test_child_idle_is_display_only(tree):
     root, launcher, child = tree
     child.last_stopped_at = NOW
     child.save(update_fields=["last_stopped_at"])
@@ -81,8 +96,16 @@ def test_child_idle_is_provider_gated(tree):
     assert entry["agent_stopped_at"] == NOW.isoformat()
     assert entry["stopped_at"] is None
     assert entry["running"] is True
+    # ``last_stopped_at`` closes no run, for either provider.
     root.provider = "codex"
-    assert build_subagents_state(root)[1]["running"] is False
+    assert build_subagents_state(root)[1]["running"] is True
+    # A Codex child's own turn end after the run's start does (rule 5).
+    ended = NOW + timedelta(seconds=5)
+    AgentRunEnd.objects.create(session=child, line_num=2, source=AgentRunEndSource.TRANSCRIPT,
+        agent_id=child.id, tool_use_id="", ended_at=ended, status="turn_complete")
+    entry = build_subagents_state(root)[1]
+    assert entry["running"] is False
+    assert entry["stopped_at"] == ended.isoformat()
     assert get_provider_helpers("codex").subagent_idle_trusted is True
     assert get_provider_helpers("claude_code").subagent_idle_trusted is False
 

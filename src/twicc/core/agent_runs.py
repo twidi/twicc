@@ -164,6 +164,36 @@ def _stop_closes(stop: _Stop, run: _Run) -> bool:
     return not keeps_open
 
 
+def deciding_line(interaction, first_result_line: int | None, *, is_codex: bool) -> int | None:
+    """The line that decided an interaction's ``opens_run`` (design §5.4).
+
+    Codex: its ``event_line_num`` (the ``interacted`` line). Claude: the
+    call's first ``ToolResultLink`` line in the owner file, given by the
+    caller (``None`` when the call has no result).
+    """
+    return interaction.event_line_num if is_codex else first_result_line
+
+
+def opens_run_at_freeze(interaction, decided_at: int | None, *, root_id: str, frozen_at_line: int | None) -> bool:
+    """Whether an interaction opens a run as a share frozen at ``frozen_at_line`` sees it (design §5.4, §7.2).
+
+    A root-owned run interaction opens a run only when its call line and
+    the line that decided ``opens_run`` (``decided_at``, from
+    :func:`deciding_line`) are both at or before the freeze. Interactions
+    owned by an agent, and every interaction when nothing is frozen, keep
+    their stored ``opens_run``. The one predicate of :func:`agent_run_states`
+    and the snapshot's ``interactions``, so the list and the state agree.
+    """
+    if not interaction.opens_run:
+        return False
+    if frozen_at_line is None or interaction.session_id != root_id:
+        return True
+    return (
+        interaction.tool_use_line_num <= frozen_at_line
+        and decided_at is not None and decided_at <= frozen_at_line
+    )
+
+
 def _sort_key(run: RunInfo):
     return (run.started_at is not None, run.started_at or datetime.min, run.owner_session_id, run.tool_use_id)
 
@@ -283,12 +313,10 @@ def agent_run_states(
         key = (row.session_id, row.tool_use_id)
         call_results = results.get(key, [])
         if row.opens_run and key not in exclude.run_interactions:
-            opening_line = row.event_line_num if is_codex else min(
-                (result.line for result in call_results), default=None,
+            opening_line = deciding_line(
+                row, min((result.line for result in call_results), default=None), is_codex=is_codex,
             )
-            if frozen and row.session_id == root_id and (
-                row.tool_use_line_num > frozen_at_line or opening_line is None or opening_line > frozen_at_line
-            ):
+            if not opens_run_at_freeze(row, opening_line, root_id=root_id, frozen_at_line=frozen_at_line):
                 continue
             runs.setdefault(row.agent_id, []).append(_Run(
                 owner_session_id=row.session_id, tool_use_id=row.tool_use_id,

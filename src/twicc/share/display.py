@@ -4,6 +4,8 @@ the viewer's network tab."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from django.db.models import Q
 
 # ItemDisplayLevel: ALWAYS=1, COLLAPSIBLE=2, DEBUG_ONLY=3.
@@ -33,6 +35,29 @@ def filtered_items_qs(session, *, max_display_mode: str, max_line: int | None, e
     if extra is not None:
         qs = qs.filter(extra)
     return qs
+
+
+def visible_call_lines(pairs: Iterable[tuple[str, int]], ceiling: int) -> set[tuple[str, int]]:
+    """The ``(session id, line)`` pairs whose item is under the display ceiling.
+
+    Same rule as :func:`filtered_items_qs`: below ``3`` an item needs a
+    non-null ``display_level`` at or under the ceiling (a missing item is not
+    visible). One query for all pairs; the share snapshot and the live
+    ``share_agent_interaction`` relay both check a control card's call item
+    with it, so a live viewer and a reloaded one agree.
+    """
+    from twicc.core.models import SessionItem
+
+    pairs = set(pairs)
+    if ceiling >= 3 or not pairs:
+        return pairs
+    rows = SessionItem.objects.filter(
+        session_id__in={session_id for session_id, _ in pairs},
+        line_num__in={line for _, line in pairs},
+        display_level__isnull=False,
+        display_level__lte=ceiling,
+    ).values_list("session_id", "line_num")
+    return {row for row in rows if row in pairs}
 
 
 async def is_descendant_of(candidate, root, *, max_hops: int = 16) -> bool:
