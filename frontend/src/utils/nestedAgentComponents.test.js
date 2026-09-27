@@ -2,25 +2,59 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { computed, reactive } from 'vue'
-import { agentLinkState, setAgentLink, rootAgentToolLine, markAgentIdle, beginAgentFetch, applyAgentSnapshot } from './agentLinkIndex.js'
+import { agentLinkState, setAgentLink, rootAgentToolLine } from './agentLinkIndex.js'
+import { controlCardAgentName } from './agentCardState.js'
 
 const source = readFileSync(new URL('../components/session/detail/items/ToolUseContent.vue', import.meta.url), 'utf8')
 function block(start, end) { return source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start))) }
+const template = source.slice(source.indexOf('<template>'))
 
-test('actual card computeds keep nested pulse after launcher idle and stop it at root cutoff', () => {
-    const props = reactive({ sessionId: 'launcher', parentSessionId: 'root', timestamp: '2026-09-07T01:00:00Z' })
-    const dataStore = reactive({ sessions: { root: {}, launcher: { cutoff: Date.parse('2026-09-07T01:01:00Z') } }, getSession: () => null })
-    const agentLink = reactive({ value: { isBackground: true } })
-    const code = block('const isStaleAgentUse', '// Unix timestamp') + block('const agentReportedIdle', '// Whether the pre-ack')
-    const run = new Function('computed', 'props', 'dataStore', 'getSessionCutoffMs', 'rootSessionId', 'agentId', 'agentLink', 'toolHelpers', 'transcriptFrozen', 'isTask', 'toolState', `${code}; return isAgentRunning`)
-    const running = run(computed, props, dataStore, s => s?.cutoff || 0, { value: 'root' }, { value: 'child' }, agentLink, { value: { agentRunEndsOnSubagentIdle: () => false } }, { value: false }, { value: true }, { value: { resultCount: 1 } })
+test('actual card running indicator reads only the store and the frozen flag', () => {
+    // A spawn that predates a root restart still shows the robot when the store
+    // says the agent runs (a resumed agent, design §8.3): no stale gate.
+    const store = reactive({ running: true })
+    const frozen = reactive({ value: false })
+    const code = block('const isAgentRunning', 'const isAgentSpawnPending')
+    const running = new Function('computed', 'dataStore', 'agentId', 'transcriptFrozen', `${code}; return isAgentRunning`)(
+        computed, { isAgentRunning: id => id === 'child' && store.running }, { value: 'child' }, frozen)
     assert.equal(running.value, true)
-    dataStore.sessions.root.cutoff = Date.parse('2026-09-07T01:01:00Z')
+    store.running = false
     assert.equal(running.value, false)
-    dataStore.sessions.root.cutoff = 0
-    agentLink.value.stoppedAt = '2026-09-07T01:02:00Z'
+    store.running = true
+    frozen.value = true
     assert.equal(running.value, false)
+    for (const removed of ['isStaleAgentUse', 'agentReportedIdle', 'agentRunEndsOnSubagentIdle', 'agentLink?.isBackground']) {
+        assert.equal(source.includes(removed), false, `${removed} is gone`)
+    }
 })
+
+test('actual Stop button: a running background agent, never in the share viewer', () => {
+    const code = block('const canStopAgent', 'const controlAgentName')
+    const showStop = fetchToolResult => new Function('computed', 'fetchToolResult', 'providerHelpers', 'isAgentRunning', 'agentRunState',
+        `${code}; return showStopAgent`)(computed, fetchToolResult, { value: { canStopSubagent: () => true } },
+        { value: true }, { value: { runBackground: true } }).value
+    assert.equal(showStop(async () => ({ results: [] })), false, 'share viewer: fetchToolResult is provided')
+    assert.equal(showStop(null), true)
+    const foreground = new Function('computed', 'fetchToolResult', 'providerHelpers', 'isAgentRunning', 'agentRunState',
+        `${code}; return showStopAgent`)(computed, null, { value: { canStopSubagent: () => true } },
+        { value: true }, { value: { runBackground: false } }).value
+    assert.equal(foreground, false, 'a foreground run')
+    assert.equal(template.match(/v-if="showStopAgent"/g)?.length, 2, 'the button and its tooltip')
+})
+
+test('actual header: a spawn card keeps its provider summary; a control card shows the agent name', () => {
+    const code = block('const controlAgentName', '// --- End of agent card state')
+    const name = isControl => new Function('computed', 'isControlCard', 'agentId', 'dataStore', 'controlCardAgentName',
+        `${code}; return controlAgentName`)(computed, { value: isControl }, { value: 'f00dcafe12345678' },
+        { getAgentLinkInfo: () => null, getSession: () => null }, controlCardAgentName).value
+    assert.equal(name(false), null, 'spawn and other cards: no agent name')
+    assert.equal(name(true), 'Agent "f00dcafe"')
+    const nameBranch = template.indexOf('v-if="controlAgentName"')
+    const summaryBranch = template.indexOf('v-else-if="summaryRendering"')
+    assert.ok(nameBranch > 0 && summaryBranch > nameBranch, 'the agent name replaces summaryRendering')
+    assert.ok(template.includes('<template v-if="isAgentCard">'), 'the agent widget shows on every agent card')
+})
+
 test('actual provided comment context updates when nested owner links arrive', () => {
     const state = reactive(agentLinkState())
     const props = reactive({ sessionId: 'child', parentSessionId: 'root', projectId: 'p', toolId: 'edit', lineNum: 7 })
@@ -41,41 +75,4 @@ test('actual navigation sends the root route for nested children', () => {
     )
     assert.equal(target.session.id, 'root')
     assert.equal(target.extra.subagentId, 'child')
-})
-
-test('actual idle computed trusts Codex and observes null wake-up over cached idle', () => {
-    const child = reactive({ last_stopped_at: '2026-09-07T01:01:00Z' })
-    const provider = reactive({ trusted: true })
-    const link = reactive({ value: { agentStoppedAt: '2026-09-07T01:01:00Z' } })
-    const code = block('const agentReportedIdle', 'const isAgentRunning')
-    const idle = new Function('computed', 'agentId', 'agentLink', 'toolHelpers', 'dataStore', `${code}; return agentReportedIdle`)(computed,
-        { value: 'child' }, link, { value: { agentRunEndsOnSubagentIdle: () => provider.trusted } }, { getSession: () => child })
-    assert.equal(idle.value, true)
-    child.last_stopped_at = null
-    assert.equal(idle.value, false)
-    child.last_stopped_at = '2026-09-07T01:01:00Z'
-    provider.trusted = false
-    assert.equal(idle.value, false)
-    link.value.stoppedAt = '2026-09-07T01:02:00Z'
-    assert.equal(idle.value, true)
-})
-
-test('actual card pulse retains first-link idle and wake events across an old snapshot', () => {
-    for (const trusted of [false, true]) {
-        for (const idle of [null, '2026-09-07T01:01:00Z']) {
-            const state = reactive(agentLinkState())
-            const token = beginAgentFetch(state, 'root')
-            markAgentIdle(state, 'child', idle)
-            applyAgentSnapshot(state, 'root', [{ agent_id: 'child', owner_session_id: 'launcher',
-                tool_use_id: 'spawn', running: false, is_background: true,
-                agent_stopped_at: '2026-09-07T01:00:00Z' }], token)
-            const code = block('const agentReportedIdle', '// Whether the pre-ack')
-            const running = new Function('computed', 'dataStore', 'agentId', 'agentLink', 'toolHelpers',
-                'transcriptFrozen', 'isTask', 'toolState', 'isStaleAgentUse', `${code}; return isAgentRunning`)(
-                computed, { getSession: () => null }, { value: 'child' }, computed(() => state.agentLinkIndex.child),
-                { value: { agentRunEndsOnSubagentIdle: () => trusted } }, { value: false }, { value: true },
-                { value: { resultCount: 1 } }, { value: false })
-            assert.equal(running.value, !(trusted && idle))
-        }
-    }
 })

@@ -10,6 +10,16 @@ import { PROCESS_STATE, PROCESS_STATE_COLORS } from '../../../../constants'
 import { stopSubagent } from '../../../../composables/useWebSocket'
 import { genericCardPredicate, useToolResultFetch } from '../../../../composables/useToolResultFetch'
 import { getSessionCutoffMs } from '../../../../utils/sessions'
+import { runKey } from '../../../../utils/agentLinkIndex'
+import {
+    controlCardAgentName,
+    needsMoreRows,
+    ownRunOpen,
+    pendingCall,
+    spawnAwaitingRun,
+    spawnPending,
+    treeRootId,
+} from '../../../../utils/agentCardState'
 import { formatToolNameForHeader } from '../../../../utils/toolNames'
 import { getParsedContent, hasContent } from '../../../../utils/parsedContent'
 import { getToolHelpers, getProviderHelpers } from '../../../../providers'
@@ -50,6 +60,10 @@ const openSubagent = inject('openSubagent', null)
 // instead of the auth-protected SPA API (a viewer holds no session). Default null
 // → SPA keeps its apiFetch behaviour. Returns the ``{ results }`` payload.
 const fetchToolResult = inject('fetchToolResult', null)
+// Share bundle supplies the shared session's id: the tree root of every card
+// there, used for the root cutoff before any link or run state says so. Null
+// in the SPA, where the card's own root is the tree root.
+const sharedSessionId = inject('sharedSessionId', null)
 // Share-only seam: the Edit/Write tool_result line is DEBUG_ONLY and filtered out
 // of the share's /items endpoint, so the full-file diff pulls it ceiling-exempt.
 const fetchBackendPatchItems = inject('fetchBackendPatchItems', null)
@@ -180,14 +194,9 @@ const {
     active: () => sessionActive.value,
     count: () => toolState.value?.resultCount ?? 0,
     displayCount: () => requiredDisplayCount.value,
-    predicate: ({ rowCount, countChanged, lastSettleFailed }) => genericCardPredicate({
-        isToolRunning: isToolRunning.value,
-        rowCount,
-        displayCount: requiredDisplayCount.value,
-        lastSettleFailed,
-        isStaleToolUse: isStaleToolUse.value,
-        countChanged,
-    }),
+    // Agent card or not, decided at each evaluation: a card can turn into a
+    // control card while it polls (see `resultFetchPredicate`).
+    predicate: p => resultFetchPredicate(p),
     transcriptFrozen: () => transcriptFrozen.value,
     connectionEpoch: () => dataStore.connectionEpoch,
 })
@@ -315,7 +324,9 @@ const helperOptions = computed(() => {
     // resolvers) read this directly instead of walking the session
     // items store — which only carries the visible window of items
     // and yields placeholders for chunks outside it.
-    const agentLink = dataStore.getAgentLink(props.sessionId, props.toolId)
+    // By agent id: a control card has no link of its own (its call is not
+    // the spawn), and a spawn card's link is the same entry.
+    const agentLinkInfo = agentId.value ? dataStore.getAgentLinkInfo(agentId.value) : null
     return {
         ...(props.extra || {}),
         toolId: props.toolId,
@@ -338,12 +349,15 @@ const helperOptions = computed(() => {
         // same nickname and reaches the store through its own
         // `session_updated`, so fall back to it; a reload re-resolves the
         // link's copy anyway (`fetchSubagentsState`).
-        agentSlug: agentLink?.slug || (agentLink?.agentId
-            ? dataStore.getSession(agentLink.agentId)?.slug || null
+        agentSlug: agentLinkInfo?.slug || (agentLinkInfo?.agentId
+            ? dataStore.getSession(agentLinkInfo.agentId)?.slug || null
             : null),
         getSessionItem: (lineNum) => dataStore.getSessionItem(props.sessionId, lineNum),
         getToolState: (toolUseId) => dataStore.getToolState(props.sessionId, toolUseId),
         resultsArray: resultData.value,
+        // The control call's interaction (control cards only: a spawn card
+        // is not a control card), for the helpers' agent labels and counts.
+        agentInteraction: isControlCard.value ? agentInteraction.value : null,
     }
 })
 
@@ -471,12 +485,6 @@ const resultRendering = computed(() => {
 // --- Tool running state (unified for all tracked tools) ---
 
 const isTask = computed(() => !!toolHelpers.value?.isAgentTool(props.name))
-// Provider-level opt-out for the Stop button next to View Agent — the
-// shell offers it whenever an agent tool runs in background mode, but
-// providers whose backend ``stop_subagent`` hook isn't wired yet (Codex
-// today) can hide it instead of dispatching a request that drops on
-// the floor. Default in BaseToolHelpers is true.
-const canStopAgent = computed(() => !!providerHelpers.value?.canStopSubagent())
 const toolState = computed(() => dataStore.getToolState(props.sessionId, props.toolId))
 
 // Tool error: non-null error string means the tool_result reported an error
@@ -667,11 +675,6 @@ const isStaleToolUse = computed(() => {
     return cutoff > 0 && new Date(props.timestamp).getTime() < cutoff
 })
 
-const isStaleAgentUse = computed(() => {
-    const cutoff = getSessionCutoffMs(dataStore.sessions[rootSessionId.value])
-    return !!props.timestamp && cutoff > 0 && Date.parse(props.timestamp) < cutoff
-})
-
 // Unix timestamp (seconds) for ProcessDuration — from the JSONL item timestamp
 const toolStartedAt = computed(() => {
     if (!props.timestamp) return null
@@ -690,9 +693,110 @@ const requiredDisplayCount = computed(() => (
     toolHelpers.value?.getRequiredResultCountForDisplay(props.name, props.input, helperOptions.value) ?? 1
 ))
 
+const toolSpinnerId = computed(() => `tool-spinner-${props.toolId}`)
+
+// --- Agent card state (design §8.3) ---
+// An agent card is a spawn card (`isTask`) or a control card: a call that
+// targets an agent (Claude `SendMessage` / `TaskStop` / `TaskOutput`, Codex
+// `followup_task` / `send_message` / `interrupt_agent`), known once its
+// interaction reaches the store (or the share shim). Until then, a control
+// call is a generic card. The pure rules live in `utils/agentCardState.js`.
+
+// Spawn cards: the agent link, from the store cache (populated by
+// `fetchSubagentsState` on session load and by the WS `agent_link_created`
+// handler — no polling needed).
+const agentLink = computed(() => dataStore.getAgentLink(props.sessionId, props.toolId))
+// Control cards: the interaction this call records on its agent.
+const agentInteraction = computed(() => dataStore.getAgentInteraction(props.sessionId, props.toolId))
+const isAgentCard = computed(() => isTask.value || !!agentInteraction.value)
+const isControlCard = computed(() => !isTask.value && !!agentInteraction.value)
+// The spawned agent, else the agent the control call targets.
+const agentId = computed(() => agentLink.value?.agentId ?? agentInteraction.value?.agentId)
+// The backend's run state of that agent (`running`, `runStartedAt`,
+// `runBackground`, `rootSessionId`, `runs`), or null.
+const agentRunState = computed(() => (agentId.value ? dataStore.getAgentRunState(agentId.value) : null))
+
+// Cutoff of the tree root. Never the card's own `rootSessionId` in the share
+// viewer: in its drawer, that is the agent itself (cutoff 0).
+const treeCutoffMs = computed(() => getSessionCutoffMs(dataStore.getSession(treeRootId({
+    runStateRoot: agentRunState.value?.rootSessionId,
+    linkRoot: dataStore.getAgentLinkInfo(props.sessionId)?.rootSessionId,
+    cardRootId: rootSessionId.value,
+    sharedSessionId,
+}))))
+
+const resultCount = computed(() => toolState.value?.resultCount ?? 0)
+// The provider helper's own running check (count / content based).
+const helperToolRunning = computed(() => (
+    !!toolHelpers.value?.isToolRunning(props.name, props.input, helperOptions.value)
+))
+// Rows the card fetches before it stops polling (not the display count).
+const expectedResultCount = computed(() => (
+    toolHelpers.value?.getExpectedResultCount(props.name, props.input, helperOptions.value) ?? 1
+))
+
+// The card's own run (a spawn, or a run-opening interaction) is still open.
+// Its root is the run state's, which is also `treeCutoffMs`'s first choice.
+const isOwnRunOpen = computed(() => ownRunOpen({
+    runState: agentRunState.value,
+    ownerSessionId: props.sessionId,
+    toolUseId: props.toolId,
+    isRunCall: isTask.value || !!agentInteraction.value?.opensRun,
+    cutoffMs: treeCutoffMs.value,
+    runStatesAvailable: dataStore.runStatesAvailable,
+    transcriptFrozen: transcriptFrozen.value,
+}))
+
+// The call has no result yet and can still get one (with the owner gate
+// when a subagent made it).
+const isCallPending = computed(() => pendingCall({
+    count: resultCount.value,
+    callError: toolState.value?.error,
+    transcriptFrozen: transcriptFrozen.value,
+    callAt: props.timestamp,
+    treeCutoffMs: treeCutoffMs.value,
+    ownerIsSubagent: !!props.parentSessionId,
+    runStatesAvailable: dataStore.runStatesAvailable,
+    ownerRunState: props.parentSessionId ? dataStore.getAgentRunState(props.sessionId) : null,
+    ownerRunning: !!props.parentSessionId && dataStore.isAgentRunning(props.sessionId),
+}))
+
+// An acknowledged spawn whose run has not reached the run state yet.
+const isSpawnAwaitingRun = computed(() => spawnAwaitingRun({
+    isTask: isTask.value,
+    count: resultCount.value,
+    hasOwnRunEntry: !!agentRunState.value?.runs?.[runKey(props.sessionId, props.toolId)],
+    callError: toolState.value?.error,
+    runStatesAvailable: dataStore.runStatesAvailable,
+    transcriptFrozen: transcriptFrozen.value,
+    callAt: props.timestamp,
+    treeCutoffMs: treeCutoffMs.value,
+    helperRunning: helperToolRunning.value,
+}))
+
+// The result fetch pipeline's polling predicate. Read at each evaluation, so
+// a card that becomes a control card while it polls switches predicate.
+const resultFetchPredicate = p => (isAgentCard.value
+    ? needsMoreRows({
+        ...p,
+        ownRunOpen: isOwnRunOpen.value,
+        expectedCount: expectedResultCount.value,
+        pendingCall: isCallPending.value,
+        spawnAwaitingRun: isSpawnAwaitingRun.value,
+    })
+    : genericCardPredicate({
+        ...p,
+        isToolRunning: isToolRunning.value,
+        displayCount: requiredDisplayCount.value,
+        isStaleToolUse: isStaleToolUse.value,
+    }))
+
+// Generic tool spinner. A spawn card has its own widget; a control card spins
+// only while its call is pending, with the same term as its Result section.
 const isToolRunning = computed(() => {
     if (transcriptFrozen.value) return false
     if (isTask.value) return false
+    if (agentInteraction.value) return resultCount.value === 0 && isCallPending.value
     if (isStaleToolUse.value) return false
     // Defer to the provider-level helper so a tool whose finished-ness
     // is signalled by content (e.g. Codex's ``exec_command`` chain
@@ -700,66 +804,55 @@ const isToolRunning = computed(() => {
     // count-based check without touching this shell.
     return toolHelpers.value?.isToolRunning(props.name, props.input, helperOptions.value) ?? false
 })
-const toolSpinnerId = computed(() => `tool-spinner-${props.toolId}`)
 
-// --- View Agent button for Task tool_use ---
+// The agent runs now (the backend's run state, cut by its root's cutoff),
+// for spawn and control cards alike.
+const isAgentRunning = computed(() => (
+    !transcriptFrozen.value && !!agentId.value && dataStore.isAgentRunning(agentId.value)
+))
 
-// Agent link: reactive lookup from the store cache.
-// The cache is populated by fetchSubagentsState (on session load) and
-// by the WS agent_link_created handler — no polling needed.
-// Returns { agentId, isBackground } or undefined.
-const agentLink = computed(() => dataStore.getAgentLink(props.sessionId, props.toolId))
-const agentId = computed(() => agentLink.value?.agentId)
+// The pre-link "agent starting" spinner of a spawn card. Stops when the
+// spawn failed (`toolState.error`, or the helper no longer running — e.g. a
+// rejected Codex `spawn_agent` ack), when it predates the tree root's
+// cutoff, and, with no result yet, when its call can no longer resolve.
+const isAgentSpawnPending = computed(() => spawnPending({
+    isTask: isTask.value,
+    agentId: agentId.value,
+    transcriptFrozen: transcriptFrozen.value,
+    callAt: props.timestamp,
+    treeCutoffMs: treeCutoffMs.value,
+    helperRunning: helperToolRunning.value,
+    count: resultCount.value,
+    pendingCall: isCallPending.value,
+    callError: toolState.value?.error,
+}))
+
+// Unix seconds (for ProcessDuration) of the agent's current run start.
+const agentRunStartedAt = computed(() => {
+    const startedMs = Date.parse(agentRunState.value?.runStartedAt ?? '')
+    return Number.isNaN(startedMs) ? null : startedMs / 1000
+})
+
+// Stop button: providers whose backend ``stop_subagent`` hook isn't wired
+// (Codex today) opt out (default in BaseToolHelpers is true). Never in the
+// share viewer, whose bundle always injects `fetchToolResult` and aliases
+// `stopSubagent` to a no-op.
+const canStopAgent = computed(() => !fetchToolResult && !!providerHelpers.value?.canStopSubagent())
+const showStopAgent = computed(() => (
+    isAgentRunning.value && !!agentRunState.value?.runBackground && canStopAgent.value
+))
+
+// A control card's header summary: its agent's name (null on other cards,
+// which keep `summaryRendering`).
+const controlAgentName = computed(() => (
+    isControlCard.value ? controlCardAgentName(agentId.value, dataStore) : null
+))
+// --- End of agent card state ---
 
 const agentCommentsCount = computed(() => {
     if (!agentId.value) return 0
     return codeCommentsStore.getCommentsBySession(props.projectId, props.parentSessionId || props.sessionId)
         .filter(c => c.subagentSessionId === agentId.value).length
-})
-
-// The subagent's own transcript reported it idle. Live, that lands on its
-// session row (its `session_updated` refreshes `last_stopped_at`); after a
-// reload the session may not be loaded at all, so the agent-links payload
-// carries the same timestamp. Only consulted for providers whose spawn tool
-// can outlive its subagent's completion — see `agentRunEndsOnSubagentIdle`.
-const agentReportedIdle = computed(() => {
-    if (!agentId.value) return false
-    if (agentLink.value?.stoppedAt) return true
-    if (!toolHelpers.value?.agentRunEndsOnSubagentIdle?.()) return false
-    const child = dataStore.getSession(agentId.value)
-    return !!(child && Object.hasOwn(child, 'last_stopped_at') ? child.last_stopped_at : agentLink.value?.agentStoppedAt)
-})
-
-const isAgentRunning = computed(() => {
-    if (transcriptFrozen.value) return false
-    if (!isTask.value || !agentId.value) return false
-    if (isStaleAgentUse.value) return false
-    if (agentReportedIdle.value) return false
-    if (agentLink.value?.running === false) return false
-    const resultCount = toolState.value?.resultCount || 0
-    const requiredCount = (agentLink.value?.isBackground) ? 2 : 1
-    return resultCount < requiredCount
-})
-
-// Whether the pre-ack "agent starting" spinner should be visible.
-// True iff the spawn tool is still waiting for an AgentLink AND the
-// helper considers the call to be still running. Mirrors the
-// terminated-on-error pattern that ``CodexToolHelpers.isToolRunning``
-// already applies to the shell family — a failed spawn ack writes
-// ``toolState.error`` (and the backend flags ``extra.is_terminated``
-// too), both of which the helper turns into ``isToolRunning=false``,
-// so the spinner stops instead of spinning forever waiting for an
-// ack that will never come. Without this guard, a rejected
-// ``spawn_agent`` (e.g. Codex's "Full-history forked agents inherit
-// the parent agent type, ..." text body sent in lieu of the
-// ``{agent_id, nickname}`` JSON ack) leaves the card stuck on the
-// spinner.
-const isAgentSpawnPending = computed(() => {
-    if (transcriptFrozen.value) return false
-    if (!isTask.value) return false
-    if (agentId.value) return false
-    if (isStaleAgentUse.value) return false
-    return !!toolHelpers.value?.isToolRunning(props.name, props.input, helperOptions.value)
 })
 
 // Unique ID for the View Agent button (for tooltip targeting)
@@ -840,19 +933,25 @@ startResultFetch()
             <div class="items-details-summary-left">
                 <strong v-if="isTask && displayName" class="items-details-summary-name">{{ displayName.name }}<span v-if="displayName.namespace" class="items-details-summary-quiet"> ({{ displayName.namespace }})</span></strong>
                 <strong v-else class="items-details-summary-name">{{ formatToolNameForHeader(name, headerLabel) }}</strong>
-                <template v-if="summaryRendering">
+                <!-- Control card: its agent's name replaces the provider summary. -->
+                <template v-if="controlAgentName">
+                    <span class="items-details-summary-separator"> — </span>
+                    <span class="items-details-summary-description">{{ controlAgentName }}</span>
+                </template>
+                <template v-else-if="summaryRendering">
                     <span class="items-details-summary-separator"> — </span>
                     <component :is="summaryRendering.component" v-bind="summaryRendering.props" />
                     <CodeCommentsIndicator :count="toolCommentsCount" :show-tooltip="false" class="tool-comments-indicator" />
                 </template>
             </div>
             <div class="items-details-summary-right">
-                <!-- View Agent indicator for Task tool_use at every depth -->
-                <template v-if="isTask">
-                    <!-- Agent not yet started: spinner. Hidden when the spawn
-                         itself failed (toolState.error) or was otherwise
-                         flagged terminated by the backend — see
-                         isAgentSpawnPending. -->
+                <!-- Agent widget on every agent card: spawn cards and control
+                     cards (a call targeting an agent), at every depth -->
+                <template v-if="isAgentCard">
+                    <!-- Spawn card, agent not yet started: spinner. Hidden when
+                         the spawn itself failed (toolState.error), was
+                         otherwise flagged terminated by the backend, or can no
+                         longer start — see isAgentSpawnPending. -->
                     <wa-spinner v-if="isAgentSpawnPending" class="agent-starting-spinner"></wa-spinner>
                     <!-- Agent started: View Agent button (with animated robot
                          if still running). Skipped when the spawn ack failed
@@ -860,8 +959,8 @@ startResultFetch()
                          callout below already tells the user what happened,
                          and a View Agent click would just be a no-op. -->
                     <template v-else-if="agentId">
-                        <AppTooltip v-if="isAgentRunning && toolStartedAt" :for="viewAgentButtonId">
-                            Agent running for <ProcessDuration :state-changed-at="toolStartedAt" />
+                        <AppTooltip v-if="isAgentRunning && agentRunStartedAt" :for="viewAgentButtonId">
+                            Agent running for <ProcessDuration :state-changed-at="agentRunStartedAt" />
                         </AppTooltip>
                         <wa-button
                             :id="viewAgentButtonId"
@@ -875,7 +974,7 @@ startResultFetch()
                             <CodeCommentsIndicator slot="end" :count="agentCommentsCount" :show-tooltip="false" class="agent-comments-indicator" />
                         </wa-button>
                         <wa-button
-                            v-if="isAgentRunning && agentLink?.isBackground && canStopAgent"
+                            v-if="showStopAgent"
                             :id="`stop-agent-${props.toolId}`"
                             size="small"
                             variant="danger"
@@ -887,7 +986,7 @@ startResultFetch()
                         >
                             <wa-icon name="ban" label="Stop Agent"></wa-icon>
                         </wa-button>
-                        <AppTooltip v-if="isAgentRunning && agentLink?.isBackground && canStopAgent" :for="`stop-agent-${props.toolId}`">Stop this agent</AppTooltip>
+                        <AppTooltip v-if="showStopAgent" :for="`stop-agent-${props.toolId}`">Stop this agent</AppTooltip>
                     </template>
                 </template>
                 <!-- View Workflow indicator for the Workflow tool_use (regular sessions only) -->
