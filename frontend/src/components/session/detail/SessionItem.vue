@@ -98,6 +98,13 @@ const props = defineProps({
     isBlockEnd: {
         type: Boolean,
         default: false
+    },
+    // True when this item is the last real message of a block that still ends
+    // with a live placeholder (agent working): it carries the block's time
+    // until the turn ends (see markLiveTimestampAnchor).
+    isLiveTimestampAnchor: {
+        type: Boolean,
+        default: false
     }
 })
 
@@ -140,10 +147,11 @@ const isBackgroundWorkStatus = computed(() => props.syntheticKind === SYNTHETIC_
 // conversation block (the one rendered with `.is-block-end`), so a multi-item
 // turn carries a single timestamp at its end rather than one per message.
 // Skipped for synthetic / optimistic / streaming placeholders (no real
-// timestamp).
+// timestamp). While the agent works, the block-end is such a placeholder, so
+// the last real message of the block shows its own time instead.
 const showTimestamp = computed(() =>
     settingsStore.areMessageTimestampsShown
-    && props.isBlockEnd
+    && (props.isBlockEnd || props.isLiveTimestampAnchor)
     && !props.content?.syntheticKind
     && !!props.content?.timestamp
 )
@@ -861,11 +869,17 @@ wa-details.item-details {
     + .virtual-scroller-item > .session-item[data-kind="assistant_message"] > .text-content:nth-child(2) {
         padding-top: var(--wa-space-xl);
     }
-    /* The USER_TURN background-work status line under a timestamped message:
-       the time keeps its own line (see MessageTimestamp), the status starts
-       below it. */
+    /* The USER_TURN background-work status line, or a live placeholder while
+       the agent works (see markLiveTimestampAnchor), under a timestamped
+       message: the time keeps its own line (see MessageTimestamp), the next
+       row starts below it. */
     .virtual-scroller-item:has( > .session-item > .message-timestamp:last-child)
-    + .virtual-scroller-item > .session-item[data-synthetic-kind="background-work-status"] > .text-content:nth-child(2) {
+    + .virtual-scroller-item > .session-item:is(
+        [data-synthetic-kind="background-work-status"],
+        [data-synthetic-kind="starting-assistant-message"],
+        [data-synthetic-kind="working-assistant-message"],
+        [data-synthetic-kind="streaming-block"]
+    ) > .text-content:nth-child(2) {
         padding-top: var(--wa-space-s);
     }
 }

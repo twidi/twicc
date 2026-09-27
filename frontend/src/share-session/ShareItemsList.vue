@@ -194,7 +194,8 @@ const {
                         :content="getParsedContent(item)" :kind="item.kind" :synthetic-kind="null"
                         :project-id="projectId" :session-id="sessionId" :parent-session-id="parentSessionId"
                         :line-num="item.lineNum" :externally-grouped="item.externallyGrouped || false"
-                        :is-block-end="item.isBlockEnd || false" />
+                        :is-block-end="item.isBlockEnd || false"
+                        :is-live-timestamp-anchor="item.isLiveTimestampAnchor || false" />
                 </template>
                 <SessionItem v-else
                     :class="{ 'is-block-start': item.isBlockStart, 'is-block-end': item.isBlockEnd }"
@@ -205,6 +206,7 @@ const {
                     :prefix-expanded="item.prefixExpanded || false" :suffix-expanded="item.suffixExpanded || false"
                     :detail-toggle-for="item.detailToggleFor ?? null"
                     :is-block-start="item.isBlockStart || false" :is-block-end="item.isBlockEnd || false"
+                    :is-live-timestamp-anchor="item.isLiveTimestampAnchor || false"
                     @toggle-suffix="toggleGroup(item.suffixGroupHead)" />
             </template>
         </VirtualScroller>

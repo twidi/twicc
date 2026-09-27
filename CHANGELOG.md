@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **New logo** — TwiCC gets its own robot, with a bit more soul.
+- **Message timestamps while the agent works** — The time now also shows under the agent's last message while it is still working, not only once its turn is over.
 
 ### Fixed
 

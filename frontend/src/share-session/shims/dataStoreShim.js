@@ -6,7 +6,7 @@ import { agentLinkState, setAgentLink, markAgentStopped, markAgentIdle, beginAge
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 import { DISPLAY_LEVEL, SYNTHETIC_ITEM } from '../../constants'
-import { computeVisualItems, insertDaySeparators, visualItemEqual } from '../../utils/visualItems'
+import { computeVisualItems, insertDaySeparators, markLiveTimestampAnchor, visualItemEqual } from '../../utils/visualItems'
 import { getParsedContent, setParsedContent, clearParsedContent } from '../../utils/parsedContent'
 import { shareApi } from './shareApi'
 import { useSettingsStore } from '../../stores/settings' // aliased to settingsStoreShim
@@ -238,6 +238,7 @@ export const useDataStore = defineStore('shareData', {
                 vis[i].isBlockStart = i === 0 || isUser !== prevUser
                 vis[i].isBlockEnd = i === vis.length - 1 || isUser !== nextUser
             }
+            if (settings.areMessageTimestampsShown) markLiveTimestampAnchor(vis)
             const render = settings.areMessageTimestampsShown ? insertDaySeparators(vis) : vis
             const cache = this._cache[sessionId] || new Map()
             const next = new Map()

@@ -393,6 +393,43 @@ export function insertDaySeparators(visualItems) {
     return result
 }
 
+// Live placeholders that can close an assistant block while the agent works.
+// They carry no timestamp, so the block would show no time at all.
+const LIVE_PLACEHOLDER_KINDS = new Set([
+    SYNTHETIC_ITEM.STARTING_ASSISTANT_MESSAGE.kind,
+    SYNTHETIC_ITEM.STREAMING_BLOCK.kind,
+    SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE.kind,
+])
+
+/**
+ * While the agent works, the last block ends with a live placeholder (starting,
+ * streaming or working message) that has no timestamp. Flag the last real item
+ * of that block rendered as a message (`isLiveTimestampAnchor`), so it shows its
+ * own time in place of the missing block-end time. When the turn ends, the flag
+ * disappears and the time moves back to the real block-end.
+ *
+ * Collapsed group heads are skipped: their toggle renders no message, hence no
+ * time. The walk stops at the block start (never crosses a user message).
+ *
+ * Requires the `syntheticKind` tags and the block flags to already be set.
+ *
+ * @param {Array} visualItems - Flagged visual items (mutated in place).
+ */
+export function markLiveTimestampAnchor(visualItems) {
+    const last = visualItems?.[visualItems.length - 1]
+    if (!last || last.kind === 'user_message' || !LIVE_PLACEHOLDER_KINDS.has(last.syntheticKind)) return
+
+    for (let i = visualItems.length - 1; i >= 0; i--) {
+        const vi = visualItems[i]
+        if (vi.kind === 'user_message') return
+        if (vi.lineNum >= 0 && !(vi.isGroupHead && !vi.isExpanded)) {
+            vi.isLiveTimestampAnchor = true
+            return
+        }
+        if (vi.isBlockStart) return
+    }
+}
+
 /**
  * Build the static status line shown at the very bottom of a USER_TURN session
  * (background shells still running, active crons) as a ready-made visual item.

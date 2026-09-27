@@ -2091,6 +2091,7 @@ defineExpose({
                             :line-num="item.lineNum"
                             :externally-grouped="item.externallyGrouped || false"
                             :is-block-end="item.isBlockEnd || false"
+                            :is-live-timestamp-anchor="item.isLiveTimestampAnchor || false"
                         />
                     </template>
 
@@ -2114,6 +2115,7 @@ defineExpose({
                         :block-comments-count="item.detailToggleFor != null ? blockCommentsCount(item.detailToggleFor) : 0"
                         :is-block-start="item.isBlockStart || false"
                         :is-block-end="item.isBlockEnd || false"
+                        :is-live-timestamp-anchor="item.isLiveTimestampAnchor || false"
                         @toggle-suffix="toggleGroup(item.suffixGroupHead)"
                     />
                 </template>

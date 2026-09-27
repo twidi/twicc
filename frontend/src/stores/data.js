@@ -6,7 +6,7 @@ import { saveEphemeralControl, deleteEphemeralControl, loadEphemeralControls } f
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { toRaw } from 'vue'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
-import { computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem } from '../utils/visualItems'
+import { computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor } from '../utils/visualItems'
 import { backgroundWorkStatusKey, buildBackgroundWorkStatusLines } from '../utils/backgroundWork'
 import { DISPLAY_LEVEL, DISPLAY_MODE, INITIAL_ITEMS_COUNT, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
 import { getProviderHelpers, getProviderStore, getToolHelpers } from '../providers'
@@ -3298,6 +3298,10 @@ export const useDataStore = defineStore('data', {
                 visualItems[i].isBlockStart = i === 0 || isUser !== prevIsUser
                 visualItems[i].isBlockEnd = i === visualItems.length - 1 || isUser !== nextIsUser
             }
+
+            // While the agent works, the block-end is a live placeholder with no
+            // time: the last real message of the block shows its own instead.
+            if (settingsStore.areMessageTimestampsShown) markLiveTimestampAnchor(visualItems)
 
             // Insert per-block day separators (on calendar-day changes, only at
             // inter-block boundaries) when the message-timestamps setting is on.
