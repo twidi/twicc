@@ -334,6 +334,8 @@ _SUB_AGENT_STARTED_KIND = "started"
 _SUB_AGENT_INTERRUPTED_KIND = "interrupted"
 _SUB_AGENT_COMPLETED_KIND = "completed"
 _SUB_AGENT_INTERACTED_KIND = "interacted"
+# Delay before the one retry of a stop relay whose run-model read failed.
+_STOPPED_RELAY_RETRY_DELAY = 1.0
 
 
 def _enum_value(value: Any) -> Any:
@@ -542,6 +544,9 @@ class CodexAgent(BaseAgent):
         # latest committed state. Not re-entrant: none of the three calls
         # another.
         self._subagent_set_lock = asyncio.Lock()
+        # The delayed retries of stop relays whose run-model read failed
+        # (strong references, so a pending retry is never collected).
+        self._subagent_stop_retry_tasks: set[asyncio.Task[None]] = set()
         # Unified-exec processes still running, ``(thread_id, process_id) ->
         # start time`` (epoch seconds). Codex runs every shell command as
         # a process the model may leave behind — its ``exec_command`` call
@@ -1303,10 +1308,14 @@ class CodexAgent(BaseAgent):
         self._subagent_wait_label_active = False
         await self._broadcast_process_label("")
 
-    async def _ephemeral_finished_subagents(self) -> list[str]:
-        """Read child runtime state; ephemeral children have no watcher rows."""
+    async def _ephemeral_finished_subagents(self, child_ids: list[str] | None = None) -> list[str]:
+        """Read child runtime state; ephemeral children have no watcher rows.
+
+        Returns, among ``child_ids`` (default: every tracked child), the
+        children whose thread is no longer active.
+        """
         stopped = []
-        for child_id in tuple(self._live_subagents):
+        for child_id in tuple(self._live_subagents if child_ids is None else child_ids):
             response = await self._codex._client.thread_read(child_id)
             status = _enum_value(response.thread.status.root.type)
             if status in {"idle", "systemError", "notLoaded"}:
@@ -1421,29 +1430,51 @@ class CodexAgent(BaseAgent):
         the prune. Watcher-backed: the payload is re-checked against the run
         model read inside the lock, and only the tracked children that are
         known and not running leave (an older stop relay that runs after a
-        newer resume keeps the resumed child). Ephemeral (no watcher rows):
+        newer resume keeps the resumed child). When that read fails, one
+        delayed retry of the same relay is scheduled (the child is never
+        dropped on an error: it may still run). Ephemeral (no watcher rows):
         the ids come from ``thread_read`` (:meth:`_watch_ephemeral_subagents`)
-        and leave as given, no DB read. Then:
+        and leave as given, no DB read — except an id whose thread reads
+        active again under the lock (an ``interacted`` item re-added it
+        between the poll and this relay). Then:
 
         - a real turn is running → it owns the state; just refresh the
           in-turn ``wait_agent`` label's count if one is shown;
         - parked in the hold with children left → refresh the label count;
         - parked in the hold with nothing left → release: settle USER_TURN.
         """
+        await self._apply_subagents_stopped(agent_ids, retry_on_error=True)
+
+    async def _retry_subagents_stopped(self, agent_ids: list[str]) -> None:
+        """The one delayed retry of a stop relay whose run-model read failed."""
+        await asyncio.sleep(_STOPPED_RELAY_RETRY_DELAY)
+        await self._apply_subagents_stopped(agent_ids, retry_on_error=False)
+
+    async def _apply_subagents_stopped(self, agent_ids: list[str], *, retry_on_error: bool) -> None:
+        """Body of :meth:`notify_subagents_stopped`, under ``_subagent_set_lock``."""
         async with self._subagent_set_lock:
             tracked = [agent_id for agent_id in dict.fromkeys(agent_ids) if agent_id in self._live_subagents]
             if not tracked:
                 return
             if getattr(self, "ephemeral", False):
-                stopped = tracked
+                # Re-check under the lock: an ``interacted`` item may have
+                # re-added a child the poll saw idle, and it now runs again.
+                stopped = await self._ephemeral_finished_subagents(tracked)
             else:
                 try:
                     stopped = await sync_to_async(_stopped_subagent_ids)(self.session_id, tracked)
                 except Exception:
                     self._logger.warning(
-                        "Codex: failed to check stopped subagents for session %s",
-                        self.session_id, exc_info=True,
+                        "Codex: failed to check stopped subagents for session %s%s",
+                        self.session_id, " — retrying once" if retry_on_error else "", exc_info=True,
                     )
+                    if retry_on_error:
+                        task = asyncio.create_task(
+                            self._retry_subagents_stopped(tracked),
+                            name=f"subagents-stopped-retry-{self.session_id}",
+                        )
+                        self._subagent_stop_retry_tasks.add(task)
+                        task.add_done_callback(self._subagent_stop_retry_tasks.discard)
                     return
             changed = False
             for agent_id in stopped:

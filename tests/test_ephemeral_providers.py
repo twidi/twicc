@@ -208,7 +208,8 @@ def test_codex_ephemeral_hold_uses_runtime_status_without_watcher():
     agent._set_state = lambda state: setattr(agent, "state", state)
     agent._notify_state_change = AsyncMock()
     agent._broadcast_process_label = AsyncMock()
-    statuses = iter(["active", "idle"])
+    # The watch loop's polls, then the stop relay's re-check under the lock.
+    statuses = iter(["active", "idle", "idle"])
 
     async def read(child_id):
         return SimpleNamespace(

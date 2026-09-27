@@ -132,6 +132,7 @@ def make_agent(session_id: str = ROOT_ID, *, ephemeral: bool = False,
     agent._live_subagents = {}
     agent._live_shells = {}
     agent._subagent_set_lock = asyncio.Lock()
+    agent._subagent_stop_retry_tasks = set()
     agent._subagent_wait_label_active = False
     agent._subagent_hold_active = False
     agent._manual_compaction = False
@@ -309,6 +310,63 @@ class TestPruneAndStopAgainstTheRunModel:
         agent._schedule_background_work_refresh.assert_not_called()
 
 
+    def test_a_failed_read_retries_the_stop_relay_once(self, monkeypatch) -> None:
+        """No pop on an error (the child may still run); one delayed retry re-reads under the lock."""
+        make_tree()
+        closed_spawn(ROOT_ID, CHILD, "c_child", 0)
+        monkeypatch.setattr(agent_module, "_STOPPED_RELAY_RETRY_DELAY", 0.01)
+        real = agent_module._stopped_subagent_ids
+        reads = []
+
+        def flaky(root_id, ids):
+            reads.append(list(ids))
+            if len(reads) == 1:
+                raise RuntimeError("database is locked")
+            return real(root_id, ids)
+
+        monkeypatch.setattr(agent_module, "_stopped_subagent_ids", flaky)
+        agent = make_agent(state=AgentState.ASSISTANT_TURN)
+        agent._live_subagents = {CHILD: "/root/child"}
+        agent._subagent_hold_active = True
+
+        async def run() -> None:
+            await agent.notify_subagents_stopped([CHILD])
+            assert agent._live_subagents == {CHILD: "/root/child"}  # kept on the error
+            assert len(agent._subagent_stop_retry_tasks) == 1
+            await asyncio.gather(*agent._subagent_stop_retry_tasks)
+
+        asyncio.run(run())
+
+        assert reads == [[CHILD], [CHILD]]
+        assert agent._live_subagents == {}
+        assert agent._subagent_hold_active is False
+        assert agent.state == AgentState.USER_TURN
+        assert agent._subagent_stop_retry_tasks == set()
+
+    def test_the_retry_does_not_retry_again(self, monkeypatch) -> None:
+        make_tree()
+        monkeypatch.setattr(agent_module, "_STOPPED_RELAY_RETRY_DELAY", 0.01)
+        reads = []
+
+        def failing(root_id, ids):
+            reads.append(list(ids))
+            raise RuntimeError("database is locked")
+
+        monkeypatch.setattr(agent_module, "_stopped_subagent_ids", failing)
+        agent = make_agent()
+        agent._live_subagents = {CHILD: "/root/child"}
+
+        async def run() -> None:
+            await agent.notify_subagents_stopped([CHILD])
+            await asyncio.gather(*agent._subagent_stop_retry_tasks)
+            assert agent._subagent_stop_retry_tasks == set()
+
+        asyncio.run(run())
+
+        assert len(reads) == 2
+        assert agent._live_subagents == {CHILD: "/root/child"}
+
+
 # ---------------------------------------------------------------------------
 # Relay order
 # ---------------------------------------------------------------------------
@@ -408,6 +466,33 @@ class TestEphemeralAgent:
         assert agent._subagent_hold_active is False
         assert agent.state == AgentState.USER_TURN
         agent._notify_state_change.assert_awaited_once()
+
+    def test_stop_relay_keeps_a_child_re_added_and_active_again(self, monkeypatch) -> None:
+        """The poll saw it idle; an ``interacted`` item re-adds it before the relay takes the lock."""
+        forbid_db(monkeypatch)
+        agent = make_agent(ephemeral=True, state=AgentState.ASSISTANT_TURN)
+        agent._live_subagents = {CHILD: "/root/child"}
+        agent._subagent_hold_active = True
+        statuses = {CHILD: "idle"}
+        agent._codex = thread_reader(statuses)
+
+        async def run() -> None:
+            stopped = await agent._ephemeral_finished_subagents()
+            assert stopped == [CHILD]
+            await agent._subagent_set_lock.acquire()
+            relay = asyncio.create_task(agent.notify_subagents_stopped(stopped))
+            await asyncio.sleep(0)
+            agent._note_sub_agent_activity(activity(CHILD, "interacted", "/root/child"))
+            statuses[CHILD] = "active"
+            agent._subagent_set_lock.release()
+            await relay
+
+        asyncio.run(run())
+
+        assert agent._live_subagents == {CHILD: "/root/child"}
+        assert agent._subagent_hold_active is True
+        assert agent.state == AgentState.ASSISTANT_TURN
+        agent._notify_state_change.assert_not_awaited()
 
     def test_prune_drops_idle_children_without_a_db_read(self, monkeypatch) -> None:
         forbid_db(monkeypatch)
