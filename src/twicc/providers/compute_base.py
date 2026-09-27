@@ -240,6 +240,26 @@ class LiveAgentSignals(NamedTuple):
     agents_resumed: tuple[tuple[str, str], ...] = ()
 
 
+class AgentRunSignalsCollector:
+    """The :class:`LiveAgentSignals` of one live batch, accumulated per hook call."""
+
+    def __init__(self) -> None:
+        self.changed_interactions: list[tuple[str, str]] = []
+        self.run_interactions: list[tuple[str, str]] = []
+        self.stop_records: list[tuple[str, str]] = []
+        self.run_end_ids: list[int] = []
+        self.affected_agent_ids: list[str] = []
+        self.agents_resumed: list[tuple[str, str]] = []
+
+    def add(self, signals: LiveAgentSignals) -> None:
+        self.changed_interactions.extend(signals.changed_interactions)
+        self.run_interactions.extend(signals.run_interactions)
+        self.stop_records.extend(signals.stop_records)
+        self.run_end_ids.extend(signals.run_end_ids)
+        self.affected_agent_ids.extend(signals.affected_agent_ids)
+        self.agents_resumed.extend(signals.agents_resumed)
+
+
 class ContentAnalysis(NamedTuple):
     """
     Single-pass extraction output used by the batch compute path.
@@ -3751,23 +3771,6 @@ class BaseSessionCompute:
         found_compact_summary = False
 
         # Agent-run signals written by ``apply_agent_run_signals``, per call.
-        class AgentRunSignalsCollector:
-            def __init__(self) -> None:
-                self.changed_interactions: list[tuple[str, str]] = []
-                self.run_interactions: list[tuple[str, str]] = []
-                self.stop_records: list[tuple[str, str]] = []
-                self.run_end_ids: list[int] = []
-                self.affected_agent_ids: list[str] = []
-                self.agents_resumed: list[tuple[str, str]] = []
-
-            def add(self, signals: LiveAgentSignals) -> None:
-                self.changed_interactions.extend(signals.changed_interactions)
-                self.run_interactions.extend(signals.run_interactions)
-                self.stop_records.extend(signals.stop_records)
-                self.run_end_ids.extend(signals.run_end_ids)
-                self.affected_agent_ids.extend(signals.affected_agent_ids)
-                self.agents_resumed.extend(signals.agents_resumed)
-
         agent_run_signals = AgentRunSignalsCollector()
 
         # For subagents: track if we need to create the link between the agent
@@ -4292,11 +4295,11 @@ class BaseSessionCompute:
         session: Session,
         agent_link_updates: list[AgentLinkUpdate],
         tool_result_updates: list[ToolResultUpdate],
-        signals,
+        signals: AgentRunSignalsCollector,
     ) -> StopStepResult:
         """Collect one live batch's affected agents and ``exclude`` rows, then run the stop step.
 
-        ``signals`` is the batch's collector of :class:`LiveAgentSignals`.
+        ``signals`` holds what the batch's ``apply_agent_run_signals`` calls wrote.
         A fixed number of queries whatever the tree size: two indexed reads
         over the batch's result calls (plus one for its stop calls), then
         :func:`~twicc.core.agent_runs.run_stop_step` (design §5.4, §6.3).

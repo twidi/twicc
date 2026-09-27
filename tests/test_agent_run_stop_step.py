@@ -41,7 +41,12 @@ from twicc.providers import compute_base, sessions_watcher
 from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
 from twicc.providers.claude_code.sessions_watcher import ClaudeCodeSessionsWatcher
 from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
-from twicc.providers.compute_base import AgentStoppedUpdate
+from twicc.providers.compute_base import (
+    AgentRunSignalsCollector,
+    AgentStoppedUpdate,
+    BaseSessionCompute,
+    ToolResultUpdate,
+)
 from twicc.providers.sessions_watcher import ParsedSessionFile, broadcast_agent_run_outcome
 
 from tests.codex_agent_run_fixtures import (
@@ -407,6 +412,19 @@ def test_claude_task_stop_result_is_a_new_stop_record(claude):
     assert outcome[5] == [AgentStoppedUpdate(AGENT, at(6), True)]
 
 
+def test_stop_record_needs_all_its_results_in_the_batch(claude):
+    """A stop's second non-error result in a later batch is not a new stop record: no re-stamp."""
+    root, _, _ = claude
+    live(claude, root, prompt(0), spawn("tool_spawn", 1), ack("tool_spawn", AGENT, 2),
+         task_stop("tool_stop", AGENT, 5))
+    assert live(claude, root, stop_ok("tool_stop", AGENT, 6))[5] == [AgentStoppedUpdate(AGENT, at(6), True)]
+    Session.objects.filter(id=AGENT).update(last_stopped_at=at(8), last_updated_at=at(8))
+    outcome = live(claude, root, stop_ok("tool_stop", AGENT, 7))
+    assert ToolResultLink.objects.filter(session=root, tool_use_id="tool_stop", error__isnull=True).count() == 2
+    assert outcome[5] == []
+    assert last_stopped_at(AGENT) == at(8)
+
+
 def test_subagent_send_message_flip_closes_an_already_ended_run_once(claude):
     root, children, _ = claude
     caller = children[OTHER]
@@ -519,6 +537,26 @@ def test_stop_step_query_budget_does_not_grow_with_the_tree(django_assert_num_qu
     big_root, big_agent, big_exclude = _budget_tree("big", 200, 15_000)
     with django_assert_num_queries(len(small.captured_queries)):
         big_outcome = run_stop_step(big_root.id, [big_agent], big_exclude)
+    assert big_outcome.stopped == [AgentStoppedUpdate(big_agent, at(4), True)]
+
+
+def _live_collection(root, exclude):
+    """The end-of-batch collection plus the step, for a batch whose one result closes ``spawn-0``."""
+    (link_id,) = exclude.tool_result_link_ids
+    update = ToolResultUpdate(session_id=root.id, tool_use_id="spawn-0", result_count=2, completed_at=at(4),
+                              link_id=link_id)
+    return BaseSessionCompute._run_live_stop_step(root, [], [update], AgentRunSignalsCollector())
+
+
+def test_live_collection_query_budget_does_not_grow_with_the_tree(django_assert_num_queries):
+    small_root, small_agent, small_exclude = _budget_tree("small", 5, 0)
+    with CaptureQueriesContext(connection) as small:
+        small_outcome = _live_collection(small_root, small_exclude)
+    assert small_outcome.stopped == [AgentStoppedUpdate(small_agent, at(4), True)]
+
+    big_root, big_agent, big_exclude = _budget_tree("big", 200, 15_000)
+    with django_assert_num_queries(len(small.captured_queries)):
+        big_outcome = _live_collection(big_root, big_exclude)
     assert big_outcome.stopped == [AgentStoppedUpdate(big_agent, at(4), True)]
 
 
