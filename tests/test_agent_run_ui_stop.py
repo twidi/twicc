@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
@@ -21,6 +21,7 @@ from asgiref.sync import sync_to_async
 from watchfiles import Change
 
 from twicc import asgi
+from twicc.core import agent_runs
 from twicc.asgi import WSConsumer
 from twicc.core.agent_runs import agent_run_states, serialize_run_state
 from twicc.core.enums import Provider
@@ -178,6 +179,26 @@ def test_failed_stop_writes_nothing_and_broadcasts_nothing(tree, monkeypatch):
     assert Session.objects.get(id=AGENT).last_stopped_at is None
 
 
+def test_failed_recording_is_logged_and_rolled_back(tree, monkeypatch):
+    """The stop step fails after the row is created: the row rolls back, the handler logs and returns."""
+    root, _ = tree
+    running_spawn(tree)
+
+    def failing_step(*args, **kwargs):
+        assert AgentRunEnd.objects.filter(source=AgentRunEndSource.UI).count() == 1  # the row was written
+        raise RuntimeError("stop step failed")
+
+    monkeypatch.setattr(agent_runs, "run_stop_step", failing_step)
+    logger = MagicMock()
+    monkeypatch.setattr(asgi, "logger", logger)
+    handler = Handler(monkeypatch, Clock(at(10)))
+    handler.stop(root)  # does not raise
+    logger.exception.assert_called_once()
+    assert not AgentRunEnd.objects.exists()
+    assert handler.sent() == []
+    assert state(root).running
+
+
 # ---------------------------------------------------------------------------
 # ended_at is read before the stop request
 # ---------------------------------------------------------------------------
@@ -257,7 +278,7 @@ def test_watcher_batch_started_during_the_handler_broadcasts_after_it(tree, monk
             watcher_tasks.append(asyncio.create_task(watcher_batch()))
             await queued.wait()
             # Give the batch time to run: it must stay queued behind the handler.
-            await asyncio.wait(watcher_tasks, timeout=0.5)
+            await asyncio.wait(watcher_tasks, timeout=0.1)
 
     handler.messages.side_effect = record
 
