@@ -214,6 +214,7 @@ from twicc.providers.compute_base import (
 )
 
 from .agent.original_files_cache import pop_original_files
+from .agent_runs import parse_sub_agent_activity
 from .canonical import (
     agent_message_text,
     build_twicc_agent_message,
@@ -1745,23 +1746,14 @@ def _parse_sub_agent_activity_started(parsed_json: dict) -> _SubAgentSpawn | Non
     never produce an :class:`~twicc.core.models.AgentLink`.
 
     Returns ``(spawn_call_id, agent_thread_id, agent_path)``, or ``None``
-    for any other line shape / kind / malformed payload.
+    for any other line shape / kind / malformed payload. The shape checks
+    live in :func:`~twicc.providers.codex.agent_runs.parse_sub_agent_activity`
+    (all four kinds); this function keeps only the ``started`` filter.
     """
-    payload = completed_item(parsed_json)
-    if payload is None or payload.get("type") != "SubAgentActivity":
+    activity = parse_sub_agent_activity(parsed_json)
+    if activity is None or activity.kind != _SUB_AGENT_ACTIVITY_STARTED_KIND:
         return None
-    if payload.get("kind") != _SUB_AGENT_ACTIVITY_STARTED_KIND:
-        return None
-    call_id = payload.get("id")
-    agent_id = payload.get("agent_thread_id")
-    agent_path = payload.get("agent_path")
-    if not isinstance(call_id, str) or not call_id:
-        return None
-    if not isinstance(agent_id, str) or not agent_id:
-        return None
-    if not isinstance(agent_path, str) or not agent_path:
-        return None
-    return _SubAgentSpawn(call_id, agent_id, agent_path)
+    return _SubAgentSpawn(activity.event_id, activity.agent_id, activity.agent_path)
 
 
 class _InterAgentMessage(NamedTuple):

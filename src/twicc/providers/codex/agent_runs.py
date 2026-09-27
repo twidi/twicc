@@ -143,9 +143,10 @@ def _event_payload(parsed: dict, payload_type: str) -> dict | None:
 def parse_sub_agent_activity(parsed: dict) -> SubAgentActivity | None:
     """Decode a ``SubAgentActivity`` item of any of its four kinds.
 
-    The spawn-only twin in ``codex/compute.py``
-    (``_parse_sub_agent_activity_started``) keeps its own contract: it
-    gates ``is_tool_result_item`` and must never accept ``completed``.
+    The spawn-only ``_parse_sub_agent_activity_started`` in
+    ``codex/compute.py`` delegates here and keeps only its ``started``
+    filter: it gates ``is_tool_result_item`` and must never accept
+    ``completed``.
     Returns ``None`` for any other line shape, kind or malformed payload.
     """
     item = completed_item(parsed)
@@ -235,9 +236,14 @@ def _has_final_answer(ev: FileEvidence, run: FileRun, before_line: int) -> bool:
     """Two distinct ``tool_result_at`` among the result lines before ``before_line``.
 
     The ack counts one; a ``FINAL_ANSWER`` sharing its timestamp adds nothing
-    (the distinct-time count of rule 1, §5.4).
+    (the distinct-time count of rule 1, §5.4). A ``None`` time is not
+    counted, like SQL ``COUNT(DISTINCT ...)`` skips ``NULL`` (rule 1 also
+    states that no agent result row has a null ``tool_result_at``).
     """
-    times = {at for line, at in ev.results.get(run.tool_use_id, ()) if line < before_line}
+    times = {
+        at for line, at in ev.results.get(run.tool_use_id, ())
+        if line < before_line and at is not None
+    }
     return len(times) >= 2
 
 
@@ -294,8 +300,12 @@ def attribute_completed(ev: FileEvidence, line: int) -> FileRun | None:
 
     Oldest candidate with neither signal; else oldest with a ``FINAL_ANSWER``
     but no ``completed``; else the newest candidate (extra signal). With no
-    candidate at all, the newest spawn of the file before the line; ``None``
-    (no row) when the file has none.
+    candidate at all, the newest spawn of the file whose call line is before
+    ``line``; ``None`` (no row) when the file has none. The design says "the
+    newest spawn in the file"; the ``call_line < line`` bound keeps the rule
+    line-ordered, so live (which has no later rows yet) and batch agree. It
+    changes nothing in practice: no signal of an agent comes before its
+    spawn's ``started`` event, and this branch was never hit in the replay.
     """
     runs = candidates(ev, line)
     for run in runs:

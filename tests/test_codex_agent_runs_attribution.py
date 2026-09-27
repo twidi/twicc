@@ -340,6 +340,54 @@ def test_completed_prefers_final_answer_only_run_when_none_has_neither():
     assert rollout.completed_at(21) == spawn
 
 
+def test_completed_picks_the_oldest_final_answer_only_run():
+    """No run has neither signal: the OLDEST FA-only run wins, not the newest."""
+    evidence = FileEvidence(
+        runs=(
+            FileRun("spawn", 10, None, "spawn"),
+            FileRun("fu1", 20, 21, "resume"),
+            FileRun("fu2", 30, 31, "resume"),
+        ),
+        stops=(),
+        completed_lines={"spawn": (15,)},
+        aborted_lines={},
+        results={
+            "spawn": ((12, _t(0)), (16, _t(5))),
+            "fu1": ((22, _t(20)), (25, _t(25))),
+            "fu2": ((32, _t(30)), (35, _t(35))),
+        },
+    )
+    assert attribute_completed(evidence, 40).tool_use_id == "fu1"
+
+
+def test_final_answer_prefers_a_completed_run_over_an_older_run_with_neither():
+    """The ``completed``-without-FA run wins even when an older run has neither."""
+    evidence = FileEvidence(
+        runs=(
+            FileRun("spawn", 10, None, "spawn"),
+            FileRun("fu", 20, 21, "resume"),
+        ),
+        stops=(),
+        completed_lines={"fu": (30,)},
+        aborted_lines={},
+        results={"spawn": ((12, _t(0)),), "fu": ((22, _t(20)),)},
+    )
+    assert attribute_final_answer(evidence, 40).tool_use_id == "fu"
+
+
+def test_null_result_time_is_not_a_distinct_timestamp():
+    evidence = FileEvidence(
+        runs=(FileRun("spawn", 10, None, "spawn"),),
+        stops=(),
+        completed_lines={},
+        aborted_lines={},
+        results={"spawn": ((12, _t(0)), (20, None))},
+    )
+    assert _ids(file_open_runs(evidence, 30)) == ["spawn"]
+    both_null = evidence._replace(results={"spawn": ((12, None), (20, None))})
+    assert _ids(file_open_runs(both_null, 30)) == ["spawn"]
+
+
 def test_no_run_at_all_attributes_nothing():
     evidence = FileEvidence(runs=(), stops=(), completed_lines={}, aborted_lines={}, results={})
     assert candidates(evidence, 10) == []
