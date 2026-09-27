@@ -67,8 +67,10 @@ defineProps({
 
 .sls-label {
     flex: 0 0 auto;
-    font-size: var(--wa-font-size-xs);
+    font-size: 0.6875rem;
     font-weight: var(--wa-font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
     color: var(--wa-color-text-quiet);
     white-space: nowrap;
 }

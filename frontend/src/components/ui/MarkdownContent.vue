@@ -869,6 +869,13 @@ function handleLinkClick(event) {
     background: transparent;
     /* Override github-markdown-css fixed 16px to inherit from :root */
     font-size: 1rem;
+    /* Prose keeps proportional digits (the app sets tabular-nums on body). */
+    font-variant-numeric: normal;
+}
+
+/* No lonely last word at the end of a paragraph. */
+.markdown-body :is(p, li) {
+    text-wrap: pretty;
 }
 
 /* Each top-level markdown block renders in its own keyed wrapper so Vue diffs

@@ -22,6 +22,12 @@
     --assistant-card-base-color: oklch(from var(--base-user-assistant-card-color) calc(l + 0.03) c h);
 }
 
+/* Fixed-width digits everywhere, so counters, costs and durations do not shift while they
+   update. Prose opts back out (MarkdownContent.vue, .markdown-body). */
+body {
+    font-variant-numeric: tabular-nums;
+}
+
 /* Override WA 3.3's "box-sizing: inherit" from @layer wa-native: native <details>
    break inherit propagation (Chrome & Firefox), so slotted content inside
    wa-details falls back to content-box — mis-sizing tool-card bodies (double

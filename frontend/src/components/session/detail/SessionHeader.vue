@@ -1016,7 +1016,8 @@ defineExpose({
 .session-title h2 {
     margin: 0;
     font-size: var(--wa-font-size-l);
-    font-weight: 600;
+    font-weight: 650;
+    letter-spacing: -0.015em;
     color: var(--wa-color-text-normal);
     margin-right: var(--wa-space-xs);
     /* Truncate with ellipsis */

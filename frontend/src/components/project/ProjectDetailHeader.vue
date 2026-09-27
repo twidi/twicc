@@ -357,7 +357,8 @@ function handleUnarchive() {
 }
 
 .detail-title {
-    font-weight: 600;
+    font-weight: 650;
+    letter-spacing: -0.015em;
     min-width: 0;
 }
 
