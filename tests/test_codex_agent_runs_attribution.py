@@ -26,8 +26,10 @@ from twicc.providers.codex.agent_runs import (
     candidates,
     file_open_runs,
     fork_fields,
+    is_copied_history,
     is_task_complete,
     line_ordinal,
+    owner_abort_cut_runs,
     owner_turn_abort_turn_id,
     parse_sub_agent_activity,
     task_started_turn_id,
@@ -530,3 +532,46 @@ def test_line_ordinal():
     assert line_ordinal({"type": "event_msg"}) is None
     assert line_ordinal({"ordinal": True}) is None
     assert line_ordinal({"ordinal": "3"}) is None
+
+
+def test_owner_abort_cut_runs_keeps_earlier_turns_and_ended_runs():
+    """§5.2: only the file-open runs whose call follows the aborted turn's ``task_started``."""
+    earlier = FileRun("earlier", 3, None, "spawn")  # previous turn: outlives the turn end
+    at_start = FileRun("at_start", 10, None, "spawn")  # call line == started line: not after it
+    resumed = FileRun("fu", 12, 13, "resume")
+    spawned = FileRun("spawned", 15, None, "spawn")
+    ended = FileRun("ended", 17, None, "spawn")
+    ev = FileEvidence(
+        runs=(earlier, at_start, resumed, spawned, ended),
+        stops=(),
+        completed_lines={"ended": (19,)},
+        aborted_lines={},
+        results={},
+    )
+    assert owner_abort_cut_runs(ev, 30, 10) == [resumed, spawned]
+    # Only lines before the abort count: the end at line 19 does not exist at line 19.
+    assert owner_abort_cut_runs(ev, 19, 10) == [resumed, spawned, ended]
+    # A later turn start cuts only what follows it.
+    assert owner_abort_cut_runs(ev, 30, 15) == []
+    assert owner_abort_cut_runs(ev, 30, 2) == [earlier, at_start, resumed, spawned]
+
+
+def test_owner_abort_cut_runs_skips_stopped_and_aborted_runs():
+    rollout = _Rollout()
+    rollout.spawn("stopped", 5, 6, _t(0))
+    rollout.interrupt(8, 7)  # stopped in line order: result 7, event 8
+    live = rollout.spawn("live", 9, 10, _t(1))
+    assert owner_abort_cut_runs(rollout.evidence(), 20, 2) == [live]
+    rollout.aborted.setdefault("live", []).append(15)  # already cut by an earlier abort
+    assert owner_abort_cut_runs(rollout.evidence(), 20, 2) == []
+
+
+def test_is_copied_history():
+    forked = ForkFields("01a08017-3fa4-7b82-aeee-f417e8db093d", 54)
+    assert is_copied_history(forked, {"ordinal": 53}) is True
+    assert is_copied_history(forked, {"ordinal": 54}) is False
+    assert is_copied_history(forked, {"type": "event_msg"}) is False  # no ordinal
+    # Non-fork children carry the field with real turn ends below it: never gated.
+    assert is_copied_history(ForkFields(None, 232), {"ordinal": 231}) is False
+    assert is_copied_history(ForkFields("x", None), {"ordinal": 1}) is False
+    assert is_copied_history(ForkFields(None, None), {"ordinal": 1}) is False

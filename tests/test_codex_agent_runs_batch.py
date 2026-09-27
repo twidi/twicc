@@ -58,6 +58,7 @@ from tests.codex_agent_run_fixtures import (
     fixture_non_fork_child_with_history_field,
     fixture_owner_abort,
     fixture_owner_abort_after_signal,
+    fixture_owner_abort_repeated_turn_id,
     fixture_pre_completed_rollout,
     fixture_reaudit_limitation,
     fixture_same_time_ack_and_final_answer,
@@ -260,6 +261,17 @@ def test_owner_turn_abort(db, kind):
     current = state(AGENT_B)
     assert not current.running and current.stopped_at == at(30)
     assert state(AGENT_C).running
+
+
+def test_owner_abort_cuts_from_the_newest_start_of_its_turn(db):
+    fx = fixture_owner_abort_repeated_turn_id()
+    play(fx)
+    # The abort's turn started twice: only the run opened after the newest
+    # ``task_started`` (B) is cut; A, between the two starts, keeps running.
+    assert run_ends() == [(mark(fx, "abort"), "c_b", AGENT_B, "owner_turn_aborted", at(20))]
+    assert state(AGENT_A).running
+    current = state(AGENT_B)
+    assert not current.running and current.stopped_at == at(20)
 
 
 def test_subagent_owner_usage_limit_writes_both_rows(db):

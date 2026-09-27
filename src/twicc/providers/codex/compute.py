@@ -229,8 +229,9 @@ from .agent_runs import (
     evidence_from_batch_state,
     file_open_runs,
     fork_fields,
+    is_copied_history,
     is_task_complete,
-    line_ordinal,
+    owner_abort_cut_runs,
     owner_turn_abort_turn_id,
     parse_sub_agent_activity,
     task_started_turn_id,
@@ -2603,7 +2604,7 @@ class CodexSessionCompute(BaseSessionCompute):
         if (
             batch_state.session_type == SessionType.SUBAGENT
             and is_task_complete(parsed)
-            and not self._is_copied_history(session_id, parsed)
+            and not is_copied_history(self._fork_fields.get(session_id, ForkFields(None, None)), parsed)
         ):
             run_ends.append({
                 'session_id': session_id,
@@ -2682,29 +2683,18 @@ class CodexSessionCompute(BaseSessionCompute):
         rows = []
         for agent_id in sorted(agents_with_file_runs(batch_state, session_id)):
             evidence = evidence_from_batch_state(batch_state, session_id, agent_id)
-            for run in file_open_runs(evidence, line):
-                if run.call_line > started_line:
-                    rows.append({
-                        'session_id': session_id,
-                        'line_num': line,
-                        'tool_use_id': run.tool_use_id,
-                        'agent_id': agent_id,
-                        'ended_at': at,
-                        'status': END_STATUS_OWNER_TURN_ABORTED,
-                    })
+            rows.extend(
+                {
+                    'session_id': session_id,
+                    'line_num': line,
+                    'tool_use_id': run.tool_use_id,
+                    'agent_id': agent_id,
+                    'ended_at': at,
+                    'status': END_STATUS_OWNER_TURN_ABORTED,
+                }
+                for run in owner_abort_cut_runs(evidence, line, started_line)
+            )
         return rows
-
-    def _is_copied_history(self, session_id: str, parsed: dict) -> bool:
-        """True for a forked child's line below ``subagent_history_start_ordinal`` (§5.2).
-
-        Only a forked child (line 1 has ``forked_from_id``) is gated: non-fork
-        children also carry the ordinal field, with real turn ends below it.
-        """
-        fields = self._fork_fields.get(session_id)
-        if fields is None or fields.forked_from_id is None or fields.history_start_ordinal is None:
-            return False
-        ordinal = line_ordinal(parsed)
-        return ordinal is not None and ordinal < fields.history_start_ordinal
 
     def _remap_orphan_end_event(
         self,

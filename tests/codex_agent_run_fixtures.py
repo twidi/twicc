@@ -276,6 +276,22 @@ def fixture_owner_abort(kind: str = "turn_aborted") -> CodexAgentRunFixture:
     return _fixture(f"owner_abort_{kind}", root)
 
 
+def fixture_owner_abort_repeated_turn_id() -> CodexAgentRunFixture:
+    """A turn id with two ``task_started`` lines: the abort cuts from the newest one.
+
+    A's spawn sits between the two starts and is not cut; B's spawn follows
+    the second start and is cut.
+    """
+    root = _root_start()
+    root.task_complete(1.5, "t1")
+    root.task_started(2, "t2", mark="first_started")
+    root.spawn(3, "c_a", AGENT_A, PATH_A, mark="spawn_a")
+    root.task_started(10, "t2", mark="second_started")
+    root.spawn(11, "c_b", AGENT_B, PATH_B, mark="spawn_b")
+    root.turn_aborted(20, "t2", mark="abort")
+    return _fixture("owner_abort_repeated_turn_id", root)
+
+
 def fixture_subagent_owner_usage_limit() -> CodexAgentRunFixture:
     """A subagent that owns a run ends its turn on a usage limit: both rows at that line."""
     root = _root_start()
@@ -565,6 +581,7 @@ ALL_FIXTURES: dict[str, Callable[[], CodexAgentRunFixture]] = {
     "merged_followup": fixture_merged_followup,
     "reaudit_limitation": fixture_reaudit_limitation,
     **{f"owner_abort_{kind}": (lambda kind=kind: fixture_owner_abort(kind)) for kind in OWNER_ABORT_KINDS},
+    "owner_abort_repeated_turn_id": fixture_owner_abort_repeated_turn_id,
     "subagent_owner_usage_limit": fixture_subagent_owner_usage_limit,
     "control_calls": fixture_control_calls,
     "child_turn_ends": fixture_child_turn_ends,

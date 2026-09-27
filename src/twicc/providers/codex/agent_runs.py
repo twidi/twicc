@@ -351,6 +351,32 @@ def attribute_final_answer(ev: FileEvidence, line: int) -> FileRun | None:
     return runs[-1] if runs else None
 
 
+def owner_abort_cut_runs(ev: FileEvidence, line: int, started_line: int) -> list[FileRun]:
+    """The runs an owner turn abort at ``line`` cuts (§5.2).
+
+    The file-open runs at ``line`` whose call line is after the aborted
+    turn's ``task_started`` line ``started_line``: runs of an earlier turn
+    outlive a turn end. The caller finds ``started_line`` by the event's
+    ``turn_id`` (the newest ``task_started`` of that turn before ``line``)
+    and cuts nothing when there is none.
+    """
+    return [run for run in file_open_runs(ev, line) if run.call_line > started_line]
+
+
+def is_copied_history(fields: ForkFields, parsed: dict) -> bool:
+    """True for a forked child's line below ``subagent_history_start_ordinal`` (§5.2).
+
+    ``fields`` are the child's line-1 fork fields. Only a forked child (a
+    ``forked_from_id``) is gated: non-fork children also carry the ordinal
+    field, with real turn ends below it. A line without ``ordinal`` is not
+    copied history.
+    """
+    if fields.forked_from_id is None or fields.history_start_ordinal is None:
+        return False
+    ordinal = line_ordinal(parsed)
+    return ordinal is not None and ordinal < fields.history_start_ordinal
+
+
 # ---------------------------------------------------------------------------
 # Batch evidence (§6.2)
 # ---------------------------------------------------------------------------
