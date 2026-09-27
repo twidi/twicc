@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Resumed subagents** — A subagent shows as running again when the agent sends it a new message or task.
 - **Background shells** — A new status (green terminal icon) shows when the provider reports that the agent has finished its turn but a shell it started is still running. Such sessions are no longer stopped automatically.
 - **Uncommitted changes on the Git tab** — The Git tab's label shows how many files are modified, added or deleted, without opening it.
 - **Background work in the CLI, skills, RPC API and MCP** — A session's process information now tells what still runs in the background (subagents, shells…), whatever the session's state.
