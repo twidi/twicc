@@ -878,27 +878,15 @@ test('compaction-duplicated tool_use line (resultCount 4, 2 rows per card): one 
 
 // --- Control card: expected count 2, display count 1 (Task 17, design §8.3) ---
 
-test('display count: a control card with expected 2 / display 1 shows the ack at once while its own run stays open', async () => {
+test('display count: a control card with expected 2 / display 1 shows the ack at once, then fetches the second row on the count flip', async () => {
     // `term` stands in for the agent card's own-run term (`needsMoreRows`):
     // its run is open and it holds fewer rows than its expected count (2),
     // while `displayCount` stays forced to 1 for control cards.
-    const { api, calls, clock } = await mount({ state: { count: 1, displayCount: 1, term: true } })
-    calls[0].resolve([{ ack: true }])
-    await flush()
-    assert.equal(api.resultState.value, 'loaded')
-    assert.deepEqual(api.resultData.value, [{ ack: true }], 'the ack shows at once, at 1 row')
-    assert.equal(api.showsPending.value, true, 'the own run is still open, so the card keeps polling')
-    assert.equal(clock.liveIntervals(), 1)
-})
-
-test('result fetch: the expected count flip 1 -> 2 (Claude SendMessage opening a run) fetches the second row', async () => {
     const { api, s, calls, clock } = await mount({ state: { count: 1, displayCount: 1, term: true } })
     calls[0].resolve([{ ack: true }])
     await flush()
     assert.equal(api.resultState.value, 'loaded')
-    assert.deepEqual(api.resultData.value, [{ ack: true }])
-    // The ack shows at once even though the expected count is 2: the display
-    // count stays forced to 1 for control cards.
+    assert.deepEqual(api.resultData.value, [{ ack: true }], 'the ack shows at once, at 1 row')
     assert.equal(api.showsPending.value, true, 'the own run is still open, so the card keeps polling')
     assert.equal(api.wantsFetch.value, true)
     assert.equal(clock.liveIntervals(), 1)

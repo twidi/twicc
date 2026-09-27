@@ -324,7 +324,7 @@ export class ClaudeCodeToolHelpers extends BaseToolHelpers {
         return lower.replace(/[aeiou]+$/, '') + 'ing'
     }
 
-    getHeaderLabel(name, input, options) {
+    getHeaderLabel(name, _input, options) {
         // A control card (``SendMessage`` / ``TaskStop`` / ``TaskOutput``
         // targeting an agent) reads its action label first — the default
         // Task labels below stay reserved for shell calls (71 of 75
