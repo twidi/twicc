@@ -20,7 +20,7 @@ function action(name) {
 const ACTIONS = [
     'applyAgentRunState(', 'setAgentRunState(', 'setAgentInteraction(', 'async fetchSubagentsState(',
     'setSyntheticProcessState(', 'removeSyntheticProcessState(', '_cleanStaleChildSynthetics(', 'unloadSession(',
-    'updateSession(', 'setActiveProcesses(', 'async refreshAllLoadedToolStates(', 'markAgentStopped(',
+    'updateSession(', 'setActiveProcesses(', 'async refreshAllLoadedToolStates(', 'markAgentStopped(', 'unloadProject(',
 ]
 const PROCESS_STATE = { STARTING: 'starting', ASSISTANT_TURN: 'assistant_turn', USER_TURN: 'user_turn', DEAD: 'dead' }
 
@@ -325,6 +325,25 @@ test('unloadSession of an agent whose root stays loaded re-fetches the root snap
     await new Promise(done => setTimeout(done, 0))
     assert.equal(store.localState.agentLinks.child['spawn-nested'].agentId, 'nested')
     assert.ok(synthetic(store, 'nested'))
+})
+test('unloadProject unloads the root first: its agents issue no /subagents/ request', () => {
+    const store = makeStore()
+    // Agents listed before their root, so insertion order alone would unload them first.
+    for (const id of ['a1', 'a2', 'a3']) {
+        store.sessions[id] = { id, project_id: 'p', parent_session_id: 'root', provider: 'claude_code' }
+        store.localState.sessions[id] = { itemsFetched: true }
+        store.setAgentRunState(runMsg(id))
+    }
+    const root = store.sessions.root
+    delete store.sessions.root
+    store.sessions.root = root
+    store.localState.projects = { p: { sessionsFetched: true } }
+    store.unloadProject('p')
+    assert.deepEqual(store.urls, [])
+    assert.deepEqual(store.sessions, {})
+    assert.deepEqual(store.localState.agentRunStates, {})
+    assert.deepEqual(store.processStates, {})
+    assert.equal(store.localState.projects.p.sessionsFetched, false)
 })
 test('unloadSession of an agent whose root items are not loaded fetches nothing', () => {
     const store = makeStore()

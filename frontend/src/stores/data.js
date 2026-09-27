@@ -3028,9 +3028,12 @@ export const useDataStore = defineStore('data', {
          * @param {string} projectId
          */
         unloadProject(projectId) {
-            // First, unload all sessions of this project
+            // First, unload all sessions of this project. Roots go first: an
+            // agent unloaded after its root finds no run state and no loaded
+            // root, so it re-fetches no ``/subagents/`` snapshot (see unloadSession).
             const sessionsToUnload = Object.values(this.sessions)
                 .filter(s => s.project_id === projectId)
+                .sort((a, b) => !!a.parent_session_id - !!b.parent_session_id)
                 .map(s => s.id)
 
             for (const sessionId of sessionsToUnload) {

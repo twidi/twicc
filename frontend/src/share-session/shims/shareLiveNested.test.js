@@ -19,7 +19,8 @@ test('live share routes nested launch and queue-only completion before delayed R
         socket.onmessage({ data: JSON.stringify({ type: 'share_agent_link', link: { agent_id: 'child', owner_session_id: 'launcher', tool_use_id: 't' } }) })
         socket.onmessage({ data: JSON.stringify({ type: 'share_agent_stopped', agent_session_id: 'child', root_session_id: 'root', stopped_at: '2026-09-07T01:01:00Z' }) })
         applyAgentSnapshot(state, 'root', [{ agent_id: 'child', owner_session_id: 'launcher', tool_use_id: 't', running: true }], token)
-        assert.equal(state.agentLinkIndex.child.stoppedAt, '2026-09-07T01:01:00Z')
+        // A stop records the stop time only; it invents no idle time.
+        assert.equal(state.agentLinks.launcher.t.agentStoppedAt, undefined)
         assert.equal(state.agentLinks.launcher.t.stoppedAt, '2026-09-07T01:01:00Z')
         disconnect()
     } finally {
