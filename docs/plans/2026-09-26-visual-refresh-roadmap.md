@@ -10,7 +10,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | Step | Topic | Status |
 |---|---|---|
 | 1 | Canvas + floating panels | **Done** — commits `ddc43644`, `8dbdfd83` on branch `enhanced-ui` |
-| 2 | Depth (layered shadows) | To specify |
+| 2 | Depth (layered shadows) + typography | **Done** — commits `85ce211f`, `ad7942b1`, `e2046d92` on branch `enhanced-ui` (see §6b) |
 | 3 | Accent-tinted glass overlays | To specify |
 | 4 | Motion tokens + micro-interactions | To specify |
 | 5 | Entrances (virtual-scroll aware) + skeletons | To specify |
@@ -188,6 +188,69 @@ Fullscreen preview from a dock; KeepAlive return with a docked Browser (corners)
 sideways shift when reopening the Artifacts overlay (commit `63d0d7c5` case); Browser
 responsive stage larger than its pane (no page scrollbar); side overlay opened while a rail
 shows. Code-read OK by the final reviewer.
+
+## 6b. Step 2 — depth + typography (done)
+
+Spec: `docs/plans/2026-09-26-depth-design.md` (§14 = the user's review amendments and the
+final-review follow-ups — binding). Plan: `docs/plans/2026-09-26-depth-plan.md`.
+Reviews: spec 7 rounds (PASS), plan 7 rounds (PASS), final whole-branch review (0
+critical, 2 important + 2 minor, all fixed in `e2046d92`), re-review Ready (one doc minor,
+fixed in the spec).
+Commits: `85ce211f` (shadows + review amendments), `ad7942b1` (typography), `e2046d92`
+(final-review fixes). Tests: 455 (`frontend/src/styles/depth.test.js` pins the CSS
+invariants).
+
+### 6b.1 What it does
+
+- `frontend/src/styles/depth.css` (imported by the SPA, the share viewer and the artifact
+  shell): `--depth-1/2/3` (resting / standing out / floating), `--depth-card` (downward-only,
+  chat and tool cards) + `--depth-card-reach`, `--depth-button`, `--depth-highlight`,
+  `--depth-edge` (dark top line), `--depth-inset` (recessed fields); Web Awesome's
+  `--wa-shadow-s/m/l` mapped to levels 1/3/3 on `:root, .wa-invert`; global `:where()`
+  rules for raised buttons (outlined/filled + solid accent, with exclusions), recessed
+  fields, split buttons without WA's see-through gap.
+- Chat: soft downward shadows (last row of an assistant card, last card of a joined tool
+  run), accent-tinted user cards (quotes inside them start on the plain surface), white
+  assistant cards in light, dark top edge.
+- Floating layers at level 3 (menus, selects, dialogs, popovers, toasts, pickers); the
+  layout overlay and the headers' overflow panels keep the step-1 ≤ 4px side budget
+  (`--panel-overlay-shadow` in `surfaces.css`).
+- Sidebar chrome: its own buttons brand outlined; project selector and filter inputs painted
+  with the canvas (mobile drawer: `--canvas-drawer-top` approximation); accent-based
+  separators (`--sidebar-divider-color`); toggle opaque only while it floats over content.
+  Home: Inbox/Settings solid accent.
+- Typography: tabular digits everywhere except `.markdown-body`; titles 650 / tighter;
+  uppercase sidebar section labels; `text-wrap: pretty` in message paragraphs.
+
+### 6b.2 Lessons (do not regress)
+
+- **Shadow layer order matters for transitions**: a `box-shadow` transition pairs layers by
+  position and snaps on an inset/outer pair — dark tokens put their inset layer first.
+- **`:where()` protects against component rules, not against layered theme rules**: an
+  unlayered global rule always beats `@layer wa-theme-*`; the awesome theme's hard controls
+  are kept by excluding `.wa-theme-awesome`.
+- **Whitespace is a combinator**: each `wa-button:is(…):not(…)` compound stays on one line.
+- **`background-attachment: fixed` is `scroll` under a transform** (the mobile drawer) and
+  in iOS Safari: canvas-painted elements need an approximation there.
+- **An outlined (transparent) button that floats over content needs an opaque fill** in its
+  floating states (sidebar toggle; home Inbox/Settings are solid).
+- KeepAlive keeps hidden chat lists of other sessions in the DOM: browser probes must scope
+  to the visible `.session-items`. A backgrounded MCP tab freezes transitions (read target
+  values with the transition disabled).
+
+### 6b.3 Not verified in a browser
+
+Layout overlay shadow, question-widget options, chart tooltips (exact token swaps, code-read
+by the reviewers); the pinned inbox badge ring (count 0 on the worktree instance); the dark
+hover *fade* (frozen in the background MCP tab; interpolation pinned by the node test). The
+public share viewer could not be opened on the worktree (checked through its built CSS).
+
+### 6b.4 Left for the global fine-tuning pass (user, 2026-09-27)
+
+The user plans a pass over every detail once all steps are done. Open items noted so far:
+neutral `filled-outlined` buttons left in the Git/Files panes; the tinted-block style
+(quotes, `:::` blocks) may be restyled later; the mock's message radius (`0.875rem`) was
+not taken.
 
 ## 7. Deferred / open topics
 
@@ -419,4 +482,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2).

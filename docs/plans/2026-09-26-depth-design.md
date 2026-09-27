@@ -631,3 +631,18 @@ steps are done.
   `SettingsPopover` `triggerAppearance`, both defaulting to `outlined`).
 - Remaining neutral `filled-outlined` buttons (Git folder and refresh, file-tree options,
   inside the Files/Git cards) are left as they are for now.
+
+Follow-ups from the final whole-branch review (commit `e2046d92`):
+
+- **Mobile drawer exception**: under 640px the sidebar is a transformed drawer, where
+  `background-attachment: fixed` acts as `scroll`. There, the project selector and the
+  filter inputs paint `linear-gradient(var(--canvas-drawer-top), var(--canvas-drawer-top)),
+  var(--canvas-color)` instead — an approximation of the drawer's top. New token
+  `--canvas-drawer-top` in `surfaces.css`: light 50% / dark 85% of `--canvas-aura-start`.
+  Do not restore `fixed` there.
+- **Sidebar toggle**: outlined (transparent) while it sits on the sidebar canvas; an opaque
+  surface fill when it floats over the content — sidebar collapsed on desktop (checkbox
+  checked), drawer closed on mobile (checkbox unchecked).
+- **Pinned inbox badge**: a 2px surface ring, so it stays readable on the home page's solid
+  Inbox button.
+- The split-button rules are wrapped in `:where()` like every global rule (§4.2).
