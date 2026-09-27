@@ -2145,8 +2145,10 @@ def evidence_from_db(session_id: str, agent_id: str, before_line: int) -> FileEv
             stop_rows.append((tool_use_id, event_line))
 
     results: dict[str, list[tuple[int, datetime | None]]] = {run.tool_use_id: [] for run in runs}
+    # Stop call id -> its first non-error result line.
     first_ok_lines: dict[str, int] = {}
-    result_ids = set(results) | {tool_use_id for tool_use_id, _ in stop_rows}
+    stop_ids = {tool_use_id for tool_use_id, _ in stop_rows}
+    result_ids = set(results) | stop_ids
     if result_ids:
         for tool_use_id, line, result_at, error in ToolResultLink.objects.filter(
             session_id=session_id, tool_use_id__in=result_ids, tool_result_line_num__lt=before_line,
@@ -2155,7 +2157,7 @@ def evidence_from_db(session_id: str, agent_id: str, before_line: int) -> FileEv
         ):
             if tool_use_id in results:
                 results[tool_use_id].append((line, result_at))
-            if error is None:
+            if error is None and tool_use_id in stop_ids:
                 first_ok_lines.setdefault(tool_use_id, line)
 
     completed_lines: dict[str, list[int]] = {}
@@ -3146,7 +3148,6 @@ class CodexSessionCompute(BaseSessionCompute):
         other tools' result rows are unaffected.
         """
         if _subagent_notification_text(parsed_json) is not None:
-            from twicc.core.models import AgentLink
             link = AgentLink.objects.filter(
                 session_id=session_id, agent_id=naive_tool_use_id,
             ).only("tool_use_id").first()

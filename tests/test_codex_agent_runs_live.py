@@ -174,14 +174,55 @@ def ack_line(fixture: CodexAgentRunFixture, spawn_mark: str = "spawn") -> int:
 # ---------------------------------------------------------------------------
 
 
+# (interactions, transcript run ends) each fixture writes, so no fixture
+# passes the parity check with empty lists. ``v1_notification`` is the only
+# one with none: multi-agent v1 has no agent-run signal (a rebind only).
+EXPECTED_ROW_COUNTS: dict[str, tuple[int, int]] = {
+    "child_turn_ends": (1, 3),
+    "completed_between_call_and_interacted": (1, 4),
+    "control_calls": (2, 0),
+    "duplicate_interacted": (1, 1),
+    "flat_timestamp_child": (0, 1),
+    "followup_after_interrupt": (2, 1),
+    "forked_child": (0, 1),
+    "idle_followup_opens_run": (1, 2),
+    "interrupt_race": (1, 1),
+    "long_gap_with_followup": (1, 2),
+    "merged_followup": (1, 1),
+    "merged_then_real_followups": (3, 3),
+    "non_fork_child_with_history_field": (0, 1),
+    "owner_abort_after_signal": (2, 2),
+    "owner_abort_other_error": (2, 2),
+    "owner_abort_other_reason": (2, 2),
+    "owner_abort_repeated_turn_id": (0, 1),
+    "owner_abort_turn_aborted": (2, 4),
+    "owner_abort_unknown_turn": (2, 2),
+    "owner_abort_usage_limit": (2, 4),
+    "pre_completed_rollout": (1, 0),
+    "reaudit_limitation": (1, 2),
+    "same_time_ack_and_final_answer": (1, 0),
+    "stop_in_completed_final_gap": (2, 1),
+    "stop_result_before_event": (1, 1),
+    "subagent_owner_usage_limit": (0, 2),
+    "t20_sequence": (2, 3),
+    "v1_notification": (0, 0),
+}
+
+
+def test_expected_row_counts_cover_every_fixture():
+    assert set(EXPECTED_ROW_COUNTS) == set(ALL_FIXTURES)
+
+
 @pytest.mark.parametrize("per_line", [True, False], ids=["per_line", "one_chunk"])
 @pytest.mark.parametrize("name", sorted(ALL_FIXTURES))
 def test_batch_live_parity(db, tmp_path, name, per_line):
     fixture = ALL_FIXTURES[name]()
     LiveReplay(fixture, tmp_path).run(per_line=per_line)
     live = rows(fixture)
-    # Every fixture pairs at least one spawn ack: the replay really synced.
+    # The replay really synced: every fixture pairs at least one spawn ack,
+    # and writes its own number of agent-run rows.
     assert live["results"]
+    assert (len(live["interactions"]), len(live["run_ends"])) == EXPECTED_ROW_COUNTS[name]
 
     # A fresh DB for the batch: drop the live sessions and every row they own.
     Session.objects.filter(project_id=PROJECT_ID).delete()
