@@ -30,6 +30,7 @@ from channels.layers import get_channel_layer
 from watchfiles import Change, awatch
 
 from twicc import search
+from twicc.core.agent_runs import late_tree_rule_payloads
 from twicc.core.enums import ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
 from twicc.core.session_queries import SpawnRef, spawn_display_names
@@ -857,6 +858,16 @@ class BaseSessionsWatcher:
                     "project": serialize_project(project),
                 })
 
+                # Late tree rule (design §7.3): each ``agent_link_created`` is
+                # followed by the interactions targeting or owned by its agent,
+                # which failed the tree rule (or the share relay's descendant
+                # filter) until now. Keys of this batch's own updates, sent
+                # right after, and keys already re-sent are skipped.
+                root_session_id = session.parent_session_id or session.id
+                sent_interactions = {
+                    (payload["owner_session_id"], payload["tool_use_id"]) for payload in agent_interaction_updates
+                }
+
                 # Broadcast agent link state changes (subagent linked).
                 # ``agent_slug`` carries the spawned subagent's nickname
                 # (Codex's ``agent_nickname`` persisted as
@@ -888,7 +899,7 @@ class BaseSessionsWatcher:
                         await broadcast_message(channel_layer, {
                             "type": "agent_link_created",
                             "parent_session_id": update.parent_session_id,
-                            "root_session_id": session.parent_session_id or session.id,
+                            "root_session_id": root_session_id,
                             "agent_session_id": update.agent_id,
                             "agent_slug": slugs_by_id.get(update.agent_id),
                             "display_name": display_names.get(
@@ -900,6 +911,23 @@ class BaseSessionsWatcher:
                             "started_at": update.started_at.isoformat() if update.started_at else None,
                             "project_id": parsed.project_id,
                         })
+                        late_payloads = await sync_to_async(late_tree_rule_payloads)(
+                            root_session_id, update.agent_id,
+                        )
+                        for payload in late_payloads:
+                            key = (payload["owner_session_id"], payload["tool_use_id"])
+                            if key in sent_interactions:
+                                continue
+                            sent_interactions.add(key)
+                            await broadcast_message(channel_layer, {
+                                **payload, "type": "agent_interaction", "project_id": parsed.project_id,
+                            })
+
+                # Interactions this batch created or whose ``opens_run`` changed.
+                for payload in agent_interaction_updates:
+                    await broadcast_message(channel_layer, {
+                        **payload, "type": "agent_interaction", "project_id": parsed.project_id,
+                    })
 
                 # Broadcast workflow tool-link state changes (a Workflow tool_use
                 # paired with its run via toolUseResult.runId). Powers the in-chat
@@ -933,7 +961,6 @@ class BaseSessionsWatcher:
                 # interaction resumed, then the stop hook every agent the
                 # batch stopped, stamped or not (resume before stop, so a
                 # resume and its end in one batch settle on the end).
-                root_session_id = session.parent_session_id or session.id
                 await broadcast_agent_run_outcome(
                     channel_layer,
                     root_session_id=root_session_id,

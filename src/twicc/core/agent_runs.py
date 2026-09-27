@@ -115,6 +115,17 @@ def owner_filter(root_id: str) -> Q:
     return Q(session_id=root_id) | Q(session__parent_session_id=root_id)
 
 
+def tree_links_to(root_id: str, agent_ids: Iterable[str]):
+    """The ``AgentLink`` rows of the root's tree that spawn one of ``agent_ids`` (the tree rule's target scope).
+
+    Owned inside the tree (:func:`owner_filter`), never targeting the root.
+    An interaction counts only when its target has such a link (design §5.1).
+    """
+    from twicc.core.models import AgentLink
+
+    return AgentLink.objects.filter(owner_filter(root_id), agent_id__in=agent_ids).exclude(agent_id=root_id)
+
+
 def _frozen_links(root: Session, frozen_at_line: int) -> tuple[list, set[str]]:
     """The tree's links visible at the freeze, and the visible agent ids (the snapshot's filter)."""
     from twicc.core.session_queries import frozen_tree_links, tree_agent_links
@@ -217,7 +228,6 @@ def agent_run_states(
     from twicc.core.models import (
         AgentInteraction,
         AgentInteractionKind,
-        AgentLink,
         AgentRunEnd,
         AgentRunEndSource,
         ToolResultLink,
@@ -239,9 +249,7 @@ def agent_run_states(
         tree_links, visible = _frozen_links(root, frozen_at_line)
         links = [link for link in tree_links if link.agent_id in agent_ids]
     else:
-        links = list(
-            AgentLink.objects.filter(owner_filter(root_id), agent_id__in=agent_ids).exclude(agent_id=root_id)
-        )
+        links = list(tree_links_to(root_id, agent_ids))
     # Removing the links created in the batch BEFORE the tree rule is the "late
     # tree rule" of §5.4: a target whose only links are new has no run yet.
     links = [link for link in links if (link.session_id, link.tool_use_id) not in exclude.agent_links]
@@ -416,6 +424,68 @@ def serialize_run_state(root_id: str, agent_id: str, state: AgentRunState) -> di
         "run_background": state.run_background,
         "runs": serialize_runs(state),
     }
+
+
+def serialize_interaction(root_id: str, interaction) -> dict:
+    """The design §7.3 ``agent_interaction`` payload, minus ``project_id`` (added by the broadcaster)."""
+    return {
+        "root_session_id": root_id,
+        "owner_session_id": interaction.session_id,
+        "agent_session_id": interaction.agent_id,
+        "tool_use_id": interaction.tool_use_id,
+        "tool_use_line_num": interaction.tool_use_line_num,
+        "kind": interaction.kind,
+        "opens_run": interaction.opens_run,
+        "started_at": _iso(interaction.started_at),
+    }
+
+
+def _tree_rule_payloads(root_id: str, rows: list) -> list[dict]:
+    """Serialize the rows (already owned inside the tree) whose target has a tree link (design §5.1)."""
+    if not rows:
+        return []
+    linked = set(tree_links_to(root_id, {row.agent_id for row in rows}).values_list("agent_id", flat=True))
+    return [serialize_interaction(root_id, row) for row in rows if row.agent_id in linked]
+
+
+def interaction_payloads(root_id: str, keys: Iterable[tuple[str, str]]) -> list[dict]:
+    """The ``agent_interaction`` payloads of the given ``(session id, tool_use_id)`` rows that pass the tree rule.
+
+    One per key, in the keys' first-seen order; a key with no row, or whose
+    row fails the tree rule, is skipped. Built by the live pass for the
+    interactions its batch created or whose ``opens_run`` changed (design §7.3).
+    """
+    from twicc.core.models import AgentInteraction
+
+    keys = list(dict.fromkeys(keys))
+    if not keys:
+        return []
+    rows = {
+        (row.session_id, row.tool_use_id): row
+        for row in AgentInteraction.objects.filter(
+            owner_filter(root_id),
+            session_id__in={session_id for session_id, _ in keys},
+            tool_use_id__in={tool_use_id for _, tool_use_id in keys},
+        )
+    }
+    return _tree_rule_payloads(root_id, [rows[key] for key in keys if key in rows])
+
+
+def late_tree_rule_payloads(root_id: str, agent_id: str) -> list[dict]:
+    """The ``agent_interaction`` payloads the watcher re-sends after ``agent_link_created`` for ``agent_id``.
+
+    The interactions **targeting** the agent (they failed the tree rule
+    until its link existed), then those **owned** by it (the share relay
+    dropped them while the agent was not a known descendant), each passing
+    the tree rule (design §7.3 "Late tree rule"). Two indexed queries: on
+    ``agent_id``, and on ``session_id``.
+    """
+    from twicc.core.models import AgentInteraction
+
+    order = ("session_id", "tool_use_line_num", "tool_use_id")
+    targeting = list(AgentInteraction.objects.filter(owner_filter(root_id), agent_id=agent_id).order_by(*order))
+    owned = list(AgentInteraction.objects.filter(owner_filter(root_id), session_id=agent_id).order_by(*order))
+    return _tree_rule_payloads(root_id, targeting + owned)
 
 
 class StopStepResult(NamedTuple):

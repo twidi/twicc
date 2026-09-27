@@ -43,7 +43,7 @@ from django.db import connection, transaction
 from django.db.models import F, Q, QuerySet
 
 from twicc.context_injection import strip_context_blocks_in_place
-from twicc.core.agent_runs import RunStateExclude, StopStepResult, run_stop_step
+from twicc.core.agent_runs import RunStateExclude, StopStepResult, interaction_payloads, run_stop_step
 from twicc.core.enums import ItemDisplayLevel, ItemKind, Provider
 from twicc.core.models import (
     AgentInteraction,
@@ -4275,6 +4275,10 @@ class BaseSessionCompute:
         stop_step = self._run_live_stop_step(
             session, agent_link_updates, tool_result_updates, agent_run_signals,
         )
+        # After the stop step: the tree rule then sees every link of the batch.
+        agent_interaction_updates = interaction_payloads(
+            session.parent_session_id or session.id, agent_run_signals.changed_interactions,
+        )
 
         # Exclude new items from modified_line_nums
         return (
@@ -4285,7 +4289,7 @@ class BaseSessionCompute:
             tool_result_updates,
             stop_step.stopped,
             found_compact_summary,
-            [],  # agent_interaction_updates
+            agent_interaction_updates,
             stop_step.run_state_payloads,
             agent_run_signals.agents_resumed,
         )

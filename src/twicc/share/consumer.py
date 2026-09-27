@@ -92,6 +92,7 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
         if not self.include_subagents:
             return set()
         from twicc.core.models import Session
+        from twicc.core.session_queries import tree_agent_links
 
         ids = await sync_to_async(list)(
             Session.objects.filter(spawn_root_id=self.session_id).values_list("id", flat=True)
@@ -100,7 +101,14 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
         child = await sync_to_async(list)(
             Session.objects.filter(parent_session_id=self.session_id).values_list("id", flat=True)
         )
-        return set(ids) | set(child)
+        # And the tree's link agents: a link can sync before its agent's
+        # ``Session`` row exists, and the late-tree-rule re-send fired before
+        # this viewer connected (design §7.3).
+        def linked_agent_ids():
+            root = Session.objects.filter(id=self.session_id).first()
+            return {link.agent_id for link in tree_agent_links(root)} if root is not None else set()
+
+        return set(ids) | set(child) | await sync_to_async(linked_agent_ids)()
 
     def _visible(self, item: dict) -> bool:
         dl = item.get("display_level")
@@ -127,6 +135,18 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
             .values_list("display_level", flat=True).first()
         )()
         return dl is not None and dl <= self.ceiling
+
+    async def _call_visible(self, session_id: str, line_num) -> bool:
+        """Whether the call item at ``(session_id, line_num)`` is under the ceiling.
+
+        Unlike :meth:`_tool_use_visible`, reads the line from the payload: a
+        control call has no ``ToolResultLink`` before its first result.
+        """
+        from twicc.share.display import visible_call_lines
+
+        if self.ceiling >= 3:
+            return True
+        return bool(await sync_to_async(visible_call_lines)([(session_id, line_num)], self.ceiling))
 
     async def broadcast(self, event):
         """Server-side filter: forward only this share's traffic."""
@@ -206,6 +226,43 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
                     "stopped_at": data.get("stopped_at"),
                     "root_session_id": self.session_id,
                 })
+            return
+
+        if mtype == "agent_run_state" and self.include_subagents:
+            if data.get("root_session_id") == self.session_id:
+                # Explicit keys: the app payload carries ``project_id``.
+                await self.send_json({
+                    "type": "share_agent_run_state",
+                    "root_session_id": self.session_id,
+                    "agent_session_id": data.get("agent_session_id"),
+                    "running": data.get("running"),
+                    "run_started_at": data.get("run_started_at"),
+                    "run_background": data.get("run_background"),
+                    "runs": data.get("runs"),
+                })
+            return
+
+        if mtype == "agent_interaction" and self.include_subagents:
+            if data.get("root_session_id") != self.session_id:
+                return
+            owner_id = data.get("owner_session_id")
+            if data.get("agent_session_id") not in self.descendant_ids:
+                return
+            if owner_id != self.session_id and owner_id not in self.descendant_ids:
+                return
+            if not await self._call_visible(owner_id, data.get("tool_use_line_num")):
+                return
+            await self.send_json({
+                "type": "share_agent_interaction",
+                "root_session_id": self.session_id,
+                "owner_session_id": owner_id,
+                "agent_session_id": data.get("agent_session_id"),
+                "tool_use_id": data.get("tool_use_id"),
+                "tool_use_line_num": data.get("tool_use_line_num"),
+                "kind": data.get("kind"),
+                "opens_run": data.get("opens_run"),
+                "started_at": data.get("started_at"),
+            })
             return
 
         if mtype == "session_updated":
