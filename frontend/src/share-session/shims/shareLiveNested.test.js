@@ -218,3 +218,21 @@ test('share viewer: a socket reopen re-fetches nothing and fires no callback', (
     assert.deepEqual(fired.map(f => f[0]), ['run'])
     disconnect()
 }))
+
+test('share viewer: setup turns run states on only with include_subagents, before the snapshot fetch', () => {
+    const source = readFileSync(new URL('../ShareSessionApp.vue', import.meta.url), 'utf8')
+    const from = source.indexOf('if (ready.value && meta.include_subagents) {'), to = source.indexOf("provide('sessionActive'", from)
+    assert.ok(from > 0 && to > from)
+    const run = (includeSubagents) => {
+        const store = makeShimStore({ runStatesAvailable: false })
+        let availableAtFetch
+        store.beginAgentFetch = root => { availableAtFetch = store.runStatesAvailable; return beginAgentFetch(store, root) }
+        store.applyAgentSnapshot = () => []
+        const api = { fetchSubagents: () => new Promise(() => {}) }
+        new Function('ready', 'meta', 'store', 'api', 'provide', 'openSubagent', 'seedAgentSession', source.slice(from, to))(
+            { value: true }, { session_id: 'root', include_subagents: includeSubagents }, store, api, () => {}, () => {}, () => {})
+        return { available: store.runStatesAvailable, availableAtFetch }
+    }
+    assert.deepEqual(run(true), { available: true, availableAtFetch: true })
+    assert.deepEqual(run(false), { available: false, availableAtFetch: undefined })
+})
