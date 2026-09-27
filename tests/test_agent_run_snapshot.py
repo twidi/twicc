@@ -124,20 +124,23 @@ def test_serialize_agent_links_without_run_states_reads_not_running(root):
 
 def test_frozen_interactions_follow_the_link_filter(root):
     launcher = child(root, "a1")
+    child(root, "a2")
     late = child(root, "a3")
     link(root, "a1", "tu-spawn-1", line=1, background=True, started_at=t(0))
+    link(root, "a2", "tu-spawn-2", line=2, background=True, started_at=t(0))
     link(root, "a3", "tu-spawn-3", line=30, background=True, started_at=t(9))
-    interaction(root, "a1", "tu-before", line=5, started_at=t(1))
-    interaction(root, "a1", "tu-after", line=20, started_at=t(5))
-    interaction(launcher, "a1", "tu-by-visible", line=3, started_at=t(2))
-    interaction(late, "a1", "tu-by-late", line=2, opens_run=True, started_at=t(10))
+    interaction(root, "a2", "tu-before", line=5, started_at=t(1))
+    interaction(root, "a2", "tu-after", line=20, started_at=t(5))
+    interaction(launcher, "a2", "tu-by-visible", line=3, started_at=t(2))
+    interaction(late, "a2", "tu-by-late", line=2, opens_run=True, started_at=t(10))
 
     rows = entries(root, frozen_at_line=12)
 
-    assert set(rows) == {"a1"}
-    assert sorted(listed(rows["a1"])) == [("a1", "tu-by-visible", False), (ROOT_ID, "tu-before", False)]
+    assert set(rows) == {"a1", "a2"}
+    assert sorted(listed(rows["a2"])) == [("a1", "tu-by-visible", False), (ROOT_ID, "tu-before", False)]
+    assert rows["a1"]["interactions"] == []
     # Not frozen: every interaction of the tree is listed.
-    assert len(entries(root)["a1"]["interactions"]) == 4
+    assert len(entries(root)["a2"]["interactions"]) == 4
 
 
 def test_frozen_root_send_message_decided_after_the_freeze_is_not_a_run(root):
@@ -212,6 +215,21 @@ def test_display_ceiling_drops_interactions_whose_call_item_is_above_it(root):
     assert listed(entries(root, display_ceiling=2)["a1"]) == [(ROOT_ID, "tu-shown", False)]
     assert len(entries(root, display_ceiling=3)["a1"]["interactions"]) == 3
     assert len(entries(root)["a1"]["interactions"]) == 3
+
+
+def test_frozen_snapshot_applies_the_display_ceiling_too(root):
+    child(root, "a1")
+    link(root, "a1", "tu-spawn", line=1, background=True, started_at=t(0))
+    for tool, line, level in (("tu-shown", 5, 1), ("tu-debug", 6, 3), ("tu-after", 20, 1)):
+        interaction(root, "a1", tool, line=line, started_at=t(1))
+        SessionItem.objects.create(session=root, line_num=line, content="{}", display_level=level)
+
+    # The freeze drops tu-after, the ceiling drops tu-debug.
+    assert listed(entries(root, frozen_at_line=12, display_ceiling=2)["a1"]) == [(ROOT_ID, "tu-shown", False)]
+    assert {row[1] for row in listed(entries(root, frozen_at_line=12, display_ceiling=3)["a1"])} == {
+        "tu-shown", "tu-debug",
+    }
+    assert {row[1] for row in listed(entries(root, display_ceiling=2)["a1"])} == {"tu-shown", "tu-after"}
 
 
 @pytest.mark.parametrize("mode,expected", [("normal", {"tu-shown"}), ("debug", {"tu-shown", "tu-debug"})])

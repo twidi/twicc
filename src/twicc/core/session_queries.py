@@ -256,14 +256,14 @@ def tree_interactions(root, agent_ids, *, frozen_at_line=None, visible=None, dis
     root-owned run interaction decided after the freeze is listed with
     ``opens_run`` false (the predicate ``agent_run_states`` applies).
     """
-    from twicc.core.agent_runs import deciding_line, opens_run_at_freeze
+    from twicc.core.agent_runs import deciding_line, opens_run_at_freeze, owner_filter
     from twicc.core.models import AgentInteraction, ToolResultLink
 
     if not agent_ids:
         return {}
     rows = list(
         AgentInteraction.objects.filter(
-            Q(session_id=root.id) | Q(session__parent_session_id=root.id), agent_id__in=agent_ids,
+            owner_filter(root.id), agent_id__in=agent_ids,
         ).order_by("session_id", "tool_use_line_num", "tool_use_id")
     )
     first_results = {}

@@ -107,8 +107,11 @@ class _Result(NamedTuple):
     error: str | None
 
 
-def _owner_filter(root_id: str) -> Q:
-    """Owned by the root or by a session whose parent is the root (the tree rule's owner scope)."""
+def owner_filter(root_id: str) -> Q:
+    """Owned by the root or by a session whose parent is the root (the tree rule's owner scope, design §5.1).
+
+    The one owner scope of the run state and of the snapshot's ``interactions``.
+    """
     return Q(session_id=root_id) | Q(session__parent_session_id=root_id)
 
 
@@ -237,7 +240,7 @@ def agent_run_states(
         links = [link for link in tree_links if link.agent_id in agent_ids]
     else:
         links = list(
-            AgentLink.objects.filter(_owner_filter(root_id), agent_id__in=agent_ids).exclude(agent_id=root_id)
+            AgentLink.objects.filter(owner_filter(root_id), agent_id__in=agent_ids).exclude(agent_id=root_id)
         )
     # Removing the links created in the batch BEFORE the tree rule is the "late
     # tree rule" of §5.4: a target whose only links are new has no run yet.
@@ -251,7 +254,7 @@ def agent_run_states(
 
     # 2. Interactions targeting a linked agent, owned inside the tree.
     interactions = [
-        row for row in AgentInteraction.objects.filter(_owner_filter(root_id), agent_id__in=linked)
+        row for row in AgentInteraction.objects.filter(owner_filter(root_id), agent_id__in=linked)
         if owner_visible(row.session_id)
     ]
 
