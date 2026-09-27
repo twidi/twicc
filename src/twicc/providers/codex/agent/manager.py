@@ -444,17 +444,35 @@ class CodexAgentManager(BaseAgentManager):
     ) -> None:
         """Relay a "these subagents finished" signal from the watcher.
 
-        Fired when ``check_agent_naturally_stopped`` stamps
-        ``last_stopped_at`` on subagents of ``session_id`` — the only
-        reliable end-of-child signal (nothing reaches the parent's SDK
-        stream). The agent drops the ids from its live set and, when parked
-        in the subagent hold with nothing left running, settles back to
-        USER_TURN. No live agent → no-op.
+        Fired when a live batch's stop step closed a run of subagents of the
+        tree rooted at ``session_id`` and they no longer run. The root's SDK
+        stream carries a ``completed`` item for most run ends, but not for
+        every one (a ``FINAL_ANSWER`` only, a child's own turn end, an owner
+        abort), so this relay is the reliable end-of-child signal. The agent
+        drops the children that are no longer running from its live set
+        and, when parked in the subagent hold with nothing left running,
+        settles back to USER_TURN. No live agent → no-op.
         """
         agent = self._agents.get(session_id)
         if agent is None:
             return
         await agent.notify_subagents_stopped(agent_ids)
+
+    async def notify_subagents_resumed(
+        self, session_id: str, agents: list[tuple[str, str]],
+    ) -> None:
+        """Relay a "these subagents run again" signal from the watcher.
+
+        Fired when a live batch created a run-opening interaction (a
+        ``followup_task`` on an idle child) in the tree rooted at
+        ``session_id``. ``agents`` are ``(agent_id, agent_path)`` pairs. The
+        agent puts back in its live set the first-level children that still
+        run. No live agent → no-op.
+        """
+        agent = self._agents.get(session_id)
+        if agent is None:
+            return
+        await agent.notify_subagents_resumed(agents)
 
     def has_live_shells(self) -> bool:
         """Whether any live agent still tracks a running unified-exec process.

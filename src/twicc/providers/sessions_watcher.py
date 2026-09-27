@@ -391,6 +391,23 @@ class BaseSessionsWatcher:
         """
         return
 
+    async def _after_agents_resumed(
+        self, session_id: str, agents: list[tuple[str, str]],
+    ) -> None:
+        """Hook fired when a live batch resumed subagents of the tree rooted at ``session_id``.
+
+        ``session_id`` is the tree root's id, whatever file was synced (only
+        the root has a live process). ``agents`` are the ``(agent_id,
+        agent_path)`` pairs of the interactions the batch created with
+        ``opens_run`` (a Codex ``followup_task`` on an idle agent). Fired in
+        the broadcast block before :meth:`_after_agents_stopped`. Default
+        implementation is a no-op. Codex overrides this so a live root puts
+        a resumed child back in its set of running subagents. Live
+        incremental-sync path only; implementations must never block the
+        ingest path on agent locks (fire-and-forget a task instead).
+        """
+        return
+
     async def _after_new_lines_synced(
         self,
         session: Session,
@@ -911,8 +928,11 @@ class BaseSessionsWatcher:
                     await self._after_tool_result_broadcast(update)
 
                 # The stop step's outcome: run states, then the stamped stops.
-                # The hook gets the tree root id (only the root has a live
-                # process) and every agent the batch stopped, stamped or not.
+                # The hooks get the tree root id (only the root has a live
+                # process): the resume hook the agents a run-opening
+                # interaction resumed, then the stop hook every agent the
+                # batch stopped, stamped or not (resume before stop, so a
+                # resume and its end in one batch settle on the end).
                 root_session_id = session.parent_session_id or session.id
                 await broadcast_agent_run_outcome(
                     channel_layer,
@@ -921,6 +941,8 @@ class BaseSessionsWatcher:
                     run_state_payloads=agent_run_state_updates,
                     stopped_updates=agent_stopped_updates,
                 )
+                if agents_resumed:
+                    await self._after_agents_resumed(root_session_id, list(agents_resumed))
                 if agent_stopped_updates:
                     await self._after_agents_stopped(
                         root_session_id,

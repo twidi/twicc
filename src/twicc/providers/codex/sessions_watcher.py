@@ -207,6 +207,27 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             return
         await manager.notify_compacted(session_id)
 
+    async def _after_agents_resumed(
+        self, session_id: str, agents: list[tuple[str, str]],
+    ) -> None:
+        # The batch created run-opening interactions (a ``followup_task`` on
+        # an idle child): the live stream cannot tell it from a
+        # ``send_message``, so only the watcher knows the child runs again.
+        # ``session_id`` is the tree root, the only session with a live
+        # agent: the relay puts the children that still run back in its
+        # running set. Fire-and-forget, like the stop relay below; the agent
+        # re-reads the run state under its own lock, so the two relays may
+        # run in any order.
+        from .agent.manager import get_codex_agent_manager
+        try:
+            manager = get_codex_agent_manager()
+        except KeyError:
+            return
+        asyncio.create_task(
+            manager.notify_subagents_resumed(session_id, list(agents)),
+            name=f"subagents-resumed-relay-{session_id}",
+        )
+
     async def _after_agents_stopped(
         self, session_id: str, stopped_agent_ids: list[str],
     ) -> None:
@@ -216,7 +237,10 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         # turn end (rule 5). ``session_id`` is the tree root, the only
         # session with a live agent: the relay drops the children from its
         # running set and releases the subagent hold (or refreshes the
-        # "waiting for N subagents" count). Fire-and-forget: the ingest path
+        # "waiting for N subagents" count). The root's stream sees a
+        # ``completed`` item for most runs, but not every run end (a
+        # ``FINAL_ANSWER`` only, rule 5, an owner abort), so this relay stays
+        # the reliable end-of-child source. Fire-and-forget: the ingest path
         # never blocks on agent state settles.
         from .agent.manager import get_codex_agent_manager
         try:

@@ -6,8 +6,9 @@ or not. Settling to USER_TURN there fires every "finished working"
 consumer (green check, browser notification, idle auto-stop) while the
 subagent still runs. The hold keeps ASSISTANT_TURN at that idle boundary
 instead, mirroring Claude Code's background-agents hold, and releases on
-the watcher's end-of-child signal (nothing reaches the parent's SDK
-stream — the ``FINAL_ANSWER`` only lands in its rollout).
+the watcher's end-of-child signal: the parent's SDK stream carries a
+``completed`` item for most run ends, not for every one, so the watcher's
+stop relay (re-checked against the run model) is the reliable source.
 
 The in-turn ``wait_agent`` label is the other shape, covered by
 ``test_codex_subagent_wait_label.py``.
@@ -19,8 +20,15 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from twicc.agent.states import AgentState
+from twicc.providers.codex.agent import agent as agent_module
 from twicc.providers.codex.agent.agent import CodexAgent
+
+# The run model's view for the relay tests: these children are known and no
+# longer running; any other id (e.g. a child of another run) is not known.
+STOPPED_IN_RUN_MODEL = {"agent-1", "agent-2"}
 
 
 def _activity(agent_thread_id: str, kind: str, agent_path: str = "/root/task") -> SimpleNamespace:
@@ -47,6 +55,7 @@ def _agent(
     agent.state_changed_at = 0.0
     agent.last_activity = 0.0
     agent._live_subagents = {}
+    agent._subagent_set_lock = asyncio.Lock()
     agent._subagent_wait_label_active = False
     agent._subagent_hold_active = False
     agent._manual_compaction = False
@@ -111,7 +120,7 @@ class TestArmingTheHold:
         assert _labels(agent) == ["waiting for 1 subagent"]
 
     def test_a_completed_stream_item_removes_the_child(self) -> None:
-        """Defensive: if the SDK ever routes ``completed``, honour it."""
+        """The stream's ``completed`` item (most run ends carry one) removes the child."""
         agent = _agent()
         agent._note_sub_agent_activity(_activity("agent-1", "started"))
         agent._note_sub_agent_activity(_activity("agent-1", "completed"))
@@ -120,6 +129,14 @@ class TestArmingTheHold:
 
 
 class TestReleasingTheHold:
+    @pytest.fixture(autouse=True)
+    def _run_model(self, monkeypatch) -> None:
+        """Stub the run-model read the stop relay makes for a watcher-backed agent."""
+        monkeypatch.setattr(
+            agent_module, "_stopped_subagent_ids",
+            lambda root_id, ids: [agent_id for agent_id in ids if agent_id in STOPPED_IN_RUN_MODEL],
+        )
+
     def _held_agent(self, children: dict[str, str]) -> CodexAgent:
         agent = _agent()
         agent._live_subagents = dict(children)

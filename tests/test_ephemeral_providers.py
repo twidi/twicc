@@ -198,6 +198,7 @@ def test_codex_ephemeral_hold_uses_runtime_status_without_watcher():
     agent.session_id = "parent"
     agent.state = AgentState.ASSISTANT_TURN
     agent._live_subagents = {"child": "/root/child"}
+    agent._subagent_set_lock = asyncio.Lock()
     agent._subagent_hold_active = False
     agent._ephemeral_subagent_task = None
     agent._current_turn = None

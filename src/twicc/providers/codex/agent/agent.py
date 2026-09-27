@@ -333,6 +333,7 @@ def command_processes_may_run(app_server_pid: int, since: float) -> bool | None:
 _SUB_AGENT_STARTED_KIND = "started"
 _SUB_AGENT_INTERRUPTED_KIND = "interrupted"
 _SUB_AGENT_COMPLETED_KIND = "completed"
+_SUB_AGENT_INTERACTED_KIND = "interacted"
 
 
 def _enum_value(value: Any) -> Any:
@@ -347,24 +348,54 @@ def _is_collab_wait_call(inner: Any) -> bool:
     return _enum_value(getattr(inner, "tool", None)) == _COLLAB_WAIT_TOOL
 
 
-def _stopped_subagent_ids(session_ids: list[str]) -> list[str]:
-    """Return, among ``session_ids``, those whose subagent session has finished.
+def _stopped_subagent_ids(root_id: str, session_ids: list[str]) -> list[str]:
+    """Return, among ``session_ids``, the subagents of ``root_id`` that are known and not running.
 
-    A spawned subagent's completion never reaches the parent's SDK stream
-    (Codex emits no item for the ``FINAL_ANSWER`` it hands back), so the
-    live view of "which children are still running" comes from the
-    watcher instead: it stamps ``Session.last_stopped_at`` when the
-    subagent's completion pairs with its ``spawn_agent``
-    (``check_agent_naturally_stopped``). Blocking ORM call — wrap in
+    The root's SDK stream carries a ``completed`` item for most run ends,
+    but not for every one (a run ending with a ``FINAL_ANSWER`` only, a
+    child's own turn end, an owner abort), so the live view of "which
+    children are still running" is checked against the run model
+    (``agent_run_states``). A child with no run yet (its spawn link not
+    written by the watcher) is not known, so it is kept. A subagent's
+    ``last_stopped_at`` is a display value, never read here. A missing
+    root row returns ``[]`` (keep everything). Blocking ORM call — wrap in
     ``sync_to_async``.
     """
+    from twicc.core.agent_runs import agent_run_states
     from twicc.core.models import Session
 
-    return list(
-        Session.objects.filter(
-            id__in=session_ids, last_stopped_at__isnull=False,
-        ).values_list("id", flat=True)
+    root = Session.objects.filter(id=root_id).first()
+    if root is None:
+        return []
+    states = agent_run_states(root, session_ids)
+    return [
+        session_id for session_id in session_ids
+        if states[session_id].known and not states[session_id].running
+    ]
+
+
+def _running_first_level_subagent_ids(root_id: str, session_ids: list[str]) -> list[str]:
+    """Return, among ``session_ids``, the running subagents whose spawn link ``root_id`` owns.
+
+    Only first-level children are tracked by the root's live set: the root's
+    SDK stream carries no item for a nested agent (spawned by a subagent),
+    so a nested agent was never in the set and is never added. A missing
+    root row returns ``[]``. Blocking ORM call — wrap in ``sync_to_async``.
+    """
+    from twicc.core.agent_runs import agent_run_states
+    from twicc.core.models import AgentLink, Session
+
+    root = Session.objects.filter(id=root_id).first()
+    if root is None:
+        return []
+    states = agent_run_states(root, session_ids)
+    running = [session_id for session_id in session_ids if states[session_id].running]
+    if not running:
+        return []
+    owned = set(
+        AgentLink.objects.filter(session_id=root_id, agent_id__in=running).values_list("agent_id", flat=True)
     )
+    return [session_id for session_id in running if session_id in owned]
 
 
 class CodexAgent(BaseAgent):
@@ -483,10 +514,17 @@ class CodexAgent(BaseAgent):
         # collaboration tools, ``agent_thread_id -> agent_path``. Fed by
         # the ``subAgentActivity`` items Codex routes on the *parent's*
         # stream (``started`` adds, ``interrupted``/``completed`` remove)
-        # and pruned against the watcher's view of which ones already
-        # finished (see :func:`_stopped_subagent_ids`) — in practice the
-        # SDK stream carries no per-agent completion item, so the watcher
-        # is the reliable end-of-child source.
+        # and kept in step with the run model by the watcher relays: a
+        # resumed child comes back (:meth:`notify_subagents_resumed` — the
+        # stream cannot tell ``followup_task`` from ``send_message``), a
+        # stopped one leaves (:meth:`notify_subagents_stopped`, and the
+        # prune, see :func:`_stopped_subagent_ids`). The stream carries a
+        # ``completed`` item for most run ends but not for every one (a
+        # ``FINAL_ANSWER`` only, a child's own turn end, an owner abort), so
+        # the watcher stays the reliable end-of-child source. An ephemeral
+        # agent has no watcher rows: it reads its children's thread status
+        # instead. Every change outside the stream goes through
+        # ``_subagent_set_lock``.
         #
         # Two consumers:
         # - the "waiting for N subagents" label while the parent blocks
@@ -497,6 +535,13 @@ class CodexAgent(BaseAgent):
         #   ``_run_turn`` keeps ASSISTANT_TURN instead of settling idle —
         #   the Codex mirror of Claude Code's background-agents hold.
         self._live_subagents: dict[str, str] = {}
+        # Serializes the three changes to ``_live_subagents`` that read the
+        # run state: the resume relay, the stop relay and the prune. The
+        # relays are fire-and-forget tasks and may run out of order; each
+        # reads the state inside the lock, so the last one applies the
+        # latest committed state. Not re-entrant: none of the three calls
+        # another.
+        self._subagent_set_lock = asyncio.Lock()
         # Unified-exec processes still running, ``(thread_id, process_id) ->
         # start time`` (epoch seconds). Codex runs every shell command as
         # a process the model may leave behind — its ``exec_command`` call
@@ -1049,17 +1094,22 @@ class CodexAgent(BaseAgent):
 
         ``started`` is the spawn (the only kind whose ``event_id`` is a
         ``spawn_agent`` call), ``interrupted``/``completed`` end the child
-        (``completed`` is defensive — the runtimes observed so far never
-        route it on the parent's stream, the watcher signal covers the
-        gap), and ``interacted`` is just a message passing through — it
-        must not change the set. Idempotent: the SDK emits the same item
-        on ``item/started`` and ``item/completed``.
+        (``completed`` reaches the parent's stream for most run ends, not
+        for every one — the watcher's stop relay covers the rest), and
+        ``interacted`` is a ``send_message`` or a ``followup_task``, which
+        the stream cannot tell apart: for a watcher-backed agent it does not
+        change the set (the watcher's resume relay re-adds a resumed child);
+        an ephemeral agent has no watcher, so it re-adds the child, and its
+        ``thread_read`` checks drop it again once idle. Idempotent: the SDK
+        emits the same item on ``item/started`` and ``item/completed``.
         """
         thread_id = getattr(inner, "agent_thread_id", None)
         if not isinstance(thread_id, str) or not thread_id:
             return
         kind = _enum_value(getattr(inner, "kind", None))
-        if kind == _SUB_AGENT_STARTED_KIND:
+        if kind == _SUB_AGENT_STARTED_KIND or (
+            kind == _SUB_AGENT_INTERACTED_KIND and getattr(self, "ephemeral", False)
+        ):
             agent_path = getattr(inner, "agent_path", None)
             self._live_subagents[thread_id] = agent_path if isinstance(agent_path, str) else ""
             self._schedule_background_work_refresh()
@@ -1214,8 +1264,8 @@ class CodexAgent(BaseAgent):
         wait. Same channel and wording as Claude Code's
         ``_refresh_waiting_label``.
 
-        The count is the spawns seen on this run's stream minus the ones
-        the watcher already saw finish, so a sequence of one-agent waits
+        The count is the tracked children minus the ones the run model
+        already reads as finished, so a sequence of one-agent waits
         reads "1 subagent" each time instead of accumulating. With nothing
         live the label drops the count and reads a bare "waiting" — a
         stale count would be worse than none, and both ways to get there
@@ -1276,31 +1326,37 @@ class CodexAgent(BaseAgent):
             await self._handle_error("Could not observe ephemeral subagents", exc=exc)
 
     async def _prune_finished_subagents(self) -> None:
-        """Forget the children the watcher already saw finish.
+        """Forget the children that no longer run.
 
-        One indexed query per ``wait`` call — the only moment the count
-        is read. Failures are swallowed: an over-count in a status label
-        is not worth breaking a turn over.
+        Called on each ``wait`` call and before each hold decision.
+        Watcher-backed: drops the children the run model knows and reads
+        as not running (:func:`_stopped_subagent_ids`), so a resumed child
+        stays while its run is open and a child with no link yet stays too.
+        Ephemeral: drops the children its ``thread_read`` reports idle, no
+        DB read. Under ``_subagent_set_lock``, like both relays. Failures
+        are swallowed: an over-count in a status label is not worth
+        breaking a turn over.
         """
-        if not self._live_subagents:
-            return
-        if getattr(self, "ephemeral", False):
-            stopped = await self._ephemeral_finished_subagents()
-            for child_id in stopped:
-                self._live_subagents.pop(child_id, None)
-            return
-        try:
-            stopped = await sync_to_async(_stopped_subagent_ids)(list(self._live_subagents))
-        except Exception:
-            self._logger.warning(
-                "Codex: failed to prune finished subagents for session %s",
-                self.session_id, exc_info=True,
-            )
-            return
-        for session_id in stopped:
-            self._live_subagents.pop(session_id, None)
-        if stopped:
-            self._schedule_background_work_refresh()
+        async with self._subagent_set_lock:
+            if not self._live_subagents:
+                return
+            if getattr(self, "ephemeral", False):
+                stopped = await self._ephemeral_finished_subagents()
+                for child_id in stopped:
+                    self._live_subagents.pop(child_id, None)
+                return
+            try:
+                stopped = await sync_to_async(_stopped_subagent_ids)(self.session_id, list(self._live_subagents))
+            except Exception:
+                self._logger.warning(
+                    "Codex: failed to prune finished subagents for session %s",
+                    self.session_id, exc_info=True,
+                )
+                return
+            for session_id in stopped:
+                self._live_subagents.pop(session_id, None)
+            if stopped:
+                self._schedule_background_work_refresh()
 
     async def _try_arm_subagent_hold(self) -> bool:
         """Hold ASSISTANT_TURN at an idle boundary when spawned subagents still run.
@@ -1356,58 +1412,125 @@ class CodexAgent(BaseAgent):
         return self._subagent_hold_active
 
     async def notify_subagents_stopped(self, agent_ids: list[str]) -> None:
-        """Relay from the watcher: these spawned subagents have finished.
+        """Relay from the watcher: runs of these spawned subagents ended.
 
-        The end-of-child signal never reaches the parent's SDK stream (the
-        ``FINAL_ANSWER`` lands only in the parent's rollout), so the watcher
-        forwards it here when ``check_agent_naturally_stopped`` stamps
-        ``last_stopped_at``. Drops the ids from the live set, then:
+        The root's SDK stream carries a ``completed`` item for most run
+        ends, but not for every one (a ``FINAL_ANSWER`` only, a child's own
+        turn end, an owner abort), so the watcher forwards the batch's stop
+        step here. Under ``_subagent_set_lock``, like the resume relay and
+        the prune. Watcher-backed: the payload is re-checked against the run
+        model read inside the lock, and only the tracked children that are
+        known and not running leave (an older stop relay that runs after a
+        newer resume keeps the resumed child). Ephemeral (no watcher rows):
+        the ids come from ``thread_read`` (:meth:`_watch_ephemeral_subagents`)
+        and leave as given, no DB read. Then:
 
         - a real turn is running → it owns the state; just refresh the
           in-turn ``wait_agent`` label's count if one is shown;
         - parked in the hold with children left → refresh the label count;
         - parked in the hold with nothing left → release: settle USER_TURN.
         """
-        changed = False
-        for agent_id in agent_ids:
-            if self._live_subagents.pop(agent_id, None) is not None:
-                changed = True
-        if not changed or self.state == AgentState.DEAD:
-            return
-        self._schedule_background_work_refresh()
+        async with self._subagent_set_lock:
+            tracked = [agent_id for agent_id in dict.fromkeys(agent_ids) if agent_id in self._live_subagents]
+            if not tracked:
+                return
+            if getattr(self, "ephemeral", False):
+                stopped = tracked
+            else:
+                try:
+                    stopped = await sync_to_async(_stopped_subagent_ids)(self.session_id, tracked)
+                except Exception:
+                    self._logger.warning(
+                        "Codex: failed to check stopped subagents for session %s",
+                        self.session_id, exc_info=True,
+                    )
+                    return
+            changed = False
+            for agent_id in stopped:
+                if self._live_subagents.pop(agent_id, None) is not None:
+                    changed = True
+            if not changed or self.state == AgentState.DEAD:
+                return
+            self._schedule_background_work_refresh()
 
-        if self._current_turn is not None:
-            if self._subagent_wait_label_active:
+            if self._current_turn is not None:
+                if self._subagent_wait_label_active:
+                    label = self.current_status_label()
+                    if label is not None:
+                        await self._broadcast_process_label(label)
+                return
+
+            if self._manual_compaction or self._goal_continuation_active:
+                # A manual ``/compact`` or a ``/goal`` continuation owns the
+                # state right now (both park ASSISTANT_TURN without a
+                # ``_current_turn``). Its own settle — ``notify_compacted`` /
+                # ``notify_goal_continuation_stopped`` — re-runs the hold
+                # decision and will find the pruned set.
+                return
+
+            if not self._subagent_hold_active:
+                return
+
+            if self._live_subagents:
                 label = self.current_status_label()
                 if label is not None:
                     await self._broadcast_process_label(label)
-            return
+                return
 
-        if self._manual_compaction or self._goal_continuation_active:
-            # A manual ``/compact`` or a ``/goal`` continuation owns the
-            # state right now (both park ASSISTANT_TURN without a
-            # ``_current_turn``). Its own settle — ``notify_compacted`` /
-            # ``notify_goal_continuation_stopped`` — re-runs the hold
-            # decision and will find the pruned set.
-            return
+            self._logger.info(
+                "Codex session %s: last held subagent finished — back to USER_TURN",
+                self.session_id,
+            )
+            self._subagent_hold_active = False
+            self._set_state(AgentState.USER_TURN)
+            self.last_activity = time.time()
+            await self._notify_state_change()
 
-        if not self._subagent_hold_active:
-            return
+    async def notify_subagents_resumed(self, agents: list[tuple[str, str]]) -> None:
+        """Relay from the watcher: run-opening interactions resumed these subagents.
 
-        if self._live_subagents:
-            label = self.current_status_label()
-            if label is not None:
-                await self._broadcast_process_label(label)
+        The stream's ``interacted`` item cannot tell a ``followup_task``
+        from a ``send_message``, so only the watcher knows a child runs
+        again. ``agents`` are ``(agent_id, agent_path)`` pairs. Under
+        ``_subagent_set_lock``, the run model is read inside the lock and
+        only the first-level children still running come back
+        (:func:`_running_first_level_subagent_ids`): a nested agent never
+        reaches the root's stream, and a child whose resumed run already
+        ended is not added. On an add, the background work is refreshed and
+        the status label too when one is shown (the in-turn ``wait_agent``
+        label, or the hold label). The hold itself is never armed here: a
+        child resumed after the turn ended counts in the background work
+        only. Ephemeral: no-op (no watcher relay fires for it; its
+        ``interacted`` items re-add the child).
+        """
+        if getattr(self, "ephemeral", False):
             return
-
-        self._logger.info(
-            "Codex session %s: last held subagent finished — back to USER_TURN",
-            self.session_id,
-        )
-        self._subagent_hold_active = False
-        self._set_state(AgentState.USER_TURN)
-        self.last_activity = time.time()
-        await self._notify_state_change()
+        async with self._subagent_set_lock:
+            if self.state == AgentState.DEAD:
+                return
+            paths: dict[str, str] = {}
+            for agent_id, agent_path in agents:
+                if agent_id not in self._live_subagents:
+                    paths[agent_id] = agent_path if isinstance(agent_path, str) else ""
+            if not paths:
+                return
+            try:
+                running = await sync_to_async(_running_first_level_subagent_ids)(self.session_id, list(paths))
+            except Exception:
+                self._logger.warning(
+                    "Codex: failed to check resumed subagents for session %s",
+                    self.session_id, exc_info=True,
+                )
+                return
+            if not running:
+                return
+            for agent_id in running:
+                self._live_subagents[agent_id] = paths[agent_id]
+            self._schedule_background_work_refresh()
+            if self._subagent_wait_label_active or self._subagent_hold_active:
+                label = self.current_status_label()
+                if label is not None:
+                    await self._broadcast_process_label(label)
 
     async def compact(self) -> None:
         """Kick off a server-side context compaction on the live thread.
