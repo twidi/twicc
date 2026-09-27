@@ -204,6 +204,7 @@ from twicc.providers.compute_base import (
     _EMPTY_TASK_TOOL_USES,
     _EMPTY_TOOL_USE_ENTRIES,
     BaseSessionCompute,
+    BatchAgentState,
     ContentAnalysis,
     INSERT_SCREENSHOT_TAG_RE,
     ToolResultInfo,
@@ -2388,12 +2389,14 @@ class CodexSessionCompute(BaseSessionCompute):
         *,
         session_id: str,
         tool_use_map: dict[str, ToolUseEntry],
+        batch_state: BatchAgentState | None = None,
     ) -> str:
         """Resolve the owning call (:meth:`_resolve_tool_result_id`), then note
         the process the output announces as running against that owner (see
         :meth:`_note_process_announcement`)."""
         resolved = self._resolve_tool_result_id(
             parsed_json, naive_tool_use_id, session_id=session_id, tool_use_map=tool_use_map,
+            batch_state=batch_state,
         )
         self._release_process_owner_on_exit(session_id, parsed_json, resolved)
         self._note_process_announcement(session_id, parsed_json, resolved)
@@ -2406,6 +2409,7 @@ class CodexSessionCompute(BaseSessionCompute):
         *,
         session_id: str,
         tool_use_map: dict[str, ToolUseEntry],
+        batch_state: BatchAgentState | None = None,
     ) -> str:
         """Rebind a write_stdin / wait function_call_output OR a subagent notification.
 
@@ -2437,6 +2441,9 @@ class CodexSessionCompute(BaseSessionCompute):
         map AFTER we resolved the parent_call_id, so analyze_content's
         reading order stays correct (it had already populated / read the
         map by the time we got here).
+
+        ``batch_state`` (the batch loop's view, ``None`` outside it) is not
+        read yet.
         """
         if (
             _subagent_notification_text(parsed_json) is not None

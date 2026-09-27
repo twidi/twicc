@@ -681,7 +681,11 @@ class BaseSessionsWatcher:
             )
 
         old_title = session.title
-        new_line_nums, modified_line_nums, agent_link_updates, workflow_link_updates, tool_result_updates, agent_stopped_updates, found_compact_summary = await sync_to_async(
+        (
+            new_line_nums, modified_line_nums, agent_link_updates, workflow_link_updates, tool_result_updates,
+            agent_stopped_updates, found_compact_summary, agent_interaction_updates, agent_run_state_updates,
+            agents_resumed,
+        ) = await sync_to_async(
             compute.sync_session_items_from_file
         )(session, path)
         title_changed = session.title != old_title

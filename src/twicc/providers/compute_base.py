@@ -44,7 +44,17 @@ from django.db.models import F, Q, QuerySet
 
 from twicc.context_injection import strip_context_blocks_in_place
 from twicc.core.enums import ItemDisplayLevel, ItemKind, Provider
-from twicc.core.models import AgentLink, Session, SessionItem, SessionType, Share, ToolResultLink
+from twicc.core.models import (
+    AgentInteraction,
+    AgentLink,
+    AgentRunEnd,
+    AgentRunEndSource,
+    Session,
+    SessionItem,
+    SessionType,
+    Share,
+    ToolResultLink,
+)
 from twicc.core.session_queries import TOOL_STATE_ANNOTATIONS
 from twicc.git import is_git_root_related, read_head_branch, resolve_git_from_path
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
@@ -158,6 +168,60 @@ class ToolUseEntry(NamedTuple):
     line_num: int
     tool_name: str
     parsed_json: dict
+
+
+class BatchAgentState(NamedTuple):
+    """Read-only view over the batch loop's dicts, for :meth:`BaseSessionCompute.collect_agent_run_signals`.
+
+    Built once before the loop; the dicts mutate in place, so the view always
+    shows the evidence "built so far" (earlier lines, plus the current line's
+    tool-result link and the agent link created from the current line's
+    result). Hooks must not mutate it: they return :class:`BatchAgentSignals`.
+    """
+    session_id: str
+    root_session_id: str  # session.parent_session_id or session.id
+    session_type: str  # SessionType value
+    tool_use_map: dict[str, ToolUseEntry]
+    all_tool_result_links: dict[tuple[str, int], dict]
+    # Same dicts as ``all_tool_result_links``, per tool_use_id, in line order.
+    results_by_tool_use: dict[str, list[dict]]
+    all_agent_links: dict[tuple[str, str], dict]
+    # tool_use_id -> interaction row dict; the FIRST line wins.
+    all_agent_interactions: dict[str, dict]
+    # (line_num, tool_use_id) -> transcript run-end row dict.
+    all_agent_run_ends: dict[tuple[int, str], dict]
+
+
+class BatchAgentSignals(NamedTuple):
+    """Rows returned by :meth:`BaseSessionCompute.collect_agent_run_signals` for one line.
+
+    Row dicts: an interaction is ``{session_id, tool_use_line_num,
+    event_line_num, tool_use_id, agent_id, kind, opens_run, started_at}``
+    (``started_at`` iso or ``None``); a run end is ``{session_id, line_num,
+    tool_use_id, agent_id, ended_at, status}`` (always ``source=transcript``).
+    Defaults are tuples: a ``NamedTuple`` default is shared by every instance.
+    """
+    interactions: tuple[dict, ...] = ()
+    # (tool_use_id, started_at iso) -> set opens_run=True on a known interaction.
+    opens_run: tuple[tuple[str, str | None], ...] = ()
+    run_ends: tuple[dict, ...] = ()
+
+
+class LiveAgentSignals(NamedTuple):
+    """What :meth:`BaseSessionCompute.apply_agent_run_signals` wrote for one line.
+
+    The rows are already in the DB; these fields drive the broadcast.
+    """
+    # (session_id, tool_use_id): interaction created or its opens_run changed.
+    changed_interactions: tuple[tuple[str, str], ...] = ()
+    # Created with opens_run, or flipped to true.
+    run_interactions: tuple[tuple[str, str], ...] = ()
+    # Stop rows created while a non-error result already exists.
+    stop_records: tuple[tuple[str, str], ...] = ()
+    run_end_ids: tuple[int, ...] = ()
+    affected_agent_ids: tuple[str, ...] = ()
+    # Codex: (agent_id, agent_path) of resumed agents.
+    agents_resumed: tuple[tuple[str, str], ...] = ()
 
 
 class ContentAnalysis(NamedTuple):
@@ -1314,6 +1378,7 @@ class BaseSessionCompute:
         *,
         session_id: str,
         tool_use_map: dict[str, ToolUseEntry],
+        batch_state: BatchAgentState | None = None,
     ) -> str:
         """
         Remap a ``tool_result_id`` before pairing with ``tool_use_map`` (batch).
@@ -1324,9 +1389,50 @@ class BaseSessionCompute:
         — for instance, attach a Codex ``write_stdin`` ``function_call_output``
         to the parent ``exec_command`` instead of the write_stdin itself.
 
+        ``batch_state`` is the loop's :class:`BatchAgentState`; it shows
+        earlier lines only (the current line's result link is written after
+        this call). ``None`` outside the batch loop.
+
         Default: identity (return ``naive_tool_use_id`` unchanged).
         """
         return naive_tool_use_id
+
+    def collect_agent_run_signals(
+        self,
+        session_id: str,
+        item: SessionItem,
+        parsed: dict,
+        batch_state: BatchAgentState,
+    ) -> BatchAgentSignals:
+        """
+        Return the agent-run rows this line creates (batch).
+
+        Called by ``compute_session_metadata`` for every item, after the
+        line's tool-result link and agent link are recorded, so
+        ``batch_state`` shows them. The orchestrator adds the returned rows
+        before the next line. Batch twin of :meth:`apply_agent_run_signals`.
+
+        Default: no rows.
+        """
+        return BatchAgentSignals()
+
+    def apply_agent_run_signals(
+        self,
+        session_id: str,
+        item: SessionItem,
+        parsed: dict,
+    ) -> LiveAgentSignals:
+        """
+        Write the agent-run rows this line creates (live) and describe them.
+
+        Called by ``sync_session_items_from_file`` for every item, after the
+        line's ``create_tool_result_link_live`` and before the agent links
+        created from a ``tool_use`` on the same line. The provider writes
+        its rows immediately, so a later line of the same batch sees them.
+
+        Default: no rows.
+        """
+        return LiveAgentSignals()
 
     def remap_tool_result_id_live(
         self,
@@ -2457,6 +2563,12 @@ class BaseSessionCompute:
         all_item_updates: list[dict] = []
         all_tool_result_links: dict[tuple[str, int], dict] = {}
         all_agent_links: dict[tuple[str, str], dict] = {}
+        # Index over ``all_tool_result_links`` (same dicts), per tool_use_id,
+        # in line order — written in the same statement as each link.
+        results_by_tool_use: dict[str, list[dict]] = {}
+        # Agent-run evidence returned by ``collect_agent_run_signals``.
+        all_agent_interactions: dict[str, dict] = {}
+        all_agent_run_ends: dict[tuple[int, str], dict] = {}
         content_overrides: list[dict] = []
         batch_size = 500
 
@@ -2501,6 +2613,28 @@ class BaseSessionCompute:
                 'agent_id': link.agent_id,
                 'is_background': link.is_background,
                 'started_at': link.started_at.isoformat() if link.started_at else None,
+            }
+
+        def serialize_agent_interaction(row: AgentInteraction) -> dict:
+            return {
+                'session_id': row.session_id,
+                'tool_use_line_num': row.tool_use_line_num,
+                'event_line_num': row.event_line_num,
+                'tool_use_id': row.tool_use_id,
+                'agent_id': row.agent_id,
+                'kind': row.kind,
+                'opens_run': row.opens_run,
+                'started_at': row.started_at.isoformat() if row.started_at else None,
+            }
+
+        def serialize_agent_run_end(row: AgentRunEnd) -> dict:
+            return {
+                'session_id': row.session_id,
+                'line_num': row.line_num,
+                'tool_use_id': row.tool_use_id,
+                'agent_id': row.agent_id,
+                'ended_at': row.ended_at.isoformat() if row.ended_at else None,
+                'status': row.status,
             }
 
         tool_use_map: dict[str, ToolUseEntry] = {}
@@ -2562,6 +2696,34 @@ class BaseSessionCompute:
             key = (link.agent_id, link.tool_use_id)
             original_agent_links[key] = serialize_agent_link(link)
             original_agent_links_ids[key] = link.id
+
+        original_agent_interactions: dict[str, dict] = {}
+        original_agent_interactions_ids: dict[str, int] = {}
+        for row in AgentInteraction.objects.filter(session_id=session_id):
+            original_agent_interactions[row.tool_use_id] = serialize_agent_interaction(row)
+            original_agent_interactions_ids[row.tool_use_id] = row.id
+
+        # Only transcript rows: ``ui`` rows (Stop button) never enter the diff.
+        original_agent_run_ends: dict[tuple[int, str], dict] = {}
+        original_agent_run_ends_ids: dict[tuple[int, str], int] = {}
+        for row in AgentRunEnd.objects.filter(session_id=session_id, source=AgentRunEndSource.TRANSCRIPT):
+            key = (row.line_num, row.tool_use_id)
+            original_agent_run_ends[key] = serialize_agent_run_end(row)
+            original_agent_run_ends_ids[key] = row.id
+
+        # Read-only view for the agent-run hooks; the dicts mutate in place,
+        # so it always shows the evidence built so far.
+        batch_state = BatchAgentState(
+            session_id=session_id,
+            root_session_id=session.parent_session_id or session.id,
+            session_type=session.type,
+            tool_use_map=tool_use_map,
+            all_tool_result_links=all_tool_result_links,
+            results_by_tool_use=results_by_tool_use,
+            all_agent_links=all_agent_links,
+            all_agent_interactions=all_agent_interactions,
+            all_agent_run_ends=all_agent_run_ends,
+        )
 
         # Provider hook: per-session setup (e.g. Codex initialises its
         # exec_command map used by remap_tool_result_id below).
@@ -2697,6 +2859,7 @@ class BaseSessionCompute:
                     tool_result_ref,
                     session_id=session_id,
                     tool_use_map=tool_use_map,
+                    batch_state=batch_state,
                 )
             if tool_result_ref and tool_result_ref in tool_use_map:
                 tu_entry = tool_use_map[tool_result_ref]
@@ -2714,7 +2877,7 @@ class BaseSessionCompute:
                 if error_override is not None:
                     error = error_override
                 new_key = (tool_result_ref, item.line_num)
-                all_tool_result_links[new_key] = serialize_tool_result_link(ToolResultLink(
+                serialized_link = serialize_tool_result_link(ToolResultLink(
                     session_id=session_id,
                     tool_use_line_num=tu_line_num,
                     tool_result_line_num=item.line_num,
@@ -2724,6 +2887,9 @@ class BaseSessionCompute:
                     extra=extra,
                     error=error,
                 ))
+                # Each key is written once, so the index mirrors the dict.
+                all_tool_result_links[new_key] = serialized_link
+                results_by_tool_use.setdefault(tool_result_ref, []).append(serialized_link)
                 # If the matched tool_use spawned an agent, count this result
                 # against the corresponding subagent for stopped detection.
                 if tool_result_ref in task_tool_use_map or any(
@@ -2750,6 +2916,21 @@ class BaseSessionCompute:
                         started_at=started_at,
                     ))
                     del task_tool_use_map[tu_id]
+
+            # Provider hook: agent-run evidence of this line. Runs after the
+            # line's tool-result link and agent link, so ``batch_state``
+            # shows them; its rows are applied before the next line.
+            run_signals = self.collect_agent_run_signals(session_id, item, parsed, batch_state)
+            for row in run_signals.interactions:
+                # First line wins (compaction duplicates), unlike all_agent_links.
+                all_agent_interactions.setdefault(row['tool_use_id'], row)
+            for tu_id, started_at in run_signals.opens_run:
+                stored = all_agent_interactions.get(tu_id)
+                if stored is not None:
+                    stored['opens_run'] = True
+                    stored['started_at'] = started_at
+            for row in run_signals.run_ends:
+                all_agent_run_ends[(row['line_num'], row['tool_use_id'])] = row
 
             # Prefix/suffix for group state machine
             has_prefix, has_suffix = False, False
@@ -2858,6 +3039,34 @@ class BaseSessionCompute:
             pk for key, pk in original_agent_links_ids.items() if key not in all_agent_links
         ]
 
+        # Diff agent interactions (keyed by tool_use_id): create / update / delete
+        agent_interactions_to_create: list[dict] = []
+        agent_interactions_to_update: list[dict] = []
+        for key, serialized in all_agent_interactions.items():
+            original = original_agent_interactions.get(key)
+            if original is None:
+                agent_interactions_to_create.append(serialized)
+            elif serialized != original:
+                serialized['id'] = original_agent_interactions_ids[key]
+                agent_interactions_to_update.append(serialized)
+        agent_interactions_to_delete: list[int] = [
+            pk for key, pk in original_agent_interactions_ids.items() if key not in all_agent_interactions
+        ]
+
+        # Diff transcript run ends (keyed by (line_num, tool_use_id))
+        agent_run_ends_to_create: list[dict] = []
+        agent_run_ends_to_update: list[dict] = []
+        for key, serialized in all_agent_run_ends.items():
+            original = original_agent_run_ends.get(key)
+            if original is None:
+                agent_run_ends_to_create.append(serialized)
+            elif serialized != original:
+                serialized['id'] = original_agent_run_ends_ids[key]
+                agent_run_ends_to_update.append(serialized)
+        agent_run_ends_to_delete: list[int] = [
+            pk for key, pk in original_agent_run_ends_ids.items() if key not in all_agent_run_ends
+        ]
+
         # Determine which agents have stopped
         for tu_id, (result_count, last_ts) in agent_tool_result_counts.items():
             if last_ts is None:
@@ -2933,6 +3142,12 @@ class BaseSessionCompute:
             'agent_links_to_create': agent_links_to_create,
             'agent_links_to_update': agent_links_to_update,
             'agent_links_to_delete': agent_links_to_delete,
+            'agent_interactions_to_create': agent_interactions_to_create,
+            'agent_interactions_to_update': agent_interactions_to_update,
+            'agent_interactions_to_delete': agent_interactions_to_delete,
+            'agent_run_ends_to_create': agent_run_ends_to_create,
+            'agent_run_ends_to_update': agent_run_ends_to_update,
+            'agent_run_ends_to_delete': agent_run_ends_to_delete,
             'session_fields': {
                 'compute_version': self.compute_version,
                 'user_message_count': user_message_count,
@@ -3204,6 +3419,66 @@ class BaseSessionCompute:
         if agent_links_to_delete:
             AgentLink.objects.filter(id__in=agent_links_to_delete).delete()
 
+        # 4b. Sync agent interactions and transcript run ends (diff-based).
+        # ``ignore_conflicts`` + the unique constraints are the in-writer
+        # existence re-check: a row the live path wrote after the compute
+        # snapshot stays (first line wins).
+        def parse_dt(value: str | None) -> datetime | None:
+            return datetime.fromisoformat(value) if value else None
+
+        def build_agent_interaction(d: dict) -> AgentInteraction:
+            return AgentInteraction(
+                id=d.get('id'),
+                session_id=d['session_id'],
+                tool_use_line_num=d['tool_use_line_num'],
+                event_line_num=d['event_line_num'],
+                tool_use_id=d['tool_use_id'],
+                agent_id=d['agent_id'],
+                kind=d['kind'],
+                opens_run=d['opens_run'],
+                started_at=parse_dt(d.get('started_at')),
+            )
+
+        def build_agent_run_end(d: dict) -> AgentRunEnd:
+            return AgentRunEnd(
+                id=d.get('id'),
+                session_id=d['session_id'],
+                line_num=d['line_num'],
+                source=AgentRunEndSource.TRANSCRIPT,
+                tool_use_id=d['tool_use_id'],
+                agent_id=d['agent_id'],
+                ended_at=parse_dt(d.get('ended_at')),
+                status=d.get('status'),
+            )
+
+        if interactions_to_create := msg.get('agent_interactions_to_create'):
+            AgentInteraction.objects.bulk_create(
+                [build_agent_interaction(d) for d in interactions_to_create],
+                ignore_conflicts=True, batch_size=50,
+            )
+        if interactions_to_update := msg.get('agent_interactions_to_update'):
+            AgentInteraction.objects.bulk_update(
+                [build_agent_interaction(d) for d in interactions_to_update],
+                ['tool_use_line_num', 'event_line_num', 'kind', 'agent_id', 'opens_run', 'started_at'],
+                batch_size=50,
+            )
+        if interactions_to_delete := msg.get('agent_interactions_to_delete'):
+            AgentInteraction.objects.filter(id__in=interactions_to_delete).delete()
+
+        if run_ends_to_create := msg.get('agent_run_ends_to_create'):
+            AgentRunEnd.objects.bulk_create(
+                [build_agent_run_end(d) for d in run_ends_to_create],
+                ignore_conflicts=True, batch_size=50,
+            )
+        if run_ends_to_update := msg.get('agent_run_ends_to_update'):
+            AgentRunEnd.objects.bulk_update(
+                [build_agent_run_end(d) for d in run_ends_to_update],
+                ['agent_id', 'ended_at', 'status'],
+                batch_size=50,
+            )
+        if run_ends_to_delete := msg.get('agent_run_ends_to_delete'):
+            AgentRunEnd.objects.filter(id__in=run_ends_to_delete).delete()
+
         # 5. Update session fields (always includes compute_version)
         session_fields = msg.get('session_fields', {})
         if session_fields:
@@ -3358,6 +3633,9 @@ class BaseSessionCompute:
         list[ToolResultUpdate],
         list[AgentStoppedUpdate],
         bool,
+        list[dict],
+        list[dict],
+        list[tuple[str, str]],
     ]:
         """
         Synchronise new lines from ``file_path`` into ``session``.
@@ -3367,7 +3645,11 @@ class BaseSessionCompute:
         timestamps, costs, and returns the broadcast payload tuple
         ``(new_line_nums, modified_line_nums, agent_link_updates,
         workflow_link_updates, tool_result_updates, agent_stopped_updates,
-        found_compact_summary)``.
+        found_compact_summary, agent_interaction_updates,
+        agent_run_state_updates, agents_resumed)``. The last three are
+        appended at the end so the existing positional indexes stay valid:
+        the ``agent_interaction`` and ``agent_run_state`` WS payloads, and
+        the Codex ``(agent_id, agent_path)`` pairs of resumed agents.
 
         ``found_compact_summary`` is ``True`` when this batch ingested at
         least one ``COMPACT_SUMMARY`` line. It is the live, append-only
@@ -3387,7 +3669,7 @@ class BaseSessionCompute:
         ``apply_session_title``).
         """
         if not file_path.exists():
-            return [], [], [], [], [], [], False
+            return [], [], [], [], [], [], False, [], [], []
 
         stat = file_path.stat()
         file_mtime = stat.st_mtime
@@ -3396,7 +3678,7 @@ class BaseSessionCompute:
         # Check file size too: mtime has ~1s resolution, so two writes within the same second
         # share the same mtime. Without the size check, the second write would be silently skipped.
         if session.mtime == file_mtime and session.last_offset >= stat.st_size:
-            return [], [], [], [], [], [], False
+            return [], [], [], [], [], [], False, [], [], []
 
         # Read raw bytes, then decode leniently — see
         # read_session_items_from_file in sync_helpers.py for the full
@@ -3422,7 +3704,7 @@ class BaseSessionCompute:
             # Update mtime even if no new content (file may have been touched)
             session.mtime = file_mtime
             session.save(update_fields=["mtime"])
-            return [], [], [], [], [], [], False
+            return [], [], [], [], [], [], False, [], [], []
 
         lines = [line for line in new_content.split("\n") if line.strip()]
 
@@ -3431,7 +3713,7 @@ class BaseSessionCompute:
 
         if not lines:
             session.save(update_fields=["last_offset", "mtime"])
-            return [], [], [], [], [], [], False
+            return [], [], [], [], [], [], False, [], [], []
 
         # Create SessionItem objects for bulk insert
         items_to_create: list[tuple[SessionItem, dict]] = []
@@ -3487,6 +3769,26 @@ class BaseSessionCompute:
 
         # Track if a compact_summary item was found in this batch
         found_compact_summary = False
+
+        # Agent-run signals written by ``apply_agent_run_signals``, per call.
+        class AgentRunSignalsCollector:
+            def __init__(self) -> None:
+                self.changed_interactions: list[tuple[str, str]] = []
+                self.run_interactions: list[tuple[str, str]] = []
+                self.stop_records: list[tuple[str, str]] = []
+                self.run_end_ids: list[int] = []
+                self.affected_agent_ids: list[str] = []
+                self.agents_resumed: list[tuple[str, str]] = []
+
+            def add(self, signals: LiveAgentSignals) -> None:
+                self.changed_interactions.extend(signals.changed_interactions)
+                self.run_interactions.extend(signals.run_interactions)
+                self.stop_records.extend(signals.stop_records)
+                self.run_end_ids.extend(signals.run_end_ids)
+                self.affected_agent_ids.extend(signals.affected_agent_ids)
+                self.agents_resumed.extend(signals.agents_resumed)
+
+        agent_run_signals = AgentRunSignalsCollector()
 
         # For subagents: track if we need to create the link between the agent
         # and the parent session tool use
@@ -3752,6 +4054,11 @@ class BaseSessionCompute:
                 if wf_update := self.create_workflow_link_from_tool_result(session.id, item, parsed):
                     workflow_link_updates.append(wf_update)
 
+            # Provider hook: agent-run evidence of this line, for every item.
+            # After this line's tool-result link, before the agent links
+            # created from a tool_use on the same line (below).
+            agent_run_signals.add(self.apply_agent_run_signals(session.id, item, parsed))
+
             # For parent sessions: check if this item contains agent-spawning tool_use(s)
             # and try to link them to existing subagents (race condition: subagent file
             # synced before the parent's tool_use line).
@@ -3993,4 +4300,7 @@ class BaseSessionCompute:
             tool_result_updates,
             agent_stopped_updates,
             found_compact_summary,
+            [],  # agent_interaction_updates
+            [],  # agent_run_state_updates
+            agent_run_signals.agents_resumed,
         )
