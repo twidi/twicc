@@ -112,6 +112,13 @@ defineExpose({ focus })
         background: var(--canvas-background);
         background-attachment: fixed;
     }
+    /* Mobile drawer (transformed: `fixed` acts as `scroll`) — see .project-selector-trigger
+       in ProjectView.vue. */
+    @media (width < 640px) {
+        &::part(base) {
+            background: linear-gradient(var(--canvas-drawer-top), var(--canvas-drawer-top)), var(--canvas-color);
+        }
+    }
 }
 
 .session-options-dropdown {

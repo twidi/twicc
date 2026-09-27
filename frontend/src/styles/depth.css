@@ -114,10 +114,10 @@
    separates solid segments with a 1px see-through gap, which shows whatever lies behind
    (the session list scrolling under the sidebar's New session button). No gap; the arrow
    carries the separator instead, a translucent light line on its own color. */
-wa-button-group:has(> wa-button[appearance='accent'])::part(base) {
+:where(wa-button-group:has(> wa-button[appearance='accent']))::part(base) {
     gap: 0;
 }
-wa-button-group > wa-dropdown > wa-button[slot='trigger'][appearance='accent']::part(base) {
+:where(wa-button-group > wa-dropdown > wa-button[slot='trigger'][appearance='accent'])::part(base) {
     border-inline-start: 1px solid oklch(1 0 0 / 0.55);
 }
 

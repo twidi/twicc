@@ -2833,6 +2833,12 @@ function updateSidebarClosedClass(closed) {
        tinted like the sidebar, yet stays opaque when it widens over the peer button. */
     background: var(--canvas-background);
     background-attachment: fixed;
+    /* Mobile drawer: it is transformed, which turns `fixed` into `scroll` (the field would
+       paint the whole canvas, both auras, in its own small box). Near the drawer's top, the
+       drawer's canvas is its color under roughly half of the start aura: paint that. */
+    @media (width < 640px) {
+        background: linear-gradient(var(--canvas-drawer-top), var(--canvas-drawer-top)), var(--canvas-color);
+    }
     &::part(base) {
         justify-content: space-between;
     }
@@ -3705,6 +3711,16 @@ html.wa-dark .usage-lane-time {
 @media (width >= 640px) {
     .project-view-wrapper:has(.sidebar-toggle-checkbox:checked) .sidebar-toggle {
         --sidebar-toggle-shift: var(--panel-gap);
+    }
+    /* Floating over the content, the (outlined, so transparent) toggle needs an opaque fill. */
+    .project-view-wrapper:has(.sidebar-toggle-checkbox:checked) #sidebar-toggle-button::part(base) {
+        background: var(--wa-color-surface-default);
+    }
+}
+/* Mobile, drawer closed: the toggle sticks out of the drawer, over the content. */
+@media (width < 640px) {
+    .project-view-wrapper:has(.sidebar-toggle-checkbox:not(:checked)) #sidebar-toggle-button::part(base) {
+        background: var(--wa-color-surface-default);
     }
 }
 

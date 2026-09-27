@@ -22,6 +22,10 @@
         radial-gradient(var(--canvas-aura-start-size) at -5% -10%, var(--canvas-aura-start), transparent var(--canvas-aura-fade)),
         radial-gradient(var(--canvas-aura-end-size) at var(--canvas-aura-end-at), var(--canvas-aura-end), transparent var(--canvas-aura-fade)),
         var(--canvas-color);
+    /* The canvas near the top of the mobile drawer (about half of the start aura), for fields
+       that must look like the canvas there but cannot use background-attachment: fixed (the
+       drawer is transformed). Laid over --canvas-color. */
+    --canvas-drawer-top: color-mix(in oklab, var(--canvas-aura-start) 50%, transparent);
 
     --panel-gap: var(--wa-space-xs);
     --panel-half-gap: calc(var(--panel-gap) / 2);
@@ -56,6 +60,8 @@
     /* Centered on the corner itself: pushed outside it, most of the aura falls off-screen. */
     --canvas-aura-end-at: 100% 100%;
     --canvas-aura-fade: 80%;
+    /* Wider, slower-fading start aura: near the drawer's top it is close to full strength. */
+    --canvas-drawer-top: color-mix(in oklab, var(--canvas-aura-start) 85%, transparent);
     --panel-shadow:
         0 1px 2px oklch(0 0 0 / 0.4),
         0 6px 10px -6px oklch(0 0 0 / 0.55);
