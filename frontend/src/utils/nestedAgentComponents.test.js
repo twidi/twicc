@@ -55,6 +55,44 @@ test('actual header: a spawn card keeps its provider summary; a control card sho
     assert.ok(template.includes('<template v-if="isAgentCard">'), 'the agent widget shows on every agent card')
 })
 
+test('actual pipeline hookup: the card hands its own predicate to useToolResultFetch', () => {
+    const call = block('} = useToolResultFetch({', '\n})\n')
+    assert.ok(call.length > 0, 'the card calls useToolResultFetch')
+    const predicateLines = call.split('\n').filter(line => /^\s*predicate:/.test(line))
+    assert.deepEqual(predicateLines.map(line => line.trim()), ['predicate: p => resultFetchPredicate(p),'])
+    assert.equal(call.includes('genericCardPredicate'), false, 'the generic predicate is chosen inside resultFetchPredicate only')
+})
+
+test('actual helperOptions: agentInteraction on control cards only, agentSlug by agent id', () => {
+    const code = block('const helperOptions = computed', '// Aggregated payload')
+    const options = ({ isControl, agentId, interaction, links = {}, sessions = {} }) => new Function(
+        'computed', 'props', 'dataStore', 'agentId', 'isControlCard', 'agentInteraction', 'resultData',
+        `${code}; return helperOptions`,
+    )(computed, { sessionId: 'root', toolId: 'call', extra: null }, {
+        getToolState: () => null,
+        getProcessState: () => null,
+        getAgentLinkInfo: id => links[id] || null,
+        getSession: id => sessions[id] || null,
+        getSessionItem: () => null,
+    }, { value: agentId }, { value: isControl }, { value: interaction }, { value: null }).value
+
+    const interaction = { agentId: 'agent', opensRun: true }
+    const control = options({ isControl: true, agentId: 'agent', interaction,
+        links: { agent: { agentId: 'agent', slug: 'Bohr' } } })
+    assert.equal(control.agentInteraction, interaction, 'a control card carries its interaction')
+    assert.equal(control.agentSlug, 'Bohr', 'the slug comes from the link found by agent id')
+
+    // `isControlCard` is false on a spawn card even if its call also carries an interaction.
+    const spawn = options({ isControl: false, agentId: 'agent', interaction,
+        links: { agent: { agentId: 'agent', slug: null } }, sessions: { agent: { slug: 'Curie' } } })
+    assert.equal(spawn.agentInteraction, null, 'a spawn card carries none')
+    assert.equal(spawn.agentSlug, 'Curie', 'no link slug: the agent session slug')
+
+    const none = options({ isControl: false, agentId: undefined, interaction: null })
+    assert.equal(none.agentSlug, null)
+    assert.equal(none.agentInteraction, null)
+})
+
 test('actual provided comment context updates when nested owner links arrive', () => {
     const state = reactive(agentLinkState())
     const props = reactive({ sessionId: 'child', parentSessionId: 'root', projectId: 'p', toolId: 'edit', lineNum: 7 })

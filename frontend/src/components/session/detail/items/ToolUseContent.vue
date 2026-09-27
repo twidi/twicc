@@ -802,7 +802,7 @@ const isToolRunning = computed(() => {
     // is signalled by content (e.g. Codex's ``exec_command`` chain
     // reading ``toolState.extra.is_terminated``) overrides the default
     // count-based check without touching this shell.
-    return toolHelpers.value?.isToolRunning(props.name, props.input, helperOptions.value) ?? false
+    return helperToolRunning.value
 })
 
 // The agent runs now (the backend's run state, cut by its root's cutoff),
