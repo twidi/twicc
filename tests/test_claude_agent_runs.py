@@ -284,6 +284,7 @@ def test_control_calls_reads_every_control_block():
     (resumed_ack("s", AGENT, 1, message=f'Agent "{AGENT}" had no active task; resumed from transcript'), True),
     (resumed_ack("s", AGENT, 1, message=f"Agent {AGENT} was stopped (completed); resumed it"), True),
     (queued_ack("s", AGENT, 1), False),
+    (result("s", "x", 1, tool_use_result={"success": False, "resumedAgentId": ""}), True),
     (failed_send_ack("s", 1), False),
     (result("s", "not json", 1), False),
     (result("s", "<tool_use_error>No such agent</tool_use_error>", 1, is_error=True), False),
@@ -605,6 +606,23 @@ def test_only_the_first_result_decides(tree, mode):
     play(mode, tree, spawned_and_finished(root), (root, [
         send("tool_send", AGENT, 10), queued_ack("tool_send", AGENT, 11), resumed_ack("tool_send", AGENT, 12)]))
     assert not interaction(root, "tool_send").opens_run
+
+
+@pytest.mark.parametrize("form", ["user", "attachment"])
+def test_notification_is_never_a_first_result(tree, mode, form):
+    """A rewritten notification whose payload looks like a resumed result opens no run.
+
+    Without ``<task-id>`` the rewrite sets no ``toolUseResult``, so the JSON
+    text of the rewritten block is what a first-result check would read.
+    """
+    root, _, _ = tree
+    xml = ("<task-notification><tool-use-id>tool_send</tool-use-id>"
+           '<status>completed</status><result>{"success": true, "message": "done"}</result></task-notification>')
+    play(mode, tree, spawned_and_finished(root),
+         (root, [send("tool_send", AGENT, 10), NOTIFICATION_FORMS[form](AGENT, "tool_send", 12, xml=xml)]))
+    assert ToolResultLink.objects.filter(session=root, tool_use_id="tool_send").count() == 1
+    row = interaction(root, "tool_send")
+    assert not row.opens_run and row.started_at == at(10)
 
 
 def test_duplicate_tool_use_line_keeps_the_first(tree, mode):

@@ -111,7 +111,7 @@ def send_message_opens_run(parsed: dict, tool_use_id: str) -> bool:
         data = _tool_result_json(parsed, tool_use_id)
     if data is None:
         return False
-    if data.get("resumedAgentId"):
+    if "resumedAgentId" in data:
         return True
     message = data.get("message")
     return data.get("success") is True and not (
@@ -164,6 +164,15 @@ def _notification_text(parsed: dict) -> str | None:
         content = _message_content(parsed)
         return content if _is_notification_text(content) else None
     return None
+
+
+def carries_task_notification(parsed: dict) -> bool:
+    """True when the line is a ``<task-notification>`` in any form, rewritten or not.
+
+    The ingest rewrite turns a notification into a ``tool_result`` on its
+    call: such a line is never a ``SendMessage`` first result.
+    """
+    return _notification_text(parsed) is not None
 
 
 def run_end_notification(parsed: dict) -> RunEndNotification | None:

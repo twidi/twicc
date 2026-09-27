@@ -56,6 +56,7 @@ from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalE
 from twicc.providers.plan_docs import DocEditEvent, extract_shell_write_targets, is_plan_doc_path
 from .agent.original_file_cache import pop_original_file
 from .agent_runs import (
+    carries_task_notification,
     control_calls,
     is_plain_interrupt_marker,
     run_end_notification,
@@ -2052,7 +2053,13 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
     # ------------------------------------------------------------------
 
     def _resumed_send_message_result(self, session_id: str, parsed: dict) -> str | None:
-        """The call id of this line's result when it has the resumed ``SendMessage`` shape."""
+        """The call id of this line's result when it has the resumed ``SendMessage`` shape.
+
+        A notification rewritten into a ``tool_result`` on the call is an end,
+        never the first result, whatever its payload text.
+        """
+        if carries_task_notification(parsed):
+            return None
         info = self.extract_tool_result_info(parsed, session_id=session_id)
         if info is None or not send_message_opens_run(parsed, info.tool_use_id):
             return None
