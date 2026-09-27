@@ -13,6 +13,7 @@ import re
 
 import orjson
 import logging
+from collections.abc import Callable
 from datetime import datetime, UTC
 from pathlib import Path
 from typing import ClassVar, NamedTuple
@@ -21,7 +22,16 @@ from django.db.models import Q
 
 from twicc.context_injection import GOAL_CLEAR_ARGS, INSTRUCTION_BLOCK_MARKER
 from twicc.core.enums import ItemKind, Provider
-from twicc.core.models import Session, SessionItem, SessionType
+from twicc.core.models import (
+    AgentInteraction,
+    AgentInteractionKind,
+    AgentRunEnd,
+    AgentRunEndSource,
+    Session,
+    SessionItem,
+    SessionType,
+    ToolResultLink,
+)
 from twicc.paths import get_artifacts_dir
 from twicc.pricing import calculate_line_context_usage
 from twicc.provider_homes import claude_plans_dir, claude_projects_dir
@@ -31,8 +41,11 @@ from twicc.providers.compute_base import (
     _EMPTY_TASK_TOOL_USES,
     _EMPTY_TOOL_USE_ENTRIES,
     BaseSessionCompute,
+    BatchAgentSignals,
+    BatchAgentState,
     ContentAnalysis,
     INSERT_SCREENSHOT_TAG_RE,
+    LiveAgentSignals,
     ToolResultInfo,
     is_base64_image,
     parse_timestamp_to_datetime,
@@ -42,6 +55,12 @@ from twicc.providers.compute_base import (
 from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalEvent
 from twicc.providers.plan_docs import DocEditEvent, extract_shell_write_targets, is_plan_doc_path
 from .agent.original_file_cache import pop_original_file
+from .agent_runs import (
+    control_calls,
+    is_plain_interrupt_marker,
+    run_end_notification,
+    send_message_opens_run,
+)
 from .pricing import extract_model_info, to_token_usage
 
 
@@ -2026,6 +2045,179 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
 
     def extract_queue_completion(self, parsed_json: dict):
         return parse_queue_completion(parsed_json)
+
+    # ------------------------------------------------------------------
+    # Agent-run signals (design §5.1, §5.2, §6.1): one decision, two
+    # evidence sources — the batch dicts or the rows already in the DB.
+    # ------------------------------------------------------------------
+
+    def _resumed_send_message_result(self, session_id: str, parsed: dict) -> str | None:
+        """The call id of this line's result when it has the resumed ``SendMessage`` shape."""
+        info = self.extract_tool_result_info(parsed, session_id=session_id)
+        if info is None or not send_message_opens_run(parsed, info.tool_use_id):
+            return None
+        return info.tool_use_id
+
+    @staticmethod
+    def _run_end_fields(
+        session_id: str, parsed: dict, is_subagent: Callable[[], bool],
+    ) -> tuple[str, str, str | None] | None:
+        """``(tool_use_id, agent_id, status)`` of the run end this line carries, or ``None``.
+
+        A ``<task-notification>`` in any form and any session type, or the
+        plain interrupt marker in a subagent's own file (agent-level row).
+        ``is_subagent`` is only called for a marker line.
+        """
+        note = run_end_notification(parsed)
+        if note is not None:
+            return note.tool_use_id, note.task_id, note.status
+        if is_plain_interrupt_marker(parsed) and is_subagent():
+            return '', session_id, 'interrupted'
+        return None
+
+    def collect_agent_run_signals(
+        self,
+        session_id: str,
+        item: SessionItem,
+        parsed: dict,
+        batch_state: BatchAgentState,
+    ) -> BatchAgentSignals:
+        at = item.timestamp.isoformat() if item.timestamp else None
+
+        # Control calls: one row per call whose target is neither the owner
+        # nor its root (§5.1 write-time rule). The orchestrator keeps the
+        # first line of a duplicated call.
+        excluded = (session_id, batch_state.root_session_id)
+        interactions = tuple(
+            {
+                'session_id': session_id,
+                'tool_use_line_num': item.line_num,
+                'event_line_num': item.line_num,
+                'tool_use_id': call.tool_use_id,
+                'agent_id': call.target,
+                'kind': call.kind,
+                'opens_run': False,
+                'started_at': at,
+            }
+            for call in control_calls(parsed)
+            if call.target not in excluded
+        )
+
+        # First result of a SendMessage of this session: this line holds a
+        # result row and the call's rows share one ``tool_result_at`` (a
+        # compaction copy re-decides the same value). A resume starts at its
+        # ack, not at the call.
+        opens_run: tuple[tuple[str, str | None], ...] = ()
+        tool_use_id = self._resumed_send_message_result(session_id, parsed)
+        if tool_use_id is not None:
+            stored = batch_state.all_agent_interactions.get(tool_use_id)
+            results = batch_state.results_by_tool_use.get(tool_use_id, ())
+            if (
+                stored is not None
+                and stored['kind'] == AgentInteractionKind.MESSAGE
+                and not stored['opens_run']
+                and (tool_use_id, item.line_num) in batch_state.all_tool_result_links
+                and len({result['tool_result_at'] for result in results}) == 1
+            ):
+                opens_run = ((tool_use_id, at),)
+
+        run_ends: tuple[dict, ...] = ()
+        fields = self._run_end_fields(
+            session_id, parsed, lambda: batch_state.session_type == SessionType.SUBAGENT,
+        )
+        if fields is not None:
+            end_tool_use_id, agent_id, status = fields
+            run_ends = ({
+                'session_id': session_id,
+                'line_num': item.line_num,
+                'tool_use_id': end_tool_use_id,
+                'agent_id': agent_id,
+                'ended_at': at,
+                'status': status,
+            },)
+
+        return BatchAgentSignals(interactions=interactions, opens_run=opens_run, run_ends=run_ends)
+
+    def apply_agent_run_signals(
+        self,
+        session_id: str,
+        item: SessionItem,
+        parsed: dict,
+    ) -> LiveAgentSignals:
+        # ``item.session`` is the synced session the live loop built the item
+        # with (no query); it gives the root id and the session type.
+        changed: list[tuple[str, str]] = []
+        run_interactions: list[tuple[str, str]] = []
+        run_end_ids: list[int] = []
+        affected: list[str] = []
+
+        calls = control_calls(parsed)
+        if calls:
+            session = item.session
+            excluded = (session_id, session.parent_session_id or session_id)
+            for call in calls:
+                if call.target in excluded:
+                    continue
+                # An existing row wins: the first line of a duplicated call.
+                _, created = AgentInteraction.objects.get_or_create(
+                    session_id=session_id,
+                    tool_use_id=call.tool_use_id,
+                    defaults={
+                        'tool_use_line_num': item.line_num,
+                        'event_line_num': item.line_num,
+                        'agent_id': call.target,
+                        'kind': call.kind,
+                        'opens_run': False,
+                        'started_at': item.timestamp,
+                    },
+                )
+                if created:
+                    changed.append((session_id, call.tool_use_id))
+                    affected.append(call.target)
+
+        # Same first-result decision as the batch hook, on the DB rows (this
+        # line's ToolResultLink is already written).
+        tool_use_id = self._resumed_send_message_result(session_id, parsed)
+        if tool_use_id is not None:
+            row = AgentInteraction.objects.filter(
+                session_id=session_id, tool_use_id=tool_use_id,
+                kind=AgentInteractionKind.MESSAGE, opens_run=False,
+            ).first()
+            if row is not None:
+                results = list(ToolResultLink.objects.filter(
+                    session_id=session_id, tool_use_id=tool_use_id,
+                ).values_list('tool_result_line_num', 'tool_result_at'))
+                own = [result_at for line_num, result_at in results if line_num == item.line_num]
+                if own and len({result_at for _, result_at in results}) == 1:
+                    row.opens_run = True
+                    row.started_at = own[0]
+                    row.save(update_fields=['opens_run', 'started_at'])
+                    changed.append((session_id, tool_use_id))
+                    run_interactions.append((session_id, tool_use_id))
+                    affected.append(row.agent_id)
+
+        fields = self._run_end_fields(
+            session_id, parsed, lambda: item.session.type == SessionType.SUBAGENT,
+        )
+        if fields is not None:
+            end_tool_use_id, agent_id, status = fields
+            end, created = AgentRunEnd.objects.get_or_create(
+                session_id=session_id,
+                line_num=item.line_num,
+                tool_use_id=end_tool_use_id,
+                source=AgentRunEndSource.TRANSCRIPT,
+                defaults={'agent_id': agent_id, 'ended_at': item.timestamp, 'status': status},
+            )
+            if created:
+                run_end_ids.append(end.id)
+                affected.append(agent_id)
+
+        return LiveAgentSignals(
+            changed_interactions=tuple(changed),
+            run_interactions=tuple(run_interactions),
+            run_end_ids=tuple(run_end_ids),
+            affected_agent_ids=tuple(affected),
+        )
 
     def get_subagent_spawn_meta(self, session: Session):
         from ..compute_base import SpawnMetaInfo
