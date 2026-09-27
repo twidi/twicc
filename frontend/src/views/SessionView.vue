@@ -39,6 +39,7 @@ import AppTooltip from '../components/ui/AppTooltip.vue'
 import TabBar from '../components/ui/TabBar.vue'
 import ProcessIndicator from '../components/ui/ProcessIndicator.vue'
 import CodeCommentsIndicator from '../components/ui/CodeCommentsIndicator.vue'
+import GitChangeStats from '../components/git/GitChangeStats.vue'
 import { useCodeCommentsStore } from '../stores/codeComments'
 import { useFramePoolStore } from '../stores/framePool'
 import {
@@ -506,6 +507,12 @@ const filesCommentsCount = computed(() =>
 const gitCommentsCount = computed(() =>
     codeCommentsStore.countBySource(projectId.value, sessionId.value, 'git')
 )
+// Uncommitted-changes counts of the git root selected in the Git tab, reported by GitPanel
+// (which keeps them fresh even while hidden) and shown next to the tab's label.
+const gitIndexStatus = ref(null)
+function toolTabChangeStats(tabId) {
+    return tabId === 'git' ? gitIndexStatus.value : null
+}
 const chatCommentsCount = computed(() =>
     codeCommentsStore.getCommentsBySession(projectId.value, sessionId.value)
         .filter(c => c.source === 'tool' && !c.subagentSessionId).length
@@ -2260,6 +2267,7 @@ onBeforeUnmount(() => {
             ref="sessionLayoutRef"
             :layout="layout"
             :tab-href="sessionTabHref"
+            :tab-change-stats="toolTabChangeStats"
             :register-target="registerLayoutTarget"
             :unregister-target="unregisterLayoutTarget"
             @select-tab="onLayoutSelectTab"
@@ -2339,6 +2347,7 @@ onBeforeUnmount(() => {
                 <SessionTabLink :href="sessionTabHref(tab.id)">
                     <wa-icon :name="tab.icon"></wa-icon>
                     {{ tab.label }}
+                    <GitChangeStats :stats="toolTabChangeStats(tab.id)" />
                     <CodeCommentsIndicator
                         v-if="toolTabCommentsCount(tab.id) !== null"
                         :count="toolTabCommentsCount(tab.id)"
@@ -2503,9 +2512,11 @@ onBeforeUnmount(() => {
                         :route-file-path="activeTabId === 'git' ? gitRouteFilePath : undefined"
                         :route-owner="ownsRoute('git')"
                         :active="isActive && isToolTabShown('git')"
+                        :session-active="isActive"
                         :focus-request="panelFocusRequests.git"
                         :is-draft="session?.draft === true"
                         @navigate="onGitNavigate"
+                        @index-status="gitIndexStatus = $event"
                     />
                 </div>
             </Teleport>

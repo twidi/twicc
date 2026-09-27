@@ -24,7 +24,7 @@ import { useSplitDividerDragFlag } from '../../composables/useSplitDividerDragFl
 import { PROCESS_STATE } from '../../constants'
 import { deriveGitRoots, getWorktreeParent } from '../../utils/projectRoots'
 
-const emit = defineEmits(['navigate'])
+const emit = defineEmits(['navigate', 'index-status'])
 
 const props = defineProps({
     projectId: {
@@ -48,6 +48,13 @@ const props = defineProps({
         default: '',
     },
     active: {
+        type: Boolean,
+        default: false,
+    },
+    // Whether the owning session is the displayed one (not kept alive in the background). Gates
+    // the light refresh of the uncommitted-changes counts shown in the Git tab's label, which
+    // runs while this pane itself is hidden.
+    sessionActive: {
         type: Boolean,
         default: false,
     },
@@ -306,8 +313,9 @@ const otherBranches = computed(() =>
  */
 const indexFilesData = ref(null)
 
-/** Counts from index — passed to GitLog's indexStatus prop. */
+/** Counts from index — passed to GitLog's indexStatus prop, and emitted for the Git tab's label. */
 const indexStatus = computed(() => indexFilesData.value?.stats ?? null)
+watch(indexStatus, (stats) => emit('index-status', stats), { immediate: true })
 
 // ---------------------------------------------------------------------------
 // Git log filter
@@ -664,7 +672,25 @@ watch(displayTree, (tree) => {
 })
 
 /**
- * Fetch index files from the dedicated endpoint.
+ * Fetch index files from the dedicated endpoint and store them in indexFilesData.
+ * Returns whether the stored data changed. Throws on network errors.
+ */
+async function fetchIndexFiles() {
+    const url = appendGitDir(`${apiPrefix.value}/git-index-files/`)
+    const res = await apiFetch(url)
+    if (!res.ok) return false
+    const newData = (await res.json()) || null
+    // The selected root may have changed while the request was in flight.
+    if (url !== appendGitDir(`${apiPrefix.value}/git-index-files/`)) return false
+    // Only update the ref if the data actually changed — avoids
+    // unnecessary re-renders of the file tree when nothing changed.
+    if (JSON.stringify(newData) === JSON.stringify(indexFilesData.value)) return false
+    indexFilesData.value = newData
+    return true
+}
+
+/**
+ * Refresh index files (tree + stats) and the open file's diff.
  * Lightweight alternative to re-fetching the entire git log.
  */
 async function refreshIndexFiles({ silent = false } = {}) {
@@ -677,18 +703,7 @@ async function refreshIndexFiles({ silent = false } = {}) {
     if (isInitialLoad) commitFilesLoading.value = true
     let treeChanged = false
     try {
-        const url = appendGitDir(`${apiPrefix.value}/git-index-files/`)
-        const res = await apiFetch(url)
-        if (res.ok) {
-            const data = await res.json()
-            const newData = data || null
-            // Only update the ref if the data actually changed — avoids
-            // unnecessary re-renders of the file tree when nothing changed.
-            if (JSON.stringify(newData) !== JSON.stringify(indexFilesData.value)) {
-                indexFilesData.value = newData
-                treeChanged = true
-            }
-        }
+        treeChanged = await fetchIndexFiles()
     } catch {
         // Silently ignore — index data just stays stale
     } finally {
@@ -1161,7 +1176,12 @@ watch(
 
 watch(effectiveGitDirectory, (newDir, oldDir) => {
     if (!newDir || newDir === oldDir) return
-    if (!started.value) return
+    if (!started.value) {
+        // Never activated: only the tab label's counts exist, reload them for the new root.
+        indexFilesData.value = null
+        refreshLabelStats()
+        return
+    }
 
     // Full reset of all git state
     entries.value = []
@@ -1289,7 +1309,7 @@ function catchUpRefresh() {
  * never overlap. One-shot catch-up refreshes (tab refocus, assistant-turn end)
  * are handled by catchUpRefresh, not the loop.
  */
-function createPollLoop({ intervalMs, run }) {
+function createPollLoop({ intervalMs, run, isActive = pollActive }) {
     let timer = null
     let inFlight = false
 
@@ -1302,13 +1322,13 @@ function createPollLoop({ intervalMs, run }) {
 
     function arm() {
         cancel()
-        if (!pollActive() || inFlight) return
+        if (!isActive() || inFlight) return
         timer = setTimeout(tick, intervalMs)
     }
 
     async function tick() {
         timer = null
-        if (!pollActive()) return
+        if (!isActive()) return
         inFlight = true
         try {
             await run()
@@ -1330,10 +1350,56 @@ const gitLogPoll = createPollLoop({
     run: () => refreshGitLog({ silent: true }),
 })
 
+// ---------------------------------------------------------------------------
+// Uncommitted-changes counts for the Git tab's label
+// ---------------------------------------------------------------------------
+// The session view shows indexStatus next to the Git tab's label, also while this
+// pane is hidden (another tab active, dock minimized) or was never opened. The
+// pane's own loading is lazy and its polls only run while it is visible, so the
+// label gets a lighter refresh of its own — the index only (git-index-files), never
+// the diff or the commit list: once when the session is displayed, when the
+// browser tab comes back, when an assistant working on the project ends its turn,
+// and every 30s while one works. It stands down whenever the pane's own 5s index
+// poll covers it, and never runs for a session kept alive in the background.
+
+/** True when the pane's own index refresh does not already keep the counts current. */
+const labelStatsUncovered = computed(() => !(props.active && isViewingIndex.value))
+
+function labelStatsRefreshAllowed() {
+    return props.sessionActive && !document.hidden && !routeRootIssue.value && !!effectiveGitDirectory.value
+}
+
+/** One-shot silent refresh of the label's counts. */
+function refreshLabelStats() {
+    if (!labelStatsRefreshAllowed()) return
+    fetchIndexFiles().catch(() => {
+        // Silently ignore — the label just keeps its previous counts
+    })
+}
+
+const labelStatsPoll = createPollLoop({
+    intervalMs: 30000,
+    run: () => fetchIndexFiles().catch(() => {}),
+    isActive: () => labelStatsRefreshAllowed() && labelStatsUncovered.value && hasActiveAssistant.value,
+})
+
+watch(
+    () => [props.sessionActive, labelStatsUncovered.value, hasActiveAssistant.value, !!routeRootIssue.value],
+    () => labelStatsPoll.arm(),
+    { immediate: true },
+)
+
+// Displaying the session: load or catch up the label's counts, unless the pane
+// is shown too — its activation watch above already refreshes the index then.
+watch(() => props.sessionActive, (sessionActive) => {
+    if (sessionActive && !props.active) refreshLabelStats()
+}, { immediate: true })
+
 function onPollVisibilityChange() {
     if (document.hidden) {
         indexPoll.cancel()
         gitLogPoll.cancel()
+        labelStatsPoll.cancel()
         return
     }
     // Returning to the tab: catch up once on whatever changed while it was hidden
@@ -1341,14 +1407,18 @@ function onPollVisibilityChange() {
     // one is running now — a single fetch on a deliberate return, not polling.
     // Then resume the recurring loops only if still warranted.
     catchUpRefresh()
+    if (labelStatsUncovered.value) refreshLabelStats()
     indexPoll.arm()
     gitLogPoll.arm()
+    labelStatsPoll.arm()
 }
 
 // When the working assistant stops, the recurring loop stops too — do one last
 // catch-up so its final commit / edits appear without waiting for the next turn.
 watch(hasActiveAssistant, (now, was) => {
-    if (was && !now) catchUpRefresh()
+    if (!was || now) return
+    catchUpRefresh()
+    if (labelStatsUncovered.value) refreshLabelStats()
 })
 
 document.addEventListener('visibilitychange', onPollVisibilityChange)
@@ -1367,6 +1437,7 @@ watch(shouldPoll, () => {
 onUnmounted(() => {
     indexPoll.cancel()
     gitLogPoll.cancel()
+    labelStatsPoll.cancel()
     document.removeEventListener('visibilitychange', onPollVisibilityChange)
     clearTransientFileNotice()
 })
