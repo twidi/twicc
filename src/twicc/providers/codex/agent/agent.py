@@ -22,10 +22,11 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Collection
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NamedTuple
 
 from openai_codex import (
     AsyncTurnHandle,
@@ -53,6 +54,14 @@ import psutil
 from asgiref.sync import sync_to_async
 
 from twicc.agent import AgentState, BaseAgent, PendingRequest, SendDeliveryError, StateChangeCallback
+from twicc.agent.shell_notice import (
+    ShellInfo,
+    ShellLookup,
+    ShellNoticeState,
+    ShellOwner,
+    merge_resolution,
+    needs_lookup,
+)
 from twicc.agent.states import build_background_work
 from twicc.context_injection import apply_pending_context
 from twicc.core.enums import Provider
@@ -111,6 +120,14 @@ _AUTO_REVIEW_RETRY_PROMPT = "Retry the exact action I just approved."
 # prompt — the exact text the official Codex TUI submits for "Yes, implement
 # this plan" (codex-rs/tui/src/chatwidget/plan_implementation.rs).
 _PLAN_IMPLEMENTATION_MESSAGE = "Implement the plan."
+
+
+class _TrackedShell(NamedTuple):
+    """One live unified-exec process (spec §5.4)."""
+
+    started_at: float
+    command: str | None
+
 
 _GUARDIAN_ACTION_TYPES_TO_CORE = {
     "command": "command",
@@ -537,6 +554,7 @@ class CodexAgent(BaseAgent):
         #   ``_run_turn`` keeps ASSISTANT_TURN instead of settling idle —
         #   the Codex mirror of Claude Code's background-agents hold.
         self._live_subagents: dict[str, str] = {}
+        self._init_codex_shell_notice_state()
         # Serializes the three changes to ``_live_subagents`` that read the
         # run state: the resume relay, the stop relay and the prune. The
         # relays are fire-and-forget tasks and may run out of order; each
@@ -548,11 +566,12 @@ class CodexAgent(BaseAgent):
         # (strong references, so a pending retry is never collected).
         self._subagent_stop_retry_tasks: set[asyncio.Task[None]] = set()
         # Unified-exec processes still running, ``(thread_id, process_id) ->
-        # start time`` (epoch seconds). Codex runs every shell command as
-        # a process the model may leave behind — its ``exec_command`` call
-        # returns after a short yield, and the process keeps running, across
-        # turn ends too. So this counts every process in flight, including a
-        # command the agent is still polling within its turn. Sources:
+        # _TrackedShell`` (start time in epoch seconds, and the command).
+        # Codex runs every shell command as a process the model may leave
+        # behind — its ``exec_command`` call returns after a short yield, and
+        # the process keeps running, across turn ends too. So this counts
+        # every process in flight, including a command the agent is still
+        # polling within its turn. Sources:
         #
         # - our own thread: the live ``commandExecution`` items
         #   (``item/started`` adds, ``item/completed`` removes);
@@ -571,7 +590,7 @@ class CodexAgent(BaseAgent):
         # check). Never holds
         # ASSISTANT_TURN; reported as background work and blocks the idle
         # auto-stop.
-        self._live_shells: dict[tuple[str, str], float] = {}
+        self._live_shells: dict[tuple[str, str], _TrackedShell] = {}
         # Start of the first shell this agent ever tracked: app-server
         # children older than that (MCP servers) are never a command's
         # process (see :func:`command_processes_may_run`).
@@ -689,6 +708,7 @@ class CodexAgent(BaseAgent):
         live by the time we get here; the agent comes up idle and runs the
         command instead of scheduling a turn. See :meth:`run_hardcoded_command`.
         """
+        self._note_external_send()
         self._state_change_callback = on_state_change
         # Whether this run is a (cold) resume of an existing thread rather than a
         # brand-new session. Read by ``CodexAgentManager._on_state_change`` to
@@ -756,6 +776,9 @@ class CodexAgent(BaseAgent):
           a silent tool execution).
         - ``DEAD``: refuse.
 
+        ``shell_notice=True`` marks TwiCC's own background shell notice: it
+        opens a turn like any send, but is not an external send (spec §3.2).
+
         ``turn/steer`` carries only the input — model / effort / sandbox /
         approval overrides are NOT applied to the active turn. Settings
         changed during ``ASSISTANT_TURN`` are refreshed on the agent by the
@@ -763,6 +786,10 @@ class CodexAgent(BaseAgent):
         """
         if self.state == AgentState.DEAD:
             raise SendDeliveryError("Cannot send message: agent is dead", code="agent_dead")
+
+        if not kwargs.get("shell_notice"):
+            self._note_external_send()
+        self._note_main_turn_opening()
 
         if self.state == AgentState.ASSISTANT_TURN:
             monitor = getattr(self, "_goal_monitor", None)
@@ -833,6 +860,7 @@ class CodexAgent(BaseAgent):
         await self._notify_state_change()
 
         self._schedule_turn(text, images)
+        return True
 
     def _schedule_turn(self, text: str, images: list[dict] | None) -> None:
         """Spawn the background task that drives one turn end-to-end."""
@@ -905,6 +933,7 @@ class CodexAgent(BaseAgent):
         clean shutdown when ``kill_reason`` is already set (i.e. the manager
         killed us on purpose) — no error toast in that case.
         """
+        self._note_main_turn_opening()
         # A real TwiCC-driven turn supersedes any parked ``/goal`` continuation
         # or subagent hold: from here ``_run_turn`` owns the state, so drop the
         # flags (the watcher signals must not flip us out of this turn). The
@@ -1083,6 +1112,7 @@ class CodexAgent(BaseAgent):
         ``KNOWN_COMMANDS``, so the trailing ``else`` is a defensive guard
         against parser/dispatch drift, not a user-reachable path.
         """
+        self._note_external_send()
         if command.name == "compact":
             await self.compact()
         elif command.name == "goal":
@@ -1093,6 +1123,14 @@ class CodexAgent(BaseAgent):
             raise RuntimeError(
                 f"No handler for hardcoded command {command.name!r}",
             )
+
+    def _init_codex_shell_notice_state(self) -> None:
+        """Codex maps of the background shell notice (spec §5.4)."""
+        self._subagent_paths: dict[str, str] = {}
+        self._subagent_run_ended_at: dict[str, float] = {}
+
+    def _note_subagent_run_end(self, thread_id: str) -> None:
+        self._subagent_run_ended_at[thread_id] = time.time()
 
     def _note_sub_agent_activity(self, inner: Any) -> None:
         """Update the live-subagent set from one ``subAgentActivity`` item.
@@ -1117,9 +1155,11 @@ class CodexAgent(BaseAgent):
         ):
             agent_path = getattr(inner, "agent_path", None)
             self._live_subagents[thread_id] = agent_path if isinstance(agent_path, str) else ""
+            self._subagent_paths[thread_id] = self._live_subagents[thread_id]
             self._schedule_background_work_refresh()
         elif kind in (_SUB_AGENT_INTERRUPTED_KIND, _SUB_AGENT_COMPLETED_KIND):
             if self._live_subagents.pop(thread_id, None) is not None:
+                self._note_subagent_run_end(thread_id)
                 self._schedule_background_work_refresh()
 
     def _note_command_execution(self, method: str, payload: Any) -> None:
@@ -1146,16 +1186,18 @@ class CodexAgent(BaseAgent):
         if method == "item/started":
             started_at_ms = getattr(payload, "started_at_ms", None)
             started_at = started_at_ms / 1000 if isinstance(started_at_ms, (int, float)) else time.time()
-            self._track_shell(key, started_at)
+            command = getattr(inner, "command", None)
+            self._track_shell(key, started_at, command if isinstance(command, str) else None)
             self._schedule_background_work_refresh()
         elif self._forget_shell(key):
             self._schedule_background_work_refresh()
 
     def _forget_shell(self, key: tuple[str, str]) -> bool:
+        self._drop_shell_notice_key(f"{key[0]}:{key[1]}")
         return self._live_shells.pop(key, None) is not None
 
-    def _track_shell(self, key: tuple[str, str], started_at: float) -> None:
-        self._live_shells[key] = started_at
+    def _track_shell(self, key: tuple[str, str], started_at: float, command: str | None = None) -> None:
+        self._live_shells[key] = _TrackedShell(started_at, command)
         if self._first_shell_started_at is None or started_at < self._first_shell_started_at:
             self._first_shell_started_at = started_at
 
@@ -1230,7 +1272,7 @@ class CodexAgent(BaseAgent):
             return None
         return pid, self._first_shell_started_at - _SHELL_PROBE_MARGIN_SECONDS
 
-    def drop_gone_shells(self, probed_at: float) -> bool:
+    def drop_gone_shells(self, probed_at: float, keys: Collection[tuple[str, str]] | None = None) -> bool:
         """Drop the shells a probe at ``probed_at`` proved gone; on the loop only.
 
         The safety net for a process killed without an end event (an
@@ -1239,10 +1281,15 @@ class CodexAgent(BaseAgent):
         still run. A shell started less than
         ``_SHELL_RECONCILE_MIN_AGE_SECONDS`` before the probe is kept (its
         process may not be spawned yet), and so is one tracked after it.
+        ``keys`` is the snapshot of the tracked keys taken before the probe
+        (spec §5.4): a shell tracked while the probe ran is never dropped.
         Returns whether anything was dropped; the caller publishes.
         """
         cutoff = probed_at - _SHELL_RECONCILE_MIN_AGE_SECONDS
-        dropped = [key for key, started_at in list(self._live_shells.items()) if started_at <= cutoff]
+        dropped = [
+            key for key, tracked in list(self._live_shells.items())
+            if tracked.started_at <= cutoff and (keys is None or key in keys)
+        ]
         for key in dropped:
             self._forget_shell(key)
         if dropped:
@@ -1251,6 +1298,62 @@ class CodexAgent(BaseAgent):
                 self.session_id, len(dropped), ", ".join(f"{t}:{p}" for t, p in dropped),
             )
         return bool(dropped)
+
+    def live_shell_keys(self) -> set[tuple[str, str]]:
+        return set(self._live_shells)
+
+    def _shell_notice_live_keys(self) -> set[str]:
+        return {f"{thread_id}:{process_id}" for thread_id, process_id in self._live_shells}
+
+    def _shell_notice_idle(self) -> bool:
+        """Spec §3.1, Codex predicate."""
+        return (
+            (self.state == AgentState.USER_TURN or self.in_subagent_hold())
+            and not self.in_goal_continuation()
+            and not self._manual_compaction
+            and not self.pending_requests
+        )
+
+    def shell_notice_state(self) -> ShellNoticeState | None:
+        if self.state == AgentState.DEAD or getattr(self, "ephemeral", False):
+            return None
+        now = time.time()
+        shells: list[ShellInfo] = []
+        for (thread_id, process_id), tracked in self._live_shells.items():
+            key = f"{thread_id}:{process_id}"
+            if thread_id == self.session_id:
+                owner, owner_ref, running, ended = ShellOwner.MAIN, None, False, None
+            elif thread_id in self._subagent_paths:
+                owner = ShellOwner.SUBAGENT
+                owner_ref = self._subagent_paths[thread_id] or thread_id
+                running = thread_id in self._live_subagents
+                ended = self._subagent_run_ended_at.get(thread_id)
+            else:
+                owner, owner_ref, running, ended = ShellOwner.UNRESOLVED, None, False, None
+            raw = ShellInfo(
+                key=key, shell_id=process_id, tool_use_id=None, owner=owner, owner_ref=owner_ref,
+                owner_label=None, owner_spawner_ref=None, owner_run_ended_at=ended, owner_running=running,
+                description=None, command=tracked.command, output_path=None, started_at=tracked.started_at,
+            )
+            merged = merge_resolution(raw, self._shell_notice_resolutions.get(key), now=now, claude_live=None)
+            if merged is not None:
+                shells.append(merged)
+        return ShellNoticeState(
+            idle=self._shell_notice_idle(),
+            shells=shells,
+            any_subagent_running=bool(self._live_subagents),
+            last_subagent_run_end=max(self._subagent_run_ended_at.values(), default=0.0),
+        )
+
+    def shell_notice_lookups(self, keys: Collection[str], now: float) -> list[ShellLookup]:
+        lookups = []
+        for thread_id, process_id in self._live_shells:
+            key = f"{thread_id}:{process_id}"
+            if key not in keys or thread_id == self.session_id or thread_id in self._subagent_paths:
+                continue
+            if needs_lookup(self._shell_notice_resolutions.get(key), codex=True, now=now):
+                lookups.append(ShellLookup(key=key, tool_use_id=None, owner_id=thread_id, codex=True))
+        return lookups
 
     def current_background_work(self) -> dict | None:
         return build_background_work(
@@ -1352,7 +1455,8 @@ class CodexAgent(BaseAgent):
             if getattr(self, "ephemeral", False):
                 stopped = await self._ephemeral_finished_subagents()
                 for child_id in stopped:
-                    self._live_subagents.pop(child_id, None)
+                    if self._live_subagents.pop(child_id, None) is not None:
+                        self._note_subagent_run_end(child_id)
                 return
             try:
                 stopped = await sync_to_async(_stopped_subagent_ids)(self.session_id, list(self._live_subagents))
@@ -1363,7 +1467,8 @@ class CodexAgent(BaseAgent):
                 )
                 return
             for session_id in stopped:
-                self._live_subagents.pop(session_id, None)
+                if self._live_subagents.pop(session_id, None) is not None:
+                    self._note_subagent_run_end(session_id)
             if stopped:
                 self._schedule_background_work_refresh()
 
@@ -1479,6 +1584,7 @@ class CodexAgent(BaseAgent):
             changed = False
             for agent_id in stopped:
                 if self._live_subagents.pop(agent_id, None) is not None:
+                    self._note_subagent_run_end(agent_id)
                     changed = True
             if not changed or self.state == AgentState.DEAD:
                 return
@@ -1557,6 +1663,7 @@ class CodexAgent(BaseAgent):
                 return
             for agent_id in running:
                 self._live_subagents[agent_id] = paths[agent_id]
+                self._subagent_paths[agent_id] = paths[agent_id]
             self._schedule_background_work_refresh()
             if self._subagent_wait_label_active or self._subagent_hold_active:
                 label = self.current_status_label()
@@ -1583,6 +1690,7 @@ class CodexAgent(BaseAgent):
         only re-renders the new label thanks to ``workingStatusKey`` (see
         ``recomputeVisualItems``), since the stabilizer ignores ``_parsedContent``.
         """
+        self._note_main_turn_opening()
         self._logger.info(
             "Codex /compact: starting manual compaction for session %s", self.session_id,
         )
@@ -1790,6 +1898,7 @@ class CodexAgent(BaseAgent):
 
     async def _run_goal_continuation(self, monitor: GoalContinuation) -> None:
         """Stream physical goal turns without starting or interrupting them."""
+        self._note_main_turn_opening()
         stream = monitor.stream()
         try:
             async for event in stream:
@@ -2021,6 +2130,11 @@ class CodexAgent(BaseAgent):
             )
         await self._settle_after_command(AgentState.USER_TURN, "plan_command_done")
 
+    async def _run_plan_implementation_turn(self) -> None:
+        """The plan prompt's "implement" answer: a human decision, so an external send (spec §3.2)."""
+        self._note_external_send()
+        await self._run_turn(_PLAN_IMPLEMENTATION_MESSAGE, None)
+
     async def _prompt_plan_implementation(self) -> None:
         """Post-plan prompt: ask whether to implement the plan just delivered.
 
@@ -2083,7 +2197,7 @@ class CodexAgent(BaseAgent):
                 "starting the implement turn",
                 self.session_id,
             )
-            await self._run_turn(_PLAN_IMPLEMENTATION_MESSAGE, None)
+            await self._run_plan_implementation_turn()
             return
 
         # ``stay`` / ``newSession`` (or a malformed response resolved to the

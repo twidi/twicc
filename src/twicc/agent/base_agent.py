@@ -13,12 +13,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Collection, Coroutine, Iterable, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
+from twicc.agent.shell_notice import OwnerFacts, ShellLookup, ShellNoticeState, ShellResolution
 from twicc.agent.work_dir_autoapprove import all_targets_within_work_dirs
 from twicc.agent.work_dirs import resolve_and_create_work_dirs
 from twicc.context_injection import clear_context, reconcile, reset_baseline
@@ -164,6 +165,7 @@ class BaseAgent:
         # (Codex may narrow it to ``None`` only on direct construction paths —
         # its manager normally resolves the list before agent startup).
         self._work_dirs: list[str] = []
+        self._init_shell_notice_state()
 
     # ------------------------------------------------------------------
     # State machine
@@ -758,6 +760,69 @@ class BaseAgent:
                         await fut
                     except BaseException:
                         pass
+
+    # ------------------------------------------------------------------
+    # Background shell notice (docs/plans/2026-09-27-background-shell-notice-design.md)
+    # ------------------------------------------------------------------
+
+    def _init_shell_notice_state(self) -> None:
+        """Episode state of the notice (spec §5.3). Separate so test stubs built
+        with ``__new__`` can call it."""
+        self._shell_notice_idle_since: float | None = None
+        self._shell_notice_notified: set[str] = set()
+        self._shell_notice_resolutions: dict[str, ShellResolution] = {}
+        self._shell_notice_task: asyncio.Task[None] | None = None
+
+    def shell_notice_state(self) -> ShellNoticeState | None:
+        """Provider hook: idle flag and backgrounded shells, owners merged.
+
+        ``None`` skips the agent (no shell tracking, DEAD, ephemeral).
+        """
+        return None
+
+    def shell_notice_lookups(self, keys: Collection[str], now: float) -> list[ShellLookup]:
+        """Provider hook: the shells among ``keys`` that need the database part."""
+        return []
+
+    def _shell_notice_live_keys(self) -> set[str]:
+        """Provider hook: keys of the live shell records."""
+        return set()
+
+    def _note_main_turn_opening(self) -> None:
+        """A main turn opens, whatever its source (spec §3.1): restart the delay."""
+        self._shell_notice_idle_since = None
+
+    def _note_external_send(self) -> None:
+        """An external send reached the agent (spec §3.2): new notice episode."""
+        self._shell_notice_notified.clear()
+
+    def _drop_shell_notice_key(self, key: str) -> None:
+        """Forget a shell that ended (spec §5.3)."""
+        self._shell_notice_notified.discard(key)
+        self._shell_notice_resolutions.pop(key, None)
+
+    def mark_shells_noticed(self, keys: Iterable[str]) -> None:
+        """Record a sent notice, only for shells still alive (spec §7 step 5)."""
+        live = self._shell_notice_live_keys()
+        self._shell_notice_notified.update(key for key in keys if key in live)
+
+    def store_shell_resolutions(self, facts: Sequence[OwnerFacts], now: float) -> None:
+        """Store the database part's facts, only for shells still alive (spec §5.5)."""
+        live = self._shell_notice_live_keys()
+        for fact in facts:
+            if fact.key not in live:
+                continue
+            previous = self._shell_notice_resolutions.get(fact.key)
+            self._shell_notice_resolutions[fact.key] = ShellResolution(
+                owner_id=fact.owner_id,
+                tool_name=fact.tool_name,
+                spawner_id=fact.spawner_id,
+                title=fact.title,
+                known=fact.known,
+                running=fact.running,
+                stopped_at=fact.stopped_at,
+                first_attempt_at=previous.first_attempt_at if previous else now,
+            )
 
     # ------------------------------------------------------------------
     # Environment context reconciliation (shared by every provider)

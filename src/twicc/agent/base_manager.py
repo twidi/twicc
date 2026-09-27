@@ -10,6 +10,7 @@ optional hooks (state-change extras, timeout policy, extra monitors).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -23,6 +24,14 @@ from twicc.providers.db_writer import run_under_db_write_lock
 
 from .base_agent import BaseAgent
 from . import ephemeral as ephemeral_runs
+from .shell_notice import (
+    SHELL_NOTICE_DELAY_SECONDS,
+    SHELL_NOTICE_STALE_SECONDS,
+    build_shell_notice,
+    earliest_delay_start,
+    resolve_shell_owners,
+    select_concerned_shells,
+)
 from .states import AgentInfo, AgentState
 
 if TYPE_CHECKING:
@@ -1334,6 +1343,13 @@ class BaseAgentManager:
         for session_id, agent in list(self._agents.items()):
             decision = await self._check_agent_timeout(agent, current_time)
             if decision is None:
+                try:
+                    await self._shell_notice_step(agent)
+                except Exception:
+                    logger.warning(
+                        "Background shell notice step failed for session %s",
+                        session_id, exc_info=True,
+                    )
                 continue
             reason, elapsed, timeout = decision
 
@@ -1345,6 +1361,101 @@ class BaseAgentManager:
                 killed.append(session_id)
 
         return killed
+
+    def _send_gate(self, session_id: str) -> contextlib.AbstractAsyncContextManager:
+        """Per-session gate taken before ``self._lock`` by a send (spec §7 step 1).
+
+        A no-op by default; the Codex manager returns its migration gate, in
+        the same order as ``send_to_session``.
+        """
+        return contextlib.nullcontext()
+
+    async def _shell_notice_step(self, agent: BaseAgent) -> None:
+        """One tick of the background shell notice for ``agent`` (spec §4)."""
+        state = agent.shell_notice_state()
+        if state is None:
+            return
+        now = time.time()
+        if not state.idle:
+            agent._shell_notice_idle_since = None
+            return
+        if agent._shell_notice_idle_since is None:
+            agent._shell_notice_idle_since = now
+        task = agent._shell_notice_task
+        if task is not None and not task.done():
+            return
+        idle_since = agent._shell_notice_idle_since
+        notified = agent._shell_notice_notified
+        candidates = {
+            shell.key for shell in state.shells
+            if shell.key not in notified
+            and earliest_delay_start(shell, idle_since) <= now - SHELL_NOTICE_DELAY_SECONDS
+        }
+        if not candidates:
+            return
+        lookups = agent.shell_notice_lookups(candidates, now)
+        if lookups:
+            facts = await sync_to_async(resolve_shell_owners)(agent.session_id, lookups)
+            agent.store_shell_resolutions(facts, now)
+            state = agent.shell_notice_state()
+            now = time.time()
+            if state is None or not state.idle:
+                return
+        if not select_concerned_shells(state, idle_since=idle_since, notified=notified, now=now):
+            return
+        agent._shell_notice_task = asyncio.create_task(
+            self.send_shell_notice(agent, now),
+            name=f"shell-notice-{agent.session_id}",
+        )
+
+    async def send_shell_notice(self, agent: BaseAgent, now: float) -> None:
+        """Send the notice to ``agent`` if it still applies (spec §7).
+
+        Never ``send_to_session``: no agent start, no settings, no steer.
+        """
+        async with self._send_gate(agent.session_id), self._lock:
+            try:
+                await self._send_shell_notice_locked(agent, now)
+            except Exception:
+                logger.warning("Background shell notice failed for session %s", agent.session_id, exc_info=True)
+
+    async def _send_shell_notice_locked(self, agent: BaseAgent, now: float) -> None:
+        """Body of ``send_shell_notice``, run under the send gate and the lock."""
+        if self._agents.get(agent.session_id) is not agent:
+            return
+        if time.time() - now > SHELL_NOTICE_STALE_SECONDS:
+            return
+        state = agent.shell_notice_state()
+        idle_since = agent._shell_notice_idle_since
+        if state is None or not state.idle or idle_since is None:
+            return
+        current = time.time()
+        shells = select_concerned_shells(
+            state, idle_since=idle_since, notified=agent._shell_notice_notified, now=current,
+        )
+        if not shells:
+            return
+        text = build_shell_notice(shells, now=current)
+        keys = [shell.key for shell in shells]
+        try:
+            result = await agent.send(text, shell_notice=True)
+        except Exception:
+            logger.warning(
+                "Background shell notice failed for session %s (%s)",
+                agent.session_id, ", ".join(keys), exc_info=True,
+            )
+            return
+        if result is False:
+            logger.warning(
+                "Background shell notice not delivered for session %s (%s)",
+                agent.session_id, ", ".join(keys),
+            )
+            return
+        agent.mark_shells_noticed(keys)
+        logger.info(
+            "Background shell notice sent to session %s (%s)",
+            agent.session_id, ", ".join(keys),
+        )
 
     def _state_based_timeout(
         self, agent: BaseAgent, current_time: float,

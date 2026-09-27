@@ -44,6 +44,9 @@ def _agent() -> ClaudeCodeAgent:
     agent._pending_wakeup_at = None
     agent._waiting_label_active = False
     agent._broadcast_process_label = AsyncMock()
+    agent._pending_requests = {}
+    agent._init_shell_notice_state()
+    agent._init_claude_shell_notice_state()
     return agent
 
 

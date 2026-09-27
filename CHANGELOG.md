@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Resumed subagents** — A subagent shows as running again when the agent sends it a new message or task.
 - **Background shells** — A new status (green terminal icon) shows when the provider reports that the agent has finished its turn but a shell it started is still running. Such sessions are no longer stopped automatically.
+- **Forgotten background shells** — When a shell is still running 5 minutes after the agent (or one of its subagents) finished working, TwiCC tells the agent which shell it is, so it can check it or stop it.
 - **Uncommitted changes on the Git tab** — The Git tab's label shows how many files are modified, added or deleted, without opening it.
 - **Background work in the CLI, skills, RPC API and MCP** — A session's process information now tells what still runs in the background (subagents, shells…), whatever the session's state.
 - **Wait for background work** — The commands (CLI, skills, RPC API and MCP) that wait for an agent's reply can now also wait until its background work is over, and return the answer that follows it.

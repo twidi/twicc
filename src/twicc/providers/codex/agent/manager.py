@@ -15,6 +15,7 @@ from the user's ``permission_mode`` preset via :func:`resolve_codex_policy`
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from typing import Any, ClassVar
@@ -197,6 +198,10 @@ class CodexAgentManager(BaseAgentManager):
                 "Codex has no protocol for documents — dropping them silently.",
                 session_id, len(documents),
             )
+
+    def _send_gate(self, session_id: str) -> contextlib.AbstractAsyncContextManager:
+        """Same order as ``send_to_session``: the migration gate, then the lock."""
+        return gate_for(session_id)
 
     async def send_to_session(
         self,
@@ -931,19 +936,23 @@ class CodexAgentManager(BaseAgentManager):
         ``SessionCron`` check because :class:`SessionCron` is Claude
         Code-specific.
 
-        One Codex-specific step first: an idle agent still counting background
-        shells gets them reconciled against its real process table (see
-        :func:`command_processes_may_run` — probed in a thread, applied here
-        on the loop), so a process killed without an end event cannot shield
-        the session from the idle auto-stop forever.
+        One Codex-specific step first: an idle agent — ``USER_TURN`` or the
+        subagent hold — still counting background shells gets them reconciled
+        against its real process table (see :func:`command_processes_may_run`
+        — probed in a thread, applied here on the loop), so a process killed
+        without an end event cannot shield the session from the idle auto-stop
+        forever. The tracked keys are snapshotted before the probe, so a shell
+        tracked while it ran is kept.
         """
-        if agent.state == AgentState.USER_TURN and agent.has_live_shells():
+        in_idle_state = agent.state == AgentState.USER_TURN or agent.in_subagent_hold()
+        if in_idle_state and agent.has_live_shells():
             try:
                 probe = agent.shell_probe()
                 if probe is not None:
+                    keys = agent.live_shell_keys()
                     probed_at = time.time()
                     may_run = await asyncio.to_thread(command_processes_may_run, *probe)
-                    if may_run is False and agent.drop_gone_shells(probed_at):
+                    if may_run is False and agent.drop_gone_shells(probed_at, keys=keys):
                         agent._schedule_background_work_refresh()
             except Exception:
                 logger.warning(

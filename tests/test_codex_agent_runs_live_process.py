@@ -143,6 +143,8 @@ def make_agent(session_id: str = ROOT_ID, *, ephemeral: bool = False,
     agent._broadcast_process_label = AsyncMock()
     agent._notify_state_change = AsyncMock()
     agent._set_state = MagicMock(side_effect=lambda new_state: setattr(agent, "state", new_state))
+    agent._init_shell_notice_state()
+    agent._init_codex_shell_notice_state()
     return agent
 
 

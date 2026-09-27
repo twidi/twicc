@@ -205,6 +205,8 @@ def test_codex_ephemeral_hold_uses_runtime_status_without_watcher():
     agent._manual_compaction = False
     agent._goal_continuation_active = False
     agent._subagent_wait_label_active = False
+    agent._init_shell_notice_state()
+    agent._init_codex_shell_notice_state()
     agent._set_state = lambda state: setattr(agent, "state", state)
     agent._notify_state_change = AsyncMock()
     agent._broadcast_process_label = AsyncMock()

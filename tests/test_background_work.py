@@ -21,11 +21,17 @@ from claude_agent_sdk import SystemMessage, UserMessage
 from django.utils import timezone
 
 from twicc.agent.base_manager import BaseAgentManager
+from twicc.agent.shell_notice import ShellOwner
 from twicc.agent.states import AgentInfo, AgentState, build_background_work, serialize_agent_info
 from twicc.core.enums import Provider
 from twicc.core.models import Project, ProcessRun, Session, SessionItem
-from twicc.providers.claude_code.agent.agent import ClaudeCodeAgent
-from twicc.providers.codex.agent.agent import CodexAgent
+from twicc.providers.claude_code.agent.agent import ClaudeCodeAgent, _ShellTask
+from twicc.providers.codex.agent.agent import CodexAgent, _TrackedShell
+
+
+def _shell(backgrounded: bool = True) -> _ShellTask:
+    return _ShellTask(backgrounded=backgrounded, tool_use_id=None, owner=ShellOwner.MAIN, owner_ref=None,
+                      description=None, command=None, output_path=None, started_at=time.time())
 
 
 def _with_publication_state(agent):
@@ -49,6 +55,9 @@ def _claude_agent() -> ClaudeCodeAgent:
     agent._pending_wakeup_at = None
     agent._waiting_label_active = False
     agent._broadcast_process_label = AsyncMock()
+    agent._pending_requests = {}
+    agent._init_shell_notice_state()
+    agent._init_claude_shell_notice_state()
     return _with_publication_state(agent)
 
 
@@ -61,6 +70,11 @@ def _codex_agent() -> CodexAgent:
     agent._first_shell_started_at = None
     agent._recently_ended_shells = {}
     agent._goal_continuation_active = False
+    agent._subagent_hold_active = False
+    agent._manual_compaction = False
+    agent._pending_requests = {}
+    agent._init_shell_notice_state()
+    agent._init_codex_shell_notice_state()
     return _with_publication_state(agent)
 
 
@@ -113,7 +127,7 @@ class TestSnapshotShape:
 
     def test_a_dead_or_ephemeral_agent_reports_nothing(self):
         agent = _claude_agent()
-        agent._live_shell_tasks["b1"] = True
+        agent._live_shell_tasks["b1"] = _shell()
         assert agent.background_work_snapshot()["shells"] == 1
         agent.state = AgentState.DEAD
         assert agent.background_work_snapshot() is None
@@ -298,7 +312,7 @@ class TestCodexShellProbe:
         """The subagent's process spawned a yield (and a relay lag) earlier."""
         agent = _codex_agent()
         asyncio.run(agent.notify_shells_started("child", {"7": 1000.0}))
-        assert agent._live_shells[("child", "7")] == 940.0
+        assert agent._live_shells[("child", "7")].started_at == 940.0
         assert agent._first_shell_started_at == 940.0
 
     def test_an_unreadable_process_table_proves_nothing(self, monkeypatch):
@@ -392,7 +406,7 @@ class TestPublication:
 
     def test_a_snapshot_published_by_a_transition_is_not_republished(self):
         agent = _codex_agent()
-        agent._live_shells[("codex-1", "1")] = 0.0
+        agent._live_shells[("codex-1", "1")] = _TrackedShell(0.0, None)
         agent._broadcast_stream_event = AsyncMock()
         agent.note_background_work_published(agent.background_work_snapshot())
         asyncio.run(agent._publish_background_work())
@@ -401,7 +415,7 @@ class TestPublication:
     def test_a_failed_broadcast_is_retried(self):
         agent = _codex_agent()
         agent.BACKGROUND_WORK_DEBOUNCE_SECONDS = 0.01
-        agent._live_shells[("codex-1", "1")] = 0.0
+        agent._live_shells[("codex-1", "1")] = _TrackedShell(0.0, None)
         agent._broadcast_stream_event = AsyncMock(side_effect=[RuntimeError("down"), None])
         agent._background_work_callback = AsyncMock()
 
@@ -488,7 +502,7 @@ class TestProcessRunColumn:
         """What the agent runs once the lock is held, not the queued value."""
         run = self._run()
         agent = _codex_agent()
-        agent._live_shells[("codex-1", "1")] = 0.0
+        agent._live_shells[("codex-1", "1")] = _TrackedShell(0.0, None)
         agent.process_run = run
         agent.provider = Provider.CODEX
         manager = BaseAgentManager.__new__(BaseAgentManager)
@@ -506,7 +520,7 @@ class TestProcessRunColumn:
         agent.provider = Provider.CODEX
         agent._pending_requests = {}
         agent.get_pid = lambda: None
-        agent._live_shells[("codex-1", "1")] = 0.0
+        agent._live_shells[("codex-1", "1")] = _TrackedShell(0.0, None)
         manager = BaseAgentManager.__new__(BaseAgentManager)
 
         asyncio.run(manager._persist_process_run_transition(agent, AgentState.USER_TURN))
@@ -629,7 +643,7 @@ class TestDeferredSettings:
         agent.project_id = project.id
         agent.interrupt_or_kill = AsyncMock()
         for index in range(shells):
-            agent._live_shell_tasks[f"b{index}"] = True
+            agent._live_shell_tasks[f"b{index}"] = _shell()
         manager = ClaudeCodeAgentManager.__new__(ClaudeCodeAgentManager)
         manager._pending_after_restart = {}
         manager._deferred_settings_tasks = {}
@@ -711,7 +725,7 @@ class TestDeferredSettings:
             elif change == "agent_replaced":
                 manager._agents["claude-1"] = _claude_agent()
             else:
-                agent._live_shell_tasks["b9"] = True
+                agent._live_shell_tasks["b9"] = _shell()
             await manager._deferred_settings_tasks["claude-1"]
 
         asyncio.run(run())

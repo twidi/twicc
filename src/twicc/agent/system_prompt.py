@@ -222,6 +222,10 @@ TwiCC keeps it current: when something changes, a user message carries a leading
 not text the user typed. Each line REPLACES the prior value for that key (latest
 wins); a block lists ONLY what changed, and omitted keys keep their value. Treat
 these as part of this environment.
+
+A user message that starts with `:: notice from TwiCC` is written by TwiCC
+itself, not by the user: TwiCC tells you about something it noticed, such as a
+background shell still running after its work ended.
 """
 
 

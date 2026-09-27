@@ -65,6 +65,9 @@ def _agent(
     agent._published_background_work = None
     agent._background_work_callback = None
     agent._current_turn = None
+    agent._pending_requests = {}
+    agent._init_shell_notice_state()
+    agent._init_codex_shell_notice_state()
     agent._broadcast_process_label = AsyncMock()
     agent._notify_state_change = AsyncMock()
     agent._set_state = MagicMock(
