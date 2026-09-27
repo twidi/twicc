@@ -1,4 +1,4 @@
-import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, buildAgentTree, hasTreeAgents } from '../utils/agentLinkIndex'
+import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, buildAgentTree, hasTreeAgents, runStateFromPayload, interactionFromPayload, setAgentRunState as cacheAgentRunState, setAgentInteraction as cacheAgentInteraction, dropRootAgentState, effectiveAgentRun } from '../utils/agentLinkIndex'
 // frontend/src/stores/data.js
 
 import { createEphemeralActions, createSendFailureActions, ephemeralFields, serializeDraftSession, isLaunchedEphemeral } from '../utils/ephemeralSessions'
@@ -9,7 +9,7 @@ import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor } from '../utils/visualItems'
 import { backgroundWorkStatusKey, buildBackgroundWorkStatusLines } from '../utils/backgroundWork'
 import { DISPLAY_LEVEL, DISPLAY_MODE, INITIAL_ITEMS_COUNT, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
-import { getProviderHelpers, getProviderStore, getToolHelpers } from '../providers'
+import { getProviderHelpers, getProviderStore } from '../providers'
 import { getSessionCutoffMs, isSessionUnread } from '../utils/sessions'
 import {
     resolveDraftProvider,
@@ -470,6 +470,10 @@ export const useDataStore = defineStore('data', {
         // Process state for active Claude processes
         // { sessionId: { state: 'starting'|'assistant_turn'|'user_turn'|'dead', error?: string } }
         processStates: {},
+
+        // Bumped once each reconnect refresh (``refreshAllLoadedToolStates``) has
+        // settled: a card whose last fetch failed during the outage retries on it.
+        connectionEpoch: 0,
 
         // Lifecycle state of each provider's orchestrator (mirrors backend
         // `twicc.providers.state.ProviderState`). Updated from the bootstrap
@@ -1259,6 +1263,14 @@ export const useDataStore = defineStore('data', {
             layoutTemplate(state.localState.sessionLayout[sessionId]),
 
         getAgentLinkInfo: (state) => (agentId) => state.localState.agentLinkIndex[agentId] || null,
+        /** The backend's run state of an agent (``agentRunStates`` entry), or null. */
+        getAgentRunState: (state) => (agentId) => state.localState.agentRunStates[agentId] || null,
+        /** The control call ``toolId`` of ``sessionId`` targeting an agent (``agentInteractions`` entry), or null. */
+        getAgentInteraction: (state) => (sessionId, toolId) => state.localState.agentInteractions[sessionId]?.[toolId] || null,
+        /** Whether an agent runs now: its synthetic process state (run state + root cutoff, ``applyAgentRunState``). */
+        isAgentRunning: (state) => (agentId) => !!state.processStates[agentId]?.synthetic,
+        /** Always true in the app; the share shim's twin is a state field (design §7.3). */
+        runStatesAvailable: () => true,
         getRootAgentToolUseLineNum: (state) => (root, agentId) => rootAgentToolLine(state.localState, root, agentId),
 
         /** True once the session's ``/subagents/`` snapshot has landed (or failed to). */
@@ -1580,24 +1592,15 @@ export const useDataStore = defineStore('data', {
             // for child agents that predate the new cutoff
             const prev = this.sessions[session.id]
             if (session.parent_session_id && (!prev || prev.last_stopped_at !== session.last_stopped_at)) {
-                // An idle/wake event also outranks a pending tree snapshot.
+                // Display only (the agent's idle time); an idle/wake event also
+                // outranks a pending tree snapshot's link fields.
                 markAgentIdle(this.localState, session.id, session.last_stopped_at)
             }
             if (prev && (prev.last_started_at !== session.last_started_at ||
                          prev.last_stopped_at !== session.last_stopped_at)) {
                 this._cleanStaleChildSynthetics(session)
             }
-            // Safety net: a subagent reported stopped clears its own synthetic
-            // "running" state. The timestamp guard keeps a fresh synthetic (agent
-            // relaunched) safe from a stale session_updated of a previous run.
-            const ownSynthetic = this.processStates[session.id]
-            if (ownSynthetic?.synthetic && session.last_stopped_at) {
-                const stoppedMs = Date.parse(session.last_stopped_at)
-                const startedMs = ownSynthetic.started_at ? ownSynthetic.started_at * 1000 : 0
-                if (!Number.isNaN(stoppedMs) && stoppedMs >= startedMs) {
-                    this.removeSyntheticProcessState(session.id)
-                }
-            }
+            const rootCutoffChanged = !session.parent_session_id && getSessionCutoffMs(prev) !== getSessionCutoffMs(session)
             // Never let last_new_content_at regress — an optimistic value (set when
             // process_state exits assistant_turn) can be overwritten by a stale
             // session_updated broadcast from the file watcher.
@@ -1606,6 +1609,13 @@ export const useDataStore = defineStore('data', {
                 session = { ...session, last_new_content_at: prev.last_new_content_at }
             }
             this.$patch({ sessions: { [session.id]: session } })
+            // A root cutoff change re-applies its agents' run states. After the
+            // patch: ``applyAgentRunState`` reads the cutoff from ``sessions[root]``.
+            if (rootCutoffChanged) {
+                for (const [agentId, entry] of Object.entries(this.localState.agentRunStates)) {
+                    if (entry.rootSessionId === session.id) this.applyAgentRunState(agentId)
+                }
+            }
             // A session that finishes (re)computing AFTER its items were already
             // loaded now carries its ToolResultLink / AgentLink / workflow rows,
             // but the tool_state / agent_link broadcasts that stop the spinners
@@ -2964,6 +2974,8 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         unloadSession(sessionId) {
+            // Read before the cleanup: an agent's own run state outlives its unload.
+            const ownRun = this.localState.agentRunStates[sessionId]
             if (this.localState.sessions[sessionId]) {
                 this.localState.sessions[sessionId].itemsFetched = false
                 this.localState.sessions[sessionId].itemsLoading = false
@@ -2988,6 +3000,22 @@ export const useDataStore = defineStore('data', {
             for (const [id, ps] of Object.entries(this.processStates)) {
                 if (ps.synthetic && this.sessions[id]?.parent_session_id === sessionId) {
                     delete this.processStates[id]
+                }
+            }
+            // Run states and interactions live as long as their root. The loop
+            // above only reaches agents whose session row is loaded.
+            for (const agentId of dropRootAgentState(this.localState, sessionId)) {
+                this.removeSyntheticProcessState(agentId)
+            }
+            if (ownRun && ownRun.rootSessionId !== sessionId) {
+                // An unloaded agent keeps its robot and Stop button.
+                this.applyAgentRunState(sessionId)
+                // ``clearAgentLinks`` dropped the links this agent owns (its nested
+                // spawns); only the root snapshot brings them back.
+                const root = ownRun.rootSessionId
+                const projectId = this.sessions[root]?.project_id
+                if (projectId && this.localState.sessions[root]?.itemsFetched) {
+                    this.fetchSubagentsState(projectId, root)
                 }
             }
         },
@@ -4388,10 +4416,60 @@ export const useDataStore = defineStore('data', {
                 rootSessionId: rootSessionId || this.sessions[sessionId]?.parent_session_id || sessionId,
             })
         },
+        /**
+         * Record an agent's stop time (``agent_stopped``). Display only: the
+         * running state comes from ``agent_run_state`` (``setAgentRunState``).
+         * @param {string} agentId
+         * @param {?string} stoppedAt - ISO time of the stop
+         * @param {?string} rootSessionId
+         */
         markAgentStopped(agentId, stoppedAt, rootSessionId = null) {
             cacheAgentStop(this.localState, agentId, stoppedAt, rootSessionId)
-            this.removeSyntheticProcessState(agentId)
         },
+        /**
+         * Store an ``agent_run_state`` payload (design §7.3) with a live stamp,
+         * whatever the root's load state, then apply it (``applyAgentRunState``).
+         * @param {Object} msg - ``{root_session_id, agent_session_id, running, run_started_at, run_background, runs}``
+         */
+        setAgentRunState(msg) {
+            cacheAgentRunState(this.localState, msg.agent_session_id, runStateFromPayload(msg, msg.root_session_id))
+            this.applyAgentRunState(msg.agent_session_id)
+        },
+        /**
+         * Store an ``agent_interaction`` payload (design §7.3) with a live stamp,
+         * whatever the root's load state.
+         * @param {Object} msg - ``{root_session_id, owner_session_id, agent_session_id, tool_use_id, tool_use_line_num, kind, opens_run, started_at}``
+         */
+        setAgentInteraction(msg) {
+            cacheAgentInteraction(this.localState, interactionFromPayload(msg, msg.agent_session_id, msg.root_session_id))
+        },
+        /**
+         * Set or remove an agent's synthetic process state from its stored run
+         * state and its root's cutoff (design §8.2). Acts only while the root's
+         * items are loaded; otherwise (or with no run state) it removes it. The
+         * synthetic ``started_at`` is the newest run's start, so
+         * ``_cleanStaleChildSynthetics`` compares that run with the root cutoff.
+         * @param {string} agentId
+         */
+        applyAgentRunState(agentId) {
+            const entry = this.localState.agentRunStates[agentId]
+            const root = entry?.rootSessionId
+            if (!entry || !this.localState.sessions[root]?.itemsFetched) {
+                this.removeSyntheticProcessState(agentId)
+                return
+            }
+            const { running, startedAtUnix } = effectiveAgentRun(entry, getSessionCutoffMs(this.sessions[root]))
+            if (running) {
+                this.setSyntheticProcessState(agentId, root, this.sessions[root]?.project_id, startedAtUnix)
+            } else {
+                this.removeSyntheticProcessState(agentId)
+            }
+        },
+        /**
+         * Drop the agent links owned by a session (see ``clearAgentLinks`` in
+         * ``utils/agentLinkIndex.js``). Run states and interactions are kept.
+         * @param {string} sessionId
+         */
         clearAgentLinks(sessionId) {
             clearAgentLinkCache(this.localState, sessionId)
         },
@@ -4498,7 +4576,8 @@ export const useDataStore = defineStore('data', {
         // Subagent state actions
 
         /**
-         * Set a synthetic process state for a subagent (assistant_turn).
+         * Set a synthetic process state for a subagent (assistant_turn). Only
+         * writes: the running decision is ``applyAgentRunState``'s, its one caller.
          * Does not overwrite real (non-synthetic) process states.
          * Triggers recomputeVisualItems only if the session's items are loaded
          * and the assistant_turn status actually changed.
@@ -4507,17 +4586,9 @@ export const useDataStore = defineStore('data', {
          * @param {string} parentSessionId - The parent session that spawned the subagent
          *   (its ``provider`` is inherited by the synthetic state).
          * @param {string} projectId - The project ID
-         * @param {number|null} startedAtUnix - Unix timestamp (seconds) of when the agent started
+         * @param {number|null} startedAtUnix - Unix timestamp (seconds) of when the agent's newest run started
          */
         setSyntheticProcessState(agentSessionId, parentSessionId, projectId, startedAtUnix) {
-            const cutoff = getSessionCutoffMs(this.sessions[parentSessionId])
-            const reportedIdle = this.sessions[agentSessionId]?.last_stopped_at
-                && getToolHelpers(this.getSessionProvider(parentSessionId))?.agentRunEndsOnSubagentIdle?.()
-            if (this.localState.agentLinkIndex[agentSessionId]?.stoppedAt || reportedIdle
-                || (cutoff && (startedAtUnix || 0) * 1000 < cutoff)) {
-                this.removeSyntheticProcessState(agentSessionId)
-                return
-            }
             // Don't overwrite real process states (from ProcessManager)
             if (this.processStates[agentSessionId] && !this.processStates[agentSessionId].synthetic) {
                 return
@@ -4580,12 +4651,11 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
-         * Fetch and set synthetic process states for all subagents of a session.
-         * Called at session load time when the session has a process in assistant_turn.
-         * Creates synthetic processState entries for agents that are not done.
+         * Fetch the ``{tool_use_id, run_id}`` couples of a session's Workflow
+         * tool_uses into ``workflowLinks``.
          *
          * @param {string} projectId - The project ID
-         * @param {string} sessionId - The parent session ID
+         * @param {string} sessionId - The session ID
          */
         async fetchWorkflowLinks(projectId, sessionId) {
             // Couples {tool_use_id, run_id} for Workflow tool_uses, so the chat
@@ -4604,24 +4674,39 @@ export const useDataStore = defineStore('data', {
             }
         },
 
-        async fetchSubagentsState(projectId, sessionId) {
+        /**
+         * Fetch a root's ``/subagents/`` snapshot (design §7.2): its agent links,
+         * run states and interactions, then apply the synthetic process states.
+         *
+         * A response discarded because the root's fetch generation changed is
+         * re-issued once, only while the root's items are still loaded (a discard
+         * caused by ``unloadSession(root)`` must not refill what it dropped). In
+         * every outcome that did not re-issue — applied, failed (HTTP or network
+         * error), discarded again — every stored run state of the root is applied,
+         * including the ones kept because their live stamp beat the snapshot.
+         *
+         * @param {string} projectId - The project ID
+         * @param {string} sessionId - The root session ID
+         * @param {Object} [options]
+         * @param {boolean} [options.reissued=false] - This call re-issues a discarded one
+         */
+        async fetchSubagentsState(projectId, sessionId, { reissued = false } = {}) {
             const token = beginAgentFetch(this.localState, sessionId)
+            const rootRunIds = () => Object.entries(this.localState.agentRunStates)
+                .filter(([, entry]) => entry.rootSessionId === sessionId).map(([agentId]) => agentId)
+            const previous = rootRunIds()
+            let outcome = 'failed'
             try {
                 const response = await apiFetch(`/api/projects/${projectId}/sessions/${sessionId}/subagents/`)
-                if (!response.ok) return
-                const agents = await response.json()
-                const previous = Object.values(this.localState.agentLinkIndex).filter(link => link.rootSessionId === sessionId)
-                const applied = applyAgentSnapshot(this.localState, sessionId, agents, token)
-                for (const link of previous) {
-                    if (!this.localState.agentLinkIndex[link.agentId]) this.removeSyntheticProcessState(link.agentId)
-                }
-                const cutoff = getSessionCutoffMs(this.sessions[sessionId])
-                for (const link of applied) {
-                    const started = link.startedAt ? Date.parse(link.startedAt) : 0
-                    if (link.running === false || link.stoppedAt || (cutoff && started < cutoff)) {
-                        this.removeSyntheticProcessState(link.agentId)
+                if (response.ok) {
+                    const agents = await response.json()
+                    // Checked here: ``applyAgentSnapshot`` returns [] for a discard
+                    // and for an empty tree alike.
+                    if (this.localState.agentFetches[sessionId] !== token.generation) {
+                        outcome = 'discarded'
                     } else {
-                        this.setSyntheticProcessState(link.agentId, sessionId, projectId, started / 1000 || null)
+                        applyAgentSnapshot(this.localState, sessionId, agents, token)
+                        outcome = 'applied'
                     }
                 }
             } catch (error) {
@@ -4633,6 +4718,16 @@ export const useDataStore = defineStore('data', {
                 // that would fire before the tree is known.
                 this.localState.agentLoaded[sessionId] = true
             }
+            if (outcome === 'discarded' && !reissued && this.localState.sessions[sessionId]?.itemsFetched) {
+                return this.fetchSubagentsState(projectId, sessionId, { reissued: true })
+            }
+            if (outcome === 'applied') {
+                // A run state the snapshot deleted leaves no phantom "working" state.
+                for (const agentId of previous) {
+                    if (!this.localState.agentRunStates[agentId]) this.removeSyntheticProcessState(agentId)
+                }
+            }
+            for (const agentId of rootRunIds()) this.applyAgentRunState(agentId)
         },
 
         /**
@@ -4651,8 +4746,8 @@ export const useDataStore = defineStore('data', {
          *     not broadcast at all.
          * Pulling the authoritative counts from the REST endpoints settles them.
          *
-         * Order matters: ``fetchSubagentsState`` reads ``toolStates`` to decide
-         * whether an agent is still running, so tool states are refreshed first.
+         * Tool states are refreshed first, then the subagent snapshot (it carries
+         * each agent's run state; it does not read ``toolStates``).
          * Subagent / workflow links only exist on parent sessions — mirror the
          * first-load gating in ``SessionItemsList``.
          */
@@ -4686,6 +4781,8 @@ export const useDataStore = defineStore('data', {
             await Promise.allSettled(
                 refs.map(({ projectId, sessionId }) => this.refreshSessionToolStates(projectId, sessionId)),
             )
+            // Cards whose last fetch failed during the outage retry on this bump.
+            this.connectionEpoch++
         },
 
         // Process state actions
@@ -4916,6 +5013,12 @@ export const useDataStore = defineStore('data', {
                         this.setSessionArchived(p.project_id, p.session_id, false)
                     }
                 }
+            }
+            // The rebuild dropped every synthetic state: re-apply the stored run
+            // states, so they survive a reconnect and an ``active_processes`` that
+            // lands after the snapshot (a real process state is never overwritten).
+            for (const agentId of Object.keys(this.localState.agentRunStates)) {
+                this.applyAgentRunState(agentId)
             }
 
             // Recompute the sessions we touched now that streaming blocks are

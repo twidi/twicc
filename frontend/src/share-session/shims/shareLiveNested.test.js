@@ -19,7 +19,7 @@ test('live share routes nested launch and queue-only completion before delayed R
         socket.onmessage({ data: JSON.stringify({ type: 'share_agent_link', link: { agent_id: 'child', owner_session_id: 'launcher', tool_use_id: 't' } }) })
         socket.onmessage({ data: JSON.stringify({ type: 'share_agent_stopped', agent_session_id: 'child', root_session_id: 'root', stopped_at: '2026-09-07T01:01:00Z' }) })
         applyAgentSnapshot(state, 'root', [{ agent_id: 'child', owner_session_id: 'launcher', tool_use_id: 't', running: true }], token)
-        assert.equal(state.agentLinks.launcher.t.running, false)
+        assert.equal(state.agentLinkIndex.child.stoppedAt, '2026-09-07T01:01:00Z')
         assert.equal(state.agentLinks.launcher.t.stoppedAt, '2026-09-07T01:01:00Z')
         disconnect()
     } finally {
@@ -71,7 +71,7 @@ test('live share duplicate link preserves cold snapshot state through the real s
         })
         socket.onmessage({ data: JSON.stringify({ type: 'share_agent_link', link: { ...link, running: undefined, agent_stopped_at: null } }) })
         assert.equal(state.agentLinks.launcher.t.agentStoppedAt, stopped)
-        assert.equal(state.agentLinks.launcher.t.running, false)
+        assert.equal(state.agentLinks.launcher.t.stoppedAt, null)
         disconnect()
     } finally {
         globalThis.WebSocket = previousSocket
