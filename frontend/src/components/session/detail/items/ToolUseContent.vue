@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref, inject, provide, watch, watchEffect, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, reactive, ref, inject, provide, watch, watchEffect, nextTick, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCodeCommentsStore } from '../../../../stores/codeComments'
 import CodeCommentsIndicator from '../../../ui/CodeCommentsIndicator.vue'
@@ -8,6 +8,7 @@ import { useSettingsStore } from '../../../../stores/settings'
 import { apiFetch } from '../../../../utils/api'
 import { PROCESS_STATE, PROCESS_STATE_COLORS } from '../../../../constants'
 import { stopSubagent } from '../../../../composables/useWebSocket'
+import { genericCardPredicate, useToolResultFetch } from '../../../../composables/useToolResultFetch'
 import { getSessionCutoffMs } from '../../../../utils/sessions'
 import { formatToolNameForHeader } from '../../../../utils/toolNames'
 import { getParsedContent, hasContent } from '../../../../utils/parsedContent'
@@ -116,9 +117,6 @@ provide('codeCommentToolContext', reactive({
     subagentToolLineNum: parentToolUseLineNum,
 }))
 
-// Polling configuration
-const POLLING_DELAY_MS = 3000
-
 // Template refs
 const toolUseDetailsRef = ref(null)
 const resultDetailsRef = ref(null)
@@ -144,183 +142,94 @@ onMounted(() => {
     if (instantOpen.value) {
         nextTick(() => { instantOpen.value = false })
     }
-    // Fetch the result when it's already meant to be visible at mount:
-    // either the "Result" disclosure was restored open, or this is an
-    // inline-result tool (e.g. view_image) whose card is open — its
-    // result renders directly in the body, so it must be fetched up front.
-    if (isResultOpen.value || (rendersResultInline.value && isOpen.value && showResultDetails.value)) {
-        ensureResultFetched()
-    }
 })
 
-// Tool result state
-const resultState = ref('idle') // 'idle' | 'loading' | 'loaded' | 'error'
-const resultData = ref(null)
-const resultError = ref(null)
-const isPolling = ref(false)
-const pollingIntervalId = ref(null)
-const abortController = ref(null)
-
-/**
- * Fetch tool result from API.
- * If result is empty and not already polling, starts polling.
- * If result has data, stops polling.
- */
-async function fetchResult() {
-    // Don't set loading state if we're polling (to avoid flicker)
-    if (!isPolling.value) {
-        resultState.value = 'loading'
-    }
-    resultError.value = null
-
-    // Create new AbortController for this request
-    abortController.value = new AbortController()
-
-    try {
-        let data
+// Tool result fetch pipeline (design §8.3): single flight, a 3 s ticker that
+// runs exactly while the card wants a fetch, stale kills, Entry / Leave on the
+// result being visible in an active session. The getters below read computeds
+// declared further down: nothing evaluates them before `startResultFetch()`,
+// the last statement of this setup.
+const {
+    resultState,
+    resultData,
+    resultError,
+    showsPending,
+    refreshNote,
+    start: startResultFetch,
+} = useToolResultFetch({
+    fetchRows: async (signal) => {
         if (fetchToolResult) {
-            // Share bundle: fetch via the token path (no SPA auth); no abort/polling wiring.
-            data = await fetchToolResult(props.lineNum, props.toolId, props.parentSessionId)
-        } else {
-            // Build URL (handles subagent case via parentSessionId)
-            const baseUrl = props.parentSessionId
-                ? `/api/projects/${props.projectId}/sessions/${props.parentSessionId}/subagent/${props.sessionId}`
-                : `/api/projects/${props.projectId}/sessions/${props.sessionId}`
-            const url = `${baseUrl}/items/${props.lineNum}/tool-results/${props.toolId}/`
-            const response = await apiFetch(url, { signal: abortController.value.signal })
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`)
-            }
-
-            data = await response.json()
+            // Share bundle: the token path takes no abort signal; a dropped
+            // request's late settle is ignored by the pipeline.
+            return (await fetchToolResult(props.lineNum, props.toolId, props.parentSessionId)).results
         }
-        resultData.value = data.results
-        resultState.value = 'loaded'
-
-        // Stop polling once two conditions both hold:
-        //   1. We have at least ``requiredDisplayCount`` rows
-        //      (placeholder is replaced by real content).
-        //   2. The helper says the tool isn't running anymore — count-based
-        //      tools flip this when ``resultCount`` reaches the expected
-        //      total; chained-result shells flip it when their final
-        //      chunk arrives carrying ``extra.is_terminated``.
-        // Either condition unmet → keep polling so progressive output
-        // (Codex's exec_command stream) keeps refreshing the body.
-        const stillRunning = !transcriptFrozen.value
-            && (toolHelpers.value?.isToolRunning(props.name, props.input, helperOptions.value) ?? false)
-        const haveAll = !stillRunning
-            && data.results
-            && data.results.length >= requiredDisplayCount.value
-        // A frozen transcript never grows: whatever this fetch returned is final.
-        if (haveAll || transcriptFrozen.value) {
-            stopPolling()
-        } else if (!isPolling.value) {
-            startPolling()
+        // Build URL (handles subagent case via parentSessionId)
+        const baseUrl = props.parentSessionId
+            ? `/api/projects/${props.projectId}/sessions/${props.parentSessionId}/subagent/${props.sessionId}`
+            : `/api/projects/${props.projectId}/sessions/${props.sessionId}`
+        const url = `${baseUrl}/items/${props.lineNum}/tool-results/${props.toolId}/`
+        const response = await apiFetch(url, { signal })
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`)
         }
-    } catch (err) {
-        // Ignore abort errors (expected when stopping polling)
-        if (err.name === 'AbortError') {
-            return
-        }
-        resultError.value = err.message
-        resultState.value = 'error'
-        stopPolling()
-    } finally {
-        abortController.value = null
-    }
-}
-
-/**
- * Start polling for results at regular intervals.
- */
-function startPolling() {
-    if (pollingIntervalId.value) return // Already polling
-    isPolling.value = true
-    pollingIntervalId.value = setInterval(fetchResult, POLLING_DELAY_MS)
-}
-
-/**
- * Stop polling and reset polling state.
- * Also aborts any in-flight fetch request.
- */
-function stopPolling() {
-    // Abort any in-flight request
-    if (abortController.value) {
-        abortController.value.abort()
-        abortController.value = null
-    }
-    if (pollingIntervalId.value) {
-        clearInterval(pollingIntervalId.value)
-        pollingIntervalId.value = null
-    }
-    isPolling.value = false
-}
-
-/**
- * Fetch the result if it isn't loaded yet, or was loaded but came back
- * short of ``requiredDisplayCount`` (retry). Shared by the "Result"
- * disclosure handlers and the inline-result auto-fetch path.
- */
-function ensureResultFetched() {
-    const shouldFetch = resultState.value === 'idle' ||
-        (resultState.value === 'loaded' && (!resultData.value || resultData.value.length < requiredDisplayCount.value))
-    if (shouldFetch) {
-        fetchResult()
-    }
-}
+        return (await response.json()).results
+    },
+    // The Result section (or the inline result) is visible — also false when
+    // `showResultDetails` hides the section.
+    open: () => isOpen.value && showResultDetails.value && (rendersResultInline.value || isResultOpen.value),
+    active: () => sessionActive.value,
+    count: () => toolState.value?.resultCount ?? 0,
+    displayCount: () => requiredDisplayCount.value,
+    predicate: ({ rowCount, countChanged, lastSettleFailed }) => genericCardPredicate({
+        isToolRunning: isToolRunning.value,
+        rowCount,
+        displayCount: requiredDisplayCount.value,
+        lastSettleFailed,
+        isStaleToolUse: isStaleToolUse.value,
+        countChanged,
+    }),
+    transcriptFrozen: () => transcriptFrozen.value,
+    connectionEpoch: () => dataStore.connectionEpoch,
+})
 
 /**
  * Handler for when the result details section is opened.
- * Fetches if idle, or if loaded but empty (to retry).
+ * The fetch pipeline's Entry fetches as needed.
  */
 function onResultOpen() {
     isResultOpen.value = true
     dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, true)
-    ensureResultFetched()
 }
 
 /**
  * Handler for when the result details section is closed.
- * Stops polling to avoid unnecessary requests.
+ * The fetch pipeline's Leave stops its ticker and aborts its request.
  */
 function onResultClose() {
     isResultOpen.value = false
     dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, false)
-    stopPolling()
 }
 
 /**
  * Handler for when the parent tool use details is closed.
- * Stops polling to avoid unnecessary requests.
+ * Closes the result section with it (the pipeline runs Leave).
  */
 function onToolUseClose() {
     isOpen.value = false
     isResultOpen.value = false
     dataStore.setDetailOpen(props.sessionId, props.toolId, false)
     dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, false)
-    stopPolling()
 }
 
 /**
  * Handler for when the parent tool use details is opened.
- * If the result section is already open and has no data, triggers a fetch/poll.
+ * The pipeline's Entry fetches when the result is visible (the "Result"
+ * disclosure is open, or the tool renders its result inline).
  */
 function onToolUseOpen() {
     isOpen.value = true
     dataStore.setDetailOpen(props.sessionId, props.toolId, true)
-    // Fetch the result when it needs to be visible: the "Result" disclosure
-    // is open, or this is an inline-result tool that renders its result
-    // directly in the body as soon as the card opens.
-    if (isResultOpen.value || (rendersResultInline.value && showResultDetails.value)) {
-        ensureResultFetched()
-    }
 }
-
-// Cleanup on unmount (e.g., when changing session, toggling groups)
-onUnmounted(() => {
-    stopPolling()
-})
 
 // KeepAlive active state (provided by SessionView)
 const sessionActive = inject('sessionActive', ref(true))
@@ -332,35 +241,6 @@ const transcriptFrozen = inject('transcriptFrozen', ref(false))
 
 // Request scroll-to-bottom from SessionItemsList (for auto-open expansion)
 const requestScrollToBottomIfNeeded = inject('requestScrollToBottomIfNeeded', null)
-
-// Track whether polling was suspended by deactivation (to resume on reactivation)
-let resultPollingPaused = false
-
-watch(sessionActive, (active) => {
-    if (active) {
-        // Reactivated: resume polling only if it was suspended and still needed
-        if (resultPollingPaused) {
-            resultPollingPaused = false
-            // Resume only if results are still incomplete (polling is self-limiting).
-            if (!resultData.value || resultData.value.length < requiredDisplayCount.value) {
-                startPolling()
-            }
-        }
-    } else {
-        // Deactivated: pause active polling intervals without resetting state
-        if (pollingIntervalId.value) {
-            resultPollingPaused = true
-            clearInterval(pollingIntervalId.value)
-            pollingIntervalId.value = null
-            // Keep isPolling.value = true so the UI still shows "checking again shortly..."
-        }
-        // Abort any in-flight result request
-        if (abortController.value) {
-            abortController.value.abort()
-            abortController.value = null
-        }
-    }
-})
 
 // Computed for display: single result or array of multiple.
 // While we haven't reached the helper's ``requiredDisplayCount`` yet,
@@ -948,6 +828,10 @@ function handleStopAgent() {
     }
 }
 
+// Create the result fetch pipeline's watchers last: its getters read
+// computeds declared throughout this setup.
+startResultFetch()
+
 </script>
 
 <template>
@@ -1080,7 +964,7 @@ function handleStopAgent() {
                     <div v-else-if="resultState === 'error'" class="tool-result-error">
                         Error loading result: {{ resultError }}
                     </div>
-                    <div v-else-if="resultState === 'loaded' && !displayResult && isPolling" class="tool-result-polling">
+                    <div v-else-if="resultState === 'loaded' && !displayResult && showsPending" class="tool-result-polling">
                         <wa-spinner></wa-spinner>
                         <span>Result not yet available. Checking again shortly...</span>
                     </div>
@@ -1099,6 +983,7 @@ function handleStopAgent() {
                             :overrides="resultOverrides"
                         />
                     </div>
+                    <div v-if="refreshNote" class="tool-result-refresh-note">Could not refresh: {{ resultError }}</div>
                 </div>
                 <wa-details v-else ref="resultDetailsRef" :open="isResultOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
                     <span slot="summary">Result</span>
@@ -1110,7 +995,7 @@ function handleStopAgent() {
                         <div v-else-if="resultState === 'error'" class="tool-result-error">
                             Error loading result: {{ resultError }}
                         </div>
-                        <div v-else-if="resultState === 'loaded' && !displayResult && isPolling" class="tool-result-polling">
+                        <div v-else-if="resultState === 'loaded' && !displayResult && showsPending" class="tool-result-polling">
                             <wa-spinner></wa-spinner>
                             <span>Result not yet available. Checking again shortly...</span>
                         </div>
@@ -1129,6 +1014,7 @@ function handleStopAgent() {
                                 :overrides="resultOverrides"
                             />
                         </div>
+                        <div v-if="refreshNote" class="tool-result-refresh-note">Could not refresh: {{ resultError }}</div>
                     </div>
                 </wa-details>
             </template>
@@ -1222,6 +1108,12 @@ wa-details.item-details {
 
 .tool-result-error {
     color: var(--wa-color-danger-60);
+}
+
+.tool-result-refresh-note {
+    margin-top: var(--wa-space-xs);
+    color: var(--wa-color-danger-60);
+    font-size: var(--wa-font-size-s);
 }
 
 .tool-result-empty {
