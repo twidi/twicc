@@ -12,7 +12,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 1 | Canvas + floating panels | **Done** — commits `ddc43644`, `8dbdfd83` on branch `enhanced-ui` |
 | 2 | Depth (layered shadows) + typography | **Done** — commits `85ce211f`, `ad7942b1`, `e2046d92` on branch `enhanced-ui` (see §6b) |
 | 3 | Accent-tinted glass overlays | **Done** — commit `709f9cf9` on branch `enhanced-ui` (see §6c) |
-| 4 | Motion tokens + micro-interactions | To specify |
+| 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (see §6d); 4b (`wa-details` motion) and 4c (gliding indicators) to specify |
 | 5 | Entrances (virtual-scroll aware) + skeletons | To specify |
 | 6 | Accent glow + live states | To specify |
 | 7 | Secondary screens | To specify |
@@ -329,6 +329,50 @@ Accepted trade-offs routed to the user: the first keyboard-focused item of a men
 settings logout button have their focus ring touching the border; the palette's sticky
 header reads slightly denser; nested modals stack veils (up to four on mobile).
 
+## 6d. Step 4a — motion tokens + micro-interactions (done)
+
+Spec: `docs/plans/2026-09-27-motion-micro-design.md` (commit `116b4f6e`, reviewed PASS in
+7 rounds; §5.4 amended after the browser review). Code: commit `46b4926c`. Step 4 is split
+in three sub-steps, each with its own spec, review and commit: **4a** (this one), **4b**
+(`wa-details` open/close), **4c** (gliding indicators + `SegmentedControl`).
+
+### 6d.1 What it does
+
+- `frontend/src/styles/motion.css`: `--motion-dur-1/2/3` (120/200/380 ms),
+  `--motion-dur-press`, `--motion-ease`, `--motion-ease-out`, `--motion-ease-spring`
+  (the mock's `linear()`), and `--motion-amount` (1; 0 under reduced motion) that
+  multiplies every movement. Web Awesome's `--wa-transition-*` map onto them on
+  `:root, .wa-invert`.
+- Micro-interactions: button press (incl. WA internal dialog "×", tab scroll arrows, tag
+  "×" via exported parts), icon grow on icon-only plain buttons, snippet lift, Send icon
+  and "go" arrow nudges, gear quarter turn, completed-task check pop (Tasks tab visible
+  only).
+- Reduced motion: movement off, fades kept; the working robot, the pending workflow
+  hourglass and the busy logo pulse in opacity (`motion-status-pulse`).
+- **Removed after the browser review:** the session row nudge and the "⋮" slide ("on
+  retire ça complètement").
+
+### 6d.2 Lessons (do not regress)
+
+- The awesome theme sets `--wa-transition-*` to a **unitless `0`** on buttons: mixed into
+  a duration list with `ms` values, it invalidates the whole list. `motion.css` restates
+  it as `0s`.
+- Replacing a `transform` with an individual property can **expose a theme rule** it was
+  overriding: the awesome theme translates native buttons 4px down on press; the snippet
+  chips keep `transform: none`.
+- Web Awesome re-declares its tokens on `.wa-invert` (tooltips): any token override goes
+  on `:root, .wa-invert`.
+- Vue scoped styles rename a keyframe only when the same scoped block declares it: a
+  global keyframe (`motion-status-pulse`) is referenced as is.
+- A CSS animation does not run in a `display: none` / detached subtree; it starts when
+  shown. Gate one-shot animations on real visibility (the Tasks tab `active` prop).
+- Sub-agents: use the Agent tool, not separate TwiCC sessions (user, 2026-09-27).
+
+### 6d.3 Not verified
+
+Chrome pass, share viewer and artifact shell visuals, touch (Firefox checked by the user;
+computed styles probed in headless Firefox).
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -559,4 +603,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a).
