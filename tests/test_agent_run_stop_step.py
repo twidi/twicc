@@ -51,6 +51,7 @@ from twicc.providers.sessions_watcher import ParsedSessionFile, broadcast_agent_
 
 from tests.codex_agent_run_fixtures import (
     AGENT_A,
+    INTERRUPT_AGENT_OUTPUT,
     PATH_A,
     ROOT,
     Rollout,
@@ -396,7 +397,7 @@ def test_codex_stop_row_created_after_its_result_closes(tmp_path):
     root.task_started(1, "t1")
     root.spawn(2, "c_spawn", AGENT_A, PATH_A)
     root.call(10, "interrupt_agent", "c_stop", {"target": PATH_A}, mark="stop")
-    root.output(11, "c_stop", "{}", mark="stop_output")
+    root.output(11, "c_stop", INTERRUPT_AGENT_OUTPUT, mark="stop_output")
     root.activity(13, "interrupted", "c_stop", AGENT_A, PATH_A, mark="stop_event")
     child = Rollout(AGENT_A, subagent=True)
     child.meta(2.1)

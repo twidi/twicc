@@ -28,7 +28,7 @@ from twicc.core.models import (
     ToolResultLink,
 )
 from twicc.providers.codex.agent_runs import FileEvidence, FileRun, evidence_from_batch_state
-from twicc.providers.codex.compute import CodexSessionCompute, get_compute
+from twicc.providers.codex.compute import CodexSessionCompute, _SpawnTarget, get_compute
 from twicc.providers.compute_base import BatchAgentState
 
 from tests.codex_agent_run_fixtures import (
@@ -36,6 +36,8 @@ from tests.codex_agent_run_fixtures import (
     AGENT_B,
     AGENT_C,
     AGENT_G,
+    ALL_FIXTURES,
+    INTERRUPT_AGENT_OUTPUT,
     OWNER_ABORT_CUTTING_KINDS,
     OWNER_ABORT_KINDS,
     PATH_A,
@@ -540,7 +542,7 @@ def test_flat_timestamp_child(db):
 def test_final_answer_without_batch_state_keeps_the_spawn_map():
     compute = CodexSessionCompute()
     compute.begin_session_compute("s")
-    compute._agent_id_map("s")[PATH_A] = "c_spawn"
+    compute._spawn_target_map("s")[PATH_A] = _SpawnTarget("c_spawn", AGENT_A)
     parsed = orjson.loads(fixture_idle_followup_opens_run().session(ROOT).lines[
         fixture_idle_followup_opens_run().line(ROOT, "final_2") - 1])
     assert compute.remap_tool_result_id(parsed, PATH_A, session_id="s", tool_use_map={}) == "c_spawn"
@@ -594,3 +596,21 @@ def test_evidence_from_batch_state():
         aborted_lines={"c_fu": (30,)},
         results={"c_spawn": ((5, at(5)), (9, at(9))), "c_fu": ((12, at(12)),)},
     )
+
+
+def test_fixture_control_outputs_have_the_real_shapes():
+    """08-11 rollout line 189: ``followup_task`` / ``send_message`` ack with ``""``; ``interrupt_agent`` names the prior status."""
+    expected = {"followup_task": "", "send_message": "", "interrupt_agent": INTERRUPT_AGENT_OUTPUT}
+    checked = set()
+    for build in ALL_FIXTURES.values():
+        for fixture_session in build().sessions:
+            names = {}
+            for raw in fixture_session.lines:
+                payload = orjson.loads(raw)["payload"]
+                if payload.get("type") == "function_call":
+                    names[payload["call_id"]] = payload["name"]
+                elif payload.get("type") == "function_call_output" and names.get(payload["call_id"]) in expected:
+                    name = names[payload["call_id"]]
+                    assert payload["output"] == expected[name], (build.__name__, payload["call_id"])
+                    checked.add(name)
+    assert checked == set(expected)

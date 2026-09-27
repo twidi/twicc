@@ -33,6 +33,9 @@ PATH_A = "/root/task_a"
 PATH_B = "/root/task_b"
 PATH_C = "/root/task_c"
 PATH_G = "/root/task_a/task_g"
+# Output of an ``interrupt_agent`` call (``followup_task`` / ``send_message``
+# ack with an empty output), as in the 08-11 rollout (line 189).
+INTERRUPT_AGENT_OUTPUT = '{"previous_status":"running"}'
 
 
 def at(seconds: float) -> datetime:
@@ -156,7 +159,7 @@ class Rollout:
 
     def control(self, seconds: float, tool: str, call_id: str, agent_path: str, *,
                 event_kind: str | None = "interacted", agent_id: str | None = None,
-                output: str = "{}", mark: str | None = None) -> None:
+                output: str = "", mark: str | None = None) -> None:
         """A collaboration control call, its activity event, its output (0.1 s apart)."""
         self.call(seconds, tool, call_id, {"target": agent_path, "message": "gAAAA"}, mark=mark)
         if event_kind is not None:
@@ -319,7 +322,7 @@ def fixture_control_calls() -> CodexAgentRunFixture:
     root.output(8.2, "c_v1", "{}")
     root.control(9, "send_message", "c_to_root", "/root", agent_id=ROOT, mark="to_root")
     root.control(12, "interrupt_agent", "c_stop", PATH_A, event_kind="interrupted", agent_id=AGENT_A,
-                 mark="stop")
+                 output=INTERRUPT_AGENT_OUTPUT, mark="stop")
     return _fixture("control_calls", root)
 
 
@@ -417,7 +420,7 @@ def fixture_completed_between_call_and_interacted() -> CodexAgentRunFixture:
     root.call(10, "followup_task", "c_fu", {"target": PATH_A, "message": "gAAAA"}, mark="fu")
     root.completed(11, AGENT_A, PATH_A, "a1", mark="completed_0")
     root.activity(12, "interacted", "c_fu", AGENT_A, PATH_A, mark="fu_event")
-    root.output(13, "c_fu", "{}", mark="fu_output")
+    root.output(13, "c_fu", "", mark="fu_output")
     root.final_answer(14, PATH_A, mark="final_0")
     root.completed(20, AGENT_A, PATH_A, "a2", mark="completed_1")
     root.final_answer(21, PATH_A, mark="final_1")
@@ -437,7 +440,7 @@ def fixture_stop_in_completed_final_gap() -> CodexAgentRunFixture:
     root.spawn(2, "c_spawn", AGENT_A, PATH_A, mark="spawn")
     root.completed(10, AGENT_A, PATH_A, "a1", mark="completed_0")
     root.control(11, "interrupt_agent", "c_stop", PATH_A, event_kind="interrupted", agent_id=AGENT_A,
-                 mark="stop")
+                 output=INTERRUPT_AGENT_OUTPUT, mark="stop")
     root.followup(14, "c_fu", AGENT_A, PATH_A, mark="fu")
     root.final_answer(17, PATH_A, mark="final_0")
     return _fixture("stop_in_completed_final_gap", root)
@@ -465,7 +468,7 @@ def fixture_followup_after_interrupt() -> CodexAgentRunFixture:
     root = _root_start()
     root.spawn(2, "c_spawn", AGENT_A, PATH_A, mark="spawn")
     root.control(10, "interrupt_agent", "c_stop", PATH_A, event_kind="interrupted", agent_id=AGENT_A,
-                 mark="stop")
+                 output=INTERRUPT_AGENT_OUTPUT, mark="stop")
     root.followup(14, "c_fu", AGENT_A, PATH_A, mark="fu")
     root.completed(20, AGENT_A, PATH_A, "a2", mark="completed")
     root.final_answer(21, PATH_A, mark="final")
@@ -507,7 +510,7 @@ def fixture_stop_result_before_event() -> CodexAgentRunFixture:
     root = _root_start()
     root.spawn(2, "c_spawn", AGENT_A, PATH_A, mark="spawn")
     root.call(10, "interrupt_agent", "c_stop", {"target": PATH_A}, mark="stop")
-    root.output(11, "c_stop", "{}", mark="stop_output")
+    root.output(11, "c_stop", INTERRUPT_AGENT_OUTPUT, mark="stop_output")
     root.completed(12, AGENT_A, PATH_A, "a1", mark="completed")
     root.activity(13, "interrupted", "c_stop", AGENT_A, PATH_A, mark="stop_event")
     root.final_answer(14, PATH_A, mark="final")
@@ -521,7 +524,7 @@ def fixture_interrupt_race() -> CodexAgentRunFixture:
     root.call(10, "interrupt_agent", "c_stop", {"target": PATH_A}, mark="stop")
     root.completed(11, AGENT_A, PATH_A, "a1", mark="completed")
     root.activity(12, "interrupted", "c_stop", AGENT_A, PATH_A, mark="stop_event")
-    root.output(13, "c_stop", "{}", mark="stop_output")
+    root.output(13, "c_stop", INTERRUPT_AGENT_OUTPUT, mark="stop_output")
     root.final_answer(14, PATH_A, mark="final")
     return _fixture("interrupt_race", root)
 
@@ -575,6 +578,21 @@ def fixture_flat_timestamp_child() -> CodexAgentRunFixture:
     return _fixture("flat_timestamp_child", root, child)
 
 
+def fixture_started_without_spawn_call() -> CodexAgentRunFixture:
+    """A ``started`` event whose ``spawn_agent`` call is not in the file: no spawn link.
+
+    The run-opening follow-up is the agent's only run here; its
+    ``FINAL_ANSWER`` lands on it (the agent comes from the ``started``
+    event, as live reads it, not from a spawn link).
+    """
+    root = _root_start()
+    root.activity(2, "started", "c_spawn", AGENT_A, PATH_A, mark="started")
+    root.followup(5, "c_fu", AGENT_A, PATH_A, mark="fu")
+    root.final_answer(9, PATH_A, mark="final")
+    root.task_complete(10, "t1")
+    return _fixture("started_without_spawn_call", root)
+
+
 # Every scenario, by name, for the parity test.
 ALL_FIXTURES: dict[str, Callable[[], CodexAgentRunFixture]] = {
     "idle_followup_opens_run": fixture_idle_followup_opens_run,
@@ -601,4 +619,5 @@ ALL_FIXTURES: dict[str, Callable[[], CodexAgentRunFixture]] = {
     "same_time_ack_and_final_answer": fixture_same_time_ack_and_final_answer,
     "pre_completed_rollout": fixture_pre_completed_rollout,
     "flat_timestamp_child": fixture_flat_timestamp_child,
+    "started_without_spawn_call": fixture_started_without_spawn_call,
 }

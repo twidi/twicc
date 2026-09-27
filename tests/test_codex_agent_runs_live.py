@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import orjson
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from twicc.core.agent_runs import agent_run_states
 from twicc.core.enums import Provider
@@ -22,6 +25,7 @@ from twicc.core.models import (
     AgentRunEndSource,
     Project,
     Session,
+    SessionItem,
     SessionType,
     ToolResultLink,
 )
@@ -36,6 +40,8 @@ from tests.codex_agent_run_fixtures import (
     PROJECT_ID,
     ROOT,
     CodexAgentRunFixture,
+    Rollout,
+    _fixture,
     at,
     fixture_completed_between_call_and_interacted,
     fixture_idle_followup_opens_run,
@@ -202,6 +208,7 @@ EXPECTED_ROW_COUNTS: dict[str, tuple[int, int]] = {
     "reaudit_limitation": (1, 2),
     "same_time_ack_and_final_answer": (1, 0),
     "stop_in_completed_final_gap": (2, 1),
+    "started_without_spawn_call": (1, 0),
     "stop_result_before_event": (1, 1),
     "subagent_owner_usage_limit": (0, 2),
     "t20_sequence": (2, 3),
@@ -410,3 +417,73 @@ def test_evidence_from_db_stop_uses_the_first_non_error_result(db):
     assert evidence_from_db(ROOT, AGENT_A, 100).stops == ((5, 6),)
     # A result line at or after ``before_line`` is not read.
     assert evidence_from_db(ROOT, AGENT_A, 6).stops == ((5, None),)
+
+
+# ---------------------------------------------------------------------------
+# Query budget
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("owner_is_subagent", [False, True], ids=["root_owner", "subagent_owner"])
+def test_control_event_on_the_owner_or_root_runs_no_query(db, django_assert_num_queries, owner_is_subagent):
+    """The free owner/root target check comes before any lookup (as batch)."""
+    project = Project.objects.create(id=PROJECT_ID)
+    root = Session.objects.create(id=ROOT, project=project, provider=Provider.CODEX, file_path="root.jsonl")
+    owner = root
+    if owner_is_subagent:
+        owner = Session.objects.create(id=AGENT_A, project=project, provider=Provider.CODEX, file_path="a.jsonl",
+                                       type=SessionType.SUBAGENT, parent_session=root)
+    rollout = Rollout(owner.id)
+    rollout.activity(5, "interacted", "c_self", ROOT, "/root")
+    parsed = orjson.loads(rollout.lines[0])
+    item = SessionItem(session=owner, line_num=7, content=rollout.lines[0], timestamp=at(5))
+    compute = CodexSessionCompute()
+    with django_assert_num_queries(0):
+        assert compute.apply_agent_run_signals(owner.id, item, parsed) == LiveAgentSignals()
+
+
+class QueryCountingCompute(CodexSessionCompute):
+    """Counts the queries of the live hook on one line."""
+
+    def __init__(self, line_num: int) -> None:
+        super().__init__()
+        self.line_num = line_num
+        self.count: int | None = None
+
+    def apply_agent_run_signals(self, session_id, item, parsed, **kwargs):
+        if item.line_num != self.line_num:
+            return super().apply_agent_run_signals(session_id, item, parsed, **kwargs)
+        with CaptureQueriesContext(connection) as ctx:
+            signals = super().apply_agent_run_signals(session_id, item, parsed, **kwargs)
+        self.count = len(ctx.captured_queries)
+        return signals
+
+
+def _abort_with_idle_agents(agent_count: int) -> CodexAgentRunFixture:
+    """``agent_count`` agents spawned (and followed up) in turn t1, one spawn in t2, then t2 aborts."""
+    root = Rollout(ROOT)
+    root.meta(0)
+    root.task_started(1, "t1")
+    for index in range(agent_count):
+        agent_id, path = f"019f0000-0000-7000-8000-{index:012d}", f"/root/task_{index}"
+        root.spawn(2 + index, f"c_spawn_{index}", agent_id, path)
+        root.followup(2.5 + index, f"c_fu_{index}", agent_id, path)
+    root.task_complete(100, "t1")
+    root.task_started(200, "t2")
+    root.spawn(201, "c_b", AGENT_A, PATH_A)
+    root.turn_aborted(300, "t2", mark="abort")
+    return _fixture(f"abort_with_{agent_count}_idle_agents", root)
+
+
+def test_owner_abort_query_budget_does_not_grow_with_the_agents(db, tmp_path):
+    counts = {}
+    for agent_count in (5, 40):
+        fx = _abort_with_idle_agents(agent_count)
+        compute = QueryCountingCompute(fx.line(ROOT, "abort"))
+        (tmp_path / str(agent_count)).mkdir()
+        LiveReplay(fx, tmp_path / str(agent_count), compute).run(per_line=False)
+        assert run_ends() == [(fx.line(ROOT, "abort"), "c_b", AGENT_A, "owner_turn_aborted", at(300))]
+        counts[agent_count] = compute.count
+        Session.objects.filter(project_id=PROJECT_ID).delete()
+    assert counts[5] is not None
+    assert counts[5] == counts[40]

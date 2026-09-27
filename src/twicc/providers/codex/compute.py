@@ -1779,6 +1779,18 @@ class _SubAgentSpawn(NamedTuple):
     agent_path: str
 
 
+class _SpawnTarget(NamedTuple):
+    """What a subagent's completion line rebinds to, in the batch side-table.
+
+    - ``call_id``: the originating ``spawn_agent`` call.
+    - ``agent_id``: the subagent's thread id, so the batch names the agent
+      the way live does (from the spawn event), spawn link or not.
+    """
+
+    call_id: str
+    agent_id: str
+
+
 def _parse_sub_agent_activity_started(parsed_json: dict) -> _SubAgentSpawn | None:
     """Decode the multi-agent **v2** spawn event.
 
@@ -2105,6 +2117,113 @@ def _data_url_image(value: object) -> tuple[str, str] | None:
     return media_type, data
 
 
+class _FileRunRows(NamedTuple):
+    """The DB rows of one file the §5.6 evidence reads, below a line, each in its builder's order.
+
+    - ``links``: ``(agent_id, tool_use_id, tool_use_line_num)``;
+    - ``interactions``: ``(agent_id, tool_use_id, tool_use_line_num,
+      event_line_num, kind, opens_run)``, ``resume`` and ``stop`` only;
+    - ``results``: ``(tool_use_id, tool_result_line_num, tool_result_at,
+      error)`` of the run and stop calls;
+    - ``ends``: ``(agent_id, tool_use_id, line_num, status)``, the
+      ``completed`` / ``owner_turn_aborted`` transcript rows.
+    """
+
+    links: list[tuple[str, str, int]]
+    interactions: list[tuple[str, str, int, int, str, bool]]
+    results: list[tuple[str, int, datetime | None, str | None]]
+    ends: list[tuple[str, str, int, str]]
+
+
+def _file_run_rows_from_db(session_id: str, before_line: int, agent_id: str | None = None) -> _FileRunRows:
+    """Load the :class:`_FileRunRows` of ``session_id`` below ``before_line``: at most four queries.
+
+    ``agent_id`` limits the rows to that agent; ``None`` loads every agent's
+    rows at once (the owner abort walks them all).
+    """
+    agent_filter = {} if agent_id is None else {'agent_id': agent_id}
+    links = list(AgentLink.objects.filter(
+        session_id=session_id, tool_use_line_num__lt=before_line, **agent_filter,
+    ).order_by('tool_use_line_num', 'id').values_list('agent_id', 'tool_use_id', 'tool_use_line_num'))
+    interactions = list(AgentInteraction.objects.filter(
+        session_id=session_id,
+        event_line_num__lt=before_line,
+        kind__in=(AgentInteractionKind.RESUME, AgentInteractionKind.STOP),
+        **agent_filter,
+    ).order_by('event_line_num', 'id').values_list(
+        'agent_id', 'tool_use_id', 'tool_use_line_num', 'event_line_num', 'kind', 'opens_run',
+    ))
+    # The calls whose results the rules read: every run call (spawn, run-opening
+    # resume) and every stop call.
+    result_ids = {tool_use_id for _, tool_use_id, _ in links}
+    result_ids.update(
+        tool_use_id for _, tool_use_id, _, _, kind, opens_run in interactions
+        if kind == AgentInteractionKind.STOP or opens_run
+    )
+    results = []
+    if result_ids:
+        results = list(ToolResultLink.objects.filter(
+            session_id=session_id, tool_use_id__in=result_ids, tool_result_line_num__lt=before_line,
+        ).order_by('tool_result_line_num', 'id').values_list(
+            'tool_use_id', 'tool_result_line_num', 'tool_result_at', 'error',
+        ))
+    ends = list(AgentRunEnd.objects.filter(
+        session_id=session_id,
+        source=AgentRunEndSource.TRANSCRIPT,
+        line_num__lt=before_line,
+        status__in=(END_STATUS_COMPLETED, END_STATUS_OWNER_TURN_ABORTED),
+        **agent_filter,
+    ).order_by('line_num', 'id').values_list('agent_id', 'tool_use_id', 'line_num', 'status'))
+    return _FileRunRows(links, interactions, results, ends)
+
+
+def _evidence_from_rows(rows: _FileRunRows, agent_id: str) -> FileEvidence:
+    """Build the :class:`FileEvidence` of ``agent_id`` from loaded rows (no query).
+
+    The one builder of :func:`evidence_from_db` and of the owner abort's
+    all-agents walk, so both give the rules the same input.
+    """
+    runs = [
+        FileRun(tool_use_id, call_line, None, RUN_KIND_SPAWN)
+        for link_agent, tool_use_id, call_line in rows.links if link_agent == agent_id
+    ]
+    stop_rows: list[tuple[str, int]] = []
+    for row_agent, tool_use_id, call_line, event_line, kind, opens_run in rows.interactions:
+        if row_agent != agent_id:
+            continue
+        if kind == AgentInteractionKind.RESUME:
+            if opens_run:
+                runs.append(FileRun(tool_use_id, call_line, event_line, RUN_KIND_RESUME))
+        else:
+            stop_rows.append((tool_use_id, event_line))
+
+    results: dict[str, list[tuple[int, datetime | None]]] = {run.tool_use_id: [] for run in runs}
+    # Stop call id -> its first non-error result line.
+    first_ok_lines: dict[str, int] = {}
+    stop_ids = {tool_use_id for tool_use_id, _ in stop_rows}
+    for tool_use_id, line, result_at, error in rows.results:
+        if tool_use_id in results:
+            results[tool_use_id].append((line, result_at))
+        if error is None and tool_use_id in stop_ids:
+            first_ok_lines.setdefault(tool_use_id, line)
+
+    completed_lines: dict[str, list[int]] = {}
+    aborted_lines: dict[str, list[int]] = {}
+    for end_agent, tool_use_id, line, status in rows.ends:
+        if end_agent != agent_id:
+            continue
+        target = completed_lines if status == END_STATUS_COMPLETED else aborted_lines
+        target.setdefault(tool_use_id, []).append(line)
+
+    return FileEvidence(
+        runs=tuple(runs),
+        stops=tuple((event_line, first_ok_lines.get(tool_use_id)) for tool_use_id, event_line in stop_rows),
+        completed_lines={tool_use_id: tuple(lines) for tool_use_id, lines in completed_lines.items()},
+        aborted_lines={tool_use_id: tuple(lines) for tool_use_id, lines in aborted_lines.items()},
+        results={tool_use_id: tuple(rows) for tool_use_id, rows in results.items()},
+    )
+
+
 def evidence_from_db(session_id: str, agent_id: str, before_line: int) -> FileEvidence:
     """Build the :class:`FileEvidence` of ``agent_id`` in ``session_id`` from the DB rows below ``before_line``.
 
@@ -2123,76 +2242,20 @@ def evidence_from_db(session_id: str, agent_id: str, before_line: int) -> FileEv
     current line's result link, which the rules skip as not before their
     line), so both builders give the rules the same input.
     """
-    runs = [
-        FileRun(tool_use_id, call_line, None, RUN_KIND_SPAWN)
-        for tool_use_id, call_line in AgentLink.objects.filter(
-            session_id=session_id, agent_id=agent_id, tool_use_line_num__lt=before_line,
-        ).order_by('tool_use_line_num', 'id').values_list('tool_use_id', 'tool_use_line_num')
-    ]
-    stop_rows: list[tuple[str, int]] = []
-    for tool_use_id, call_line, event_line, kind, opens_run in AgentInteraction.objects.filter(
-        session_id=session_id,
-        agent_id=agent_id,
-        event_line_num__lt=before_line,
-        kind__in=(AgentInteractionKind.RESUME, AgentInteractionKind.STOP),
-    ).order_by('event_line_num', 'id').values_list(
-        'tool_use_id', 'tool_use_line_num', 'event_line_num', 'kind', 'opens_run',
-    ):
-        if kind == AgentInteractionKind.RESUME:
-            if opens_run:
-                runs.append(FileRun(tool_use_id, call_line, event_line, RUN_KIND_RESUME))
-        else:
-            stop_rows.append((tool_use_id, event_line))
-
-    results: dict[str, list[tuple[int, datetime | None]]] = {run.tool_use_id: [] for run in runs}
-    # Stop call id -> its first non-error result line.
-    first_ok_lines: dict[str, int] = {}
-    stop_ids = {tool_use_id for tool_use_id, _ in stop_rows}
-    result_ids = set(results) | stop_ids
-    if result_ids:
-        for tool_use_id, line, result_at, error in ToolResultLink.objects.filter(
-            session_id=session_id, tool_use_id__in=result_ids, tool_result_line_num__lt=before_line,
-        ).order_by('tool_result_line_num', 'id').values_list(
-            'tool_use_id', 'tool_result_line_num', 'tool_result_at', 'error',
-        ):
-            if tool_use_id in results:
-                results[tool_use_id].append((line, result_at))
-            if error is None and tool_use_id in stop_ids:
-                first_ok_lines.setdefault(tool_use_id, line)
-
-    completed_lines: dict[str, list[int]] = {}
-    aborted_lines: dict[str, list[int]] = {}
-    for tool_use_id, line, status in AgentRunEnd.objects.filter(
-        session_id=session_id,
-        agent_id=agent_id,
-        source=AgentRunEndSource.TRANSCRIPT,
-        line_num__lt=before_line,
-        status__in=(END_STATUS_COMPLETED, END_STATUS_OWNER_TURN_ABORTED),
-    ).order_by('line_num', 'id').values_list('tool_use_id', 'line_num', 'status'):
-        target = completed_lines if status == END_STATUS_COMPLETED else aborted_lines
-        target.setdefault(tool_use_id, []).append(line)
-
-    return FileEvidence(
-        runs=tuple(runs),
-        stops=tuple((event_line, first_ok_lines.get(tool_use_id)) for tool_use_id, event_line in stop_rows),
-        completed_lines={tool_use_id: tuple(lines) for tool_use_id, lines in completed_lines.items()},
-        aborted_lines={tool_use_id: tuple(lines) for tool_use_id, lines in aborted_lines.items()},
-        results={tool_use_id: tuple(rows) for tool_use_id, rows in results.items()},
-    )
+    return _evidence_from_rows(_file_run_rows_from_db(session_id, before_line, agent_id), agent_id)
 
 
-def _agents_with_file_runs_in_db(session_id: str, before_line: int) -> list[str]:
-    """Live twin of :func:`~twicc.providers.codex.agent_runs.agents_with_file_runs`, below ``before_line``.
+def _agents_with_file_runs_in_rows(rows: _FileRunRows) -> list[str]:
+    """Live twin of :func:`~twicc.providers.codex.agent_runs.agents_with_file_runs`, over loaded rows.
 
-    The agents with a spawn link or a run-opening ``resume`` owned by
-    ``session_id``, sorted (the batch walks them sorted too).
+    The agents with a spawn link or a run-opening ``resume``, sorted (the
+    batch walks them sorted too).
     """
-    agents = set(AgentLink.objects.filter(
-        session_id=session_id, tool_use_line_num__lt=before_line,
-    ).values_list('agent_id', flat=True))
-    agents.update(AgentInteraction.objects.filter(
-        session_id=session_id, kind=AgentInteractionKind.RESUME, opens_run=True, event_line_num__lt=before_line,
-    ).values_list('agent_id', flat=True))
+    agents = {agent_id for agent_id, _, _ in rows.links}
+    agents.update(
+        agent_id for agent_id, _, _, _, kind, opens_run in rows.interactions
+        if kind == AgentInteractionKind.RESUME and opens_run
+    )
     return sorted(agents)
 
 
@@ -2269,7 +2332,8 @@ class CodexSessionCompute(BaseSessionCompute):
         # {session_id: {completion key: spawn_agent_call_id}}. Batch-only
         # side-table letting the subagent's completion line rebind onto
         # the originating ``spawn_agent`` ``ToolResultLink`` chain
-        # without a DB lookup. The key is whatever that completion line
+        # without a DB lookup; the value is a :class:`_SpawnTarget` (the
+        # spawn call id and the agent id). The key is whatever that completion line
         # addresses the agent by, which differs per protocol generation
         # (the two key spaces can't collide — a UUID never starts with
         # ``/``):
@@ -2289,9 +2353,9 @@ class CodexSessionCompute(BaseSessionCompute):
         # carries an agent path).
         # Initialised by :meth:`begin_session_compute`, freed by
         # :meth:`end_session_compute`. Lazily created on first access in
-        # :meth:`_agent_id_map` to tolerate the live path that never
+        # :meth:`_spawn_target_map` to tolerate the live path that never
         # calls ``begin_session_compute``.
-        self._agent_id_to_spawn_call_id: dict[str, dict[str, str]] = {}
+        self._spawn_targets: dict[str, dict[str, _SpawnTarget]] = {}
         # Batch-only file facts of the agent-run hook
         # (:meth:`collect_agent_run_signals`, design §6.2), filled as the
         # loop passes the lines; the live twin reads the same facts from
@@ -2356,15 +2420,15 @@ class CodexSessionCompute(BaseSessionCompute):
         """
         return self._code_exec_targets.setdefault(session_id, [])
 
-    def _agent_id_map(self, session_id: str) -> dict[str, str]:
-        """Return the per-session ``{completion key: spawn_agent_call_id}`` map.
+    def _spawn_target_map(self, session_id: str) -> dict[str, _SpawnTarget]:
+        """Return the per-session ``{completion key: _SpawnTarget}`` map.
 
         Lazily creates the map on first access for the same reason as
         :meth:`_proc_map`. The live path doesn't actually consult this
         map (it queries ``AgentLink`` instead), so a missing entry there
         is harmless.
         """
-        return self._agent_id_to_spawn_call_id.setdefault(session_id, {})
+        return self._spawn_targets.setdefault(session_id, {})
 
     def _plan_prefix_state(self, session_id: str) -> _PlanPrefixState:
         """Return the per-session ``/plan``-prefix scan state.
@@ -2393,7 +2457,7 @@ class CodexSessionCompute(BaseSessionCompute):
         self._code_exec_targets[session_id] = []
         self._process_owners[session_id] = {}
         self._ended_processes[session_id] = {}
-        self._agent_id_to_spawn_call_id[session_id] = {}
+        self._spawn_targets[session_id] = {}
         self._turn_started_lines[session_id] = {}
         self._fork_fields[session_id] = ForkFields(None, None)
         self._prev_total_tokens[session_id] = 0
@@ -2412,7 +2476,7 @@ class CodexSessionCompute(BaseSessionCompute):
         self._code_exec_targets.pop(session_id, None)
         self._process_owners.pop(session_id, None)
         self._ended_processes.pop(session_id, None)
-        self._agent_id_to_spawn_call_id.pop(session_id, None)
+        self._spawn_targets.pop(session_id, None)
         self._turn_started_lines.pop(session_id, None)
         self._fork_fields.pop(session_id, None)
         self._prev_total_tokens.pop(session_id, None)
@@ -2572,7 +2636,7 @@ class CodexSessionCompute(BaseSessionCompute):
         - the subagent completion line — a ``<subagent_notification>``
           user message on multi-agent v1, a ``FINAL_ANSWER`` agent
           message on v2: rebound to the originating ``spawn_agent`` via
-          ``self._agent_id_to_spawn_call_id``, populated by
+          ``self._spawn_targets``, populated by
           :meth:`analyze_content` when it saw the spawn ack output
           ``{"agent_id": ...}`` (v1) / the ``SubAgentActivity`` spawn
           event (v2). Falls back to identity when no mapping is
@@ -2587,27 +2651,32 @@ class CodexSessionCompute(BaseSessionCompute):
         map by the time we got here).
 
         The v2 ``FINAL_ANSWER`` goes further when ``batch_state`` (the
-        batch loop's view, ``None`` outside it) is given: the spawn found
-        through the map names the agent, and the file-local attribution
-        of §5.6 picks the run it ends (:meth:`_attribute_final_answer_in_batch`)
-        — a follow-up's answer lands on its ``followup_task`` call. No run
-        found → the spawn, as without ``batch_state``.
+        batch loop's view, ``None`` outside it) is given: the map entry
+        names the agent (from its ``started`` event, as live reads it,
+        spawn link or not), and the file-local attribution of §5.6 picks
+        the run it ends — a follow-up's answer lands on its
+        ``followup_task`` call. The rebind runs before the line's own
+        result link and hook, so every ``batch_state`` row is from an
+        earlier line: :data:`_AFTER_BATCH_ROWS` as the reference line
+        gives the rules the answer of the line itself. No run found → the
+        spawn, as without ``batch_state``.
         """
         if _subagent_notification_text(parsed_json) is not None:
-            agent_map = self._agent_id_to_spawn_call_id.get(session_id)
-            if not agent_map:
-                return naive_tool_use_id
-            return agent_map.get(naive_tool_use_id, naive_tool_use_id)
+            agent_map = self._spawn_targets.get(session_id)
+            target = agent_map.get(naive_tool_use_id) if agent_map else None
+            return target.call_id if target is not None else naive_tool_use_id
         if _parse_agent_final_answer(parsed_json) is not None:
-            agent_map = self._agent_id_to_spawn_call_id.get(session_id)
-            spawn_call_id = agent_map.get(naive_tool_use_id) if agent_map else None
-            if spawn_call_id is None:
+            agent_map = self._spawn_targets.get(session_id)
+            target = agent_map.get(naive_tool_use_id) if agent_map else None
+            if target is None:
                 return naive_tool_use_id
             if batch_state is not None:
-                run_call_id = self._attribute_final_answer_in_batch(batch_state, session_id, spawn_call_id)
-                if run_call_id is not None:
-                    return run_call_id
-            return spawn_call_id
+                run = attribute_final_answer(
+                    evidence_from_batch_state(batch_state, session_id, target.agent_id), _AFTER_BATCH_ROWS,
+                )
+                if run is not None:
+                    return run.tool_use_id
+            return target.call_id
         parent = tool_use_map.get(naive_tool_use_id)
         if parent is None:
             # A ``FileChange`` / ``McpToolCall`` from a
@@ -2643,32 +2712,6 @@ class CodexSessionCompute(BaseSessionCompute):
             ):
                 proc_map.pop(exec_command_id, None)
         return parent_call_id
-
-    def _attribute_final_answer_in_batch(
-        self, batch_state: BatchAgentState, session_id: str, spawn_call_id: str,
-    ) -> str | None:
-        """Return the call a v2 ``FINAL_ANSWER`` ends (§5.6), or ``None``.
-
-        ``spawn_call_id`` is the newest spawn announcing the sender path
-        (``_agent_id_map``); its link names the agent. The rebind runs
-        before the current line's result link and hook, so every row of
-        ``batch_state`` is from an earlier line: :data:`_AFTER_BATCH_ROWS`
-        as the reference line gives the rules the answer of the line itself.
-        ``None`` (no link, no candidate) → the caller keeps the spawn.
-        """
-        agent_id = next(
-            (
-                link["agent_id"] for link in batch_state.all_agent_links.values()
-                if link["session_id"] == session_id and link["tool_use_id"] == spawn_call_id
-            ),
-            None,
-        )
-        if agent_id is None:
-            return None
-        run = attribute_final_answer(
-            evidence_from_batch_state(batch_state, session_id, agent_id), _AFTER_BATCH_ROWS,
-        )
-        return run.tool_use_id if run is not None else None
 
     def collect_agent_run_signals(
         self,
@@ -2864,6 +2907,11 @@ class CodexSessionCompute(BaseSessionCompute):
             return LiveAgentSignals(run_end_ids=(end_id,), affected_agent_ids=(activity.agent_id,))
         if activity.kind not in _SUB_AGENT_ACTIVITY_CONTROL_KINDS:
             return LiveAgentSignals()
+        # A target that is the owner or its root never gets a row (§5.1):
+        # the free check first, before any lookup.
+        session = item.session
+        if activity.agent_id in (session_id, session.parent_session_id or session_id):
+            return LiveAgentSignals()
         # A duplicated event line: the first one's row stands.
         if AgentInteraction.objects.filter(session_id=session_id, tool_use_id=activity.event_id).exists():
             return LiveAgentSignals()
@@ -2874,8 +2922,7 @@ class CodexSessionCompute(BaseSessionCompute):
             return LiveAgentSignals()
         payload, call_line = found
         kind = INTERACTION_KIND_BY_TOOL.get(_tool_use_name(payload))
-        session = item.session
-        if kind is None or activity.agent_id in (session_id, session.parent_session_id or session_id):
+        if kind is None:
             return LiveAgentSignals()
         # A resume opens a run when the agent has no file-open run here.
         opens_run = kind == AgentInteractionKind.RESUME and not file_open_runs(
@@ -2921,10 +2968,12 @@ class CodexSessionCompute(BaseSessionCompute):
         started_line = self._lookup_task_started_line(session_id, line, turn_id)
         if started_line is None:
             return []
+        # Every agent's rows in one load, then each evidence in memory.
+        rows = _file_run_rows_from_db(session_id, line)
         return [
             (agent_id, run.tool_use_id)
-            for agent_id in _agents_with_file_runs_in_db(session_id, line)
-            for run in owner_abort_cut_runs(evidence_from_db(session_id, agent_id, line), line, started_line)
+            for agent_id in _agents_with_file_runs_in_rows(rows)
+            for run in owner_abort_cut_runs(_evidence_from_rows(rows, agent_id), line, started_line)
         ]
 
     def _lookup_task_started_line(self, session_id: str, max_line_num: int, turn_id: str) -> int | None:
@@ -3281,7 +3330,7 @@ class CodexSessionCompute(BaseSessionCompute):
     ) -> _SubAgentSpawn | None:
         """Resolve a multi-agent v2 agent path to the spawn that announced it.
 
-        Live counterpart of the batch ``_agent_id_to_spawn_call_id``
+        Live counterpart of the batch ``_spawn_targets``
         side-table: walks back to the canonical ``SubAgentActivity`` item
         line that announced the spawn (newest first — an agent path can
         be reused by a later spawn once the previous holder is gone) and
@@ -5470,7 +5519,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 spawn = _parse_sub_agent_activity_started(parsed_json)
                 if spawn is None:
                     return _EMPTY_ANALYSIS
-                self._agent_id_map(session_id)[spawn.agent_path] = spawn.call_id
+                self._spawn_target_map(session_id)[spawn.agent_path] = _SpawnTarget(spawn.call_id, spawn.agent_id)
                 return ContentAnalysis(
                     has_visible_content=False,
                     text_content=None,
@@ -5738,7 +5787,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 # path skips this and queries ``AgentLink`` instead.
                 if tool_result_agent_info is not None:
                     spawn_call_id, agent_id, _is_async = tool_result_agent_info
-                    self._agent_id_map(session_id)[agent_id] = spawn_call_id
+                    self._spawn_target_map(session_id)[agent_id] = _SpawnTarget(spawn_call_id, agent_id)
                 return ContentAnalysis(
                     has_visible_content=False,
                     text_content=None,
