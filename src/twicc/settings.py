@@ -476,6 +476,13 @@ TELEMETRY_ENDPOINT = (
 # Used by devctl in worktree mode so dev servers come up without prompting.
 AUTO_ENABLE_PROVIDERS = os.environ.get("TWICC_AUTO_ENABLE_PROVIDERS", "").strip().lower() in ("1", "true", "yes")
 
+# Default of the per-device tips toggle (Settings > Tips)
+# Set TWICC_TIPS_DEFAULT_OFF=1 to turn tips OFF for a browser that never chose.
+# An explicit choice (stored in the browser's localStorage) always wins.
+# Used by devctl in worktree mode: agents inspect their work there, and a tip
+# toast popping over the UI disturbs them.
+TIPS_DEFAULT_ENABLED = os.environ.get("TWICC_TIPS_DEFAULT_OFF", "").strip().lower() not in ("1", "true", "yes")
+
 # Hybrid Claude CLI mode (feature flag, default OFF)
 # Set TWICC_CLAUDE_HYBRID_ENABLED=1 to un-gate the whole hybrid mode feature:
 # the startup announcement, the per-session toggle, the Claude settings block,

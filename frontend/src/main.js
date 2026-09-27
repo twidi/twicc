@@ -240,6 +240,7 @@ if (!authStore.needsLogin) {
     useTerminalConfigStore().applyConfig(bootstrapData.terminal_config)
     useMessageSnippetsStore().applyConfig(bootstrapData.message_snippets)
     useTipsStore().applyManifest(bootstrapData.tips_manifest)
+    useTipsStore().applyDefaultEnabled(bootstrapData.tips_default_enabled)
     useTipsStore().applySeenTips(bootstrapData.seen_tips)
     useHelpStore().applyManifest(bootstrapData.help_manifest)
     useHelpStore().applySeenHelp(bootstrapData.seen_help)
