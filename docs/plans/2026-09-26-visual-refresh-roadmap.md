@@ -11,7 +11,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 |---|---|---|
 | 1 | Canvas + floating panels | **Done** — commits `ddc43644`, `8dbdfd83` on branch `enhanced-ui` |
 | 2 | Depth (layered shadows) + typography | **Done** — commits `85ce211f`, `ad7942b1`, `e2046d92` on branch `enhanced-ui` (see §6b) |
-| 3 | Accent-tinted glass overlays | To specify |
+| 3 | Accent-tinted glass overlays | **Done** — commit `709f9cf9` on branch `enhanced-ui` (see §6c) |
 | 4 | Motion tokens + micro-interactions | To specify |
 | 5 | Entrances (virtual-scroll aware) + skeletons | To specify |
 | 6 | Accent glow + live states | To specify |
@@ -252,6 +252,66 @@ neutral `filled-outlined` buttons left in the Git/Files panes; the tinted-block 
 (quotes, `:::` blocks) may be restyled later; the mock's message radius (`0.875rem`) was
 not taken.
 
+## 6c. Step 3 — accent-tinted glass overlays (done)
+
+Spec: `docs/plans/2026-09-27-glass-design.md` (no separate plan: the spec carries the exact
+CSS and every component change). Reviews: spec 17 rounds (from round 8 on, two parallel
+reviewers split by zone: CSS mechanics and tests / scope and components) until PASS;
+implementation by a subagent, code review by another (PASS); user fixes after that.
+Commit: `709f9cf9`. Tests: 468 (`frontend/src/styles/glass.test.js`,
+`frontend/src/utils/glassArrowGap.test.js`).
+
+### 6c.1 What it does
+
+- `frontend/src/styles/glass.css` (SPA, share viewer, artifact shell): `--glass-*` tokens
+  (tint from palette steps, 74 % bg, accent border, top edge, blur, veil, tooltip, item
+  highlights, field bg, row tokens, edge gap); glass on `wa-dialog`, `wa-dropdown` menu and
+  submenu, `wa-select` list box, `wa-popover` body, `wa-tooltip`, Notivue toasts, and our
+  panels via `.glass-surface` / `.glass-sticky` / `.glass-veil`; lighter blurred modal
+  veil; accent-tinted highlighted rows; fields at 70 %; `wa-details` tinted inside glass.
+- Toasts are no longer inverted (glass like the menus); Notivue's list `clip-path` removed
+  (it stopped the blur).
+- Popover arrows merge with the body: `frontend/src/utils/glassArrowGap.js` reads the
+  arrow's position on each `wa-reposition` and the border overlay is masked under its base.
+- Settings popover, mobile: the sticky back row covers the panel padding edge to edge.
+
+### 6c.2 Lessons (do not regress)
+
+- **Never put `backdrop-filter` on an element with children**: it becomes the containing
+  block of `position: fixed` descendants (Web Awesome's tooltip hover bridge, the submenu
+  safe triangle). The blur lives on a childless pseudo-element layer (or an arrow part).
+- **An ancestor with `opacity < 1`, `filter`, `mask`, `clip-path`… stops the blur** of the
+  glass inside it (Notivue's list clip; entrance fades show a short unblurred moment).
+- **A border drawn on a `z-index: -1` layer disappears under content**, and Chromium paints
+  an element's outline before its positioned descendants: the glass border is a
+  `z-index: 100` overlay.
+- **Custom properties fed into Web Awesome's `calc()` need units** (`0px`, never `0`).
+- **Selector lists stay homogeneous**: one unsupported selector (a pseudo-element after
+  `::part()`) drops the whole rule.
+- **The production minifier writes `::before` as `:before`** but leaves `@supports selector()`
+  conditions as written: test both spellings.
+- **Theme widths vary**: `--wa-border-width-s` is 2px in the awesome theme.
+- **Firefox antialiases a diagonal clip to a half-covered row**: the arrow clip overlaps the
+  body by 1px.
+- Headless Chrome with CDP `Emulation.setEmulatedMedia` checks `prefers-reduced-transparency`;
+  headless Firefox driven by Selenium (`/snap/bin/geckodriver`) checks Firefox rendering
+  (it never applies `backdrop-filter`).
+
+### 6c.3 Not verified in a browser
+
+- **Safari** (none available): whether WebKit renders a pseudo-element after `::part()` is
+  unknown; the `@supports` fallback (opaque tinted surfaces, never none) is the guarantee.
+- **Share viewer visual** (the worktree cannot serve shares): built CSS checked; to look at
+  on the main instance after the merge (popover menu, its select, a tooltip, the sub-agent
+  drawer veil).
+- Arrow joint on other device pixel ratios (the user's Android phone).
+
+### 6c.4 Left for the global fine-tuning pass
+
+Accepted trade-offs routed to the user: the first keyboard-focused item of a menu and the
+settings logout button have their focus ring touching the border; the palette's sticky
+header reads slightly denser; nested modals stack veils (up to four on mobile).
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -482,4 +542,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3).
