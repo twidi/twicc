@@ -588,6 +588,10 @@ export const useDataStore = defineStore('data', {
             // { sessionId: { toolId: agentId } }
             // Only caches found agents (not-found triggers polling, not caching)
             ...agentLinkState(),
+            // rootSessionId -> generation of the newest ``/subagents/`` fetch started
+            // for it. ``agentFetches`` is also bumped by ``clearAgentLinks``: this
+            // tells a discard by a newer fetch (never re-issued) from one by a clear.
+            agentFetchStarts: {},
             // sessionId -> { tool_use_id: run_id } for the in-chat "View Workflow" button.
             workflowLinks: {},
 
@@ -4683,7 +4687,9 @@ export const useDataStore = defineStore('data', {
          *
          * A response discarded because the root's fetch generation changed is
          * re-issued once, only while the root's items are still loaded (a discard
-         * caused by ``unloadSession(root)`` must not refill what it dropped). In
+         * caused by ``unloadSession(root)`` must not refill what it dropped) and
+         * no newer fetch of the root started after this one (that fetch answers;
+         * re-issuing would discard it in turn). In
          * every outcome that did not re-issue — applied, failed (HTTP or network
          * error), discarded again — every stored run state of the root is applied,
          * including the ones kept because their live stamp beat the snapshot.
@@ -4695,6 +4701,7 @@ export const useDataStore = defineStore('data', {
          */
         async fetchSubagentsState(projectId, sessionId, { reissued = false } = {}) {
             const token = beginAgentFetch(this.localState, sessionId)
+            this.localState.agentFetchStarts[sessionId] = token.generation
             const rootRunIds = () => Object.entries(this.localState.agentRunStates)
                 .filter(([, entry]) => entry.rootSessionId === sessionId).map(([agentId]) => agentId)
             const previous = rootRunIds()
@@ -4721,7 +4728,10 @@ export const useDataStore = defineStore('data', {
                 // that would fire before the tree is known.
                 this.localState.agentLoaded[sessionId] = true
             }
-            if (outcome === 'discarded' && !reissued && this.localState.sessions[sessionId]?.itemsFetched) {
+            if (
+                outcome === 'discarded' && !reissued && this.localState.sessions[sessionId]?.itemsFetched
+                && this.localState.agentFetchStarts[sessionId] === token.generation
+            ) {
                 return this.fetchSubagentsState(projectId, sessionId, { reissued: true })
             }
             if (outcome === 'applied') {

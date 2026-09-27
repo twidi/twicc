@@ -63,6 +63,7 @@ function makeStore({ fetches = [] } = {}) {
         connectionEpoch: 0,
         localState: {
             ...agentLinkState(),
+            agentFetchStarts: {},
             sessions: { root: { itemsFetched: true } },
             sessionExpandedGroups: {}, sessionDebugOverride: {}, sessionInternalExpandedGroups: {}, sessionVisualItems: {},
             visualItemCache: {}, optimisticMessages: {}, workflowLinks: {}, toolStates: {}, liveItems: {}, openDetails: {},
@@ -231,6 +232,20 @@ test('Reconnect: a snapshot discarded by a generation bump is re-issued once and
     assert.deepEqual(store.urls, [SUBAGENTS_URL, SUBAGENTS_URL])
     assert.ok(store.localState.agentRunStates.child)
     assert.ok(synthetic(store, 'child'))
+})
+test('Overlapping fetches of one root: the older is discarded, not re-issued; the newer applies (2 requests)', async () => {
+    const older = deferred(), newer = deferred()
+    const store = makeStore({ fetches: [() => older.promise, () => newer.promise] })
+    const first = store.fetchSubagentsState('p', 'root')
+    const second = store.fetchSubagentsState('p', 'root')
+    older.resolve(okResponse([snapshotEntry('old')]))
+    await new Promise(done => setTimeout(done, 0))
+    newer.resolve(okResponse([snapshotEntry('new')]))
+    await Promise.all([first, second])
+    assert.deepEqual(store.urls, [SUBAGENTS_URL, SUBAGENTS_URL])
+    assert.ok(store.localState.agentRunStates.new)
+    assert.equal(store.localState.agentRunStates.old, undefined)
+    assert.ok(synthetic(store, 'new'))
 })
 test('Reconnect: a second discard applies the root stored run states', async () => {
     const first = deferred(), second = deferred()
