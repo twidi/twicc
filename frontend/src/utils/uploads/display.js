@@ -2,7 +2,7 @@
 // Display helpers of the in-tab indicator (spec §6.6, §6.7). Pure: the
 // components only call them.
 
-import { isStalled } from './rules.js'
+import { bytesDone, isStalled } from './rules.js'
 
 /**
  * State text and buttons of one strip line (§6.7).
@@ -54,4 +54,16 @@ export function takePickedFiles(input) {
     const files = Array.from(input.files || [])
     input.value = ''
     return files
+}
+
+/**
+ * Progress of one strip line, in whole percent: same bytes-done rule as the
+ * tab label aggregate (§6.11); 100 for a zero-byte file.
+ *
+ * @param {object} entry
+ * @returns {number} 0 to 100
+ */
+export function entryPercent(entry) {
+    if (!entry.size) return 100
+    return Math.min(100, Math.floor((100 * bytesDone(entry)) / entry.size))
 }

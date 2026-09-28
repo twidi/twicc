@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { entryActions, takePickedFiles } from './display.js'
+import { entryActions, entryPercent, takePickedFiles } from './display.js'
 
 const TAB = 'tab-1'
 const NOW = 10_000_000
@@ -51,4 +51,11 @@ test('takePickedFiles copies the files before the input reset', () => {
     const files = takePickedFiles(input)
     assert.deepEqual(files, ['a', 'b'])
     assert.equal(input.files.length, 0)
+})
+
+test('entryPercent: sentBytes while sending, server offset otherwise, 100 for zero size', () => {
+    assert.equal(entryPercent({ size: 200, localState: 'sending', sentBytes: 101, server: record({ offset: 0 }) }), 50)
+    assert.equal(entryPercent({ size: 100, localState: null, sentBytes: 90, server: record({ offset: 10 }) }), 10)
+    assert.equal(entryPercent({ size: 100, localState: 'queued', sentBytes: 0, server: null }), 0)
+    assert.equal(entryPercent({ size: 0, localState: 'queued', sentBytes: 0, server: null }), 100)
 })

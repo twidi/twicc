@@ -22,7 +22,7 @@ const props = defineProps({
 
 const emit = defineEmits([
     'close',
-    'create-file', 'create-folder', 'rename', 'move', 'delete',
+    'create-file', 'create-folder', 'upload-files', 'rename', 'move', 'delete',
     'copy-name', 'copy-relative-path', 'copy-full-path',
     'git-stage', 'git-unstage', 'git-discard',
     'download', 'download-diff',
@@ -160,6 +160,14 @@ watch([() => props.x, () => props.y], () => {
                 >
                     <wa-icon slot="icon" name="folder-plus"></wa-icon>
                     New folder
+                </wa-dropdown-item>
+                <wa-dropdown-item
+                    v-if="nodeType === 'directory'"
+                    value="upload-files"
+                    :disabled="writableLoading || !writable"
+                >
+                    <wa-icon slot="icon" name="upload"></wa-icon>
+                    Upload files…
                 </wa-dropdown-item>
                 <wa-divider v-if="nodeType === 'directory'"></wa-divider>
 

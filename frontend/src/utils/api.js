@@ -25,15 +25,27 @@ export async function apiFetch(url, options) {
     const response = await fetch(url, options)
 
     if (response.status === 401) {
-        const authStore = useAuthStore()
-        authStore.handleUnauthorized()
-        // Redirect to login with current path as redirect target
-        const router = await getRouter()
-        const currentPath = router.currentRoute.value.fullPath
-        if (router.currentRoute.value.name !== 'login') {
-            router.replace({ name: 'login', query: { redirect: currentPath } })
-        }
+        await handleUnauthorized()
     }
 
     return response
+}
+
+/**
+ * Shared handling of a 401 answer: mark the auth store as unauthenticated and
+ * redirect to the login route (current path as redirect target).
+ *
+ * Used by `apiFetch` and by requests that do not go through it (the tus
+ * transfers of the uploads store).
+ *
+ * @returns {Promise<void>}
+ */
+export async function handleUnauthorized() {
+    const authStore = useAuthStore()
+    authStore.handleUnauthorized()
+    const router = await getRouter()
+    const currentPath = router.currentRoute.value.fullPath
+    if (router.currentRoute.value.name !== 'login') {
+        router.replace({ name: 'login', query: { redirect: currentPath } })
+    }
 }

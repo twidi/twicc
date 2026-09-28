@@ -400,6 +400,14 @@ const artifactsExternalRoots = computed(() =>
     artifactsDir.value ? [{ key: 'artifacts', label: 'Artifacts', path: artifactsDir.value }] : []
 )
 
+// Where an upload started from the Files / Artifacts tab belongs (upload spec §6.7).
+const filesUploadOrigin = computed(() =>
+    session.value?.id ? { panel: 'files', key: `session:${session.value.id}` } : null
+)
+const artifactsUploadOrigin = computed(() =>
+    session.value?.id ? { panel: 'artifacts', key: `session:${session.value.id}` } : null
+)
+
 // `sessionLoadError` drives the "not found" / "error" fallback in the template:
 // - `null`: still loading, loaded successfully, or redirecting via draft alias
 // - `'not-found'`: backend returned 404 — the session ID does not exist
@@ -2493,6 +2501,7 @@ onBeforeUnmount(() => {
                         :focus-request="panelFocusRequests.files"
                         :is-draft="session?.draft === true"
                         :frame-elevated="filesFrameElevated"
+                        :upload-origin="filesUploadOrigin"
                         @navigate="onFilesNavigate"
                     />
                 </div>
@@ -2580,6 +2589,7 @@ onBeforeUnmount(() => {
                         :active="isActive && isToolTabShown('artifacts')"
                         :focus-request="panelFocusRequests.artifacts"
                         :frame-elevated="artifactsFrameElevated"
+                        :upload-origin="artifactsUploadOrigin"
                         @navigate="onArtifactsNavigate"
                     />
                 </div>

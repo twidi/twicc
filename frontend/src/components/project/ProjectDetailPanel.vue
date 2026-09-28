@@ -145,6 +145,12 @@ const filesRootRestriction = computed(() => {
     return terminalCwd.value
 })
 
+// Where an upload started from the Files tab belongs (upload spec §6.7). The
+// project id may be the all-projects id or a workspace id: it is only a key.
+const filesUploadOrigin = computed(() =>
+    props.projectId ? { panel: 'files', key: `project:${props.projectId}` } : null
+)
+
 const filesAvailableRoots = computed(() => {
     // All-projects mode
     if (props.projectId === ALL_PROJECTS_ID) {
@@ -473,6 +479,7 @@ onBeforeUnmount(() => {
                     :route-root-key="activeTab === 'files' ? filesRouteRootKey : undefined"
                     :route-file-path="activeTab === 'files' ? filesRouteFilePath : undefined"
                     :active="isActive && activeTab === 'files'"
+                    :upload-origin="filesUploadOrigin"
                     @navigate="onFilesNavigate"
                 />
             </wa-tab-panel>

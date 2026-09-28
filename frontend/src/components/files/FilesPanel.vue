@@ -5,6 +5,7 @@ import { useContainerBreakpoint } from '../../composables/useContainerBreakpoint
 import { usePanelContentFocus } from '../../composables/usePanelContentFocus'
 import FileTreePanel from './FileTreePanel.vue'
 import FilePane from './FilePane.vue'
+import UploadStrip from './UploadStrip.vue'
 import ArtifactBookmarkTree from '../artifacts/ArtifactBookmarkTree.vue'
 import ProjectBadge from '../project/ProjectBadge.vue'
 import { useCodeCommentsStore, buildCommentedPathsSet } from '../../stores/codeComments'
@@ -128,6 +129,12 @@ const props = defineProps({
     frameElevated: {
         type: Boolean,
         default: false,
+    },
+    // Where an upload started from this panel belongs (`{ panel, key }`, spec
+    // §6.7): drives the in-tab strip and is stored with each new upload.
+    uploadOrigin: {
+        type: Object,
+        default: null,
     },
 })
 
@@ -1089,6 +1096,10 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
             </div>
         </Teleport>
 
+        <!-- In-tab upload indicator (spec §6.7): above both layouts, outside the
+             reparented tree owner. -->
+        <UploadStrip :origin="uploadOrigin" :root-path="directory" />
+
         <!-- ═══ Hidden owners: single instances that get reparented ═══ -->
         <div ref="treeOwnerRef" class="reparent-owner">
             <FileTreePanel
@@ -1104,6 +1115,7 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                 :session-id="sessionId"
                 :is-draft="isDraft"
                 :root-restriction="rootRestriction"
+                :upload-origin="uploadOrigin"
                 :extra-query="optionsQuery()"
                 :show-refresh="true"
                 :is-mobile="isMobile"
@@ -1274,6 +1286,9 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .mobile-layout {
+    /* Positioned: the mobile tree overlay anchors here, below the upload strip,
+       instead of `.files-panel`. */
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1;

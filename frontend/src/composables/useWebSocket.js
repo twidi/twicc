@@ -1289,6 +1289,14 @@ export function useWebSocket() {
             case 'mcp_updated':
                 window.dispatchEvent(new CustomEvent('twicc:mcp-updated'))
                 break
+            case 'upload_state': {
+                // One upload's server record (spec §6.3). Lazy import: the
+                // uploads store never imports useWebSocket.
+                import('../stores/uploads').then(({ useUploadsStore }) => {
+                    useUploadsStore().applyServerRecord(msg.upload, { fromWs: true })
+                })
+                break
+            }
             case 'peers_updated': {
                 // Full snapshot pushed on WS connect (share precedent).
                 // Lazy import to avoid a useWebSocket ↔ store cycle.
@@ -1930,6 +1938,12 @@ export function useWebSocket() {
             const isReconnection = wasConnected
             console.log(`WebSocket ${isReconnection ? 'reconnected' : 'connected'}, starting reconciliation...`)
             onReconnected(currentProjectId, currentSessionId, isReconnection)
+            // Uploads: reconcile with the server list, then restart the
+            // network-paused uploads (spec §6.3, §6.5). Every connection, the
+            // first one included. Lazy import (no useWebSocket ↔ store cycle).
+            import('../stores/uploads').then(({ useUploadsStore }) => {
+                useUploadsStore().reconnected()
+            })
             // After a real reconnection, the reconciliation re-syncs session
             // payloads (so presence flags like has_artifacts / has_plan are
             // fresh), but the transient tool-pane content events
