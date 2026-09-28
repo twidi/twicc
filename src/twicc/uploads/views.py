@@ -407,7 +407,9 @@ async def _list_view(request):
 
 TUS_METHODS = ("HEAD", "PATCH", "DELETE")
 PATCH_CONTENT_TYPE = "application/offset+octet-stream"
-_OFFSET_RE = re.compile(r"[0-9]+")
+# A non-negative integer header value. Bounded: ``int()`` refuses a digit
+# string longer than 4300 digits, and 20 digits cover every file size.
+_OFFSET_RE = re.compile(r"[0-9]{1,20}")
 
 
 def _status(code: int) -> HttpResponse:

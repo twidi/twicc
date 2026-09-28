@@ -618,9 +618,9 @@ def cancel_upload(upload_id: str) -> WriteOutcome:
 
     Writes ``cancelled`` first, then removes ``<id>.part`` (best effort):
     ``204``. On a disk-full write: removes ``<id>.part`` first, then writes
-    ``cancelled`` again; if that write fails too, nothing to broadcast and the
-    failure's code (``507`` for disk full). Any other failed write: ``500``,
-    nothing removed.
+    ``cancelled`` again; if that write fails too, nothing to broadcast and
+    ``507``, whatever the second error (§5.3). Any other failed first write:
+    ``500``, nothing removed.
     """
     try:
         meta = update_metadata(upload_id, state=STATE_CANCELLED)
@@ -631,9 +631,9 @@ def cancel_upload(upload_id: str) -> WriteOutcome:
         remove_best_effort(part_path(upload_id))
         try:
             meta = update_metadata(upload_id, state=STATE_CANCELLED)
-        except Exception as second:
+        except Exception:
             logger.warning("Upload %s: cannot write the 'cancelled' state again", upload_id, exc_info=True)
-            return WriteOutcome(None, failure_code(second))
+            return WriteOutcome(None, 507)
         return WriteOutcome(meta, 204)
     remove_best_effort(part_path(upload_id))
     return WriteOutcome(meta, 204)

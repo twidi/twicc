@@ -444,6 +444,22 @@ def test_patch_missing_or_invalid_upload_offset_is_400(app, target, offset):
     assert store.part_size(upload_id) == 0
 
 
+@pytest.mark.parametrize("offset", ["9" * 21, "1" * 5000])
+def test_patch_oversized_upload_offset_is_400(app, target, offset):
+    upload_id = _new_upload(target)
+    resp = _request(app, "PATCH", upload_id, headers=_patch_headers(offset), body=b"abc")
+    assert resp.status == 400
+    assert store.part_size(upload_id) == 0
+
+
+def test_patch_oversized_content_length_is_ignored(app, target):
+    upload_id = _new_upload(target, size=10)
+    headers = _patch_headers(0, **{"Content-Length": "1" * 5000})
+    resp = _patch(app, upload_id, 0, b"abc", headers=headers, content_length=False)
+    assert resp.status == 204
+    assert resp.headers["upload-offset"] == "3"
+
+
 def test_patch_offset_mismatch_is_409(app, target, layer):
     upload_id = _new_upload(target, size=10, content=b"abc")
     for offset in (0, 2, 4):
@@ -503,6 +519,53 @@ def test_patch_with_a_lost_part_and_a_disk_full_write(app, target, layer, monkey
     assert _patch(app, upload_id, 0, b"abc").status == 507
     assert store.read_metadata(upload_id)["state"] == "active"
     assert layer.sent == []
+
+
+def test_patch_with_a_lost_part_and_another_write_error(app, target, layer, monkeypatch):
+    upload_id = _new_upload(target, size=10)
+    store.part_path(upload_id).unlink()
+
+    def broken(*args, **kwargs):
+        raise OSError(errno.EIO, "io")
+
+    monkeypatch.setattr(store, "atomic_write_json", broken)
+    assert _patch(app, upload_id, 0, b"abc").status == 500
+    assert store.read_metadata(upload_id)["state"] == "active"
+    assert layer.sent == []
+
+
+@pytest.mark.parametrize(("error_number", "status"), [(errno.ENOSPC, 507), (errno.EIO, 500)])
+def test_patch_part_open_failure(app, target, layer, monkeypatch, error_number, status):
+    upload_id = _new_upload(target, size=10, content=b"ab")
+
+    def failing_open(*args, **kwargs):
+        raise OSError(error_number, "open failed")
+
+    monkeypatch.setattr(store, "open", failing_open, raising=False)
+    assert _patch(app, upload_id, 2, b"cd").status == status
+    assert store.part_path(upload_id).read_bytes() == b"ab"
+    meta = store.read_metadata(upload_id)
+    assert meta["state"] == "active"
+    assert meta["offset"] == 2  # re-synced from the .part size (was 0)
+    assert [r["offset"] for r in layer.records()] == [2]
+
+
+def test_patch_read_error_reaching_size_still_finalizes(app, target, monkeypatch):
+    """A short body (a read error) whose bytes complete the file: the
+    finalization runs, whatever the branch (§5.3)."""
+    upload_id = _new_upload(target, size=3)
+    calls = []
+
+    async def fake_finalize(uid):
+        calls.append((uid, store.part_size(uid)))
+        return upload_views.StepOutcome(store.update_metadata(uid, state="completed", final_path="/x"), 204)
+
+    monkeypatch.setattr(upload_views, "finalize_upload", fake_finalize)
+    headers = _patch_headers(0, **{"Content-Length": "8"})
+    resp = _patch(app, upload_id, 0, b"abc", headers=headers, content_length=False)
+    assert calls == [(upload_id, 3)]
+    assert resp.status == 204
+    assert resp.headers["upload-offset"] == "3"
 
 
 @pytest.mark.parametrize("with_length", [True, False])
@@ -904,6 +967,29 @@ def test_delete_when_the_second_write_fails_too_is_507(app, target, layer, monke
     assert store.read_metadata(upload_id)["state"] == "active"
     assert not store.part_path(upload_id).exists()
     assert layer.sent == []
+
+
+def test_delete_answers_507_when_the_second_write_fails_with_another_error(app, target, layer, monkeypatch):
+    upload_id = _new_upload(target, size=10, content=b"abc")
+    errors = iter([OSError(errno.ENOSPC, "full"), OSError(errno.EIO, "io")])
+
+    def failing(path, data):
+        raise next(errors)
+
+    monkeypatch.setattr(store, "atomic_write_json", failing)
+    resp = _request(app, "DELETE", upload_id)
+    assert resp.status == 507
+    assert store.read_metadata(upload_id)["state"] == "active"
+    assert not store.part_path(upload_id).exists()
+    assert layer.sent == []
+
+
+def test_delete_an_active_upload_without_part(app, target, layer):
+    upload_id = _new_upload(target, size=10)
+    store.part_path(upload_id).unlink()
+    assert _request(app, "DELETE", upload_id).status == 204
+    assert store.read_metadata(upload_id)["state"] == "cancelled"
+    assert [r["state"] for r in layer.records()] == ["cancelled"]
 
 
 def test_delete_other_write_error_is_500_and_keeps_the_part(app, target, layer, monkeypatch):
