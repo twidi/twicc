@@ -52,12 +52,6 @@ dependencies = [
     "xmltodict~=1.0.4",
 ]
 
-[project.optional-dependencies]
-test = [
-    "pytest>=8.0.0",
-    "pytest-django>=4.8.0",
-]
-
 [project.urls]
 Homepage = "https://github.com/twidi/twicc"
 Repository = "https://github.com/twidi/twicc"
@@ -194,4 +188,8 @@ addopts = "-v --ds=twicc.settings_test"
 dev = [
     "django-extensions>=4.1",
     "ipython>=9.10.0",
+    # In the default group (not an extra) so `uv run pytest` installs them in every
+    # checkout's .venv, worktrees included.
+    "pytest>=8.0.0",
+    "pytest-django>=4.8.0",
 ]

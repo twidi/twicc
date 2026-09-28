@@ -32,7 +32,7 @@ uv + npm · Django 6 ASGI (Uvicorn, Python ≥ 3.13) · Channels + InMemoryChann
 
 **Python lint: ruff (line-length=120), NOT an installed dependency** — always `uvx ruff check .`; `uv run ruff` fails with `Failed to spawn: ruff`. (It gets declared and pinned the day the project-wide lint pass happens, not before.) Same rule for **any** Python tool absent from the env: run it with `uvx <tool> …` instead of reporting it as missing, and never `uv add` it just to make a command work.
 
-**Tests: pytest + pytest-django** (declared in the `test` extra, so `uv run` resolves them). Main repo: `uv run pytest`. Worktree: `cd <worktree> && TWICC_DATA_DIR=$PWD uv run pytest`.
+**Tests: pytest + pytest-django** (declared in the default `dev` dependency group, so `uv run` installs them in each checkout's own `.venv`, worktrees included). Main repo: `uv run pytest`. Worktree: `cd <worktree> && TWICC_DATA_DIR=$PWD uv run pytest`.
 
 **Codex real-binary integration tests** (`tests/test_codex_migration_integration.py`, rollout migration against the bundled `codex` in a throwaway `CODEX_HOME`) are skipped unless `TWICC_CODEX_INTEGRATION=1`; they need the runtime already downloaded. They never touch `~/.codex`.
 

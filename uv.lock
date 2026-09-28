@@ -1540,16 +1540,12 @@ dependencies = [
     { name = "xmltodict" },
 ]
 
-[package.optional-dependencies]
-test = [
-    { name = "pytest" },
-    { name = "pytest-django" },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "django-extensions" },
     { name = "ipython" },
+    { name = "pytest" },
+    { name = "pytest-django" },
 ]
 
 [package.metadata]
@@ -1572,8 +1568,6 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "psutil", specifier = "~=7.2.2" },
     { name = "pydantic", specifier = ">=2.12" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0" },
-    { name = "pytest-django", marker = "extra == 'test'", specifier = ">=4.8.0" },
     { name = "python-dotenv", specifier = "~=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "tantivy", specifier = "~=0.25.1" },
@@ -1583,12 +1577,13 @@ requires-dist = [
     { name = "websockets", specifier = "~=16.0" },
     { name = "xmltodict", specifier = "~=1.0.4" },
 ]
-provides-extras = ["test"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "django-extensions", specifier = ">=4.1" },
     { name = "ipython", specifier = ">=9.10.0" },
+    { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pytest-django", specifier = ">=4.8.0" },
 ]
 
 [[package]]
