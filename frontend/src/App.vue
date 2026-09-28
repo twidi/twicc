@@ -776,8 +776,9 @@ const toastTheme = computed(() => {
         '--nv-global-fg': 'var(--wa-color-text-normal)',
         // The border overlay draws the glass border; slateTheme's 1px border goes.
         '--nv-border-width': '0',
-        // Outer shadow only: the border overlay draws the top edge.
-        '--nv-shadow': 'var(--glass-shadow)',
+        // Outer shadow only: the border overlay draws the top edge. The live shadow fades
+        // with the toast (styles/glass.css); set inline on the notification, where it resolves.
+        '--nv-shadow': 'var(--glass-shadow-live)',
     }
 })
 </script>

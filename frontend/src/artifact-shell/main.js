@@ -22,6 +22,10 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js'
 import ArtifactShellApp from './ArtifactShellApp.vue'
 import { recordShareView } from '../share-recent/recordView'
 import { initArtifactShellColorScheme } from '../share-session/theme'
+import { installWaMotionStyles } from '../utils/waMotionStyles'
+
+// The consent prompt dialog opens and closes like the SPA's (see utils/waMotionStyles.js).
+installWaMotionStyles()
 
 // The shell's chrome (footer + banners) follows the browser's color scheme.
 // No switcher here: the only chrome is the footer strip, and the iframed

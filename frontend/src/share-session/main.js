@@ -39,6 +39,9 @@ installGlassArrowGap()
 // wa-details open/close: TwiCC owns the motion (see utils/detailsMotion.js).
 import { installDetailsMotion } from '../utils/detailsMotion'
 installDetailsMotion()
+// Overlay entrances and exits: TwiCC's keyframes inside Web Awesome's shadow roots (see utils/waMotionStyles.js).
+import { installWaMotionStyles } from '../utils/waMotionStyles'
+installWaMotionStyles()
 import { recordShareView } from '../share-recent/recordView'  // 3.19
 
 const el = document.getElementById('twicc-share-data')

@@ -24,6 +24,7 @@ import { useSettingsStore } from '../../stores/settings'
 import { apiFetch } from '../../utils/api'
 import FileTreePanel from './FileTreePanel.vue'
 import { deriveFileRoots, getWorktreeParent } from '../../utils/projectRoots'
+import { usePopupMotion } from '../../composables/usePopupMotion'
 
 const props = defineProps({
     sessionId: {
@@ -64,6 +65,9 @@ const apiPrefix = computed(() => {
 
 const popupRef = ref(null)
 const isOpen = ref(false)
+// The panel grows from its anchor on each opening; the close stays instant (overlay motion §6).
+const panelRef = ref(null)
+usePopupMotion(isOpen, panelRef, popupRef)
 const fileTreePanelRef = ref(null)
 
 // ─── Display options ──────────────────────────────────────────────────────
@@ -341,7 +345,7 @@ defineExpose({ open, close, isOpen })
         shift-padding="8"
         class="picker-popup"
     >
-        <div class="picker-panel glass-surface" @keydown.capture="onPickerKeydown">
+        <div ref="panelRef" class="picker-panel glass-surface" @keydown.capture="onPickerKeydown">
             <!-- Header: current root path -->
             <div class="picker-header">
                 <span class="picker-path" :title="directory">{{ directory || '...' }}</span>

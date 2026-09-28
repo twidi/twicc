@@ -574,3 +574,14 @@ test('13. live chat entrances: keyframes scaled by --motion-amount, variants, st
     assert.deepEqual(findRule(topRules, ['.chat-entering.is-user']).decls, { 'animation-name': 'chat-enter-user' })
     assert.deepEqual(findRule(topRules, ['.chat-entering.is-slice']).decls, { 'animation-name': 'chat-enter-fade' })
 })
+
+test('14. the registered --twicc-reveal (overlay motion design §14.3)', () => {
+    const blocks = [...motionStripped.matchAll(/@property\s+--twicc-reveal\s*\{([^{}]*)\}/g)]
+    assert.equal(blocks.length, 1, 'one @property --twicc-reveal')
+    assert.deepEqual(Object.fromEntries(declarationList(blocks[0][1])), {
+        syntax: "'<number>'",
+        inherits: 'true',
+        'initial-value': '1',
+    })
+    assert.ok(motionTree.some((n) => n.type === 'at' && n.prelude === '@property --twicc-reveal'), 'at the top level')
+})

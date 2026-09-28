@@ -2,7 +2,8 @@
    Design: docs/plans/2026-09-27-glass-design.md.
    Shared by the SPA (main.js), the share viewer (share-session/main.js) and the artifact
    shell (artifact-shell/main.js): nothing here may depend on another app stylesheet except
-   depth.css (--depth-3) and the Web Awesome theme tokens.
+   depth.css (--depth-3), motion.css (the registered `--twicc-reveal` that the glass layers
+   and shadows read) and the Web Awesome theme tokens.
 
    Declaration order matters (all blocks match <html>): light tokens on :root, dark
    overrides on .wa-dark (same specificity, later wins), then the reduced-transparency and
@@ -127,6 +128,36 @@
     --glass-edge-gap: calc(var(--wa-border-width-s) + 1px);
 }
 
+/* The cast shadow while an overlay fades (overlay motion design §14): its alphas are
+   scaled by --twicc-reveal (1 at rest), declared on each glass host so the var() resolves
+   there. Written entry by entry (a ::part() is not valid inside :where()). Keep the light
+   layers in sync with --depth-3 (depth.css), the dark ones with the dark --glass-shadow.
+   Toasts read it through Notivue's --nv-shadow (App.vue). */
+:where(wa-dialog)::part(dialog),
+:where(wa-dropdown)::part(menu),
+:where(wa-dropdown-item)::part(submenu),
+:where(wa-select:not(.glass-listbox-direct))::part(listbox),
+:where(wa-popover)::part(body),
+:where(.glass-surface),
+:where(.Notivue__notification) {
+    --glass-shadow-live:
+        0 2px 4px oklch(0.2 0.02 275 / calc(0.06 * var(--twicc-reveal, 1))),
+        0 12px 28px -4px oklch(0.2 0.02 275 / calc(0.16 * var(--twicc-reveal, 1))),
+        0 32px 64px -16px oklch(0.2 0.02 275 / calc(0.24 * var(--twicc-reveal, 1)));
+}
+/* Same specificity as the light rule (0 + ::part where present): later, it wins. */
+:where(.wa-dark) :where(wa-dialog)::part(dialog),
+:where(.wa-dark) :where(wa-dropdown)::part(menu),
+:where(.wa-dark) :where(wa-dropdown-item)::part(submenu),
+:where(.wa-dark) :where(wa-select:not(.glass-listbox-direct))::part(listbox),
+:where(.wa-dark) :where(wa-popover)::part(body),
+:where(.wa-dark) :where(.glass-surface),
+:where(.wa-dark) :where(.Notivue__notification) {
+    --glass-shadow-live:
+        0 2px 6px oklch(0 0 0 / calc(0.45 * var(--twicc-reveal, 1))),
+        0 24px 56px -12px oklch(0 0 0 / calc(0.65 * var(--twicc-reveal, 1)));
+}
+
 /* Layered surfaces: the layer draws background and blur; the border overlay draws the
    glass border and the top edge above the content. No border on the surface: some clip
    their children at the padding box, which would leave an unblurred ring under a border. */
@@ -138,7 +169,7 @@
 :where(.glass-surface) {
     background-color: transparent;
     border: 0;
-    box-shadow: var(--glass-shadow);
+    box-shadow: var(--glass-shadow-live);
 }
 /* The list box scrolls: its layer is anchored to the non-scrolling popup element. */
 :where(wa-select:not(.glass-listbox-direct))::part(listbox) {
@@ -157,7 +188,10 @@
 /* The glass layer. Two rules with the same declarations: a browser that cannot parse a
    pseudo-element after ::part() drops a whole rule whose selector list contains one, and
    our own panels and toasts must keep their layer there. The submenu's ::before is Web
-   Awesome's safe triangle, so its layer is the ::after. */
+   Awesome's safe triangle, so its layer is the ::after.
+   Every glass layer takes its opacity from --twicc-reveal (1 at rest): a moving overlay
+   animates it instead of its own opacity, which would stop the blur (overlay motion design
+   §14). An element's own opacity applies after its backdrop filter: the blur stays drawn. */
 :where(wa-dialog)::part(dialog)::before,
 :where(wa-dropdown)::part(menu)::before,
 :where(wa-dropdown-item)::part(submenu)::after,
@@ -171,6 +205,7 @@
     background-color: var(--glass-bg);
     backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
+    opacity: var(--twicc-reveal, 1);
     pointer-events: none;
 }
 :where(.glass-surface)::before,
@@ -183,6 +218,7 @@
     background-color: var(--glass-bg);
     backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
+    opacity: var(--twicc-reveal, 1);
     pointer-events: none;
 }
 
@@ -200,6 +236,7 @@
     border-radius: inherit;
     /* The top edge: an inset shadow paints inside the border, on the row just below it. */
     box-shadow: var(--glass-highlight);
+    opacity: var(--twicc-reveal, 1);
     pointer-events: none;
 }
 :where(.glass-surface)::after,
@@ -211,12 +248,14 @@
     border: var(--wa-border-width-s) solid var(--glass-border);
     border-radius: inherit;
     box-shadow: var(--glass-highlight);
+    opacity: var(--twicc-reveal, 1);
     pointer-events: none;
 }
 /* The submenu's two pseudo-elements are taken (safe triangle, layer): inner outline, and
-   the top edge on its layer (where it shares its row with the outline). */
+   the top edge on its layer (where it shares its row with the outline). The outline fades
+   with the reveal. */
 :where(wa-dropdown-item)::part(submenu) {
-    outline: var(--wa-border-width-s) solid var(--glass-border);
+    outline: var(--wa-border-width-s) solid color-mix(in oklab, var(--glass-border) calc(var(--twicc-reveal, 1) * 100%), transparent);
     outline-offset: calc(-1 * var(--wa-border-width-s));
 }
 :where(wa-dropdown-item)::part(submenu)::after {
@@ -226,13 +265,15 @@
 /* The five opt-in select lists wider than their field (search overlay filters, peer
    message review actions): the popup-anchored layer would be only as wide as the field,
    so the glass is carried directly. Their options hold no tooltip, dropdown or popover
-   (no fixed descendant to displace). */
+   (no fixed descendant to displace). Its own opacity fades its blur, content and shadow
+   together. */
 :where(wa-select.glass-listbox-direct)::part(listbox) {
     background-color: var(--glass-bg);
     border-color: var(--glass-border);
     box-shadow: var(--glass-shadow), var(--glass-highlight);
     backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
+    opacity: var(--twicc-reveal, 1);
 }
 
 /* The popover arrow: childless, so it carries its glass directly. */
@@ -243,6 +284,15 @@
     border-color: var(--glass-border);
     backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
+    opacity: var(--twicc-reveal, 1);
+}
+
+/* The content of our own glass panels and toasts during an overlay motion: the mover
+   declares --twicc-reveal-filter (none at rest). A filter on a child is not an ancestor of
+   the glass layer, so the blur stays drawn. Zero specificity: a child with its own filter
+   rule keeps it (and does not fade). */
+:where(.glass-surface, .Notivue__notification) > * {
+    filter: var(--twicc-reveal-filter, none);
 }
 
 /* Tooltips: dark in light mode (light in dark mode), slightly translucent and blurred. */
@@ -409,6 +459,9 @@
         background-color: var(--glass-tint);
         /* No layer is left to hide an inset shadow, so the surface carries its top edge. */
         box-shadow: var(--glass-shadow), var(--glass-highlight);
+        /* No blur to lose here: the surface fades as a whole (its content then fades by
+           the square of the reveal). */
+        opacity: var(--twicc-reveal, 1);
     }
     /* Their ::after border overlay is missing too (the submenu keeps its outline). */
     :where(wa-dialog)::part(dialog),

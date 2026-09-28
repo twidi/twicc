@@ -267,7 +267,11 @@ useGlideInk({
 // ─── Dialog event handlers ───────────────────────────────────────────────
 
 function onAfterShow() {
-    selectFirstItem()
+    // The field has the focus since the entrance started (autofocus): an arrow key pressed
+    // meanwhile moved the highlight, keep it.
+    if (activeKey.value === null || !visibleItems.value.some((entry) => entry.key === activeKey.value)) {
+        selectFirstItem()
+    }
     searchInputRef.value?.focus()
 }
 
@@ -507,7 +511,7 @@ defineExpose({ open, close })
 </script>
 
 <template>
-    <wa-dialog ref="dialogRef" without-header light-dismiss @wa-after-show="onAfterShow" @wa-hide="onHide" @wa-after-hide="onAfterHide">
+    <wa-dialog ref="dialogRef" class="motion-drop" without-header light-dismiss @wa-after-show="onAfterShow" @wa-hide="onHide" @wa-after-hide="onAfterHide">
         <div class="command-palette">
             <!-- Header with search -->
             <div class="palette-header">
@@ -536,6 +540,7 @@ defineExpose({ open, close })
                     @keydown="handleKeydown"
                     autocomplete="off"
                     spellcheck="false"
+                    autofocus
                 />
             </div>
             <wa-divider />

@@ -289,7 +289,7 @@ test('5. Web Awesome mapping, layers, overlays and fallback block', () => {
     const layered = findRule(topRulesOutsideAt, LAYERED)
     assert.equal(layered.decls['background-color'], 'transparent')
     assert.equal(layered.decls.border, '0')
-    assert.equal(layered.decls['box-shadow'], 'var(--glass-shadow)')
+    assert.equal(layered.decls['box-shadow'], 'var(--glass-shadow-live)')
     assert.equal(findRule(topRulesOutsideAt, [':where(wa-select:not(.glass-listbox-direct))::part(listbox)']).decls.position, 'static')
 
     // Layer anchors.
@@ -338,7 +338,7 @@ test('5. Web Awesome mapping, layers, overlays and fallback block', () => {
 
     // Submenu: outline and its layer's top edge.
     const submenu = findRule(topRulesOutsideAt, [':where(wa-dropdown-item)::part(submenu)'])
-    assert.equal(submenu.decls.outline, 'var(--wa-border-width-s) solid var(--glass-border)')
+    assert.equal(submenu.decls.outline, 'var(--wa-border-width-s) solid color-mix(in oklab, var(--glass-border) calc(var(--twicc-reveal, 1) * 100%), transparent)')
     assert.equal(submenu.decls['outline-offset'], 'calc(-1 * var(--wa-border-width-s))')
     assert.equal(findRule(topRulesOutsideAt, [':where(wa-dropdown-item)::part(submenu)::after']).decls['box-shadow'], 'var(--glass-highlight)')
 
@@ -479,4 +479,91 @@ test('7. toasts take the page scheme and the Notivue list is not clipped', () =>
     assert.ok(styles, '<Notivue> must bind :styles')
     assert.match(styles[1], /list\s*:\s*\{\s*clipPath\s*:\s*'none'\s*\}/)
     assert.match(app, /'--nv-global-bg'\s*:\s*'transparent'/)
+})
+
+// ---------------------------------------------------------------------------
+// The glass blur stays on while overlays move (overlay motion design §14)
+// ---------------------------------------------------------------------------
+
+const REVEAL_OPACITY = 'var(--twicc-reveal, 1)'
+
+test('8. every glass layer fades through its own opacity, read from --twicc-reveal', () => {
+    const layers = [
+        [':where(wa-dialog)::part(dialog)::before', ':where(wa-dropdown)::part(menu)::before', ':where(wa-dropdown-item)::part(submenu)::after',
+            ':where(wa-select:not(.glass-listbox-direct))::part(listbox)::before', ':where(wa-popover)::part(body)::before'],
+        [':where(.glass-surface)::before', ':where(.Notivue__notification)::before'],
+        [':where(wa-dialog)::part(dialog)::after', ':where(wa-dropdown)::part(menu)::after',
+            ':where(wa-select:not(.glass-listbox-direct))::part(listbox)::after', ':where(wa-popover)::part(body)::after'],
+        [':where(.glass-surface)::after', ':where(.Notivue__notification)::after'],
+        [':where(wa-select.glass-listbox-direct)::part(listbox)'],
+        [':where(wa-popover)::part(popup__arrow)'],
+    ]
+    for (const selectors of layers) assert.equal(findRule(topRulesOutsideAt, selectors).decls.opacity, REVEAL_OPACITY, selectors.join(', '))
+    // Tooltips keep their opacity animation (§14.4): their layers do not read the reveal.
+    for (const selectors of [[':where(wa-tooltip)::part(body)::before'], [':where(wa-tooltip)::part(base__arrow)']]) {
+        assert.equal(findRule(topRulesOutsideAt, selectors).decls.opacity, undefined, selectors[0])
+    }
+})
+
+test('9. the content of our own glass surfaces and toasts fades through --twicc-reveal-filter', () => {
+    const content = findRule(topRulesOutsideAt, [':where(.glass-surface, .Notivue__notification) > *'])
+    assert.deepEqual(content.decls, { filter: 'var(--twicc-reveal-filter, none)' })
+})
+
+const LIVE_SHADOW_HOSTS = [
+    ':where(wa-dialog)::part(dialog)',
+    ':where(wa-dropdown)::part(menu)',
+    ':where(wa-dropdown-item)::part(submenu)',
+    ':where(wa-select:not(.glass-listbox-direct))::part(listbox)',
+    ':where(wa-popover)::part(body)',
+    ':where(.glass-surface)',
+    ':where(.Notivue__notification)',
+]
+const LIGHT_LIVE_SHADOW = '0 2px 4px oklch(0.2 0.02 275 / calc(0.06 * var(--twicc-reveal, 1))), '
+    + '0 12px 28px -4px oklch(0.2 0.02 275 / calc(0.16 * var(--twicc-reveal, 1))), '
+    + '0 32px 64px -16px oklch(0.2 0.02 275 / calc(0.24 * var(--twicc-reveal, 1)))'
+const DARK_LIVE_SHADOW = '0 2px 6px oklch(0 0 0 / calc(0.45 * var(--twicc-reveal, 1))), '
+    + '0 24px 56px -12px oklch(0 0 0 / calc(0.65 * var(--twicc-reveal, 1)))'
+
+test('10. the cast shadow fades with the reveal: --glass-shadow-live on each host, light then dark', () => {
+    const light = findRule(topRulesOutsideAt, LIVE_SHADOW_HOSTS, 'light --glass-shadow-live')
+    const dark = findRule(topRulesOutsideAt, LIVE_SHADOW_HOSTS.map((s) => `:where(.wa-dark) ${s}`), 'dark --glass-shadow-live')
+    assert.deepEqual(light.decls, { '--glass-shadow-live': LIGHT_LIVE_SHADOW })
+    assert.deepEqual(dark.decls, { '--glass-shadow-live': DARK_LIVE_SHADOW })
+    assert.ok(glassTree.indexOf(dark) > glassTree.indexOf(light), 'the dark rule comes after the light one')
+
+    // Same layers as --depth-3 light and the dark --glass-shadow, alphas scaled by the reveal.
+    const unscale = (value) => value.replace(/calc\(([\d.]+) \* var\(--twicc-reveal, 1\)\)/g, '$1')
+    const depthTree = parseBlocks(stripComments(read('depth.css')))
+    const lightDepth3 = mergedTopLevel(depthTree, ':root')['--depth-3']
+    assert.deepEqual(splitTopLevel(unscale(LIGHT_LIVE_SHADOW)), splitTopLevel(lightDepth3))
+    assert.deepEqual(splitTopLevel(unscale(DARK_LIVE_SHADOW)), splitTopLevel(darkTokens['--glass-shadow']))
+
+    // The direct list box fades as a whole through its opacity: it keeps --glass-shadow.
+    const direct = findRule(topRulesOutsideAt, [':where(wa-select.glass-listbox-direct)::part(listbox)'])
+    assert.equal(direct.decls['box-shadow'], 'var(--glass-shadow), var(--glass-highlight)')
+    assert.equal(findRule(topRulesOutsideAt, [':where(wa-popover)::part(popup__arrow)']).decls['box-shadow'], undefined, 'the arrow has no shadow')
+    assert.ok(rootTokens['--glass-shadow'], '--glass-shadow stays for other readers')
+})
+
+test('11. fallback without ::part()::before: the hosts fade through their own opacity', () => {
+    const last = glassTree[glassTree.length - 1]
+    const fbFill = findRule(allRules(last.children), WA_LAYERED, 'fallback fills')
+    assert.equal(fbFill.decls.opacity, REVEAL_OPACITY)
+})
+
+test('12. no trace of the opaque-while-moving attempt; header names motion.css', () => {
+    const stripped = stripComments(glassCss)
+    assert.ok(!stripped.includes('--glass-settle'), 'no --glass-settle')
+    assert.ok(!/--glass-[\w-]*motion-bg/.test(stripped), 'no *-motion-bg token')
+    assert.ok(!/\btransition\s*:/.test(stripped), 'no settle transition')
+    assert.equal(findRule(topRulesOutsideAt, [':where(wa-tooltip)::part(base__arrow)']).decls['background-color'], undefined)
+    const last = glassTree[glassTree.length - 1]
+    assert.equal(allRules(last.children).filter((r) => r.selector === ':where(wa-tooltip)::part(base__arrow)').length, 0)
+    const header = glassCss.slice(0, glassCss.indexOf('*/'))
+    assert.match(collapse(header), /except depth\.css \(--depth-3\), motion\.css \(the registered `--twicc-reveal` that the glass layers and shadows read\) and the Web Awesome theme tokens/)
+})
+
+test('13. App.vue: the toasts cast the live shadow', () => {
+    assert.match(read('../App.vue'), /'--nv-shadow'\s*:\s*'var\(--glass-shadow-live\)'/)
 })

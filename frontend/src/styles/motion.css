@@ -39,6 +39,16 @@
     --glide-fade: opacity var(--motion-dur-1) var(--motion-ease);
 }
 
+/* Overlay fades (overlay motion design §14): an overlay that moves animates this property
+   (0 → 1) instead of its opacity, which would stop the glass blur inside it. Its glass
+   layers read it as their own opacity, its content as filter: opacity(), its shadow as
+   alphas. Registered, so it interpolates and inherits into shadow trees; 1 at rest. */
+@property --twicc-reveal {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 1;
+}
+
 /* Web Awesome components take the same timing. The theme declares these tokens in
    @layer wa-theme on the theme root and again on .wa-light / .wa-dark / .wa-invert
    descendants: repeated on .wa-invert (tooltips), which would otherwise re-declare the

@@ -1,0 +1,75 @@
+/* Toast entrances and exits — visual refresh step 5b.
+   Design: docs/plans/2026-09-28-overlay-motion-design.md §8, §14.5.
+   SPA only (main.js), imported after the Notivue CSS; replaces notivue/animations.css.
+   The class names are passed to createNotivue({ animations }): Notivue puts them on the
+   notification container and waits for their animationend.
+
+   Toasts drop in from the top center with a small bounce and fade up when leaving. They
+   are the one exception to the overlays' same-keyframe model (utils/waMotionStyles.js):
+   Notivue waits on the leave's own animationend (a cancelled enter resolves nothing), and a
+   leave inside a toast's 520ms entrance is rare (a dismissal right after it appears), where
+   the toast snaps to visible and then leaves.
+
+   The container only moves: an opacity animation would stop the toast's glass blur. The
+   fade animates the registered --twicc-reveal (motion.css): the glass layers read it as
+   their opacity, the shadow as alphas (glass.css), the content as the filter declared
+   here (glass.css's content rule reads it). */
+
+.twicc-toast-enter {
+    animation: twicc-toast-in 520ms var(--motion-ease-spring), twicc-reveal 520ms var(--motion-ease);
+    --twicc-reveal-filter: opacity(var(--twicc-reveal));
+}
+
+.twicc-toast-leave {
+    animation: twicc-toast-out 220ms ease-in forwards, twicc-reveal-out 220ms ease-in forwards;
+    --twicc-reveal-filter: opacity(var(--twicc-reveal));
+}
+
+/* Clear all: Notivue puts the class on the root list. One reveal per toast, on each
+   container (more specific than .twicc-toast-enter: a toast still entering fades out too);
+   their animationend bubbles to Notivue's root handler, which ends the clear. */
+.twicc-toast-clear-all [data-notivue-container] {
+    animation: twicc-reveal-out 300ms ease-in forwards;
+    --twicc-reveal-filter: opacity(var(--twicc-reveal));
+}
+
+/* The close button resets `all` (App.vue): it reads the filter again. */
+.Notivue__notification > .Notivue__close {
+    filter: var(--twicc-reveal-filter, none);
+}
+
+@keyframes twicc-toast-in {
+    from {
+        translate: 0 calc(-130% * var(--motion-amount));
+        scale: calc(1 - 0.04 * var(--motion-amount));
+    }
+}
+
+@keyframes twicc-toast-out {
+    to {
+        translate: 0 calc(-60% * var(--motion-amount));
+        scale: calc(1 - 0.04 * var(--motion-amount));
+    }
+}
+
+@keyframes twicc-reveal {
+    from {
+        --twicc-reveal: 0;
+    }
+}
+
+@keyframes twicc-reveal-out {
+    to {
+        --twicc-reveal: 0;
+    }
+}
+
+/* Notivue skips its enter/leave classes under reduced motion: keep a reveal on the
+   notification itself (it plays when the element is created). The leave stays instant.
+   No end state: the children keep filter: opacity(1) for the toast's life. */
+@media (prefers-reduced-motion: reduce) {
+    .Notivue__notification {
+        animation: twicc-reveal 200ms var(--motion-ease);
+        --twicc-reveal-filter: opacity(var(--twicc-reveal));
+    }
+}

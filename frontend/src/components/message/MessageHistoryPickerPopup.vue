@@ -21,6 +21,7 @@
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { apiFetch } from '../../utils/api'
 import { useGlideInk } from '../../composables/useGlideInk'
+import { usePopupMotion } from '../../composables/usePopupMotion'
 
 const props = defineProps({
     projectId: {
@@ -47,6 +48,9 @@ const emit = defineEmits(['select', 'close', 'filter-change'])
 
 const popupRef = ref(null)
 const isOpen = ref(false)
+// The panel grows from its anchor on each opening; the close stays instant (overlay motion §6).
+const panelRef = ref(null)
+usePopupMotion(isOpen, panelRef, popupRef)
 const searchInputRef = ref(null)
 const listRef = ref(null)
 
@@ -384,7 +388,7 @@ defineExpose({ open, close, isOpen })
         shift-padding="8"
         class="picker-popup"
     >
-        <div class="picker-panel glass-surface">
+        <div ref="panelRef" class="picker-panel glass-surface">
             <!-- Search input -->
             <div class="picker-search">
                 <wa-input

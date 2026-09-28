@@ -101,64 +101,121 @@ useGlideInk({
 
 <template>
     <Teleport to="body">
-        <div v-if="visible" class="switcher-overlay glass-veil" @mousedown.self="cancel">
-            <div class="switcher-panel glass-surface" role="listbox" :aria-label="modeLabel">
-                <div class="switcher-header">
-                    <span class="switcher-mode">{{ modeLabel }}</span>
-                    <span class="switcher-hint"><kbd>⇧</kbd> to switch</span>
-                </div>
-                <div ref="listRef" class="switcher-list">
-                    <span ref="listInkRef" class="glide-ink" aria-hidden="true"></span>
-                    <button
-                        v-for="row in rows"
-                        :key="row.session.id"
-                        type="button"
-                        class="switcher-row"
-                        :class="{ 'switcher-row--active': row.index === cursor }"
-                        role="option"
-                        :aria-selected="row.index === cursor"
-                        @mouseenter="pointTo(row.index)"
-                        @click="commitTo(row.index)"
-                    >
-                        <ProjectMark :icon-url="row.iconUrl" :color="row.dotColor" class="switcher-mark" />
-                        <wa-icon
-                            v-if="row.providerIcon"
-                            auto-width
-                            family="brands"
-                            :name="row.providerIcon"
-                            class="switcher-provider"
-                        ></wa-icon>
-                        <wa-tag
-                            v-if="row.session.archived"
-                            size="small"
-                            variant="neutral"
-                            class="switcher-archived-tag"
-                        >Arch.</wa-tag>
-                        <wa-tag
-                            v-else-if="row.isDraft"
-                            size="small"
-                            variant="warning"
-                            class="switcher-draft-tag"
-                        >Draft</wa-tag>
-                        <span class="switcher-name">{{ row.name }}</span>
-                        <span class="switcher-state">
-                            <wa-icon v-if="row.state.kind === 'unread'" name="eye" class="switcher-unread"></wa-icon>
-                            <wa-icon v-else-if="row.state.kind === 'pending'" name="hand" class="switcher-pending"></wa-icon>
-                            <ProcessIndicator
-                                v-else-if="row.state.kind === 'process'"
-                                :state="row.state.processState.state"
-                                :has-active-crons="row.state.processState.active_crons?.length > 0"
+        <!-- Explicit durations: the moving parts are the veil's ::before and the panel,
+             which Vue cannot read on the root. -->
+        <Transition name="switcher" :duration="{ enter: 260, leave: 160 }">
+            <div v-if="visible" class="switcher-overlay glass-veil" @mousedown.self="cancel">
+                <div class="switcher-panel glass-surface" role="listbox" :aria-label="modeLabel">
+                    <div class="switcher-header">
+                        <span class="switcher-mode">{{ modeLabel }}</span>
+                        <span class="switcher-hint"><kbd>⇧</kbd> to switch</span>
+                    </div>
+                    <div ref="listRef" class="switcher-list">
+                        <span ref="listInkRef" class="glide-ink" aria-hidden="true"></span>
+                        <button
+                            v-for="row in rows"
+                            :key="row.session.id"
+                            type="button"
+                            class="switcher-row"
+                            :class="{ 'switcher-row--active': row.index === cursor }"
+                            role="option"
+                            :aria-selected="row.index === cursor"
+                            @mouseenter="pointTo(row.index)"
+                            @click="commitTo(row.index)"
+                        >
+                            <ProjectMark :icon-url="row.iconUrl" :color="row.dotColor" class="switcher-mark" />
+                            <wa-icon
+                                v-if="row.providerIcon"
+                                auto-width
+                                family="brands"
+                                :name="row.providerIcon"
+                                class="switcher-provider"
+                            ></wa-icon>
+                            <wa-tag
+                                v-if="row.session.archived"
                                 size="small"
-                            />
-                        </span>
-                    </button>
+                                variant="neutral"
+                                class="switcher-archived-tag"
+                            >Arch.</wa-tag>
+                            <wa-tag
+                                v-else-if="row.isDraft"
+                                size="small"
+                                variant="warning"
+                                class="switcher-draft-tag"
+                            >Draft</wa-tag>
+                            <span class="switcher-name">{{ row.name }}</span>
+                            <span class="switcher-state">
+                                <wa-icon v-if="row.state.kind === 'unread'" name="eye" class="switcher-unread"></wa-icon>
+                                <wa-icon v-else-if="row.state.kind === 'pending'" name="hand" class="switcher-pending"></wa-icon>
+                                <ProcessIndicator
+                                    v-else-if="row.state.kind === 'process'"
+                                    :state="row.state.processState.state"
+                                    :has-active-crons="row.state.processState.active_crons?.length > 0"
+                                    size="small"
+                                />
+                            </span>
+                        </button>
+                    </div>
                 </div>
             </div>
-        </div>
+        </Transition>
     </Teleport>
 </template>
 
 <style scoped>
+/* Entrance and exit (visual refresh step 5b, overlay motion design §7, §14): the panel
+   drops in, the veil fades. The overlay itself never changes opacity (it would stop the
+   veil blur and the panel's glass blur): its veil layer fades its own opacity; the panel
+   only moves and fades through the registered --twicc-reveal (its glass layers read it as
+   their opacity, its content through --twicc-reveal-filter). One keyframe per moving part,
+   forward to open, reversed to close (ease-out reversed plays as ease-in): a close during
+   the entrance updates the running animations in place. */
+.switcher-enter-active.switcher-overlay::before {
+    animation: twicc-switcher-fade 260ms var(--motion-ease-out);
+}
+
+.switcher-leave-active.switcher-overlay::before {
+    animation: twicc-switcher-fade 160ms ease-out reverse forwards;
+}
+
+.switcher-enter-active .switcher-panel {
+    animation: twicc-switcher-drop 260ms var(--motion-ease-spring), twicc-reveal 260ms var(--motion-ease);
+}
+
+.switcher-leave-active .switcher-panel {
+    animation: twicc-switcher-drop 160ms ease-out reverse forwards, twicc-reveal 160ms ease-out reverse forwards;
+}
+
+/* The panel's content fades with the reveal (glass.css's content rule reads the filter). */
+.switcher-enter-active .switcher-panel,
+.switcher-leave-active .switcher-panel {
+    --twicc-reveal-filter: opacity(var(--twicc-reveal));
+}
+
+/* The leaving overlay (fixed, full screen) never takes the next gesture's clicks. */
+.switcher-leave-active {
+    pointer-events: none;
+}
+
+@keyframes twicc-switcher-drop {
+    from {
+        translate: 0 calc(-0.5rem * var(--motion-amount));
+        scale: calc(1 - 0.03 * var(--motion-amount));
+    }
+}
+
+@keyframes twicc-switcher-fade {
+    from {
+        opacity: 0;
+    }
+}
+
+@keyframes twicc-reveal {
+    from {
+        --twicc-reveal: 0;
+    }
+}
+
 .switcher-overlay {
     position: fixed;
     inset: 0;

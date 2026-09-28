@@ -23,6 +23,7 @@
 import { ref, watch, nextTick, useId, onBeforeUnmount } from 'vue'
 import { apiFetch } from '../../utils/api'
 import FileTreePanel from './FileTreePanel.vue'
+import { usePopupMotion } from '../../composables/usePopupMotion'
 
 const props = defineProps({
     modelValue: {
@@ -42,6 +43,9 @@ const emit = defineEmits(['update:modelValue'])
 const popupRef = ref(null)
 const anchorId = useId()
 const isOpen = ref(false)
+// The panel grows from its anchor on each opening; the close stays instant (overlay motion §6).
+const panelRef = ref(null)
+usePopupMotion(isOpen, panelRef, popupRef)
 
 // ─── Tree state ──────────────────────────────────────────────────────────────
 
@@ -313,7 +317,7 @@ onBeforeUnmount(() => {
             shift-padding="8"
             class="picker-popup"
         >
-            <div class="picker-panel glass-surface" @keydown.capture="onPickerKeydown">
+            <div ref="panelRef" class="picker-panel glass-surface" @keydown.capture="onPickerKeydown">
                 <!-- Header: current path + navigate up -->
                 <div class="picker-header">
                     <wa-button

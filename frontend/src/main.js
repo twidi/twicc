@@ -32,6 +32,10 @@ installGlassArrowGap()
 // wa-details open/close: TwiCC owns the motion (see utils/detailsMotion.js).
 import { installDetailsMotion } from './utils/detailsMotion'
 installDetailsMotion()
+// Overlay entrances and exits: TwiCC's keyframes inside Web Awesome's shadow roots
+// (see utils/waMotionStyles.js). Every wa-* import above and below is evaluated first.
+import { installWaMotionStyles } from './utils/waMotionStyles'
+installWaMotionStyles()
 import '@awesome.me/webawesome/dist/components/progress-bar/progress-bar.js'
 import '@awesome.me/webawesome/dist/components/progress-ring/progress-ring.js'
 import '@awesome.me/webawesome/dist/components/option/option.js'
@@ -81,7 +85,8 @@ import { computeUsageData } from './utils/usage'
 
 // Notivue CSS
 import 'notivue/notification.css'
-import 'notivue/animations.css'
+// Toast entrances and exits (replaces notivue/animations.css; classes set in createNotivue).
+import './styles/toast-motion.css'
 
 // CodeMirror search panel overrides (Web Awesome themed)
 import './styles/codemirror-search.css'
@@ -98,6 +103,12 @@ const notivue = createNotivue({
     enqueue: true,
     pauseOnHover: true,
     pauseOnTabChange: false,
+    // Toast motion: styles/toast-motion.css.
+    animations: {
+        enter: 'twicc-toast-enter',
+        leave: 'twicc-toast-leave',
+        clearAll: 'twicc-toast-clear-all',
+    },
     // NOTE: Do NOT set duration in 'global' — Notivue merges configs as
     // { ...typeConfig, ...globalConfig, ...pushOptions }, so a global duration
     // would override all type-specific durations.

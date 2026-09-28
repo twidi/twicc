@@ -14,7 +14,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 3 | Accent-tinted glass overlays | **Done** — commit `709f9cf9` on branch `enhanced-ui` (see §6c) |
 | 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (§6d); **4b done** — commit `d11ea446` (§6e); **4c done** — commit `116f9d10` (§6f) |
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
-| 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b** (overlays), **5c** (list cascade, tab crossfade, theme reveal): to specify |
+| 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code in the step-5b commit (§6h); **5c** (list cascade, tab crossfade, theme reveal): to specify |
 | 6 | Accent glow + live states | To specify |
 | 7 | Secondary screens | To specify |
 
@@ -496,6 +496,49 @@ and project/workspace switch, tab-panel crossfade, light/dark circular reveal).
   `motion.css`): kept as in the mock; the user judges it with use (2026-09-28). Removing it
   is one line.
 
+## 6h. Step 5b — overlay entrances and exits (done)
+
+Spec: `docs/plans/2026-09-28-overlay-motion-design.md` (commit `2d19c1af`, reviewed PASS in
+17 rounds). Implemented by a sub-agent, code review by another (PASS, mutation check).
+
+### 6h.1 What it does
+
+- `utils/waMotionStyles.js`: a constructed stylesheet appended to the Lit `elementStyles`
+  of `wa-dialog`, `wa-dropdown`, `wa-dropdown-item`, `wa-popover`, `wa-popup`, `wa-select` (installed in
+  the three entry files): Web Awesome keeps its classes and lifecycle, TwiCC's keyframes
+  play. Dialogs spring up (320ms), palette and search drop in (`motion-drop`, 260ms),
+  menus / selects / color picker grow from their trigger (180ms), submenus fade (safe
+  triangle), popovers grow from their arrow (`--popover-arrow-center` from
+  `glassArrowGap.js`), tooltips fade after 250ms. One keyframe per kind, reversed to close
+  (`ease-out reverse` plays as ease-in); menu/popover exits keep Web Awesome's durations.
+- Pickers: entrance only (`composables/usePopupMotion.js`); session switcher: Vue
+  `Transition`; toasts: own Notivue classes (`styles/toast-motion.css`).
+- Palette and search take the focus through `autofocus` in the first frame; search selects
+  its kept query on `focusin`; the palette keeps a highlight moved during the entrance.
+
+### 6h.2 Lessons (do not regress)
+
+- A Lit web component's shadow styles can be extended from outside: push a constructed
+  `CSSStyleSheet` into `Ctor.elementStyles` before any instance exists.
+- Web Awesome's `animateWithClass` resolves on the first `animationend`/`animationcancel`
+  of the element, including its `::backdrop`: equal durations, and the same keyframe name
+  for show and hide (distinct names cancel and close at once).
+- `animation-direction: reverse` also reverses the timing function.
+- A `scale` on an element turns it into the containing block of its `position: fixed`
+  descendants (Web Awesome's submenu safe triangle).
+- A Lit Boolean property that does not reflect needs `:prop.attr` for attribute selectors.
+- Longer entrances delay every `wa-after-show` consumer (focus steps): list them.
+- **An `opacity` animation cuts the glass blur of its whole subtree for its whole
+  duration, even at opacity 1** (user's phone recording, frames in `video10-menu/`): the
+  sharp text behind showed through, then the blur snapped on at the end. Spec §14 (option
+  B, probe `glass-fade-probe/` variant 3): movers only move (`translate`, `scale`); a
+  registered `--twicc-reveal` (0 → 1, `@property` in `motion.css`) fades the glass layers
+  through their own opacity (applied after their backdrop filter: the blur is drawn from the
+  first frame), the content through `filter: opacity()` in the motion states only, and the
+  cast shadow through its alphas (`--glass-shadow-live`). Tooltips keep an opacity fade.
+  Option A (opaque glass while moving, then easing back to translucent) was tried and
+  rejected in the browser: it moved the step to the end of the animation.
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -725,4 +768,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b).

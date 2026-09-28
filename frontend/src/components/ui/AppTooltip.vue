@@ -41,6 +41,13 @@ import { useSettingsStore } from '../../stores/settings'
 const INTERACTIVE_HIDE_DELAY = 300
 
 /**
+ * Delay, in ms, before a tooltip shows (Web Awesome's default is 150ms): a pointer
+ * crossing the UI does not flash tooltips. Bound before `v-bind="$attrs"`, so a
+ * caller's own `show-delay` still wins.
+ */
+const TOOLTIP_SHOW_DELAY_MS = 250
+
+/**
  * Open interactive tooltips, which are mutually exclusive. The grace period
  * would otherwise keep one on screen while the next one opens (its `showDelay`
  * is shorter), and the two would overlap — anchors are usually stacked close
@@ -205,6 +212,7 @@ onBeforeUnmount(stopListening)
     <wa-tooltip
         v-if="shouldShow"
         ref="tooltipEl"
+        :show-delay="TOOLTIP_SHOW_DELAY_MS"
         :hide-delay="interactive ? INTERACTIVE_HIDE_DELAY : undefined"
         v-bind="$attrs"
     >

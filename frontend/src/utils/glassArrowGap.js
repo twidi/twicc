@@ -18,7 +18,8 @@ const SIDE_FOR_PLACEMENT = { top: 'bottom', bottom: 'top', left: 'right', right:
  * @param {{left: number, top: number, right: number, bottom: number, width: number, height: number}} arrowRect
  *   Arrow box on screen (the rotated square's bounding box: its span along the edge is the base).
  * @param {number} [scale=1] Screen size / layout size of the body (below 1 during the show animation).
- * @returns {{side: 'top'|'bottom'|'left'|'right', start: number, end: number}|null}
+ * @returns {{side: 'top'|'bottom'|'left'|'right', start: number, end: number, center: number}|null}
+ *   `center` is the middle of the base: the popover grows from it (overlay motion, step 5b).
  */
 export function computeArrowGap(placement, bodyRect, arrowRect, scale = 1) {
     const side = SIDE_FOR_PLACEMENT[(placement || '').split('-')[0]]
@@ -31,7 +32,9 @@ export function computeArrowGap(placement, bodyRect, arrowRect, scale = 1) {
     const to = horizontal ? arrowRect.right - bodyRect.left : arrowRect.bottom - bodyRect.top
     const clamp = (value) => Math.min(Math.max(value / scale, 0), length)
     const round = (value) => Math.round(value * 100) / 100
-    return { side, start: round(clamp(from)), end: round(clamp(to)) }
+    const start = clamp(from)
+    const end = clamp(to)
+    return { side, start: round(start), end: round(end), center: round((start + end) / 2) }
 }
 
 function onReposition(event) {
@@ -52,6 +55,8 @@ function onReposition(event) {
     host.dataset.glassArrow = gap.side
     host.style.setProperty('--glass-arrow-gap-start', `${gap.start}px`)
     host.style.setProperty('--glass-arrow-gap-end', `${gap.end}px`)
+    // The popover's transform origin (utils/waMotionStyles.js, gated on data-glass-arrow).
+    host.style.setProperty('--popover-arrow-center', `${gap.center}px`)
 }
 
 let installed = false

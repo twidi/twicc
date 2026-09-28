@@ -714,3 +714,285 @@ separately.
 - Update `docs/plans/2026-09-26-visual-refresh-roadmap.md`: status row 5 (5b), a §6h summary
   with lessons, the test count in §10.
 - One commit after the user's browser review and explicit "commit".
+
+## 14. Amendment — the glass blur stays on while overlays move (user review, 2026-09-28)
+
+### 14.1 What the browser review showed
+
+A screen recording (Firefox for Android, the sidebar menu; frames in the TwiCC artifacts of
+session `2992a814-2ce5-4622-a145-219d5e2fd203`, `video10-menu/`) shows the text behind the
+menu staying **sharp** through the whole entrance, seen through the 74% glass background,
+although the menu is nearly opaque after ~80ms; on the frame where the animation ends, the
+blur appears at once. On close, the blur vanishes on the first frame of the exit. Chrome
+does the same.
+
+Cause (roadmap §6c.2): an element whose `opacity` is animated is a backdrop root for its
+whole subtree **for the whole animation**, even at an opacity of 1; the glass blur lives on a
+layer inside the animated element, so it blurs nothing until the animation ends. Every glass
+overlay of this step is concerned.
+
+A first fix (opaque background while moving, then easing back to translucent) was tried
+and rejected in the browser: the step moved to the end of the animation (the blurred
+content behind appeared in ~25ms, `video11-settings/`). The user then tested a probe page
+(`glass-fade-probe/`, variant 3) on the phone and chose the approach below.
+
+### 14.2 Decision (user: probe variant 3)
+
+**No `opacity` animation on an ancestor of a glass layer.** The element that moves (the
+*mover*) only moves (`translate`, `scale`). The fade is carried by one registered custom
+property, `--twicc-reveal` (0 → 1), animated on the mover and inherited by:
+
+- the **glass layers** (the `::before` background with the blur, the `::after` border
+  overlay, the direct list box, the popover arrow), which take `opacity:
+  var(--twicc-reveal, 1)`: an element's own opacity applies after its own backdrop filter,
+  so the blur is drawn from the first frame and fades in with the panel;
+- the **content** of the glass host, which takes `filter: opacity(…)` during the motion
+  only (a filter on the content is not an ancestor of the glass layer; `filter: opacity()`
+  multiplies with the content's own `opacity`, e.g. a disabled item at 0.5);
+- the glass host's **cast shadow** and the submenu's outline, whose colours are scaled by it.
+
+Nothing changes after the animation ends: the blur was there all along.
+
+### 14.3 The property and the easing rule
+
+`frontend/src/styles/motion.css` (document scope; registration is global, shadow trees
+included; imported by the three entries):
+
+```css
+@property --twicc-reveal { syntax: '<number>'; inherits: true; initial-value: 1; }
+```
+
+Each sheet that uses it declares its keyframes (keyframes are scoped per shadow root):
+`@keyframes twicc-reveal { from { --twicc-reveal: 0; } }` and, where an exit is played
+forward (toasts), `@keyframes twicc-reveal-out { to { --twicc-reveal: 0; } }`.
+
+**Easing rule** (replaces §5.1's "spring paired with `twicc-fade` using `--motion-ease`"
+and §9's third bullet): an entrance pairs its movement with `twicc-reveal` of the same
+duration; the reveal uses `--motion-ease` next to a spring movement and `--motion-ease-out`
+next to an ease-out movement (or alone). Exits reuse the same keyframes, `ease-out reverse
+forwards` (plays as ease-in, §5), except toasts (§14.5).
+
+### 14.4 Movers, glass layers, content
+
+| Surface | Mover: animations (show / hide) | Glass host | Content fade |
+|---|---|---|---|
+| Dialogs | `.dialog`: `twicc-dialog 320ms spring, twicc-reveal 320ms ease` / both `160ms ease-out reverse forwards`; `motion-drop`: `twicc-drop` + `twicc-reveal`, 260ms | `.dialog` itself | `.dialog.show > *, .dialog.hide > *` |
+| Dropdown menus | `#menu`: `twicc-pop-move 180ms ease-out, twicc-reveal 180ms ease-out` / 50ms reverse | `#menu` | `#menu.show ::slotted(*), #menu.hide ::slotted(*)` |
+| Submenus | `#submenu`: `twicc-reveal 180ms ease-out` / 50ms reverse (no scale, §5.2) | `#submenu` | `#submenu.show ::slotted(*), #submenu.hide ::slotted(*)` |
+| Popovers | wa-popup `.popup` (`:host(.popover)`): `twicc-grow 260ms spring, twicc-reveal 260ms ease` / 100ms reverse | popover `.body` | new `wa-popover` sheet rule: `.body ::slotted(*)` |
+| Selects | wa-popup `.popup` (`:host(.select)`): `twicc-pop-move 180ms ease-out, twicc-reveal 180ms ease-out` / 100ms reverse | `listbox` part (itself for `glass-listbox-direct`) | new `wa-select` sheet: `:host(:not(.glass-listbox-direct)) .listbox ::slotted(*)` |
+| Session switcher | `.switcher-panel`: `twicc-switcher-drop 260ms spring, twicc-reveal 260ms ease` / 160ms reverse | the panel (`.glass-surface`) | generic rule |
+| Pickers | `.picker-panel` (WAAPI, §14.6) | the panel (`.glass-surface`) | generic rule |
+| Toasts | Notivue container (§14.5) | `.Notivue__notification` | generic rule + close button rule |
+
+`twicc` easing names above are shorthand: "spring" = `var(--motion-ease-spring)`, "ease" =
+`var(--motion-ease)`, "ease-out" on entrances = `var(--motion-ease-out)`; exits use the CSS
+keyword `ease-out` with `reverse forwards`. Durations are §5.6's, unchanged.
+
+**Keyframes.** `twicc-pop-move { from { scale: calc(1 - 0.06 * A); } }` (scale only)
+replaces `twicc-pop` for the dropdown `#menu` and the select popup. The popup sheet keeps
+`twicc-pop` (opacity + scale) for the color picker only (not glass: unchanged). `twicc-fade`
+stays only in the dialog sheet (its `::backdrop`); it is removed from the dropdown-item and
+popup sheets (no user left). `twicc-dialog`, `twicc-drop`, `twicc-grow`,
+`twicc-switcher-drop` are already scale/translate only. The `wa-popover` sheet
+(already present for the arrow origin) gains the content rule; `WA_MOTION_STYLES` gains one
+entry, `wa-select` (new): six tags in all.
+
+**Content fade.**
+- *Direct* (dialog, menu, submenu: the sheet knows the state class):
+  `filter: opacity(var(--twicc-reveal))` on the listed selectors.
+- *Inherited* (popover, select, switcher, pickers, toasts: the content lives in another
+  tree): in its motion state the mover declares
+  `--twicc-reveal-filter: opacity(var(--twicc-reveal));` (unregistered: its `var()`
+  resolves on the mover every frame and the result inherits — checked in Firefox 156
+  through shadow roots and slots). Content rules read `filter: var(--twicc-reveal-filter,
+  none)`; nothing declares it at rest, so `none`. Motion states declaring it: popup sheet
+  `:host(.popover) .popup.show-with-scale`, `…hide-with-scale`, `:host(.select)
+  .popup.show`, `…hide`; `SessionSwitcher.vue` `.switcher-enter-active .switcher-panel,
+  .switcher-leave-active .switcher-panel`; `toast-motion.css` `.twicc-toast-enter,
+  .twicc-toast-leave`, and `.twicc-toast-clear-all [data-notivue-container]` (§14.5); `usePopupMotion` inline (§14.6).
+- *Generic rule* (`glass.css`): `:where(.glass-surface, .Notivue__notification) > *
+  { filter: var(--twicc-reveal-filter, none); }` (zero specificity: a child with its own
+  `filter` rule keeps it and does not fade). The toast close button resets `all` (`App.vue`
+  `.Notivue__close { all: unset }`, 0,1,0): `toast-motion.css` adds
+  `.Notivue__notification > .Notivue__close { filter: var(--twicc-reveal-filter, none); }`.
+- *Reduced-motion dialog pulse*: its media query holds two rules, `.dialog.pulse {
+  animation: twicc-pulse-dim 250ms var(--motion-ease); }` with `twicc-pulse-dim { 50% {
+  --twicc-reveal: 0.85; } }`, and `.dialog.pulse > * { filter: opacity(var(--twicc-reveal)); }`:
+  the whole dialog dips, its blur kept.
+
+**Glass layers** (`glass.css`): every layer rule gains `opacity: var(--twicc-reveal, 1)`:
+the `::before` and `::after` of the dialog, menu, (non-direct) list box and popover body,
+the submenu's `::after`, `.glass-surface::before/::after`, `.Notivue__notification::before/
+::after`, the direct list box itself (its own blur and content fade together) and the
+popover arrow part.
+
+**Shadow and outline** (`glass.css`, `App.vue`): the cast shadow is on the glass host itself,
+so it is written on the host with alphas scaled by `--twicc-reveal`, in a host declaration
+`--glass-shadow-live` that the host's `box-shadow` reads:
+light — `0 2px 4px oklch(0.2 0.02 275 / calc(0.06 * var(--twicc-reveal, 1))), 0 12px 28px -4px oklch(0.2 0.02 275 / calc(0.16 * var(--twicc-reveal, 1))), 0 32px 64px -16px oklch(0.2 0.02 275 / calc(0.24 * var(--twicc-reveal, 1)))`;
+dark (`:where(.wa-dark)` ancestor) — `0 2px 6px oklch(0 0 0 / calc(0.45 * var(--twicc-reveal, 1))), 0 24px 56px -12px oklch(0 0 0 / calc(0.65 * var(--twicc-reveal, 1)))`
+(`--depth-3`'s light layers and the dark `--glass-shadow`; a comment asks to keep them in
+sync). Placement: a separate light token rule whose selector list is written out entry by entry
+(a `::part()` is not valid inside `:where()`, which would drop it silently):
+`:where(wa-dialog)::part(dialog), :where(wa-dropdown)::part(menu),
+:where(wa-dropdown-item)::part(submenu), :where(wa-select:not(.glass-listbox-direct))::part(listbox),
+:where(wa-popover)::part(body), :where(.glass-surface), :where(.Notivue__notification)
+{ --glass-shadow-live: <light>; }`, followed later in `glass.css` by the dark rule with the
+same entries each prefixed by `:where(.wa-dark) ` (e.g. `:where(.wa-dark)
+:where(wa-dialog)::part(dialog)`) and `--glass-shadow-live: <dark>` (each light entry and its dark twin
+have equal specificity — 0, plus `::part` where present: order decides); the existing layered host rule (which sets `background-color:
+transparent; border: 0; box-shadow`) keeps its selector list and its `box-shadow` becomes
+`var(--glass-shadow-live)`; toasts read it through Notivue's
+`--nv-shadow`, which `App.vue` sets to `var(--glass-shadow-live)` (the inline declaration
+sits on the notification, so the `var()` resolves there). The direct list box keeps
+`var(--glass-shadow)` (its own opacity already fades it) and the popover arrow has no
+shadow. The submenu outline colour becomes `color-mix(in oklab, var(--glass-border)
+calc(var(--twicc-reveal, 1) * 100%), transparent)`. `--glass-shadow` stays for other
+readers.
+
+**Fallback block** (`@supports not (selector(...::before))`, where hosts paint the tint and
+shadow themselves, without blur): the hosts gain `opacity: var(--twicc-reveal, 1)` (no blur
+to lose there), so they fade; their content then fades by the square of the reveal (host
+opacity × content filter), accepted.
+
+**Tooltips are the exception:** their text is slotted through a `display: contents`
+wrapper (`AppTooltip.vue`), which a filter cannot fade, and their glass is a small 82%
+surface: they keep §5.4's opacity animation (`twicc-tip`), with its blur off for 160ms.
+**Veils** (dialog `::backdrop`, switcher `::before`) animate their own opacity: unchanged.
+**Color picker** (not glass): unchanged.
+
+### 14.5 Toasts
+
+- Enter: `twicc-toast-in 520ms var(--motion-ease-spring), twicc-reveal 520ms var(--motion-ease)`;
+  `twicc-toast-in` stays movement only.
+- Leave: `twicc-toast-out 220ms ease-in forwards, twicc-reveal-out 220ms ease-in forwards`;
+  `twicc-toast-out` loses its `opacity: 0` (movement only: `to { translate …; scale … }`).
+- Clear all: Notivue puts the class on the root `<ol>`. The motion state goes on the
+  containers, not the root: `.twicc-toast-clear-all [data-notivue-container] { animation:
+  twicc-reveal-out 300ms ease-in forwards; --twicc-reveal-filter:
+  opacity(var(--twicc-reveal)); }` (0,2,0, beats `.twicc-toast-enter`, so a toast still
+  entering fades out too). The root itself gets no animation (one reveal per toast: its glass
+  and its content fade at the same rate). The containers' `animationend` bubbles to
+  Notivue's root handler, which ends the clear (it does not check the target).
+- Keyframes of `toast-motion.css`: `twicc-toast-in`, `twicc-toast-out`, `twicc-reveal`,
+  `twicc-reveal-out`; `twicc-toast-fade-in`, `twicc-toast-fade-out` and option A's
+  `twicc-toast-reduced-in` are removed.
+- Reduced motion (Notivue drops its classes): `.Notivue__notification { animation:
+  twicc-reveal 200ms var(--motion-ease); --twicc-reveal-filter:
+  opacity(var(--twicc-reveal)); }`. The media rule has no end state: under reduced motion
+  a toast's children keep `filter: opacity(1)` for the toast's life (§14.9).
+
+### 14.6 Pickers
+
+`usePopupMotion` animates `panel.animate([{ '--twicc-reveal': 0, scale: 1 - 0.06 * A }, {
+'--twicc-reveal': 1, scale: 1 }], { duration: 180, easing })` (no `opacity` keyframe), and
+sets `--twicc-reveal-filter: opacity(var(--twicc-reveal))` inline on the panel right before
+`animate`, removed on finish, cancel and dispose (option A's four inline properties go).
+
+### 14.7 What this replaces
+
+Option A is removed entirely from the working tree: the `--glass-*-motion-bg` tokens; the
+`--glass-settle` transitions; every declaration of `--glass-bg`, `--glass-sticky-bg`,
+`--glass-tooltip-bg` or `--glass-settle` in a motion state (`GLASS_MOTION_STATE` in
+`waMotionStyles.js`, `SessionSwitcher.vue`, `toast-motion.css`, `usePopupMotion.js`) with
+their comments; the tooltip arrow `background-color` rule and its fallback; the tooltip host
+comment returns to its original text; and their tests. The `glass.css` header's dependency
+sentence becomes: "…except depth.css, motion.css (the registered `--twicc-reveal` that the
+glass layers and shadows read) and the Web Awesome theme tokens".
+
+§4's last bullet and §12's "The blur of glass overlays is not drawn during their fade" are
+replaced by: "The glass blur is drawn during every motion (§14), tooltips excepted." §13's
+roadmap update records §14 (and rewrites the §6h.2 option-A lesson in
+`docs/plans/2026-09-26-visual-refresh-roadmap.md`).
+
+### 14.8 Invariants (amend §9)
+
+- No glass layer of a glass host has an ancestor with an `opacity`, `filter`, `mask` or
+  `clip-path` animation or value during a motion state, tooltips excepted; content filters
+  apply to the host's children only, never to the host or the mover. Glass layers inside the
+  content (`.glass-sticky` headers of the palette and settings) fade with the content filter;
+  during the motion they blur only the content behind them.
+- Replaces the property list of §9's second bullet and of §4's third bullet (their other
+  rules stay: no `transform`, no `filter` in keyframes; every distance and scale delta ×
+  `--motion-amount`; §4's movement-easing rule, completed by §14.3); §5.4's per-sheet
+  keyframe inventory is replaced by §14.4 "Keyframes": keyframes use `translate`, `scale`, `--twicc-reveal`;
+  `opacity` only in `twicc-tip` (tooltips), `twicc-pop` (color picker) and the veil fades
+  (`twicc-fade` on the dialog `::backdrop`, the switcher veil); `twicc-pulse-dim` holds
+  `--twicc-reveal` only. §4's pulse sentence and §5.1's "opacity dip" are replaced by §14.4
+  (a `--twicc-reveal` dip).
+- Show and hide name the same keyframes (§5), `twicc-reveal` included, toasts excepted.
+
+### 14.9 Limitations (amend §12)
+
+- Tooltips keep the opacity animation: their small glass is unblurred during 160ms.
+- A content child with its own `filter` rule does not fade.
+- During a motion, content children are containing blocks for `absolute` and `fixed`
+  descendants (the filter). Web Awesome popups opened inside are top-layer popovers, not
+  affected.
+- Under reduced motion, a toast's children keep `filter: opacity(1)` for the toast's life.
+- In the no-pseudo-element fallback, content fades by the square of the reveal.
+- The fade animates an inherited registered custom property: it runs on the main thread and
+  restyles the mover's subtree each frame (a composited `opacity` did not); on a busy main
+  thread the fade can lag behind the movement, which stays composited.
+- `#menu` and the list box are scroll containers: the host paints its own scrollbar, which
+  the content filter does not cover; a long menu's or select's scrollbar shows at full
+  opacity during the entrance.
+
+### 14.10 Tests (amend §10)
+
+- `motion.test.js`: the `@property --twicc-reveal` rule with the stated descriptors.
+- `waMotionStyles.test.js`:
+  - six tags (`wa-select` added) instead of five; guard assertions for the structures the
+    content rules rely on: `.listbox` wraps the default `<slot>` (select), `.body` wraps the
+    default `<slot>` (popover), `#menu` holds the default `<slot>` (dropdown), `#submenu`
+    holds `<slot name="submenu">` (dropdown-item);
+  - every glass mover rule pairs its movement with `twicc-reveal` (same duration, the
+    easing rule of §14.3); no glass mover keyframe holds `opacity`; `twicc-pop-move` is
+    scale-only; the color picker keeps `twicc-pop` (opacity + scale);
+  - the direct content rules (dialog, menu, submenu), the popover and select content rules,
+    the `--twicc-reveal-filter` motion states, the select-direct exclusion;
+  - the reduced-motion dialog block holds the two rules, `twicc-pulse-dim` animates
+    `--twicc-reveal` only;
+  - the tooltip rules unchanged;
+  - amended existing assertions: the keyframe property whitelist (`opacity`, `translate`,
+    `scale`) accepts `--twicc-reveal`; the "non-opacity keyframe properties include
+    `var(--motion-amount)`" check exempts `--twicc-reveal`; the spring-pairing test is
+    rewritten to require `twicc-reveal` of the same duration with `--motion-ease` (still
+    three springs) and §10's matching bullet ("paired with `twicc-fade`") is struck; the
+    `wa-popover` sheet rule count goes from 4 to 5 (or the arrow-origin test filters its four
+    origin rules); the pulse test expects the reduced-motion block's two rules and its title
+    becomes a `--twicc-reveal` dip; "submenus animate only
+    `twicc-fade`" becomes `twicc-reveal`; pulse-dim `['opacity']` becomes
+    `['--twicc-reveal']`; the option-A glass motion state test is removed.
+- `glass.test.js`: every glass layer rule (list of §14.4) has `opacity: var(--twicc-reveal,
+  1)`; the generic content rule; the light and dark token rules, found by their exact
+  selector lists (§14.4), declare `--glass-shadow-live` with the stated values, the dark one
+  after the light one; the layered host rule's `box-shadow` is `var(--glass-shadow-live)`
+  (amend the existing host `box-shadow` assertion); the direct list box keeps `var(--glass-shadow)`;
+  the fallback hosts' `opacity`; the submenu outline colour; option-A tests 8–10 removed; no
+  `--glass-settle`, no `*-motion-bg` left.
+- `toast-motion.test.js`: the keyframe list of §14.5 (amend the exact list); the property
+  whitelist accepts `--twicc-reveal`; the `--motion-amount` check exempts `--twicc-reveal`;
+  `twicc-toast-in` and `twicc-toast-out` hold `translate` and `scale` only (no `opacity`); the "no transform/filter" check applies inside
+  `@keyframes` only (the close-button rule sets `filter`); the clear-all container rule; enter, leave,
+  clear-all rules; the reduced-motion rule; the close-button rule; option-A assertions
+  removed; `App.vue` sets `--nv-shadow` to `var(--glass-shadow-live)` (source check).
+- `overlay-motion.test.js` (switcher): the reveal pairing and the `--twicc-reveal-filter`
+  motion state; option-A assertions removed.
+- `usePopupMotion.test.js`: WAAPI keyframes carry `--twicc-reveal` and `scale` (no
+  `opacity`); "`--motion-amount: 0`" keeps `--twicc-reveal` and `scale: 1`; the inline
+  `--twicc-reveal-filter` set before `animate` and removed on finish, cancel, dispose;
+  option-A assertions removed.
+
+### 14.11 Browser checks (amend §11)
+
+- Menu, settings popover, a dialog (and the palette), a select, the switcher, a picker, a
+  toast — light and dark, Firefox (desktop and Android) and Chrome: the content behind is
+  blurred from the first frame of the entrance to the last frame of the exit; nothing
+  changes when the animation ends; the shadow fades with the panel (no grey halo before
+  it); the toast close button fades with the toast.
+- A menu with a disabled item: it keeps its own dimmed opacity after the entrance.
+- Palette category headers and the settings detail header (sticky glass) during the entrance.
+- Reduced motion: the same, without movement; the dialog pulse dips the whole dialog with its
+  blur kept.

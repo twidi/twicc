@@ -61,6 +61,13 @@ const dialogRef = ref(null)
 const searchInputRef = ref(null)
 const isOpen = ref(false)
 
+// The kept query (easy replacement) is selected when the field takes the focus: the
+// autofocus gives it during the entrance, before a realistic keystroke, so typed keys
+// replace the query instead of landing next to it. Top level: a stable listener reference.
+function selectKeptQuery() {
+    if (query.value) searchInputRef.value?.select()
+}
+
 function open() {
     if (dialogRef.value) {
         if (dialogRef.value.open) {
@@ -86,6 +93,7 @@ function open() {
             filters.projectId = store.getProject(routeProjectId)?.worktree_of || routeProjectId
         }
 
+        searchInputRef.value?.addEventListener('focusin', selectKeptQuery, { once: true })
         dialogRef.value.open = true
         isOpen.value = true
     }
@@ -110,16 +118,12 @@ function handleAfterShow(e) {
     // (wa-select fires wa-after-show when its dropdown opens, and it bubbles up)
     if (e.target !== dialogRef.value) return
 
-    // Focus the search input after dialog animation completes
+    // The autofocus already focused the search input during the entrance (and the
+    // focusin listener selected the kept query): only focus it if the focus left it.
     nextTick(() => {
         const input = searchInputRef.value
-        if (input) {
+        if (input && !input.contains(document.activeElement)) {
             input.focus()
-            // If there's existing text, select it for easy replacement
-            const len = input.value?.length || 0
-            if (len > 0) {
-                input.select()
-            }
         }
     })
 }
@@ -438,6 +442,8 @@ function navigateToResult(result) {
 
 function handleAfterHide(e) {
     if (e.target !== dialogRef.value) return
+    // The field never took the focus during this opening.
+    searchInputRef.value?.removeEventListener('focusin', selectKeptQuery)
     if (deferredPendingSearch) {
         pendingSessionSearch.value = deferredPendingSearch
         deferredPendingSearch = null
@@ -522,7 +528,7 @@ defineExpose({ open })
 <template>
     <wa-dialog
         ref="dialogRef"
-        class="search-overlay"
+        class="search-overlay motion-drop"
         without-header
         light-dismiss
         @wa-hide="handleDialogHide"
@@ -539,6 +545,7 @@ defineExpose({ open })
                         placeholder="Search in all sessions..."
                         size="medium"
                         with-clear
+                        :autofocus.attr="true"
                         class="search-input"
                     >
                         <wa-icon slot="start" name="magnifying-glass"></wa-icon>
