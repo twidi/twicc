@@ -8,6 +8,7 @@ import asyncio
 import errno
 import os
 import stat
+import tempfile
 from unittest.mock import patch
 
 import orjson
@@ -475,3 +476,112 @@ def test_cancel_after_failed_append_sync_outranks_every_broadcast(layer):
     versions = [message["data"]["upload"]["version"] for _, message in layer.sent]
     assert cancelled["version"] > max(versions[:-1])
     assert versions == sorted(set(versions))
+
+
+# ── Review follow-ups ────────────────────────────────────────────────────────
+
+
+def test_real_atomic_write_temp_name_passes_the_filter():
+    upload_id = store.new_upload_id()
+    staging = store.get_staging_dir()
+    # Same call as atomic_write_json builds for <id>.json.
+    fd, tmp = tempfile.mkstemp(dir=staging, prefix=f"{upload_id}.json.", suffix=".tmp")
+    os.close(fd)
+    assert store.classify_staging_name(os.path.basename(tmp)) == ("json_tmp", upload_id)
+
+
+def test_scan_staging_yields_only_filtered_names():
+    upload_id, _ = _new_upload()
+    staging = store.get_staging_dir()
+    (staging / f"{upload_id}.json.x1.tmp").write_bytes(b"")
+    (staging / "README").write_bytes(b"")
+    (staging / "other.part").write_bytes(b"")
+    found = {(name.kind, name.upload_id, entry.name) for name, entry in store.scan_staging()}
+    assert found == {
+        ("json", upload_id, f"{upload_id}.json"),
+        ("part", upload_id, f"{upload_id}.part"),
+        ("json_tmp", upload_id, f"{upload_id}.json.x1.tmp"),
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "client_id",
+        "size",
+        "offset",
+        "filename",
+        "target_dir",
+        "scope",
+        "origin",
+        "fingerprint",
+        "created_at",
+        "updated_at",
+        "last_transfer_at",
+    ],
+)
+def test_metadata_missing_a_required_field_is_unparsable(field):
+    upload_id, _ = _new_upload()
+    drifted = _disk_json(upload_id)
+    del drifted[field]
+    store.metadata_path(upload_id).write_bytes(orjson.dumps(drifted))
+    with pytest.raises(store.UnparsableMetadataError):
+        store.read_metadata(upload_id)
+    kept_id, _ = _new_upload()
+    # One drifted file is skipped; the listing (and build_record) still works.
+    records = store.list_metadata()
+    assert [meta["id"] for meta in records] == [kept_id]
+    assert [store.build_record(meta)["id"] for meta in records] == [kept_id]
+
+
+def test_list_metadata_skips_a_directory_named_like_metadata():
+    kept_id, _ = _new_upload()
+    (store.get_staging_dir() / f"{store.new_upload_id()}.json").mkdir()
+    assert [meta["id"] for meta in store.list_metadata()] == [kept_id]
+
+
+def test_state_change_setting_only_error_clears_the_other_fields():
+    upload_id, _ = _new_upload()
+    store.update_metadata(upload_id, state="finalizing")
+    store.update_metadata(
+        upload_id, state="active", error="boom", finalize_error_code=500, finalize_failed_at=store.now_iso()
+    )
+    meta = store.update_metadata(upload_id, state="failed", error="target gone")
+    assert (meta["error"], meta["finalize_error_code"], meta["finalize_failed_at"]) == ("target gone", None, None)
+
+
+def test_finalize_error_fields_need_error():
+    upload_id, _ = _new_upload()
+    store.update_metadata(upload_id, state="finalizing")
+    for changes in (
+        {"state": "active", "finalize_error_code": 507},
+        {"state": "active", "finalize_failed_at": store.now_iso()},
+        {"finalize_error_code": 500},
+    ):
+        with pytest.raises(ValueError):
+            store.update_metadata(upload_id, **changes)
+    assert _disk_json(upload_id)["version"] == 2
+    store.update_metadata(
+        upload_id, state="active", error="disk full", finalize_error_code=507, finalize_failed_at=store.now_iso()
+    )
+    # Clearing error alone would leave the other two: refused.
+    with pytest.raises(ValueError):
+        store.update_metadata(upload_id, error=None)
+
+
+def test_create_metadata_failed_write_leaves_no_json():
+    upload_id = store.new_upload_id()
+    store.part_path(upload_id).touch()
+    with patch.object(atomic_json.os, "replace", _enospc), pytest.raises(OSError):
+        store.create_metadata(
+            upload_id,
+            client_id="c",
+            size=1,
+            filename="a",
+            target_dir="/t",
+            scope={"kind": "standalone", "root": None},
+            origin={"panel": "files", "key": "k"},
+            fingerprint="f",
+        )
+    assert not store.metadata_path(upload_id).exists()
+    assert [name for name in os.listdir(store.get_staging_dir()) if name.endswith(".tmp")] == []

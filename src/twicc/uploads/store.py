@@ -28,6 +28,7 @@ import os
 import re
 import uuid
 from datetime import UTC, datetime
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 
@@ -234,6 +235,26 @@ _UPDATABLE_FIELDS = frozenset(
 )
 # Set together, cleared together by the next state change (§5.2).
 _FINALIZE_ERROR_FIELDS = ("error", "finalize_error_code", "finalize_failed_at")
+# Fields every metadata object must hold (written by create_metadata, indexed
+# by build_record and by the later steps). A file missing one is unparsable.
+_REQUIRED_FIELDS = frozenset(
+    {
+        "id",
+        "client_id",
+        "state",
+        "version",
+        "size",
+        "offset",
+        "filename",
+        "target_dir",
+        "scope",
+        "origin",
+        "fingerprint",
+        "created_at",
+        "updated_at",
+        "last_transfer_at",
+    }
+)
 
 
 def now_iso() -> str:
@@ -246,8 +267,9 @@ def read_metadata(upload_id: str) -> dict | None:
 
     Returns ``None`` when the file does not exist (or disappears during the
     read). Raises :class:`UnparsableMetadataError` when it is not valid JSON,
-    not an object, or lacks a coherent ``id`` / ``version`` / ``state`` (a
-    power loss can truncate a write, §8).
+    not an object, lacks a coherent ``id`` / ``version`` / ``state``, or lacks
+    one of the fields every metadata object holds (a power loss can truncate a
+    write, §8).
     """
     path = metadata_path(upload_id)
     try:
@@ -266,9 +288,24 @@ def read_metadata(upload_id: str) -> dict | None:
         or not isinstance(version, int)
         or isinstance(version, bool)
         or data.get("state") not in STATES
+        or not _REQUIRED_FIELDS <= data.keys()
     ):
         raise UnparsableMetadataError(f"{path}: not an upload metadata object")
     return data
+
+
+def scan_staging() -> Iterator[tuple[StagingName, os.DirEntry]]:
+    """Yield ``(StagingName, DirEntry)`` for every staging-dir entry that
+    passes the name filter of §5.1 (``.json``, ``.part``, ``.json.*.tmp``).
+
+    Entries of any other name are never yielded. The entry type is not
+    checked: the caller decides what to do with it.
+    """
+    with os.scandir(get_staging_dir()) as entries:
+        for entry in entries:
+            name = classify_staging_name(entry.name)
+            if name is not None:
+                yield name, entry
 
 
 def list_metadata() -> list[dict]:
@@ -278,9 +315,8 @@ def list_metadata() -> list[dict]:
     that disappears between the listing and the read.
     """
     records = []
-    for entry in os.scandir(get_staging_dir()):
-        name = classify_staging_name(entry.name)
-        if name is None or name.kind != NAME_KIND_JSON:
+    for name, entry in scan_staging():
+        if name.kind != NAME_KIND_JSON:
             continue
         try:
             meta = read_metadata(name.upload_id)
@@ -356,8 +392,9 @@ def update_metadata(upload_id: str, **changes: object) -> dict:
       current size of ``<id>.part`` (kept as is when the file is missing); a
       terminal write keeps the last ``offset``.
 
-    Only the fields of ``_UPDATABLE_FIELDS`` can be changed (``ValueError``
-    otherwise). Raises :class:`UploadNotFoundError` when ``<id>.json`` is
+    Only the fields of ``_UPDATABLE_FIELDS`` can be changed, and
+    ``finalize_error_code`` / ``finalize_failed_at`` never exist without
+    ``error`` (``ValueError`` otherwise, nothing written). Raises :class:`UploadNotFoundError` when ``<id>.json`` is
     absent, :class:`UnparsableMetadataError` when it is unparsable, and the
     ``OSError`` of a failed write — which leaves the file on disk unchanged,
     so the caller must not broadcast.
@@ -377,6 +414,10 @@ def update_metadata(upload_id: str, **changes: object) -> dict:
         for field in _FINALIZE_ERROR_FIELDS:
             meta[field] = None
     meta.update(changes)
+    if meta.get("error") is None and (
+        meta.get("finalize_error_code") is not None or meta.get("finalize_failed_at") is not None
+    ):
+        raise ValueError("finalize_error_code and finalize_failed_at need error (set together, §5.2)")
     meta["version"] = current["version"] + 1
     meta["updated_at"] = now_iso()
     if not is_terminal(meta["state"]):
