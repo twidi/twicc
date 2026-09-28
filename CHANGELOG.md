@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **File upload** — Upload files into any folder of the Files or Artifacts tab from its context menu, handy from a phone or another computer.
 - **Resumed subagents** — A subagent shows as running again when the agent sends it a new message or task.
 - **Background shells** — A new status (green terminal icon) shows when the provider reports that the agent has finished its turn but a shell it started is still running. Such sessions are no longer stopped automatically.
 - **Forgotten background shells** — When a shell is still running 5 minutes after the agent (or one of its subagents) finished working, TwiCC tells the agent which shell it is, so it can check it or stop it.
