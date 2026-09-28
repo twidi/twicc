@@ -12,7 +12,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 1 | Canvas + floating panels | **Done** — commits `ddc43644`, `8dbdfd83` on branch `enhanced-ui` |
 | 2 | Depth (layered shadows) + typography | **Done** — commits `85ce211f`, `ad7942b1`, `e2046d92` on branch `enhanced-ui` (see §6b) |
 | 3 | Accent-tinted glass overlays | **Done** — commit `709f9cf9` on branch `enhanced-ui` (see §6c) |
-| 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (§6d); **4b done** — commit `d11ea446` (§6e); 4c (gliding indicators) to specify |
+| 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (§6d); **4b done** — commit `d11ea446` (§6e); **4c done** — commit `116f9d10` (§6f) |
 | 5 | Entrances (virtual-scroll aware) + skeletons | To specify |
 | 6 | Accent glow + live states | To specify |
 | 7 | Secondary screens | To specify |
@@ -408,6 +408,39 @@ in 10 rounds; §11 = amendments after the browser review, binding). Code: commit
 - A global rule moving padding into children must be checked against every child's own
   padding rule (`var(--spacing, 0)` pattern).
 
+## 6f. Step 4c — gliding indicators + `SegmentedControl` (done)
+
+Spec: `docs/plans/2026-09-28-gliding-indicators-design.md` (commit `32493932`, reviewed
+PASS in 9 rounds). Code: commit `116f9d10`. Implemented by a sub-agent, reviewed by
+another (PASS, one test gap fixed).
+
+### 6f.1 What it does
+
+- `frontend/src/utils/glideInk.js` (+ `composables/useGlideInk.js`): measures the active
+  item, writes its box to `--glide-x/y/w/h`, a CSS transition (`--glide-transition`,
+  spring) moves the ink. Snap (no glide) on first display, after a hidden panel, when a
+  list is rebuilt (reset key); glide only between two items of the same list.
+- Sites: every `TabBar` (ink = `::part(tabs)::after`), settings nav (light accent fill),
+  command palette, session switcher, search overlay, `/` and history pickers.
+- `components/ui/SegmentedControl.vue` (button radios + gliding fill): Cost/Speed and the
+  orchestration Sessions/Subagents switch.
+- Reduced motion: `--glide-transition: none`; the fade stays.
+
+### 6f.2 Lessons (do not regress)
+
+- Web Awesome dialogs, popovers and dropdowns open with `scale: 0.8 → 1`: a
+  `getBoundingClientRect` measure taken then is scaled. Divide by the container's
+  visual/layout ratio (one ratio, longer axis, ≤1px = rounding) and re-measure once the
+  scale ends (Firefox starts the animation one frame late).
+- A `ResizeObserver` on the container and the active item is not enough: an earlier
+  sibling can move the active item. Observe all items.
+- An invisible absolutely positioned element still counts in a scroller's scroll range:
+  collapse it when hidden.
+- The awesome theme styles button radios (offset shadow, 4px "pressed" shift): an
+  unlayered override must reset `box-shadow` and `transform`.
+- A measured placement is not a movement: never multiply it by `--motion-amount`
+  (`motion.test.js` test 8 exempts `.glide-ink`).
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -638,4 +671,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c).
