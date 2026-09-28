@@ -20,6 +20,7 @@
 
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { apiFetch } from '../../utils/api'
+import { useGlideInk } from '../../composables/useGlideInk'
 
 const props = defineProps({
     projectId: {
@@ -79,6 +80,19 @@ const filteredMessages = computed(() => {
     return allMessagesWithSynthetic.value.filter(msg =>
         msg.text.toLowerCase().includes(query)
     )
+})
+
+// ─── Gliding highlight (visual refresh step 4c) ───────────────────────────
+// The highlight glides from row to row; a new filter snaps it.
+
+const listInkRef = ref(null)
+useGlideInk({
+    container: listRef,
+    flushTarget: listInkRef,
+    getActive: () => listRef.value?.querySelector('.picker-item.active') ?? null,
+    getItems: () => [...(listRef.value?.querySelectorAll('.picker-item') ?? [])],
+    sources: [activeIndex, filteredMessages],
+    resetKey: () => searchQuery.value,
 })
 
 // ─── API fetch ────────────────────────────────────────────────────────────
@@ -394,6 +408,7 @@ defineExpose({ open, close, isOpen })
                 tabindex="0"
                 @keydown="handleListKeydown"
             >
+                <span ref="listInkRef" class="glide-ink" aria-hidden="true"></span>
                 <template v-if="loading">
                     <div class="picker-status">Loading...</div>
                 </template>
@@ -458,6 +473,10 @@ defineExpose({ open, close, isOpen })
     flex: 1;
     min-height: 0;
     outline: none;
+    /* The gliding highlight (motion.css .glide-ink). */
+    position: relative;
+    --glide-ink-bg: var(--glass-item-highlight);
+    --glide-ink-radius: 0;
 }
 
 .picker-status {
@@ -477,6 +496,7 @@ defineExpose({ open, close, isOpen })
     padding: var(--wa-space-xs);
     cursor: pointer;
     line-height: 1.5;
+    position: relative; /* paints above the glide ink */
 }
 
 .picker-item:hover {
@@ -485,6 +505,13 @@ defineExpose({ open, close, isOpen })
 
 .picker-item.active {
     background: var(--glass-item-highlight);
+}
+
+/* The ink marks the active row once placed. A hover makes its row active, so the ink
+   already marks it: a separate hover fill would sit on top of the arriving ink. */
+.picker-list[data-glide-ready] > .picker-item.active,
+.picker-list[data-glide-ready] > .picker-item:hover {
+    background: transparent;
 }
 
 .item-text {

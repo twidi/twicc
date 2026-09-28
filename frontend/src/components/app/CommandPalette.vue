@@ -27,6 +27,7 @@ import { ref, computed, watch, nextTick, shallowRef } from 'vue'
 import { useCommandRegistry } from '../../composables/useCommandRegistry'
 import { fuzzyMatch } from '../../utils/fuzzyMatch'
 import { splitDrillDownQuery } from '../../utils/paletteDrillDown'
+import { useGlideInk } from '../../composables/useGlideInk'
 import ProcessIndicator from '../ui/ProcessIndicator.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import PermissionModeIcon from '../ui/PermissionModeIcon.vue'
@@ -37,6 +38,7 @@ const { isOpen, availableCommands, commandsByCategory, categoryLabelByKey, openP
 const dialogRef = ref(null)
 const searchInputRef = ref(null)
 const listRef = ref(null)
+const listInkRef = ref(null)
 
 const query = ref('')
 // Key of the highlighted row. Root commands and nested items are keyed by
@@ -245,6 +247,23 @@ function selectFirstItem() {
 
 watch(visibleItems, selectFirstItem)
 
+// ─── Gliding highlight (visual refresh step 4c) ──────────────────────────
+//
+// The highlight glides from row to row. A new list (another level, another
+// query) snaps it. `navEpoch` marks "back": goBack() re-highlights the parent
+// one tick after changing the level, a second change that must snap too.
+
+const navEpoch = ref(0)
+
+useGlideInk({
+    container: listRef,
+    flushTarget: listInkRef,
+    getActive: () => listRef.value?.querySelector('.command-item.active') ?? null,
+    getItems: () => [...(listRef.value?.querySelectorAll('.command-item') ?? [])],
+    sources: [activeKey, visibleItems, navEpoch],
+    resetKey: () => `${parentCommand.value?.id ?? ''}|${query.value}|${navEpoch.value}`,
+})
+
 // ─── Dialog event handlers ───────────────────────────────────────────────
 
 function onAfterShow() {
@@ -350,6 +369,10 @@ function goBack() {
         query.value = returnQuery
         returnQuery = ''
         nextTick(() => {
+            // Same tick as the re-highlight: both reach one update, with a new reset
+            // key (a snap). Bumped even when the parent is not found, so the stored
+            // reset key is never stale.
+            navEpoch.value++
             if (visibleItems.value.some((entry) => entry.key === parentId)) {
                 activeKey.value = parentId
                 scrollIntoView(parentId)
@@ -518,6 +541,7 @@ defineExpose({ open, close })
             <wa-divider />
             <!-- Command list -->
             <div ref="listRef" class="palette-list">
+                <span ref="listInkRef" class="glide-ink" aria-hidden="true"></span>
                 <!-- Root category mode -->
                 <template v-if="!query && !parentCommand">
                     <template v-for="group in commandsByCategory" :key="group.key">
@@ -839,6 +863,10 @@ wa-divider {
     max-height: min(400px, 60dvh);
     overflow-y: auto;
     padding: 0 0 var(--wa-space-xs) 0;
+    /* The gliding highlight (motion.css .glide-ink); it passes under the sticky headers. */
+    position: relative;
+    --glide-ink-bg: var(--glass-item-highlight);
+    --glide-ink-radius: var(--wa-border-radius-s);
 }
 
 /* Sticky wrapper: pins the group header to the top of the scroll area while
@@ -905,6 +933,7 @@ wa-divider {
     border-radius: var(--wa-border-radius-s);
     margin: 1px var(--wa-space-xs);
     user-select: none;
+    position: relative; /* paints above the glide ink */
     /* Keyboard nav scrolls the active row into view; reserve the sticky
        category header's height on top so it lands below the header, not under
        it (harmless in search/nested modes, which have no sticky header). */
@@ -912,6 +941,10 @@ wa-divider {
 }
 .command-item.active {
     background: var(--glass-item-highlight);
+}
+/* The ink marks the active row once placed. */
+.palette-list[data-glide-ready] > .command-item.active {
+    background: transparent;
 }
 .command-icon {
     width: 1.25em;

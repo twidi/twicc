@@ -47,6 +47,7 @@ import { sendChangelogSeen, sendValidateUsageDumpPath, sendValidateUsageFile, se
 import { toast } from '../../composables/useToast'
 import { useProviderActivation } from '../../composables/useProviderActivation'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
+import { useGlideInk } from '../../composables/useGlideInk'
 
 const props = defineProps({
     // The trigger floats over scrolling content on the home page, where it must be opaque
@@ -135,6 +136,18 @@ const sections = computed(() => [
 const activeSection = ref('general')
 const mobileShowContent = ref(false)
 const popoverRef = ref(null)
+
+// The chosen section's light fill glides from item to item (visual refresh step 4c).
+const navRef = ref(null)
+const navInkRef = ref(null)
+useGlideInk({
+    container: navRef,
+    flushTarget: navInkRef,
+    getActive: () => navRef.value?.querySelector('.settings-nav-item.active') ?? null,
+    // A badge appearing on an item above (the peers inbox count) moves the chosen one.
+    getItems: () => [...(navRef.value?.querySelectorAll('.settings-nav-item') ?? [])],
+    sources: [activeSection, sections, hasTips, hasHelp],
+})
 
 // If the user is sitting on the Tips section when its nav entry
 // disappears (e.g. they just toggled the last enabled provider that
@@ -1282,7 +1295,8 @@ function onChangelogClose() {
         <div class="settings-layout">
             <div class="settings-layout-inner" :class="{ 'showing-content': mobileShowContent }">
                 <!-- Nav: section list -->
-                <nav class="settings-nav">
+                <nav ref="navRef" class="settings-nav">
+                    <span ref="navInkRef" class="glide-ink settings-nav-ink" aria-hidden="true"></span>
                     <button
                         v-for="section in sections"
                         :key="section.id"
@@ -2385,10 +2399,16 @@ function onChangelogClose() {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-2xs);
+    /* The gliding fill under the chosen section (motion.css .glide-ink). */
+    position: relative;
+    --glide-ink-bg: var(--glass-item-hover);
+    --glide-ink-radius: var(--wa-border-radius-m);
 }
 
 .settings-nav-item {
     all: unset;
+    /* After `all: unset`, which would reset it: the item paints above the ink. */
+    position: relative;
     box-sizing: border-box;
     cursor: pointer;
     padding: var(--wa-space-xs) var(--wa-space-s);
@@ -2503,6 +2523,11 @@ function onChangelogClose() {
     .settings-nav-item.active {
         color: var(--wa-color-text);
         font-weight: inherit;
+    }
+
+    /* A drill-down list: no chosen section to mark. */
+    .settings-nav-ink {
+        display: none;
     }
 
     .settings-nav-item::after {

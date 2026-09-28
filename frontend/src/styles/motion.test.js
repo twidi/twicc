@@ -182,7 +182,12 @@ test('3. reduced motion is reduced, not none', () => {
     const rules = reducedMedia[0].children
     assert.equal(rules.length, 1)
     assert.equal(rules[0].selector, ':root')
-    assert.deepEqual(rules[0].decls, { '--motion-amount': '0', '--motion-ease-spring': 'var(--motion-ease)' })
+    // Gliding indicators (step 4c): no glide, the ink goes to its place at once.
+    assert.deepEqual(rules[0].decls, {
+        '--motion-amount': '0',
+        '--motion-ease-spring': 'var(--motion-ease)',
+        '--glide-transition': 'none',
+    })
     // The second block only makes the wa-details chevron turn at once (step 4b).
     const chevron = reducedMedia[1].children
     assert.equal(chevron.length, 1)
@@ -376,12 +381,13 @@ test('7. no plain icon button carries a bare-text label', () => {
     assert.match(read('../components/json/JsonHumanView.vue'), /<span>\{\{ diffSplitMode\[pair\.baseName\] \? 'Diff mode' : 'Old\/new mode' \}\}<\/span>/)
 })
 
-/** §6 invariants over a set of { rule, ancestors } entries. */
-function assertMotionInvariants(entries, label) {
+/** §6 invariants over a set of { rule, ancestors } entries. `measured`: the rule's translate is a
+ *  measured placement (the glide ink), not a movement distance: no --motion-amount check. */
+function assertMotionInvariants(entries, label, { measured = false } = {}) {
     for (const { rule, ancestors } of entries) {
         for (const [property, value] of declarationList(rule.body)) {
             if (['translate', 'scale', 'rotate'].includes(property)) {
-                if (value !== 'none') {
+                if (value !== 'none' && !measured) {
                     assert.ok(value.includes('var(--motion-amount)'), `${label} "${rule.selector}": ${property} ${value} without --motion-amount`)
                 }
                 if (rule.selector.includes(':hover')) {
@@ -400,10 +406,17 @@ function keyframeEntries(tree, name) {
 }
 
 test('8. invariants: individual transforms, scaled by --motion-amount, hover inside @media (hover: hover)', () => {
-    assertMotionInvariants(motionFlat, 'motion.css')
+    // Exempt from the --motion-amount check only: the .glide-ink translate, a measured
+    // placement (step 4c; reduced motion drops its transition instead). Stated in the header.
+    const header = motionCss.slice(0, motionCss.indexOf('*/'))
+    const isInk = (e) => e.rule.selector === '.glide-ink'
+    assert.equal(motionFlat.filter(isInk).length, 1, 'one .glide-ink rule')
+    assert.match(header, /\.glide-ink/, 'header states the .glide-ink exception')
+    assertMotionInvariants(motionFlat.filter((e) => !isInk(e)), 'motion.css')
+    assertMotionInvariants(motionFlat.filter(isInk), 'motion.css', { measured: true })
     // Exempt: motion-spin, the wa-details loading spinner, a status indicator that keeps
     // turning under reduced motion (roadmap §4; stated in the motion.css header).
-    assert.match(motionCss.slice(0, motionCss.indexOf('*/')), /@keyframes motion-spin/, 'header states the exception')
+    assert.match(header, /@keyframes motion-spin/, 'header states the exception')
     const keyframes = keyframeEntries(motionTree, '').filter((e) => e.ancestors[0].prelude !== '@keyframes motion-spin')
     assert.ok(keyframes.length > 0)
     assertMotionInvariants(keyframes, 'motion.css keyframes')

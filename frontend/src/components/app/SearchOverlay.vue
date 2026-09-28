@@ -27,6 +27,7 @@ import ProjectBadge from '../project/ProjectBadge.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import ProjectSelectOptions from '../project/ProjectSelectOptions.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
+import { useGlideInk } from '../../composables/useGlideInk'
 
 const route = useRoute()
 const router = useRouter()
@@ -132,6 +133,19 @@ const isLoading = ref(false)
 const error = ref(null)
 const selectedIndex = ref(0)
 const visitedSessionIds = reactive(new Set())
+
+// The selection glides from card to card (visual refresh step 4c). A new search or an
+// appended page replaces the results array: the new list snaps it.
+const resultsRef = ref(null)
+const resultsInkRef = ref(null)
+useGlideInk({
+    container: resultsRef,
+    flushTarget: resultsInkRef,
+    getActive: () => resultsRef.value?.querySelector('.search-result-card.selected') ?? null,
+    getItems: () => [...(resultsRef.value?.querySelectorAll('.search-result-card') ?? [])],
+    sources: [selectedIndex, results],
+    resetKey: () => results.value,
+})
 
 // Which pass produced the current results: 'all' (every term, same message) or
 // 'any' (the backend widened because the strict pass found nothing). Pinned on
@@ -671,7 +685,8 @@ defineExpose({ open })
             </div>
 
             <!-- Results list -->
-            <div v-else-if="results.length > 0" class="search-results">
+            <div v-else-if="results.length > 0" ref="resultsRef" class="search-results">
+                <span ref="resultsInkRef" class="glide-ink" aria-hidden="true"></span>
                 <div
                     v-for="(result, index) in results"
                     :key="result.session_id"
@@ -867,6 +882,10 @@ defineExpose({ open })
     overflow-y: auto;
     padding: var(--wa-space-xs) 0;
     max-height: 60dvh;
+    /* The gliding selection (motion.css .glide-ink). */
+    position: relative;
+    --glide-ink-bg: var(--glass-item-highlight);
+    --glide-ink-radius: var(--wa-border-radius-s);
 }
 
 /* ─── Result card — matches CommandPalette .command-item pattern ─────────── */
@@ -884,6 +903,17 @@ defineExpose({ open })
 }
 
 .search-result-card.visited {
+    opacity: 0.5;
+}
+
+/* The ink marks the selected card once placed. */
+.search-results[data-glide-ready] > .search-result-card.selected {
+    background: transparent;
+}
+
+/* A visited card is dimmed with its selected background: the ink sits behind the card,
+   so it is dimmed by its own rule (beats the ready rule's opacity). */
+.search-results[data-glide-ready]:has(> .search-result-card.selected.visited) > .glide-ink {
     opacity: 0.5;
 }
 

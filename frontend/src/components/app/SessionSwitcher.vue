@@ -21,6 +21,7 @@ import { getProviderIcon } from '../../providers'
 import ProcessIndicator from '../ui/ProcessIndicator.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import { useSessionSwitcher } from '../../composables/useSessionSwitcher'
+import { useGlideInk } from '../../composables/useGlideInk'
 
 const route = useRoute()
 const store = useDataStore()
@@ -84,6 +85,18 @@ watch([cursor, visible], async () => {
     await nextTick()
     listRef.value?.querySelector('.switcher-row--active')?.scrollIntoView({ block: 'nearest' })
 })
+
+// The highlight glides from row to row (visual refresh step 4c). The panel is under
+// v-if: each opening creates the controller, which places it without gliding.
+const listInkRef = ref(null)
+useGlideInk({
+    container: listRef,
+    flushTarget: listInkRef,
+    getActive: () => listRef.value?.querySelector('.switcher-row--active') ?? null,
+    getItems: () => [...(listRef.value?.querySelectorAll('.switcher-row') ?? [])],
+    sources: [cursor, rows],
+    resetKey: () => mode.value,
+})
 </script>
 
 <template>
@@ -95,6 +108,7 @@ watch([cursor, visible], async () => {
                     <span class="switcher-hint"><kbd>⇧</kbd> to switch</span>
                 </div>
                 <div ref="listRef" class="switcher-list">
+                    <span ref="listInkRef" class="glide-ink" aria-hidden="true"></span>
                     <button
                         v-for="row in rows"
                         :key="row.session.id"
@@ -198,6 +212,10 @@ watch([cursor, visible], async () => {
 .switcher-list {
     overflow-y: auto;
     padding: var(--wa-space-2xs);
+    /* The gliding highlight (motion.css .glide-ink). */
+    position: relative;
+    --glide-ink-bg: var(--glass-item-highlight);
+    --glide-ink-radius: var(--wa-border-radius-m);
 }
 
 .switcher-row {
@@ -214,11 +232,17 @@ watch([cursor, visible], async () => {
     font-size: var(--wa-font-size-s);
     text-align: start;
     cursor: pointer;
+    position: relative; /* paints above the glide ink */
 }
 
 .switcher-row--active {
     background: var(--glass-item-highlight);
     color: var(--wa-color-brand-on-quiet);
+}
+
+/* The ink marks the active row once placed; its text color stays. */
+.switcher-list[data-glide-ready] > .switcher-row--active {
+    background: transparent;
 }
 
 .switcher-mark {

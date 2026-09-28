@@ -12,6 +12,8 @@
  *    horizontal trackpad already pan via the native overflow-x);
  *  - the active tab is kept in view when the tab list is reordered — WA only
  *    re-scrolls on an `active` change, not when the active tab merely moves.
+ * And always: the active tab's line glides from tab to tab (utils/glideInk.js, visual
+ * refresh step 4c).
  *
  * Usage:
  *   <TabBar :active="activeId" @wa-tab-show="onShow">
@@ -28,6 +30,7 @@
  *     component yields the Vue instance, not the element — reach the host via `.el`.
  */
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { createGlideInk } from '../../utils/glideInk.js'
 
 defineOptions({ inheritAttrs: false })
 
@@ -85,19 +88,63 @@ function scheduleEnsureActiveVisible() {
     pendingFrame = requestAnimationFrame(ensureActiveVisible)
 }
 
+// ── Gliding line (visual refresh step 4c) ──────────────────────────────────────
+// The line under the active tab is an ink (the ::after of WA's `tabs` part, styled
+// below) that glides from tab to tab. Its box is written on the host by a glide
+// controller; WA's own border on the active tab stays until the ink is placed.
+let glideInk = null
+let activeObserver = null
+let unmounted = false
+
+function createTabGlide(host) {
+    const tabs = host.shadowRoot?.querySelector('[part~="tabs"]')
+    // WA internals changed: no ink, WA's border stays.
+    if (!tabs) return
+    glideInk = createGlideInk({
+        container: tabs,
+        target: host,
+        flushTarget: tabs,
+        flushPseudo: '::after',
+        getActive: () => (host.placement === 'top' ? host.querySelector(':scope > wa-tab[active]') : null),
+        // A tab before the active one can change width on its own (an indicator, a label).
+        getItems: () => [...host.querySelectorAll(':scope > wa-tab')],
+    })
+    // Every path that changes the active tab goes through WA's setActiveTab, which
+    // reflects `active` on the tabs. No subtree childList: it would fire on every change
+    // inside the panels.
+    activeObserver = new MutationObserver((mutations) => {
+        if (mutations.some((m) => m.target.tagName === 'WA-TAB' && m.target.closest('wa-tab-group') === host)) {
+            glideInk?.update()
+        }
+    })
+    activeObserver.observe(host, { attributes: true, attributeFilter: ['active'], subtree: true })
+}
+
 onMounted(async () => {
     if (el.value?.updateComplete) await el.value.updateComplete
-    navEl = el.value?.shadowRoot?.querySelector('.nav')
+    // Unmounted during the await: create nothing (the observers would leak).
+    if (unmounted || !el.value) return
+    navEl = el.value.shadowRoot?.querySelector('.nav')
     navEl?.addEventListener('wheel', onWheel, { passive: false })
     // The wa-tab elements are direct light-DOM children, so a keyed reorder surfaces
     // as childList mutations here. Coalesce a burst into one rAF (lets layout settle).
-    listObserver = new MutationObserver(scheduleEnsureActiveVisible)
+    // A reorder, an added or a removed tab also moves the active one: the ink follows
+    // (and starts watching an added tab).
+    listObserver = new MutationObserver(() => {
+        scheduleEnsureActiveVisible()
+        glideInk?.update()
+    })
     listObserver.observe(el.value, { childList: true })
+    createTabGlide(el.value)
 })
 
 onBeforeUnmount(() => {
+    unmounted = true
     navEl?.removeEventListener('wheel', onWheel)
     listObserver?.disconnect()
+    activeObserver?.disconnect()
+    glideInk?.destroy()
+    glideInk = null
     if (pendingFrame) cancelAnimationFrame(pendingFrame)
 })
 </script>
@@ -126,5 +173,35 @@ onBeforeUnmount(() => {
    bottom border lands exactly on the tabs' track and runs the line edge to edge. */
 .tab-bar::part(scroll-button) {
     border-bottom: var(--track-width) solid var(--track-color);
+}
+
+/* The gliding line (step 4c): the active tab's own box with WA's bottom border, so the
+   line stays exactly where WA draws it (some call sites center shorter tabs in the strip).
+   --safe-track-width and --indicator-color are WA's, declared on its :host. */
+.tab-bar::part(tabs)::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    width: var(--glide-w, 0px);
+    height: var(--glide-h, 0px);
+    translate: var(--glide-x, 0px) var(--glide-y, 0px);
+    border-block-end: var(--safe-track-width) solid var(--indicator-color);
+    pointer-events: none;
+    opacity: 0;
+    transition: var(--glide-fade);
+}
+.tab-bar[data-glide-ready]::part(tabs)::after {
+    opacity: 1;
+    transition: var(--glide-transition);
+}
+.tab-bar[data-glide-instant]::part(tabs)::after {
+    transition: none;
+}
+/* The ink draws the line: the active tab keeps its border width (no layout shift) but not
+   its color. Direct children only, so a nested TabBar keeps its own. */
+.tab-bar[data-glide-ready] > :deep(wa-tab[active]) {
+    border-block-end-color: transparent;
 }
 </style>

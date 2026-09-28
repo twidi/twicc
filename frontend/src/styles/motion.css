@@ -11,8 +11,10 @@
    - individual transform properties (translate, scale, rotate), never `transform`, so an
      effect never overwrites a component's transform and two effects combine;
    - hover effects only under @media (hover: hover): on touch a hover state sticks.
-   One exception: @keyframes motion-spin (the wa-details loading line's spinner) turns
-   under reduced motion too, a status indicator (roadmap §4). */
+   Two exceptions: @keyframes motion-spin (the wa-details loading line's spinner) turns
+   under reduced motion too, a status indicator (roadmap §4); the .glide-ink translate is a
+   measured placement, not a movement distance, so it is never multiplied by
+   --motion-amount (reduced motion sets --glide-transition to none instead). */
 
 :root {
     --motion-dur-1: 120ms;
@@ -29,6 +31,12 @@
     --motion-ease-spring: linear(0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%, 0.849 31.5%, 0.937 38.1%, 0.968 41.8%, 0.991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.9%, 1);
     /* Multiplier of every movement (unitless): 1, or 0 under reduced motion. */
     --motion-amount: 1;
+    /* Gliding indicators (step 4c): the ink moves with the spring, fades with --motion-ease. */
+    --glide-transition:
+        translate var(--motion-dur-3) var(--motion-ease-spring),
+        width var(--motion-dur-3) var(--motion-ease-spring),
+        height var(--motion-dur-3) var(--motion-ease-spring);
+    --glide-fade: opacity var(--motion-dur-1) var(--motion-ease);
 }
 
 /* Web Awesome components take the same timing. The themes declare these tokens in
@@ -58,6 +66,8 @@
     :root {
         --motion-amount: 0;
         --motion-ease-spring: var(--motion-ease);
+        /* No gliding: the ink goes to its place at once; --glide-fade stays. */
+        --glide-transition: none;
     }
 }
 
@@ -135,6 +145,35 @@
     :where(wa-button:not([disabled]):hover) > wa-icon[slot='end']:is([name='arrow-right'], [name='chevron-right']) {
         translate: calc(0.1875rem * var(--motion-amount)) 0;
     }
+}
+
+/* Gliding indicators (step 4c, docs/plans/2026-09-28-gliding-indicators-design.md): the
+   list ink. The owner (useGlideInk) writes --glide-x/y/w/h and data-glide-ready /
+   data-glide-instant on the ink's parent. The ink is the first child, positioned and without
+   z-index; the rows are positioned too, so they paint above it in tree order, and sticky
+   headers (z-index) above both. */
+.glide-ink {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: var(--glide-w, 0px);
+    height: var(--glide-h, 0px);
+    translate: var(--glide-x, 0px) var(--glide-y, 0px);
+    border-radius: var(--glide-ink-radius, 0);
+    background: var(--glide-ink-bg, transparent);
+    pointer-events: none;
+    opacity: 0;
+    transition: var(--glide-fade);
+}
+/* Entering the ready state takes this list, without opacity: the ink appears at once, in
+   the frame the active item's own marker goes. Leaving it takes the base list: a fade. */
+[data-glide-ready] > .glide-ink {
+    opacity: 1;
+    transition: var(--glide-transition);
+}
+/* After the ready rule (same specificity): a snap commits its values without a transition. */
+[data-glide-instant] > .glide-ink {
+    transition: none;
 }
 
 /* wa-details open/close (step 4b, docs/plans/2026-09-27-details-motion-design.md; the

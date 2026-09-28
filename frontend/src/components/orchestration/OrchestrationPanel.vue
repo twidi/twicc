@@ -24,6 +24,7 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import OrchestrationNode from './OrchestrationNode.vue'
 import AgentTreeNode from './AgentTreeNode.vue'
 import CostDisplay from '../ui/CostDisplay.vue'
+import SegmentedControl from '../ui/SegmentedControl.vue'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { agentForestCost } from '../../utils/agentTreeMetrics'
@@ -64,6 +65,11 @@ const runningAgentCount = computed(() => {
 // All-inclusive cost of the agent tree, resolved exactly like each node's own.
 const agentTotalCost = computed(() => agentForestCost(store, agentTree.value))
 const canSwitchView = computed(() => props.hasSpawnTree && hasAgents.value)
+// The two trees the view switch offers.
+const VIEW_OPTIONS = [
+    { value: 'sessions', label: 'Sessions', icon: 'diagram-project' },
+    { value: 'agents', label: 'Subagents', icon: 'robot' },
+]
 // User choice, only honoured when both views exist; otherwise the available one
 // wins (a session that loses its last agent must not stay on an empty view).
 const selectedView = ref('sessions')
@@ -250,26 +256,14 @@ onUnmounted(() => {
                     </template>
                 </div>
                 <div class="orch-toolbar-actions">
-                    <wa-button-group v-if="canSwitchView" label="Tree to show" class="orch-view-switch">
-                        <wa-button
-                            size="small"
-                            :variant="view === 'sessions' ? 'brand' : 'neutral'"
-                            :appearance="view === 'sessions' ? 'filled' : 'outlined'"
-                            @click="selectedView = 'sessions'"
-                        >
-                            <wa-icon slot="start" name="diagram-project"></wa-icon>
-                            Sessions
-                        </wa-button>
-                        <wa-button
-                            size="small"
-                            :variant="view === 'agents' ? 'brand' : 'neutral'"
-                            :appearance="view === 'agents' ? 'filled' : 'outlined'"
-                            @click="selectedView = 'agents'"
-                        >
-                            <wa-icon slot="start" name="robot"></wa-icon>
-                            Subagents
-                        </wa-button>
-                    </wa-button-group>
+                    <SegmentedControl
+                        v-if="canSwitchView"
+                        class="orch-view-switch"
+                        label="Tree to show"
+                        :model-value="view"
+                        :options="VIEW_OPTIONS"
+                        @update:model-value="selectedView = $event"
+                    />
                     <span
                         v-if="view === 'sessions' && nodeCount"
                         class="orch-autorefresh"

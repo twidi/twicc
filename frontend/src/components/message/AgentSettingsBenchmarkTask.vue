@@ -6,6 +6,7 @@
 import { useId } from 'vue'
 import { useBenchmarkTaskStore } from '../../stores/benchmarkTask'
 import { TASK_TYPES } from '../../utils/benchmarkScores'
+import SegmentedControl from '../ui/SegmentedControl.vue'
 
 defineProps({
     // Providers shown in the matrix; the "Default provider only" switch only
@@ -23,6 +24,7 @@ defineProps({
 const store = useBenchmarkTaskStore()
 const uid = useId()
 const taskTypes = TASK_TYPES
+const FAVOR_OPTIONS = [{ value: 'cost', label: 'Cost' }, { value: 'speed', label: 'Speed' }]
 
 function onTaskTypeChange(event) {
     store.setTaskType(event.target.value)
@@ -30,10 +32,6 @@ function onTaskTypeChange(event) {
 
 function onDifficultyInput(event) {
     store.setDifficulty(event.target.value)
-}
-
-function onFavorChange(event) {
-    store.setFavor(event.target.value)
 }
 </script>
 
@@ -65,20 +63,15 @@ function onFavorChange(event) {
             ></wa-slider>
 
             <span class="task-label">Favor</span>
-            <!-- label="Favor" gives the inner radiogroup its accessible name
-                 (an aria-label on the host does not reach it); the visible
-                 label is the span above, so the group's own label is hidden. -->
-            <wa-radio-group
+            <!-- label="Favor" is the control's accessible name; the visible label is
+                 the span above (the component hides its own). -->
+            <SegmentedControl
                 class="task-control task-favor"
-                size="small"
-                orientation="horizontal"
                 label="Favor"
-                :value.prop="store.favor"
-                @change="onFavorChange"
-            >
-                <wa-radio appearance="button" value="cost">Cost</wa-radio>
-                <wa-radio appearance="button" value="speed">Speed</wa-radio>
-            </wa-radio-group>
+                :model-value="store.favor"
+                :options="FAVOR_OPTIONS"
+                @update:model-value="store.setFavor"
+            />
         </div>
 
         <!-- Auto-select controls, at the end. Hidden where showAutoSelect is
@@ -130,16 +123,6 @@ function onFavorChange(event) {
 /* The two Favor buttons keep their natural width. */
 .task-favor {
     justify-self: start;
-}
-
-/* Visible label is the grid's span; keep the group's label for screen readers only. */
-.task-favor::part(form-control-label) {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
 }
 
 /* Auto-select switch line — same wrap + gaps as the popover's switch row. */
