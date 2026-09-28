@@ -1474,6 +1474,7 @@ defineExpose({
                 :full-path="computeFullPath(contextMenu.path)"
                 :writable="contextMenu.writable"
                 :writable-loading="contextMenu.writableLoading"
+                :can-upload="!!uploadOrigin"
                 :mode="contextMenuMode"
                 :staged-status="contextMenu.stagedStatus"
                 :unstaged-status="contextMenu.unstagedStatus"

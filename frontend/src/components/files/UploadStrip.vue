@@ -197,6 +197,14 @@ function onResumeInputChange(event) {
     align-items: center;
 }
 
+/* Compact buttons: a small wa-button is taller than a strip line, which
+   would fit only about three lines in the max-height. Its shadow height,
+   line height and icon-only width all derive from this property. */
+.upload-buttons wa-button {
+    --wa-form-control-height: 1.5rem;
+    --wa-form-control-padding-inline: var(--wa-space-xs);
+}
+
 /* Hidden single-file input of *Resume*. Visually hidden rather than
    `display: none`: some mobile browsers refuse a programmatic click() on a
    non-rendered file input. */

@@ -10,7 +10,7 @@
 // project or layout switch. `useWebSocket.js` reaches it only through a lazy
 // `import()`; this module never imports `useWebSocket.js`.
 
-import { defineStore, acceptHMRUpdate } from 'pinia'
+import { defineStore } from 'pinia'
 import { Upload } from 'tus-js-client'
 import { apiFetch, handleUnauthorized } from '../utils/api'
 import { useAuthStore } from './auth'
@@ -85,8 +85,6 @@ const pageEvents = {
     },
 }
 
-let controller = null
-
 function buildController() {
     const authStore = useAuthStore()
     const toast = useToast()
@@ -111,9 +109,7 @@ function buildController() {
 }
 
 export const useUploadsStore = defineStore('uploads', () => {
-    controller?.dispose()
-    controller = buildController()
-    const c = controller
+    const c = buildController()
     return {
         // State
         entries: c.entries,
@@ -142,13 +138,13 @@ export const useUploadsStore = defineStore('uploads', () => {
     }
 })
 
-// Pinia HMR support. A hot update disposes the previous controller (its
-// listeners, timers and transfers) and the new setup builds a fresh one: reload
-// the page after such an update (dev only, spec §8).
+// Dev hot reload (spec §8): a Pinia hot update would keep the old `entries`
+// while a new controller is built, so a hot update of this store forces a full
+// page reload instead. `invalidate()` alone is not enough: it propagates the
+// update to the importers, and the Vue SFCs that import the store are HMR
+// boundaries, so the page would not reload.
 if (import.meta.hot) {
-    import.meta.hot.dispose(() => {
-        controller?.dispose()
-        controller = null
+    import.meta.hot.accept(() => {
+        window.location.reload()
     })
-    import.meta.hot.accept(acceptHMRUpdate(useUploadsStore, import.meta.hot))
 }
