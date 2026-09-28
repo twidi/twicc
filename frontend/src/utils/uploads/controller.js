@@ -554,10 +554,17 @@ export function createUploadsController(deps) {
             const age = serverNow - Date.parse(item.updated_at)
             applyServerRecord(item, { seenAt: Number.isFinite(age) ? clientNow - age : undefined })
         }
-        for (const entry of list()) {
-            if (!entry.server || seen.has(entry.server.id)) continue
-            if (entry.localState === 'queued' || entry.localState === 'creating') continue
-            if (!(entry.receivedAt < requestedAt)) continue
+        // Select every entry to drop before dropping any: a drop runs the
+        // pump, which could promote a `queued` entry of this same answer.
+        const toDrop = list().filter(entry => (
+            entry.server &&
+            !seen.has(entry.server.id) &&
+            entry.localState !== 'queued' &&
+            entry.localState !== 'creating' &&
+            entry.receivedAt < requestedAt
+        ))
+        for (const entry of toDrop) {
+            if (!exists(entry)) continue
             const wasLocal = entry.local
             const wasCancelling = entry.localState === 'cancelling'
             removeEntry(entry)

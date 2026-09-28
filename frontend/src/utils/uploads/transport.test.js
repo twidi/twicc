@@ -65,7 +65,8 @@ test('onError table', () => {
     // A retryable status while the record carries a finalization error.
     assert.deepEqual(classifyTusError(tusError(500, { upload: true }), { state: 'active', error: 'copy failed' }),
         { action: 'pause', reason: 'error', message: 'copy failed' })
-    assert.deepEqual(classifyTusError(tusError(null), { state: 'active', error: 'copy failed' }).reason, 'error')
+    // No response is a network problem, even with a finalization error on the record.
+    assert.deepEqual(classifyTusError(tusError(null), { state: 'active', error: 'copy failed' }).reason, 'network')
     // Persistent upload-code 500 vs. a 500 without the header.
     assert.equal(classifyTusError(tusError(500, { upload: true, body: '{"error":"boom"}' }), active).message, 'boom')
     assert.equal(classifyTusError(tusError(500, { upload: true }), active).reason, 'error')

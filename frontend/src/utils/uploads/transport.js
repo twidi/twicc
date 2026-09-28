@@ -107,7 +107,7 @@ export function classifyTusError(err, record) {
     if (status === 404 || status === 410 || status === 422) return { action: 'reconcile' }
     if (status === 507) return { action: 'pause', reason: 'error', message: DISK_FULL_MESSAGE }
     const retryable = isRetryableInfo(info)
-    if (retryable && record?.state === 'active' && record.error) {
+    if (retryable && info.hasResponse && record?.state === 'active' && record.error) {
         return { action: 'pause', reason: 'error', message: record.error }
     }
     if (status === 500 && fromUpload) {
@@ -116,7 +116,6 @@ export function classifyTusError(err, record) {
     if (retryable) return { action: 'pause', reason: 'network', message: null }
     return { action: 'pause', reason: 'error', message: errorMessageOf(err) || statusMessage(status) }
 }
-
 
 /**
  * The `error` field of a JSON error body carried by a tus error, if any.

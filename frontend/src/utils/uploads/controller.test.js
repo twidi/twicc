@@ -121,6 +121,7 @@ function createHarness(options = {}) {
         GET: () => respond(200, { uploads: [], now: new Date(clock.now()).toISOString() }),
         DELETE: () => respond(204),
         HEAD: () => respond(200),
+        ignoreAbort: false, // true: an answer already on its way is not stopped by an abort
     }
     const apiFetch = async (url, init = {}) => {
         const req = {
@@ -132,7 +133,7 @@ function createHarness(options = {}) {
         }
         requests.push(req)
         const answer = server[req.method](req)
-        if (req.signal && answer && typeof answer.then === 'function') {
+        if (req.signal && !server.ignoreAbort && answer && typeof answer.then === 'function') {
             return new Promise((resolve, reject) => {
                 req.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
                 answer.then(resolve, reject)
@@ -687,6 +688,47 @@ test('rule 3: an entry created here receives the WebSocket record before the POS
     assert.equal(entry.localState, 'sending')
 })
 
+test('rule 3: reload then a new upload with the same client_id: the two entries stay separate', async () => {
+    const h = createHarness()
+    // An upload of this tab before a reload: now non-local. Its client_id is
+    // the one the next pick generates (the fake randomHex starts at 0).
+    const clientId = `${TAB}:0000000000000000`
+    const old = makeRecord({ client_id: clientId })
+    h.controller.applyServerRecord(old, { fromWs: true })
+    await h.pick(['new.txt'])
+    assert.equal(h.posts()[0].body.client_id, clientId)
+    assert.equal(h.list().length, 2)
+    const fresh = h.controller.entries.get(clientId)
+    assert.notEqual(fresh.server.id, old.id)
+    // A later record of the old upload goes to its own entry.
+    h.controller.applyServerRecord(next(old, { offset: 3 }), { fromWs: true })
+    assert.equal(h.controller.entries.get(old.id).server.offset, 3)
+    assert.equal(fresh.server.offset, 0)
+    assert.equal(fresh.localState, 'sending')
+    assert.equal(h.controller.entries.get(old.id).local, false)
+})
+
+test('finalization failed → Retry → the HEAD loses the network → network pause, then the restart', async () => {
+    const h = createHarness()
+    await h.pick(['a.txt'])
+    const [entry] = h.list()
+    h.lastUpload().options.onSuccess()
+    h.controller.applyServerRecord(next(entry.server, { offset: 5, error: 'copy failed' }), { fromWs: true })
+    assert.equal(entry.pauseReason, 'error')
+    assert.equal(h.errorToasts().length, 1)
+    h.controller.retry(entry.key)
+    assert.equal(entry.localState, 'sending')
+    h.lastUpload().options.onError(tusError(null))
+    await flush()
+    assert.equal(entry.localState, 'paused')
+    assert.equal(entry.pauseReason, 'network')
+    assert.equal(h.errorToasts().length, 2)
+    assert.equal(h.errorToasts()[1].title, 'Upload paused')
+    h.events.emit('online')
+    assert.equal(entry.localState, 'sending')
+    assert.equal(h.uploads.length, 3)
+})
+
 test('rule 4: a record not newer than the stored one is ignored', () => {
     const h = createHarness()
     const record = makeRecord({ version: 5, offset: 3 })
@@ -832,6 +874,8 @@ test('reconcile(): stalled at once from the server now; own tab id without File 
         ],
         now: serverNow.toISOString(),
     })
+    // No entry and no timer yet: only reconcile() itself can refresh `now`.
+    await h.clock.advance(3_600_000)
     await h.controller.reconcile()
     const get = id => h.controller.entries.get(id)
     assert.equal(h.controller.isStalled(get(old.id)), true)
@@ -865,6 +909,39 @@ test('reconcile(): no drop of queued / creating entries, nor of an entry receive
     assert.ok(h.controller.entries.get(creating.key))
     releasePost()
     await flush()
+})
+
+test('reconcile(): a creating entry with its record and a queued entry with a record are not dropped', async () => {
+    // A creating entry that already received its WebSocket record.
+    const h = createHarness()
+    let releasePost
+    const post = h.server.POST
+    h.server.POST = req => new Promise(resolve => { releasePost = () => resolve(post(req)) })
+    await h.pick(['c.txt'])
+    const [creating] = h.list()
+    h.controller.applyServerRecord(makeRecord({ client_id: creating.clientId }), { fromWs: true })
+    assert.ok(creating.server)
+    assert.equal(creating.localState, 'creating')
+    await h.clock.advance(10)
+    await h.controller.reconcile()
+    assert.equal(h.controller.entries.get(creating.key), creating)
+    releasePost()
+    await flush()
+
+    // A queued entry with a record (a failed cancel while a network pause gates the pump).
+    const h2 = createHarness()
+    await h2.pick(['a.txt', 'b.txt'])
+    const [a, b] = h2.list()
+    h2.uploads[0].options.onError(tusError(null))
+    await flush()
+    h2.server.DELETE = () => respond(409)
+    await h2.controller.cancel(b.key)
+    assert.equal(b.localState, 'queued')
+    assert.ok(b.server)
+    await h2.clock.advance(10)
+    await h2.controller.reconcile()
+    assert.equal(h2.controller.entries.get(b.key), b)
+    assert.equal(h2.controller.entries.has(a.key), false) // the paused one is dropped
 })
 
 test('reconcile(): a local entry absent from the answer is dropped with one "lost" toast', async () => {
@@ -920,20 +997,42 @@ test('cancel during creating: the POST is aborted and unanswered → orphan set,
 
 test('cancel during creating with a 201 already in: DELETE, no transfer, no toast', async () => {
     const h = createHarness()
+    h.server.ignoreAbort = true
     let release
     const post = h.server.POST
     h.server.POST = req => new Promise(resolve => { release = () => resolve(post(req)) })
     await h.pick(['a.txt'])
     const [entry] = h.list()
-    entry.cancelRequested = true // as cancel() sets it, without aborting the POST
+    await h.controller.cancel(entry.key)
+    assert.equal(entry.cancelRequested, true)
     release()
     await flush()
     assert.equal(h.deletes().length, 1)
     assert.equal(h.uploads.length, 0)
-    assert.equal(h.list().length, 1)
     assert.equal(entry.localState, 'cancelling')
     h.controller.applyServerRecord(next(entry.server, { state: 'cancelled' }), { fromWs: true })
     assert.equal(h.list().length, 0)
+    assert.equal(h.toasts.length, 0)
+})
+
+test('cancel during creating, then 201, then DELETE 409 → queued, then sending; cancelRequested cleared', async () => {
+    const h = createHarness()
+    h.server.ignoreAbort = true
+    h.server.DELETE = () => respond(409)
+    let release
+    const post = h.server.POST
+    h.server.POST = req => new Promise(resolve => { release = () => resolve(post(req)) })
+    await h.pick(['a.txt'])
+    const [entry] = h.list()
+    await h.controller.cancel(entry.key)
+    release()
+    await flush()
+    assert.equal(h.deletes().length, 1)
+    assert.equal(entry.cancelRequested, false)
+    // Back to queued (never creating again: no second POST), which the pump sends.
+    assert.equal(h.posts().length, 1)
+    assert.equal(entry.localState, 'sending')
+    assert.equal(h.uploads.length, 1)
     assert.equal(h.toasts.length, 0)
 })
 
