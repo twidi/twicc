@@ -317,10 +317,6 @@ def _find_by_client_id(client_id: str) -> dict | None:
 _NAME_SUFFIX_ROOM = 8
 
 
-def _st_dev(path: str | os.PathLike) -> int:
-    return os.stat(path).st_dev
-
-
 def _check_target_writable(target_dir: str) -> JsonResponse | None:
     """Check 4: *target_dir* is writable and is not the staging dir or inside it (``403``)."""
     if not os.access(target_dir, os.W_OK):
@@ -354,7 +350,7 @@ def _check_target_sync(target_dir: str, filename: str, size: int) -> JsonRespons
             expected_by_others += max(meta["size"] - received, 0)
     if shutil.disk_usage(staging).free - expected_by_others < size:
         return _error("Not enough disk space", 507)
-    if _st_dev(target_dir) != _st_dev(staging) and shutil.disk_usage(target_dir).free < size:
+    if store.st_dev(target_dir) != store.st_dev(staging) and shutil.disk_usage(target_dir).free < size:
         return _error("Not enough disk space in the target directory", 507)
     return None
 

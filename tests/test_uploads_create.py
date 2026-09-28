@@ -507,7 +507,7 @@ def test_terminal_uploads_expect_no_bytes(client, target, monkeypatch):
 
 def test_not_enough_space_on_another_target_filesystem(client, target, monkeypatch):
     staging = store.get_staging_dir()
-    monkeypatch.setattr(upload_views, "_st_dev", lambda path: 1 if str(path) == str(staging) else 2)
+    monkeypatch.setattr(store, "st_dev", lambda path: 1 if str(path) == str(staging) else 2)
     _fake_disk_usage(monkeypatch, {str(target): 5})
     assert _post(client, STANDALONE_URL, _body(target, size=10)).status_code == 507
     assert _post(client, STANDALONE_URL, _body(target, size=5)).status_code == 201

@@ -110,13 +110,13 @@ def _temp(upload_id, target):
 
 def _other_filesystem(monkeypatch, target):
     """Make ``target`` look like another filesystem than the staging dir."""
-    real = store._st_dev
+    real = store.st_dev
 
     def fake(path):
         dev = real(path)
         return dev + 1 if str(path).startswith(str(target)) else dev
 
-    monkeypatch.setattr(store, "_st_dev", fake)
+    monkeypatch.setattr(store, "st_dev", fake)
 
 
 def _link_raising(monkeypatch, error_number, *, times=None, only_part=False, before=None):
@@ -295,6 +295,19 @@ def test_exdev_on_the_part_goes_to_the_copy_path(app, target, monkeypatch):
     assert calls[-1][0] == str(_temp(upload_id, target))
     assert not _temp(upload_id, target).exists()
     assert _meta(upload_id)["final_method"] == "link"
+
+
+def test_exdev_on_a_link_from_the_temp_file_is_unexpected(app, target, monkeypatch):
+    _other_filesystem(monkeypatch, target)
+    calls = _link_raising(monkeypatch, errno.EXDEV)
+    upload_id = _new_upload(target, size=len(DATA))
+    assert _patch(app, upload_id, 0, DATA).status == 500
+    assert calls[0][0] == str(_temp(upload_id, target))  # the copy was made first
+    meta = _meta(upload_id)
+    assert (meta["state"], meta["finalize_error_code"]) == ("active", 500)
+    assert store.part_path(upload_id).read_bytes() == DATA
+    assert not _temp(upload_id, target).exists()
+    assert list(target.iterdir()) == []
 
 
 def test_cross_filesystem_disk_full_is_507_then_head_finalizes(app, target, monkeypatch):
@@ -670,6 +683,19 @@ def test_head_507_gate_target_gone_runs_recovery_to_410(app, target):
     assert _meta(upload_id)["state"] == "failed"
 
 
+def test_head_507_gate_target_gone_skips_the_gate_even_with_staging_full(app, target, monkeypatch):
+    upload_id = _complete_upload(target)
+    store.update_metadata(
+        upload_id, error="full", finalize_error_code=507, finalize_failed_at=datetime.now(UTC).isoformat()
+    )
+    staging = str(store.get_staging_dir())
+    real_free = store._free_bytes
+    monkeypatch.setattr(store, "_free_bytes", lambda p: 0 if str(p) == staging else real_free(p))
+    target.rmdir()
+    assert _head(app, upload_id).status == 410  # recovery ran, not 507
+    assert _meta(upload_id)["state"] == "failed"
+
+
 def test_head_waiting_behind_a_finalization_that_fails_answers_500_without_copying(app, target, monkeypatch):
     links = _link_raising(monkeypatch, errno.EIO)
     real_update = store.update_metadata
@@ -846,6 +872,39 @@ def test_recovery_replace_whose_final_path_holds_other_content(app, target):
     meta = _meta(upload_id)
     assert meta["final_path"] == str(target / "a (1).txt")
     assert meta["final_method"] == "link"
+
+
+def test_recovery_replace_from_the_temp_file_whose_final_path_holds_other_content(app, target, monkeypatch):
+    _other_filesystem(monkeypatch, target)
+    upload_id = _complete_upload(target)
+    _temp(upload_id, target).write_bytes(DATA)
+    (target / "a.txt").write_bytes(b"someone else's file")
+    store.update_metadata(
+        upload_id, state="finalizing", final_path=str(target / "a.txt"), final_method="replace", final_source="tmp"
+    )
+    _assert_completed_head(_head(app, upload_id), len(DATA))
+    assert (target / "a.txt").read_bytes() == b"someone else's file"
+    assert (target / "a (1).txt").read_bytes() == DATA
+    assert _meta(upload_id)["final_path"] == str(target / "a (1).txt")
+    assert not _temp(upload_id, target).exists()
+    assert not store.part_path(upload_id).exists()
+
+
+def test_recovery_replace_never_takes_a_symlink_for_the_reservation(app, target, tmp_path):
+    upload_id = _complete_upload(target)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    empty = elsewhere / "empty.txt"
+    empty.write_bytes(b"")
+    (target / "a.txt").symlink_to(empty)  # a symlink at the reserved name, to an empty file
+    store.update_metadata(
+        upload_id, state="finalizing", final_path=str(target / "a.txt"), final_method="replace", final_source="part"
+    )
+    _assert_completed_head(_head(app, upload_id), len(DATA))
+    assert (target / "a.txt").is_symlink()
+    assert empty.read_bytes() == b""
+    assert (target / "a (1).txt").read_bytes() == DATA
+    assert _meta(upload_id)["final_path"] == str(target / "a (1).txt")
 
 
 def test_recovery_cross_filesystem_temp_file_not_linked(app, target, monkeypatch):

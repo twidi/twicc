@@ -694,8 +694,9 @@ def candidate_names(filename: str) -> Iterator[str]:
         yield f"{stem} ({number}){ext}"
 
 
-def _st_dev(path: str | os.PathLike) -> int:
-    """``st_dev`` of *path* (a separate function, so tests can fake another filesystem)."""
+def st_dev(path: str | os.PathLike) -> int:
+    """``st_dev`` of *path*: the one filesystem-identity check of the uploads
+    (creation check 5, finalization, the ``HEAD`` gate); tests fake it."""
     return os.stat(path).st_dev
 
 
@@ -866,7 +867,7 @@ def _place(upload_id: str, meta: dict) -> _Placement:
 
     names = list(candidate_names(meta["filename"]))
     try:
-        same_filesystem = _st_dev(part) == _st_dev(target_dir)
+        same_filesystem = st_dev(part) == st_dev(target_dir)
     except OSError as exc:
         raise _mapped_failure(exc, target_dir) from exc
 
@@ -988,15 +989,17 @@ def finalize_space_available(meta: dict) -> bool:
     on it for a link. When ``target_dir`` (or ``<id>.part``) cannot be
     stat'ed, the gate is skipped (``True``): recovery settles the upload.
     """
-    if _free_bytes(get_staging_dir()) < FINALIZE_SPACE_MARGIN:
-        return False
     target_dir = meta["target_dir"]
+    # The target first: when it cannot be stat'ed, skip the whole gate.
     try:
-        same_filesystem = _st_dev(part_path(meta["id"])) == _st_dev(target_dir)
-        free = _free_bytes(target_dir)
+        target_dev = st_dev(target_dir)
+        target_free = _free_bytes(target_dir)
+        same_filesystem = st_dev(part_path(meta["id"])) == target_dev
     except OSError:
         return True
-    return free >= (FINALIZE_SPACE_MARGIN if same_filesystem else meta["size"])
+    if _free_bytes(get_staging_dir()) < FINALIZE_SPACE_MARGIN:
+        return False
+    return target_free >= (FINALIZE_SPACE_MARGIN if same_filesystem else meta["size"])
 
 
 # ── Recovery (§5.7) ──────────────────────────────────────────────────────────
@@ -1056,15 +1059,21 @@ def _recover_committed(upload_id: str, meta: dict, part: str, tmp: str) -> Recov
     if meta.get("final_method") == FINAL_METHOD_LINK:
         return _settle(upload_id, meta, cleanup, state=STATE_COMPLETED)
 
-    # ``replace``.
-    final_size = _file_size(final_path)
-    if final_size == size:
+    # ``replace``. ``lstat``: only a regular file at ``final_path`` counts
+    # (a symlink placed at the reserved name is never taken for ours).
+    try:
+        final_st = os.lstat(final_path)
+    except (FileNotFoundError, NotADirectoryError):
+        final_st = None
+    final_is_file = final_st is not None and stat.S_ISREG(final_st.st_mode)
+    if final_is_file and final_st.st_size == size:
         return _settle(upload_id, meta, cleanup, state=STATE_COMPLETED)
     source = tmp if meta.get("final_source") == FINAL_SOURCE_TMP else part
     if _file_size(source) != size:
         _remove_if_empty(final_path)
         return _settle(upload_id, meta, cleanup, state=STATE_FAILED, error=ERROR_STAGING_LOST)
-    if final_size is None or final_size == 0:
+    # ``final_path`` absent, or empty (our reservation).
+    if final_st is None or (final_is_file and final_st.st_size == 0):
         try:
             os.replace(source, final_path)
         except OSError as exc:
