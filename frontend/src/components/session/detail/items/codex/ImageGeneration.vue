@@ -23,6 +23,7 @@
  */
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { useDataStore } from '../../../../../stores/data'
+import { useDetailsClosing } from '../../../../../composables/useDetailsClosing'
 import { imageGeneration } from '../../../../../providers/codex/canonical'
 import MarkdownContent from '../../../../ui/MarkdownContent.vue'
 import MediaPreviewDialog from '../../../../media/MediaPreviewDialog.vue'
@@ -113,6 +114,9 @@ const detailKey = computed(() => `image_prompt:${props.lineNum}`)
 const isPromptOpen = ref(dataStore.isDetailOpen(props.sessionId, detailKey.value))
 const instantOpen = ref(isPromptOpen.value)
 
+// Keeps the body rendered while the card folds (utils/detailsMotion.js).
+const { isClosing, markClosing, clearClosing } = useDetailsClosing()
+
 onMounted(() => {
     if (instantOpen.value) {
         nextTick(() => { instantOpen.value = false })
@@ -120,13 +124,19 @@ onMounted(() => {
 })
 
 function onPromptShow() {
+    clearClosing()
     isPromptOpen.value = true
     dataStore.setDetailOpen(props.sessionId, detailKey.value, true)
 }
 
 function onPromptHide() {
+    markClosing()
     isPromptOpen.value = false
     dataStore.setDetailOpen(props.sessionId, detailKey.value, false)
+}
+
+function onPromptAfterHide() {
+    clearClosing()
 }
 </script>
 
@@ -149,12 +159,13 @@ function onPromptHide() {
             icon-placement="start"
             @wa-show="onPromptShow"
             @wa-hide="onPromptHide"
+            @wa-after-hide="onPromptAfterHide"
         >
             <span slot="summary" class="items-details-summary">
                 <strong class="items-details-summary-name">Image prompt</strong>
             </span>
-            <div v-if="isPromptOpen" class="image-generation-prompt-body">
-                <MarkdownContent :source="promptMarkdown" />
+            <div v-if="isPromptOpen || isClosing()" class="image-generation-prompt-body">
+                <MarkdownContent :source="promptMarkdown" :show-toolbar="false" />
             </div>
         </wa-details>
         <div v-if="savedPath" class="image-generation-path">

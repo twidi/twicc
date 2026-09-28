@@ -52,7 +52,7 @@ const markdownSource = computed(() => {
 <template>
     <template v-if="parsed && markdownSource">
         <div class="read-result-header">Lines {{ parsed.startLine }}–{{ parsed.endLine }}</div>
-        <MarkdownContent :source="markdownSource" />
+        <MarkdownContent :source="markdownSource" :show-toolbar="false" />
     </template>
 </template>
 

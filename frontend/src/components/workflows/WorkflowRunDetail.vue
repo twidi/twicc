@@ -15,6 +15,7 @@ import ProcessDuration from '../ui/ProcessDuration.vue'
 import CostDisplay from '../ui/CostDisplay.vue'
 import WorkflowStateBadge from './WorkflowStateBadge.vue'
 import { useSettingsStore } from '../../stores/settings'
+import { useDetailsClosing } from '../../composables/useDetailsClosing'
 import { formatDuration } from '../../utils/date'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
 
@@ -220,6 +221,8 @@ const hasResult = computed(() => {
 const resultOpen = ref(false)
 function onResultToggle(event, open) {
     if (event.target !== event.currentTarget) return // ignore nested wa-* bubbling
+    if (open) clearClosing('run-result')
+    else markClosing('run-result')
     resultOpen.value = open
 }
 
@@ -251,6 +254,8 @@ const argsView = computed(() => jsonOrMarkdown(args.value))
 const argsOpen = ref(false)
 function onArgsToggle(event, open) {
     if (event.target !== event.currentTarget) return // ignore nested wa-* bubbling
+    if (open) clearClosing('args')
+    else markClosing('args')
     argsOpen.value = open
 }
 
@@ -261,8 +266,21 @@ function onArgsToggle(event, open) {
 const open = ref(new Set())
 function toggleOpen(event, key, isOpen) {
     if (event.target !== event.currentTarget) return // ignore nested wa-* bubbling
-    if (isOpen) open.value.add(key)
-    else open.value.delete(key)
+    if (isOpen) {
+        clearClosing(key)
+        open.value.add(key)
+    } else {
+        markClosing(key)
+        open.value.delete(key)
+    }
+}
+
+// Every lazy body above stays rendered while its row folds (utils/detailsMotion.js),
+// keyed like `open` ('args' and 'run-result' for the two run-level rows).
+const { isClosing, markClosing, clearClosing } = useDetailsClosing()
+function onRowAfterHide(event, key) {
+    if (event.target !== event.currentTarget) return // ignore nested wa-* bubbling
+    clearClosing(key)
 }
 
 // "View Agent" opens the workflow subagent in its own tab — the same route the
@@ -346,13 +364,14 @@ function agentsLabel(n) {
                 icon-placement="start"
                 @wa-show="onArgsToggle($event, true)"
                 @wa-hide="onArgsToggle($event, false)"
+                @wa-after-hide="onRowAfterHide($event, 'args')"
             >
                 <span slot="summary" class="items-details-summary">
                     <span class="items-details-summary-left">
                         <strong class="items-details-summary-name">Arguments</strong>
                     </span>
                 </span>
-                <div v-if="argsOpen" class="wf-row-body wf-args-body">
+                <div v-if="argsOpen || isClosing('args')" class="wf-row-body wf-args-body">
                     <JsonHumanView v-if="argsView?.mode === 'json'" :value="argsView.value" />
                     <MarkdownContent v-else :source="argsView?.value" />
                 </div>
@@ -370,6 +389,7 @@ function agentsLabel(n) {
                 :open="open.has('phase:' + ph.key)"
                 @wa-show="toggleOpen($event, 'phase:' + ph.key, true)"
                 @wa-hide="toggleOpen($event, 'phase:' + ph.key, false)"
+                @wa-after-hide="onRowAfterHide($event, 'phase:' + ph.key)"
             >
                 <span slot="summary" class="items-details-summary">
                     <span class="items-details-summary-left">
@@ -384,7 +404,7 @@ function agentsLabel(n) {
                     <wa-icon v-else-if="ph.statusKind === 'pending'" name="hourglass-start" class="wf-status-icon wf-status-pending"></wa-icon>
                     <wa-icon v-else name="circle-check" class="wf-status-icon wf-status-done"></wa-icon>
                 </span>
-                <div v-if="open.has('phase:' + ph.key)" class="wf-phase-body">
+                <div v-if="open.has('phase:' + ph.key) || isClosing('phase:' + ph.key)" class="wf-phase-body">
                     <div class="wf-info wf-phase-info">
                         <span class="wf-info-item">
                             <WorkflowStateBadge :kind="ph.statusKind" />
@@ -406,6 +426,7 @@ function agentsLabel(n) {
                             :open="open.has('agent:' + ag.agentId)"
                             @wa-show="toggleOpen($event, 'agent:' + ag.agentId, true)"
                             @wa-hide="toggleOpen($event, 'agent:' + ag.agentId, false)"
+                            @wa-after-hide="onRowAfterHide($event, 'agent:' + ag.agentId)"
                         >
                             <span slot="summary" class="items-details-summary">
                                 <span class="items-details-summary-left">
@@ -423,7 +444,7 @@ function agentsLabel(n) {
                                     View Agent
                                 </wa-button>
                             </span>
-                            <div v-if="open.has('agent:' + ag.agentId)" class="wf-agent-body">
+                            <div v-if="open.has('agent:' + ag.agentId) || isClosing('agent:' + ag.agentId)" class="wf-agent-body">
                                 <div class="wf-info wf-agent-info">
                                     <span class="wf-info-item">
                                         <WorkflowStateBadge :kind="ag.statusKind" />
@@ -443,13 +464,14 @@ function agentsLabel(n) {
                                     :open="open.has('prompt:' + ag.agentId)"
                                     @wa-show="toggleOpen($event, 'prompt:' + ag.agentId, true)"
                                     @wa-hide="toggleOpen($event, 'prompt:' + ag.agentId, false)"
+                                    @wa-after-hide="onRowAfterHide($event, 'prompt:' + ag.agentId)"
                                 >
                                     <span slot="summary" class="items-details-summary">
                                         <span class="items-details-summary-left">
                                             <strong class="items-details-summary-name">Prompt</strong>
                                         </span>
                                     </span>
-                                    <div v-if="open.has('prompt:' + ag.agentId)" class="wf-row-body wf-args-body">
+                                    <div v-if="open.has('prompt:' + ag.agentId) || isClosing('prompt:' + ag.agentId)" class="wf-row-body wf-args-body">
                                         <MarkdownContent :source="ag.promptPreview" />
                                     </div>
                                 </wa-details>
@@ -460,13 +482,14 @@ function agentsLabel(n) {
                                     :open="open.has('result:' + ag.agentId)"
                                     @wa-show="toggleOpen($event, 'result:' + ag.agentId, true)"
                                     @wa-hide="toggleOpen($event, 'result:' + ag.agentId, false)"
+                                    @wa-after-hide="onRowAfterHide($event, 'result:' + ag.agentId)"
                                 >
                                     <span slot="summary" class="items-details-summary">
                                         <span class="items-details-summary-left">
                                             <strong class="items-details-summary-name">Result</strong>
                                         </span>
                                     </span>
-                                    <div v-if="open.has('result:' + ag.agentId)" class="wf-row-body wf-args-body">
+                                    <div v-if="open.has('result:' + ag.agentId) || isClosing('result:' + ag.agentId)" class="wf-row-body wf-args-body">
                                         <JsonHumanView v-if="ag.resultView.mode === 'json'" :value="ag.resultView.value" />
                                         <MarkdownContent v-else :source="ag.resultView.value" />
                                     </div>
@@ -485,13 +508,14 @@ function agentsLabel(n) {
                 icon-placement="start"
                 @wa-show="onResultToggle($event, true)"
                 @wa-hide="onResultToggle($event, false)"
+                @wa-after-hide="onRowAfterHide($event, 'run-result')"
             >
                 <span slot="summary" class="items-details-summary">
                     <span class="items-details-summary-left">
                         <strong class="items-details-summary-name">Result</strong>
                     </span>
                 </span>
-                <div v-if="resultOpen" class="wf-row-body wf-result-body">
+                <div v-if="resultOpen || isClosing('run-result')" class="wf-row-body wf-result-body">
                     <JsonHumanView :value="result" />
                 </div>
             </wa-details>

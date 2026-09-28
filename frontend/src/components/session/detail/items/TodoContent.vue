@@ -103,7 +103,9 @@ function onPopEnd(index) {
 .todo-list {
     list-style: none;
     margin: 0;
-    padding: var(--wa-space-xs) 0;
+    /* Side spacing: an open details' when the list is one of its children (moved from the
+       details' content part, motion.css); none elsewhere (the Tasks tab). */
+    padding: var(--wa-space-xs) var(--spacing, 0);
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-2xs);

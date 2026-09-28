@@ -1256,7 +1256,9 @@ export class BaseToolHelpers {
     /**
      * Return ``{ component, props }`` for the tool's Result area, or ``null``
      * to fall back to ``JsonHumanView``. Called when the tool result has been
-     * fetched and is non-empty. Default: always fall back.
+     * fetched and is non-empty. The Result area caps the component at 20rem
+     * (it scrolls inside); add ``uncapped: true`` for a component that sizes
+     * itself (images). Default: always fall back.
      */
     getResultRendering(/* name, result, input, ctx */) {
         return null

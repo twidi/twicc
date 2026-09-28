@@ -36,6 +36,9 @@ import ShareRecentApp from './ShareRecentApp.vue'   // 3.20
 // Glass popovers: cut the body border under the arrow (see glass.css).
 import { installGlassArrowGap } from '../utils/glassArrowGap'
 installGlassArrowGap()
+// wa-details open/close: TwiCC owns the motion (see utils/detailsMotion.js).
+import { installDetailsMotion } from '../utils/detailsMotion'
+installDetailsMotion()
 import { recordShareView } from '../share-recent/recordView'  // 3.19
 
 const el = document.getElementById('twicc-share-data')

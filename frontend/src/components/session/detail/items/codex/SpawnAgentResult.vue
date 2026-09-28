@@ -31,7 +31,7 @@ defineProps({
         <div v-if="nickname" class="spawn-agent-meta">
             Subagent: <strong>{{ nickname }}</strong>
         </div>
-        <MarkdownContent v-if="message" :source="message" />
+        <MarkdownContent v-if="message" :source="message" :show-toolbar="false" />
         <div v-else-if="statusLabel" class="spawn-agent-status-only">
             {{ statusLabel }}
         </div>

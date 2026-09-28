@@ -146,6 +146,7 @@ const TOKENS = {
     '--motion-dur-press': '60ms',
     '--motion-ease': 'cubic-bezier(.2, .8, .2, 1)',
     '--motion-ease-out': 'cubic-bezier(.22, 1, .36, 1)',
+    '--motion-ease-out-height': 'cubic-bezier(.25, .46, .45, .94)',
     '--motion-ease-spring': 'linear(0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%, 0.849 31.5%, 0.937 38.1%, 0.968 41.8%, 0.991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.9%, 1)',
     '--motion-amount': '1',
 }
@@ -154,7 +155,8 @@ test('1. motion tokens on :root, reduced-motion block after them', () => {
     const tokenBlocks = motionTree.filter((n) => n.type === 'rule' && n.selector === ':root')
     assert.equal(tokenBlocks.length, 1, 'one top-level :root token block')
     for (const [name, value] of Object.entries(TOKENS)) assert.equal(tokenBlocks[0].decls[name], value, name)
-    assert.equal(reducedMedia.length, 1, 'one top-level reduced-motion block')
+    // The :root block (step 4a) and the wa-details chevron block (step 4b).
+    assert.equal(reducedMedia.length, 2, 'two top-level reduced-motion blocks')
     assert.ok(motionTree.indexOf(reducedMedia[0]) > motionTree.indexOf(tokenBlocks[0]), 'reduced-motion block must follow the tokens')
 })
 
@@ -181,6 +183,11 @@ test('3. reduced motion is reduced, not none', () => {
     assert.equal(rules.length, 1)
     assert.equal(rules[0].selector, ':root')
     assert.deepEqual(rules[0].decls, { '--motion-amount': '0', '--motion-ease-spring': 'var(--motion-ease)' })
+    // The second block only makes the wa-details chevron turn at once (step 4b).
+    const chevron = reducedMedia[1].children
+    assert.equal(chevron.length, 1)
+    assert.equal(chevron[0].selector, ':where(wa-details)::part(icon)')
+    assert.deepEqual(chevron[0].decls, { 'transition-duration': '0s' })
     for (const rule of motionRules) {
         for (const selector of rule.selectors) assert.ok(!/(^|[\s>+~(,])\*/.test(selector), `"${selector}": no * selector`)
     }
@@ -394,7 +401,12 @@ function keyframeEntries(tree, name) {
 
 test('8. invariants: individual transforms, scaled by --motion-amount, hover inside @media (hover: hover)', () => {
     assertMotionInvariants(motionFlat, 'motion.css')
-    assertMotionInvariants(keyframeEntries(motionTree, ''), 'motion.css keyframes')
+    // Exempt: motion-spin, the wa-details loading spinner, a status indicator that keeps
+    // turning under reduced motion (roadmap §4; stated in the motion.css header).
+    assert.match(motionCss.slice(0, motionCss.indexOf('*/')), /@keyframes motion-spin/, 'header states the exception')
+    const keyframes = keyframeEntries(motionTree, '').filter((e) => e.ancestors[0].prelude !== '@keyframes motion-spin')
+    assert.ok(keyframes.length > 0)
+    assertMotionInvariants(keyframes, 'motion.css keyframes')
 
     const changed = [
         ['../components/message/MessageSnippetsBar.vue', (s) => s.includes('.snippet-btn')],

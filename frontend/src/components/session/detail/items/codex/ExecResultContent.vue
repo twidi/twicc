@@ -31,5 +31,5 @@ const markdownSource = computed(() => {
 </script>
 
 <template>
-    <MarkdownContent v-if="markdownSource" :source="markdownSource" />
+    <MarkdownContent v-if="markdownSource" :source="markdownSource" :show-toolbar="false" />
 </template>

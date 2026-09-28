@@ -555,6 +555,16 @@ function toggleJsonView() {
     }
 }
 
+/* Codex reasoning renders as its own item kind: same placement as Thinking. */
+.session-items .session-item[data-kind="reasoning"] .reasoning-body > .markdown-content-wrapper > .markdown-toolbar {
+    right: auto;
+    left: calc(100% + var(--markdown-toolbar-offset));
+    top: 0;
+    width: 7rem;
+    display: flex;
+    justify-content: flex-end;
+}
+
 /* Style assistant messages in parts, the whole looking like a wa-card
    But as we have many items, the first one handles the top, the last one handles the bottom, and all have left/right sides
  */

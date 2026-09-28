@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { useDataStore } from '../../../../../stores/data'
+import { useDetailsClosing } from '../../../../../composables/useDetailsClosing'
 import { isBlankMarkdown } from '../../../../../utils/markdown.js'
 import MarkdownContent from '../../../../ui/MarkdownContent.vue'
 
@@ -41,6 +42,9 @@ const isOpen = ref(dataStore.isDetailOpen(props.sessionId, props.detailKey))
 // or state transferred from a streaming block). Same pattern as ToolUseContent.
 const instantOpen = ref(isOpen.value)
 
+// Keeps the body rendered while the card folds (utils/detailsMotion.js).
+const { isClosing, markClosing, clearClosing } = useDetailsClosing()
+
 onMounted(() => {
     if (instantOpen.value) {
         nextTick(() => { instantOpen.value = false })
@@ -48,23 +52,29 @@ onMounted(() => {
 })
 
 function onShow() {
+    clearClosing()
     isOpen.value = true
     dataStore.setDetailOpen(props.sessionId, props.detailKey, true)
 }
 
 function onHide() {
+    markClosing()
     isOpen.value = false
     dataStore.setDetailOpen(props.sessionId, props.detailKey, false)
+}
+
+function onAfterHide() {
+    clearClosing()
 }
 </script>
 
 <template>
-    <wa-details ref="detailsRef" :open="isOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="item-details thinking-content" icon-placement="start" @wa-show="onShow" @wa-hide="onHide">
+    <wa-details ref="detailsRef" :open="isOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="item-details thinking-content" icon-placement="start" @wa-show="onShow" @wa-hide="onHide" @wa-after-hide="onAfterHide">
         <span slot="summary" class="items-details-summary">
             <strong class="items-details-summary-name">Thinking</strong>
             <wa-spinner v-if="streaming"></wa-spinner>
         </span>
-        <div v-if="isOpen" class="thinking-body">
+        <div v-if="isOpen || isClosing()" class="thinking-body">
             <MarkdownContent v-if="streaming || hasContent" :source="thinking" />
             <p v-else class="thinking-placeholder">No thinking content was provided</p>
         </div>

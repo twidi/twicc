@@ -23,16 +23,12 @@ const markdownSource = computed(() => {
     return null
 })
 
-// Suppress the copy / raw-toggle toolbar on the "Waiting…" placeholder —
-// it's the only call site in the codebase that exercises show-toolbar=false,
-// because Monitor uses the placeholder frame to keep the body's vertical
-// footprint stable across the running→completed transition (Bash never
-// renders an empty body, so it never needs the opt-out).
-const showToolbar = computed(() => !!props.aggregatedOutput)
+// No markdown raw-toggle / copy toolbar: it belongs to messages, thinking and
+// reasoning; a tool result has the code block's own wrap / copy buttons.
 </script>
 
 <template>
-    <MarkdownContent v-if="markdownSource" :source="markdownSource" :show-toolbar="showToolbar" />
+    <MarkdownContent v-if="markdownSource" :source="markdownSource" :show-toolbar="false" />
     <div v-else class="monitor-output__no-events">(no events)</div>
 </template>
 

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, nextTick, onMounted } from 'vue'
 import { useDataStore } from '../../../../../stores/data'
+import { useDetailsClosing } from '../../../../../composables/useDetailsClosing'
 import { splitProposedPlan } from '../../../../../providers/codex/proposedPlan'
 import TextContent from '../TextContent.vue'
 import MarkdownContent from '../../../../ui/MarkdownContent.vue'
@@ -42,6 +43,9 @@ const isOpen = ref(!dataStore.isDetailOpen(props.sessionId, closedKey.value))
 // closed it). Same pattern as ToolUseContent / Reasoning.
 const instantOpen = ref(isOpen.value)
 
+// Keeps the body rendered while the card folds (utils/detailsMotion.js).
+const { isClosing, markClosing, clearClosing } = useDetailsClosing()
+
 onMounted(() => {
     if (instantOpen.value) {
         nextTick(() => { instantOpen.value = false })
@@ -49,13 +53,19 @@ onMounted(() => {
 })
 
 function onShow() {
+    clearClosing()
     isOpen.value = true
     dataStore.setDetailOpen(props.sessionId, closedKey.value, false)
 }
 
 function onHide() {
+    markClosing()
     isOpen.value = false
     dataStore.setDetailOpen(props.sessionId, closedKey.value, true)
+}
+
+function onAfterHide() {
+    clearClosing()
 }
 </script>
 
@@ -69,11 +79,12 @@ function onHide() {
             icon-placement="start"
             @wa-show.self="onShow"
             @wa-hide.self="onHide"
+            @wa-after-hide.self="onAfterHide"
         >
             <span slot="summary" class="items-details-summary">
                 <strong class="items-details-summary-name">Proposed plan</strong>
             </span>
-            <div v-if="isOpen" class="proposed-plan-body">
+            <div v-if="isOpen || isClosing()" class="proposed-plan-body">
                 <MarkdownContent :source="segments.plan" />
             </div>
         </wa-details>

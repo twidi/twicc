@@ -10,7 +10,9 @@
      reduced motion sets to 0: the transitions still run, with nothing to move;
    - individual transform properties (translate, scale, rotate), never `transform`, so an
      effect never overwrites a component's transform and two effects combine;
-   - hover effects only under @media (hover: hover): on touch a hover state sticks. */
+   - hover effects only under @media (hover: hover): on touch a hover state sticks.
+   One exception: @keyframes motion-spin (the wa-details loading line's spinner) turns
+   under reduced motion too, a status indicator (roadmap §4). */
 
 :root {
     --motion-dur-1: 120ms;
@@ -20,6 +22,10 @@
     --motion-dur-press: 60ms;
     --motion-ease: cubic-bezier(.2, .8, .2, 1);
     --motion-ease-out: cubic-bezier(.22, 1, .36, 1);
+    /* Heights (wa-details): a gentler start than --motion-ease-out. A height animation runs
+       on the main thread; on a busy phone a dropped first frame is then a small step, not a
+       jump (measured, step 4b). */
+    --motion-ease-out-height: cubic-bezier(.25, .46, .45, .94);
     --motion-ease-spring: linear(0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%, 0.849 31.5%, 0.937 38.1%, 0.968 41.8%, 0.991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.9%, 1);
     /* Multiplier of every movement (unitless): 1, or 0 under reduced motion. */
     --motion-amount: 1;
@@ -129,4 +135,71 @@
     :where(wa-button:not([disabled]):hover) > wa-icon[slot='end']:is([name='arrow-right'], [name='chevron-right']) {
         translate: calc(0.1875rem * var(--motion-amount)) 0;
     }
+}
+
+/* wa-details open/close (step 4b, docs/plans/2026-09-27-details-motion-design.md; the
+   motion itself is utils/detailsMotion.js). The content part becomes a formatting root
+   (no visual change): it contains its children's margins, so its height is exactly the
+   height the body needs. */
+wa-details::part(content) {
+    display: flow-root;
+    padding-inline: 0; /* moved into the children, below */
+}
+
+/* The side spacing of an open details lives in each direct child, not in its content
+   part: a child that scrolls has its scrollbar against the card's edge, with the spacing
+   between its text and the scrollbar. A child whose own rule sets its side padding uses
+   `var(--spacing, 0)` for it (ToolUseContent, UnknownEntry, TodoContent). The value is
+   read on the details (--details-spacing): a child that is itself a Web Awesome component
+   declaring its own --spacing (wa-divider) would otherwise read that one.
+   Caveat: a list placed directly in a details loses its native indent, and an inline
+   child that wraps gets the spacing on its first and last line only (none today). */
+wa-details {
+    --details-spacing: var(--spacing);
+}
+wa-details > :not([slot], wa-callout, wa-divider) {
+    padding-inline: var(--details-spacing);
+}
+/* A framed box or a line keeps its own inner padding and stays inset. */
+wa-details > :is(wa-callout, wa-divider):not([slot]) {
+    margin-inline: var(--details-spacing);
+}
+/* The loading line is drawn in the content part itself: it keeps the spacing there. */
+wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content) {
+    padding-inline: var(--details-spacing);
+}
+
+/* The chevron turns with the spring. */
+:where(wa-details)::part(icon) {
+    transition: rotate var(--motion-dur-2) var(--motion-ease-spring);
+}
+@media (prefers-reduced-motion: reduce) {
+    :where(wa-details)::part(icon) {
+        transition-duration: 0s;
+    }
+}
+
+/* Loading line of a card opened with nothing to show yet, like the "Loading result..."
+   line of tool results. The :has() guard hides it as soon as a content element exists. */
+wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content)::before {
+    /* A CSS stand-in for <wa-spinner> (its track and indicator colors and its 2s turn). */
+    content: '';
+    display: inline-block;
+    box-sizing: border-box; /* document `*` rules do not reach a shadow pseudo-element */
+    vertical-align: middle;
+    inline-size: 1em;
+    block-size: 1em;
+    margin-inline-end: var(--wa-space-s);
+    border-radius: 50%;
+    border: 0.1em solid var(--wa-color-neutral-fill-normal); /* wa-spinner draws a stroke of 5 in a 50-unit viewBox; its --track-width is unused */
+    border-block-start-color: var(--wa-color-brand-fill-loud);
+    animation: motion-spin 2s linear infinite;
+}
+wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content)::after {
+    content: 'Loading...';
+    vertical-align: middle;
+    color: var(--wa-color-text-quiet);
+}
+@keyframes motion-spin {
+    to { rotate: 1turn; }
 }

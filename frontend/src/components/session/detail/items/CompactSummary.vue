@@ -15,6 +15,7 @@
  */
 import { ref, nextTick, onMounted, computed } from 'vue'
 import { useDataStore } from '../../../../stores/data'
+import { useDetailsClosing } from '../../../../composables/useDetailsClosing'
 import { getProviderLabel } from '../../../../providers'
 import MarkdownContent from '../../../ui/MarkdownContent.vue'
 
@@ -52,6 +53,9 @@ const isOpen = ref(dataStore.isDetailOpen(props.sessionId, props.detailKey))
 // Same pattern as ThinkingContent.
 const instantOpen = ref(isOpen.value)
 
+// Keeps the body rendered while the card folds (utils/detailsMotion.js).
+const { isClosing, markClosing, clearClosing } = useDetailsClosing()
+
 onMounted(() => {
     if (instantOpen.value) {
         nextTick(() => { instantOpen.value = false })
@@ -59,22 +63,28 @@ onMounted(() => {
 })
 
 function onShow() {
+    clearClosing()
     isOpen.value = true
     dataStore.setDetailOpen(props.sessionId, props.detailKey, true)
 }
 
 function onHide() {
+    markClosing()
     isOpen.value = false
     dataStore.setDetailOpen(props.sessionId, props.detailKey, false)
+}
+
+function onAfterHide() {
+    clearClosing()
 }
 </script>
 
 <template>
-    <wa-details ref="detailsRef" :open="isOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="item-details compact-summary-content" icon-placement="start" @wa-show="onShow" @wa-hide="onHide">
+    <wa-details ref="detailsRef" :open="isOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="item-details compact-summary-content" icon-placement="start" @wa-show="onShow" @wa-hide="onHide" @wa-after-hide="onAfterHide">
         <span slot="summary" class="items-details-summary">
             <strong class="items-details-summary-name">Session compacted</strong>
         </span>
-        <div v-if="isOpen" class="compact-summary-body">
+        <div v-if="isOpen || isClosing()" class="compact-summary-body">
             <MarkdownContent v-if="hasContent" :source="content" />
             <p v-else class="compact-summary-placeholder">{{ placeholder }}</p>
         </div>

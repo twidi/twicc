@@ -1535,6 +1535,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
             return {
                 component: ViewImageResult,
                 props: { images, name: imageName },
+                uncapped: true, // the image caps itself at 75vh
             }
         }
         // ``image_gen__imagegen``: same wire shape as ``view_image`` — the
@@ -1551,6 +1552,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
             return {
                 component: ViewImageResult,
                 props: { images, name: 'Generated image' },
+                uncapped: true, // the image caps itself at 75vh
             }
         }
         if (name === CODE_MODE_EXEC_TOOL_NAME) {

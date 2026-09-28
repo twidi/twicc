@@ -31,6 +31,9 @@ import './utils/brandRobotIcon'
 // Glass popovers: cut the body border under the arrow (see glass.css).
 import { installGlassArrowGap } from './utils/glassArrowGap'
 installGlassArrowGap()
+// wa-details open/close: TwiCC owns the motion (see utils/detailsMotion.js).
+import { installDetailsMotion } from './utils/detailsMotion'
+installDetailsMotion()
 import '@awesome.me/webawesome/dist/components/progress-bar/progress-bar.js'
 import '@awesome.me/webawesome/dist/components/progress-ring/progress-ring.js'
 import '@awesome.me/webawesome/dist/components/option/option.js'

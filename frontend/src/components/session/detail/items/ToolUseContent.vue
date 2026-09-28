@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useCodeCommentsStore } from '../../../../stores/codeComments'
 import CodeCommentsIndicator from '../../../ui/CodeCommentsIndicator.vue'
 import { useDataStore } from '../../../../stores/data'
+import { useDetailsClosing } from '../../../../composables/useDetailsClosing'
 import { useSettingsStore } from '../../../../stores/settings'
 import { apiFetch } from '../../../../utils/api'
 import { PROCESS_STATE, PROCESS_STATE_COLORS } from '../../../../constants'
@@ -138,6 +139,9 @@ const instantOpen = ref(isOpen.value)
 const isResultOpen = ref(
     isOpen.value && dataStore.isDetailOpen(props.sessionId, `result:${props.toolId}`)
 )
+
+// Keeps the body rendered while the card folds (utils/detailsMotion.js).
+const { isClosing, markClosing, clearClosing } = useDetailsClosing()
 
 onMounted(() => {
     // After first render, restore normal animation duration for future open/close
@@ -295,8 +299,8 @@ function onResultClose() {
  * Stops polling to avoid unnecessary requests.
  */
 function onToolUseClose() {
+    markClosing()
     isOpen.value = false
-    isResultOpen.value = false
     dataStore.setDetailOpen(props.sessionId, props.toolId, false)
     dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, false)
     stopPolling()
@@ -307,14 +311,26 @@ function onToolUseClose() {
  * If the result section is already open and has no data, triggers a fetch/poll.
  */
 function onToolUseOpen() {
+    clearClosing()
     isOpen.value = true
     dataStore.setDetailOpen(props.sessionId, props.toolId, true)
+    // Reopened during the fold: the Result is still open on screen, so is the store.
+    if (isResultOpen.value) dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, true)
     // Fetch the result when it needs to be visible: the "Result" disclosure
     // is open, or this is an inline-result tool that renders its result
     // directly in the body as soon as the card opens.
     if (isResultOpen.value || (rendersResultInline.value && showResultDetails.value)) {
         ensureResultFetched()
     }
+}
+
+/**
+ * Handler for when the parent tool use details has finished folding.
+ * The nested Result folds with the card (not on its own), then is reset closed.
+ */
+function onToolUseAfterHide() {
+    clearClosing()
+    if (!isOpen.value) isResultOpen.value = false
 }
 
 // Cleanup on unmount (e.g., when changing session, toggling groups)
@@ -681,6 +697,8 @@ watch(shouldAutoOpen, (val) => {
 // an error, close it — the diff will be stale since Claude will retry shortly.
 watch(isToolError, (errored) => {
     if (errored && hasAutoOpened && isOpen.value) {
+        // Same tick as the flag: the diff stays rendered during the fold.
+        markClosing()
         isOpen.value = false
         dataStore.setDetailOpen(props.sessionId, props.toolId, false)
     }
@@ -947,7 +965,7 @@ function handleStopAgent() {
 </script>
 
 <template>
-    <wa-details ref="toolUseDetailsRef" :open="isOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="item-details tool-use" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
+    <wa-details ref="toolUseDetailsRef" :open="isOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="item-details tool-use" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose" @wa-after-hide.self="onToolUseAfterHide">
         <div slot="summary" class="items-details-summary">
             <div class="items-details-summary-left">
                 <strong v-if="isTask && displayName" class="items-details-summary-name">{{ displayName.name }}<span v-if="displayName.namespace" class="items-details-summary-quiet"> ({{ displayName.namespace }})</span></strong>
@@ -1046,7 +1064,7 @@ function handleStopAgent() {
                 </template>
             </div>
         </div>
-        <template v-if="isOpen">
+        <template v-if="isOpen || isClosing()">
             <component
                 v-if="inputRendering"
                 :is="inputRendering.component"
@@ -1061,7 +1079,7 @@ function handleStopAgent() {
             <!-- Tool error message (shown directly, replaces the Result details unless Bash/Unknown) -->
             <wa-callout v-if="isToolError" variant="danger" appearance="outlined" class="tool-error-message">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-                <MarkdownContent v-if="errorAsMarkdown" :source="toolErrorText" />
+                <MarkdownContent v-if="errorAsMarkdown" :source="toolErrorText" :show-toolbar="false" />
                 <template v-else>{{ toolErrorText }}</template>
             </wa-callout>
             <template v-if="showResultDetails">
@@ -1114,11 +1132,12 @@ function handleStopAgent() {
                             No result available
                         </div>
                         <div v-else-if="resultState === 'loaded' && displayResult" class="tool-result-data">
-                            <component
-                                v-if="resultRendering"
-                                :is="resultRendering.component"
-                                v-bind="resultRendering.props"
-                            />
+                            <div v-if="resultRendering" :class="{ 'tool-result-dedicated': !resultRendering.uncapped }">
+                                <component
+                                    :is="resultRendering.component"
+                                    v-bind="resultRendering.props"
+                                />
+                            </div>
                             <JsonHumanView
                                 v-else
                                 :value="displayResult"
@@ -1180,14 +1199,15 @@ wa-details.item-details {
 }
 
 .tool-input {
-    padding: 0;
+    /* Side spacing: the open details' (moved from its content part, motion.css). */
+    padding: 0 var(--spacing, 0);
     overflow-x: auto;
 }
 
 .tool-no-input {
     color: var(--wa-color-text-quiet);
     font-style: italic;
-    padding: var(--wa-space-xs) 0;
+    padding: var(--wa-space-xs) var(--spacing, 0);
 }
 
 .tool-result {
@@ -1202,6 +1222,13 @@ wa-details.item-details {
 
 .tool-result-content {
     padding: var(--wa-space-xs) 0;
+}
+
+/* The Result's scroller is two levels below its details, so the side spacing (moved out of
+   the details' content part by motion.css) goes down to it, and to the Result's other lines. */
+.tool-result-content > :not(.tool-result-data),
+.tool-result-content > .tool-result-data > * {
+    padding-inline: var(--spacing);
 }
 
 .tool-result-loading,
@@ -1227,6 +1254,26 @@ wa-details.item-details {
 
 .tool-result-data {
     overflow-x: auto;
+}
+
+/* The markdown raw / copy toolbar belongs to messages, Thinking and Reasoning (placed
+   outside their block by SessionItem.vue). Nothing in a tool card gets it — the JSON view
+   of the input or result, a dedicated result, the error callout: the code blocks keep
+   their own wrap / copy buttons. Hidden here rather than per component, because
+   JsonHumanView keeps it elsewhere (permission prompts, workflows, orchestration). */
+.tool-use :deep(.markdown-toolbar) {
+    display: none;
+}
+
+/* A dedicated result (Read, Bash, WebFetch…) gets the same cap as the generic JSON view's
+   text and markdown blocks (SessionItem.vue) and the diffs: a long output scrolls inside
+   instead of unrolling thousands of pixels into the transcript. */
+.tool-result-dedicated {
+    max-height: 20rem;
+    overflow: auto;
+    /* Isolates the (possibly huge) content's layout and paint from the card's height
+       animation (wa-details motion, utils/detailsMotion.js). */
+    contain: content;
 }
 
 .read-result-header {

@@ -9,8 +9,9 @@ micro-interactions, done: `docs/plans/2026-09-27-motion-micro-design.md`, commit
 parity**, **reduced motion is reduced, not none**) and §6d (4a lessons).
 
 4b uses the 4a tokens from `frontend/src/styles/motion.css`: `--motion-dur-2` (200ms),
-`--motion-dur-3` (380ms), `--motion-ease-out`, `--motion-ease-spring`, `--motion-amount`
-(`1`, `0` under `prefers-reduced-motion: reduce`).
+`--motion-dur-3` (380ms), `--motion-ease-spring`, `--motion-amount` (`1`, `0` under
+`prefers-reduced-motion: reduce`), and adds `--motion-ease-out-height` for its heights
+(§11; it replaced `--motion-ease-out` after the browser review).
 
 ### 1.1 How `wa-details` animates today (Web Awesome 3.3.1)
 
@@ -80,8 +81,8 @@ also changes the height in jumps.
   renaming). Everything else of the component (render, styles, parts, events, keyboard,
   accessibility) stays Web Awesome's.
 - **Empty body → a generic loading line** (option B): a card opened by the user whose
-  body is still empty after ~150ms shows it until content appears. It looks like the
-  existing "Loading result..." line of tool results (spinner + quiet text), reading
+  body is still empty ~150ms after its opening starts (after the idle wait, §11) shows
+  it until content appears. It looks like the existing "Loading result..." line of tool results (spinner + quiet text), reading
   "Loading...".
 - Instant restores stay instant (session re-activation, virtual-scroller re-mount,
   auto-opened live diffs).
@@ -129,7 +130,7 @@ also changes the height in jumps.
    height and opacity when an animation was running, else from the settled state (0 for an
    open, the full height for a close).
 4. **Height follows the content while followed.** From a user open to the next close, the
-   body height is **pinned** inline (`height: <px>`, `overflow: clip`). `clip`, not
+   body height is **pinned** inline (`height: <px>`, `overflow-y: clip`, `overflow-x: visible`, §11). `clip`, not
    `hidden`: it creates no scroll container, so a focus or `scrollIntoView` inside cannot
    scroll the body (Firefox 156 and Chrome support it). No `overflow-clip-margin`: during
    a motion it would let the cut content paint past the card's bottom edge over the next
@@ -146,7 +147,8 @@ also changes the height in jumps.
 ### 4.1 Tokens, sizes, pure helpers
 
 Motion values are read from `getComputedStyle(document.documentElement)` at each gesture:
-`--motion-dur-3`, `--motion-dur-2`, `--motion-ease-out`, `--motion-amount`
+`--motion-dur-3`, `--motion-dur-2`, `--motion-ease-out-height` (the easing of every
+animation of the module, §11), `--motion-amount`
 (`reduced = amount === 0`). The instant test keeps Web Awesome's own reading:
 `--show-duration` / `--hide-duration` of the body, `0` → instant.
 
@@ -232,8 +234,8 @@ whole fold.
 2. read, **before** changing anything: `renderedHeight = body.offsetHeight`,
    `renderedOpacity = getComputedStyle(body).opacity`;
 3. cancel `animation`; `pending = false`; stop following (which also clears any inline
-   `opacity` a superseded open held); set `overflow: clip` inline (every inline
-   `overflow` of this module is `clip`).
+   `opacity` a superseded open held); set `overflow-y: clip` + `overflow-x: visible` inline (every inline
+   overflow of this module is this pair).
 
 **Open:**
 
@@ -247,13 +249,15 @@ whole fold.
    'open', interrupting, renderedHeight, renderedOpacity})`. Hold the start state on screen at once: `body.style.height =
    start.height px`, `body.style.opacity = start.opacity`, `pending = true` (so the frame
    painted before step 5, if any, shows the start, not the full content).
-5. `await` the next `requestAnimationFrame` (Vue's render of the lazy content and the Lit
-   renders it triggered — a nested `wa-details`, a `wa-callout` — are done by then, so the
-   content has its real height). Token check.
+5. `await` an idle main thread (`requestIdleCallback`, `timeout: 250`; a zero `setTimeout`
+   where it is missing), token check, then the next `requestAnimationFrame` (Vue's render
+   of the lazy content, the Lit renders it triggered — a nested `wa-details`, a
+   `wa-callout` — and a code viewer's highlighting are done by then, so the content has its
+   real height and the motion does not compete with them). Token check. (§11.)
 6. `pending = false`. `H` = the content height (§4.1). Clear the inline `opacity`; pin
    `height: H px`. Start `animation = body.animate(openKeyframes(start, H, reduced),
    {duration: normal --motion-dur-3 / reduced --motion-dur-2, easing:
-   --motion-ease-out})`. Reduced: `body.style.height = 'auto'` instead of the pin.
+   --motion-ease-out-height})`. Reduced: `body.style.height = 'auto'` instead of the pin.
 7. `lastHeight = H`; `followed = !reduced`; observe the content slot (§4.4) — **now**, so
    content arriving during the opening is followed from the first frame; arm the loading
    line (§4.7); unpin the followed ancestors (§4.5).
@@ -281,7 +285,7 @@ whole fold.
    reduced), …)` with `reduced` read **live** at this gesture (§4.1; a card opened
    instantly has no stored value — the stored `reduced` serves only the follow frames and
    the prevented-hide restore), `{duration: normal --motion-dur-3 / reduced --motion-dur-2, easing:
-   --motion-ease-out})`; unpin the followed ancestors (§4.5).
+   --motion-ease-out-height})`; unpin the followed ancestors (§4.5).
 4. `await animation.finished` (catch). Token check (a reopen during the fold returns here:
    the card is open again and nothing closes it).
 5. `body.style.height = 'auto'`, clear `overflow`, `isAnimating = false`,
@@ -289,8 +293,8 @@ whole fold.
 
 Close during the opening: the close's common start cancels the opening (its loop returns
 on the token check) and folds from the on-screen height and opacity, including during the
-step-5 frame wait (`pending`). Reopen during the fold: the open's common start cancels
-the fold (its `await` returns on the token check; the inner `<details>` was never closed)
+step-5 idle and frame wait (`pending`). Reopen during the fold: the open's common start
+cancels the fold (its `await` returns on the token check; the inner `<details>` was never closed)
 and grows back from the on-screen height and opacity.
 
 **After-events of abandoned gestures.** A superseded gesture dispatches no `wa-after-*`
@@ -333,7 +337,7 @@ In that frame, token unchanged:
   `0` (the OS switched to reduced motion while the card was open), do a `set` instead (pin
   at `target`, no animation); else cancel `animation`, pin `height: target px`,
   `animation = body.animate(followKeyframes(from, target, fromOpacity), {duration:
-  --motion-dur-2, easing: --motion-ease-out})`, `lastHeight = target`, unpin the followed
+  --motion-dur-2, easing: --motion-ease-out-height})`, `lastHeight = target`, unpin the followed
   ancestors (§4.5); `unpin` → §4.5; `set` → pin `height: target px`, `lastHeight =
   target`, `unpinned = false`, no animation.
 
@@ -559,9 +563,10 @@ need no change.
   `parentElement` / `closest('wa-details')` / `getRootNode()` (with `.host`) for the
   ancestor walk; `slot.assignedElements()`; `setAttribute` / `removeAttribute` /
   `hasAttribute`; a stubbed `document.documentElement` and `getComputedStyle` (durations,
-  opacity, motion tokens); fake `requestAnimationFrame`, `setTimeout` and
-  `ResizeObserver` the test drives. Cases:
-  - user open → followed, pinned, `body.style.overflow === 'clip'`, `wa-show` then
+  opacity, motion tokens); fake `requestIdleCallback`, `requestAnimationFrame`,
+  `setTimeout` and `ResizeObserver` the test drives. Cases:
+  - user open → followed, pinned, `overflowY === 'clip'` and `overflowX === 'visible'`,
+    `wa-show` then
     exactly one `wa-after-show`; the inline `overflow` is empty after a completed fold,
     after the instant paths, after a prevented `wa-show`, and after a prevented `wa-hide`
     on a card that was neither followed nor opening;
@@ -572,8 +577,9 @@ need no change.
     a `set`, no animation;
   - content shrinking on a settled followed card → an animation downward to the new
     height;
-  - close during the opening (also during the frame wait) → folds from the rendered
-    height and opacity, one `wa-after-hide`, no `wa-after-show`;
+  - close during the opening (also during the idle wait, and after it before the frame)
+    → folds from the rendered height and opacity, one `wa-after-hide`, no
+    `wa-after-show`;
   - reopen during the fold → no `wa-after-hide`, inner details never closed, ends
     followed;
   - open-close-open-close → ends closed, one `wa-after-hide`;
@@ -692,9 +698,10 @@ need no change.
 - A parent card still in its own motion jumps to full height and full opacity when a
   nested card starts moving (open, fold or follow), and its own content changes are not
   animated while a nested card moves (§4.5).
-- A card opened by the user clips what overflows its body while it is open (`overflow:
-  clip`), e.g. the focus ring of a link on the first line of a thinking block (the
-  transcript cards have no top padding on their content part). A card restored open is
+- A card opened by the user clips what overflows its body vertically while it is open
+  (`overflow-y: clip`; sideways stays visible, §11), e.g. the top of the focus ring of a
+  link on the first line of a thinking block (the transcript cards have no top padding
+  on their content part). A card restored open is
   not clipped. A clip margin was rejected: it paints the cut content over the next card
   during a motion.
 - A prevented `wa-hide` snaps the card back to its content height (§4.3 close step 1). No
@@ -707,6 +714,95 @@ need no change.
   or never (no caller in the repo, §4.3).
 - A Web Awesome upgrade needs a re-read of §1.1 (the §8 guard test fails on purpose).
 
-## 11. Delivery
+## 11. Amendments after the browser review (user, 2026-09-28) — binding
+
+The first build was measured on the user's phone (Firefox Beta for Android, screen
+recordings analysed frame by frame): the motion logic was right, but a Write card opened
+in jumps (0 → 118px in one frame, frozen 70ms, → 328px, then smooth). A height animation
+runs on the main thread, and the phone was still rendering the card's content (the code
+viewer and its highlighting) during the first frames; the steep start of
+`--motion-ease-out` turned each dropped frame into a big step. Two experiments, compared
+with `main` side by side, settled it:
+
+- **Wait for an idle main thread before the opening** (§4.3 open step 5):
+  `requestIdleCallback` with a 250ms cap (`IDLE_TIMEOUT_MS`), then the frame. Measured:
+  ~25ms from the tap to the first moving frame on the phone, near zero on a desktop.
+  (A fixed 250ms wait was smooth too, but its delay was perceptible.)
+- **A gentler start for heights:** new token `--motion-ease-out-height:
+  cubic-bezier(.25, .46, .45, .94)` (easeOutQuad) in `motion.css`, used by every
+  animation of the module (open, follow, fold; the reduced-motion fades too). At 10% of the
+  time it covers ~17% of the height instead of ~29%, so a dropped first frame is a small
+  step. Measured: steps of ~15px per frame from the start, no jump.
+- The loading line is armed ~150ms after the opening **starts**, so after the idle wait:
+  up to ~250ms + one frame + 150ms after the tap. The card is held at `0px` / opacity 0
+  meanwhile, so nothing looks stuck.
+- Browsers without `requestIdleCallback` (Safari does not ship it by default) take the
+  zero-timeout fallback, which does not wait for an idle thread: the measured gain is not
+  guaranteed there. Firefox and Chrome support it with `timeout`.
+- **Long bodies are capped at 20rem and scroll inside** (user, after a recording of a
+  Read result: 713 lines unrolled thousands of pixels in one frame, which no motion can
+  make pleasant). The generic JSON view's text and markdown blocks (`SessionItem.vue`) and
+  the diffs (`ToolDiffViewer.vue`, `JsonHumanView.vue`) already had this cap; the rest now
+  matches it: the dedicated result renderers of the "Result" disclosure (Claude Read,
+  Bash, Monitor, WebFetch/WebSearch; Codex Read, Exec, SpawnAgent), wrapped in
+  `ToolUseContent.vue`'s new `.tool-result-dedicated` (with `contain: content`, kept by
+  the user although it showed no measurable gain; no radius: the scroller spans the card
+  width, so a radius would round its padding, not the cut code block). Images
+  size themselves (75vh in `ViewImageResult.vue`): a result rendering may return
+  `uncapped: true` (documented on `baseHelpers.getResultRendering`), which Codex's
+  `view_image` and image-generation results do; the inline result path (`view_image`
+  only) is unchanged. Known consequence: a result that grows while open (Monitor output,
+  a running Codex exec) adds its new text below the fold.
+- **Thinking and Reasoning are not capped** (tried, then reverted by the user): the
+  scroller cut and scrolled away their markdown toolbar, which sits outside the block,
+  and made the block scroll horizontally.
+- **The markdown raw / copy toolbar is off inside tool cards** (a bug already on `main`,
+  fixed here because tool cards are the main use of `wa-details`): `MarkdownContent`
+  shows it by default, and only messages, Thinking and the compact summary had a rule
+  placing it outside their block. The seven dedicated result renderers and the tool
+  error callout (`ToolUseContent.vue`) pass `:show-toolbar="false"`, and
+  `ToolUseContent.vue` hides `.markdown-toolbar` for anything else inside the card (the
+  JSON view of an input or a result). `JsonHumanView.vue` itself is unchanged: it keeps the
+  toolbar where it is used outside tool cards (permission prompts, workflows,
+  orchestration). A tool card keeps the code blocks' own wrap / copy buttons. The Codex
+  image-generation item (its own item kind, `ImageGeneration.vue`) also drops it on its
+  prompt. Codex Reasoning (its own `data-kind="reasoning"` item) gets the Thinking
+  placement rule in `SessionItem.vue`, so its toolbar sits outside the block too.
+- **The side spacing of an open details lives in its children** (user): `motion.css`
+  sets `wa-details::part(content) { padding-inline: 0 }` and gives each direct child
+  (`wa-details > :not([slot], wa-callout, wa-divider)`) `padding-inline:
+  var(--details-spacing)` (the details' `--spacing`, read on the details so a WA child
+  declaring its own `--spacing`, like `wa-divider`, does not read that one; the loading
+  line, drawn in the content part, keeps the spacing there),
+  so a child that scrolls has its scrollbar against the card's edge and the spacing
+  inside, between its text and the scrollbar. Callouts and dividers keep their frame
+  inset with `margin-inline: var(--details-spacing)`. Children whose own rule sets their side
+  padding use `var(--spacing, 0)` (`.tool-input`, `.tool-no-input` in `ToolUseContent.vue`;
+  `.unknown-data`, `.unknown-no-data` in `UnknownEntry.vue`; `.todo-list` in
+  `TodoContent.vue`, 0 in the Tasks tab). In the Result, the spacing goes down two levels
+  to the scroller and the state lines (`.tool-result-content > :not(.tool-result-data)`,
+  `.tool-result-content > .tool-result-data > *`). Not reached: the diff viewer's own
+  scroller (deeper inside the widget) keeps its scrollbar inset, as before; the dashed
+  separator between earlier goal objectives now spans the card's width.
+- **The pin clips vertically only** (`overflow-y: clip`, `overflow-x: visible`): what
+  overflows at the bottom must not paint over the next card during a motion, but a
+  toolbar placed beside the block (Thinking, Reasoning) must stay visible.
+- **The follow waits for an idle main thread too** (`scheduleFollow`, same
+  `waitForIdle()` as the opening): a heavy content render (a long highlighted file
+  arriving in a Result) is done before the height animation starts. A slight gain in
+  the user's recordings.
+- **Limitation, Firefox for Android:** animating a card that holds a very large
+  highlighted body runs at ~15 frames per second there (a frame every 60–70ms);
+  Chrome on the same phone is fluid. Paint containment, a dedicated compositor layer
+  (`will-change`) and removing the opacity fade were tried and changed nothing
+  measurable; the fade was kept.
+- Tests: the fake environment has `requestIdleCallback`; gesture cases check that an
+  opening waits for idle (capped at 250ms), that a close during the idle wait and a close
+  after it but before the frame both fold from the held start with no opening, and the
+  zero-timeout fallback; a follow waits for idle before its frame, and a stale follow wait
+  (the card closed and reopened meanwhile) requests no frame. `motion.test.js` lists the
+  new token.
+
+## 12. Delivery
 
 One commit on branch `enhanced-ui`, after the user's browser check and explicit "commit".
