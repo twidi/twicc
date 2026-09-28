@@ -58,6 +58,14 @@ def layer(monkeypatch):
     return fake
 
 
+@pytest.fixture(autouse=True)
+def fresh_upload_locks():
+    """Each test starts without upload locks (one loop per ``asyncio.run``)."""
+    locks._loop_locks.clear()
+    yield
+    locks._loop_locks.clear()
+
+
 @pytest.fixture
 def client(settings):
     settings.TWICC_PASSWORD_HASH = ""
@@ -373,6 +381,58 @@ def test_unknown_session(client, project):
 # ── Check 4: writable, never the staging dir ──────────────────────────────────
 
 
+# ── Order of the checks ──────────────────────────────────────────────────────
+
+
+def test_filename_checked_before_the_target(client, tmp_path):
+    """Check 2 before check 3: invalid name and missing target → 400."""
+    resp = _post(client, STANDALONE_URL, _body(tmp_path / "missing", filename="a/b"))
+    assert resp.status_code == 400
+
+
+def test_scope_checked_before_writable_and_space(client, target, tmp_path, monkeypatch):
+    """Check 3 before checks 4-5: out of root, not writable, no space → 403
+    from the scope check (the writable check is never reached)."""
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.setattr(os, "access", lambda path, mode: False)
+    _fake_disk_usage(monkeypatch, {"*": 0})
+    resp = _post(client, STANDALONE_URL, _body(target, root=str(other)))
+    assert resp.status_code == 403
+    assert "root" in _json(resp)["error"]
+
+
+def test_missing_target_checked_before_space(client, tmp_path, monkeypatch):
+    """Check 3 before check 5: missing target and no space → 404."""
+    _fake_disk_usage(monkeypatch, {"*": 0})
+    resp = _post(client, STANDALONE_URL, _body(tmp_path / "missing"))
+    assert resp.status_code == 404
+
+
+def test_writable_checked_before_space(client, target, monkeypatch):
+    """Check 4 before check 5: not writable and no space → 403."""
+    monkeypatch.setattr(os, "access", lambda path, mode: False)
+    _fake_disk_usage(monkeypatch, {"*": 0})
+    resp = _post(client, STANDALONE_URL, _body(target))
+    assert resp.status_code == 403
+
+
+def test_staging_rule_checked_before_space(client, monkeypatch):
+    """Check 4 (staging dir) before check 5 → 403."""
+    staging = store.get_staging_dir()
+    _fake_disk_usage(monkeypatch, {"*": 0})
+    resp = _post(client, STANDALONE_URL, _body(staging))
+    assert resp.status_code == 403
+
+
+def test_pc_name_max_checked_before_writable(client, target, monkeypatch):
+    """The ``PC_NAME_MAX`` part of check 2 runs after check 3, before check 4."""
+    monkeypatch.setattr(os, "pathconf", lambda path, name: 20)
+    monkeypatch.setattr(os, "access", lambda path, mode: False)
+    resp = _post(client, STANDALONE_URL, _body(target, filename="x" * 13))
+    assert resp.status_code == 400
+
+
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root bypasses permissions")
 def test_target_not_writable(client, target):
     target.chmod(0o500)
@@ -579,6 +639,45 @@ def test_creation_failure_on_the_part_file(client, target, monkeypatch):
     resp = _post(client, STANDALONE_URL, _body(target))
     assert resp.status_code == 507
     assert _staging_files() == []
+
+
+def test_create_upload_leaves_an_existing_part_untouched():
+    upload_id = store.new_upload_id()
+    store.part_path(upload_id).write_bytes(b"theirs")
+    store.metadata_path(upload_id).write_bytes(b"{}")
+    with pytest.raises(FileExistsError):
+        store.create_upload(
+            upload_id,
+            client_id="c",
+            size=6,
+            filename="a.txt",
+            target_dir="/tmp",
+            scope={"kind": "standalone", "root": None},
+            origin={"panel": "files", "key": "k"},
+            fingerprint="fp",
+        )
+    assert store.part_path(upload_id).read_bytes() == b"theirs"
+    assert store.metadata_path(upload_id).read_bytes() == b"{}"
+
+
+def test_create_upload_leaves_an_existing_json_untouched():
+    """``create_metadata`` refuses an existing ``.json``: only this call's
+    ``.part`` is removed."""
+    upload_id = store.new_upload_id()
+    store.metadata_path(upload_id).write_bytes(b"{}")
+    with pytest.raises(FileExistsError):
+        store.create_upload(
+            upload_id,
+            client_id="c",
+            size=6,
+            filename="a.txt",
+            target_dir="/tmp",
+            scope={"kind": "standalone", "root": None},
+            origin={"panel": "files", "key": "k"},
+            fingerprint="fp",
+        )
+    assert store.metadata_path(upload_id).read_bytes() == b"{}"
+    assert not store.part_path(upload_id).exists()
 
 
 def test_retry_after_a_creation_failure_creates_the_upload(client, target, monkeypatch):
@@ -849,19 +948,37 @@ def test_runner_task_survives_the_cancellation_of_its_caller():
     assert locked is False
 
 
-def test_creation_lock_is_usable_across_event_loops():
-    """Each ``asyncio.run`` gets locks bound to its own loop."""
+def test_locks_are_kept_per_event_loop():
+    """Within one loop the locks are never replaced; a new loop (one
+    ``asyncio.run`` per call in tests) gets its own locks."""
 
     async def contend():
         lock = locks.get_creation_lock()
         async with lock:
             waiter = asyncio.create_task(lock.acquire())
             await asyncio.sleep(0)
+            assert locks.get_creation_lock() is lock
         await waiter
         lock.release()
 
     _run(contend())
     _run(contend())
+
+
+def test_upload_lock_does_not_create_the_staging_dir(data_dir):
+    async def scenario():
+        return locks.get_upload_lock("e" * 32)
+
+    assert _run(scenario()) is None
+    assert not (data_dir / "uploads").exists()
+
+
+def test_upload_lock_rejects_an_invalid_id():
+    async def scenario():
+        locks.get_upload_lock("../x")
+
+    with pytest.raises(ValueError):
+        _run(scenario())
 
 
 def test_upload_lock_exists_only_with_its_metadata(client, target):

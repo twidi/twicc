@@ -387,23 +387,26 @@ def create_upload(upload_id: str, **fields: object) -> dict:
     """Create a new upload on disk: ``<id>.part`` first, then ``<id>.json`` (§5.2).
 
     *fields* are the keyword arguments of :func:`create_metadata`. The part
-    file is created with ``open(path, "xb")`` (mode set by the umask). On any
-    failure both files are removed (when present) and the error is re-raised,
-    so nothing is left behind. Returns the persisted metadata.
+    file is created with ``open(path, "xb")`` (mode set by the umask). A
+    failure removes only what this call created: a ``.part`` that already
+    exists (``FileExistsError``) is left untouched, and a failed
+    :func:`create_metadata` never leaves a ``.json`` of its own (it refuses an
+    existing one, and ``atomic_write_json`` leaves the path untouched on
+    failure), so only this call's ``.part`` is removed. The error is
+    re-raised. Returns the persisted metadata.
     """
     part = part_path(upload_id)
+    with open(part, "xb"):
+        pass
     try:
-        with open(part, "xb"):
-            pass
         return create_metadata(upload_id, **fields)
     except BaseException:
-        for path in (metadata_path(upload_id), part):
-            try:
-                os.unlink(path)
-            except FileNotFoundError:
-                pass
-            except OSError:
-                logger.warning("Upload creation: cannot remove %s", path, exc_info=True)
+        try:
+            os.unlink(part)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning("Upload creation: cannot remove %s", part, exc_info=True)
         raise
 
 

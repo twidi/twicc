@@ -24,9 +24,11 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import weakref
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
+from twicc.paths import get_uploads_dir
 from twicc.uploads import store
 
 logger = logging.getLogger(__name__)
@@ -41,41 +43,51 @@ _GUARDED_TASKS: set[asyncio.Task] = set()
 # view decorator does not log it a second time.
 _LOGGED_ATTR = "_twicc_upload_logged"
 
-# The locks are bound to the event loop that first waits on them. TwiCC runs
-# one loop per process; a new loop (only in tests, one ``asyncio.run`` per
-# test) gets fresh locks instead of locks bound to a closed loop.
-_locks_loop: asyncio.AbstractEventLoop | None = None
-_creation_lock: asyncio.Lock | None = None
-_upload_locks: dict[str, asyncio.Lock] = {}
+
+class _LoopLocks:
+    """The locks of one event loop: the creation lock and one lock per upload."""
+
+    def __init__(self) -> None:
+        self.creation = asyncio.Lock()
+        self.uploads: dict[str, asyncio.Lock] = {}
 
 
-def _ensure_loop_state() -> None:
-    global _locks_loop, _creation_lock
+# An ``asyncio.Lock`` is bound to the event loop that first waits on it, so the
+# locks are kept per loop. TwiCC runs one loop per process: there is one
+# ``_LoopLocks``, never replaced while its loop lives (a waiter never finds a
+# replaced lock, §5.4). A closed loop's entry goes away with the loop. Tests
+# run one loop per ``asyncio.run`` and clear this mapping between tests.
+_loop_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _LoopLocks] = weakref.WeakKeyDictionary()
+
+
+def _current_locks() -> _LoopLocks:
     loop = asyncio.get_running_loop()
-    if loop is not _locks_loop:
-        _locks_loop = loop
-        _creation_lock = asyncio.Lock()
-        _upload_locks.clear()
+    state = _loop_locks.get(loop)
+    if state is None:
+        state = _loop_locks[loop] = _LoopLocks()
+    return state
 
 
 def get_creation_lock() -> asyncio.Lock:
-    """The module-level creation lock (§5.3 ``POST``)."""
-    _ensure_loop_state()
-    return _creation_lock
+    """The module-level creation lock (§5.3 ``POST``) of the running loop."""
+    return _current_locks().creation
 
 
 def get_upload_lock(upload_id: str) -> asyncio.Lock | None:
     """The lock of one upload, or ``None`` when ``<id>.json`` does not exist.
 
-    An entry is created only when the metadata file exists (a cheap ``stat``);
-    the caller answers ``404`` on ``None``. *upload_id* must be a valid id.
+    An entry is created only when the metadata file exists (one ``stat``; the
+    staging dir is never created here); the caller answers ``404`` on
+    ``None``. Raises ``ValueError`` for an invalid *upload_id*.
     """
-    _ensure_loop_state()
-    lock = _upload_locks.get(upload_id)
+    if not store.is_valid_upload_id(upload_id):
+        raise ValueError(f"invalid upload id: {upload_id!r}")
+    uploads = _current_locks().uploads
+    lock = uploads.get(upload_id)
     if lock is None:
-        if not store.metadata_path(upload_id).exists():
+        if not (get_uploads_dir() / f"{upload_id}.json").exists():
             return None
-        lock = _upload_locks.setdefault(upload_id, asyncio.Lock())
+        lock = uploads.setdefault(upload_id, asyncio.Lock())
     return lock
 
 
