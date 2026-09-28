@@ -15,6 +15,9 @@ import FilesPanel from '../files/FilesPanel.vue'
 import GitPanel from '../git/GitPanel.vue'
 import TerminalPanel from '../terminal/TerminalPanel.vue'
 import TabBar from '../ui/TabBar.vue'
+import UploadTabStatus from '../files/UploadTabStatus.vue'
+import { useUploadsStore } from '../../stores/uploads'
+import { originKey } from '../../utils/uploads/rules'
 import { deriveFileRoots, getWorktreeParent } from '../../utils/projectRoots'
 import { worktreeLabel } from '../../utils/worktree'
 import {
@@ -149,6 +152,11 @@ const filesRootRestriction = computed(() => {
 // project id may be the all-projects id or a workspace id: it is only a key.
 const filesUploadOrigin = computed(() =>
     props.projectId ? { panel: 'files', key: `project:${props.projectId}` } : null
+)
+// Upload status of the Files tab (spec §6.11), shown next to its label.
+const uploadsStore = useUploadsStore()
+const filesUploadStatus = computed(() =>
+    filesUploadOrigin.value ? uploadsStore.statusByOrigin[originKey(filesUploadOrigin.value)] || null : null
 )
 
 const filesAvailableRoots = computed(() => {
@@ -461,6 +469,7 @@ onBeforeUnmount(() => {
             <wa-tab v-for="tab in TABS" :key="tab.id" slot="nav" :panel="tab.id">
                 <wa-icon :name="tab.icon"></wa-icon>
                 {{ tab.label }}
+                <UploadTabStatus v-if="tab.id === 'files'" :status="filesUploadStatus" />
             </wa-tab>
 
             <wa-tab-panel name="stats">

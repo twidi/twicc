@@ -7,6 +7,7 @@ import TabPlacementMenu from './TabPlacementMenu.vue'
 import SessionTabLink from './SessionTabLink.vue'
 import TabBar from '../../ui/TabBar.vue'
 import GitChangeStats from '../../git/GitChangeStats.vue'
+import UploadTabStatus from '../../files/UploadTabStatus.vue'
 
 const props = defineProps({
     overlay: { type: Object, required: true }, // { edge, rect:{x,y,w,h}, tabs }
@@ -14,6 +15,8 @@ const props = defineProps({
     tabHref: { type: Function, required: true },
     // (tabId) -> change counts ({ modified, added, deleted, conflicted }) shown next to a tab's label, or null.
     tabChangeStats: { type: Function, default: null },
+    // (tabId) -> upload status ({ count, percent, allStalled }) shown next to a tab's label, or null.
+    tabUploadStatus: { type: Function, default: null },
     dockOf: { type: Function, required: true }, // tabId -> its current dockId | 'center'
     registerTarget: { type: Function, required: true },
     unregisterTarget: { type: Function, required: true },
@@ -52,6 +55,7 @@ function onShow(event) { emit('select', event.detail.name) }
                             <wa-icon v-if="t.icon" :name="t.icon" class="overlay-tab-icon"></wa-icon>
                             <span>{{ t.label }}</span>
                             <GitChangeStats v-if="tabChangeStats" :stats="tabChangeStats(t.id)" />
+                            <UploadTabStatus v-if="tabUploadStatus" :status="tabUploadStatus(t.id)" />
                         </SessionTabLink>
                         <TabPlacementMenu
                             :tab-id="t.id"

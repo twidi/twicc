@@ -5,6 +5,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import SessionTabLink from './SessionTabLink.vue'
 import GitChangeStats from '../../git/GitChangeStats.vue'
+import UploadTabStatus from '../../files/UploadTabStatus.vue'
 
 const props = defineProps({
     // resolver gutter: { edge, x, y, w, h, items: [{ dockId, tabs, action, anchor }] }
@@ -16,6 +17,8 @@ const props = defineProps({
     tabHref: { type: Function, required: true },
     // (tabId) -> change counts ({ modified, added, deleted, conflicted }) shown next to a tab's label, or null.
     tabChangeStats: { type: Function, default: null },
+    // (tabId) -> upload status ({ count, percent, allStalled }) shown next to a tab's label, or null.
+    tabUploadStatus: { type: Function, default: null },
 })
 const emit = defineEmits(['action'])
 
@@ -271,6 +274,7 @@ onUnmounted(cancelPending)
                 <wa-icon :name="entry.tab.icon"></wa-icon>
                 <span class="g-label">{{ entry.tab.label }}</span>
                 <GitChangeStats v-if="tabChangeStats" class="g-label" :stats="tabChangeStats(entry.tab.id)" />
+                <UploadTabStatus v-if="tabUploadStatus" class="g-label" :status="tabUploadStatus(entry.tab.id)" />
             </SessionTabLink>
             <SessionTabLink
                 v-if="startPlus"
@@ -300,6 +304,7 @@ onUnmounted(cancelPending)
                 <wa-icon :name="entry.tab.icon"></wa-icon>
                 <span class="g-label">{{ entry.tab.label }}</span>
                 <GitChangeStats v-if="tabChangeStats" class="g-label" :stats="tabChangeStats(entry.tab.id)" />
+                <UploadTabStatus v-if="tabUploadStatus" class="g-label" :status="tabUploadStatus(entry.tab.id)" />
             </SessionTabLink>
             <SessionTabLink
                 v-if="endPlus"
@@ -312,7 +317,7 @@ onUnmounted(cancelPending)
                 @plain-click="onClick(endPlus)"
             >+{{ endPlus.hidden.length }}</SessionTabLink>
         </div>
-        <!-- Hidden measurement mirrors: every chip with its label (and change counts), an icon-only copy of each, and a
+        <!-- Hidden measurement mirrors: every chip with its label (and change counts, upload status), an icon-only copy of each, and a
              "+N" sample (worst-case digits: the group's full count). Never visible, never clipped by
              icons-only (plain spans, no .g-label), never hit-testable. -->
         <div ref="startMirrorRef" class="g-measure" aria-hidden="true">
@@ -320,6 +325,7 @@ onUnmounted(cancelPending)
                 <wa-icon :name="entry.tab.icon"></wa-icon>
                 <span>{{ entry.tab.label }}</span>
                 <GitChangeStats v-if="tabChangeStats" :stats="tabChangeStats(entry.tab.id)" />
+                <UploadTabStatus v-if="tabUploadStatus" :status="tabUploadStatus(entry.tab.id)" />
             </span>
             <span v-for="entry in startIcons" :key="'i:' + entry.item.dockId + ':' + entry.tab.id" class="g-chip mm-icon">
                 <wa-icon :name="entry.tab.icon"></wa-icon>
@@ -331,6 +337,7 @@ onUnmounted(cancelPending)
                 <wa-icon :name="entry.tab.icon"></wa-icon>
                 <span>{{ entry.tab.label }}</span>
                 <GitChangeStats v-if="tabChangeStats" :stats="tabChangeStats(entry.tab.id)" />
+                <UploadTabStatus v-if="tabUploadStatus" :status="tabUploadStatus(entry.tab.id)" />
             </span>
             <span v-for="entry in endIcons" :key="'i:' + entry.item.dockId + ':' + entry.tab.id" class="g-chip mm-icon">
                 <wa-icon :name="entry.tab.icon"></wa-icon>

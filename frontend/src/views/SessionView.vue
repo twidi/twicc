@@ -40,8 +40,11 @@ import TabBar from '../components/ui/TabBar.vue'
 import ProcessIndicator from '../components/ui/ProcessIndicator.vue'
 import CodeCommentsIndicator from '../components/ui/CodeCommentsIndicator.vue'
 import GitChangeStats from '../components/git/GitChangeStats.vue'
+import UploadTabStatus from '../components/files/UploadTabStatus.vue'
 import { useCodeCommentsStore } from '../stores/codeComments'
 import { useFramePoolStore } from '../stores/framePool'
+import { useUploadsStore } from '../stores/uploads'
+import { originKey } from '../utils/uploads/rules'
 import {
     buildFilesRouteParams,
     buildGitRouteParams,
@@ -71,6 +74,7 @@ const layoutsStore = useLayoutsStore()
 const settingsStore = useSettingsStore()
 const helpStore = useHelpStore()
 const codeCommentsStore = useCodeCommentsStore()
+const uploadsStore = useUploadsStore()
 const { registerCommands, unregisterCommands } = useCommandRegistry()
 
 // Reference to session header for opening rename dialog
@@ -520,6 +524,14 @@ const gitCommentsCount = computed(() =>
 const gitIndexStatus = ref(null)
 function toolTabChangeStats(tabId) {
     return tabId === 'git' ? gitIndexStatus.value : null
+}
+// Upload status of the Files / Artifacts tab (spec §6.11): the aggregate of the uploads started
+// from that panel of this session, shown next to the tab's label.
+function toolTabUploadStatus(tabId) {
+    const origin = tabId === 'files' ? filesUploadOrigin.value
+        : tabId === 'artifacts' ? artifactsUploadOrigin.value
+        : null
+    return origin ? uploadsStore.statusByOrigin[originKey(origin)] || null : null
 }
 const chatCommentsCount = computed(() =>
     codeCommentsStore.getCommentsBySession(projectId.value, sessionId.value)
@@ -2276,6 +2288,7 @@ onBeforeUnmount(() => {
             :layout="layout"
             :tab-href="sessionTabHref"
             :tab-change-stats="toolTabChangeStats"
+            :tab-upload-status="toolTabUploadStatus"
             :register-target="registerLayoutTarget"
             :unregister-target="unregisterLayoutTarget"
             @select-tab="onLayoutSelectTab"
@@ -2356,6 +2369,7 @@ onBeforeUnmount(() => {
                     <wa-icon :name="tab.icon"></wa-icon>
                     {{ tab.label }}
                     <GitChangeStats :stats="toolTabChangeStats(tab.id)" />
+                    <UploadTabStatus :status="toolTabUploadStatus(tab.id)" />
                     <CodeCommentsIndicator
                         v-if="toolTabCommentsCount(tab.id) !== null"
                         :count="toolTabCommentsCount(tab.id)"

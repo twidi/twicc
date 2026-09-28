@@ -16,7 +16,7 @@ import { apiFetch, handleUnauthorized } from '../utils/api'
 import { useAuthStore } from './auth'
 import { useToast } from '../composables/useToast'
 import { generateUUID } from '../utils/crypto'
-import { isAppNavigation } from '../utils/appNavigation'
+import { isAppNavigation, markAppNavigation } from '../utils/appNavigation'
 import { createUploadsController } from '../utils/uploads/controller'
 import { randomHexFromUUID } from '../utils/uploads/ids'
 
@@ -145,6 +145,7 @@ export const useUploadsStore = defineStore('uploads', () => {
 // boundaries, so the page would not reload.
 if (import.meta.hot) {
     import.meta.hot.accept(() => {
+        markAppNavigation()
         window.location.reload()
     })
 }

@@ -13,6 +13,8 @@ import { useSettingsStore } from '../../stores/settings'
 import { useDataStore } from '../../stores/data'
 import { deriveFileRoots, getWorktreeParent } from '../../utils/projectRoots'
 import { useSplitDividerDragFlag } from '../../composables/useSplitDividerDragFlag'
+import { useUploadsStore } from '../../stores/uploads'
+import { createDirRefresher } from '../../utils/uploads/tree'
 
 const emit = defineEmits(['navigate'])
 
@@ -614,6 +616,34 @@ async function reloadAll() {
 
 onBeforeUnmount(() => {
     if (artifactFlushTimer) clearTimeout(artifactFlushTimer)
+})
+
+// ─── Refresh on upload completion (spec §6.10) ──────────────────────────────
+
+// On every completed upload (from any panel, tab or device), refresh in place
+// only the node of its target directory, when this panel's current tree root
+// contains the final file. No scroll, no focus, no change to the selection or
+// the open file. `refreshTreeSoft()` is not used: it replaces the whole tree,
+// and the backend returns lazily loaded directories as stubs. A KeepAlive-cached
+// panel stays subscribed (it is unmounted only when really destroyed).
+const uploadRefresher = createDirRefresher({
+    fetchListing: lazyLoadDir,
+    // The tree on screen and its root; `loadedDirectory` is the directory the
+    // tree was fetched for (null while another root loads).
+    getTree: () => {
+        if (!started.value || !tree.value || !loadedDirectory.value) return null
+        return { tree: tree.value, rootPath: loadedDirectory.value }
+    },
+})
+let unsubscribeUploadCompleted = null
+onMounted(() => {
+    unsubscribeUploadCompleted = useUploadsStore().onCompleted(record => {
+        uploadRefresher.completed(record)
+    })
+})
+onBeforeUnmount(() => {
+    unsubscribeUploadCompleted?.()
+    unsubscribeUploadCompleted = null
 })
 
 // ─── File selection ──────────────────────────────────────────────────────────

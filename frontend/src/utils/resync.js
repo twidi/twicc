@@ -20,6 +20,8 @@
 //   nobody, and it is the tab most likely to have fallen behind in the first
 //   place. It reloads when the user comes back to it.
 
+import { markAppNavigation } from './appNavigation.js'
+
 // Survives the reload it triggers, and is per-tab — exactly the scope of the
 // decision. localStorage would let one tab's reload suppress another's.
 const LAST_RELOAD_KEY = 'twicc:lastResyncReload'
@@ -53,6 +55,8 @@ function readLastReload() {
 
 function reloadNow() {
     sessionStorage.setItem(LAST_RELOAD_KEY, String(Date.now()))
+    // An app-initiated reload: the uploads `beforeunload` handler must not ask to confirm it.
+    markAppNavigation()
     window.location.reload()
 }
 
