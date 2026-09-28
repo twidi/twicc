@@ -14,7 +14,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 3 | Accent-tinted glass overlays | **Done** — commit `709f9cf9` on branch `enhanced-ui` (see §6c) |
 | 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (§6d); **4b done** — commit `d11ea446` (§6e); **4c done** — commit `116f9d10` (§6f) |
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
-| 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code in the step-5b commit (§6h); **5c** (list cascade, tab crossfade, theme reveal): to specify |
+| 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c** (list cascade, tab crossfade, theme reveal): to specify |
 | 6 | Accent glow + live states | To specify |
 | 7 | Secondary screens | To specify |
 
