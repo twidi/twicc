@@ -13,6 +13,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 2 | Depth (layered shadows) + typography | **Done** — commits `85ce211f`, `ad7942b1`, `e2046d92` on branch `enhanced-ui` (see §6b) |
 | 3 | Accent-tinted glass overlays | **Done** — commit `709f9cf9` on branch `enhanced-ui` (see §6c) |
 | 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (§6d); **4b done** — commit `d11ea446` (§6e); **4c done** — commit `116f9d10` (§6f) |
+| 4→5 | Fixed theme `default` + accent `cyan` | **Implemented**, awaiting the user's browser review — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md`; commit to record once made |
 | 5 | Entrances (virtual-scroll aware) + skeletons | To specify |
 | 6 | Accent glow + live states | To specify |
 | 7 | Secondary screens | To specify |
@@ -27,9 +28,10 @@ The user found the UI "sad": flat surfaces, almost no animation, nothing that ma
 components and tokens (there are too many screens to treat one by one).
 
 Constraints given at the start:
-- light and dark schemes, and a user-chosen accent color, must both keep working;
+- light and dark schemes must both keep working;
 - the user **may later remove** the theme choice and the accent-color choice (keep
-  everything derived from tokens so either outcome works);
+  everything derived from tokens so either outcome works) — **done** (2026-09-28): both
+  are now fixed, see §4;
 - sizes are `rem`-based and follow the font-size setting.
 
 Findings on the existing UI (2026-09-26):
@@ -66,6 +68,10 @@ matching step** (values are copied in §9 below in case the artifact is lost).
 
 From the mock (round 1 pick, round 2 review) and from step 1 reviews:
 
+- **Fixed theme and accent (2026-09-28):** one Web Awesome theme, `default`, and one
+  accent, `cyan`. The user no longer chooses them; only the light/dark/auto color scheme
+  stays a user choice. Stored values are purged silently. The word "accent" stays: it names
+  the UI's brand color, now fixed. Spec: `docs/plans/2026-09-28-fixed-theme-accent-design.md`.
 - **Selected session:** no accent bar on its left. Keep a distinct, **more evident** fill
   (stronger lit fill, thin accent ring, soft accent shadow, bolder title).
 - **Toasts:** top center (where Notivue shows them), dropping in from the top.
@@ -245,7 +251,8 @@ invariants).
   position and snaps on an inset/outer pair — dark tokens put their inset layer first.
 - **`:where()` protects against component rules, not against layered theme rules**: an
   unlayered global rule always beats `@layer wa-theme-*`; the awesome theme's hard controls
-  are kept by excluding `.wa-theme-awesome`.
+  are kept by excluding `.wa-theme-awesome`. *The exclusion is obsolete (fixed-theme
+  step): the awesome theme no longer exists; do not re-add it.*
 - **Whitespace is a combinator**: each `wa-button:is(…):not(…)` compound stays on one line.
 - **`background-attachment: fixed` is `scroll` under a transform** (the mobile drawer) and
   in iOS Safari: canvas-painted elements need an approximation there.
@@ -308,6 +315,8 @@ Commit: `709f9cf9`. Tests: 468 (`frontend/src/styles/glass.test.js`,
 - **The production minifier writes `::before` as `:before`** but leaves `@supports selector()`
   conditions as written: test both spellings.
 - **Theme widths vary**: `--wa-border-width-s` is 2px in the awesome theme.
+  *Obsolete (fixed-theme step): the awesome theme no longer exists; do not re-add
+  this code.*
 - **Firefox antialiases a diagonal clip to a half-covered row**: the arrow clip overlaps the
   body by 1px.
 - Headless Chrome with CDP `Emulation.setEmulatedMedia` checks `prefers-reduced-transparency`;
@@ -357,9 +366,12 @@ in three sub-steps, each with its own spec, review and commit: **4a** (this one)
 - The awesome theme sets `--wa-transition-*` to a **unitless `0`** on buttons: mixed into
   a duration list with `ms` values, it invalidates the whole list. `motion.css` restates
   it as `0s`.
+  *Obsolete (fixed-theme step): the awesome theme no longer exists; do not re-add
+  this code.*
 - Replacing a `transform` with an individual property can **expose a theme rule** it was
   overriding: the awesome theme translates native buttons 4px down on press; the snippet
-  chips keep `transform: none`.
+  chips keep `transform: none`. *The awesome example is obsolete (fixed-theme step): the
+  theme no longer exists; do not re-add `transform: none` for it.*
 - Web Awesome re-declares its tokens on `.wa-invert` (tooltips): any token override goes
   on `:root, .wa-invert`.
 - Vue scoped styles rename a keyframe only when the same scoped block declares it: a
@@ -438,6 +450,8 @@ another (PASS, one test gap fixed).
   collapse it when hidden.
 - The awesome theme styles button radios (offset shadow, 4px "pressed" shift): an
   unlayered override must reset `box-shadow` and `transform`.
+  *Obsolete (fixed-theme step): the awesome theme no longer exists; do not re-add
+  this code.*
 - A measured placement is not a movement: never multiply it by `--motion-amount`
   (`motion.test.js` test 8 exempts `.glide-ink`).
 
@@ -446,7 +460,6 @@ another (PASS, one test gap fixed).
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
   sidebar, which now reads as visibly truncated at the sidebar edge) — "to rethink later",
   user 2026-09-26.
-- Possible removal of the theme and accent-color choices (user idea, undecided).
 - A bundled variable font (Inter / Geist, self-hosted) — would add an npm dependency: the
   user's call.
 - CHANGELOG entry for the redesign — propose at the end, do not write without asking.

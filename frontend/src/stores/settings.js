@@ -12,16 +12,13 @@ import {
     COLOR_SCHEME,
     SESSION_TIME_FORMAT,
     SYNCED_SETTINGS_KEYS,
-    WA_THEME,
-    WA_BRAND,
-    WA_THEME_DEFAULT_PALETTE,
     resolveTitleSuggestionModel,
     resolveEffectiveTitleSuggestionModel,
 } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 import { getProviderHelpers, getRegisteredProviders } from '../providers'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
-import { setColorScheme as setColorSchemeOnDom, setWaTheme, setWaBrand } from '../utils/theme'
+import { setColorScheme as setColorSchemeOnDom } from '../utils/theme'
 import { validateWorktreeTemplate } from '../utils/worktreePath'
 import { usablePublicOrigin } from '../utils/publicOrigin'
 import { ORIGIN_SETTING_KEYS } from '../utils/originSettingsForm'
@@ -95,8 +92,6 @@ export const SETTINGS_SCHEMA = {
     worktreeDirectoryTemplate: null,
     terminalUseTmux: null,
     terminalTmuxConfigPath: null,
-    waTheme: null,
-    waBrand: null,
     externalNotificationTargets: [],
     publicBaseUrl: null,
     shareBaseUrl: null,
@@ -191,8 +186,6 @@ const SETTINGS_VALIDATORS = {
     notifExtraUsageStartBrowser: (v) => typeof v === 'boolean',
     notifPeerSound: (v) => Object.values(NOTIFICATION_SOUNDS).includes(v),
     notifPeerBrowser: (v) => typeof v === 'boolean',
-    waTheme: (v) => Object.values(WA_THEME).includes(v),
-    waBrand: (v) => Object.values(WA_BRAND).includes(v),
     externalNotificationTargets: (v) =>
         Array.isArray(v) && v.every(item =>
             item && typeof item === 'object'
@@ -407,8 +400,6 @@ export const useSettingsStore = defineStore('settings', {
         isNotifExtraUsageStartBrowser: (state) => state.notifExtraUsageStartBrowser,
         getNotifPeerSound: (state) => state.notifPeerSound,
         isNotifPeerBrowser: (state) => state.notifPeerBrowser,
-        getWaTheme: (state) => state.waTheme,
-        getWaBrand: (state) => state.waBrand,
         getExternalNotificationTargets: (state) => state.externalNotificationTargets,
         getPublicBaseUrl: (state) => state.publicBaseUrl,
         getShareBaseUrl: (state) => state.shareBaseUrl,
@@ -997,18 +988,6 @@ export const useSettingsStore = defineStore('settings', {
             }
         },
 
-        setWaTheme(theme) {
-            if (SETTINGS_VALIDATORS.waTheme(theme)) {
-                this.waTheme = theme
-            }
-        },
-
-        setWaBrand(brand) {
-            if (SETTINGS_VALIDATORS.waBrand(brand)) {
-                this.waBrand = brand
-            }
-        },
-
         /**
          * Replace the external notification targets list.
          * @param {Array<{url: string, enabled: boolean, tested: boolean|null}>} targets
@@ -1269,8 +1248,6 @@ export function initSettings() {
             notifPendingRequestBrowser: store.notifPendingRequestBrowser,
             notifExtraUsageStartSound: store.notifExtraUsageStartSound,
             notifExtraUsageStartBrowser: store.notifExtraUsageStartBrowser,
-            waTheme: store.waTheme,
-            waBrand: store.waBrand,
             externalNotificationTargets: store.externalNotificationTargets,
             publicBaseUrl: store.publicBaseUrl,
             shareBaseUrl: store.shareBaseUrl,
@@ -1337,10 +1314,6 @@ export function initSettings() {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         store._updateEffectiveColorScheme()
     })
-
-    // Watch for WA theme/palette/brand changes
-    watch(() => store.waTheme, (theme) => { if (theme) setWaTheme(theme) })
-    watch(() => store.waBrand, (brand) => { if (brand) setWaBrand(brand) })
 
     // Watch for font size changes
     watch(() => store.fontSize, (size) => {

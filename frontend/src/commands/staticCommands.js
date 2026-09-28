@@ -36,10 +36,6 @@ import { TERMINAL_ROUTES, WORKFLOW_ROUTES } from '../utils/tabRoutes'
 import {
     DISPLAY_MODE,
     COLOR_SCHEME,
-    WA_THEME,
-    WA_THEME_LABELS,
-    WA_BRAND,
-    WA_BRAND_LABELS,
 } from '../constants'
 
 // Top-level command glyph for a boolean flag, aligned with the shared flag
@@ -1119,30 +1115,6 @@ export function initStaticCommands(router) {
                 { id: COLOR_SCHEME.LIGHT, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.LIGHT], action: () => settings.setColorScheme(COLOR_SCHEME.LIGHT), active: settings.colorScheme === COLOR_SCHEME.LIGHT },
                 { id: COLOR_SCHEME.DARK, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.DARK], action: () => settings.setColorScheme(COLOR_SCHEME.DARK), active: settings.colorScheme === COLOR_SCHEME.DARK },
             ],
-        },
-        {
-            id: 'display.wa-theme',
-            label: 'Change Theme…',
-            icon: 'palette',
-            category: 'display',
-            items: () => Object.values(WA_THEME).map(value => ({
-                id: value,
-                label: WA_THEME_LABELS[value],
-                action: () => settings.setWaTheme(value),
-                active: settings.waTheme === value,
-            })),
-        },
-        {
-            id: 'display.wa-brand',
-            label: 'Change Brand Color…',
-            icon: 'droplet',
-            category: 'display',
-            items: () => Object.values(WA_BRAND).map(value => ({
-                id: value,
-                label: WA_BRAND_LABELS[value],
-                action: () => settings.setWaBrand(value),
-                active: settings.waBrand === value,
-            })),
         },
         {
             id: 'display.mode',

@@ -1021,8 +1021,8 @@ wa-divider {
 }
 
 /* Untrusted-project marker (mirrors ProjectBadge): faint closed
-   lock — normal text colour at low opacity, so it adapts to light/dark and every
-   theme on its own (quieter than --wa-color-text-quiet). */
+   lock — normal text colour at low opacity, so it adapts to light/dark on its
+   own (quieter than --wa-color-text-quiet). */
 .palette-trust-icon {
     flex-shrink: 0;
     color: var(--wa-color-text-normal);

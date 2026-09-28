@@ -33,6 +33,7 @@ from twicc.core.services.public_origin import (
 from twicc.providers.helpers import get_provider_helpers_registry
 from twicc.synced_settings import (
     _settings_lock,
+    get_obsolete_synced_settings_keys,
     prepare_settings_for_client,
     read_synced_settings,
     write_synced_settings,
@@ -387,7 +388,12 @@ async def update_synced_settings(
     transitions run and ``synced_settings_updated`` is broadcast to all clients.
     Only the owner suspension action skips revocation when turning MCP off.
     Origin changes always revoke grants, including on that internal path.
+
+    Obsolete keys (a tab opened before an upgrade may still send them) are
+    silently dropped from ``patch`` first: never stored, never broadcast.
     """
+    obsolete_keys = get_obsolete_synced_settings_keys()
+    patch = {key: value for key, value in patch.items() if key not in obsolete_keys}
     previous_mcp = read_synced_settings()
     result = await sync_to_async(_merge_and_write)(patch, base_version)
     if result["status"] == "accepted" and set(patch) & {"mcpBaseUrl", "externalMcpEnabled"}:

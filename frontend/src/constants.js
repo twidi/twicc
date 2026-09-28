@@ -144,58 +144,6 @@ export const PROVIDER = {
 }
 
 /**
- * Web Awesome theme values.
- * Controls the visual theme applied to Web Awesome components.
- */
-export const WA_THEME = {
-    DEFAULT: 'default',
-    SHOELACE: 'shoelace',
-    AWESOME: 'awesome',
-}
-
-export const WA_THEME_LABELS = {
-    [WA_THEME.DEFAULT]: 'Default',
-    [WA_THEME.SHOELACE]: 'Shoelace',
-    [WA_THEME.AWESOME]: 'Awesome',
-}
-
-export const WA_THEME_DEFAULT_PALETTE = {
-    [WA_THEME.AWESOME]: 'bright',
-    [WA_THEME.DEFAULT]: 'default',
-    [WA_THEME.SHOELACE]: 'shoelace',
-}
-
-/**
- * Web Awesome brand color values.
- * Controls the accent/brand color used throughout the UI.
- */
-export const WA_BRAND = {
-    BLUE: 'blue',
-    RED: 'red',
-    ORANGE: 'orange',
-    YELLOW: 'yellow',
-    GREEN: 'green',
-    CYAN: 'cyan',
-    INDIGO: 'indigo',
-    PURPLE: 'purple',
-    PINK: 'pink',
-    GRAY: 'gray',
-}
-
-export const WA_BRAND_LABELS = {
-    [WA_BRAND.BLUE]: 'Blue',
-    [WA_BRAND.RED]: 'Red',
-    [WA_BRAND.ORANGE]: 'Orange',
-    [WA_BRAND.YELLOW]: 'Yellow',
-    [WA_BRAND.GREEN]: 'Green',
-    [WA_BRAND.CYAN]: 'Cyan',
-    [WA_BRAND.INDIGO]: 'Indigo',
-    [WA_BRAND.PURPLE]: 'Purple',
-    [WA_BRAND.PINK]: 'Pink',
-    [WA_BRAND.GRAY]: 'Gray',
-}
-
-/**
  * Generic settings keys synced across devices via backend settings.json.
  * Provider-owned synced keys are declared by each provider's helper
  * (``BaseProviderHelpers.getSyncedSettingsKeys``) — they are dispatched to
@@ -208,7 +156,6 @@ export const SYNCED_SETTINGS_KEYS = new Set([
     'titleSuggestionModel', 'titleSystemPrompt', 'autoUnpinOnArchive',
     'worktreeDirectoryTemplate',
     'terminalUseTmux', 'terminalTmuxConfigPath',
-    'waTheme', 'waBrand',
     'externalNotificationTargets', 'publicBaseUrl', 'shareBaseUrl', 'peerBaseUrl', 'peerDisplayName',
     'notifyOnExtraUsageStart',
     'allowAgentSessionShares', 'allowAgentArtifactShares',

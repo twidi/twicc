@@ -94,17 +94,14 @@ wa-radio-group::part(form-control-input) {
     gap: var(--segmented-pad);
 }
 
-/* A document rule on the host beats Web Awesome's :host(...) rules and the themes'
-   layered ones: the checked fill, the joined-button radii and the overlap margins are
-   replaced, so a segment's box never depends on its checked state. */
+/* A document rule on the host beats Web Awesome's :host(...) rules: the checked fill,
+   the joined-button radii and the overlap margins are replaced, so a segment's box never
+   depends on its checked state. */
 wa-radio[appearance='button'] {
     margin: 0;
     border-color: transparent;
     border-radius: var(--glide-ink-radius);
     background-color: transparent;
-    /* the awesome theme's hard offset shadow, and its checked "pressed" shift */
-    box-shadow: none;
-    transform: none;
     color: var(--wa-color-text-quiet);
     /* the frame's padding and border are inside the control height */
     min-height: calc(var(--wa-form-control-height) - 2 * (var(--segmented-pad) + var(--wa-form-control-border-width)));

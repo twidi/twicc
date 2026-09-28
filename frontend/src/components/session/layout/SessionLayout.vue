@@ -146,7 +146,7 @@ const draggingId = ref(null)
 function splitterStyle(s) {
     // Only the resolver position + the long dimension. The thin dimension and the on-divider
     // centering live in CSS (--resize-grab + translate -50%), so there's no px magic here and it
-    // adapts to the theme's divider thickness.
+    // adapts to the divider thickness.
     return s.axis === 'v'
         ? { left: `${s.x}px`, top: `${s.y}px`, height: `${s.h}px` }
         : { left: `${s.x}px`, top: `${s.y}px`, width: `${s.w}px` }
@@ -962,16 +962,16 @@ body.sidebar-closed .session-layout :deep(.dock-gutter.left .g-group.end) {
     /* Grid so the grip child is centered with place-content (no px offsets, no transform tricks). */
     display: grid;
     place-content: center;
-    /* The only sizing knob: the grab-strip thickness. The visible line stays var(--divider-size),
-       which varies with the theme; the strip is centered on its divider with translate, so
-       everything stays aligned whatever the divider thickness is. */
+    /* The only sizing knob: the grab-strip thickness. The visible line stays var(--divider-size);
+       the strip is centered on its divider with translate, so everything stays aligned
+       whatever the divider thickness is. */
     --resize-grab: 0.6rem;
 }
 /* Center each strip on its divider with translate (not a px offset); thin dimension from the token. */
 .layout-splitter.axis-v { width: var(--resize-grab); translate: -50% 0; cursor: col-resize; }
 .layout-splitter.axis-h { height: var(--resize-grab); translate: 0 -50%; cursor: row-resize; }
 
-/* Hover/drag highlight: a line the thickness of the theme's divider, centered in the strip. */
+/* Hover/drag highlight: a line the thickness of the divider, centered in the strip. */
 .layout-splitter::after {
     content: '';
     position: absolute;

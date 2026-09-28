@@ -73,7 +73,7 @@
 /* Web Awesome's own shadows follow the levels: wa-card rests at level 1; every consumer
    of m (dropdown, submenu, select listbox, color picker) and of l (dialog, drawer,
    popover) is a floating layer, so both map to level 3. .wa-invert is listed because
-   every theme re-declares --wa-shadow-* there (tooltip content); var(--depth-*) then
+   the theme re-declares --wa-shadow-* there (tooltip content); var(--depth-*) then
    resolves to the page scheme, inherited from <html> — right for a shadow cast on the
    page. Placed after the .wa-dark block. */
 :root,
@@ -85,9 +85,7 @@
 
 /* Global rules below are wrapped in :where() (specificity 0 + ::part), so any unlayered
    component rule that sets its own box-shadow on the same part wins. Being unlayered they
-   beat every layered Web Awesome rule; the only layered ones that shadow these parts are
-   the awesome theme's button and field rules, hence the awesome exclusion (that theme's
-   controls keep their hard shadows: its press effect depends on them). */
+   beat every layered Web Awesome rule. */
 
 /* Buttons: gently raised. Not: plain, outlined/filled buttons joined in a group (a shadow
    per segment breaks the group; solid accent groups such as "New session" + its menu are
@@ -98,7 +96,7 @@
    Each wa-button:is(…):not(…) compound stays on one line: a line break between :is() and
    :not() would be a descendant combinator and target what is inside the buttons. */
 :where(
-    :root:not(.wa-theme-awesome) wa-button:is([appearance*='outlined'], [appearance*='filled']):not(wa-button-group wa-button, .wa-invert wa-button, .session-item, .bookmark-item, .filters-toggle, .autoattach-button)
+    wa-button:is([appearance*='outlined'], [appearance*='filled']):not(wa-button-group wa-button, .wa-invert wa-button, .session-item, .bookmark-item, .filters-toggle, .autoattach-button)
 )::part(base) {
     box-shadow: var(--depth-button), var(--depth-highlight);
 }
@@ -106,7 +104,7 @@
    step of whatever color the button actually has (brand, neutral, danger… or a component's
    own background) — a plain white line reads too bright on a colored fill. */
 :where(
-    :root:not(.wa-theme-awesome) wa-button[appearance='accent']:not(.wa-invert wa-button, .layout-winbtn)
+    wa-button[appearance='accent']:not(.wa-invert wa-button, .layout-winbtn)
 )::part(base) {
     box-shadow: var(--depth-button), inset 0 1px 0 oklch(1 0 0 / 0.2);
 }
@@ -123,7 +121,7 @@
 }
 
 /* Text fields: slightly recessed. The focus ring is an outline, so it is unaffected. */
-:where(:root:not(.wa-theme-awesome) :is(wa-input, wa-textarea))::part(base),
-:where(:root:not(.wa-theme-awesome) wa-select)::part(combobox) {
+:where(:is(wa-input, wa-textarea))::part(base),
+:where(wa-select)::part(combobox) {
     box-shadow: var(--depth-inset);
 }

@@ -4,11 +4,9 @@
 import { initTheme } from './utils/theme'
 initTheme()
 
-// Web Awesome base styles and themes (all free themes loaded for runtime switching)
+// Web Awesome base styles and its default theme (the only one used)
 import '@awesome.me/webawesome/dist/styles/webawesome.css';
-import '@awesome.me/webawesome/dist/styles/themes/awesome.css'
 import '@awesome.me/webawesome/dist/styles/themes/default.css'
-import '@awesome.me/webawesome/dist/styles/themes/shoelace.css'
 // Shared transcript CSS tokens (also imported by the share bundle — design §8.8).
 import './styles/transcript-tokens.css'
 // Depth tokens (also imported by the share bundle and the artifact shell).

@@ -39,7 +39,7 @@
     --glide-fade: opacity var(--motion-dur-1) var(--motion-ease);
 }
 
-/* Web Awesome components take the same timing. The themes declare these tokens in
+/* Web Awesome components take the same timing. The theme declares these tokens in
    @layer wa-theme on the theme root and again on .wa-light / .wa-dark / .wa-invert
    descendants: repeated on .wa-invert (tooltips), which would otherwise re-declare the
    layered values on itself (same reason as depth.css). */
@@ -49,15 +49,6 @@
     --wa-transition-normal: var(--motion-dur-2);
     --wa-transition-slow: var(--motion-dur-3);
     --wa-transition-easing: var(--motion-ease);
-}
-
-/* The awesome theme keeps its buttons instant, but with a unitless 0, an invalid <time>
-   that would void the mixed transition-duration lists below (the press would snap).
-   Same "instant", with units. */
-:where(.wa-theme-awesome wa-button) {
-    --wa-transition-fast: 0s;
-    --wa-transition-normal: 0s;
-    --wa-transition-slow: 0s;
 }
 
 /* Reduced, not none: movement goes, fades and status indicators stay. After the token
@@ -81,9 +72,8 @@
 
 /* Button press: sinks in 60ms, springs back on release. The property list repeats Web
    Awesome's own list on .button (a ::part() rule replaces it) and adds scale.
-   Exclusions: the awesome theme's framed buttons (their own press would fight the scale;
-   its plain buttons have none), inert buttons, group segments (they would break the joined
-   edges), and the full-width sidebar rows (session rows get their own nudge).
+   Exclusions: inert buttons, group segments (they would break the joined edges), and the
+   full-width sidebar rows (session rows get their own nudge).
    Each compound stays on one line: a line break before :not( is a descendant combinator. */
 :where(wa-button)::part(base) {
     transition-property: background, border, box-shadow, color, opacity, scale;
@@ -95,8 +85,7 @@
         var(--wa-transition-easing), var(--motion-ease-spring);
 }
 :where(
-    :root:not(.wa-theme-awesome) wa-button:not([disabled], [loading], wa-button-group wa-button, .session-item, .bookmark-item):active,
-    :root.wa-theme-awesome wa-button[appearance~='plain']:not([disabled], [loading], wa-button-group wa-button, .session-item, .bookmark-item):active
+    wa-button:not([disabled], [loading], wa-button-group wa-button, .session-item, .bookmark-item):active
 )::part(base) {
     scale: calc(1 - 0.04 * var(--motion-amount));
     transition-duration: var(--wa-transition-fast), var(--wa-transition-fast),

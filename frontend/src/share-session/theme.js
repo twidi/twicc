@@ -32,7 +32,6 @@ export function applyShareFontSize(size) {
 
 export function initShareTheme() {
     document.documentElement.classList.add('wa-theme-default', 'wa-palette-default', 'wa-brand-cyan')
-    document.documentElement.dataset.theme = 'default'
     applyShareColorScheme(getShareColorScheme())
     applyShareFontSize(getShareFontSize())
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -47,7 +46,6 @@ export function initShareTheme() {
 // session/doc switcher use.
 export function initArtifactShellColorScheme() {
     document.documentElement.classList.add('wa-theme-default', 'wa-palette-default', 'wa-brand-cyan')
-    document.documentElement.dataset.theme = 'default'
     const mq = matchMedia('(prefers-color-scheme: dark)')
     const apply = () => {
         document.documentElement.classList.toggle('wa-dark', mq.matches)

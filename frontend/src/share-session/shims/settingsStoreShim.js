@@ -26,7 +26,6 @@ export const useSettingsStore = defineStore('shareSettings', {
         // without these the code/diff blocks render light regardless of the viewer's
         // dark toggle and the font size is undefined.
         getEffectiveColorScheme() { return this._effectiveColorScheme },
-        getWaTheme() { return this.waTheme },
         getFontSize() { return this.fontSize },
         showDiffs: () => false,
         isMac: () => /Mac/i.test(navigator.platform || ''),
@@ -36,8 +35,6 @@ export const useSettingsStore = defineStore('shareSettings', {
         isClaudeHybridEnabled: () => false,
         isTitleGenerationEnabled: () => false,
         getTitleSystemPrompt: () => '',
-        waTheme: () => 'default',
-        waBrand: () => 'cyan',
     },
     actions: {
         setDisplayMode(mode) { this.displayMode = mode; document.body.dataset.displayMode = mode },

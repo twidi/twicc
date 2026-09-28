@@ -321,8 +321,6 @@ test('SegmentedControl: button radios, ink, not-ready fill, change guard, value 
     assert.equal(frame.decls.position, 'relative')
     assert.equal(frame.decls['--glide-ink-bg'], 'var(--wa-color-brand-fill-normal)')
     const button = rule(rules, ["wa-radio[appearance='button']"])
-    assert.equal(button.decls['box-shadow'], 'none')
-    assert.equal(button.decls.transform, 'none')
     assert.equal(button.decls.margin, '0')
     assert.equal(button.decls['background-color'], 'transparent')
     const notReady = rule(rules, [".segmented-control:not([data-glide-ready]) wa-radio[appearance='button']:state(checked)"])

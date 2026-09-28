@@ -10,7 +10,7 @@
 const EDGE_EPSILON = 0.5
 
 // A pooled iframe corner is "flush" with its card's corner when within this distance on both
-// axes: the largest card border (4px, awesome theme) plus rounding.
+// axes: the card border plus rounding, with margin.
 export const FLUSH_TOLERANCE_PX = 6
 
 // Radius given to a flush iframe corner: the card's padding-box radius, resolved by the

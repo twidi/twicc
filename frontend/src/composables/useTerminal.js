@@ -2023,8 +2023,8 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
         }
     })
 
-    // Switch theme live when the user toggles dark/light mode or WA theme
-    watch(() => [settingsStore.getEffectiveColorScheme, settingsStore.getWaTheme], ([newColorScheme]) => {
+    // Switch theme live when the user toggles dark/light mode
+    watch(() => settingsStore.getEffectiveColorScheme, (newColorScheme) => {
         if (terminal) {
             terminal.options.theme = getTerminalTheme(newColorScheme)
         }

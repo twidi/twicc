@@ -516,3 +516,27 @@ def test_external_mcp_payload_cannot_bypass_password_requirement(temp_settings, 
     })
     assert result.success is False
     assert ss.read_synced_settings()["externalMcpEnabled"] is False
+
+
+def test_obsolete_keys_are_neither_stored_nor_broadcast(temp_settings, monkeypatch):
+    # A tab opened before the upgrade may still send the fixed theme/accent keys:
+    # the valid part of the patch goes through, the obsolete keys are silently dropped.
+    import orjson
+
+    from twicc.core.services import settings_mutation as sm
+
+    broadcast_patches = []
+
+    async def record(patch, result):
+        broadcast_patches.append(patch)
+
+    monkeypatch.setattr(sm, "_apply_transitions_and_broadcast", record)
+    r = async_to_sync(sm.update_synced_settings)(
+        {"waTheme": "awesome", "autoUnpinOnArchive": False}, broadcast=True,
+    )
+    assert r.status == "accepted"
+    assert r.corrections == {}
+    stored = orjson.loads(temp_settings.read_bytes())
+    assert stored["autoUnpinOnArchive"] is False
+    assert "waTheme" not in stored
+    assert broadcast_patches == [{"autoUnpinOnArchive": False}]

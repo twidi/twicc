@@ -32,8 +32,9 @@ def test_existing_settings_without_title_model_use_provider_without_rewrite(temp
 def test_generic_allowlist_excludes_visual_and_special():
     from twicc.cli.settings._keys import classify_key
     assert classify_key("autoUnpinOnArchive") == "generic"
-    assert classify_key("waTheme") == "excluded"
     assert classify_key("defaultLayoutId") == "excluded"
+    # Theme and accent are fixed since the visual refresh: no longer a setting at all.
+    assert classify_key("waTheme") == "unknown"
     assert classify_key("disabledProviders") == "provider"
     assert classify_key("externalNotificationTargets") == "notifications"
     assert classify_key("claudeCodeDefaultModel") == "provider"
@@ -73,7 +74,6 @@ def test_build_settings_dump_keeps_only_generic_keys(temp_settings):
         k: classify_key(k) for k in result if classify_key(k) != "generic"
     }
     # Non-generic keys are dropped: excluded (UI-only), provider, notifications.
-    assert "waTheme" not in result
     assert "defaultLayoutId" not in result
     assert "claudeCodeDefaultModel" not in result
     assert "defaultProvider" not in result
@@ -129,7 +129,7 @@ def _validate_settable_key(key: str):
 
 
 def test_set_rejects_excluded_key():
-    result = _validate_settable_key("waTheme")
+    result = _validate_settable_key("defaultLayoutId")
     assert result is not None
     assert result[1] == "excluded"
 
@@ -740,12 +740,12 @@ def test_info_settings_generic_key_has_correct_type_and_default():
 
 
 def test_info_settings_excluded_key_is_marked_excluded():
-    """build() marks waTheme as excluded (UI-only)."""
+    """build() marks defaultLayoutId as excluded (UI-only)."""
     from twicc.cli.info.settings import build
 
     result = build()
     entries = _get_schema_entries(result)
-    matches = [e for e in entries if e["key"] == "waTheme"]
+    matches = [e for e in entries if e["key"] == "defaultLayoutId"]
     assert len(matches) == 1
     assert matches[0]["owner"] == "excluded"
 

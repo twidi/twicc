@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 # Keys excluded from CLI mutation (visual-only or internal).
-EXCLUDED_KEYS = frozenset({"waTheme", "waBrand", "defaultLayoutId", "_version"})
+EXCLUDED_KEYS = frozenset({"defaultLayoutId", "_version"})
 # Keys owned by dedicated sub-commands.
 PROVIDER_KEYS = frozenset({"defaultProvider", "disabledProviders",
                            "orchestrationDisabledProviders"})

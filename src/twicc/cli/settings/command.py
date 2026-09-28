@@ -5,8 +5,8 @@ operates **only** on the generic, directly-settable keys — the ones a user can
 really change through this command family. Provider keys (``claudeCode*`` /
 ``codex*`` / ``defaultProvider`` / …) and notification keys live in their own
 worlds and are read/written through ``twicc settings provider`` and
-``twicc settings notifications``; the UI-only ``excluded`` keys (``waTheme``,
-``waBrand``, ``defaultLayoutId``) are not exposed here at all.
+``twicc settings notifications``; the UI-only ``excluded`` key
+(``defaultLayoutId``) is not exposed here at all.
 
 So the bare ``twicc settings`` prints only the generic keys (offline read,
 ``_version`` stripped), and ``twicc settings get <KEY>`` prints a single

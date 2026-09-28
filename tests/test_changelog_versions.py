@@ -71,7 +71,7 @@ def test_first_install_seeds_both_keys(temp_settings, first_run):
 
 def test_install_from_before_1_2_1_announces_everything(temp_settings, not_first_run):
     """Settings with no tracking on an existing install → user was on ≤ 1.2.1."""
-    temp_settings.write_bytes(orjson.dumps({"waTheme": "default"}))
+    temp_settings.write_bytes(orjson.dumps({"autoUnpinOnArchive": True}))
 
     previous, last, show_forced = asgi._resolve_changelog_versions()
 

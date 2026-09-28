@@ -501,8 +501,8 @@ export function useSettingsWatcher(getView, cmExtensions, overrides = {}) {
 
         if (!overrides.theme) {
             stops.push(watch(
-                () => [settingsStore.getEffectiveColorScheme, settingsStore.getWaTheme],
-                ([theme]) => {
+                () => settingsStore.getEffectiveColorScheme,
+                (theme) => {
                     const view = getView()
                     if (view) cmExtensions.reconfigure(view, 'theme', theme)
                 },

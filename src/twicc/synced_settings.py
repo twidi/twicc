@@ -78,8 +78,6 @@ _GENERIC_SYNCED_SETTINGS_DEFAULTS: dict = {
     "worktreeDirectoryTemplate": "",
     "terminalUseTmux": True,
     "terminalTmuxConfigPath": "",
-    "waTheme": "default",
-    "waBrand": "cyan",
     # Providers the user opted OUT of orchestration (soft preference, mirrors
     # the shape of `disabledProviders`). Agents picking providers on their own
     # for orchestration skip these; an explicit user request still wins as
@@ -203,7 +201,24 @@ _GENERIC_OBSOLETE_SYNCED_SETTINGS_KEYS: tuple[str, ...] = (
     # release shipped them.
     "externalNotifyUserTurn",
     "externalNotifyPendingRequest",
+    # Theme and accent are fixed since the visual refresh (Web Awesome theme
+    # ``default``, accent ``cyan``): no longer a user choice.
+    "waTheme",
+    "waBrand",
 )
+
+
+def get_obsolete_synced_settings_keys() -> frozenset[str]:
+    """Every obsolete synced-settings key: the generic ones plus each provider's.
+
+    Dropped from ``settings.json`` on read (:func:`_migrate_legacy_settings`)
+    and from incoming patches by the settings mutation service, so a client
+    still sending one can neither store it back nor relay it to other clients.
+    """
+    return frozenset((
+        *_GENERIC_OBSOLETE_SYNCED_SETTINGS_KEYS,
+        *_merge_provider_tuples("OBSOLETE_SYNCED_SETTINGS_KEYS"),
+    ))
 
 
 # Cross-provider legacy → current key renames. Provider-specific renames are
@@ -232,10 +247,7 @@ def _migrate_legacy_settings(file_data: dict) -> bool:
     changed = False
     dropped: list[str] = []
     renamed: list[str] = []
-    obsolete_keys = (
-        *_GENERIC_OBSOLETE_SYNCED_SETTINGS_KEYS,
-        *_merge_provider_tuples("OBSOLETE_SYNCED_SETTINGS_KEYS"),
-    )
+    obsolete_keys = sorted(get_obsolete_synced_settings_keys())
     renames = {
         **_GENERIC_RENAMED_SYNCED_SETTINGS_KEYS,
         **_merge_provider_dicts("RENAMED_SYNCED_SETTINGS_KEYS"),

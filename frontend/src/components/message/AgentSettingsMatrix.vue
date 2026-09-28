@@ -600,7 +600,7 @@ onBeforeUnmount(() => {
 /* Selection marker — a badge straddling the bottom-right corner: a filled disc
    in the cell's foreground color with the check in the counter-color, plus a
    surface-colored ring to detach it from the fill. Stays legible whatever the
-   score fill or the user's brand color. */
+   score fill. */
 .matrix-cell-check {
     position: absolute;
     right: -4px;

@@ -103,7 +103,7 @@ Print the value of a single **generic** synced settings key as `{key: value}`. O
 
 ### `twicc settings set <KEY> <VALUE>` / `twicc settings unset <KEY>`
 Mutate a single **generic** scalar setting. `set` type-coerces `VALUE` to match the key's default type (bool: `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`; int: integer string; string: verbatim). `unset` reverts the key to its built-in default. The `--help` of `get`/`set`/`unset` lists every settable generic key with a one-line description. Both commands validate the key first:
-- `excluded` keys (`waTheme`, `waBrand`, `defaultLayoutId`, `_version`) — UI-only visual preferences, not settable via CLI.
+- `excluded` keys (`defaultLayoutId`, `_version`) — UI-only visual preferences, not settable via CLI.
 - `provider` keys (`defaultProvider`, `disabledProviders`, `orchestrationDisabledProviders`, and any `claudeCode*` / `codex*` prefixed keys) — use `twicc settings provider …`.
 - `notifications` keys (`externalNotificationTargets`) — use `twicc settings notifications …`.
 - `unknown` — no such setting.

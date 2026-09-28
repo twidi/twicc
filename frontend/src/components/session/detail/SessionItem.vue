@@ -679,9 +679,8 @@ function toggleJsonView() {
                 --assistant-card-bottom-spacing: var(--assistant-card-spacing);
                 --assistant-card-shadow: var(--assistant-card-default-shadow);
                 /* For the shadow to appear on the last element with virtual scroller "cropping" if
-                   we don't have this. max(): --depth-card reaches further than the theme's shadow
-                   offset in the default and shoelace themes. */
-                margin-bottom: calc(max(var(--main-shadow-size), var(--depth-card-reach)) + 1px);
+                   we don't have this. */
+                margin-bottom: calc(var(--depth-card-reach) + 1px);
             }
         }
     }

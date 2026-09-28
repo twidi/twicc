@@ -125,7 +125,7 @@ See the [`CHANGELOG.md`](CHANGELOG.md) for the full release history.
   - **Orchestration** — the tree of sessions this one spawned or was spawned by
   - **Workflows** — Claude Code workflow runs, live as they execute
   - **Browser** — an embedded web browser
-- **Themes**: light/dark color scheme and several visual themes with a customizable accent color
+- **Color scheme**: light, dark, or following the system
 
 ### Search and navigation
 

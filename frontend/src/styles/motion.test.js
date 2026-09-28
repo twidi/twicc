@@ -160,7 +160,7 @@ test('1. motion tokens on :root, reduced-motion block after them', () => {
     assert.ok(motionTree.indexOf(reducedMedia[0]) > motionTree.indexOf(tokenBlocks[0]), 'reduced-motion block must follow the tokens')
 })
 
-test('2. Web Awesome tokens: mapping on :root, .wa-invert; awesome buttons restated as 0s', () => {
+test('2. Web Awesome tokens: mapping on :root, .wa-invert', () => {
     const mapping = findRule(topRules, [':root', '.wa-invert'])
     assert.deepEqual(mapping.decls, {
         '--wa-transition-fast': 'var(--motion-dur-1)',
@@ -169,12 +169,6 @@ test('2. Web Awesome tokens: mapping on :root, .wa-invert; awesome buttons resta
         '--wa-transition-easing': 'var(--motion-ease)',
     })
     // Top level (never inside @layer): it must beat the layered theme rule.
-    const awesome = findRule(topRules, [':where(.wa-theme-awesome wa-button)'])
-    assert.deepEqual(awesome.decls, {
-        '--wa-transition-fast': '0s',
-        '--wa-transition-normal': '0s',
-        '--wa-transition-slow': '0s',
-    })
     assert.ok(!/@layer/.test(motionStripped), 'motion.css must stay unlayered')
 })
 
@@ -279,11 +273,7 @@ test('5. button press: transition lists and press rules', () => {
     // The :where() list, compounds on one line each (a line break is a descendant combinator).
     const rawPress = motionStripped.slice(motionStripped.indexOf(':where(\n'), motionStripped.indexOf(')::part(base)', motionStripped.indexOf(':where(\n')))
     const branches = rawPress.split('\n').map((l) => l.trim()).filter((l) => l.includes('wa-button'))
-    assert.equal(branches.length, 2, 'two press branches, one line each')
-    const EXCLUSIONS = ':not([disabled], [loading], wa-button-group wa-button, .session-item, .bookmark-item):active'
-    const [plainBranch, awesomeBranch] = branches[0].includes(':not(.wa-theme-awesome)') ? branches : [...branches].reverse()
-    assert.equal(plainBranch.replace(/,$/, ''), `:root:not(.wa-theme-awesome) wa-button${EXCLUSIONS}`)
-    assert.equal(awesomeBranch.replace(/,$/, ''), `:root.wa-theme-awesome wa-button[appearance~='plain']${EXCLUSIONS}`)
+    assert.deepEqual(branches, ['wa-button:not([disabled], [loading], wa-button-group wa-button, .session-item, .bookmark-item):active'], 'one press branch, on one line')
 
     const internalPress = findRule(topRules, INTERNAL_PARTS.map((s) => `${s}:active`))
     assert.equal(internalPress.decls.scale, PRESS_SCALE)
@@ -454,7 +444,6 @@ test('9. snippet chips: lift on hover, press as scale, clip room in the narrow c
     assert.equal(hover.rule.decls.translate, '0 calc(-1px * var(--motion-amount))')
     const press = rule('.snippet-btn:active').rule
     assert.equal(press.decls.scale, 'calc(1 - 0.05 * var(--motion-amount))')
-    assert.equal(press.decls.transform, 'none')
     const disabledHover = rule('.snippet-btn.snippet-disabled:hover')
     assert.ok(inHoverMedia(disabledHover.ancestors))
     assert.equal(disabledHover.rule.decls.scale, 'none')
@@ -462,9 +451,8 @@ test('9. snippet chips: lift on hover, press as scale, clip room in the narrow c
     assert.equal(disabledHover.rule.decls.transform, undefined)
     const disabledPress = rule('.snippet-btn.snippet-disabled:active').rule
     assert.equal(disabledPress.decls.scale, 'none')
-    assert.equal(disabledPress.decls.transform, 'none')
-    const transforms = flat.filter((e) => 'transform' in e.rule.decls).map((e) => e.rule.selector).sort()
-    assert.deepEqual(transforms, ['.snippet-btn.snippet-disabled:active', '.snippet-btn:active'])
+    const transforms = flat.filter((e) => 'transform' in e.rule.decls).map((e) => e.rule.selector)
+    assert.deepEqual(transforms, [], 'no snippet rule declares transform')
 
     const narrow = tree.filter((n) => n.type === 'at' && n.prelude === '@container message-input (width < 40rem)')
     assert.equal(narrow.length, 1, 'one top-level narrow container query')

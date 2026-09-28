@@ -323,8 +323,6 @@ button {
 .snippet-btn:active {
     background: color-mix(in srgb, var(--wa-color-surface-raised), var(--wa-color-mix-active));
     scale: calc(1 - 0.05 * var(--motion-amount));
-    /* Cancels the awesome theme's press on native buttons (a 4px downward translate). */
-    transform: none;
 }
 
 /* ── Disabled snippets ────────────────────────────────────────────── */
@@ -343,7 +341,6 @@ button {
 
 .snippet-btn.snippet-disabled:active {
     scale: none;
-    transform: none;
 }
 
 /* ── Scope indicators ────────────────────────────────────────────── */

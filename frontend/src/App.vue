@@ -1025,9 +1025,6 @@ body.sidebar-closed {
     --sparkline-pink-stroke-color: #e57399;
 
     --divider-size: 1px;
-    &[data-theme="awesome"] {
-        --divider-size: 4px;
-    }
 
     /* Diff editor colors (light mode) */
     --diff-removedLineBackground: #FEF1F1;

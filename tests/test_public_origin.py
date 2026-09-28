@@ -448,3 +448,11 @@ def test_one_way_fixture_inputs_are_all_accepted():
     for raw in CASES["one_way_accepted_inputs"]:
         result = normalize_public_origin(raw)
         assert result.error is None and result.value, repr(raw)
+
+
+def test_migration_drops_fixed_theme_and_accent_keys():
+    import twicc.synced_settings as ss
+
+    settings = {"waTheme": "awesome", "waBrand": "red", "autoUnpinOnArchive": False}
+    assert ss._migrate_legacy_settings(settings) is True
+    assert settings == {"autoUnpinOnArchive": False}

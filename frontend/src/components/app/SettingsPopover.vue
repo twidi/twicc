@@ -22,10 +22,6 @@ import {
     COLOR_SCHEME,
     SESSION_TIME_FORMAT,
     DEFAULT_MAX_CACHED_SESSIONS,
-    WA_THEME,
-    WA_THEME_LABELS,
-    WA_BRAND,
-    WA_BRAND_LABELS,
     SPONSOR_URL,
     TITLE_SUGGESTION_MODEL,
     TITLE_SUGGESTION_MODEL_PROVIDERS,
@@ -410,17 +406,6 @@ const shortcutGroups = computed(() => {
     ]
 })
 
-// WA theme/palette/brand options
-const waThemeOptions = Object.values(WA_THEME).map(value => ({
-    value,
-    label: WA_THEME_LABELS[value],
-}))
-
-const waBrandOptions = Object.values(WA_BRAND).map(value => ({
-    value,
-    label: WA_BRAND_LABELS[value],
-}))
-
 // Color scheme options for the select
 const colorSchemeOptions = [
     { value: COLOR_SCHEME.SYSTEM, label: 'System' },
@@ -535,8 +520,6 @@ const isLinux = computed(() => store.isLinux)
 const worktreeDirectoryTemplate = computed(() => store.getWorktreeDirectoryTemplate)
 const compactSessionList = computed(() => store.isCompactSessionList)
 const showMessageTimestamps = computed(() => store.areMessageTimestampsShown)
-const waTheme = computed(() => store.getWaTheme)
-const waBrand = computed(() => store.getWaBrand)
 const showDiffs = computed(() => store.isShowDiffs)
 const toolDiffWordWrap = computed(() => store.isToolDiffWordWrap)
 const toolDiffSideBySide = computed(() => store.isToolDiffSideBySide)
@@ -863,14 +846,6 @@ function onFontSizeChange(event) {
 
 function onColorSchemeChange(event) {
     store.setColorScheme(event.target.value)
-}
-
-function onWaThemeChange(event) {
-    store.setWaTheme(event.target.value)
-}
-
-function onWaBrandChange(event) {
-    store.setWaBrand(event.target.value)
 }
 
 // The origin form subscribes to the correlated-result event itself; the
@@ -1217,7 +1192,7 @@ function resetTitleSystemPrompt() {
  *
  * Bound with ``@wa-show.self``: WA ``wa-show`` bubbles, so a nested
  * wa-select / wa-dropdown opening its listbox (e.g. the quota wake-up hour
- * pickers, the theme/brand selects) would otherwise re-fire this handler and
+ * pickers, the color scheme select) would otherwise re-fire this handler and
  * slide the mobile view back to the nav while the control stays open. ``.self``
  * restricts it to the popover's own event (target === currentTarget).
  */
@@ -1402,34 +1377,6 @@ function onChangelogClose() {
                         >
                             <wa-option
                                 v-for="option in colorSchemeOptions"
-                                :key="option.value"
-                                :value="option.value"
-                            >{{ option.label }}</wa-option>
-                        </wa-select>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Theme <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <wa-select
-                            :value.prop="waTheme"
-                            @change="onWaThemeChange"
-                            size="small"
-                        >
-                            <wa-option
-                                v-for="option in waThemeOptions"
-                                :key="option.value"
-                                :value="option.value"
-                            >{{ option.label }}</wa-option>
-                        </wa-select>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Accent color <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <wa-select
-                            :value.prop="waBrand"
-                            @change="onWaBrandChange"
-                            size="small"
-                        >
-                            <wa-option
-                                v-for="option in waBrandOptions"
                                 :key="option.value"
                                 :value="option.value"
                             >{{ option.label }}</wa-option>

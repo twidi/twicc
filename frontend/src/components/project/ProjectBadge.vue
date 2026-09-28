@@ -182,7 +182,7 @@ const untrusted = computed(() => store.untrustedProjectIds.has(props.projectId))
 }
 
 /* Untrusted marker: normal text colour at low opacity — faint, and adapts to
-   light/dark and every theme on its own (quieter than --wa-color-text-quiet). */
+   light/dark on its own (quieter than --wa-color-text-quiet). */
 .project-badge-trust {
     flex-shrink: 0;
     color: var(--wa-color-text-normal);

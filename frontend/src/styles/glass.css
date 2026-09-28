@@ -7,7 +7,7 @@
    Declaration order matters (all blocks match <html>): light tokens on :root, dark
    overrides on .wa-dark (same specificity, later wins), then the reduced-transparency and
    no-support overrides on :root (later again, so they win over .wa-dark too). Unlayered,
-   so they beat the themes' @layer wa-theme declarations.
+   so they beat the theme's @layer wa-theme declarations.
 
    Only this file declares backdrop-filter, always through a --glass-*-filter token (so the
    fallbacks turn every blur off), and only on childless boxes: pseudo-elements, the two
@@ -27,8 +27,7 @@
 
 :root {
     /* The tint: the accent's lightest step softened toward the raised surface. Derived by
-       mixing palette steps, never by forcing a chroma on the accent hue: a gray accent
-       (wa-brand-gray) has no hue and must stay gray. */
+       mixing palette steps, never by forcing a chroma on the accent hue. */
     --glass-tint: color-mix(in oklab, var(--wa-color-brand-95) 70%, var(--wa-color-surface-raised));
     --glass-bg: color-mix(in oklab, var(--glass-tint) 74%, transparent);
     --glass-border: color-mix(in oklab, var(--wa-color-brand-60) 22%, transparent);
@@ -98,7 +97,7 @@
 }
 
 /* The modal veil: what Web Awesome's .dialog::backdrop and the native dialog::backdrop
-   paint. The themes declare it in @layer wa-theme on :root and .wa-dark; this unlayered
+   paint. The theme declares it in @layer wa-theme on :root and .wa-dark; this unlayered
    :root declaration wins on <html>. */
 :root {
     --wa-color-overlay-modal: var(--glass-veil);
