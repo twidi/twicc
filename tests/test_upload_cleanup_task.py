@@ -188,6 +188,14 @@ def test_first_pass_recovers_every_non_terminal_upload(target, recoveries):
     assert _meta(missing)["error"] == "staging file lost"
 
 
+def test_recovery_count_ignores_no_op_recoveries(target, recoveries):
+    upload_id = _new_upload(target, size=10, content=b"abc")
+    stats = _pass(first_pass=True)
+    assert recoveries == [upload_id]  # recovery ran
+    assert stats.recovered == 0  # but changed nothing
+    assert _meta(upload_id)["version"] == 1
+
+
 def test_first_pass_skips_an_active_upload_with_error(target, recoveries, monkeypatch):
     upload_id = _complete(target)
     store.update_metadata(
@@ -393,6 +401,26 @@ def test_expiry_of_a_finalizing_upload_removes_the_empty_reservation(target, mon
     assert layer.records()[-1]["error"] == "recovery failed"
 
 
+def test_expiry_of_a_finalizing_upload_whose_write_fails(target, monkeypatch, layer):
+    upload_id = _complete(target)
+    store.update_metadata(upload_id, state="finalizing")
+    _stale(upload_id)
+    version = _meta(upload_id)["version"]
+    layer.sent.clear()
+    _recovery_failing(monkeypatch)
+    hits = _update_raising(monkeypatch, errno.ENOSPC, lambda c: c.get("error") == "recovery failed")
+
+    stats = _pass()
+
+    assert len(hits) == 1
+    assert stats.expired == 0
+    meta = _meta(upload_id)
+    assert meta["state"] == "finalizing"
+    assert meta["version"] == version
+    assert store.part_path(upload_id).read_bytes() == DATA
+    assert layer.records() == []
+
+
 def test_expiry_of_a_finalizing_link_keeps_the_final_file(target, monkeypatch):
     upload_id = _complete(target)
     os.link(store.part_path(upload_id), target / "a.txt")
@@ -486,6 +514,59 @@ def test_orphans_older_than_one_hour_are_removed(data_dir):
     assert young_part.exists()
     assert young_tmp.exists()
     assert other.exists()
+
+
+def test_symlinks_and_directories_with_upload_names_are_never_removed(data_dir, tmp_path):
+    staging = store.get_staging_dir()
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"not json")
+    linked_part = staging / f"{'a' * 32}.part"
+    linked_part.symlink_to(outside)
+    linked_tmp = staging / f"{'b' * 32}.json.x1y2.tmp"
+    linked_tmp.symlink_to(outside)
+    linked_json = staging / f"{'c' * 32}.json"  # unparsable through the link
+    linked_json.symlink_to(outside)
+    dir_part = staging / f"{'d' * 32}.part"
+    dir_part.mkdir()
+    dir_json = staging / f"{'e' * 32}.json"
+    dir_json.mkdir()
+    for path in (linked_part, linked_tmp, linked_json, dir_part, dir_json):
+        stamp = (datetime.now(UTC) - timedelta(days=3)).timestamp()
+        os.utime(path, (stamp, stamp), follow_symlinks=False)
+    _age_file(outside, timedelta(days=3))
+
+    stats = _pass(now=_clock(timedelta(days=3)))
+
+    assert stats.orphans == 0
+    assert stats.unparsable == 0
+    for path in (linked_part, linked_tmp, linked_json):
+        assert path.is_symlink()
+    assert dir_part.is_dir()
+    assert dir_json.is_dir()
+    assert outside.read_bytes() == b"not json"
+
+
+def test_orphan_recheck_when_the_json_appears_after_the_snapshot(data_dir, monkeypatch):
+    upload_id = "a" * 32
+    part = store.get_staging_dir() / f"{upload_id}.part"
+    part.write_bytes(b"x")
+    _age_file(part, timedelta(hours=2))
+    real = janitor.take_snapshot
+    calls = []
+
+    def snapshot_then_json():
+        snapshot = real()
+        calls.append(snapshot)
+        if len(calls) == 2:  # the snapshot of the orphan phase
+            (store.get_staging_dir() / f"{upload_id}.json").write_bytes(b"{}")
+        return snapshot
+
+    monkeypatch.setattr(janitor, "take_snapshot", snapshot_then_json)
+    stats = _pass()
+    assert upload_id in calls[1].parts
+    assert upload_id not in calls[1].json_ids
+    assert stats.orphans == 0
+    assert part.exists()
 
 
 def test_orphan_age_follows_the_clock(data_dir):

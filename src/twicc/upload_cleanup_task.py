@@ -46,6 +46,7 @@ import os
 import stat
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import NamedTuple
 
 from twicc.paths import get_uploads_dir
@@ -80,7 +81,7 @@ def utc_now() -> datetime:
 class PassStats(NamedTuple):
     """What one janitor pass did (counts of uploads or files)."""
 
-    recovered: int  # recovery steps run
+    recovered: int  # recovery steps that changed the metadata
     expired: int  # uploads written ``failed`` by expiry
     leftovers: int  # terminal uploads whose leftovers were removed
     tombstones: int  # tombstones removed
@@ -91,16 +92,6 @@ class PassStats(NamedTuple):
 # ── Time helpers ──────────────────────────────────────────────────────────────
 
 
-def _parse_iso(value: object) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-
-
 def _is_older(reference: datetime | None, age: timedelta, now: datetime) -> bool:
     """True when *reference* is known and at least *age* old.
 
@@ -108,6 +99,24 @@ def _is_older(reference: datetime | None, age: timedelta, now: datetime) -> bool
     cannot date.
     """
     return reference is not None and now - reference >= age
+
+
+def _part_file(upload_id: str) -> Path:
+    """``<id>.part``, without ``store.part_path`` (which creates the staging dir)."""
+    return get_uploads_dir() / f"{upload_id}.part"
+
+
+def _metadata_file(upload_id: str) -> Path:
+    """``<id>.json``, without ``store.metadata_path`` (which creates the staging dir)."""
+    return get_uploads_dir() / f"{upload_id}.json"
+
+
+def _part_size(upload_id: str) -> int | None:
+    """Size of ``<id>.part`` (following a symlink, like ``store.part_size``); ``None`` when absent."""
+    try:
+        return _part_file(upload_id).stat().st_size
+    except (FileNotFoundError, NotADirectoryError):
+        return None
 
 
 def _mtime(path: str | os.PathLike) -> datetime | None:
@@ -152,19 +161,19 @@ def is_expired(meta: dict, now: datetime) -> bool:
     ``last_transfer_at`` older than :data:`UPLOAD_EXPIRY`."""
     if store.is_terminal(meta["state"]) or locks.is_finalizing_now(meta["id"]):
         return False
-    return _is_older(_parse_iso(meta.get("last_transfer_at")), UPLOAD_EXPIRY, now)
+    return _is_older(store.parse_iso(meta.get("last_transfer_at")), UPLOAD_EXPIRY, now)
 
 
 def is_old_tombstone(meta: dict, now: datetime) -> bool:
     """A terminal upload whose ``updated_at`` is at least 24 h old."""
     if not store.is_terminal(meta["state"]):
         return False
-    return _is_older(_parse_iso(meta.get("updated_at")), store.TOMBSTONE_LIFETIME, now)
+    return _is_older(store.parse_iso(meta.get("updated_at")), store.TOMBSTONE_LIFETIME, now)
 
 
 def _terminal_leftovers(meta: dict) -> list[str]:
     """The files a terminal upload should not have any more (present ones only)."""
-    paths = [str(store.part_path(meta["id"])), store.temp_file_path(meta["id"], meta["target_dir"])]
+    paths = [str(_part_file(meta["id"])), store.temp_file_path(meta["id"], meta["target_dir"])]
     return [path for path in paths if os.path.lexists(path)]
 
 
@@ -182,15 +191,22 @@ class Snapshot(NamedTuple):
 
 
 def take_snapshot() -> Snapshot | None:
-    """Scan the staging dir (blocking). ``None`` when it does not exist (never created here)."""
-    if not get_uploads_dir().is_dir():
-        return None
+    """Scan the staging dir (blocking). ``None`` when it does not exist.
+
+    Scans :func:`get_uploads_dir` directly (never ``store.scan_staging``, whose
+    ``get_staging_dir`` creates the dir): the janitor never creates it.
+    """
     metas: dict[str, dict] = {}
     unparsable: set[str] = set()
     json_ids: set[str] = set()
     parts: set[str] = set()
     json_temps: list[str] = []
-    for name, entry in store.scan_staging():
+    try:
+        with os.scandir(get_uploads_dir()) as it:
+            entries = [(name, entry) for entry in it if (name := store.classify_staging_name(entry.name)) is not None]
+    except FileNotFoundError:
+        return None
+    for name, entry in entries:
         if name.kind == store.NAME_KIND_PART:
             parts.add(name.upload_id)
         elif name.kind == store.NAME_KIND_JSON_TMP:
@@ -238,7 +254,7 @@ async def _guarded(upload_id: str, action: Callable[[], Awaitable[bool]], *, lab
 
 def _reread(upload_id: str) -> tuple[dict | None, int | None]:
     """The metadata re-read under the lock (``None``: absent or unparsable) and the ``.part`` size."""
-    return store.peek_metadata(upload_id), store.part_size(upload_id)
+    return store.peek_metadata(upload_id), _part_size(upload_id)
 
 
 async def _recover(upload_id: str, *, first_pass: bool) -> bool:
@@ -247,8 +263,10 @@ async def _recover(upload_id: str, *, first_pass: bool) -> bool:
         if meta is None or not needs_recovery(meta, part, first_pass=first_pass):
             return False
         # Resolved at call time, so tests can replace it.
-        await upload_views.recover_upload(upload_id)
-        return True
+        outcome = await upload_views.recover_upload(upload_id)
+        # Counted only when it changed the metadata (a no-op recovery of a
+        # short ``active`` upload at startup is not worth a log line).
+        return outcome.meta is None or outcome.meta["version"] != meta["version"]
 
     return await _guarded(upload_id, action, label="recovery")
 
@@ -290,7 +308,7 @@ async def _clean_terminal(upload_id: str) -> bool:
 def _unlink_metadata(upload_id: str) -> bool:
     """Remove ``<id>.json``; ``True`` when it is gone (``ENOENT`` included)."""
     try:
-        os.unlink(store.metadata_path(upload_id))
+        os.unlink(_metadata_file(upload_id))
     except FileNotFoundError:
         return True
     except OSError:
@@ -317,17 +335,19 @@ async def _drop_tombstone(upload_id: str, now: datetime) -> bool:
 
 
 def _remove_unparsable(upload_id: str, now: datetime) -> bool:
+    if not os.path.lexists(_metadata_file(upload_id)):
+        return False
     try:
         store.read_metadata(upload_id)
     except store.UnparsableMetadataError:
         pass
     else:
         return False  # rewritten meanwhile, or gone
-    if not _is_older(_mtime(store.metadata_path(upload_id)), UNPARSABLE_AGE, now):
+    if not _is_older(_mtime(_metadata_file(upload_id)), UNPARSABLE_AGE, now):
         return False
     if not _unlink_metadata(upload_id):
         return False
-    store.remove_best_effort(store.part_path(upload_id))
+    store.remove_best_effort(_part_file(upload_id))
     return True
 
 
@@ -350,8 +370,8 @@ def _remove_orphans(snapshot: Snapshot, now: datetime) -> int:
     """
     removed = 0
     for upload_id in sorted(snapshot.parts - snapshot.json_ids):
-        part = store.part_path(upload_id)
-        if store.metadata_path(upload_id).exists():
+        part = _part_file(upload_id)
+        if os.path.lexists(_metadata_file(upload_id)):
             continue
         if _is_older(_mtime(part), ORPHAN_AGE, now):
             store.remove_best_effort(part)
@@ -367,7 +387,12 @@ def _remove_orphans(snapshot: Snapshot, now: datetime) -> int:
 
 
 async def run_cleanup_pass(*, first_pass: bool, now: Clock = utc_now) -> PassStats:
-    """Run one janitor pass (§5.9); *now* is the clock every age is measured with."""
+    """Run one janitor pass (§5.9).
+
+    *now* is the clock, read once: the pre-selection and every re-check under
+    the lock compare the ages with the same instant.
+    """
+    current = now()
     snapshot = await asyncio.to_thread(take_snapshot)
     if snapshot is None:
         return PassStats(0, 0, 0, 0, 0, 0)
@@ -377,7 +402,7 @@ async def run_cleanup_pass(*, first_pass: bool, now: Clock = utc_now) -> PassSta
     for upload_id, meta in sorted(snapshot.metas.items()):
         if store.is_terminal(meta["state"]):
             continue
-        part = await asyncio.to_thread(store.part_size, upload_id)
+        part = await asyncio.to_thread(_part_size, upload_id)
         if needs_recovery(meta, part, first_pass=first_pass) and await _recover(upload_id, first_pass=first_pass):
             recovered += 1
 
@@ -385,7 +410,7 @@ async def run_cleanup_pass(*, first_pass: bool, now: Clock = utc_now) -> PassSta
     # the re-read under the lock sees what recovery did.
     expired = 0
     for upload_id, meta in sorted(snapshot.metas.items()):
-        if is_expired(meta, now()) and await _expire(upload_id, now()):
+        if is_expired(meta, current) and await _expire(upload_id, current):
             expired += 1
 
     # 3-6 work on a fresh view of the staging dir.
@@ -399,15 +424,15 @@ async def run_cleanup_pass(*, first_pass: bool, now: Clock = utc_now) -> PassSta
             continue
         if await asyncio.to_thread(_terminal_leftovers, meta) and await _clean_terminal(upload_id):
             leftovers += 1
-        if is_old_tombstone(meta, now()) and await _drop_tombstone(upload_id, now()):
+        if is_old_tombstone(meta, current) and await _drop_tombstone(upload_id, current):
             tombstones += 1
 
     unparsable = 0
     for upload_id in sorted(snapshot.unparsable):
-        if await _drop_unparsable(upload_id, now()):
+        if await _drop_unparsable(upload_id, current):
             unparsable += 1
 
-    orphans = await asyncio.to_thread(_remove_orphans, snapshot, now())
+    orphans = await asyncio.to_thread(_remove_orphans, snapshot, current)
 
     stats = PassStats(recovered, expired, leftovers, tombstones, unparsable, orphans)
     if any(stats):

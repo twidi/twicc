@@ -454,21 +454,11 @@ async def _create_view(request, *, project_id: str | None = None, session_id: st
 # ── List (§5.3 GET) ───────────────────────────────────────────────────────────
 
 
-def _parse_iso(value: object) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-
-
 def _list_records(now: datetime) -> list[dict]:
     records = []
     for meta in store.list_metadata():
         if store.is_terminal(meta["state"]):
-            updated_at = _parse_iso(meta["updated_at"])
+            updated_at = store.parse_iso(meta["updated_at"])
             if updated_at is None or now - updated_at >= store.TOMBSTONE_LIFETIME:
                 continue
         records.append(store.build_record(meta))
@@ -546,7 +536,7 @@ FINALIZE_RETRY_THROTTLE = timedelta(seconds=60)
 
 def _within_throttle(failed_at: object) -> bool:
     """True when *failed_at* (``finalize_failed_at``) is less than 60 s old."""
-    parsed = _parse_iso(failed_at)
+    parsed = store.parse_iso(failed_at)
     if parsed is None:
         return False
     return timedelta(0) <= datetime.now(UTC) - parsed < FINALIZE_RETRY_THROTTLE

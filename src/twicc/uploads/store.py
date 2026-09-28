@@ -270,6 +270,17 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def parse_iso(value: object) -> datetime | None:
+    """An ISO 8601 metadata timestamp as an aware datetime (naive → UTC); ``None`` when invalid."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 def read_metadata(upload_id: str) -> dict | None:
     """Read ``<id>.json``.
 
