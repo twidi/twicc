@@ -310,6 +310,16 @@ def get_share_snapshot_dir(share_id: str) -> Path:
     return get_shares_dir() / share_id
 
 
+def get_uploads_dir() -> Path:
+    """Staging area of the browser file uploads (``<data_dir>/uploads/``).
+
+    Holds ``<id>.part`` (bytes received so far) and ``<id>.json`` (metadata)
+    per upload. Path only — ``twicc.uploads.store`` creates it (mode ``0o700``)
+    before its first use. See docs/plans/2026-09-28-file-upload-design.md.
+    """
+    return get_data_dir() / "uploads"
+
+
 def get_project_icons_dir() -> Path:
     """Return the project-icons root directory (``<data_dir>/project-icons/``).
 
