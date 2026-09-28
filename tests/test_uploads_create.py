@@ -695,10 +695,6 @@ def test_retry_after_a_creation_failure_creates_the_upload(client, target, monke
 # ── Zero-byte upload ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="zero-byte finalization is task 4 of docs/plans/2026-09-28-file-upload-implementation-plan.md",
-)
 def test_zero_byte_upload_is_finalized_in_the_creation(client, target):
     resp = _post(client, STANDALONE_URL, _body(target, filename="empty.txt", size=0))
     assert resp.status_code == 201
@@ -724,12 +720,6 @@ def test_zero_byte_upload_calls_the_finalization_hook_under_the_upload_lock(clie
     assert calls == [(record["id"], True, True)]
     assert record["state"] == "completed"
     assert record["version"] == 2
-
-
-def test_zero_byte_upload_answers_500_until_finalization_exists(client, target):
-    resp = _post(client, STANDALONE_URL, _body(target, size=0))
-    assert resp.status_code == 500
-    assert resp[UPLOAD_HEADER] == "1"
 
 
 # ── GET ───────────────────────────────────────────────────────────────────────

@@ -25,7 +25,6 @@ pytestmark = pytest.mark.django_db(transaction=True)
 UPLOAD_HEADER = "x-twicc-upload"
 TUS = {"Tus-Resumable": "1.0.0"}
 OCTET = "application/offset+octet-stream"
-TASK_4 = "finalization and recovery are task 4 of docs/plans/2026-09-28-file-upload-implementation-plan.md"
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -353,7 +352,6 @@ def test_patch_reads_the_body_in_blocks(app, target, monkeypatch):
     assert store.part_path(upload_id).read_bytes() == b"0123456789"
 
 
-@pytest.mark.xfail(strict=True, reason=TASK_4)
 def test_tus_flow_completes_into_the_target(app, target):
     data = b"hello world"
     upload_id = _new_upload(target, size=len(data))
@@ -362,16 +360,6 @@ def test_tus_flow_completes_into_the_target(app, target):
     assert resp.headers["upload-offset"] == str(len(data))
     assert (target / "a.txt").read_bytes() == data
     assert store.read_metadata(upload_id)["state"] == "completed"
-
-
-def test_final_patch_answers_500_until_finalization_exists(app, target):
-    upload_id = _new_upload(target, size=3)
-    resp = _patch(app, upload_id, 0, b"abc")
-    assert resp.status == 500
-    _assert_tus_headers(resp)
-    # The bytes and the offset sync happened before the finalization hook.
-    assert store.part_size(upload_id) == 3
-    assert store.read_metadata(upload_id)["offset"] == 3
 
 
 @pytest.mark.parametrize(
@@ -795,14 +783,6 @@ def test_head_answer_after_recovery(app, target, monkeypatch, result, code, stat
         assert resp.headers["upload-length"] == "3"
 
 
-def test_head_answers_500_until_recovery_exists(app, target):
-    upload_id = _new_upload(target, size=3, content=b"abc")
-    resp = _request(app, "HEAD", upload_id)
-    assert resp.status == 500
-    _assert_tus_headers(resp)
-    assert resp.headers["cache-control"] == "no-store"
-
-
 def test_head_waiting_behind_a_cancel_never_overwrites_the_terminal_state(app, target, monkeypatch):
     """The lock-free read chose recovery; under the lock the state is
     terminal: the operation does nothing and answers from that state."""
@@ -857,7 +837,6 @@ def test_head_waiting_behind_the_final_patch_answers_completed(app, target, monk
     assert store.read_metadata(upload_id)["state"] == "completed"
 
 
-@pytest.mark.xfail(strict=True, reason=TASK_4)
 def test_head_on_active_without_part_fails_it_under_the_lock(app, target):
     upload_id = _new_upload(target, size=10)
     store.part_path(upload_id).unlink()
@@ -865,7 +844,6 @@ def test_head_on_active_without_part_fails_it_under_the_lock(app, target):
     assert store.read_metadata(upload_id)["state"] == "failed"
 
 
-@pytest.mark.xfail(strict=True, reason=TASK_4)
 def test_head_on_finalizing_not_in_the_set_runs_recovery(app, target):
     upload_id = _new_upload(target, size=3, content=b"abc")
     _set_state(upload_id, state="finalizing")

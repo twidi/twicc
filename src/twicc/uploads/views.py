@@ -21,7 +21,7 @@ import logging
 import os
 import re
 import shutil
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 import orjson
@@ -86,7 +86,7 @@ def upload_view(*, tus: bool = False):
     return decorator
 
 
-# ── Finalization hook (§5.6) ──────────────────────────────────────────────────
+# ── Finalization (§5.6) ───────────────────────────────────────────────────────
 
 
 class StepOutcome(NamedTuple):
@@ -100,39 +100,115 @@ async def finalize_upload(upload_id: str) -> StepOutcome:
     """Finalization of a complete upload (§5.6).
 
     A step that runs under the upload's lock, **already held by the caller**
-    (it never takes the lock). Returns the resulting metadata and the answer
-    code of the step. Implemented by task 4 of the implementation plan.
+    (it never takes the lock). The coroutine side: re-read (step 1), ORM
+    re-validation (step 2), the "finalizing now" set and the ``finalizing``
+    write (step 3), the broadcasts. Every file and metadata step of step 4,
+    and every failure rule, run in the worker thread
+    (:func:`store.finalize_files`, :func:`store.finalize_precommit_failure`).
+
+    Returns the metadata on disk after the step and its answer: ``204``
+    (``completed``), ``422`` (``failed``), else ``507`` (disk full) / ``500``
+    with the upload ``active`` with ``error`` or still ``finalizing``.
     """
-    raise NotImplementedError("upload finalization is not implemented yet")
+    # 1. Re-read; a terminal state stops here.
+    meta = await asyncio.to_thread(store.peek_metadata, upload_id)
+    if meta is None:
+        return StepOutcome(None, 404)
+    if store.is_terminal(meta["state"]):
+        return StepOutcome(meta, _TERMINAL_STEP_CODES[meta["state"]])
+
+    # 2. Re-validate the stored scope and target (creation checks 3-4).
+    try:
+        refusal = await _revalidate_target(meta)
+    except Exception:
+        logger.warning("Upload %s: re-validation of the target raised", upload_id, exc_info=True)
+        result = await asyncio.to_thread(
+            store.finalize_precommit_failure, upload_id, meta, 500, "Cannot validate the target directory"
+        )
+        return await _finish_step(result)
+    if refusal is not None:
+        result = await asyncio.to_thread(store.finalize_precommit_failure, upload_id, meta, 422, refusal)
+        return await _finish_step(result)
+
+    # 3. "Finalizing now", then the ``finalizing`` write; the id leaves the
+    # set in the ``finally`` of the context manager, after every later step.
+    with locks.finalizing_now(upload_id):
+        try:
+            current = await asyncio.to_thread(store.update_metadata, upload_id, state=store.STATE_FINALIZING)
+        except Exception as exc:
+            logger.warning("Upload %s: cannot write the 'finalizing' state", upload_id, exc_info=True)
+            return StepOutcome(meta, store.failure_code(exc))
+        await broadcast_upload_state(current)
+        # 4-5. The worker thread, then the broadcast of its result.
+        result = await asyncio.to_thread(store.finalize_files, upload_id, current)
+        return await _finish_step(result)
 
 
-# ── Recovery hook (§5.7) ──────────────────────────────────────────────────────
+_TERMINAL_STEP_CODES = {store.STATE_COMPLETED: 204, store.STATE_FAILED: 422, store.STATE_CANCELLED: 410}
+
+
+async def _finish_step(result: store.FinalizeResult) -> StepOutcome:
+    if result.broadcast:
+        await broadcast_upload_state(result.meta)
+    return StepOutcome(result.meta, result.code)
+
+
+def _error_message(response: JsonResponse) -> str:
+    try:
+        message = orjson.loads(response.content).get("error")
+    except (orjson.JSONDecodeError, AttributeError):
+        message = None
+    return message if isinstance(message, str) and message else "The target directory is not valid"
+
+
+async def _revalidate_target(meta: dict) -> str | None:
+    """§5.6 step 2: creation checks 3-4 on the stored scope and ``target_dir``.
+
+    Returns the refusal message of a validation verdict (→ ``422``), or
+    ``None``. An exception (e.g. a SQLite ``OperationalError``) propagates:
+    the caller treats it as an unexpected pre-commit failure.
+    """
+    target_dir = meta["target_dir"]
+    if not os.path.isabs(target_dir):
+        return "'target_dir' must be an absolute path"
+    scope = meta["scope"]
+    if scope["kind"] == "project":
+        _scope, error = await _check_scope(
+            target_dir, project_id=scope["project_id"], session_id=scope.get("session_id"), root=None
+        )
+    else:
+        _scope, error = await _check_scope(target_dir, project_id=None, session_id=None, root=scope.get("root"))
+    if error is None:
+        error = await asyncio.to_thread(_check_target_writable, target_dir)
+    return None if error is None else _error_message(error)
+
+
+# ── Recovery (§5.7) ───────────────────────────────────────────────────────────
 
 
 async def recover_upload(upload_id: str) -> StepOutcome:
     """Recovery of an upload that a crash or a stop left unsettled (§5.7).
 
-    Implemented by task 4 of the implementation plan. Contract:
-
     - A step that runs under the upload's lock, **already held by the caller**
       (the ``HEAD`` guarded operation, later the janitor); it never takes the
-      lock. It re-reads the metadata itself, runs its file and metadata work
-      in a worker thread, runs finalization (:func:`finalize_upload`) itself
-      for a *finalize* verdict, and broadcasts every record it persists.
+      lock. Its file and metadata work runs in the worker thread
+      (:func:`store.recover_files`), which returns a verdict; the coroutine
+      broadcasts the record it persisted, and runs finalization
+      (:func:`finalize_upload`) itself for a *finalize* verdict.
     - Returns ``StepOutcome(meta, code)``: *meta* is the metadata on disk after
       the step (``None``: absent); *code* is ``507`` or ``500`` when recovery
       ran a finalization that failed with that code, or when a step or a write
       failed and left the state not settled (``507`` for disk full, else
       ``500``). Any other *code* means "settled": the ``HEAD`` caller then
-      answers from *meta* with its lock-free table (``completed`` →
-      offset = length, ``failed`` / ``cancelled`` → ``410``, ``active`` with a
-      short ``.part`` → its offset).
-    - The ``HEAD`` gates of §5.3 (the ``507`` free-space gate and the ``500``
-      60 s throttle, decided from the metadata re-read under the lock) belong
-      to task 4 too; they run before this step, in
-      :func:`_head_recovery` (or inside this step).
+      answers from *meta* with its lock-free table.
+    - The ``HEAD`` gates of §5.3 run before this step, in :func:`_head_recovery`.
     """
-    raise NotImplementedError("upload recovery is not implemented yet")
+    verdict = await asyncio.to_thread(store.recover_files, upload_id)
+    if verdict.broadcast:
+        await broadcast_upload_state(verdict.meta)
+    if verdict.kind == store.RECOVERY_FINALIZE:
+        return await finalize_upload(upload_id)
+    return StepOutcome(verdict.meta, verdict.code)
 
 
 # ── Creation (§5.3 POST) ──────────────────────────────────────────────────────
@@ -245,6 +321,15 @@ def _st_dev(path: str | os.PathLike) -> int:
     return os.stat(path).st_dev
 
 
+def _check_target_writable(target_dir: str) -> JsonResponse | None:
+    """Check 4: *target_dir* is writable and is not the staging dir or inside it (``403``)."""
+    if not os.access(target_dir, os.W_OK):
+        return _error("The target directory is not writable", 403)
+    if store.is_in_staging_dir(target_dir):
+        return _error("The target directory is not allowed", 403)
+    return None
+
+
 def _check_target_sync(target_dir: str, filename: str, size: int) -> JsonResponse | None:
     """Blocking part of the checks after check 3: ``PC_NAME_MAX``, check 4, check 5."""
     try:
@@ -255,10 +340,8 @@ def _check_target_sync(target_dir: str, filename: str, size: int) -> JsonRespons
         if len(filename.encode("utf-8")) + _NAME_SUFFIX_ROOM > name_max:
             return _error("The file name is too long for the target directory", 400)
 
-    if not os.access(target_dir, os.W_OK):
-        return _error("The target directory is not writable", 403)
-    if store.is_in_staging_dir(target_dir):
-        return _error("The target directory is not allowed", 403)
+    if (error := _check_target_writable(target_dir)) is not None:
+        return error
 
     # Check 5, best effort: other uploads and programs consume space too.
     staging = store.get_staging_dir()
@@ -460,15 +543,46 @@ async def _run_locked(upload_id: str, operation, *, label: str) -> HttpResponse:
     return await locks.run_guarded(guarded(), label=f"{label}({upload_id})")
 
 
+# A finalization that failed with an unexpected error is not run again by
+# ``HEAD`` before this delay (bounds the copies made by client retries, §5.3).
+FINALIZE_RETRY_THROTTLE = timedelta(seconds=60)
+
+
+def _within_throttle(failed_at: object) -> bool:
+    """True when *failed_at* (``finalize_failed_at``) is less than 60 s old."""
+    parsed = _parse_iso(failed_at)
+    if parsed is None:
+        return False
+    return timedelta(0) <= datetime.now(UTC) - parsed < FINALIZE_RETRY_THROTTLE
+
+
 async def _head_recovery(meta: dict) -> HttpResponse:
     """``HEAD`` after the lock-free table chose the recovery path (§5.3).
 
-    Runs under the held lock, on the metadata re-read under it.
+    Runs under the held lock. Every decision comes from *meta*, the metadata
+    re-read under it: the table rows (terminal state, "finalizing now", a
+    short ``.part``), then the gates of an ``active`` upload with a complete
+    ``.part`` whose last finalization failed (``507``: free-space gate;
+    ``500``: 60 s throttle), then recovery (§5.7).
     """
     upload_id = meta["id"]
-    if store.is_terminal(meta["state"]):
-        # A terminal state: the operation does nothing, answers from that state.
-        return _head_table(meta, None)
+    size = meta["size"]
+    part = await asyncio.to_thread(store.part_size, upload_id)
+    answer = _head_table(meta, part)
+    if answer is not None:
+        return answer
+
+    if meta["state"] == store.STATE_ACTIVE and part is not None and part >= size:
+        failed_code = meta.get("finalize_error_code")
+        if failed_code == 507:
+            # A Retry right after freeing space works at once; still not
+            # enough → 507 without copying. A target that cannot be stat'ed
+            # skips the gate: recovery ends it in 422 → failed.
+            if not await asyncio.to_thread(store.finalize_space_available, meta):
+                return _status(507)
+        elif failed_code == 500 and _within_throttle(meta.get("finalize_failed_at")):
+            return _status(500)
+
     outcome = await recover_upload(upload_id)
     if outcome.code in (500, 507):
         return _status(outcome.code)

@@ -34,6 +34,7 @@ from channels.layers import get_channel_layer
 from watchfiles import awatch
 
 from twicc.paths import get_artifacts_dir, get_session_artifacts_dir
+from twicc.uploads.store import is_upload_temp_name
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,11 @@ class ArtifactsWatcher:
             # relative path (within the session dir) of each touched entry.
             touched: dict[str, set[str]] = {}
             for _change_type, raw_path in changes:
+                # An upload's cross-filesystem temp file (design
+                # 2026-09-28-file-upload §5.6) is dropped before the grouping:
+                # alone, it would mark an empty session as having artifacts.
+                if is_upload_temp_name(os.path.basename(raw_path)):
+                    continue
                 resolved = self._session_rel_for(raw_path)
                 if resolved is None:
                     continue

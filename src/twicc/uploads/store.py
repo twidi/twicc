@@ -26,6 +26,8 @@ import errno
 import logging
 import os
 import re
+import shutil
+import stat
 import uuid
 from datetime import UTC, datetime, timedelta
 from collections.abc import Iterator
@@ -206,7 +208,9 @@ def remove_best_effort(path: str | os.PathLike) -> None:
     """
     try:
         os.unlink(path)
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
+        # NotADirectoryError: a parent is gone (a removed target dir), so the
+        # file is gone too.
         pass
     except OSError:
         logger.warning("Upload cleanup: cannot remove %s", path, exc_info=True)
@@ -637,6 +641,518 @@ def cancel_upload(upload_id: str) -> WriteOutcome:
         return WriteOutcome(meta, 204)
     remove_best_effort(part_path(upload_id))
     return WriteOutcome(meta, 204)
+
+
+# ── Finalization (§5.6) ──────────────────────────────────────────────────────
+#
+# The worker-thread part of the finalization step: every file and metadata
+# step of §5.6 step 4, and every failure rule. The coroutine side (the
+# re-validation, the ``finalizing`` write, the "finalizing now" set and the
+# broadcasts) lives in :mod:`twicc.uploads.views`.
+
+FINAL_METHOD_LINK = "link"
+FINAL_METHOD_REPLACE = "replace"
+FINAL_SOURCE_PART = "part"
+FINAL_SOURCE_TMP = "tmp"
+
+# Candidates after the requested name: ``stem (1).ext`` … ``stem (999).ext``.
+MAX_NAME_SUFFIX = 999
+# Free space a finalization needs for its metadata writes, and for a link.
+FINALIZE_SPACE_MARGIN = 1024 * 1024
+COPY_BLOCK_SIZE = 1024 * 1024
+
+# ``os.link`` errors of a filesystem without hard-link support (§5.6 step 4.4).
+_NO_HARD_LINK_ERRNOS = frozenset({errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS})
+# Mode argument of the temp file and of the reservation: the umask applies, so
+# they end with the same mode as ``<id>.part`` (created with ``open(.., "xb")``).
+_NEW_FILE_MODE = 0o666
+_NEW_FILE_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+
+ERROR_STAGING_LOST = "staging file lost"
+
+
+def temp_file_path(upload_id: str, target_dir: str) -> str:
+    """``<target_dir>/.twicc-upload-<id>.tmp``: the cross-filesystem copy (§5.6)."""
+    return os.path.join(target_dir, f"{TEMP_FILE_PREFIX}{_checked_id(upload_id)}.tmp")
+
+
+def is_upload_temp_name(name: str) -> bool:
+    """True for a base name matching ``.twicc-upload-*.tmp``."""
+    return name.startswith(TEMP_FILE_PREFIX) and name.endswith(".tmp")
+
+
+def candidate_names(filename: str) -> Iterator[str]:
+    """The free-name candidates: *filename*, then ``stem (1).ext`` … ``stem (999).ext``.
+
+    ``ext`` is the last suffix only (``archive.tar.gz`` → ``archive.tar (1).gz``);
+    a dot-file without another dot has no extension (``.env`` → ``.env (1)``).
+    """
+    yield filename
+    dot = filename.rfind(".")
+    stem, ext = (filename[:dot], filename[dot:]) if dot > 0 else (filename, "")
+    for number in range(1, MAX_NAME_SUFFIX + 1):
+        yield f"{stem} ({number}){ext}"
+
+
+def _st_dev(path: str | os.PathLike) -> int:
+    """``st_dev`` of *path* (a separate function, so tests can fake another filesystem)."""
+    return os.stat(path).st_dev
+
+
+def _free_bytes(path: str | os.PathLike) -> int:
+    """Free bytes of the filesystem of *path*."""
+    return shutil.disk_usage(path).free
+
+
+def _file_size(path: str) -> int | None:
+    """``st_size`` of *path*, or ``None`` when it (or a parent) does not exist."""
+    try:
+        return os.stat(path).st_size
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+
+
+def _remove_if_empty(path: str) -> None:
+    """Remove *path* when it is an empty regular file (our reservation), best effort."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return
+    if st.st_size == 0 and stat.S_ISREG(st.st_mode):
+        remove_best_effort(path)
+
+
+def _os_error_message(exc: BaseException) -> str:
+    if isinstance(exc, OSError) and exc.errno is not None:
+        return os.strerror(exc.errno)
+    return "Unexpected error"
+
+
+class FinalizeResult(NamedTuple):
+    """Result of the worker-thread part of a finalization step."""
+
+    meta: dict  # the metadata on disk after the step
+    code: int  # 204 completed, 422 failed, else 507 (disk full) / 500
+    broadcast: bool  # *meta* was just persisted with a new state: broadcast it
+
+
+class _PreCommitFailure(Exception):
+    """A failure before the commit point (§5.6): no link and no reservation exist."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _mapped_failure(exc: BaseException, target_dir: str) -> _PreCommitFailure:
+    """Map an error of the copy, the link loop or the reserve loop (§5.6 step 4.4)."""
+    if is_target_refusal(exc, target_dir):
+        if not os.path.isdir(target_dir):
+            return _PreCommitFailure(422, "The target directory no longer exists")
+        return _PreCommitFailure(422, f"The target directory refuses the file: {_os_error_message(exc)}")
+    if is_disk_full(exc):
+        return _PreCommitFailure(507, "Not enough disk space in the target directory")
+    return _PreCommitFailure(500, f"Unexpected error: {_os_error_message(exc)}")
+
+
+class _Placement(NamedTuple):
+    final_path: str
+    method: str  # FINAL_METHOD_LINK or FINAL_METHOD_REPLACE
+    source_kind: str  # FINAL_SOURCE_PART or FINAL_SOURCE_TMP
+    source: str  # path of the source file
+
+
+class _CrossDevice(Exception):
+    """``os.link`` raised ``EXDEV``."""
+
+
+class _NoHardLinks(Exception):
+    """``os.link`` raised an error of a filesystem without hard links."""
+
+
+def _copy_to_temp(part: str, tmp: str, target_dir: str, size: int) -> None:
+    """Step 4.3, other filesystem: copy ``<id>.part`` into a new temp file, ``fsync`` it."""
+    try:
+        free = _free_bytes(target_dir)
+    except OSError as exc:
+        raise _mapped_failure(exc, target_dir) from exc
+    if free < size:
+        raise _PreCommitFailure(507, "Not enough disk space in the target directory")
+    # Never write through a leftover: it may be hard-linked to a final name.
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise _mapped_failure(exc, target_dir) from exc
+    try:
+        source = open(part, "rb")
+    except OSError as exc:
+        # The source, not the target: disk full or unexpected, never a refusal.
+        raise _PreCommitFailure(failure_code(exc), f"Cannot read the staging file: {_os_error_message(exc)}") from exc
+    with source:
+        try:
+            fd = os.open(tmp, _NEW_FILE_FLAGS, _NEW_FILE_MODE)
+        except OSError as exc:
+            raise _mapped_failure(exc, target_dir) from exc
+        try:
+            with os.fdopen(fd, "wb") as out:
+                shutil.copyfileobj(source, out, COPY_BLOCK_SIZE)
+                out.flush()
+                os.fsync(out.fileno())
+        except OSError as exc:
+            raise _mapped_failure(exc, target_dir) from exc
+
+
+def _link_loop(source: str, target_dir: str, names: list[str]) -> str:
+    """Step 4.4: ``os.link`` the source to the first free candidate; return its path."""
+    for name in names:
+        candidate = os.path.join(target_dir, name)
+        try:
+            os.link(source, candidate)
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            if exc.errno == errno.EXDEV:
+                raise _CrossDevice from exc
+            if exc.errno in _NO_HARD_LINK_ERRNOS:
+                raise _NoHardLinks from exc
+            raise _mapped_failure(exc, target_dir) from exc
+        return candidate
+    raise _PreCommitFailure(422, "No free file name in the target directory")
+
+
+def _reserve_loop(target_dir: str, names: list[str]) -> str:
+    """Step 4.4, no hard links: create the first free candidate empty; return its path."""
+    for name in names:
+        candidate = os.path.join(target_dir, name)
+        try:
+            fd = os.open(candidate, _NEW_FILE_FLAGS, _NEW_FILE_MODE)
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            if exc.errno == errno.EPERM:
+                raise _PreCommitFailure(422, "The target directory refuses the file") from exc
+            raise _mapped_failure(exc, target_dir) from exc
+        try:
+            os.close(fd)
+        except OSError:
+            logger.warning("Upload finalization: cannot close the reservation %s", candidate, exc_info=True)
+        return candidate
+    raise _PreCommitFailure(422, "No free file name in the target directory")
+
+
+def _place(upload_id: str, meta: dict) -> _Placement:
+    """Steps 4.1-4.4: ``fsync``, candidates, source, link or reserve loop.
+
+    Returns the placement once a link or a reservation exists. Raises
+    :class:`_PreCommitFailure` before that; then no link and no reservation
+    exist.
+    """
+    target_dir = meta["target_dir"]
+    size = meta["size"]
+    part = str(part_path(upload_id))
+    tmp = temp_file_path(upload_id, target_dir)
+
+    try:
+        fd = os.open(part, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise _PreCommitFailure(failure_code(exc), f"Cannot sync the staging file: {_os_error_message(exc)}") from exc
+
+    names = list(candidate_names(meta["filename"]))
+    try:
+        same_filesystem = _st_dev(part) == _st_dev(target_dir)
+    except OSError as exc:
+        raise _mapped_failure(exc, target_dir) from exc
+
+    if same_filesystem:
+        source, source_kind = part, FINAL_SOURCE_PART
+    else:
+        _copy_to_temp(part, tmp, target_dir, size)
+        source, source_kind = tmp, FINAL_SOURCE_TMP
+
+    while True:
+        try:
+            final_path = _link_loop(source, target_dir, names)
+        except _CrossDevice:
+            if source_kind == FINAL_SOURCE_TMP:
+                raise _PreCommitFailure(500, "Unexpected error: cross-device link inside the target directory")
+            # Two mounts of one filesystem can share ``st_dev``: copy instead.
+            _copy_to_temp(part, tmp, target_dir, size)
+            source, source_kind = tmp, FINAL_SOURCE_TMP
+            continue
+        except _NoHardLinks:
+            final_path = _reserve_loop(target_dir, names)
+            return _Placement(final_path, FINAL_METHOD_REPLACE, source_kind, source)
+        return _Placement(final_path, FINAL_METHOD_LINK, source_kind, source)
+
+
+def finalize_precommit_failure(upload_id: str, current: dict, code: int, message: str) -> FinalizeResult:
+    """The pre-commit failure rule of §5.6 (no link and no reservation exist).
+
+    Removes the temp file. Then:
+
+    - *code* ``422`` → writes ``failed`` with ``error``, removes ``<id>.part``;
+    - ``507`` or ``500`` → keeps ``<id>.part``, writes ``active`` with
+      ``error``, ``finalize_error_code`` and ``finalize_failed_at``.
+
+    A failed write leaves the state on disk as it was (*current*) and answers
+    ``507`` when the write or the original failure is disk full, else ``500``
+    (a ``422`` whose ``failed`` write fails answers the write's own code).
+    """
+    remove_best_effort(temp_file_path(upload_id, current["target_dir"]))
+    if code == 422:
+        try:
+            meta = update_metadata(upload_id, state=STATE_FAILED, error=message)
+        except Exception as exc:
+            logger.warning("Upload %s: cannot write the 'failed' state", upload_id, exc_info=True)
+            return FinalizeResult(current, failure_code(exc), False)
+        remove_best_effort(part_path(upload_id))
+        return FinalizeResult(meta, 422, True)
+    try:
+        meta = update_metadata(
+            upload_id,
+            state=STATE_ACTIVE,
+            error=message,
+            finalize_error_code=code,
+            finalize_failed_at=now_iso(),
+        )
+    except Exception as exc:
+        logger.warning("Upload %s: cannot write the finalization failure", upload_id, exc_info=True)
+        return FinalizeResult(current, 507 if code == 507 or is_disk_full(exc) else 500, False)
+    return FinalizeResult(meta, code, True)
+
+
+def finalize_files(upload_id: str, current: dict) -> FinalizeResult:
+    """Worker-thread part of the finalization (§5.6 step 4), with its failure rules.
+
+    *current* is the ``finalizing`` metadata the coroutine just wrote. The
+    caller holds the upload's lock and broadcasts the result when
+    ``broadcast`` is true.
+    """
+    try:
+        placement = _place(upload_id, current)
+    except _PreCommitFailure as failure:
+        logger.warning("Upload %s: finalization failed before the commit point: %s", upload_id, failure.message)
+        return finalize_precommit_failure(upload_id, current, failure.code, failure.message)
+    except Exception as exc:
+        logger.exception("Upload %s: unexpected finalization error", upload_id)
+        return finalize_precommit_failure(upload_id, current, 500, f"Unexpected error: {exc}")
+
+    # 4.5 Commit point: the final name exists.
+    changes = {"final_path": placement.final_path, "final_method": placement.method}
+    if placement.method == FINAL_METHOD_REPLACE:
+        changes["final_source"] = placement.source_kind
+    try:
+        current = update_metadata(upload_id, **changes)
+    except Exception as exc:
+        logger.warning("Upload %s: commit write failed", upload_id, exc_info=True)
+        code = failure_code(exc)
+        if placement.method == FINAL_METHOD_LINK:
+            # Keep the link: the state stays ``finalizing``; recovery finds it by inode.
+            return FinalizeResult(current, code, False)
+        # The reservation name is known here: remove it, then the pre-commit rule.
+        remove_best_effort(placement.final_path)
+        message = "Not enough disk space" if code == 507 else f"Unexpected error: {_os_error_message(exc)}"
+        return finalize_precommit_failure(upload_id, current, code, message)
+
+    # 4.6 ``replace`` only.
+    if placement.method == FINAL_METHOD_REPLACE:
+        try:
+            os.replace(placement.source, placement.final_path)
+        except OSError as exc:
+            logger.warning("Upload %s: replace into %s failed", upload_id, placement.final_path, exc_info=True)
+            return FinalizeResult(current, failure_code(exc), False)
+
+    # 4.7 ``completed``, then the best-effort removals.
+    try:
+        current = update_metadata(upload_id, state=STATE_COMPLETED)
+    except Exception as exc:
+        logger.warning("Upload %s: cannot write the 'completed' state", upload_id, exc_info=True)
+        return FinalizeResult(current, failure_code(exc), False)
+    remove_best_effort(part_path(upload_id))
+    remove_best_effort(temp_file_path(upload_id, current["target_dir"]))
+    return FinalizeResult(current, 204, True)
+
+
+def finalize_space_available(meta: dict) -> bool:
+    """The ``HEAD`` ``507`` gate (§5.3): enough free space to finalize again?
+
+    1 MiB on the staging filesystem (metadata writes), plus ``size`` bytes on
+    the target filesystem when a copy is needed (other filesystem), or 1 MiB
+    on it for a link. When ``target_dir`` (or ``<id>.part``) cannot be
+    stat'ed, the gate is skipped (``True``): recovery settles the upload.
+    """
+    if _free_bytes(get_staging_dir()) < FINALIZE_SPACE_MARGIN:
+        return False
+    target_dir = meta["target_dir"]
+    try:
+        same_filesystem = _st_dev(part_path(meta["id"])) == _st_dev(target_dir)
+        free = _free_bytes(target_dir)
+    except OSError:
+        return True
+    return free >= (FINALIZE_SPACE_MARGIN if same_filesystem else meta["size"])
+
+
+# ── Recovery (§5.7) ──────────────────────────────────────────────────────────
+
+RECOVERY_DONE = "done"  # settled; broadcast ``meta`` when ``broadcast`` is true
+RECOVERY_ANSWER = "answer"  # not settled: answer ``code``
+RECOVERY_FINALIZE = "finalize"  # the coroutine runs finalization (§5.6) from its step 1
+
+
+class RecoveryVerdict(NamedTuple):
+    """Result of the worker-thread part of a recovery step."""
+
+    kind: str  # RECOVERY_DONE, RECOVERY_ANSWER or RECOVERY_FINALIZE
+    meta: dict | None  # the metadata on disk after the thread work (None: absent)
+    code: int  # the answer for RECOVERY_ANSWER (404, 507, 500); 200 otherwise
+    broadcast: bool  # *meta* was just persisted with a new state: broadcast it
+
+
+def _settle(upload_id: str, current: dict, cleanup: tuple[str, ...], **changes: object) -> RecoveryVerdict:
+    """Write *changes*; on success remove *cleanup* (best effort) and answer *done*."""
+    try:
+        meta = update_metadata(upload_id, **changes)
+    except Exception as exc:
+        logger.warning("Upload %s: recovery write failed", upload_id, exc_info=True)
+        return RecoveryVerdict(RECOVERY_ANSWER, current, failure_code(exc), False)
+    for path in cleanup:
+        remove_best_effort(path)
+    return RecoveryVerdict(RECOVERY_DONE, meta, 200, True)
+
+
+def _scan_for_inode(target_dir: str, inodes: set[tuple[int, int]]) -> str | None:
+    """The entry of *target_dir* with one of *inodes*, skipping ``.twicc-upload-*.tmp``.
+
+    A scan error (the target is gone or unreadable) counts as "not found".
+    """
+    try:
+        with os.scandir(target_dir) as entries:
+            for entry in entries:
+                if is_upload_temp_name(entry.name):
+                    continue
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if (st.st_dev, st.st_ino) in inodes:
+                    return os.path.join(target_dir, entry.name)
+    except OSError:
+        return None
+    return None
+
+
+def _recover_committed(upload_id: str, meta: dict, part: str, tmp: str) -> RecoveryVerdict:
+    """Recovery case 2: ``final_path`` is set."""
+    final_path = meta["final_path"]
+    size = meta["size"]
+    cleanup = (part, tmp)
+    if meta.get("final_method") == FINAL_METHOD_LINK:
+        return _settle(upload_id, meta, cleanup, state=STATE_COMPLETED)
+
+    # ``replace``.
+    final_size = _file_size(final_path)
+    if final_size == size:
+        return _settle(upload_id, meta, cleanup, state=STATE_COMPLETED)
+    source = tmp if meta.get("final_source") == FINAL_SOURCE_TMP else part
+    if _file_size(source) != size:
+        _remove_if_empty(final_path)
+        return _settle(upload_id, meta, cleanup, state=STATE_FAILED, error=ERROR_STAGING_LOST)
+    if final_size is None or final_size == 0:
+        try:
+            os.replace(source, final_path)
+        except OSError as exc:
+            logger.warning("Upload %s: recovery replace into %s failed", upload_id, final_path, exc_info=True)
+            if not is_target_refusal(exc, meta["target_dir"]):
+                return RecoveryVerdict(RECOVERY_ANSWER, meta, failure_code(exc), False)
+            verdict = _settle(
+                upload_id,
+                meta,
+                cleanup,
+                state=STATE_FAILED,
+                error=f"The target directory refuses the file: {_os_error_message(exc)}",
+            )
+            if verdict.kind == RECOVERY_DONE:
+                _remove_if_empty(final_path)
+            return verdict
+        return _settle(upload_id, meta, cleanup, state=STATE_COMPLETED)
+
+    # ``final_path`` holds other content: never overwrite it; finalize again
+    # from ``<id>.part``, which picks a new free name.
+    try:
+        meta = update_metadata(upload_id, final_path=None, final_method=None, final_source=None)
+    except Exception as exc:
+        logger.warning("Upload %s: cannot clear the final path", upload_id, exc_info=True)
+        return RecoveryVerdict(RECOVERY_ANSWER, meta, failure_code(exc), False)
+    remove_best_effort(tmp)
+    return RecoveryVerdict(RECOVERY_FINALIZE, meta, 200, False)
+
+
+def _recover_uncommitted(upload_id: str, meta: dict, part: str, tmp: str) -> RecoveryVerdict:
+    """Recovery case 3: ``final_path`` is not set."""
+    target_dir = meta["target_dir"]
+    inodes = set()
+    for path in (part, tmp):
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        if st.st_nlink > 1:
+            inodes.add((st.st_dev, st.st_ino))
+    if inodes:
+        found = _scan_for_inode(target_dir, inodes)
+        if found is not None:
+            return _settle(
+                upload_id,
+                meta,
+                (part, tmp),
+                state=STATE_COMPLETED,
+                final_path=found,
+                final_method=FINAL_METHOD_LINK,
+            )
+
+    remove_best_effort(tmp)
+    received = part_size(upload_id)
+    if received is None:
+        return _settle(upload_id, meta, (), state=STATE_FAILED, error=ERROR_STAGING_LOST)
+    if received >= meta["size"]:
+        return RecoveryVerdict(RECOVERY_FINALIZE, meta, 200, False)
+    if meta["state"] == STATE_FINALIZING:
+        return _settle(upload_id, meta, (), state=STATE_ACTIVE)
+    return RecoveryVerdict(RECOVERY_DONE, meta, 200, False)
+
+
+def recover_files(upload_id: str) -> RecoveryVerdict:
+    """Worker-thread part of the recovery step (§5.7).
+
+    Re-reads the metadata (the caller holds the upload's lock), runs every
+    file and metadata step of the matching case and returns a verdict. For
+    :data:`RECOVERY_FINALIZE`, every metadata write the verdict needs is
+    already done. An unexpected exception answers ``507`` / ``500`` and leaves
+    the state as it is.
+    """
+    meta = peek_metadata(upload_id)
+    if meta is None:
+        return RecoveryVerdict(RECOVERY_ANSWER, None, 404, False)
+    try:
+        part = str(part_path(upload_id))
+        tmp = temp_file_path(upload_id, meta["target_dir"])
+        if is_terminal(meta["state"]):
+            remove_best_effort(part)
+            remove_best_effort(tmp)
+            return RecoveryVerdict(RECOVERY_DONE, meta, 200, False)
+        if meta.get("final_path"):
+            return _recover_committed(upload_id, meta, part, tmp)
+        return _recover_uncommitted(upload_id, meta, part, tmp)
+    except Exception as exc:
+        logger.exception("Upload %s: unexpected recovery error", upload_id)
+        return RecoveryVerdict(RECOVERY_ANSWER, meta, failure_code(exc), False)
 
 
 # ── Record (§5.8) ─────────────────────────────────────────────────────────────
