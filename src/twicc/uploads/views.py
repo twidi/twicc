@@ -3,10 +3,14 @@
 Design: docs/plans/2026-09-28-file-upload-design.md (§5.3, §5.4, §5.5).
 
 - ``POST`` under the three file-operation prefixes creates an upload (JSON);
-- ``GET api/uploads/`` lists the non-terminal uploads and the tombstones.
+- ``GET api/uploads/`` lists the non-terminal uploads and the tombstones;
+- ``HEAD`` / ``PATCH`` / ``DELETE api/uploads/<id>/`` are the tus core
+  protocol with the ``termination`` extension.
 
 Every view is wrapped by :func:`upload_view`, which turns an escaping
 exception into a JSON ``500`` and adds ``X-Twicc-Upload: 1`` to every answer.
+Every write to an upload's metadata or files runs in a guarded operation
+(:func:`twicc.uploads.locks.run_guarded`) under the upload's lock.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import asyncio
 import functools
 import logging
 import os
+import re
 import shutil
 from datetime import UTC, datetime
 from typing import NamedTuple
@@ -22,7 +27,7 @@ from typing import NamedTuple
 import orjson
 from asgiref.sync import sync_to_async
 from django.core.exceptions import RequestDataTooBig
-from django.http import Http404, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 
 from twicc.file_tree import validate_path
 from twicc.uploads import locks, store
@@ -56,7 +61,8 @@ def upload_view(*, tus: bool = False):
       ``asyncio.CancelledError`` is not an ``Exception``: it propagates (a
       client disconnect, §5.4).
     - Every answer gets ``X-Twicc-Upload: 1``; with *tus* (the ``<id>``
-      routes) also ``Tus-Resumable: 1.0.0``.
+      routes) also ``Tus-Resumable: 1.0.0``, and ``Cache-Control: no-store``
+      on a ``HEAD`` answer.
     """
 
     def decorator(view):
@@ -71,6 +77,8 @@ def upload_view(*, tus: bool = False):
             response[UPLOAD_HEADER] = "1"
             if tus:
                 response["Tus-Resumable"] = TUS_VERSION
+                if request.method == "HEAD":
+                    response["Cache-Control"] = "no-store"
             return response
 
         return wrapper
@@ -96,6 +104,35 @@ async def finalize_upload(upload_id: str) -> StepOutcome:
     code of the step. Implemented by task 4 of the implementation plan.
     """
     raise NotImplementedError("upload finalization is not implemented yet")
+
+
+# ── Recovery hook (§5.7) ──────────────────────────────────────────────────────
+
+
+async def recover_upload(upload_id: str) -> StepOutcome:
+    """Recovery of an upload that a crash or a stop left unsettled (§5.7).
+
+    Implemented by task 4 of the implementation plan. Contract:
+
+    - A step that runs under the upload's lock, **already held by the caller**
+      (the ``HEAD`` guarded operation, later the janitor); it never takes the
+      lock. It re-reads the metadata itself, runs its file and metadata work
+      in a worker thread, runs finalization (:func:`finalize_upload`) itself
+      for a *finalize* verdict, and broadcasts every record it persists.
+    - Returns ``StepOutcome(meta, code)``: *meta* is the metadata on disk after
+      the step (``None``: absent); *code* is ``507`` or ``500`` when recovery
+      ran a finalization that failed with that code, or when a step or a write
+      failed and left the state not settled (``507`` for disk full, else
+      ``500``). Any other *code* means "settled": the ``HEAD`` caller then
+      answers from *meta* with its lock-free table (``completed`` →
+      offset = length, ``failed`` / ``cancelled`` → ``410``, ``active`` with a
+      short ``.part`` → its offset).
+    - The ``HEAD`` gates of §5.3 (the ``507`` free-space gate and the ``500``
+      60 s throttle, decided from the metadata re-read under the lock) belong
+      to task 4 too; they run before this step, in
+      :func:`_head_recovery` (or inside this step).
+    """
+    raise NotImplementedError("upload recovery is not implemented yet")
 
 
 # ── Creation (§5.3 POST) ──────────────────────────────────────────────────────
@@ -366,6 +403,196 @@ async def _list_view(request):
     return JsonResponse({"uploads": records, "now": now.isoformat()})
 
 
+# ── tus routes: HEAD, PATCH, DELETE (§5.3) ───────────────────────────────────
+
+TUS_METHODS = ("HEAD", "PATCH", "DELETE")
+PATCH_CONTENT_TYPE = "application/offset+octet-stream"
+_OFFSET_RE = re.compile(r"[0-9]+")
+
+
+def _status(code: int) -> HttpResponse:
+    """An empty answer (tus answers carry their data in headers)."""
+    return HttpResponse(status=code)
+
+
+def _offset_answer(offset: int, size: int) -> HttpResponse:
+    response = _status(200)
+    response["Upload-Offset"] = str(offset)
+    response["Upload-Length"] = str(size)
+    return response
+
+
+def _head_table(meta: dict, part: int | None) -> HttpResponse | None:
+    """The ``HEAD`` lock-free table (§5.3); ``None``: recovery must run."""
+    state = meta["state"]
+    size = meta["size"]
+    if state == store.STATE_COMPLETED:
+        return _offset_answer(size, size)
+    if state in (store.STATE_FAILED, store.STATE_CANCELLED):
+        return _status(410)
+    if locks.is_finalizing_now(meta["id"]):
+        return _offset_answer(size, size)
+    if state == store.STATE_ACTIVE and part is not None and part < size:
+        return _offset_answer(part, size)
+    return None
+
+
+async def _run_locked(upload_id: str, operation, *, label: str) -> HttpResponse:
+    """Run *operation(meta)* as a guarded operation of one upload (§5.4).
+
+    The shielded task takes the upload's lock, re-reads the metadata (absent
+    or unparsable → ``404``) and calls ``await operation(meta)``, which runs
+    under the held lock.
+    """
+    lock = locks.get_upload_lock(upload_id)
+    if lock is None:
+        return _status(404)
+
+    async def guarded() -> HttpResponse:
+        async with lock:
+            meta = await asyncio.to_thread(store.peek_metadata, upload_id)
+            if meta is None:
+                return _status(404)
+            return await operation(meta)
+
+    return await locks.run_guarded(guarded(), label=f"{label}({upload_id})")
+
+
+async def _head_recovery(meta: dict) -> HttpResponse:
+    """``HEAD`` after the lock-free table chose the recovery path (§5.3).
+
+    Runs under the held lock, on the metadata re-read under it.
+    """
+    upload_id = meta["id"]
+    if store.is_terminal(meta["state"]):
+        # A terminal state: the operation does nothing, answers from that state.
+        return _head_table(meta, None)
+    outcome = await recover_upload(upload_id)
+    if outcome.code in (500, 507):
+        return _status(outcome.code)
+    if outcome.meta is None:
+        return _status(404)
+    part = await asyncio.to_thread(store.part_size, upload_id)
+    answer = _head_table(outcome.meta, part)
+    # Settled by contract; an answer with offset = length would end the
+    # client with success for an upload that did not finish.
+    return answer if answer is not None else _status(500)
+
+
+async def _head(upload_id: str, meta: dict) -> HttpResponse:
+    part = await asyncio.to_thread(store.part_size, upload_id)
+    answer = _head_table(meta, part)
+    if answer is not None:
+        return answer
+    return await _run_locked(upload_id, _head_recovery, label="head")
+
+
+def _patch_after_finalization(outcome: StepOutcome) -> HttpResponse:
+    """The ``PATCH`` answer after the finalization it ran (§5.3)."""
+    meta = outcome.meta
+    if meta is None:
+        return _status(404)
+    if meta["state"] == store.STATE_COMPLETED:
+        response = _status(204)
+        response["Upload-Offset"] = str(meta["size"])
+        return response
+    if meta["state"] == store.STATE_FAILED:
+        return _status(422)
+    if meta["state"] == store.STATE_CANCELLED:
+        return _status(410)
+    # ``active`` with ``error``, or still ``finalizing``.
+    return _status(507 if outcome.code == 507 else 500)
+
+
+_APPEND_FAILURE_CODES = {
+    store.APPEND_EXCESS: 400,
+    store.APPEND_READ_ERROR: 500,
+    store.APPEND_DISK_FULL: 507,
+    store.APPEND_WRITE_ERROR: 500,
+}
+
+
+def _declared_length(request) -> int | None:
+    value = request.META.get("CONTENT_LENGTH")
+    if isinstance(value, str) and _OFFSET_RE.fullmatch(value):
+        return int(value)
+    return None
+
+
+async def _patch(request, upload_id: str) -> HttpResponse:
+    if request.content_type != PATCH_CONTENT_TYPE:
+        return _error(f"Content-Type must be {PATCH_CONTENT_TYPE}", 415)
+    raw_offset = request.headers.get("Upload-Offset")
+    if raw_offset is None or not _OFFSET_RE.fullmatch(raw_offset):
+        return _error("Upload-Offset must be a non-negative integer", 400)
+    client_offset = int(raw_offset)
+    declared_length = _declared_length(request)
+
+    async def operation(meta: dict) -> HttpResponse:
+        state = meta["state"]
+        if store.is_terminal(state):
+            return _status(410)
+        if state == store.STATE_FINALIZING:
+            return _status(409)
+        size = meta["size"]
+        part = await asyncio.to_thread(store.part_size, upload_id)
+        if part is None:
+            lost = await asyncio.to_thread(store.mark_staging_lost, upload_id)
+            if lost.meta is not None:
+                await broadcast_upload_state(lost.meta)
+            return _status(lost.code)
+        if part >= size:
+            # Nothing to append: the client resynchronises with HEAD, which
+            # applies its gates before any new finalization.
+            return _status(409)
+        if client_offset != part:
+            return _status(409)
+
+        result = await asyncio.to_thread(
+            store.append_chunk,
+            upload_id,
+            request.read,
+            start_offset=part,
+            size=size,
+            meta_offset=meta["offset"],
+            declared_length=declared_length,
+        )
+        if result.meta is not None:
+            await broadcast_upload_state(result.meta)
+        if result.part_size is not None and result.part_size >= size:
+            return _patch_after_finalization(await finalize_upload(upload_id))
+        if result.outcome != store.APPEND_OK:
+            code = _APPEND_FAILURE_CODES[result.outcome]
+            if code == 400:
+                return _error(f"The body holds more than the {size - part} bytes left", 400)
+            return _status(code)
+        if result.part_size is None:  # pragma: no cover - the lock excludes every remover
+            return _status(500)
+        response = _status(204)
+        response["Upload-Offset"] = str(result.part_size)
+        return response
+
+    return await _run_locked(upload_id, operation, label="patch")
+
+
+async def _delete(upload_id: str) -> HttpResponse:
+    if locks.is_finalizing_now(upload_id):
+        return _status(409)
+
+    async def operation(meta: dict) -> HttpResponse:
+        state = meta["state"]
+        if store.is_terminal(state):
+            return _status(204)
+        if state == store.STATE_FINALIZING:
+            return _status(409)
+        outcome = await asyncio.to_thread(store.cancel_upload, upload_id)
+        if outcome.meta is not None:
+            await broadcast_upload_state(outcome.meta)
+        return _status(outcome.code)
+
+    return await _run_locked(upload_id, operation, label="delete")
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
@@ -385,3 +612,25 @@ async def upload_create(request, project_id, session_id=None):
     if request.method != "POST":
         return _error("Method not allowed", 405)
     return await _create_view(request, project_id=project_id, session_id=session_id)
+
+
+@upload_view(tus=True)
+async def upload_detail(request, upload_id):
+    """``api/uploads/<id>/``: tus ``HEAD`` (offset), ``PATCH`` (append), ``DELETE`` (cancel)."""
+    if request.method not in TUS_METHODS:
+        response = _error("Method not allowed", 405)
+        response["Allow"] = ", ".join(TUS_METHODS)
+        return response
+    if request.headers.get("Tus-Resumable") != TUS_VERSION:
+        response = _error(f"Tus-Resumable: {TUS_VERSION} is required", 412)
+        response["Tus-Version"] = TUS_VERSION
+        return response
+    # Invalid id, unknown or unparsable ``<id>.json`` → 404 before any lock or path work.
+    meta = await asyncio.to_thread(store.peek_metadata, upload_id)
+    if meta is None:
+        return _status(404)
+    if request.method == "HEAD":
+        return await _head(upload_id, meta)
+    if request.method == "PATCH":
+        return await _patch(request, upload_id)
+    return await _delete(upload_id)

@@ -460,6 +460,185 @@ def update_metadata(upload_id: str, **changes: object) -> dict:
     return meta
 
 
+def peek_metadata(upload_id: str) -> dict | None:
+    """Lock-free read of an ``<id>`` route (§5.3): the metadata, or ``None``.
+
+    ``None`` for an invalid id, a missing ``<id>.json`` or an unparsable one:
+    the route answers ``404`` before any lock or path work. The staging dir is
+    never created here.
+    """
+    if not is_valid_upload_id(upload_id):
+        return None
+    if not (get_uploads_dir() / f"{upload_id}.json").is_file():
+        return None
+    try:
+        return read_metadata(upload_id)
+    except UnparsableMetadataError:
+        return None
+
+
+# ── Steps of the tus routes (§5.3) ───────────────────────────────────────────
+#
+# Blocking work of one guarded operation (§5.4): the caller holds the upload's
+# lock, runs the function in a worker thread and broadcasts the metadata it
+# returns. Every failure rule runs here, inside the thread.
+
+
+class WriteOutcome(NamedTuple):
+    """Result of a step that writes the metadata."""
+
+    meta: dict | None  # the persisted metadata to broadcast (None: nothing written)
+    code: int  # the HTTP answer of the step
+
+
+# Size of one read of the request body during an append.
+APPEND_BLOCK_SIZE = 1024 * 1024
+
+APPEND_OK = "ok"  # the body was fully appended
+APPEND_EXCESS = "excess"  # the body holds more than ``size - offset``: truncated back, 400
+APPEND_READ_ERROR = "read_error"  # reading the body failed (closed after a disconnect, short read)
+APPEND_DISK_FULL = "disk_full"  # writing failed: disk full
+APPEND_WRITE_ERROR = "write_error"  # writing failed: any other error
+
+
+class AppendResult(NamedTuple):
+    """Result of :func:`append_chunk`."""
+
+    outcome: str  # one of the APPEND_* values
+    part_size: int | None  # real size of ``<id>.part`` after the append (None: missing)
+    meta: dict | None  # metadata persisted by the offset sync (None: no write, or a failed one)
+
+
+def _write_block(file, data: bytes) -> None:
+    """Write all of *data* to an unbuffered binary file."""
+    view = memoryview(data)
+    while view:
+        written = file.write(view)
+        view = view[written:]
+
+
+def append_chunk(
+    upload_id: str,
+    read,
+    *,
+    start_offset: int,
+    size: int,
+    meta_offset: int,
+    declared_length: int | None,
+) -> AppendResult:
+    """Append one ``PATCH`` body to ``<id>.part``, then sync the metadata (§5.3).
+
+    *read* is the request's ``read(n)``: the body is read in blocks, never as a
+    whole. At most ``size - start_offset`` bytes are accepted, whatever
+    *declared_length* (``Content-Length``) says: when the body holds more,
+    ``<id>.part`` is truncated back to *start_offset* (:data:`APPEND_EXCESS`).
+    A read error (``ValueError`` / ``OSError``: Django closed the body file
+    after a disconnect) or a body shorter than *declared_length* stops the
+    append; the bytes already written stay.
+
+    Then the metadata ``offset`` is synced to the real size of ``<id>.part``
+    when it differs from *meta_offset* (the offset on disk before the append),
+    with ``last_transfer_at`` when bytes were added. A failure of this sync is
+    logged and ignored: the ``.part`` size stays the truth.
+    """
+    remaining = size - start_offset
+    accepted = 0
+    received = 0
+    outcome = APPEND_OK
+    part = part_path(upload_id)
+    try:
+        file = open(part, "ab", buffering=0)
+    except OSError as exc:
+        logger.warning("Upload %s: cannot open %s for append", upload_id, part, exc_info=True)
+        outcome = APPEND_DISK_FULL if is_disk_full(exc) else APPEND_WRITE_ERROR
+    else:
+        with file:
+            while True:
+                want = remaining - accepted
+                try:
+                    # Once every accepted byte is in, read one more byte: any
+                    # further byte is an excess.
+                    block = read(min(APPEND_BLOCK_SIZE, want) if want > 0 else 1)
+                except (ValueError, OSError):
+                    logger.info("Upload %s: request body unreadable after %d bytes", upload_id, received)
+                    outcome = APPEND_READ_ERROR
+                    break
+                if not block:
+                    if declared_length is not None and received < declared_length:
+                        logger.info(
+                            "Upload %s: short request body (%d of %d bytes)", upload_id, received, declared_length
+                        )
+                        outcome = APPEND_READ_ERROR
+                    break
+                received += len(block)
+                if want <= 0:
+                    outcome = APPEND_EXCESS
+                    break
+                try:
+                    _write_block(file, block)
+                except OSError as exc:
+                    logger.warning("Upload %s: append failed", upload_id, exc_info=True)
+                    outcome = APPEND_DISK_FULL if is_disk_full(exc) else APPEND_WRITE_ERROR
+                    break
+                accepted += len(block)
+
+    if outcome == APPEND_EXCESS:
+        try:
+            os.truncate(part, start_offset)
+        except OSError:
+            logger.warning("Upload %s: cannot truncate %s back to %d", upload_id, part, start_offset, exc_info=True)
+
+    real_size = part_size(upload_id)
+    meta = None
+    if real_size is not None and real_size != meta_offset:
+        changes = {"last_transfer_at": now_iso()} if real_size > start_offset else {}
+        try:
+            meta = update_metadata(upload_id, **changes)
+        except Exception:
+            logger.warning("Upload %s: offset sync after append failed", upload_id, exc_info=True)
+    return AppendResult(outcome, real_size, meta)
+
+
+def mark_staging_lost(upload_id: str) -> WriteOutcome:
+    """``active`` whose ``<id>.part`` is missing → ``failed`` (``"staging file lost"``).
+
+    Answer ``410`` after the write; a failed write answers its own code
+    (``507`` for disk full, else ``500``) and writes nothing.
+    """
+    try:
+        meta = update_metadata(upload_id, state=STATE_FAILED, error="staging file lost")
+    except Exception as exc:
+        logger.warning("Upload %s: cannot write the 'failed' state", upload_id, exc_info=True)
+        return WriteOutcome(None, failure_code(exc))
+    return WriteOutcome(meta, 410)
+
+
+def cancel_upload(upload_id: str) -> WriteOutcome:
+    """tus termination of a non-terminal, non-``finalizing`` upload (§5.3 ``DELETE``).
+
+    Writes ``cancelled`` first, then removes ``<id>.part`` (best effort):
+    ``204``. On a disk-full write: removes ``<id>.part`` first, then writes
+    ``cancelled`` again; if that write fails too, nothing to broadcast and the
+    failure's code (``507`` for disk full). Any other failed write: ``500``,
+    nothing removed.
+    """
+    try:
+        meta = update_metadata(upload_id, state=STATE_CANCELLED)
+    except Exception as exc:
+        logger.warning("Upload %s: cannot write the 'cancelled' state", upload_id, exc_info=True)
+        if not is_disk_full(exc):
+            return WriteOutcome(None, failure_code(exc))
+        remove_best_effort(part_path(upload_id))
+        try:
+            meta = update_metadata(upload_id, state=STATE_CANCELLED)
+        except Exception as second:
+            logger.warning("Upload %s: cannot write the 'cancelled' state again", upload_id, exc_info=True)
+            return WriteOutcome(None, failure_code(second))
+        return WriteOutcome(meta, 204)
+    remove_best_effort(part_path(upload_id))
+    return WriteOutcome(meta, 204)
+
+
 # ── Record (§5.8) ─────────────────────────────────────────────────────────────
 
 

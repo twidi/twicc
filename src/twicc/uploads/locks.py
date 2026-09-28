@@ -17,15 +17,18 @@ Design: docs/plans/2026-09-28-file-upload-design.md (§5.4).
   cancels only the awaiting view, never the operation: the operation always
   ends under its lock, and no cleanup code runs in parallel with its worker
   thread.
+- The in-process **"finalizing now"** set (:func:`finalizing_now`,
+  :func:`is_finalizing_now`), read without the lock by ``HEAD`` and ``DELETE``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import logging
 import weakref
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Iterator
 from typing import Any, TypeVar
 
 from twicc.paths import get_uploads_dir
@@ -89,6 +92,32 @@ def get_upload_lock(upload_id: str) -> asyncio.Lock | None:
             return None
         lock = uploads.setdefault(upload_id, asyncio.Lock())
     return lock
+
+
+# Ids whose finalization runs in this process (§5.4). ``HEAD`` and ``DELETE``
+# read it without the lock (§5.3); finalization adds its id before its
+# ``finalizing`` write and removes it in a ``finally`` (:func:`finalizing_now`).
+_FINALIZING_NOW: set[str] = set()
+
+
+def is_finalizing_now(upload_id: str) -> bool:
+    """True while the finalization of *upload_id* runs in this process."""
+    return upload_id in _FINALIZING_NOW
+
+
+@contextlib.contextmanager
+def finalizing_now(upload_id: str) -> Iterator[None]:
+    """Hold *upload_id* in the "finalizing now" set for the block.
+
+    Used by finalization (§5.6 step 3) under the upload's lock: the id enters
+    before the ``finalizing`` write and leaves in a ``finally`` that covers
+    every later step and every exception.
+    """
+    _FINALIZING_NOW.add(upload_id)
+    try:
+        yield
+    finally:
+        _FINALIZING_NOW.discard(upload_id)
 
 
 def was_logged(exc: BaseException) -> bool:

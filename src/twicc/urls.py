@@ -48,6 +48,8 @@ urlpatterns = [
     path("api/file-create/", views.standalone_file_create),
     # Browser file uploads: GET lists, POST creates (standalone scope).
     path("api/uploads/", upload_views.uploads_root),
+    # tus transfer of one upload: HEAD (offset), PATCH (append), DELETE (cancel).
+    path("api/uploads/<str:upload_id>/", upload_views.upload_detail),
     path("api/home-directory/", views.home_directory),
     path("api/artifact-bookmarks/", views.artifact_bookmark_list),
     path("api/artifact-bookmarks/<int:bookmark_id>/", views.artifact_bookmark_detail),
