@@ -100,6 +100,16 @@ const props = defineProps({
     itemMinHeight: {
         type: Function,
         default: null
+    },
+    /** Optional (item) => class value, bound on each row wrapper. */
+    itemClass: {
+        type: Function,
+        default: null
+    },
+    /** Optional (item) => style object, bound on each row wrapper. */
+    itemStyle: {
+        type: Function,
+        default: null
     }
 })
 
@@ -701,6 +711,8 @@ defineExpose({
             :key="key"
             :item-key="key"
             :min-height="itemMinHeight ? itemMinHeight(item) : null"
+            :class="itemClass ? itemClass(item) : null"
+            :style="itemStyle ? itemStyle(item) : null"
         >
             <slot :item="item" :index="index" />
         </VirtualScrollerItem>

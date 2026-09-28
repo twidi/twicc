@@ -7,6 +7,8 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, relative } from 'node:path'
 
+import { CHAT_ENTRANCE_STAGGER_MS } from '../utils/chatEntrance.js'
+
 const here = dirname(fileURLToPath(import.meta.url))
 const srcDir = join(here, '..')
 const read = (rel) => readFileSync(join(here, rel), 'utf8')
@@ -206,6 +208,7 @@ test('4. status indicators pulse in opacity under reduced motion', () => {
         ['robot-working.css', parseBlocks(stripComments(read('robot-working.css'))), '.robot-working', 'motion-status-pulse 1.4s ease-in-out infinite'],
         ['WorkflowStateBadge.vue', componentTree('../components/workflows/WorkflowStateBadge.vue'), '.wf-state-pending', 'motion-status-pulse 1s ease-in-out infinite'],
         ['WorkflowRunDetail.vue', componentTree('../components/workflows/WorkflowRunDetail.vue'), '.wf-row .wf-status-pending', 'motion-status-pulse 1s ease-in-out infinite'],
+        ['ChatSkeleton.vue', componentTree('../components/session/detail/ChatSkeleton.vue'), '.chat-skeleton-bar', 'motion-status-pulse 1.4s ease-in-out infinite'],
     ]
     for (const [file, tree, selector, animation] of localRules) {
         const media = tree.filter((n) => n.type === 'at' && /prefers-reduced-motion: ?reduce/.test(n.prelude))
@@ -531,4 +534,43 @@ test('12. motion.css is imported right after glass.css in the three entry files'
         assert.ok(glassAt >= 0, `${file}: no glass.css import`)
         assert.equal(lines[glassAt + 1], `import '${prefix}motion.css'`, `${file}: motion.css must follow glass.css`)
     }
+})
+
+test('13. live chat entrances: keyframes scaled by --motion-amount, variants, stagger', () => {
+    const keyframes = (name) => {
+        const blocks = motionTree.filter((n) => n.type === 'at' && n.prelude === `@keyframes ${name}`)
+        assert.equal(blocks.length, 1, `one @keyframes ${name}`)
+        assert.equal(blocks[0].children.length, 1, `${name}: one frame`)
+        assert.equal(blocks[0].children[0].selector, 'from', `${name}: a from frame`)
+        return blocks[0].children[0].decls
+    }
+    const AMOUNT = 'var(--motion-amount)'
+    const enter = keyframes('chat-enter')
+    assert.deepEqual(enter, {
+        opacity: '0',
+        translate: `0 calc(0.75rem * ${AMOUNT})`,
+        scale: `calc(1 - 0.015 * ${AMOUNT})`,
+        filter: `blur(calc(0.125rem * ${AMOUNT}))`,
+    })
+    const enterUser = keyframes('chat-enter-user')
+    assert.deepEqual(enterUser, {
+        opacity: '0',
+        translate: `calc(1rem * ${AMOUNT}) 0`,
+        scale: `calc(1 - 0.015 * ${AMOUNT})`,
+    })
+    assert.deepEqual(keyframes('chat-enter-fade'), { opacity: '0' }, 'a slice only fades')
+    for (const decls of [enter, enterUser]) {
+        assert.ok(!('transform' in decls), 'individual properties, never transform')
+        for (const property of ['translate', 'scale', 'filter']) {
+            if (property in decls) assert.ok(decls[property].includes(AMOUNT), `${property} × --motion-amount`)
+        }
+    }
+
+    const base = findRule(topRules, ['.chat-entering'])
+    assert.equal(base.decls.animation, 'chat-enter var(--motion-dur-3) var(--motion-ease-out) both')
+    const delay = base.decls['animation-delay']
+    assert.match(delay, /^calc\(var\(--chat-enter-index, 0\) \* \d+ms\)$/)
+    assert.equal(Number(delay.match(/(\d+)ms/)[1]), CHAT_ENTRANCE_STAGGER_MS, 'the CSS stagger is CHAT_ENTRANCE_STAGGER_MS')
+    assert.deepEqual(findRule(topRules, ['.chat-entering.is-user']).decls, { 'animation-name': 'chat-enter-user' })
+    assert.deepEqual(findRule(topRules, ['.chat-entering.is-slice']).decls, { 'animation-name': 'chat-enter-fade' })
 })

@@ -5,7 +5,9 @@ import SessionItem from '../components/session/detail/SessionItem.vue'
 import GroupToggle from '../components/session/detail/GroupToggle.vue'
 import ChatNavToolbar from '../components/session/detail/ChatNavToolbar.vue'
 import DaySeparator from '../components/session/detail/items/DaySeparator.vue'
+import ChatSkeleton from '../components/session/detail/ChatSkeleton.vue'
 import { useChatNavigation } from '../composables/useChatNavigation'
+import { useChatReveal } from '../composables/useChatReveal.js'
 import { useDataStore } from '../stores/data'          // aliased → dataStoreShim
 import { useSettingsStore } from '../stores/settings'  // aliased → settingsStoreShim
 import { getParsedContent, hasContent } from '../utils/parsedContent'
@@ -23,6 +25,10 @@ const store = useDataStore()
 const settings = useSettingsStore()
 const scrollerRef = ref(null)
 const preparationPending = ref(false)
+// The first load: the rows that fill meanwhile stay hidden under the skeleton (same
+// delay and hold as the SPA, utils/chatReveal.js).
+const initialLoading = ref(true)
+const reveal = useChatReveal(() => initialLoading.value)
 const INITIAL = 100, BUFFER = 40, MIN_ITEM = 40
 
 const visualItems = computed(() => store.getSessionVisualItems(props.sessionId))
@@ -55,6 +61,8 @@ async function loadInitial() {
             return
         }
         throw error
+    } finally {
+        initialLoading.value = false
     }
 }
 onMounted(loadInitial)
@@ -164,7 +172,7 @@ const {
 </script>
 
 <template>
-    <div class="session-items-list share-items-list">
+    <div class="session-items-list share-items-list" :aria-busy="reveal.hidden.value ? 'true' : null">
         <wa-callout v-if="preparationPending" variant="neutral" class="share-banner">
             This shared session is being prepared. Refresh this page later.
         </wa-callout>
@@ -178,6 +186,7 @@ const {
             :unload-buffer="10000"
             :prevent-auto-scroll-to-bottom="!!parentSessionId"
             class="session-items"
+            :class="{ 'initial-scrolling': reveal.hidden.value }"
             @update="onUpdate"
         >
             <template #default="{ item }">
@@ -209,8 +218,18 @@ const {
             </template>
         </VirtualScroller>
 
+        <!-- One skeleton instance per reveal phase, over the first load (see SessionItemsList). -->
+        <Transition name="chat-skeleton" type="transition" :key="reveal.phaseId.value">
+            <ChatSkeleton
+                v-if="reveal.hidden.value && !preparationPending"
+                class="chat-skeleton-overlay"
+                :visible="reveal.skeletonShown.value"
+                :align="parentSessionId ? 'start' : 'end'"
+            />
+        </Transition>
+
         <ChatNavToolbar
-            v-show="navHasNavigation"
+            v-show="navHasNavigation && !reveal.hidden.value"
             :can-go-top="navCanGoTop"
             :can-go-prev="navCanGoPrev"
             :can-go-next="navCanGoNext"
@@ -223,3 +242,20 @@ const {
         />
     </div>
 </template>
+
+<style scoped>
+.chat-skeleton-overlay {
+    position: absolute;
+    inset: 0;
+}
+
+/* Hidden under the skeleton while the first load fills the rows; when the class goes,
+   visibility switches at once and the opacity fades in (as in SessionItemsList). */
+.session-items {
+    transition: opacity var(--motion-dur-2) var(--motion-ease);
+}
+.session-items.initial-scrolling {
+    visibility: hidden;
+    opacity: 0;
+}
+</style>

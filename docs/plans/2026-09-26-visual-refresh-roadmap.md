@@ -14,7 +14,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 3 | Accent-tinted glass overlays | **Done** — commit `709f9cf9` on branch `enhanced-ui` (see §6c) |
 | 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (§6d); **4b done** — commit `d11ea446` (§6e); **4c done** — commit `116f9d10` (§6f) |
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
-| 5 | Entrances (virtual-scroll aware) + skeletons | To specify |
+| 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code in the step-5a commit (§6g); **5b** (overlays), **5c** (list cascade, tab crossfade, theme reveal): to specify |
 | 6 | Accent glow + live states | To specify |
 | 7 | Secondary screens | To specify |
 
@@ -455,6 +455,47 @@ another (PASS, one test gap fixed).
 - A measured placement is not a movement: never multiply it by `--motion-amount`
   (`motion.test.js` test 8 exempts `.glide-ink`).
 
+## 6g. Step 5a — live chat entrances + chat skeleton (done)
+
+Spec: `docs/plans/2026-09-28-chat-entrances-skeleton-design.md` (commit `6104a040`,
+reviewed PASS in 9 rounds, two parallel reviewers by zone for rounds 1–5). Implemented by a
+sub-agent, code review by another (PASS, mutation check). Step 5 is split in 5a / 5b
+(overlay entrances and exits, tooltip delay 250ms) / 5c (session-list cascade on app load
+and project/workspace switch, tab-panel crossfade, light/dark circular reveal).
+
+### 6g.1 What it does
+
+- `utils/chatEntrance.js` (pure rules) + `composables/useChatEntrance.js`: a row enters
+  only when its line was marked live by the WebSocket (`markItemsLive`) since the previous
+  recompute; view changes, reconnect catch-ups and synthetic-row swaps never play it.
+  Variants: user message (slide from the right), whole card (slide up + scale + blur),
+  slice of a larger card (fade only). 70ms stagger, more than 6 rows = catch-up, no entrance.
+- `utils/chatReveal.js` + `composables/useChatReveal.js`: the chat hides at once when work
+  starts and shows in a later macrotask; the skeleton shows after 300ms and stays at least
+  300ms. `SessionItemsList` covers the load, the `fetchToolStates` gap and the initial
+  scroll with a flow counter; one `ChatSkeleton` per phase in `.chat-stage`.
+- `VirtualScroller` `itemClass` / `itemStyle` props; share viewer skeleton.
+
+### 6g.2 Lessons (do not regress)
+
+- **Mounting is not arrival** in a virtual scroller; a watermark over the visual list is not
+  "live" either (hidden live lines, view changes, first loads). Use the store's live marking,
+  consumed per recompute.
+- A per-row transform on a card sliced over several rows opens the card: only a whole card
+  moves; slices fade.
+- A reveal state machine grown by patches kept leaking stuck/flicker states over 3 review
+  rounds; a pure controller with injected time, one slot per timer and a macrotask reveal
+  converged at once.
+- Bind env functions (`() => env.performance.now()`): a bare `performance.now` reference
+  throws "Illegal invocation".
+- A keyed `<Transition>` whose key changes unmounts the old child without a leave.
+
+### 6g.3 Left for the global fine-tuning pass
+
+- The entrance blur of a whole card (`filter: blur(.125rem)` in `@keyframes chat-enter`,
+  `motion.css`): kept as in the mock; the user judges it with use (2026-09-28). Removing it
+  is one line.
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -684,4 +725,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a).

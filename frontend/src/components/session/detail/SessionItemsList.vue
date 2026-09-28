@@ -29,8 +29,12 @@ import GoalBlock from '../../message/GoalBlock.vue'
 import ProcessIndicator from '../../ui/ProcessIndicator.vue'
 import TextSelectionComment from './TextSelectionComment.vue'
 import ChatNavToolbar from './ChatNavToolbar.vue'
+import ChatSkeleton from './ChatSkeleton.vue'
 import { useTextSelectionComment } from '../../../composables/useTextSelectionComment'
 import { useChatNavigation } from '../../../composables/useChatNavigation'
+import { useChatEntrance } from '../../../composables/useChatEntrance.js'
+import { useChatReveal } from '../../../composables/useChatReveal.js'
+import { isInTurnState, shouldNoteViewChange } from '../../../utils/chatEntrance.js'
 import { getProviderLabel } from '../../../providers'
 
 // All states should animate for the bottom process indicator
@@ -95,6 +99,28 @@ const isAutoScrollingToBottom = ref(false)
 // Flag to track if we're in the initial scroll phase (scroller hidden until positioned)
 // This prevents visible jumping when the scroller first appears at top then scrolls to bottom
 const isInitialScrolling = ref(false)
+
+// Loading state (declared here: the reveal below reads it)
+const isLoading = computed(() => store.areSessionItemsLoading(props.sessionId))
+
+// Reveal flows (visual refresh step 5a): each running flow (a first load, a retry, a
+// reload after compute) keeps the chat hidden until it ends, whatever the others do.
+// A count, not an owner.
+const revealFlows = ref(0)
+function beginRevealFlow() {
+    revealFlows.value += 1
+    let released = false
+    return function release() {
+        if (released) return
+        released = true
+        revealFlows.value -= 1
+    }
+}
+
+// Is the chat hidden, and is the skeleton showing (utils/chatReveal.js): hidden while
+// the items load, a flow runs or the initial scroll positions the chat; the skeleton
+// shows only when that takes more than 300ms, then for at least 300ms.
+const reveal = useChatReveal(() => isLoading.value || isInitialScrolling.value || revealFlows.value > 0)
 
 // Callback to resolve when scroll stabilizes (set by scrollToEdgeUntilStable)
 let onStabilizedCallback = null
@@ -202,8 +228,7 @@ const computePendingHint = createComputePendingHint({
     setPhase: phase => { computePendingHintPhase.value = phase },
 })
 
-// Loading and error states
-const isLoading = computed(() => store.areSessionItemsLoading(props.sessionId))
+// Error state
 const hasError = computed(() => store.didSessionItemsFailToLoad(props.sessionId))
 
 // Process state for this session (starting, assistant_turn, user_turn, dead)
@@ -404,6 +429,70 @@ const showVirtualScroller = computed(() => {
     return !isComputePending.value && !hasError.value && !isLoading.value && (visualItems.value?.length > 0)
 })
 
+// The skeleton covers the load and the initial positioning (one instance per reveal
+// phase), never with a callout, the error panel or an empty session.
+const showSkeleton = computed(() => reveal.hidden.value && !unavailableReason.value && !isComputePending.value
+    && !hasError.value && (isLoading.value || visualItems.value.length > 0))
+
+// =============================================================================
+// Live chat entrances (visual refresh step 5a)
+// =============================================================================
+
+// A row that arrives live enters (composables/useChatEntrance.js); nothing else plays
+// it. Only while the chat is on screen and revealed.
+const isRevealed = () => sessionActive.value && !isLoading.value && !reveal.hidden.value && showVirtualScroller.value
+const entrance = useChatEntrance({ items: visualItems, getKey: item => item.lineNum, isRevealed })
+
+// Store actions feeding the entrances. Separate from the stream-swap listener below
+// (that one returns early at the bottom or when inactive). Pinia binds these
+// subscriptions to the component: they are removed on unmount.
+//
+// Actions that recompute this list for a view change (display mode, debug override,
+// timestamps, group or detail-block toggle) or a reconnect: the next update is not
+// arrival. `setActiveProcesses` also counts when this session's turn started or ended
+// during the disconnect: its working/starting row appears or goes at the next recompute.
+const VIEW_CHANGE_ACTIONS = new Set([
+    'toggleExpandedGroup', 'toggleBlockDetailedMode', 'ensureBlockDetailed', 'toggleSessionDebug',
+])
+const GLOBAL_VIEW_CHANGE_ACTIONS = new Set(['recomputeAllVisualItems', 'setActiveProcesses'])
+
+// Set while a reconnect marks the new tail lines live: they are a catch-up, not arrival.
+let suppressLive = false
+
+store.$onAction(({ name, args, after, onError }) => {
+    if (name === 'markNewTailItemsLive') {
+        if (args[0] !== props.sessionId) return
+        suppressLive = true
+        after(() => { suppressLive = false })
+        onError(() => { suppressLive = false })
+        return
+    }
+    if (name === 'markItemsLive') {
+        if (args[0] === props.sessionId && !suppressLive) entrance.noteLive(args[1])
+        return
+    }
+    if (name === '_retireStreamingBlocks') {
+        if (args[0] === props.sessionId) after(pairs => entrance.noteRetired(pairs))
+        return
+    }
+    const perSession = VIEW_CHANGE_ACTIONS.has(name)
+    if (!perSession && !GLOBAL_VIEW_CHANGE_ACTIONS.has(name)) return
+    if (perSession && args[0] !== props.sessionId) return
+    const sessionId = props.sessionId
+    const listBefore = store.localState.sessionVisualItems[sessionId]
+    const tracksTurn = name === 'setActiveProcesses'
+    const inTurnBefore = tracksTurn ? isInTurnState(store.processStates[sessionId]?.state) : undefined
+    after(() => {
+        const change = shouldNoteViewChange({
+            listBefore,
+            listAfter: store.localState.sessionVisualItems[sessionId],
+            inTurnBefore,
+            inTurnAfter: tracksTurn ? isInTurnState(store.processStates[sessionId]?.state) : undefined,
+        })
+        if (change) entrance.noteViewChange()
+    })
+})
+
 // Timer for temporary indicator display (user_turn, dead)
 let temporaryIndicatorTimer = null
 const showTemporaryIndicator = ref(false)
@@ -463,14 +552,13 @@ onDeactivated(() => {
         clearTimeout(temporaryIndicatorTimer)
         temporaryIndicatorTimer = null
     }
-    if (stabilityTimeoutId) {
-        clearTimeout(stabilityTimeoutId)
-        stabilityTimeoutId = null
-    }
-    if (stabilityMaxWaitId) {
-        clearTimeout(stabilityMaxWaitId)
-        stabilityMaxWaitId = null
-    }
+    // End a stability wait in flight (clearing its timers) instead of leaving it
+    // pending: the scroll then ends, and with it any reveal flow awaiting it.
+    // scrollToEdgeUntilStable skips its final jump while inactive.
+    resolveStability()
+
+    // Entrances in flight end here; while inactive, arriving rows only update the baseline.
+    entrance.clear()
 
     // Capture state for reactivation: track item count and scroll position
     itemCountAtDeactivation = visualItems.value?.length ?? null
@@ -556,6 +644,10 @@ function onScrollerBecameVisible() {
     if (pendingScrollToBottom) {
         const options = pendingScrollToBottom
         pendingScrollToBottom = null
+        // The skeleton was in a hidden tab: its clock starts now. (Not `reveal.hidden`:
+        // this event also fires on a normal first load while the flow still runs. Not
+        // `options.isInitial`: a later watcher run can overwrite it while still hidden.)
+        if (isInitialScrolling.value) reveal.restartClock()
         scrollToBottomUntilStable(options)
     }
 }
@@ -701,68 +793,77 @@ watch([() => props.sessionId, session], async ([newSessionId, newSession], [oldS
     // Only initialize and load if not already done
     const isFirstLoad = !store.areSessionItemsFetched(newSessionId)
 
-    if (isFirstLoad) {
-        await loadSessionData(lastLine)
-
-        // Fetch tool states first (needed by fetchSubagentsState to determine agent running status)
-        await store.fetchToolStates(props.projectId, newSessionId)
-
-        // For parent sessions, fetch all subagent states.
-        // Populates the agent link cache (tool_use_id → agent_id) for View Agent buttons,
-        // and creates synthetic process states for agents still running.
-        if (!props.parentSessionId) {
-            store.fetchSubagentsState(props.projectId, newSessionId)
-            // Workflow tool-links (View Workflow buttons). Only sessions that
-            // actually ran a local workflow carry them, so gate on has_workflows
-            // to skip the derive scan everywhere else.
-            if (store.getSession(newSessionId)?.has_workflows) {
-                store.fetchWorkflowLinks(props.projectId, newSessionId)
-            }
-        }
-    } else if (sessionChanged) {
-        // Navigating (back) to an already-loaded session: verify its items
-        // still cover everything the server has — see the same call in
-        // onActivated. Gated on sessionChanged because this watch also fires
-        // on every mutation of the session object (each session_updated),
-        // where a coverage scan would race the in-flight items_added stream.
-        store.ensureSessionItemsCoverage(newSessionId).catch(() => {})
-    }
-
-    // Skip DOM-manipulating scroll when inactive (KeepAlive deactivated)
-    if (!sessionActive.value) return
-
-    // Subagent tabs open at the top — skip scroll-to-bottom
-    if (props.parentSessionId) return
-
-    // A session-object replacement (same id, items already loaded — e.g. the
-    // reconciliation's loadSessions after a WebSocket reconnect) is not an
-    // opening: follow the bottom only when the user was already there, exactly
-    // like live-arriving items. Only a real opening scrolls unconditionally.
-    if (!isFirstLoad && !sessionChanged) {
-        const scroller = scrollerRef.value
-        if (!scroller) return
-        if (!isAutoScrollingToBottom.value && !scroller.isAtBottom()) return
-    }
-
-    // Scroll to end of session (with retry until stable)
-    // Mark as initial scroll to hide scroller until positioned (only on first load)
-    // When returning to an already-loaded session, items are already sized so no resize events will fire
-    await nextTick()
-
-    // Check if the scroller container is visible (chat tab panel is active).
-    // When navigating directly to a non-chat tab (e.g., /files), the chat panel
-    // has display:none and scrollToBottom has no effect. In that case, defer the
-    // scroll until the chat tab becomes visible (handled by onScrollerBecameVisible).
-    const scroller = scrollerRef.value
-    const scrollState = scroller?.getScrollState()
-    if (scrollState && scrollState.clientHeight === 0) {
-        pendingScrollToBottom = { isInitial: isFirstLoad }
+    // A first load is a reveal flow: the chat stays hidden (skeleton after 300ms) until
+    // the load, the tool states and the initial scroll are all done.
+    const release = isFirstLoad ? beginRevealFlow() : null
+    try {
         if (isFirstLoad) {
-            isInitialScrolling.value = true
+            await loadSessionData(lastLine)
+
+            // Fetch tool states first (needed by fetchSubagentsState to determine agent running status)
+            await store.fetchToolStates(props.projectId, newSessionId)
+
+            // For parent sessions, fetch all subagent states.
+            // Populates the agent link cache (tool_use_id → agent_id) for View Agent buttons,
+            // and creates synthetic process states for agents still running.
+            if (!props.parentSessionId) {
+                store.fetchSubagentsState(props.projectId, newSessionId)
+                // Workflow tool-links (View Workflow buttons). Only sessions that
+                // actually ran a local workflow carry them, so gate on has_workflows
+                // to skip the derive scan everywhere else.
+                if (store.getSession(newSessionId)?.has_workflows) {
+                    store.fetchWorkflowLinks(props.projectId, newSessionId)
+                }
+            }
+        } else if (sessionChanged) {
+            // Navigating (back) to an already-loaded session: verify its items
+            // still cover everything the server has — see the same call in
+            // onActivated. Gated on sessionChanged because this watch also fires
+            // on every mutation of the session object (each session_updated),
+            // where a coverage scan would race the in-flight items_added stream.
+            store.ensureSessionItemsCoverage(newSessionId).catch(() => {})
         }
-    } else {
-        pendingScrollToBottom = null
-        scrollToBottomUntilStable({ isInitial: isFirstLoad })
+
+        // Skip DOM-manipulating scroll when inactive (KeepAlive deactivated)
+        if (!sessionActive.value) return
+
+        // Subagent tabs open at the top — skip scroll-to-bottom
+        if (props.parentSessionId) return
+
+        // A session-object replacement (same id, items already loaded — e.g. the
+        // reconciliation's loadSessions after a WebSocket reconnect) is not an
+        // opening: follow the bottom only when the user was already there, exactly
+        // like live-arriving items. Only a real opening scrolls unconditionally.
+        if (!isFirstLoad && !sessionChanged) {
+            const scroller = scrollerRef.value
+            if (!scroller) return
+            if (!isAutoScrollingToBottom.value && !scroller.isAtBottom()) return
+        }
+
+        // Scroll to end of session (with retry until stable)
+        // Mark as initial scroll to hide scroller until positioned (only on first load)
+        // When returning to an already-loaded session, items are already sized so no resize events will fire
+        await nextTick()
+
+        // Check if the scroller container is visible (chat tab panel is active).
+        // When navigating directly to a non-chat tab (e.g., /files), the chat panel
+        // has display:none and scrollToBottom has no effect. In that case, defer the
+        // scroll until the chat tab becomes visible (handled by onScrollerBecameVisible).
+        // The flow then ends: isInitialScrolling keeps the chat hidden until the tab shows.
+        const scroller = scrollerRef.value
+        const scrollState = scroller?.getScrollState()
+        if (scrollState && scrollState.clientHeight === 0) {
+            pendingScrollToBottom = { isInitial: isFirstLoad }
+            if (isFirstLoad) {
+                isInitialScrolling.value = true
+            }
+        } else {
+            pendingScrollToBottom = null
+            // Awaited: the reveal flow covers the whole scroll.
+            await scrollToBottomUntilStable({ isInitial: isFirstLoad })
+        }
+    } finally {
+        release?.()
     }
 }, { immediate: true })
 
@@ -783,15 +884,24 @@ async function handleRetry() {
     delete store.sessionItems[sId]
     delete store.sessionVisualItems[sId]
 
-    await loadSessionData(lastLine)
+    const release = beginRevealFlow()
+    try {
+        await loadSessionData(lastLine)
 
-    // Subagent tabs open at the top — skip scroll-to-bottom
-    if (props.parentSessionId) return
+        // The error panel stayed on screen during the retry's load: the skeleton
+        // starts counting only now.
+        if (!hasError.value) reveal.restartClock()
 
-    // Scroll to bottom after successful load
-    // Mark as initial scroll to hide scroller until positioned
-    await nextTick()
-    scrollToBottomUntilStable({ isInitial: true })
+        // Subagent tabs open at the top — skip scroll-to-bottom
+        if (props.parentSessionId) return
+
+        // Scroll to bottom after successful load
+        // Mark as initial scroll to hide scroller until positioned
+        await nextTick()
+        await scrollToBottomUntilStable({ isInitial: true })
+    } finally {
+        release()
+    }
 }
 
 /**
@@ -804,17 +914,22 @@ async function onComputeCompleted() {
     const lastLine = session.value.last_line
     if (!lastLine) return
 
-    await loadSessionData(lastLine)
+    const release = beginRevealFlow()
+    try {
+        await loadSessionData(lastLine)
 
-    // Skip DOM-manipulating scroll when inactive (KeepAlive deactivated)
-    if (!sessionActive.value) return
+        // Skip DOM-manipulating scroll when inactive (KeepAlive deactivated)
+        if (!sessionActive.value) return
 
-    // Subagent tabs open at the top — skip scroll-to-bottom
-    if (props.parentSessionId) return
+        // Subagent tabs open at the top — skip scroll-to-bottom
+        if (props.parentSessionId) return
 
-    // Mark as initial scroll to hide scroller until positioned
-    await nextTick()
-    scrollToBottomUntilStable({ isInitial: true })
+        // Mark as initial scroll to hide scroller until positioned
+        await nextTick()
+        await scrollToBottomUntilStable({ isInitial: true })
+    } finally {
+        release()
+    }
 }
 
 // Watch for session compute completion
@@ -1146,8 +1261,9 @@ async function scrollToEdgeUntilStable(edge, options = {}) {
             })
         })
 
-        // Final scroll to ensure we're at the very edge
-        jump({ behavior: 'auto' })
+        // Final scroll to ensure we're at the very edge — not while inactive: the
+        // wait was ended by onDeactivated and the scroller is suspended.
+        if (sessionActive.value) jump({ behavior: 'auto' })
 
         isAutoScrollingToBottom.value = false
 
@@ -1968,120 +2084,139 @@ defineExpose({
             @update:terms="handleSearchTerms"
         />
 
-        <!-- Unavailable history (Codex rollout gone or refused by Codex's migration) -->
-        <div v-if="unavailableReason" class="compute-pending-state">
-            <wa-callout variant="danger">
-                <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-                <div class="compute-pending-copy">
-                    <span>This session's history is not available.</span>
-                    <span v-if="unavailableReason === 'rollout_missing'">
-                        Its Codex rollout file is no longer on disk.
-                    </span>
-                    <span v-else>
-                        Codex could not convert its rollout to the current session format
-                        ({{ unavailableReason }}).
-                    </span>
-                </div>
-            </wa-callout>
-        </div>
+        <!-- The chat's stage: the states below and the scroll area, with the skeleton
+             laid over them while the chat loads and positions itself. The notice and
+             the search bar above, and the footer below, stay outside. -->
+        <div class="chat-stage" :aria-busy="showSkeleton ? 'true' : null">
+            <!-- Unavailable history (Codex rollout gone or refused by Codex's migration) -->
+            <div v-if="unavailableReason" class="compute-pending-state">
+                <wa-callout variant="danger">
+                    <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                    <div class="compute-pending-copy">
+                        <span>This session's history is not available.</span>
+                        <span v-if="unavailableReason === 'rollout_missing'">
+                            Its Codex rollout file is no longer on disk.
+                        </span>
+                        <span v-else>
+                            Codex could not convert its rollout to the current session format
+                            ({{ unavailableReason }}).
+                        </span>
+                    </div>
+                </wa-callout>
+            </div>
 
-        <!-- Compute pending state -->
-        <div v-else-if="isComputePending" class="compute-pending-state">
-            <wa-callout variant="warning">
-                <wa-icon slot="icon" name="hourglass"></wa-icon>
-                <div class="compute-pending-copy">
-                    <span>Session is being prepared, please wait...</span>
-                    <span v-if="computePendingHintPhase">
-                        Preparation is taking longer than expected. An agent outside this TwiCC instance may still be
-                        updating this session. Preparation will resume automatically when the session becomes stable.
-                    </span>
-                    <span v-if="computePendingHintPhase === 'restart'">
-                        If this message remains after the agent finishes, restart this TwiCC instance.
-                    </span>
-                </div>
-            </wa-callout>
-        </div>
+            <!-- Compute pending state -->
+            <div v-else-if="isComputePending" class="compute-pending-state">
+                <wa-callout variant="warning">
+                    <wa-icon slot="icon" name="hourglass"></wa-icon>
+                    <div class="compute-pending-copy">
+                        <span>Session is being prepared, please wait...</span>
+                        <span v-if="computePendingHintPhase">
+                            Preparation is taking longer than expected. An agent outside this TwiCC instance may still be
+                            updating this session. Preparation will resume automatically when the session becomes stable.
+                        </span>
+                        <span v-if="computePendingHintPhase === 'restart'">
+                            If this message remains after the agent finishes, restart this TwiCC instance.
+                        </span>
+                    </div>
+                </wa-callout>
+            </div>
 
-        <!-- Error state -->
-        <FetchErrorPanel
-            v-else-if="hasError"
-            :loading="isLoading"
-            @retry="handleRetry"
-        >
-            Failed to load session content
-        </FetchErrorPanel>
-
-        <!-- Loading state -->
-        <div v-else-if="isLoading" class="empty-state">
-            <wa-spinner></wa-spinner>
-            <span>Loading...</span>
-        </div>
-
-        <!-- Draft session empty state -->
-        <div v-else-if="session?.draft && !visualItems.length" class="empty-state">
-        </div>
-
-        <!-- Empty state (no items and not a special state above) -->
-        <div v-else-if="!visualItems.length" class="empty-state">
-            Nothing to show yet
-        </div>
-
-        <!--
-            Items list (virtualized), plus the navigation toolbar pinned over its
-            bottom-right corner. The wrapper is what gives the toolbar its
-            positioning context: `.session-items-list` also holds the composer
-            below, so anchoring to it would drop the toolbar onto the composer.
-
-            IMPORTANT: Uses v-show instead of v-if/v-else-if to keep the VirtualScroller
-            mounted across KeepAlive deactivation/activation cycles. Without this, the
-            v-else-if chain causes the VirtualScroller to be destroyed and recreated,
-            losing the composable's height cache and scroll state.
-            See spec: "Problems Encountered > VirtualScroller Scroll Position Loss"
-        -->
-        <div v-show="showVirtualScroller" class="chat-scroll-area">
-            <VirtualScroller
-                ref="scrollerRef"
-                :items="visualItems"
-                :item-key="item => item.lineNum"
-                :item-min-height="streamSwapItemMinHeight"
-                :min-item-height="MIN_ITEM_SIZE"
-                :buffer="5000"
-                :unload-buffer="10000"
-                :prevent-auto-scroll-to-bottom="!!parentSessionId"
-                class="session-items"
-                :class="{ 'initial-scrolling': isInitialScrolling }"
-                @update="onScrollerUpdate"
-                @item-resized="onItemResized"
-                @became-visible="onScrollerBecameVisible"
+            <!-- Error state -->
+            <FetchErrorPanel
+                v-else-if="hasError"
+                :loading="isLoading"
+                @retry="handleRetry"
             >
-                <template #default="{ item, index }">
-                    <!-- Day separator (horizontal rule + date) — must come before the
-                         placeholder branch since separators carry no content. -->
-                    <DaySeparator
-                        v-if="item.isDaySeparator"
-                        :label="item.dayLabel"
-                        :day-key="item.dayKey"
-                    />
+                Failed to load session content
+            </FetchErrorPanel>
 
-                    <!-- Placeholder (no content loaded yet) -->
-                    <div
-                        v-else-if="!hasContent(item)"
-                        :class="{ 'is-block-start': item.isBlockStart, 'is-block-end': item.isBlockEnd }"
-                        :style="{ minHeight: MIN_ITEM_SIZE + 'px' }"
-                    ></div>
+            <!-- Loading state: an empty spacer, the skeleton overlay covers it -->
+            <div v-else-if="isLoading" class="chat-skeleton-area"></div>
 
-                    <!-- Group head: show toggle (+ item content if expanded) -->
-                    <template v-else-if="item.isGroupHead">
-                        <GroupToggle
-                            :class="{ 'is-block-start': item.isBlockStart, 'is-block-end': item.isBlockEnd && !item.isExpanded }"
-                            :expanded="item.isExpanded"
-                            :item-count="item.groupSize"
-                            :comments-count="groupCommentsCount(item.lineNum, item.groupTail)"
-                            @toggle="toggleGroup(item.lineNum)"
+            <!-- Draft session empty state -->
+            <div v-else-if="session?.draft && !visualItems.length" class="empty-state">
+            </div>
+
+            <!-- Empty state (no items and not a special state above) -->
+            <div v-else-if="!visualItems.length" class="empty-state">
+                Nothing to show yet
+            </div>
+
+            <!--
+                Items list (virtualized), plus the navigation toolbar pinned over its
+                bottom-right corner. The wrapper is what gives the toolbar its
+                positioning context: `.session-items-list` also holds the composer
+                below, so anchoring to it would drop the toolbar onto the composer.
+
+                IMPORTANT: Uses v-show instead of v-if/v-else-if to keep the VirtualScroller
+                mounted across KeepAlive deactivation/activation cycles. Without this, the
+                v-else-if chain causes the VirtualScroller to be destroyed and recreated,
+                losing the composable's height cache and scroll state.
+                See spec: "Problems Encountered > VirtualScroller Scroll Position Loss"
+            -->
+            <div v-show="showVirtualScroller" class="chat-scroll-area">
+                <VirtualScroller
+                    ref="scrollerRef"
+                    :items="visualItems"
+                    :item-key="item => item.lineNum"
+                    :item-min-height="streamSwapItemMinHeight"
+                    :min-item-height="MIN_ITEM_SIZE"
+                    :buffer="5000"
+                    :unload-buffer="10000"
+                    :prevent-auto-scroll-to-bottom="!!parentSessionId"
+                    :item-class="entrance.itemClass"
+                    :item-style="entrance.itemStyle"
+                    class="session-items"
+                    :class="{ 'initial-scrolling': reveal.hidden.value }"
+                    @update="onScrollerUpdate"
+                    @item-resized="onItemResized"
+                    @became-visible="onScrollerBecameVisible"
+                >
+                    <template #default="{ item, index }">
+                        <!-- Day separator (horizontal rule + date) — must come before the
+                             placeholder branch since separators carry no content. -->
+                        <DaySeparator
+                            v-if="item.isDaySeparator"
+                            :label="item.dayLabel"
+                            :day-key="item.dayKey"
                         />
+
+                        <!-- Placeholder (no content loaded yet) -->
+                        <div
+                            v-else-if="!hasContent(item)"
+                            :class="{ 'is-block-start': item.isBlockStart, 'is-block-end': item.isBlockEnd }"
+                            :style="{ minHeight: MIN_ITEM_SIZE + 'px' }"
+                        ></div>
+
+                        <!-- Group head: show toggle (+ item content if expanded) -->
+                        <template v-else-if="item.isGroupHead">
+                            <GroupToggle
+                                :class="{ 'is-block-start': item.isBlockStart, 'is-block-end': item.isBlockEnd && !item.isExpanded }"
+                                :expanded="item.isExpanded"
+                                :item-count="item.groupSize"
+                                :comments-count="groupCommentsCount(item.lineNum, item.groupTail)"
+                                @toggle="toggleGroup(item.lineNum)"
+                            />
+                            <SessionItem
+                                v-if="item.isExpanded"
+                                :class="{ 'is-block-end': item.isBlockEnd }"
+                                :content="getParsedContent(item)"
+                                :kind="item.kind"
+                                :synthetic-kind="item.syntheticKind || null"
+                                :project-id="projectId"
+                                :session-id="sessionId"
+                                :parent-session-id="parentSessionId"
+                                :line-num="item.lineNum"
+                                :externally-grouped="item.externallyGrouped || false"
+                                :is-block-end="item.isBlockEnd || false"
+                            />
+                        </template>
+
+                        <!-- Regular item (including ALWAYS with prefix/suffix): show item content -->
                         <SessionItem
-                            v-if="item.isExpanded"
-                            :class="{ 'is-block-end': item.isBlockEnd }"
+                            v-else
+                            :class="{ 'is-block-start': item.isBlockStart, 'is-block-end': item.isBlockEnd }"
                             :content="getParsedContent(item)"
                             :kind="item.kind"
                             :synthetic-kind="item.syntheticKind || null"
@@ -2090,50 +2225,47 @@ defineExpose({
                             :parent-session-id="parentSessionId"
                             :line-num="item.lineNum"
                             :externally-grouped="item.externallyGrouped || false"
+                            :group-head="item.groupHead"
+                            :group-tail="item.groupTail"
+                            :prefix-expanded="item.prefixExpanded || false"
+                            :suffix-expanded="item.suffixExpanded || false"
+                            :detail-toggle-for="item.detailToggleFor ?? null"
+                            :block-comments-count="item.detailToggleFor != null ? blockCommentsCount(item.detailToggleFor) : 0"
+                            :is-block-start="item.isBlockStart || false"
                             :is-block-end="item.isBlockEnd || false"
+                            @toggle-suffix="toggleGroup(item.suffixGroupHead)"
                         />
                     </template>
+                </VirtualScroller>
 
-                    <!-- Regular item (including ALWAYS with prefix/suffix): show item content -->
-                    <SessionItem
-                        v-else
-                        :class="{ 'is-block-start': item.isBlockStart, 'is-block-end': item.isBlockEnd }"
-                        :content="getParsedContent(item)"
-                        :kind="item.kind"
-                        :synthetic-kind="item.syntheticKind || null"
-                        :project-id="projectId"
-                        :session-id="sessionId"
-                        :parent-session-id="parentSessionId"
-                        :line-num="item.lineNum"
-                        :externally-grouped="item.externallyGrouped || false"
-                        :group-head="item.groupHead"
-                        :group-tail="item.groupTail"
-                        :prefix-expanded="item.prefixExpanded || false"
-                        :suffix-expanded="item.suffixExpanded || false"
-                        :detail-toggle-for="item.detailToggleFor ?? null"
-                        :block-comments-count="item.detailToggleFor != null ? blockCommentsCount(item.detailToggleFor) : 0"
-                        :is-block-start="item.isBlockStart || false"
-                        :is-block-end="item.isBlockEnd || false"
-                        @toggle-suffix="toggleGroup(item.suffixGroupHead)"
-                    />
-                </template>
-            </VirtualScroller>
+                <!-- Hidden alongside the scroller while the chat is hidden (load and
+                     initial scroll; `.initial-scrolling` only covers the scroller itself),
+                     and on a transcript that fits on one screen. -->
+                <ChatNavToolbar
+                    v-show="navHasNavigation && !reveal.hidden.value"
+                    :can-go-top="navCanGoTop"
+                    :can-go-prev="navCanGoPrev"
+                    :can-go-next="navCanGoNext"
+                    :can-go-bottom="navCanGoBottom"
+                    :scroll-element="scrollerElement"
+                    @top="navGoTop"
+                    @prev="navGoPrevBlock"
+                    @next="navGoNextBlock"
+                    @bottom="navGoBottom"
+                />
+            </div>
 
-            <!-- Hidden alongside the scroller during the initial scroll-to-bottom
-                 (`.initial-scrolling` only covers the scroller itself), and on a
-                 transcript that fits on one screen. -->
-            <ChatNavToolbar
-                v-show="navHasNavigation && !isInitialScrolling"
-                :can-go-top="navCanGoTop"
-                :can-go-prev="navCanGoPrev"
-                :can-go-next="navCanGoNext"
-                :can-go-bottom="navCanGoBottom"
-                :scroll-element="scrollerElement"
-                @top="navGoTop"
-                @prev="navGoPrevBlock"
-                @next="navGoNextBlock"
-                @bottom="navGoBottom"
-            />
+            <!-- One skeleton instance per reveal phase, over the load and the positioning.
+                 The key sits on the Transition: a restarted clock (new phase) replaces the
+                 instance at once, a normal phase end plays the leave (a crossfade). -->
+            <Transition name="chat-skeleton" type="transition" :key="reveal.phaseId.value">
+                <ChatSkeleton
+                    v-if="showSkeleton"
+                    class="chat-skeleton-overlay"
+                    :visible="reveal.skeletonShown.value"
+                    :align="parentSessionId ? 'start' : 'end'"
+                />
+            </Transition>
         </div>
 
         <div class="session-footer">
@@ -2333,13 +2465,39 @@ defineExpose({
     flex: 1;
     min-height: 0;
     padding-bottom: var(--wa-space-2xl);
+    /* No horizontal scrollbar flash while a user message enters from the right: no
+       row is wider than the scroller (wide content scrolls inside its own card). */
+    overflow-x: hidden;
+    transition: opacity var(--motion-dur-2) var(--motion-ease);
 }
 
-/* Hide scroller during initial scroll to bottom to prevent visible jumping.
-   Using visibility:hidden keeps the element in the layout and scrollable,
-   but invisible until we're positioned at the bottom. */
+/* Hide the scroller while the chat loads and positions itself, to prevent visible
+   jumping. Using visibility:hidden keeps the element in the layout and scrollable,
+   but invisible until we're positioned at the bottom. When the class goes,
+   visibility switches at once and the opacity fades in. */
 .session-items.initial-scrolling {
     visibility: hidden;
+    opacity: 0;
+}
+
+/* The chat's stage (states + scroll area + skeleton overlay): the branches keep a
+   flex-column parent. */
+.chat-stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+.chat-skeleton-area {
+    flex: 1;
+    min-height: 0;
+}
+
+.chat-skeleton-overlay {
+    position: absolute;
+    inset: 0;
 }
 
 .empty-state {

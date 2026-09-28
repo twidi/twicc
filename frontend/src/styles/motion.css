@@ -231,3 +231,35 @@ wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content)::after 
 @keyframes motion-spin {
     to { rotate: 1turn; }
 }
+/* Live chat entrances (step 5a). The classes and --chat-enter-index are set by
+   useChatEntrance on the virtual scroller's row wrapper. Movement × --motion-amount:
+   reduced motion keeps the opacity fade only. A row that is one slice of a larger card
+   only fades: moving a slice would open a gap in the card. */
+@keyframes chat-enter {
+    from {
+        opacity: 0;
+        translate: 0 calc(0.75rem * var(--motion-amount));
+        scale: calc(1 - 0.015 * var(--motion-amount));
+        filter: blur(calc(0.125rem * var(--motion-amount)));
+    }
+}
+@keyframes chat-enter-user {
+    from {
+        opacity: 0;
+        translate: calc(1rem * var(--motion-amount)) 0;
+        scale: calc(1 - 0.015 * var(--motion-amount));
+    }
+}
+@keyframes chat-enter-fade {
+    from { opacity: 0; }
+}
+.chat-entering {
+    animation: chat-enter var(--motion-dur-3) var(--motion-ease-out) both;
+    animation-delay: calc(var(--chat-enter-index, 0) * 70ms);
+}
+.chat-entering.is-user {
+    animation-name: chat-enter-user;
+}
+.chat-entering.is-slice {
+    animation-name: chat-enter-fade;
+}
