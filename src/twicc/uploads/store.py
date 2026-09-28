@@ -27,7 +27,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
@@ -67,6 +67,10 @@ ORIGIN_PANELS = frozenset({"files", "artifacts"})
 
 # Prefix of the cross-filesystem temp file in the target dir (§5.6); reserved.
 TEMP_FILE_PREFIX = ".twicc-upload-"
+
+# A terminal upload's ``<id>.json`` stays as a tombstone this long, counted
+# from its ``updated_at`` (§5.2, §5.3 ``GET``, §5.9).
+TOMBSTONE_LIFETIME = timedelta(hours=24)
 
 
 # ── Error numbers (§5.1) ──────────────────────────────────────────────────────
@@ -377,6 +381,30 @@ def create_metadata(
     }
     atomic_write_json(meta_file, meta)
     return meta
+
+
+def create_upload(upload_id: str, **fields: object) -> dict:
+    """Create a new upload on disk: ``<id>.part`` first, then ``<id>.json`` (§5.2).
+
+    *fields* are the keyword arguments of :func:`create_metadata`. The part
+    file is created with ``open(path, "xb")`` (mode set by the umask). On any
+    failure both files are removed (when present) and the error is re-raised,
+    so nothing is left behind. Returns the persisted metadata.
+    """
+    part = part_path(upload_id)
+    try:
+        with open(part, "xb"):
+            pass
+        return create_metadata(upload_id, **fields)
+    except BaseException:
+        for path in (metadata_path(upload_id), part):
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logger.warning("Upload creation: cannot remove %s", path, exc_info=True)
+        raise
 
 
 def update_metadata(upload_id: str, **changes: object) -> dict:
