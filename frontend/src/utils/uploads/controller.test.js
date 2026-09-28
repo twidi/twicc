@@ -885,6 +885,19 @@ test('reconcile(): stalled at once from the server now; own tab id without File 
     assert.equal(h.controller.statusByOrigin.value['files|session:s1'].allStalled, false)
 })
 
+test('reconcile(): the now refresh at its end makes an old entry stalled before the timer ticks', async () => {
+    const h = createHarness()
+    // A non-local entry: the 15 s timer runs and now = START.
+    h.controller.applyServerRecord(makeRecord(), { fromWs: true })
+    assert.equal(h.controller.now.value, START)
+    await h.clock.advance(14_000) // the timer has not ticked
+    const current = h.clock.now()
+    const old = makeRecord({ updated_at: new Date(current - 185_000).toISOString() })
+    h.server.GET = () => respond(200, { uploads: [old], now: new Date(current).toISOString() })
+    await h.controller.reconcile()
+    assert.equal(h.controller.isStalled(h.controller.entries.get(old.id)), true)
+})
+
 test('reconcile(): no drop of queued / creating entries, nor of an entry received after requestedAt', async () => {
     const h = createHarness()
     let releasePost
