@@ -12,7 +12,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 1 | Canvas + floating panels | **Done** — commits `ddc43644`, `8dbdfd83` on branch `enhanced-ui` |
 | 2 | Depth (layered shadows) + typography | **Done** — commits `85ce211f`, `ad7942b1`, `e2046d92` on branch `enhanced-ui` (see §6b) |
 | 3 | Accent-tinted glass overlays | **Done** — commit `709f9cf9` on branch `enhanced-ui` (see §6c) |
-| 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (see §6d); 4b (`wa-details` motion) and 4c (gliding indicators) to specify |
+| 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (§6d); **4b done** — commit `d11ea446` (§6e); 4c (gliding indicators) to specify |
 | 5 | Entrances (virtual-scroll aware) + skeletons | To specify |
 | 6 | Accent glow + live states | To specify |
 | 7 | Secondary screens | To specify |
@@ -373,6 +373,41 @@ in three sub-steps, each with its own spec, review and commit: **4a** (this one)
 Chrome pass, share viewer and artifact shell visuals, touch (Firefox checked by the user;
 computed styles probed in headless Firefox).
 
+## 6e. Step 4b — `wa-details` open/close motion (done)
+
+Spec: `docs/plans/2026-09-27-details-motion-design.md` (commit `bfb01178`, reviewed PASS
+in 10 rounds; §11 = amendments after the browser review, binding). Code: commit `d11ea446`.
+
+### 6e.1 What it does
+
+- `frontend/src/utils/detailsMotion.js` replaces `WaDetails.prototype.handleOpenChange`
+  (user's idea; same tag, styles, events): cards grow to the real content height, follow
+  their content while open, fold with it visible (`composables/useDetailsClosing.js`),
+  handle interrupted gestures, show a loading line when empty, keep instant restores.
+- Opening and follow wait for an idle main thread (`requestIdleCallback`, 250ms cap);
+  heights use `--motion-ease-out-height` (easeOutQuad).
+- Dedicated tool results capped at 20rem (images opt out with `uncapped: true`);
+  Thinking/Reasoning not capped.
+- Side spacing of an open `wa-details` moved into its direct children
+  (`--details-spacing`), so scrollbars touch the card edge.
+- Markdown raw/copy toolbar removed from tool cards (bug on `main`); Codex Reasoning's
+  toolbar placed outside like Thinking.
+
+### 6e.2 Lessons (do not regress)
+
+- Fighting a Web Awesome animation from outside (re-timing, cancelling its pending
+  branches) races endlessly; owning the method (prototype replacement, `watch` calls it
+  by name) converged. Guard test pins Web Awesome 3.3.1.
+- A height animation runs on the main thread: start it when the thread is idle and with
+  a gentle start, else a busy phone drops frames into big jumps. Measure on the phone
+  (screen recordings analysed frame by frame; comparison artifacts in session
+  2992a814-2ce5-4622-a145-219d5e2fd203).
+- Firefox for Android animates cards holding very large highlighted bodies at ~15 fps;
+  Chrome is fluid. `contain`, `will-change` and dropping the fade changed nothing.
+- `overflow: clip` on one axis only (`overflow-y`): a sideways toolbar must stay visible.
+- A global rule moving padding into children must be checked against every child's own
+  padding rule (`var(--spacing, 0)` pattern).
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -603,4 +638,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b).
