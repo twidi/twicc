@@ -617,6 +617,32 @@ def mark_staging_lost(upload_id: str) -> WriteOutcome:
     return WriteOutcome(meta, 410)
 
 
+def _end_active_upload(upload_id: str, **changes: object) -> WriteOutcome:
+    """Terminal write of an ``active`` upload with the ``DELETE`` ordering (§5.3).
+
+    Writes *changes* first, then removes ``<id>.part`` (best effort): ``204``.
+    On a disk-full write: removes ``<id>.part`` first, then writes *changes*
+    again; if that write fails too, nothing to broadcast and ``507``, whatever
+    the second error. Any other failed first write: ``500``, nothing removed.
+    """
+    state = changes["state"]
+    try:
+        meta = update_metadata(upload_id, **changes)
+    except Exception as exc:
+        logger.warning("Upload %s: cannot write the '%s' state", upload_id, state, exc_info=True)
+        if not is_disk_full(exc):
+            return WriteOutcome(None, failure_code(exc))
+        remove_best_effort(part_path(upload_id))
+        try:
+            meta = update_metadata(upload_id, **changes)
+        except Exception:
+            logger.warning("Upload %s: cannot write the '%s' state again", upload_id, state, exc_info=True)
+            return WriteOutcome(None, 507)
+        return WriteOutcome(meta, 204)
+    remove_best_effort(part_path(upload_id))
+    return WriteOutcome(meta, 204)
+
+
 def cancel_upload(upload_id: str) -> WriteOutcome:
     """tus termination of a non-terminal, non-``finalizing`` upload (§5.3 ``DELETE``).
 
@@ -626,21 +652,44 @@ def cancel_upload(upload_id: str) -> WriteOutcome:
     ``507``, whatever the second error (§5.3). Any other failed first write:
     ``500``, nothing removed.
     """
+    return _end_active_upload(upload_id, state=STATE_CANCELLED)
+
+
+ERROR_EXPIRED = "expired"
+ERROR_RECOVERY_FAILED = "recovery failed"
+
+
+def expire_active_upload(upload_id: str) -> WriteOutcome:
+    """Janitor expiry of an ``active`` upload (§5.9): ``failed`` with ``"expired"``.
+
+    Same ordering as ``DELETE`` (:func:`cancel_upload`), disk-full case
+    included: the metadata first, then ``<id>.part``; on a disk-full write,
+    ``<id>.part`` first, then the write again. ``meta`` is ``None`` when
+    nothing was written (nothing to broadcast).
+    """
+    return _end_active_upload(upload_id, state=STATE_FAILED, error=ERROR_EXPIRED)
+
+
+def expire_finalizing_upload(upload_id: str, meta: dict) -> WriteOutcome:
+    """Janitor expiry of a ``finalizing`` upload whose recovery kept failing (§5.9).
+
+    *meta* is the metadata re-read under the lock. Removes an empty
+    reservation at ``final_path`` when ``final_method`` is ``replace``, writes
+    ``failed`` (``"recovery failed"``), then removes ``<id>.part`` and the temp
+    file (best effort). A failed write answers its own code (``507`` / ``500``)
+    with nothing to broadcast.
+    """
+    final_path = meta.get("final_path")
+    if final_path and meta.get("final_method") == FINAL_METHOD_REPLACE:
+        _remove_if_empty(final_path)
     try:
-        meta = update_metadata(upload_id, state=STATE_CANCELLED)
+        new_meta = update_metadata(upload_id, state=STATE_FAILED, error=ERROR_RECOVERY_FAILED)
     except Exception as exc:
-        logger.warning("Upload %s: cannot write the 'cancelled' state", upload_id, exc_info=True)
-        if not is_disk_full(exc):
-            return WriteOutcome(None, failure_code(exc))
-        remove_best_effort(part_path(upload_id))
-        try:
-            meta = update_metadata(upload_id, state=STATE_CANCELLED)
-        except Exception:
-            logger.warning("Upload %s: cannot write the 'cancelled' state again", upload_id, exc_info=True)
-            return WriteOutcome(None, 507)
-        return WriteOutcome(meta, 204)
+        logger.warning("Upload %s: cannot write the 'failed' state", upload_id, exc_info=True)
+        return WriteOutcome(None, failure_code(exc))
     remove_best_effort(part_path(upload_id))
-    return WriteOutcome(meta, 204)
+    remove_best_effort(temp_file_path(upload_id, new_meta["target_dir"]))
+    return WriteOutcome(new_meta, 204)
 
 
 # ── Finalization (§5.6) ──────────────────────────────────────────────────────

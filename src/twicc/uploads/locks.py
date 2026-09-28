@@ -94,6 +94,16 @@ def get_upload_lock(upload_id: str) -> asyncio.Lock | None:
     return lock
 
 
+def forget_upload_lock(upload_id: str) -> None:
+    """Drop the lock entry of an upload whose ``<id>.json`` the janitor removed.
+
+    Called by the janitor under that lock, right after the removal (§5.9). A
+    waiter already holding the old lock re-reads the metadata and answers
+    ``404``; the getter never creates a new entry, since the file is gone.
+    """
+    _current_locks().uploads.pop(upload_id, None)
+
+
 # Ids whose finalization runs in this process (§5.4). ``HEAD`` and ``DELETE``
 # read it without the lock (§5.3); finalization adds its id before its
 # ``finalizing`` write and removes it in a ``finally`` (:func:`finalizing_now`).
