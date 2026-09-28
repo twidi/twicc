@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import logging
 import os
 import stat
 import tempfile
@@ -358,17 +359,33 @@ def test_update_refuses_unknown_fields_and_states():
     assert _disk_json(upload_id)["version"] == 1
 
 
-def test_remove_best_effort(tmp_path, caplog):
-    path = tmp_path / "f"
-    path.write_bytes(b"x")
-    store.remove_best_effort(path)
-    assert not path.exists()
-    store.remove_best_effort(path)  # ENOENT ignored
-    directory = tmp_path / "d"
-    directory.mkdir()
-    store.remove_best_effort(directory)  # other error: logged, not raised
-    assert directory.exists()
-    assert "cannot remove" in caplog.text
+def test_remove_best_effort(tmp_path):
+    # Own the logger instead of using caplog: settings_test's
+    # ``disable_existing_loggers: True`` makes caplog depend on the suite's
+    # import order (see ``layer_logs`` in test_channel_layer_resync.py).
+    logger = logging.getLogger("twicc.uploads.store")
+    saved = (logger.disabled, logger.level, logger.propagate)
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    logger.disabled, logger.propagate = False, False
+    logger.setLevel(logging.WARNING)
+    logger.addHandler(handler)
+    try:
+        path = tmp_path / "f"
+        path.write_bytes(b"x")
+        store.remove_best_effort(path)
+        assert not path.exists()
+        store.remove_best_effort(path)  # ENOENT ignored
+        directory = tmp_path / "d"
+        directory.mkdir()
+        store.remove_best_effort(directory)  # other error: logged, not raised
+        assert directory.exists()
+        assert any("cannot remove" in r.getMessage() for r in records)
+    finally:
+        logger.removeHandler(handler)
+        logger.disabled, logger.propagate = saved[0], saved[2]
+        logger.setLevel(saved[1])
 
 
 # ── Record shape (§5.8) ──────────────────────────────────────────────────────

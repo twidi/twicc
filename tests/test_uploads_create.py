@@ -797,19 +797,48 @@ class _Request:
     method = "GET"
 
 
-def test_decorator_turns_an_exception_into_a_logged_json_500(caplog):
+@pytest.fixture
+def upload_logs():
+    """Capture the upload views' and locks' error records whatever the global logging state.
+
+    ``caplog`` is not enough: ``settings_test`` configures logging with
+    ``disable_existing_loggers: True``, so whether these loggers are still
+    enabled depends on import order across the whole suite (same reason as
+    ``layer_logs`` in ``test_channel_layer_resync.py``). Owning them keeps the
+    assertions about our code rather than about test ordering.
+    """
+    loggers = [logging.getLogger("twicc.uploads.views"), logging.getLogger("twicc.uploads.locks")]
+    saved = [(lg, lg.disabled, lg.level, lg.propagate) for lg in loggers]
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    for lg in loggers:
+        lg.disabled = False
+        lg.setLevel(logging.ERROR)
+        lg.propagate = False
+        lg.addHandler(handler)
+    try:
+        yield records
+    finally:
+        for lg, disabled, level, propagate in saved:
+            lg.removeHandler(handler)
+            lg.disabled = disabled
+            lg.setLevel(level)
+            lg.propagate = propagate
+
+
+def test_decorator_turns_an_exception_into_a_logged_json_500(upload_logs):
     @upload_views.upload_view()
     async def view(request):
         raise RuntimeError("boom")
 
-    with caplog.at_level(logging.ERROR):
-        resp = _run(view(_Request()))
+    resp = _run(view(_Request()))
     assert resp.status_code == 500
     assert isinstance(resp, JsonResponse)
     assert _json(resp)["error"]
     assert resp[UPLOAD_HEADER] == "1"
     assert "Tus-Resumable" not in resp
-    logged = [r for r in caplog.records if r.exc_info and r.exc_info[1] is not None]
+    logged = [r for r in upload_logs if r.exc_info and r.exc_info[1] is not None]
     assert len(logged) == 1
 
 
@@ -829,7 +858,7 @@ def test_decorator_adds_the_tus_header_on_id_routes():
         assert resp["Tus-Resumable"] == "1.0.0"
 
 
-def test_decorator_logs_a_guarded_task_exception_once(caplog):
+def test_decorator_logs_a_guarded_task_exception_once(upload_logs):
     async def operation():
         raise RuntimeError("inside the guarded task")
 
@@ -837,10 +866,9 @@ def test_decorator_logs_a_guarded_task_exception_once(caplog):
     async def view(request):
         return await locks.run_guarded(operation(), label="test")
 
-    with caplog.at_level(logging.ERROR):
-        resp = _run(view(_Request()))
+    resp = _run(view(_Request()))
     assert resp.status_code == 500
-    logged = [r for r in caplog.records if r.exc_info and r.exc_info[1] is not None]
+    logged = [r for r in upload_logs if r.exc_info and r.exc_info[1] is not None]
     assert len(logged) == 1
 
 
