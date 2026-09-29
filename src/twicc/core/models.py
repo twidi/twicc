@@ -53,6 +53,22 @@ class SessionType(models.TextChoices):
     SUBAGENT = "subagent", "Subagent"
 
 
+class HistoryFactKind(models.TextChoices):
+    """Historical evidence computed from provider session items."""
+
+    TOOL_CALL = "tool_call", "Tool call"
+    PROCESS_START = "process_start", "Process start"
+    CODE_CELL = "code_cell", "Code cell"
+    AGENT_SPAWN = "agent_spawn", "Agent spawn"
+    TURN_START = "turn_start", "Turn start"
+    CODE_EXEC_TARGET = "code_exec_target", "Code exec target"
+    TURN_CONTEXT = "turn_context", "Turn context"
+    PLAN_MARKER = "plan_marker", "Plan marker"
+    GOAL_CONTEXT = "goal_context", "Goal context"
+    GOAL_UPDATE = "goal_update", "Goal update"
+    TOKEN_USAGE = "token_usage", "Token usage"
+
+
 class PinMode(models.TextChoices):
     """Pin visibility scope for a session."""
     PROJECT = "project", "Project"
@@ -824,6 +840,25 @@ class SessionItem(models.Model):
 
     def __str__(self):
         return f"{self.session_id}:{self.line_num}"
+
+
+class SessionHistoryFact(models.Model):
+    """Compact historical evidence, keyed by its exact source occurrence."""
+
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="history_facts")
+    line_num = models.PositiveIntegerField()
+    kind = models.CharField(max_length=32, choices=HistoryFactKind.choices)
+    key = models.TextField()
+    data = models.JSONField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=Q(line_num__gte=1), name="history_fact_positive_line"),
+            models.UniqueConstraint(
+                fields=["session", "kind", "key", "line_num"],
+                name="uniq_history_fact_source",
+            ),
+        ]
 
 
 class ToolResultLink(models.Model):
