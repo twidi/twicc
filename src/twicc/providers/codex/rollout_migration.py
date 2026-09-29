@@ -339,8 +339,8 @@ def _apply_clear_snapshot_anchors_job(job: ClearSnapshotAnchorsJob) -> int:
 
 
 # Rows inserted per transaction by the history replacement. Each slice is
-# its own compute-worker call, so a 500 MB rollout does not monopolize
-# the worker for the whole rebuild.
+# its own compute-worker call and transaction. The writer lease spans the
+# whole rebuild, while the event loop remains available.
 REPLACE_HISTORY_CHUNK_SIZE = 2000
 
 

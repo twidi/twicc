@@ -76,9 +76,8 @@ BATCH_ACTIVITY_COUNT = 50
 INITIAL_SYNC_QUEUE_MAXSIZE = 200
 COMPUTE_QUEUE_MAXSIZE = 200
 # A compute result carrying more item writes than this is applied in slices
-# of this size, each in its own worker call and transaction, so a giant
-# session (hundreds of thousands of items) can share the compute worker
-# with other admitted writes between chunks.
+# of this size, each in its own compute-worker call and transaction. The
+# writer lease spans the complete message; the event loop remains available.
 COMPUTE_APPLY_CHUNK_SIZE = 2000
 
 # "spawn" context — the compute result queue is created here and passed to
@@ -1985,10 +1984,10 @@ async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
     """Pre-apply a large result's item writes in slices; return the trimmed message.
 
     Small results are returned untouched (``apply_session_complete`` writes
-    their items itself). For large ones every slice runs as its own
-    worker call, so other heavy writers interleave,
-    and re-checks the revision guard; the first non-``ok`` outcome stops the
-    apply and is returned so the caller reports it exactly as
+    their items itself). For large ones every slice runs in a separate
+    compute-worker call and transaction, and re-checks the revision guard.
+    The writer lease remains held across all slices. The first non-``ok``
+    outcome stops the apply and is returned so the caller reports it as
     ``apply_session_complete`` would have.
     """
     from twicc.providers.compute_base import BaseSessionCompute
