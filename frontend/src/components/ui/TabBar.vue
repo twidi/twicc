@@ -14,6 +14,9 @@
  *    re-scrolls on an `active` change, not when the active tab merely moves.
  * And always: the active tab's line glides from tab to tab (utils/glideInk.js, visual
  * refresh step 4c).
+ * With `crossfade` (read at mount): a user's click or key on a tab of this bar switches the
+ * panel in a view-transition crossfade (utils/tabCrossfade.js, step 5c); `crossfade-start`
+ * is emitted just before, synchronously.
  *
  * Usage:
  *   <TabBar :active="activeId" @wa-tab-show="onShow">
@@ -31,8 +34,16 @@
  */
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { createGlideInk } from '../../utils/glideInk.js'
+import { installTabCrossfade } from '../../utils/tabCrossfade.js'
+import { supportsViewTransitions } from '../../utils/viewTransition.js'
 
 defineOptions({ inheritAttrs: false })
+
+const props = defineProps({
+    // Crossfade the panels on a user's tab switch (the session's center and dock bars).
+    crossfade: { type: Boolean, default: false },
+})
+const emit = defineEmits(['crossfade-start'])
 
 const el = ref(null)
 defineExpose({ el })
@@ -120,10 +131,15 @@ function createTabGlide(host) {
     activeObserver.observe(host, { attributes: true, attributeFilter: ['active'], subtree: true })
 }
 
+let uninstallCrossfade = null
+
 onMounted(async () => {
     if (el.value?.updateComplete) await el.value.updateComplete
     // Unmounted during the await: create nothing (the observers would leak).
     if (unmounted || !el.value) return
+    if (props.crossfade && supportsViewTransitions() && typeof el.value.setActiveTab === 'function') {
+        uninstallCrossfade = installTabCrossfade(el.value, { onStart: () => emit('crossfade-start') })
+    }
     navEl = el.value.shadowRoot?.querySelector('.nav')
     navEl?.addEventListener('wheel', onWheel, { passive: false })
     // The wa-tab elements are direct light-DOM children, so a keyed reorder surfaces
@@ -140,6 +156,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
     unmounted = true
+    uninstallCrossfade?.()
+    uninstallCrossfade = null
     navEl?.removeEventListener('wheel', onWheel)
     listObserver?.disconnect()
     activeObserver?.disconnect()

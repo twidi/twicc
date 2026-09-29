@@ -15,6 +15,7 @@ import { isWorkspaceProjectId, extractWorkspaceId } from '../../../utils/workspa
 import { computeSidebarSessionBlocks } from '../../../utils/sidebarSessions'
 import { matchQuery } from '../../../utils/textFilter'
 import { dateBucketSeparator } from '../../../utils/datePresets'
+import { useListCascade } from '../../../composables/useListCascade'
 import VirtualScroller from '../../virtual-scroller/VirtualScroller.vue'
 import SessionListItem from './SessionListItem.vue'
 import SidebarListSeparator from '../../sidebar/SidebarListSeparator.vue'
@@ -221,6 +222,31 @@ const highlightedIndex = ref(-1)
 // Number of items to jump for PageUp/PageDown
 const PAGE_SIZE = 10
 
+// Entrances (visual refresh step 5c): the rows on screen cascade in when a scope's list
+// arrives; a session that appears live enters alone. Declared before the sessionId
+// watchers: the scrolling one runs during setup and holds the cascade's start.
+const cascade = useListCascade({
+    items: sessions,
+    getKey: (s) => s.id,
+    sourceSize: () => allSessions.value.length,
+    scopeKey: () => props.projectId,
+    getVisibleRange: () => scrollerRef.value?.getVisibleRange() ?? null,
+})
+
+// Live ids: a session received from the server or created in this tab. A Codex draft's
+// canonical row replaces a row the user already sees: it must not enter. In a tab that
+// never held the draft the new row keeps its entrance.
+store.$onAction(({ name, args, after }) => {
+    if (name === 'addSession') {
+        cascade.noteLive(args[0]?.id)
+    } else if (name === 'createDraftSession') {
+        after((id) => cascade.noteLive(id))
+    } else if (name === 'bindDraftSession') {
+        const [draftId, sessionId] = args
+        if (draftId !== sessionId && store.sessions[draftId]) cascade.dropLive(sessionId)
+    }
+})
+
 // Load more sessions when approaching the end of the list
 async function loadMore() {
     if (isLoading.value || !hasMore.value || loadMoreError.value) return
@@ -281,9 +307,10 @@ watch(() => props.sessionId, (newSessionId) => {
 // Uses immediate:true because navigating from single-project (/project/X) to all-projects
 // (/projects/X/session/Y) remounts the entire component tree (different route branches).
 // Without immediate, the watcher wouldn't fire for the initial sessionId value on mount.
+// The cascade's start waits (capped) for this scroll when the session is off screen.
 watch(() => props.sessionId, (newSessionId) => {
     if (newSessionId) {
-        scrollToSession(newSessionId)
+        cascade.holdTarget(newSessionId, scrollToSession(newSessionId))
     }
 }, { flush: 'post', immediate: true })
 
@@ -307,32 +334,31 @@ onBeforeUnmount(() => store.setDisplayedSessionIds([]))
  * Retries a few times because the VirtualScroller may be recreated (via :key)
  * when projectId changes simultaneously with sessionId, and the new scroller
  * needs time to mount and measure items.
+ * Resolves when the scroll settles, or when the retries give up.
  */
 function scrollToSession(targetSessionId, attempt = 0) {
     const MAX_ATTEMPTS = 5
     const RETRY_DELAY = 50
 
+    const retry = () => new Promise((resolve) => {
+        setTimeout(() => resolve(scrollToSession(targetSessionId, attempt + 1)), RETRY_DELAY)
+    })
+
     if (!sessions.value.some(s => s.id === targetSessionId)) {
         // Session not in list yet (data loading). Retry a few times.
-        if (attempt < MAX_ATTEMPTS) {
-            setTimeout(() => scrollToSession(targetSessionId, attempt + 1), RETRY_DELAY)
-        }
-        return
+        return attempt < MAX_ATTEMPTS ? retry() : Promise.resolve()
     }
 
     if (!scrollerRef.value) {
         // Scroller not mounted yet (recreated via :key). Retry.
-        if (attempt < MAX_ATTEMPTS) {
-            setTimeout(() => scrollToSession(targetSessionId, attempt + 1), RETRY_DELAY)
-        }
-        return
+        return attempt < MAX_ATTEMPTS ? retry() : Promise.resolve()
     }
 
     // Use the VirtualScroller's scrollToKey which has a robust "jump, settle, correct"
     // loop: it scrolls to the item, waits for ResizeObserver height measurements to
     // stabilize, then verifies visibility and re-scrolls if needed. This handles all
     // timing issues when the scroller was just recreated (via :key on projectId change).
-    scrollerRef.value.scrollToKey(targetSessionId, { align: 'center' })
+    return scrollerRef.value.scrollToKey(targetSessionId, { align: 'center' }).then(() => {}, () => {})
 }
 
 const emit = defineEmits(['select', 'drop-data', 'focus-search'])
@@ -616,6 +642,8 @@ defineExpose({
             :key="projectId"
             :items="sessions"
             :item-key="session => session.id"
+            :item-class="cascade.itemClass"
+            :item-style="cascade.itemStyle"
             :min-item-height="minSessionHeight"
             :buffer="SCROLLER_BUFFER"
             :unload-buffer="SCROLLER_BUFFER * 1.5"

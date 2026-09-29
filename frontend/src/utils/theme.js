@@ -79,6 +79,15 @@ export function setColorScheme(mode) {
     recomputeCachedColors()
 }
 
+// OS scheme changes go to this handler when one is set (the settings store, which applies
+// them through a view transition), else are applied here directly.
+let systemSchemeChangeHandler = null
+
+/** Set (or clear with null) the handler of OS color-scheme changes. */
+export function setSystemSchemeChangeHandler(fn) {
+    systemSchemeChangeHandler = fn
+}
+
 /**
  * Initialize theme on app startup.
  * Apply initial color scheme and WA classes, listen for system preference changes.
@@ -89,6 +98,10 @@ export function initTheme() {
     recomputeCachedColors()
     document.documentElement.classList.remove('loading')
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if (systemSchemeChangeHandler) {
+            systemSchemeChangeHandler()
+            return
+        }
         applyColorScheme()
         recomputeCachedColors()
     })

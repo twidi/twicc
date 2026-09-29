@@ -18,7 +18,8 @@ import {
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
 import { getProviderHelpers, getRegisteredProviders } from '../providers'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
-import { setColorScheme as setColorSchemeOnDom } from '../utils/theme'
+import { setColorScheme as setColorSchemeOnDom, setSystemSchemeChangeHandler } from '../utils/theme'
+import { effectiveSchemeFor, runSchemeTransition, takeNextSchemeOrigin } from '../utils/colorSchemeTransition'
 import { validateWorktreeTemplate } from '../utils/worktreePath'
 import { usablePublicOrigin } from '../utils/publicOrigin'
 import { ORIGIN_SETTING_KEYS } from '../utils/originSettingsForm'
@@ -1294,10 +1295,31 @@ export function initSettings() {
         _localStorageNeedsRewrite = false
     }
 
-    // Watch for color scheme changes
-    watch(() => store.colorScheme, (mode) => {
-        setColorSchemeOnDom(mode)
+    // Color scheme (step 5c): the <html> class and _effectiveColorScheme (what CodeMirror,
+    // xterm and Mermaid follow) change together, inside the view transition's callback, so
+    // its old image holds the old scheme everywhere. Each call reads the scheme at call time.
+    const applyStoreColorScheme = () => {
+        setColorSchemeOnDom(store.colorScheme)
         store._updateEffectiveColorScheme()
+    }
+
+    // Synced settings may have changed the scheme since initTheme(): reach the page before
+    // mount, without a transition.
+    setColorSchemeOnDom(store.colorScheme)
+
+    // A change from the settings panel or the palette carries an origin (circle); any other
+    // change fades. A change that leaves the page's scheme the same plays nothing.
+    watch(() => store.colorScheme, () => {
+        runSchemeTransition(applyStoreColorScheme, {
+            origin: takeNextSchemeOrigin(),
+            animate: effectiveSchemeFor(store.colorScheme) !== store._effectiveColorScheme,
+        })
+    })
+
+    // The OS scheme only shows under "System" (under "Light" or "Dark" nothing changes).
+    setSystemSchemeChangeHandler(() => {
+        if (store.colorScheme !== COLOR_SCHEME.SYSTEM) return
+        runSchemeTransition(applyStoreColorScheme)
     })
 
     // Detect touch device once at startup (primary input has no hover support)
@@ -1309,11 +1331,8 @@ export function initSettings() {
     store._isLinux   = /Linux/i.test(plat) && !/Android/i.test(ua)
     store._isWindows = /Win/i.test(plat)
 
-    // Initialize effective color scheme and listen for system preference changes
+    // Initialize the effective color scheme (OS changes go through the handler above)
     store._updateEffectiveColorScheme()
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-        store._updateEffectiveColorScheme()
-    })
 
     // Watch for font size changes
     watch(() => store.fontSize, (size) => {

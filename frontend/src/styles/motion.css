@@ -273,3 +273,88 @@ wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content)::after 
 .chat-entering.is-slice {
     animation-name: chat-enter-fade;
 }
+
+/* Session-list cascade (step 5c). Classes and --list-enter-index are set by useListCascade
+   on the virtual scroller's row wrapper. Movement × --motion-amount: reduced motion keeps
+   the fade only. The delays and 320ms match utils/listCascade.js. */
+@keyframes list-enter {
+    from {
+        opacity: 0;
+        translate: 0 calc(0.375rem * var(--motion-amount));
+    }
+}
+.list-arriving {
+    opacity: 0;
+}
+.list-entering {
+    animation: list-enter 320ms var(--motion-ease-out) both;
+    animation-delay: calc(var(--list-enter-index, 0) * 22ms);
+}
+
+/* Color-scheme change (step 5c). runViewTransition puts one twicc-vt-* class on <html>
+   for the duration of the view transition. Circle: the new scheme grows over the old one
+   (no crossfade). Fade: the old image stays opaque and the new one fades in over it, like
+   the tab crossfade below (the UA crossfade's plus-lighter blend collapses on Firefox
+   Android). */
+html.twicc-vt-circle::view-transition-old(root),
+html.twicc-vt-circle::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+}
+html.twicc-vt-circle::view-transition-new(root) {
+    animation: twicc-scheme-circle 650ms var(--motion-ease-out);
+}
+@keyframes twicc-scheme-circle {
+    from { clip-path: circle(0 at var(--twicc-scheme-x) var(--twicc-scheme-y)); }
+    to { clip-path: circle(var(--twicc-scheme-r) at var(--twicc-scheme-x) var(--twicc-scheme-y)); }
+}
+html.twicc-vt-fade::view-transition-old(root) {
+    animation: none;
+    mix-blend-mode: normal;
+}
+html.twicc-vt-fade::view-transition-new(root) {
+    animation: twicc-vt-fade-in var(--motion-dur-3) ease-in-out both;
+    mix-blend-mode: normal;
+}
+
+/* Tab crossfade and overlay (step 5c §12). The old image stays opaque under the new one,
+   which fades in (the UA crossfade's plus-lighter blend collapsed on Firefox Android). */
+html.twicc-vt-tab::view-transition-old(root),
+html.twicc-vt-overlay::view-transition-old(root) {
+    animation: none;
+    mix-blend-mode: normal;
+}
+html.twicc-vt-tab::view-transition-new(root),
+html.twicc-vt-overlay::view-transition-new(root) {
+    animation: twicc-vt-fade-in 250ms ease-in-out both;
+    mix-blend-mode: normal;
+}
+@keyframes twicc-vt-fade-in {
+    from { opacity: 0; }
+}
+/* Overlay open / close: the card and its pooled iframe cell get their own groups and slide
+   by the same viewport distance (they stay aligned); the backdrop fades with the root. */
+html.twicc-vt-overlay .layout-overlay {
+    view-transition-name: twicc-overlay;
+}
+/* Visible cells only: a kept-alive session's hidden overlay cell (visibility: hidden, still
+   captured) would duplicate the name and abort the transition. */
+html.twicc-vt-overlay .frame-cell--overlay:not(.frame-cell--hidden) {
+    view-transition-name: twicc-overlay-frame;
+}
+html.twicc-vt-overlay::view-transition-new(twicc-overlay),
+html.twicc-vt-overlay::view-transition-new(twicc-overlay-frame) {
+    animation: twicc-vt-slide-in 300ms var(--motion-ease-out) both;
+    mix-blend-mode: normal;
+}
+html.twicc-vt-overlay::view-transition-old(twicc-overlay),
+html.twicc-vt-overlay::view-transition-old(twicc-overlay-frame) {
+    animation: twicc-vt-slide-out 220ms ease-in both;
+    mix-blend-mode: normal;
+}
+@keyframes twicc-vt-slide-in {
+    from { translate: calc(var(--twicc-vt-slide-x) * var(--motion-amount)) calc(var(--twicc-vt-slide-y) * var(--motion-amount)); }
+}
+@keyframes twicc-vt-slide-out {
+    to { translate: calc(var(--twicc-vt-slide-x) * var(--motion-amount)) calc(var(--twicc-vt-slide-y) * var(--motion-amount)); }
+}

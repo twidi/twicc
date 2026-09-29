@@ -44,6 +44,7 @@ import { toast } from '../../composables/useToast'
 import { useProviderActivation } from '../../composables/useProviderActivation'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
 import { useGlideInk } from '../../composables/useGlideInk'
+import { originFromElement, setNextSchemeOrigin } from '../../utils/colorSchemeTransition'
 
 const props = defineProps({
     // The trigger floats over scrolling content on the home page, where it must be opaque
@@ -844,8 +845,12 @@ function onFontSizeChange(event) {
     store.setFontSize(event.target.value)
 }
 
+// The new scheme grows in a circle from the select (step 5c).
 function onColorSchemeChange(event) {
-    store.setColorScheme(event.target.value)
+    if (event.target.value !== store.colorScheme) {
+        setNextSchemeOrigin(originFromElement(event.target))
+        store.setColorScheme(event.target.value)
+    }
 }
 
 // The origin form subscribes to the correlated-result event itself; the

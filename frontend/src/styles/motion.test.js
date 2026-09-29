@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join, relative } from 'node:path'
 
 import { CHAT_ENTRANCE_STAGGER_MS } from '../utils/chatEntrance.js'
+import { LIST_CASCADE_DURATION_MS, LIST_CASCADE_STAGGER_MS } from '../utils/listCascade.js'
+import { SCHEME_REVEAL_MS } from '../utils/colorSchemeTransition.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const srcDir = join(here, '..')
@@ -584,4 +586,92 @@ test('14. the registered --twicc-reveal (overlay motion design §14.3)', () => {
         'initial-value': '1',
     })
     assert.ok(motionTree.some((n) => n.type === 'at' && n.prelude === '@property --twicc-reveal'), 'at the top level')
+})
+
+/** The single `from` frame of a keyframe block (or the frame named `selector`). */
+function keyframeDecls(name, selector = 'from') {
+    const blocks = motionTree.filter((n) => n.type === 'at' && n.prelude === `@keyframes ${name}`)
+    assert.equal(blocks.length, 1, `one @keyframes ${name}`)
+    const frames = blocks[0].children.filter((r) => r.selector === selector)
+    assert.equal(frames.length, 1, `${name}: one "${selector}" frame`)
+    return frames[0].decls
+}
+
+test('27. session-list cascade: rise × --motion-amount, 320ms and the 22ms stagger of utils/listCascade.js', () => {
+    const enter = keyframeDecls('list-enter')
+    assert.deepEqual(enter, { opacity: '0', translate: '0 calc(0.375rem * var(--motion-amount))' })
+    assert.ok(!('transform' in enter))
+    assert.deepEqual(findRule(topRules, ['.list-arriving']).decls, { opacity: '0' })
+    const entering = findRule(topRules, ['.list-entering'])
+    const animation = entering.decls.animation
+    assert.match(animation, /^list-enter \d+ms var\(--motion-ease-out\) both$/)
+    assert.equal(Number(animation.match(/(\d+)ms/)[1]), LIST_CASCADE_DURATION_MS)
+    const delay = entering.decls['animation-delay']
+    assert.match(delay, /^calc\(var\(--list-enter-index, 0\) \* \d+ms\)$/)
+    assert.equal(Number(delay.match(/(\d+)ms/)[1]), LIST_CASCADE_STAGGER_MS)
+})
+
+test('28. color-scheme circle: the full --twicc-scheme-* names, SCHEME_REVEAL_MS, fade on the tokens', () => {
+    const from = keyframeDecls('twicc-scheme-circle', 'from')
+    const to = keyframeDecls('twicc-scheme-circle', 'to')
+    assert.equal(from['clip-path'], 'circle(0 at var(--twicc-scheme-x) var(--twicc-scheme-y))')
+    assert.equal(to['clip-path'], 'circle(var(--twicc-scheme-r) at var(--twicc-scheme-x) var(--twicc-scheme-y))')
+
+    const still = findRule(topRules, [
+        'html.twicc-vt-circle::view-transition-old(root)',
+        'html.twicc-vt-circle::view-transition-new(root)',
+    ])
+    assert.deepEqual(still.decls, { animation: 'none', 'mix-blend-mode': 'normal' })
+    const circle = findRule(topRules, ['html.twicc-vt-circle::view-transition-new(root)'])
+    const animation = circle.decls.animation
+    assert.match(animation, /^twicc-scheme-circle \d+ms var\(--motion-ease-out\)$/)
+    assert.equal(Number(animation.match(/(\d+)ms/)[1]), SCHEME_REVEAL_MS)
+    assert.ok(topRules.indexOf(circle) > topRules.indexOf(still), 'the circle rule follows the reset')
+
+    // Fade: the old image stays opaque, the new one fades in over it (the UA crossfade's
+    // plus-lighter blend collapses on Firefox Android, §12.2 point 4).
+    assert.deepEqual(findRule(topRules, ['html.twicc-vt-fade::view-transition-old(root)']).decls, {
+        animation: 'none',
+        'mix-blend-mode': 'normal',
+    })
+    assert.deepEqual(findRule(topRules, ['html.twicc-vt-fade::view-transition-new(root)']).decls, {
+        animation: 'twicc-vt-fade-in var(--motion-dur-3) ease-in-out both',
+        'mix-blend-mode': 'normal',
+    })
+})
+
+test('39. tab crossfade and overlay slide (step 5c §12.6)', () => {
+    const OLD = ['html.twicc-vt-tab::view-transition-old(root)', 'html.twicc-vt-overlay::view-transition-old(root)']
+    const NEW = ['html.twicc-vt-tab::view-transition-new(root)', 'html.twicc-vt-overlay::view-transition-new(root)']
+    assert.deepEqual(findRule(topRules, OLD).decls, { animation: 'none', 'mix-blend-mode': 'normal' })
+    assert.deepEqual(findRule(topRules, NEW).decls, {
+        animation: 'twicc-vt-fade-in 250ms ease-in-out both',
+        'mix-blend-mode': 'normal',
+    })
+    assert.deepEqual(keyframeDecls('twicc-vt-fade-in'), { opacity: '0' })
+
+    // view-transition-name only while the overlay transition runs.
+    const named = motionFlat.filter((e) => 'view-transition-name' in e.rule.decls)
+    assert.equal(named.length, 2)
+    for (const { rule } of named) {
+        for (const selector of rule.selectors) assert.ok(selector.startsWith('html.twicc-vt-overlay '), selector)
+    }
+    assert.equal(findRule(topRules, ['html.twicc-vt-overlay .layout-overlay']).decls['view-transition-name'], 'twicc-overlay')
+    assert.equal(
+        findRule(topRules, ['html.twicc-vt-overlay .frame-cell--overlay:not(.frame-cell--hidden)']).decls['view-transition-name'],
+        'twicc-overlay-frame',
+    )
+
+    assert.deepEqual(findRule(topRules, [
+        'html.twicc-vt-overlay::view-transition-new(twicc-overlay)',
+        'html.twicc-vt-overlay::view-transition-new(twicc-overlay-frame)',
+    ]).decls, { animation: 'twicc-vt-slide-in 300ms var(--motion-ease-out) both', 'mix-blend-mode': 'normal' })
+    assert.deepEqual(findRule(topRules, [
+        'html.twicc-vt-overlay::view-transition-old(twicc-overlay)',
+        'html.twicc-vt-overlay::view-transition-old(twicc-overlay-frame)',
+    ]).decls, { animation: 'twicc-vt-slide-out 220ms ease-in both', 'mix-blend-mode': 'normal' })
+
+    const SLIDE = 'calc(var(--twicc-vt-slide-x) * var(--motion-amount)) calc(var(--twicc-vt-slide-y) * var(--motion-amount))'
+    assert.deepEqual(keyframeDecls('twicc-vt-slide-in', 'from'), { translate: SLIDE })
+    assert.deepEqual(keyframeDecls('twicc-vt-slide-out', 'to'), { translate: SLIDE })
 })

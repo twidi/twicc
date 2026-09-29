@@ -73,7 +73,7 @@ watch(() => pool.geometryEpoch, () => hostRect.update(), { flush: 'post' })
             v-for="id in ids"
             :key="id"
             class="frame-cell"
-            :class="{ 'frame-cell--hidden': !pool.frames[id].visible }"
+            :class="{ 'frame-cell--hidden': !pool.frames[id].visible, 'frame-cell--overlay': pool.frames[id].zTier === 'overlay' }"
             :style="cellStyle(pool.frames[id])"
         >
             <iframe

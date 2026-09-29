@@ -26,7 +26,7 @@ const props = defineProps({
     // inset by half a panel gap on them.
     insets: { type: Object, default: () => NO_INSETS },
 })
-const emit = defineEmits(['select', 'tab-activate', 'minimize', 'maximize', 'restore', 'place', 'pane-focus'])
+const emit = defineEmits(['select', 'tab-activate', 'minimize', 'maximize', 'restore', 'place', 'pane-focus', 'crossfade-start'])
 
 const bodyRef = ref(null)
 
@@ -102,7 +102,7 @@ function onEmptyBarDblClick(event) {
              window buttons must stay visible while the tab strip scrolls, and never sit over a
              tab — they live beside the scroll area, not inside it. -->
         <div class="dock-topbar" :class="{ 'tabnav-dimmed': !isRouteActive }" :title="maximized ? 'Double-click to restore' : 'Double-click to maximize'">
-        <TabBar class="dock-tabnav" :active="activeTabId" @wa-tab-show.stop="onShow" @click="onEmptyBarClick" @dblclick="onEmptyBarDblClick">
+        <TabBar class="dock-tabnav" :active="activeTabId" crossfade @crossfade-start="emit('crossfade-start')" @wa-tab-show.stop="onShow" @click="onEmptyBarClick" @dblclick="onEmptyBarDblClick">
             <!-- Clicking a tab header activates it: focuses its filter + claims the route (onTabClick).
                  wa-tab-show handles switching to a *different* tab; the claim also covers clicking the
                  tab that is ALREADY this group's active one (no wa-tab-show fires then) while another

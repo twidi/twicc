@@ -25,6 +25,7 @@ import { ARTIFACT_ICON } from '../utils/artifactBookmark'
 import { AGENT_SETTING_ICONS } from '../utils/agentSettingIcons'
 import { lastSessionsLocation, lastArtifactsLocation } from '../utils/sidebarViewMemory'
 import { apiFetch } from '../utils/api'
+import { setNextSchemeOrigin, viewportCenter } from '../utils/colorSchemeTransition'
 import { toast } from '../composables/useToast'
 import { useTerminalTabsStore } from '../stores/terminalTabs'
 import { useWorkflowRunsStore } from '../stores/workflowRuns'
@@ -356,6 +357,15 @@ export function initStaticCommands(router) {
     const route = useRoute()
 
     // ── Helpers ────────────────────────────────────────────────────────────
+
+    /** Change the color scheme, the new one growing from the screen center (step 5c). The
+     *  palette is closed at that point: its actions run after its close animation. */
+    function changeColorScheme(mode) {
+        if (mode !== settings.colorScheme) {
+            setNextSchemeOrigin(viewportCenter())
+            settings.setColorScheme(mode)
+        }
+    }
 
     /** Whether the current route is in "all projects" mode */
     function isAllProjectsMode() {
@@ -1111,9 +1121,9 @@ export function initStaticCommands(router) {
             icon: 'circle-half-stroke',
             category: 'display',
             items: () => [
-                { id: COLOR_SCHEME.SYSTEM, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.SYSTEM], action: () => settings.setColorScheme(COLOR_SCHEME.SYSTEM), active: settings.colorScheme === COLOR_SCHEME.SYSTEM },
-                { id: COLOR_SCHEME.LIGHT, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.LIGHT], action: () => settings.setColorScheme(COLOR_SCHEME.LIGHT), active: settings.colorScheme === COLOR_SCHEME.LIGHT },
-                { id: COLOR_SCHEME.DARK, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.DARK], action: () => settings.setColorScheme(COLOR_SCHEME.DARK), active: settings.colorScheme === COLOR_SCHEME.DARK },
+                { id: COLOR_SCHEME.SYSTEM, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.SYSTEM], action: () => changeColorScheme(COLOR_SCHEME.SYSTEM), active: settings.colorScheme === COLOR_SCHEME.SYSTEM },
+                { id: COLOR_SCHEME.LIGHT, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.LIGHT], action: () => changeColorScheme(COLOR_SCHEME.LIGHT), active: settings.colorScheme === COLOR_SCHEME.LIGHT },
+                { id: COLOR_SCHEME.DARK, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.DARK], action: () => changeColorScheme(COLOR_SCHEME.DARK), active: settings.colorScheme === COLOR_SCHEME.DARK },
             ],
         },
         {

@@ -61,6 +61,7 @@ import { canToggleSessionReadState, hasUnreadContent } from '../utils/sessions'
 import { fileRootsFromStore } from '../utils/projectRoots'
 import { normalizePosixPath } from '../utils/worktreePath'
 import { computeSessionArtifactBookmarks } from '../utils/sessionArtifactBookmarks'
+import { runViewTransition } from '../utils/viewTransition'
 
 const route = useRoute()
 const router = useRouter()
@@ -1020,7 +1021,8 @@ function onLayoutTabActivate(tabId) {
 function onLayoutTabDragStart() {
     cancelPaneFocus()
     if (layout.maximizedRegion.value) layout.restoreMaximized()
-    if (layout.openOverlayEdge.value) onOverlayDismiss()
+    // No transition during a drag: pointer input must keep flowing.
+    if (layout.openOverlayEdge.value) overlayDismissNow()
 }
 function onLayoutTabDrop(tabId, { activate = true } = {}) {
     if (!activate) return
@@ -1070,7 +1072,8 @@ watch(() => !!session.value, (has, had) => {
 // non-dismiss close (the tab was placed into a real dock/center, or a resize dropped the overlay)
 // leaves focus on wherever it landed — we only clear the memory (handled by the watcher below).
 let overlayReturnTab = null
-function onOverlayActivate(tabId) {
+// Both return the navigation promise (the overlay transition's update awaits it).
+function overlayActivateNow(tabId) {
     if (overlayReturnTab === null) {
         const prior = activeTabId.value
         // Never remember an overlay-only tab as the return target — dismissing to it would just
@@ -1078,17 +1081,47 @@ function onOverlayActivate(tabId) {
         overlayReturnTab = layout.overlayEdgeForTab(prior) ? 'main' : prior
     }
     cancelPaneFocus()
-    switchToTab(tabId)
+    const navigation = switchToTab(tabId)
     // Peeking a docked tab in an overlay makes a previously-hidden tab visible → focus its content.
     if (ACTIVATION_FOCUS_TABS.includes(tabId)) requestPanelFocus(tabId)
+    return navigation
 }
-function onOverlayDismiss() {
+function overlayDismissNow() {
     // No remembered tab (overlay was opened by direct navigation, not a gesture) → fall back to the
     // center, so dismissing leaves focus on a visible tab and can't re-trigger the auto-open.
     const back = overlayReturnTab ?? 'main'
     overlayReturnTab = null
     cancelPaneFocus()
-    switchToTab(back)
+    return switchToTab(back)
+}
+
+// Overlay motion (visual refresh step 5c): opening / closing slides the card from / to its
+// edge; a tab change inside an open overlay (its bar, the gutter chips, another edge's chip)
+// crossfades. Every overlay tab change reaches these two handlers. Offsets per gutter edge
+// (utils/layoutResolver.js); reduced motion or any other edge → the crossfade.
+const SLIDE_OFFSETS = { right: ['100vw', '0px'], left: ['-100vw', '0px'], bottom: ['0px', '100vh'] }
+function runOverlayTransition(update, slideEdge) {
+    cancelPaneFocus()
+    const offsets = slideEdge ? SLIDE_OFFSETS[slideEdge] : null
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true
+    if (offsets && !reduced) {
+        runViewTransition(update, {
+            kind: 'overlay',
+            properties: { '--twicc-vt-slide-x': offsets[0], '--twicc-vt-slide-y': offsets[1] },
+            settle: true,
+        })
+    } else {
+        runViewTransition(update, { kind: 'tab', settle: true })
+    }
+}
+function onOverlayActivate(tabId) {
+    // Re-activating the shown tab (a gutter chip's double click) navigates nowhere.
+    if (tabId === activeTabId.value) return overlayActivateNow(tabId)
+    const slideEdge = layout.openOverlayEdge.value ? null : layout.overlayEdgeForTab(tabId)
+    runOverlayTransition(() => overlayActivateNow(tabId), slideEdge)
+}
+function onOverlayDismiss() {
+    runOverlayTransition(() => overlayDismissNow(), layout.openOverlayEdge.value)
 }
 // Any overlay close clears the remembered return tab. A dismiss already cleared it synchronously
 // above; this catches closes driven purely by the route leaving overlay mode (back/forward, the
@@ -2273,9 +2306,12 @@ onBeforeUnmount(() => {
             @overlay-dismiss="onOverlayDismiss"
             @tab-drag-start="onLayoutTabDragStart"
             @tab-drop="onLayoutTabDrop"
+            @crossfade-start="cancelPaneFocus"
         >
         <TabBar
             ref="sessionTabsRef"
+            crossfade
+            @crossfade-start="cancelPaneFocus"
             :active="centerActiveTab"
             @wa-tab-show="onTabShow"
             @click.capture="onCenterClick"

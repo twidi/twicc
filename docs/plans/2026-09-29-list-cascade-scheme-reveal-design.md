@@ -895,6 +895,11 @@ html.twicc-vt-overlay::view-transition-old(twicc-overlay-frame) {
 }
 ```
 
+- **§5.5 amended (code review, 2026-09-29):** the scheme fade uses the same pattern (old
+  image `animation: none; mix-blend-mode: normal`; new image
+  `twicc-vt-fade-in var(--motion-dur-3) ease-in-out both`), not the UA crossfade, which
+  collapses on Firefox Android (§12.2 point 4); `--motion-ease` is also front-loaded for a
+  fade (§12.1). Test 28 pins it.
 - The names exist only while `twicc-vt-overlay` is on `<html>`: the scheme circle and the tab
   crossfade keep a single root group.
 - The slide never runs under reduced motion (§12.5 picks `'tab'`); the `--motion-amount`

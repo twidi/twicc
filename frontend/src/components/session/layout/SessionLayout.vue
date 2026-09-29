@@ -21,7 +21,7 @@ const props = defineProps({
     registerTarget: { type: Function, required: true },
     unregisterTarget: { type: Function, required: true },
 })
-const emit = defineEmits(['select-tab', 'tab-activate', 'minimize', 'maximize', 'restore-maximized', 'focus-pane', 'overlay-activate', 'overlay-dismiss', 'tab-drag-start', 'tab-drop'])
+const emit = defineEmits(['select-tab', 'tab-activate', 'minimize', 'maximize', 'restore-maximized', 'focus-pane', 'overlay-activate', 'overlay-dismiss', 'tab-drag-start', 'tab-drop', 'crossfade-start'])
 
 // props.layout is the useSessionLayout() return — a bag of refs/functions. Refs accessed
 // through a prop object are NOT auto-unwrapped, so read them via .value here.
@@ -693,6 +693,7 @@ onBeforeUnmount(() => {
             @pane-focus="(id) => emit('focus-pane', id)"
             @restore="emit('restore-maximized')"
             @place="(id, dest) => layout.place(id, dest)"
+            @crossfade-start="emit('crossfade-start')"
         />
 
         <!-- Normal dockable layout — skipped while maximizing (a maximized center shows only the
@@ -714,6 +715,7 @@ onBeforeUnmount(() => {
                 @minimize="(dockIds) => emit('minimize', dockIds)"
                 @maximize="(dockIds, tab) => emit('maximize', dockIds, tab)"
                 @place="(id, dest) => layout.place(id, dest)"
+                @crossfade-start="emit('crossfade-start')"
             />
 
             <DockGutter
