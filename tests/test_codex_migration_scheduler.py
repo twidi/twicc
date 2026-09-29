@@ -6,6 +6,9 @@ import queue
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from watchfiles import Change
+
 from twicc.core.models import SessionType
 from twicc.providers.codex import background_compute
 from twicc.providers.codex.background_compute import (
@@ -245,7 +248,7 @@ def test_worker_dispatches_next_only_after_computed_not_applied(monkeypatch):
         ]
         stale = {candidate.session_id for candidate in candidates}
 
-        async def load(_version):
+        async def load(_version, *, forced_ids=frozenset()):
             return [candidate for candidate in candidates if candidate.session_id in stale]
 
         async def prepare(candidate):
@@ -655,3 +658,127 @@ def test_offset_zero_forces_a_history_replacement(monkeypatch, tmp_path):
         coordinator._release_lease("interrupted", replay=False)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('status_before_apply', [False, True])
+def test_forced_rebuild_is_discovered_after_older_compute_restores_current_version(
+    provider_home, monkeypatch, status_before_apply,
+):
+    import orjson
+    from unittest.mock import AsyncMock
+    from twicc.core.enums import Provider
+    from twicc.core.models import Project, Session, SessionItem
+    from twicc.providers import db_writer, sessions_watcher
+    from twicc.providers.compute_executor import run_compute_sync
+    from twicc.providers.codex import migration_gate
+    from twicc.providers.codex.compute import get_compute
+    from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
+
+    monkeypatch.setattr(migration_gate, '_rebuild_requests', set())
+    compute = get_compute()
+    sid = 'forced-scheduler'
+    path = provider_home.codex / 'sessions' / '2026' / f'rollout-{sid}.jsonl'
+    path.parent.mkdir(parents=True)
+    meta = {'type': 'session_meta', 'payload': {'id': sid, 'cwd': '/tmp/p', 'history_mode': 'paginated'}}
+    old = {'type': 'event_msg', 'payload': {'type': 'user_message', 'message': 'old'}}
+    new = {'type': 'event_msg', 'payload': {'type': 'user_message', 'message': 'new and larger'}}
+    records = [orjson.dumps(meta), orjson.dumps(old)]
+    path.write_bytes(b'\n'.join(records) + b'\n')
+    session = Session.objects.create(id=sid, provider=Provider.CODEX, project=Project.objects.create(id='p'),
+        file_path=f'2026/{path.name}', last_offset=path.stat().st_size, last_line=2,
+        compute_version=compute.compute_version - 1)
+    for line, record in enumerate(records, 1):
+        SessionItem.objects.create(session=session, line_num=line, content=record.decode())
+    monkeypatch.setattr(background_compute, 'broadcast_startup_progress', AsyncMock())
+    monkeypatch.setattr(sessions_watcher, 'broadcast_message', AsyncMock())
+    monkeypatch.setattr('twicc.search_indexing_task.request_session_reindex', lambda _sid: None)
+
+    async def run():
+        watcher = CodexSessionsWatcher()
+        ctx = SimpleNamespace(compute_version=compute.compute_version, stop_event=asyncio.Event(),
+                              command_queue=queue.Queue(), run_id=0)
+        coordinator = CodexComputeCoordinator(ctx, asyncio.Event(), on_migration_released=watcher.notify_migration_released)
+        coordinator._is_agent_active = lambda _sid: False
+        # Control worker transport only. Discovery, preparation, real compute,
+        # final apply, reconstruction jobs, and release handling remain real.
+        def start_run():
+            coordinator.run_active = True
+        async def finish_run():
+            coordinator.run_active = False
+        coordinator._start_run = start_run
+        coordinator._finish_run = finish_run
+        monkeypatch.setattr(background_compute, 'stop_background_task', AsyncMock())
+        db_writer.start_db_writer()
+        task = None
+        try:
+            await watcher._observe_source(path)
+            task = asyncio.create_task(coordinator.run())
+            await _wait_until(lambda: not ctx.command_queue.empty(), timeout=5)
+            assert ctx.command_queue.get_nowait() == {'session_id': sid}
+            assert coordinator._prepared[sid].kind == 'compute'
+            assert not gate_for(sid).locked()
+            result_queue = queue.Queue()
+            await run_compute_sync(compute.compute_session_metadata, sid, result_queue, run_id=0)
+            messages = [orjson.loads(result_queue.get_nowait()) for _ in range(result_queue.qsize())]
+            [old_result] = [msg for msg in messages if msg['type'] == 'session_complete']
+
+            replacement = path.with_suffix('.replacement')
+            replacement.write_bytes(orjson.dumps(meta) + b'\n' + orjson.dumps(new) + b'\n')
+            replacement.replace(path)
+            watcher._enqueue(path, Change.modified)
+            await watcher._consumer_task
+            marked = await Session.objects.aget(id=sid)
+            assert marked.compute_version is None and marked.last_offset == session.last_offset
+            await _wait_until(lambda: sid in coordinator._forced_rebuild, timeout=5)
+            assert ctx.command_queue.empty()
+            if status_before_apply:
+                await coordinator.events.put(('worker', {'type': 'computed', 'session_id': sid}))
+                await _wait_until(lambda: sid in coordinator.computed_not_applied, timeout=5)
+                assert ctx.command_queue.empty()
+
+            applied = await db_writer.run_under_db_write_lock(
+                lambda: run_compute_sync(compute.apply_session_complete, old_result),
+            )
+            assert applied.outcome == 'applied'
+            assert (await Session.objects.aget(id=sid)).compute_version == compute.compute_version
+            assert await SessionItem.objects.filter(session_id=sid, content=records[1].decode()).aexists()
+            await coordinator.events.put(('applied', ComputeApplied(sid, applied.outcome)))
+            if not status_before_apply:
+                await _wait_until(lambda: sid in coordinator.applied_before_computed, timeout=5)
+                assert ctx.command_queue.empty()
+                await coordinator.events.put(('worker', {'type': 'computed', 'session_id': sid}))
+
+            await _wait_until(lambda: not ctx.command_queue.empty(), timeout=5)
+            assert ctx.command_queue.get_nowait() == {'session_id': sid}
+            assert coordinator._prepared[sid].kind == 'replaced'
+            assert sid not in coordinator._forced_rebuild
+            assert gate_for(sid).locked()
+            actual = [content async for content in SessionItem.objects.filter(session_id=sid)
+                      .order_by('line_num').values_list('content', flat=True)]
+            assert actual == [orjson.dumps(meta).decode(), orjson.dumps(new).decode()]
+            await run_compute_sync(compute.compute_session_metadata, sid, result_queue, run_id=0)
+            messages = [orjson.loads(result_queue.get_nowait()) for _ in range(result_queue.qsize())]
+            [new_result] = [msg for msg in messages if msg['type'] == 'session_complete']
+            applied = await db_writer.run_under_db_write_lock(
+                lambda: run_compute_sync(compute.apply_session_complete, new_result),
+            )
+            await coordinator.events.put(('worker', {'type': 'computed', 'session_id': sid}))
+            await coordinator.events.put(('applied', ComputeApplied(sid, applied.outcome)))
+            await _wait_until(lambda: sid not in coordinator._prepared, timeout=5)
+            await watcher._consumer_task
+            assert not gate_for(sid).locked() and path not in watcher._replaced_paths
+            assert watcher._queue.idle
+        finally:
+            try:
+                if task is not None:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+            finally:
+                try:
+                    watcher.stop_watcher()
+                    await watcher._drain_changes()
+                finally:
+                    await db_writer.stop_db_writer()
+    asyncio.run(run())

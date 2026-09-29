@@ -32,6 +32,11 @@ class MigrationRelease(NamedTuple):
     release_token: int
 
 
+class _DrainWaiter(NamedTuple):
+    target: PathDrainTarget
+    event_token: int
+
+
 class _PathState:
     def __init__(self):
         self.token = 0
@@ -42,9 +47,10 @@ class _PathState:
         self.generation: object = object()
         self.offset = 0
         self.release: MigrationRelease | None = None
+        self.release_event_token = 0
         self.turn_release_token = -1
         self.terminal: str | None = None
-        self.waiters: dict[asyncio.Future, PathDrainTarget] = {}
+        self.waiters: dict[asyncio.Future, _DrainWaiter] = {}
 
 
 class SessionChangeQueue:
@@ -109,7 +115,7 @@ class SessionChangeQueue:
         ):
             # A release can arrive after the provider's check, before finish.
             state.deferred = True
-            self._apply_release(turn.path, state, release)
+            self._apply_release(turn.path, state, release, admitted_after_turn=newer)
         elif failed:
             self._settle(state)
             state.terminal = 'failed'
@@ -127,6 +133,18 @@ class SessionChangeQueue:
 
     def current_change(self, path: Path) -> Change:
         return self._state(path).change
+
+    def event_token(self, path: Path) -> int:
+        return self._state(path).token
+
+    def has_pending_change(self, path: Path) -> bool:
+        state = self._state(path)
+        return state.queued or state.in_flight or state.deferred
+
+    def resume_pending_change(self, path: Path) -> None:
+        """Resume identification without admitting an event after its release."""
+        if not self.closed and self.has_pending_change(path):
+            self._schedule(path, self._state(path))
 
     def release_token(self, path: Path) -> int:
         release = self._state(path).release
@@ -156,7 +174,7 @@ class SessionChangeQueue:
             return
         state.offset = max(state.offset, target.end_offset)
         for future, requested in list(state.waiters.items()):
-            if requested.end_offset <= state.offset:
+            if requested.target.end_offset <= state.offset:
                 if not future.done():
                     future.set_result(None)
                 state.waiters.pop(future)
@@ -169,7 +187,7 @@ class SessionChangeQueue:
                 or state.terminal == 'failed'):
             return
         future = asyncio.get_running_loop().create_future()
-        state.waiters[future] = target
+        state.waiters[future] = _DrainWaiter(target, state.token)
         try:
             await asyncio.shield(future)
         finally:
@@ -177,46 +195,57 @@ class SessionChangeQueue:
             if not future.done():
                 future.cancel()
 
-    def notify_migration_released(self, release: MigrationRelease) -> bool:
+    def notify_migration_released(self, release: MigrationRelease, *, event_token: int | None = None) -> bool:
         if release.path is None:
             return False
         state = self._state(release.path)
         if state.release and release.release_token <= state.release.release_token:
             return False
         state.release = release
+        state.release_event_token = state.token if event_token is None else event_token
         if state.in_flight:
             # finish consumes this outcome after the callback releases its locks.
             return True
         self._apply_release(release.path, state, release)
         return True
 
-    def _apply_release(self, path: Path, state: _PathState, release: MigrationRelease) -> None:
+    def _apply_release(
+        self, path: Path, state: _PathState, release: MigrationRelease, *, admitted_after_turn: bool = False,
+    ) -> None:
         if release.outcome == 'ready':
             if state.deferred or state.queued or release.replay:
                 state.deferred = False
                 state.terminal = None
-                if not self.closed:
+                if not self.closed or admitted_after_turn:
                     self._schedule(path, state)
         else:
             if release.outcome == 'failed':
                 logger.error('Session migration failed for %s: %s', path, release.error)
-            state.terminal = release.outcome
             state.deferred = False
-            self._settle(state, cancel=release.outcome == 'cancelled')
-            if state.queued:
-                self._ready.remove(path)
-                state.queued = False
+            self._settle(state, cancel=release.outcome == 'cancelled', through_token=state.release_event_token)
+            if state.token > state.release_event_token:
+                # A later explicit admission owns a new attempt. Neither the
+                # failed turn's backlog nor an earlier dirty event can retry.
+                state.terminal = None
+                self._schedule(path, state)
+            else:
+                state.terminal = release.outcome
+                if state.queued:
+                    self._ready.remove(path)
+                    state.queued = False
         self._settle_closed()
 
     @staticmethod
-    def _settle(state: _PathState, *, cancel: bool = False) -> None:
-        for future in state.waiters:
+    def _settle(state: _PathState, *, cancel: bool = False, through_token: int | None = None) -> None:
+        for future, requested in list(state.waiters.items()):
+            if through_token is not None and requested.event_token > through_token:
+                continue
             if not future.done():
                 if cancel:
                     future.cancel()
                 else:
                     future.set_result(None)
-        state.waiters.clear()
+            state.waiters.pop(future)
 
     def _settle_closed(self) -> None:
         if self.closed and self.idle:

@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 from asgiref.sync import sync_to_async
+from django.db.models import Q
 
 from twicc import search
 from twicc.agent import AgentState
@@ -164,11 +165,14 @@ class _RolloutMissing(RolloutMigrationError):
     """The session's rollout is gone from disk."""
 
 
-async def _load_stale_candidates(compute_version: int) -> list[CodexComputeCandidate]:
+async def _load_stale_candidates(
+    compute_version: int, *, forced_ids: frozenset[str] = frozenset(),
+) -> list[CodexComputeCandidate]:
+    """Include forced histories even when an older compute restored their version."""
     rows = await sync_to_async(
         lambda: list(
             Session.objects.filter(provider=Provider.CODEX)
-            .exclude(compute_version=compute_version)
+            .filter(~Q(compute_version=compute_version) | Q(id__in=forced_ids))
             .order_by("-mtime")
             .values_list("id", "file_path", "type", "last_offset")
         )
@@ -831,7 +835,10 @@ class CodexComputeCoordinator:
     # ------------------------------------------------------------------
 
     async def run(self) -> None:
-        initial_candidates = await _load_stale_candidates(self.ctx.compute_version)
+        self._absorb_rebuild_requests()
+        initial_candidates = await _load_stale_candidates(
+            self.ctx.compute_version, forced_ids=frozenset(self._forced_rebuild),
+        )
         await self._initialize_progress(initial_candidates)
         if initial_candidates:
             sources, self._legacy_ids = await asyncio.to_thread(self._classify_sources, initial_candidates)
@@ -861,7 +868,9 @@ class CodexComputeCoordinator:
         try:
             while not self.ctx.stop_event.is_set():
                 self._absorb_rebuild_requests()
-                candidates = await _load_stale_candidates(self.ctx.compute_version)
+                candidates = await _load_stale_candidates(
+                    self.ctx.compute_version, forced_ids=frozenset(self._forced_rebuild),
+                )
                 stale_ids = {candidate.session_id for candidate in candidates}
                 for session_id in self.initial_ids - stale_ids:
                     await self._classify_initial(session_id)

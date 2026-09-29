@@ -737,7 +737,10 @@ def test_paginated_replacement_reaches_real_gated_reconstruction_and_release(tmp
 
 @pytest.mark.parametrize('outcome', ['failed', 'cancelled'])
 @pytest.mark.parametrize('same_session', [False, True], ids=['new-identity', 'same-identity'])
-def test_release_before_replacement_parse_waits_for_source_identity(tmp_path, monkeypatch, outcome, same_session):
+@pytest.mark.parametrize('lifecycle', ['coalesced-delete', 'completed-delete', 'startup'])
+def test_release_before_replacement_parse_waits_for_source_identity(
+    tmp_path, monkeypatch, outcome, same_session, lifecycle,
+):
     from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
     from twicc.providers.session_change_queue import MigrationRelease
     import orjson
@@ -752,22 +755,30 @@ def test_release_before_replacement_parse_waits_for_source_identity(tmp_path, mo
         watcher._rewrite_detected = AsyncMock(return_value=False)
         monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
         seen = []
-        async def process(self, source, parsed, *_args):
+        async def process(self, source, parsed, change, *_args):
             seen.append(parsed.session_id)
-            return module.SessionChangeResult('drained', watcher._queue.source_generation(source), source.stat().st_size)
+            end = 0 if change == Change.deleted else source.stat().st_size
+            return module.SessionChangeResult('drained', watcher._queue.source_generation(source), end)
         monkeypatch.setattr(module.BaseSessionsWatcher, '_process_parsed_session_change', process)
-        await watcher.process_path(path)
-        await watcher._consumer_task
+        if lifecycle != 'startup':
+            await watcher.process_path(path)
+            await watcher._consumer_task
+        if lifecycle == 'completed-delete':
+            path.unlink()
+            watcher._enqueue(path, Change.deleted)
+            await watcher._consumer_task
+            assert path not in watcher._deleted_parsed_paths
         ensure_consumer = watcher._ensure_consumer
         watcher._ensure_consumer = lambda: None
-        if same_session:
+        if lifecycle == 'coalesced-delete' and same_session:
             other = tmp_path / 'replacement'
             other.write_bytes(content('old', 2))
             other.replace(path)
         else:
-            path.unlink()
-            watcher._enqueue(path, Change.deleted)
-            path.write_bytes(content('new', 2))
+            if lifecycle == 'coalesced-delete':
+                path.unlink()
+                watcher._enqueue(path, Change.deleted)
+            path.write_bytes(content('old' if same_session else 'new', 2))
         target = await watcher._observe_source(path)
         watcher._enqueue(path, Change.added)
         waiter = asyncio.create_task(watcher._queue.wait_drained(path, target=target))
@@ -782,7 +793,8 @@ def test_release_before_replacement_parse_waits_for_source_identity(tmp_path, mo
                 await waiter
         else:
             await asyncio.wait_for(waiter, 1)
-        assert seen == (['old'] if same_session else ['old', 'new'])
+        previous = {'coalesced-delete': ['old'], 'completed-delete': ['old', 'old'], 'startup': []}[lifecycle]
+        assert seen == previous + ([] if same_session else ['new'])
         watcher.stop_watcher()
         await watcher._drain_changes()
         assert not watcher._pending_source_releases
@@ -939,4 +951,55 @@ def test_first_observed_claude_truncation_fails_before_slice(tmp_path, monkeypat
         result = await watcher._process_parsed_session_change(path, parsed, Change.modified, None)
         assert result.disposition == 'failed'
         watcher.sync_and_broadcast.assert_not_awaited()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'cancelled'])
+@pytest.mark.parametrize('later_event', [False, True], ids=['other-identity-release', 'later-explicit-event'])
+def test_unidentified_source_preserves_release_identity_and_original_event_order(
+    tmp_path, monkeypatch, outcome, later_event,
+):
+    from twicc.core.models import SessionType
+    from twicc.providers.session_change_queue import MigrationRelease
+    async def run():
+        watcher = module.BaseSessionsWatcher()
+        path = tmp_path / 'unknown.jsonl'
+        path.write_bytes(b'{}\n')
+        parsed = module.ParsedSessionFile('p', 'new', SessionType.SESSION, path.name)
+        watcher.parse_session_file = AsyncMock(return_value=parsed)
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        sliced = []
+        async def process(source, *_args):
+            sliced.append(source)
+            return module.SessionChangeResult('drained', watcher._queue.source_generation(source), 3)
+        watcher._process_parsed_session_change = process
+        ensure_consumer = watcher._ensure_consumer
+        watcher._ensure_consumer = lambda: None
+        target = await watcher._observe_source(path)
+        watcher._enqueue(path, Change.added)
+        before = asyncio.create_task(watcher._queue.wait_drained(path, target=target))
+        await asyncio.sleep(0)
+        watcher.notify_migration_released(MigrationRelease('new', path, outcome, False, 'failed', 8001))
+        if later_event:
+            watcher._enqueue(path, Change.modified)
+            after = asyncio.create_task(watcher._queue.wait_drained(path, target=target))
+            await asyncio.sleep(0)
+        else:
+            # A later outcome for a different identity cannot hide the first.
+            watcher.notify_migration_released(MigrationRelease('old', path, 'ready', True, None, 8002))
+        assert watcher._consumer_task is None
+        watcher._ensure_consumer = ensure_consumer
+        watcher._ensure_consumer()
+        await watcher._consumer_task
+        if outcome == 'cancelled':
+            with pytest.raises(asyncio.CancelledError):
+                await before
+        else:
+            await before
+        if later_event:
+            await after
+        assert sliced == ([path] if later_event else [])
+        watcher.stop_watcher()
+        await watcher._drain_changes()
+        assert not watcher._pending_source_releases
     asyncio.run(run())

@@ -84,6 +84,11 @@ class _SourceSnapshot(NamedTuple):
     end_offset: int
 
 
+class _PendingSourceRelease(NamedTuple):
+    release: MigrationRelease
+    event_token: int
+
+
 def _read_source_snapshot(path: Path) -> _SourceSnapshot:
     """Capture a finite complete-record watermark, using bounded read buffers."""
     import os
@@ -351,7 +356,7 @@ class BaseSessionsWatcher:
         self._replaced_paths: set[Path] = set()
         self._parsed_paths: dict[Path, ParsedSessionFile] = {}
         self._deleted_parsed_paths: dict[Path, ParsedSessionFile] = {}
-        self._pending_source_releases: dict[Path, MigrationRelease] = {}
+        self._pending_source_releases: dict[Path, dict[str, _PendingSourceRelease]] = {}
         self._line_limits: dict[Path, int] = {}
 
     # ------------------------------------------------------------------
@@ -1370,25 +1375,30 @@ class BaseSessionsWatcher:
             # Also yield when a no-op callback performed no asynchronous work.
             await asyncio.sleep(0)
 
-    def notify_migration_released(self, release: MigrationRelease) -> None:
+    def notify_migration_released(self, release: MigrationRelease, *, event_token: int | None = None) -> None:
         if release.path is None or release.release_token <= self._queue.release_token(release.path):
             return
         parsed = self._parsed_paths.get(release.path)
         if parsed is not None and parsed.session_id != release.session_id:
             # A recreated path can belong to a different session entirely.
             return
-        if (parsed is None and release.path in self._deleted_parsed_paths
+        if (parsed is None and self._queue.has_pending_change(release.path)
                 and self._queue.current_change(release.path) != Change.deleted):
-            # Identity invalidation precedes asynchronous parsing. Keep the
-            # reparse event until it can attribute this outcome to its source.
+            # First observation and recreation can both await identification.
+            # Keep the admitted event until parsing can attribute its outcome.
             if self._queue.closed:
                 return
-            previous = self._pending_source_releases.get(release.path)
-            if previous is None or release.release_token > previous.release_token:
-                self._pending_source_releases[release.path] = release
-                self._enqueue(release.path, Change.modified)
+            pending = self._pending_source_releases.setdefault(release.path, {})
+            previous = pending.get(release.session_id)
+            if previous is None or release.release_token > previous.release.release_token:
+                pending[release.session_id] = _PendingSourceRelease(
+                    release, self._queue.event_token(release.path) if event_token is None else event_token,
+                )
+                self._queue.resume_pending_change(release.path)
+                if self._channel_layer is not None or self._consumer_task is not None:
+                    self._ensure_consumer()
             return
-        if not self._queue.notify_migration_released(release):
+        if not self._queue.notify_migration_released(release, event_token=event_token):
             return
         if release.outcome == 'ready' and release.replay and release.path is not None:
             # Replacement owns a fresh byte coordinate system. A replay captures
@@ -1473,10 +1483,11 @@ class BaseSessionsWatcher:
             if change_type != Change.deleted:
                 self._parsed_paths[path] = parsed
                 self._deleted_parsed_paths.pop(path, None)
-                release = self._pending_source_releases.pop(path, None)
-                if release is not None:
-                    self.notify_migration_released(release)
-                    if release.session_id == parsed.session_id and release.outcome != 'ready':
+                pending = self._pending_source_releases.pop(path, {})
+                selected = pending.get(parsed.session_id)
+                if selected is not None:
+                    self.notify_migration_released(selected.release, event_token=selected.event_token)
+                    if selected.release.outcome != 'ready':
                         return SessionChangeResult('deferred')
             if await self.defer_session_change(parsed):
                 logger.debug(

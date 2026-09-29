@@ -192,3 +192,81 @@ def test_terminal_release_wins_over_non_deferred_commit(outcome, has_more):
             await asyncio.wait_for(waiter, 1)
         assert q._paths[path].terminal == outcome
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'cancelled'])
+@pytest.mark.parametrize('event_after_release', [False, True], ids=['event-before', 'event-after'])
+@pytest.mark.parametrize('disposition', ['ready', 'drained', 'deferred'])
+@pytest.mark.parametrize('close_before_finish', [False, True], ids=['open', 'closing'])
+def test_terminal_release_preserves_only_later_explicit_admissions(
+    outcome, event_after_release, disposition, close_before_finish,
+):
+    async def run():
+        module = queue_type()
+        q = module.SessionChangeQueue()
+        path = Path('ordered-admissions')
+        generation = object()
+        q.observe_source(path, generation)
+        q.enqueue(path, Change.modified)
+        old_target = module.PathDrainTarget(generation, 100)
+        new_target = module.PathDrainTarget(generation, 200)
+        old_waiter = asyncio.create_task(q.wait_drained(path, target=old_target))
+        await asyncio.sleep(0)
+        turn = await q.next_change()
+        release = module.MigrationRelease('s', path, outcome, False, 'failed', 9)
+        if event_after_release:
+            q.notify_migration_released(release)
+        q.enqueue(path, Change.modified)
+        new_waiter = asyncio.create_task(q.wait_drained(path, target=new_target))
+        await asyncio.sleep(0)
+        if not event_after_release:
+            q.notify_migration_released(release)
+        if close_before_finish:
+            q.close()
+        q.committed(path, old_target)
+        q.finish(turn, has_more=disposition == 'ready', deferred=disposition == 'deferred')
+        if outcome == 'cancelled':
+            with pytest.raises(asyncio.CancelledError):
+                await old_waiter
+        else:
+            await old_waiter
+        if event_after_release:
+            assert not q.idle, 'release discarded a later explicit event'
+            assert not new_waiter.done(), 'release settled a later admission'
+            next_turn = await q.next_change()
+            q.committed(path, new_target)
+            q.finish(next_turn, has_more=False)
+            await new_waiter
+        elif outcome == 'cancelled':
+            with pytest.raises(asyncio.CancelledError):
+                await new_waiter
+        else:
+            await new_waiter
+        assert q.idle
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('replay', [False, True])
+def test_ready_release_during_close_preserves_preclose_dirty_turn(replay):
+    async def run():
+        module = queue_type()
+        q = module.SessionChangeQueue()
+        path = Path('closing-release')
+        generation = object()
+        q.observe_source(path, generation)
+        q.enqueue(path, Change.modified)
+        turn = await q.next_change()
+        q.enqueue(path, Change.modified)
+        target = module.PathDrainTarget(generation, 3)
+        waiter = asyncio.create_task(q.wait_drained(path, target=target))
+        await asyncio.sleep(0)
+        q.notify_migration_released(module.MigrationRelease('s', path, 'ready', replay, None, 10))
+        q.close()
+        q.finish(turn, has_more=True, deferred=True)
+        assert not q.idle, 'ready release discarded the admitted dirty turn at close'
+        next_turn = await q.next_change()
+        q.committed(path, target)
+        q.finish(next_turn, has_more=True)
+        await waiter
+        assert q.idle
+    asyncio.run(run())
