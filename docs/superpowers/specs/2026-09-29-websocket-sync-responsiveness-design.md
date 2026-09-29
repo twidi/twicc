@@ -1,7 +1,7 @@
 # WebSocket responsiveness and indexed session history
 
 Date: 2026-09-29
-Status: Approved by the user on 2026-09-29. Tasks 1–9 passed independent review. Implementation and two full whole-change reviews are complete. Deployment and real-client checks remain pending.
+Status: Approved by the user on 2026-09-29. Tasks 1–10 passed independent review. Implementation and two full whole-change reviews are complete. Deployment and real-client checks remain pending.
 Source baseline: `fb51f74e` on local `main`.
 Implementation plan: [Task sequence and validation](../plans/2026-09-29-websocket-sync-responsiveness.md).
 
