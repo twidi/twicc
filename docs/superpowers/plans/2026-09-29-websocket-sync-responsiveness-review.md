@@ -4,7 +4,7 @@ Date: 2026-09-29
 Reviewed baseline: `5ad56736`.
 Plan: [WebSocket responsiveness implementation](2026-09-29-websocket-sync-responsiveness.md).
 Spec: [Approved design and review clarifications](../specs/2026-09-29-websocket-sync-responsiveness-design.md).
-Result: **PASS after corrections.** All three reviewers report no remaining major defect in their reviewed scope.
+Result: **Full-plan review loop in progress.** Round 1 passed scoped correction rechecks; this did not constitute a fresh complete review.
 
 ## Method and scope
 
@@ -12,6 +12,10 @@ The user explicitly requests an adversarial review before implementation.
 Three fresh reviewers receive the plan and source paths, without the author's conversation history.
 They examine separate areas and construct concrete failure cases.
 The author verifies findings against source, corrects the documents, and requests independent rechecks.
+The user then requires a complete review loop: any correction must be followed by a new full-plan pass.
+Round 2 uses two fresh reviewers on the entire corrected plan at `0e11115f`.
+The stopping condition is a complete pass with no new blocking or major finding from either reviewer.
+Scoped correction rechecks alone do not satisfy that condition.
 
 | Reviewer | Scope | Final result |
 | --- | --- | --- |
@@ -153,13 +157,48 @@ The generation token is process-local file coordination, not a new index version
 
 **Recheck:** scheduling reviewer passes the finite-target and replacement semantics.
 
+### R7 — A full activity flush remains on the shared executor
+
+**Found in fresh complete round 2**, after the six earlier corrections.
+Task 1 listed call-site adapters but omitted the decorator on `_flush_pending_activities`.
+
+**Counterexample:** a batch of compute results finishes and triggers full project/global day/week aggregation.
+That transaction still uses the shared executor, so authentication and Channels cleanup can stall behind it.
+The original coupling survives even though the listed adapters move to the new worker.
+
+**Evidence:** `src/twicc/providers/db_writer.py:2299–2309` and callers at `:2139`, `:2173`, and `:2224`.
+The author verifies the decorated helper and all three threshold/normal-finalization/abandoned-finalization paths against source.
+
+**Correction:** explicitly route this transaction through `run_compute_sync` in task 1.
+Add a latch regression using the real finalization path, not only a generic worker test.
+Task 8 then removes the now-redundant buffered activity flush after in-transaction aggregate maintenance is complete.
+Retain project broadcasts, completion bookkeeping, and drainage; replace the obsolete flush test with the actual aggregate-apply path.
+
+**Next gate:** a fresh complete round 3, not a targeted recheck of R7.
+
+## Complete review loop
+
+| Round | Input | Reviewer A | Reviewer B | Result |
+| --- | --- | --- | --- | --- |
+| 1 | Original plan at `5ad56736`, then scoped corrections | Three scoped reviewers and targeted rechecks, listed above | Not a complete independent rerun | Six findings corrected; insufficient as the loop's stopping gate |
+| 2 | Corrected plan at `0e11115f` | `/root/plan_round2_a`: full-plan PASS | `/root/plan_round2_b`: R7, major | FAIL; correct R7 and rerun the entire plan |
+
+Round 2 reviewers receive the entire plan and spec with no previous conversation history.
+Reviewer A reads the older report only after independent analysis; reviewer B does not consult it.
+Both cover all ten tasks and their cross-task contracts.
+
+One additional hypothesis is rejected after discussion: changing activity session-count eligibility for outdated peers would alter the reference semantics.
+The existing reference reads `Session.user_message_count`; its later normal compute repairs the peer and affected buckets.
+No different result from the reference recalculation is demonstrated, so this is not counted as a finding.
+
 ## Final scope and remaining verification
 
 The plan retains the user's central constraint: historical construction uses normal compute versions only.
 The aggregate baseline correction also uses normal compute, with no new builder or readiness field.
 The spec records these review clarifications so implementation does not receive contradictory instructions.
 
-No remaining P1 issue is identified after rechecks.
+No remaining P1 issue was identified by round 1's scoped rechecks.
+That statement is limited to those rechecks; the complete-pass results below determine the final loop outcome.
 Implementation still needs the prescribed regression suites, workload measurements, and real-client checks.
 Passing this review does not prove that a future implementation is free of concurrency defects.
 
