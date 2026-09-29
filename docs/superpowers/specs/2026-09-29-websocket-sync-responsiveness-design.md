@@ -1,7 +1,7 @@
 # WebSocket responsiveness and indexed session history
 
 Date: 2026-09-29
-Status: Approved by the user on 2026-09-29. Product implementation has not started.
+Status: Approved by the user on 2026-09-29. Implementation is in progress through the linked plan.
 Source baseline: `fb51f74e` on local `main`.
 Implementation plan: [Task sequence and validation](../plans/2026-09-29-websocket-sync-responsiveness.md).
 
