@@ -4,7 +4,8 @@ Date: 2026-09-29
 Reviewed baseline: `5ad56736`.
 Plan: [WebSocket responsiveness implementation](2026-09-29-websocket-sync-responsiveness.md).
 Spec: [Approved design and review clarifications](../specs/2026-09-29-websocket-sync-responsiveness-design.md).
-Result: **Full-plan review loop in progress.** Round 1 passed scoped correction rechecks; this did not constitute a fresh complete review.
+Result: **PASS after a complete review loop.** Both fresh reviewers pass the entire plan in round 3, with no new blocking or major finding.
+Final reviewed implementation-plan baseline: `d4b07575a990da81e8e7487b14642445e132c24f`.
 
 ## Method and scope
 
@@ -174,7 +175,7 @@ Add a latch regression using the real finalization path, not only a generic work
 Task 8 then removes the now-redundant buffered activity flush after in-transaction aggregate maintenance is complete.
 Retain project broadcasts, completion bookkeeping, and drainage; replace the obsolete flush test with the actual aggregate-apply path.
 
-**Next gate:** a fresh complete round 3, not a targeted recheck of R7.
+**Completed gate:** two fresh reviewers pass the entire plan in round 3, not only the correction to R7.
 
 ## Complete review loop
 
@@ -182,6 +183,7 @@ Retain project broadcasts, completion bookkeeping, and drainage; replace the obs
 | --- | --- | --- | --- | --- |
 | 1 | Original plan at `5ad56736`, then scoped corrections | Three scoped reviewers and targeted rechecks, listed above | Not a complete independent rerun | Six findings corrected; insufficient as the loop's stopping gate |
 | 2 | Corrected plan at `0e11115f` | `/root/plan_round2_a`: full-plan PASS | `/root/plan_round2_b`: R7, major | FAIL; correct R7 and rerun the entire plan |
+| 3 | R7 correction at `d4b07575` | `/root/plan_round3_a`: full-plan PASS | `/root/plan_round3_b`: full-plan PASS | PASS; no new blocking or major finding, no further plan correction |
 
 Round 2 reviewers receive the entire plan and spec with no previous conversation history.
 Reviewer A reads the older report only after independent analysis; reviewer B does not consult it.
@@ -191,14 +193,30 @@ One additional hypothesis is rejected after discussion: changing activity sessio
 The existing reference reads `Session.user_message_count`; its later normal compute repairs the peer and affected buckets.
 No different result from the reference recalculation is demonstrated, so this is not counted as a finding.
 
+### Round 3 coverage and immutable input
+
+Two new reviewers examine the complete plan and spec against source, without relying on earlier reviewers' conclusions.
+Both check all ten tasks, including cross-task contracts, rather than only the previous round's diff.
+They confirm normal compute-version-only reconstruction, executor boundaries and drainage, authenticated heartbeat lifecycle, chronological facts, rollback reservations, aggregate consistency, fair queues, migration outcomes, finite completion targets, and validation feasibility.
+
+The author verifies that plan and spec bytes remain unchanged throughout this complete pass:
+
+```text
+plan sha256: d6d7b5bf88221189279b3b1af8d0b66263048f638560138e0e2aa9cbe43ede42
+spec sha256: e4373a5ed0f5c6e0f9bd191064590ce0e0ba0cfb2582b2c288bccca1062b48bd
+```
+
+Only this review record changes after the final verdicts; no unreviewed implementation-plan correction follows the clean pass.
+
 ## Final scope and remaining verification
 
 The plan retains the user's central constraint: historical construction uses normal compute versions only.
 The aggregate baseline correction also uses normal compute, with no new builder or readiness field.
 The spec records these review clarifications so implementation does not receive contradictory instructions.
 
-No remaining P1 issue was identified by round 1's scoped rechecks.
-That statement is limited to those rechecks; the complete-pass results below determine the final loop outcome.
+The loop identifies and corrects seven major findings in total.
+Round 1's scoped rechecks alone were insufficient: round 2 discovers another concrete shared-executor path.
+Round 3 satisfies the stopping condition with two independent complete-plan PASS results and no further plan changes.
 Implementation still needs the prescribed regression suites, workload measurements, and real-client checks.
 Passing this review does not prove that a future implementation is free of concurrency defects.
 
