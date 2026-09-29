@@ -15,7 +15,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (§6d); **4b done** — commit `d11ea446` (§6e); **4c done** — commit `116f9d10` (§6f) |
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
 | 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c done** (list cascade, theme reveal, tab crossfade + overlay slide): spec `b181801d`, code `024f8532` (§6i) |
-| 6 | Accent glow + live states | **6a done** (accent glow): spec `0f1c5979` (§16–§17 amendments in the code commits), code `655c65a9` + artifacts-list parity `a2020d6d` (§6j); **6b** (live states) to specify |
+| 6 | Accent glow + live states | **6a done** (accent glow): spec `0f1c5979` (§16–§17 amendments in the code commits), code `655c65a9` + artifacts-list parity `a2020d6d` (§6j); **6a-bis done** (gliding open-row fill + edge-only smooth reveal): spec and code `7c8b2529` (§6k); **6b** (live states) to specify |
 | 7 | Secondary screens | To specify |
 
 **No merge into `main` and no pull request until the whole redesign (steps 1–7) is done.**
@@ -615,6 +615,34 @@ tested). Code: `655c65a9` (6a), `a2020d6d` (§17).
 - The sidebar's two lists are one component for the user: style them from one shared
   stylesheet, never copies.
 
+## 6k. Step 6a-bis — gliding open-row fill, edge-only smooth reveal (done)
+
+Spec: `docs/plans/2026-09-29-sidebar-row-glide-design.md` (§1–§9 reviewed PASS in 7 rounds;
+§10 edge-only reveal, 17 rounds; §10.7 smooth reveal, 10 rounds). Code `7c8b2529`
+(implemented and code-reviewed by sub-agents, mutation tested).
+
+### 6k.1 What it does
+
+- The lit open row of both sidebar lists is a gliding ink (4c mechanism): `VirtualScroller`
+  `before` slot, `utils/sidebarRows.js` (`activeRowBase`, `entranceOffset`, reveal helpers),
+  `glideInk.js` `getActiveOffset` + a 0.05px same-element tolerance.
+- The lists reveal the open row only near an edge (`utils/nearestScroll.js`, `align:
+  'nearest'` in `useVirtualScroll.js`): registered `@property` bands in `rem` (compact
+  5rem, plus 3.125rem for the New session button), minimal scroll, smooth when near.
+
+### 6k.2 Lessons (do not regress)
+
+- Never use `scroll-padding` / `scroll-margin` for app margins: every native
+  scroll-into-view (a dialog's focus restore) then centres the element in Chrome.
+- A scroll event from our own write arrives after a synchronous "programmatic" flag is
+  reset: detect user scrolls from input events (wheel, pointerdown on the container,
+  touch `pointercancel`, non-prevented keys), not scroll events.
+- A row click or tap is not a scroll gesture; a prevented arrow key does not scroll.
+- In a virtual list, a smooth scroll must not mount unmeasured rows above the viewport
+  while the anchor correction is held; `viewportHeight` can be content-box or
+  `clientHeight` depending on the resize history — read `clientHeight` for geometry.
+- Firefox rounds rects to 1/60px: compare boxes with a tolerance before snapping.
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -844,4 +872,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis).
