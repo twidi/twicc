@@ -164,11 +164,11 @@ Create `tests/test_history_fact_compute_apply.py`.
 **Interfaces:** Consume task 3 append/replace helpers and task 4 `history_facts` payload.
 Keep existing `apply_session_complete` results, revision guard, run IDs, and retry signaling unchanged.
 
-- [ ] **Write failing publication tests.** A successful final apply publishes facts and metadata with the version. Superseded and missing sessions publish nothing. A failure after fact replacement rolls back facts and version together. Item pre-apply chunks cannot advertise a current fact index. Cancelling the caller allows an admitted successful transaction to finish atomically.
-- [ ] **Add replacement and lifecycle tests.** Replacing a Codex rollout removes old facts in the same replacement transaction. New empty/live-created sessions have complete facts for all committed rows before current-version lookups are permitted. An initial-sync raw-only session stays outdated until normal compute completes.
-- [ ] **Run the tests.** `uv run pytest tests/test_history_fact_compute_apply.py tests/test_compute_apply_signals.py -q`.
-- [ ] **Implement final publication.** Keep `guard_compute_revision` first. Apply full facts inside `apply_session_complete` before its version write. Do not publish during item chunks. Delete facts during rollout replacement and every existing same-session raw-history replacement path found by searching `SessionItem` deletion. Preserve current rebuild scheduling and retry machinery.
-- [ ] **Verify and commit.** Run the focused command plus `uv run pytest tests/test_background_compute_retries.py tests/test_codex_recompute_persistence.py tests/test_search_compute_readiness.py -q`. Commit `feat(compute): rebuild history facts through normal compute versions`.
+- [x] **Write failing publication tests.** A successful final apply publishes facts and metadata with the version. Superseded and missing sessions publish nothing. A failure after fact replacement rolls back facts and version together. Item pre-apply chunks cannot advertise a current fact index. Cancelling the caller allows an admitted successful transaction to finish atomically.
+- [x] **Add replacement and lifecycle tests.** Replacing a Codex rollout removes old facts in the same replacement transaction. New empty/live-created sessions have complete facts for all committed rows before current-version lookups are permitted. An initial-sync raw-only session stays outdated until normal compute completes.
+- [x] **Run the tests.** `uv run pytest tests/test_history_fact_compute_apply.py tests/test_compute_apply_signals.py -q`.
+- [x] **Implement final publication.** Keep `guard_compute_revision` first. Apply full facts inside `apply_session_complete` before its version write. Do not publish during item chunks. Delete facts during rollout replacement and every existing same-session raw-history replacement path found by searching `SessionItem` deletion. Preserve current rebuild scheduling and retry machinery.
+- [x] **Verify and commit.** Run the focused command plus `uv run pytest tests/test_background_compute_retries.py tests/test_codex_recompute_persistence.py tests/test_search_compute_readiness.py -q`. Commit `feat(compute): rebuild history facts through normal compute versions`.
 
 ### Task 6: Switch historical resolvers and activate provider versions
 
