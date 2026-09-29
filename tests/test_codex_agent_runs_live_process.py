@@ -63,6 +63,28 @@ NESTED = "live-process-nested"
 pytestmark = pytest.mark.usefixtures("compute_executor_started")
 
 
+@pytest.mark.parametrize("delay, running", [(0, False), (30, False), (30.001, True)])
+def test_process_end_keeps_thirty_second_late_announcement_rule(delay, running):
+    """Historical facts must not replace the process owner/end state machine."""
+    import orjson
+
+    from twicc.providers.codex.compute import CodexSessionCompute
+    from tests.test_codex_code_mode import _command_execution_line
+    from tests.test_history_fact_extraction import output
+
+    compute = CodexSessionCompute()
+    end = orjson.loads(_command_execution_line("42"))
+    end["timestamp"] = t(0).isoformat()
+    assert compute._take_process_owner(ROOT_ID, end) is None
+    announcement = output("owner", "Process running with session ID 42")
+    announcement["timestamp"] = t(delay).isoformat()
+    compute._note_process_announcement(ROOT_ID, announcement, "owner")
+    assert compute.has_process_owner(ROOT_ID, 42) is running
+    if running:
+        assert compute._take_process_owner(ROOT_ID, end) == "owner"
+        assert not compute.has_process_owner(ROOT_ID, 42)
+
+
 def t(seconds: float) -> datetime:
     return datetime(2026, 9, 27, 10, tzinfo=UTC) + timedelta(seconds=seconds)
 

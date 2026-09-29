@@ -8,7 +8,7 @@ from twicc.providers.helpers import get_provider_helpers
 
 __all__ = [
     "HistoryFact", "HistoryFactContext", "HistoryFactKind", "append_history_facts", "history_facts_are_current",
-    "iter_history_facts", "iter_history_items", "replace_history_facts",
+    "iter_history_facts", "iter_history_items", "iter_resolver_items", "replace_history_facts",
 ]
 
 
@@ -112,11 +112,57 @@ def history_facts_are_current(session: Session) -> bool:
     return current is not None and session.compute_version == current
 
 
+def iter_resolver_items(
+    session_id: str, kind: str | None, key: str | None = None, *, before_line: int = 2**63 - 1,
+) -> Iterator[SessionItem]:
+    """Read source candidates, with authoritative indexed absence for current sessions.
+
+    Read readiness afresh for each operation, never from a long-lived provider cache.
+    A stale session uses raw pages exclusively, even when partial facts exist.
+    ``kind=None`` explicitly requests unsupported legacy evidence (Claude queues).
+    Provider predicates still validate each source item.
+    """
+    session = Session.objects.only("provider", "compute_version").filter(id=session_id).first()
+    if session is None:
+        return
+    if kind is not None and history_facts_are_current(session):
+        if key is not None:
+            lines = (fact.line_num for fact in iter_history_facts(session_id, kind, key, before_line=before_line))
+        else:
+            # Spawn recovery needs all calls. Deduplicate several blocks on one
+            # source line, while paging by line rather than by fact occurrence.
+            def source_lines():
+                cursor = before_line
+                while True:
+                    page = list(SessionHistoryFact.objects.filter(
+                        session_id=session_id, kind=kind, line_num__lt=cursor,
+                    ).order_by("-line_num").values_list("line_num", flat=True).distinct()[:_FACT_PAGE_SIZE])
+                    yield from page
+                    if len(page) < _FACT_PAGE_SIZE:
+                        return
+                    cursor = page[-1]
+            lines = source_lines()
+        for line in lines:
+            item = SessionItem.objects.filter(session_id=session_id, line_num=line).first()
+            if item is not None:
+                yield item
+        return
+    cursor = before_line
+    while True:
+        rows = list(SessionItem.objects.filter(
+            session_id=session_id, line_num__lt=cursor,
+        ).order_by("-line_num")[:_FACT_PAGE_SIZE])
+        yield from rows
+        if len(rows) < _FACT_PAGE_SIZE:
+            return
+        cursor = rows[-1].line_num
+
+
 class HistoryFactContext:
     """Read-only extraction view over earlier records; registration belongs to the caller.
 
     Keep references to parsed call records, never copies of scripts or outputs.
-    Persisted lookup deliberately uses raw history until the resolver version switch.
+    Persisted lookup uses the normal compute version to select facts or raw pages.
     """
 
     def __init__(self, provider, *, session_id: str | None = None):
@@ -156,25 +202,25 @@ class HistoryFactContext:
             from twicc.providers.claude_code.history_facts import tool_calls
         return tool_calls(parsed)
 
-    def _raw_items(self, *, before_line: int):
+    def _source_items(self, kind: str, key: str, *, before_line: int):
         import orjson
 
         if self.session_id is None:
             return
-        for line, content in iter_history_items(self.session_id, before_line=before_line):
+        for item in iter_resolver_items(self.session_id, kind, key, before_line=before_line):
             try:
-                parsed = orjson.loads(content)
+                parsed = orjson.loads(item.content)
             except orjson.JSONDecodeError:
                 continue
             if isinstance(parsed, dict):
-                yield line, parsed
+                yield item.line_num, parsed
 
     def lookup_tool_call(self, call_id: str, *, before_line: int) -> tuple[dict, int] | None:
         """Return the newest matching call strictly before the requested line."""
         for payload, line in reversed(self._calls.get(call_id, ())):
             if line < before_line:
                 return payload, line
-        for line, parsed in self._raw_items(before_line=before_line):
+        for line, parsed in self._source_items(HistoryFactKind.TOOL_CALL, call_id, before_line=before_line):
             payload = dict(self._tool_calls(parsed)).get(call_id)
             if payload is not None:
                 return payload, line
@@ -187,7 +233,7 @@ class HistoryFactContext:
         for call_id, line in reversed(self._cells.get(cell_id, ())):
             if line < before_line:
                 return call_id, line
-        for line, parsed in self._raw_items(before_line=before_line):
+        for line, parsed in self._source_items(HistoryFactKind.CODE_CELL, cell_id, before_line=before_line):
             cell = code_cell(parsed)
             if cell is not None and cell[0] == cell_id:
                 return cell[1], line

@@ -60,7 +60,10 @@ from twicc.core.models import (
 from twicc.core.session_queries import TOOL_STATE_ANNOTATIONS
 from twicc.git import is_git_root_related, read_head_branch, resolve_git_from_path
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
-from twicc.providers.history_facts import HistoryFact, HistoryFactContext, append_history_facts, replace_history_facts
+from twicc.providers.history_facts import (
+    HistoryFact, HistoryFactContext, HistoryFactKind,
+    append_history_facts, iter_resolver_items, replace_history_facts,
+)
 from twicc.providers.plan_docs import (
     FOLDED_SOURCES,
     DocEditEvent,
@@ -1958,9 +1961,8 @@ class BaseSessionCompute:
 
         1. Pull ``(tool_use_id, error)`` from ``parsed_json`` via the
            provider's :meth:`extract_tool_result_info` hook.
-        2. Search prior items whose content textually contains the
-           ``tool_use_id`` (cheap LIKE pre-filter), then verify each
-           candidate by parsing it and asking the provider for its
+        2. Select prior source items through computed facts (bounded raw
+           pages for outdated sessions), then verify the provider's
            ``tool_use_entries`` mapping.
         3. On match, ask the provider for the link's structured ``extra``
            via :meth:`compute_link_extra`, persist the link, and
@@ -1982,19 +1984,18 @@ class BaseSessionCompute:
         )
         error = info.error_text
 
-        # Find candidates by text search (LIKE), ordered most recent first.
-        # The tool_use_id string could appear in text content (e.g. assistant mentioning it),
-        # so we iterate candidates and verify each one until we find an actual tool_use match.
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=item.line_num,
-            content__contains=tool_use_id,
-        ).order_by('-line_num')
+        # Facts select source pointers; provider predicates verify candidates.
+        # Stale sessions use bounded reverse raw pages exclusively.
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.TOOL_CALL, tool_use_id, before_line=item.line_num,
+        )
 
-        for candidate in candidates.iterator(chunk_size=10):
+        for candidate in candidates:
             try:
                 candidate_parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(candidate_parsed, dict):
                 continue
 
             tool_use_entries = self.extract_tool_use_entries(
@@ -2143,17 +2144,17 @@ class BaseSessionCompute:
                     )
             return None
 
-        # Find the agent-spawning tool_use by searching for the tool_use_id
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=item.line_num,
-            content__contains=tool_use_id,
-        ).order_by('-line_num')
+        # Resolve the exact prior call, then validate the spawning predicate.
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.TOOL_CALL, tool_use_id, before_line=item.line_num,
+        )
 
-        for candidate in candidates.iterator(chunk_size=10):
+        for candidate in candidates:
             try:
                 candidate_parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(candidate_parsed, dict):
                 continue
 
             for tu_id, input_is_background in self.extract_task_tool_uses(candidate_parsed):
@@ -2219,13 +2220,18 @@ class BaseSessionCompute:
 
     def _spawn_items(self, owner_id: str):
         """Yield actual spawn blocks in transcript order, including uncomputed history."""
-        for item in SessionItem.objects.filter(session_id=owner_id).order_by("line_num").iterator(chunk_size=200):
+        matches = []
+        for item in iter_resolver_items(owner_id, HistoryFactKind.TOOL_CALL):
             try:
                 parsed = orjson.loads(item.content)
             except orjson.JSONDecodeError:
                 continue
+            if not isinstance(parsed, dict):
+                continue
             for tool_id, prompt, background in self.extract_task_tool_use_prompts(parsed):
-                yield item, tool_id, prompt.strip(), background
+                matches.append((item, tool_id, prompt.strip(), background))
+        # Preserve source order, including block order within a source line.
+        yield from sorted(matches, key=lambda match: match[0].line_num)
 
     def _create_recovered_agent_link(self, link: AgentLink) -> AgentLinkUpdate | None:
         """Create one deterministic spawn identity; callers run under the live transaction."""
@@ -2346,19 +2352,23 @@ class BaseSessionCompute:
                 return None
             owners = [info.launcher_session_id]
         matches = []
-        for item in SessionItem.objects.filter(
-            Q(kind__in=(ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS)) | Q(kind__isnull=True),
-            session_id__in=owners, content__contains=completion.tool_use_id).order_by("session_id", "line_num").iterator(chunk_size=100):
-            try:
-                parsed = orjson.loads(item.content)
-            except orjson.JSONDecodeError:
-                continue
-            if any(tu == completion.tool_use_id for tu, _bg in self.extract_task_tool_uses(parsed)):
-                matches.append(item)
+        for owner_id in owners:
+            candidates = iter_resolver_items(owner_id, HistoryFactKind.TOOL_CALL, completion.tool_use_id)
+            for item in candidates:
+                if item.kind not in (None, ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
+                    continue
+                try:
+                    parsed = orjson.loads(item.content)
+                except orjson.JSONDecodeError:
+                    continue
+                if not isinstance(parsed, dict):
+                    continue
+                if any(tu == completion.tool_use_id for tu, _bg in self.extract_task_tool_uses(parsed)):
+                    matches.append(item)
         owner_ids = {item.session_id for item in matches}
         if len(owner_ids) != 1:
             return None
-        item = matches[0]
+        item = min(matches, key=lambda candidate: candidate.line_num)
         return AgentLink(session_id=item.session_id, agent_id=completion.task_id,
             tool_use_id=completion.tool_use_id, tool_use_line_num=item.line_num,
             is_background=True, started_at=item.timestamp)
@@ -2378,14 +2388,20 @@ class BaseSessionCompute:
         return self._create_recovered_agent_link(link) if link is not None else None
 
     def _tree_queue_completions(self, root_id):
-        for item in SessionItem.objects.filter(session_id=root_id, content__contains="queue-operation").order_by("line_num"):
+        # Queue completion semantics have no fact kind. Keep this explicit
+        # residual raw path, with bounded reads and chronological delivery.
+        matches = []
+        for item in iter_resolver_items(root_id, None):
             try:
                 parsed = orjson.loads(item.content)
             except orjson.JSONDecodeError:
                 continue
+            if not isinstance(parsed, dict):
+                continue
             completion = self.extract_queue_completion(parsed)
             if completion is not None:
-                yield item, completion
+                matches.append((item, completion))
+        yield from reversed(matches)
 
     def create_agent_link_from_subagent(
         self,
@@ -2402,8 +2418,7 @@ class BaseSessionCompute:
 
         Provider hooks involved:
 
-        - :meth:`agent_tool_candidates_query` for the pre-filtered queryset
-          of items likely to contain an agent-spawning tool_use.
+        - :meth:`_spawn_items` for indexed or bounded raw source candidates.
         - :meth:`extract_task_tool_use_prompts` for the per-candidate
           extraction of ``(tool_use_id, prompt, is_background)`` triples.
         """

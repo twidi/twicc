@@ -208,7 +208,7 @@ from twicc.pricing import calculate_line_context_usage
 from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalEvent
 from twicc.providers.helpers import humanize_identifier
 from twicc.providers.plan_docs import DocEditEvent, extract_shell_write_targets, is_plan_doc_path
-from twicc.providers.history_facts import HistoryFact, HistoryFactContext
+from twicc.providers.history_facts import HistoryFact, HistoryFactContext, HistoryFactKind, iter_resolver_items
 from twicc.providers.compute_base import (
     _EMPTY_ANALYSIS,
     _EMPTY_FILE_PATHS,
@@ -2979,18 +2979,18 @@ class CodexSessionCompute(BaseSessionCompute):
 
     def _lookup_task_started_line(self, session_id: str, max_line_num: int, turn_id: str) -> int | None:
         """The newest ``task_started`` line of ``turn_id`` below ``max_line_num`` in the session, or ``None``."""
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-            content__contains=turn_id,
-        ).filter(content__contains=_PAYLOAD_TASK_STARTED).order_by('-line_num').values_list('line_num', 'content')
-        for line_num, content in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.TURN_START, turn_id, before_line=max_line_num,
+        )
+        for candidate in candidates:
             try:
-                parsed = orjson.loads(content)
+                parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
                 continue
+            if not isinstance(parsed, dict):
+                continue
             if task_started_turn_id(parsed) == turn_id:
-                return line_num
+                return candidate.line_num
         return None
 
     def _live_fork_fields(self, session_id: str) -> ForkFields:
@@ -3301,15 +3301,15 @@ class CodexSessionCompute(BaseSessionCompute):
         Direct ``function_call`` and code-mode ``custom_tool_call`` shapes
         qualify; text merely containing the id is rejected. Newest line first.
         """
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-            content__contains=call_id,
-        ).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.TOOL_CALL, call_id, before_line=max_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_RESPONSE_ITEM:
                 continue
@@ -3338,15 +3338,15 @@ class CodexSessionCompute(BaseSessionCompute):
         returns its spawn call id and agent id. ``None`` when nothing
         matches.
         """
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-            content__contains=_SUB_AGENT_ACTIVITY_ITEM_TYPE,
-        ).filter(content__contains=agent_path).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.AGENT_SPAWN, agent_path, before_line=max_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             spawn = _parse_sub_agent_activity_started(parsed)
             if spawn is not None and spawn.agent_path == agent_path:
@@ -3366,7 +3366,7 @@ class CodexSessionCompute(BaseSessionCompute):
         """Live equivalent of :meth:`_remap_orphan_end_event`.
 
         Walks the preceding code-mode ``exec`` custom_tool_calls (newest
-        first, textual pre-filter on ``"name":"exec"``), re-extracts each
+        first, through target facts or bounded stale raw pages), re-extracts each
         script, and returns the first whose declared targets match the
         event — patch paths against ``changes`` for ``FileChange``,
         the exact ``mcp_qualified`` name for ``McpToolCall``; the
@@ -3379,15 +3379,15 @@ class CodexSessionCompute(BaseSessionCompute):
             [p for p in changes if isinstance(p, str)] if isinstance(changes, dict) else []
         )
         recency_fallback: str | None = None
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-            content__contains='"name":"exec"',
-        ).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.CODE_EXEC_TARGET, "patch" if is_patch else "mcp", before_line=max_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_RESPONSE_ITEM:
                 continue
@@ -3436,16 +3436,15 @@ class CodexSessionCompute(BaseSessionCompute):
         carry its id. Returns ``fallback`` when nothing matches, so the live
         link is still created (just under the naive id).
         """
-        marker = f"Script running with cell ID {cell_id}"
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-            content__contains=marker,
-        ).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.CODE_CELL, cell_id, before_line=max_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_RESPONSE_ITEM:
                 continue
@@ -3485,29 +3484,15 @@ class CodexSessionCompute(BaseSessionCompute):
         is the one a later line talks about. Returns ``fallback`` when nothing
         is found, so the live link is still created (just under the naive id).
         """
-        direct_marker = f"Process running with session ID {exec_command_id}"
-        code_mode_marker = f"SESSION_ID={exec_command_id}"
-        # The raw nested JSON result sits JSON-escaped inside the stored
-        # line: ``\"session_id\":<id>`` (or with a space after the colon
-        # when the script pretty-printed it). A pre-filter only — every
-        # candidate is re-parsed below.
-        json_markers = (
-            f'\\"session_id\\":{exec_command_id}',
-            f'\\"session_id\\": {exec_command_id}',
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.PROCESS_START, str(exec_command_id), before_line=max_line_num,
         )
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-        ).filter(
-            Q(content__contains=direct_marker)
-            | Q(content__contains=code_mode_marker)
-            | Q(content__contains=json_markers[0])
-            | Q(content__contains=json_markers[1])
-        ).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_RESPONSE_ITEM:
                 continue
@@ -3942,15 +3927,15 @@ class CodexSessionCompute(BaseSessionCompute):
         """
         prev_mode = "default"
         prev_tc_line = 0
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=current_line_num,
-            content__contains='"type":"turn_context"',
-        ).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.TURN_CONTEXT, "context", before_line=current_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             mode = _turn_context_collaboration_mode(parsed)
             if mode is None:
@@ -3958,21 +3943,17 @@ class CodexSessionCompute(BaseSessionCompute):
             prev_mode = mode
             prev_tc_line = candidate.line_num
             break
-        marker_candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__gt=prev_tc_line,
-            line_num__lt=current_line_num,
-            # The relabelled marker serialises a canonical text entry
-            # ``{"type":"text","text":"/plan","text_elements":[]}`` (plus
-            # the raw source under ``twiccOriginalContent``). A prefixed
-            # inline prompt ("/plan foo") never contains the closed
-            # string; candidates are still parse-verified below.
-            content__contains='"text":"/plan"',
-        ).order_by('-line_num')
-        for candidate in marker_candidates.iterator(chunk_size=10):
+        marker_candidates = iter_resolver_items(
+            session_id, HistoryFactKind.PLAN_MARKER, "context", before_line=current_line_num,
+        )
+        for candidate in marker_candidates:
+            if candidate.line_num <= prev_tc_line:
+                break
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if user_message_text(parsed) == "/plan":
                 return prev_mode, True
@@ -4013,19 +3994,19 @@ class CodexSessionCompute(BaseSessionCompute):
 
         Only two facts matter: the most recent internal context (if any), and
         whether a newer ``thread_goal_updated`` line activated another goal
-        boundary. Both scans parse-verify their cheap text-filter candidates.
+        boundary. Both scans validate indexed source pointers or stale raw pages.
         """
         state = _GoalContextState(initialized=True)
         context_line = 0
-        context_candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=current_line_num,
-            content__contains="codex_internal_context",
-        ).order_by("-line_num")
-        for candidate in context_candidates.iterator(chunk_size=10):
+        context_candidates = iter_resolver_items(
+            session_id, HistoryFactKind.GOAL_CONTEXT, "context", before_line=current_line_num,
+        )
+        for candidate in context_candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             objective = _goal_context_objective(parsed)
             if objective is None:
@@ -4035,16 +4016,17 @@ class CodexSessionCompute(BaseSessionCompute):
             context_line = candidate.line_num
             break
 
-        update_candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__gt=context_line,
-            line_num__lt=current_line_num,
-            content__contains='"type":"thread_goal_updated"',
-        ).order_by("-line_num")
-        for candidate in update_candidates.iterator(chunk_size=10):
+        update_candidates = iter_resolver_items(
+            session_id, HistoryFactKind.GOAL_UPDATE, "context", before_line=current_line_num,
+        )
+        for candidate in update_candidates:
+            if candidate.line_num <= context_line:
+                break
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_EVENT_MSG:
                 continue
@@ -4497,15 +4479,15 @@ class CodexSessionCompute(BaseSessionCompute):
         :meth:`begin_session_compute`. The scan stops at the first hit,
         so it costs at most one row read on a healthy session.
         """
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=current_line_num,
-            content__contains='"type":"token_count"',
-        ).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.TOKEN_USAGE, "context", before_line=current_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_EVENT_MSG:
                 continue

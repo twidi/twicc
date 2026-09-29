@@ -224,9 +224,18 @@ def test_expected_row_counts_cover_every_fixture():
 
 @pytest.mark.parametrize("per_line", [True, False], ids=["per_line", "one_chunk"])
 @pytest.mark.parametrize("name", sorted(ALL_FIXTURES))
-def test_batch_live_parity(db, tmp_path, name, per_line):
+@pytest.mark.parametrize("current", [False, True], ids=["stale_history", "indexed_history"])
+def test_batch_live_parity(db, tmp_path, name, per_line, current):
     fixture = ALL_FIXTURES[name]()
-    LiveReplay(fixture, tmp_path).run(per_line=per_line)
+    replay = LiveReplay(fixture, tmp_path)
+    if current:
+        from twicc.providers.helpers import get_provider_helpers
+
+        version = get_provider_helpers(Provider.CODEX).current_compute_version
+        for session in replay.sessions.values():
+            session.compute_version = version
+            session.save(update_fields=["compute_version"])
+    replay.run(per_line=per_line)
     live = rows(fixture)
     # Batch extraction must match both live chunking modes, including
     # normalized private-source records already written by live transforms.
