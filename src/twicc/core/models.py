@@ -845,7 +845,7 @@ class SessionItem(models.Model):
 class SessionHistoryFact(models.Model):
     """Compact historical evidence, keyed by its exact source occurrence."""
 
-    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="history_facts")
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="history_facts", db_index=False)
     line_num = models.PositiveIntegerField()
     kind = models.CharField(max_length=32, choices=HistoryFactKind.choices)
     key = models.TextField()

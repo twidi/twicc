@@ -20,6 +20,11 @@ class HistoryFact(NamedTuple):
 
 
 _FACT_PAGE_SIZE = 128
+_CONTEXT_KINDS = frozenset({
+    HistoryFactKind.TURN_CONTEXT, HistoryFactKind.PLAN_MARKER,
+    HistoryFactKind.GOAL_CONTEXT, HistoryFactKind.GOAL_UPDATE,
+    HistoryFactKind.TOKEN_USAGE,
+})
 
 
 def iter_history_facts(session_id: str, kind: str, key: str, *, before_line: int) -> Iterator[HistoryFact]:
@@ -59,15 +64,43 @@ def iter_history_items(
 
 def replace_history_facts(session_id: str, facts: Sequence[HistoryFact]) -> None:
     """Replace one session's complete fact set inside the caller's transaction."""
+    rows = _fact_rows(session_id, facts)
     SessionHistoryFact.objects.filter(session_id=session_id).delete()
-    append_history_facts(session_id, facts)
+    _insert_rows(rows)
 
 
 def append_history_facts(session_id: str, facts: Sequence[HistoryFact]) -> None:
     """Insert fact occurrences idempotently inside the caller's transaction."""
+    _insert_rows(_fact_rows(session_id, facts))
+
+
+def _fact_rows(session_id: str, facts: Sequence[HistoryFact]) -> list[SessionHistoryFact]:
+    """Validate the complete input before any row changes."""
+    rows = []
+    for fact in facts:
+        if type(fact.line_num) is not int or fact.line_num < 1:
+            raise ValueError("history fact line_num must be a positive integer")
+        if fact.kind not in HistoryFactKind.values:
+            raise ValueError(f"unsupported history fact kind: {fact.kind!r}")
+        if not isinstance(fact.key, str) or not fact.key.strip():
+            raise ValueError("history fact key must be a nonempty string")
+        if fact.kind in _CONTEXT_KINDS and fact.key != "context":
+            raise ValueError(f"history fact {fact.kind} requires the context key")
+        if fact.kind == HistoryFactKind.CODE_EXEC_TARGET and fact.key not in {"patch", "mcp"}:
+            raise ValueError("code execution target key must be patch or mcp")
+        if not isinstance(fact.data, dict):
+            raise TypeError("history fact data must be a dictionary")
+        rows.append(SessionHistoryFact(
+            session_id=session_id, line_num=fact.line_num, kind=fact.kind,
+            key=fact.key, data=fact.data,
+        ))
+    return rows
+
+
+def _insert_rows(rows: list[SessionHistoryFact]) -> None:
+    """Ignore duplicate source tuples after all other required fields pass validation."""
     SessionHistoryFact.objects.bulk_create(
-        [SessionHistoryFact(session_id=session_id, line_num=fact.line_num, kind=fact.kind,
-                            key=fact.key, data=fact.data) for fact in facts],
+        rows,
         ignore_conflicts=True,
         batch_size=_FACT_PAGE_SIZE,
     )

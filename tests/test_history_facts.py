@@ -64,6 +64,37 @@ def test_duplicate_source_fact_is_idempotent(session):
     assert list(iter_history_facts(session.id, fact.kind, fact.key, before_line=4)) == [fact]
 
 
+@pytest.mark.parametrize("fact, error", [
+    (HistoryFact(0, HistoryFactKind.TOOL_CALL, "call-1", {}), ValueError),
+    (HistoryFact(1, "unsupported", "call-1", {}), ValueError),
+    (HistoryFact(1, HistoryFactKind.TOOL_CALL, "", {}), ValueError),
+    (HistoryFact(1, HistoryFactKind.TOOL_CALL, "call-1", []), TypeError),
+    (HistoryFact(1, HistoryFactKind.TURN_CONTEXT, "wrong", {}), ValueError),
+    (HistoryFact(1, HistoryFactKind.CODE_EXEC_TARGET, "wrong", {}), ValueError),
+])
+def test_append_rejects_invalid_facts_without_dropping_valid_ones(session, fact, error):
+    valid = HistoryFact(2, HistoryFactKind.TOOL_CALL, "valid", {"name": "run"})
+
+    with pytest.raises(error):
+        append_history_facts(session.id, [valid, fact])
+
+    assert SessionHistoryFact.objects.filter(session=session).count() == 0
+
+
+def test_replace_rejects_invalid_complete_set_before_deleting_old_facts(session):
+    old = HistoryFact(2, HistoryFactKind.TOOL_CALL, "call-1", {"name": "old"})
+    append_history_facts(session.id, [old])
+
+    with pytest.raises(ValueError):
+        replace_history_facts(session.id, [
+            HistoryFact(3, HistoryFactKind.TOOL_CALL, "call-2", {"name": "new"}),
+            HistoryFact(0, HistoryFactKind.TOOL_CALL, "call-3", {}),
+        ])
+
+    assert list(iter_history_facts(session.id, old.kind, old.key, before_line=4)) == [old]
+    assert SessionHistoryFact.objects.filter(session=session).count() == 1
+
+
 def test_replace_history_facts_replaces_only_one_session(session):
     other = Session.objects.create(id="other-history", project=session.project, provider="codex", file_path="other.jsonl")
     old = HistoryFact(1, HistoryFactKind.PLAN_MARKER, "context", {"mode": "old"})
@@ -126,6 +157,19 @@ def test_exact_key_prior_line_lookup_uses_unique_index(session):
         for step in plan
     ), plan
     assert all("USE TEMP B-TREE" not in step for step in plan)
+
+
+def test_unique_index_also_covers_session_fk_lookup(session):
+    with connection.cursor() as cursor:
+        cursor.execute('PRAGMA index_list("core_sessionhistoryfact")')
+        index_names = [row[1] for row in cursor.fetchall()]
+        columns = []
+        for name in index_names:
+            cursor.execute(f'PRAGMA index_info("{name}")')
+            columns.append([row[2] for row in cursor.fetchall()])
+
+    assert ["session_id", "kind", "key", "line_num"] in columns
+    assert ["session_id"] not in columns
 
 
 def test_history_facts_are_current_uses_provider_compute_version(session):

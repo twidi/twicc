@@ -19,7 +19,7 @@ class Migration(migrations.Migration):
                 ('kind', models.CharField(choices=[('tool_call', 'Tool call'), ('process_start', 'Process start'), ('code_cell', 'Code cell'), ('agent_spawn', 'Agent spawn'), ('turn_start', 'Turn start'), ('code_exec_target', 'Code exec target'), ('turn_context', 'Turn context'), ('plan_marker', 'Plan marker'), ('goal_context', 'Goal context'), ('goal_update', 'Goal update'), ('token_usage', 'Token usage')], max_length=32)),
                 ('key', models.TextField()),
                 ('data', models.JSONField()),
-                ('session', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='history_facts', to='core.session')),
+                ('session', models.ForeignKey(db_index=False, on_delete=django.db.models.deletion.CASCADE, related_name='history_facts', to='core.session')),
             ],
             options={
                 'constraints': [models.CheckConstraint(condition=models.Q(('line_num__gte', 1)), name='history_fact_positive_line'), models.UniqueConstraint(fields=('session', 'kind', 'key', 'line_num'), name='uniq_history_fact_source')],
