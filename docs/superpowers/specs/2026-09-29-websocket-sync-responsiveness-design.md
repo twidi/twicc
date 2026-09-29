@@ -167,12 +167,15 @@ The upstream server frame limit remains the upper bound for that exception.
 
 When a disconnect is observed, disable heartbeat immediately.
 Forward its terminal event after previously admitted business events, preserving serial handling.
-Stop upstream reads. On a receive exception, deliver a terminal failure to the consumer-side receiver.
+Stop upstream reads. On a receive/send failure, deliver one synthetic `websocket.disconnect` after admitted events.
+Keep exception provenance separately for logging; do not raise it from the consumer-facing receiver.
+The installed Channels dispatch cleanup can leave its channel receive task alive after a receiver exception.
 Never leave the consumer waiting on an empty FIFO whose producer has exited.
 
 On consumer completion, failure, or cancellation, cancel and join the reader task and release queued payloads.
 Preserve existing shielded database writes and intentionally detached process-control tasks.
 Do not let a failed pong sender leave the reader or consumer waiting forever.
+Run idempotent updates-group cleanup from both normal disconnect and the consumer's final cleanup, including partial setup and cancellation.
 
 ### Guarantee and limits
 
@@ -240,6 +243,8 @@ Any semantic harmonization is a separate change, not a performance optimization.
 Use provider hooks that extract facts from already parsed data.
 Share these hooks between full compute and live ingestion.
 Do not call stateful `analyze_content` twice to obtain facts.
+Supply a read-only chronological lookup context where validation needs earlier calls or cell announcements.
+The current process-output record alone cannot identify a validated starter.
 
 Full compute collects facts alongside existing tool, agent, and run-evidence maps.
 Live sync registers facts in chronological order, before downstream consumers need earlier evidence.
@@ -323,7 +328,22 @@ Codex `pop_original_files` and Claude `pop_original_file` consume these during t
 For these caches, borrow without consuming, then consume matching entries only after commit, or restore borrowed entries on rollback.
 Preserve entries added or replaced concurrently; cleanup must match the borrowed value or identity.
 Retry must retain the same full diff enrichment, not just linkage and counters.
+Keep failed-attempt enrichment reserved for its exact source record, separately from any newer entry with the same call ID.
+A token belongs to one source record from its first borrow; another record in the same slice cannot consume it again.
+Explicit session clear or committed history replacement invalidates those reservations; unused reservations retain a bounded 300-second retry lifetime.
 Do not retain an advanced in-memory offset or ownership map after a failed transaction.
+
+Bound the work repeated by each slice, not only its input size.
+Use indexed existence checks for the slice's message IDs, rather than loading all historical IDs.
+For current-version sessions, maintain exact cost, message, and activity aggregates from changed-row contributions.
+Preserve existing eligibility, UTC buckets, persisted Decimal precision, and null-versus-zero behavior.
+Every committed item-mutation transaction must leave its session, parent, and shared activity aggregates consistent.
+This includes background pre-apply chunks that may outlive a failed final apply.
+Before relying on child cached costs for parent nullability, full parent repair synchronizes direct-child costs from stored items.
+That repair does not advance child compute versions.
+Outdated sessions use complete affected-aggregate repair inside each such transaction until normal compute establishes a current baseline.
+Use another normal provider compute-version bump when this change lands; never add independent aggregate readiness state.
+Keep outdated slices at their initial size; expensive fallback/repair must not trigger increasingly small slices.
 
 Return an explicit result containing committed updates and whether another complete-record slice is ready.
 Use a named result type rather than adding more positional slots to the existing long tuple.
@@ -338,7 +358,12 @@ Do not implement a private `while has_more` loop that retains `_change_lock` or 
 Coalesce repeated events without losing an append that arrives during processing.
 Deletion, truncation, and replacement must follow existing provider handling before another slice is admitted.
 Preserve Codex `defer_session_change`, migration exclusion, and explicit `process_path` behavior.
-Any completion signal currently meaning “path synchronized” must mean the committed backlog is drained, not merely the first slice.
+An explicit `process_path` waiter captures the finite complete-record backlog present when requested.
+It completes after that source generation's target offset commits; later appends must not extend its target indefinitely.
+Incomplete trailing bytes are outside the target. Replacement/deletion terminates obsolete targets rather than reusing their offsets.
+Notify the queue when migration releases a path, including failure or cancellation without successful replay.
+Drain waiters must settle on these terminal outcomes, even without another filesystem event.
+Retain release outcomes across an in-flight deferral check so the queue cannot lose its only wake-up.
 
 Existing compute item chunks release their SQL transactions, but retain the outer writer lease for the full message.
 Do not describe those chunks as fairness between writers.
@@ -371,6 +396,7 @@ The user controls running-instance restart and migration; this design stage perf
 - Verify pong encoding reaches the existing frontend visibility probe.
 - Saturate each FIFO limit; verify bounded retention, backpressure, and no silent command loss.
 - Close or fail each side; verify no late pong, reader leak, or hung consumer.
+- With the real Channels consumer, verify channel-receive tasks and updates-group membership disappear on every exit path.
 - Cancel an admitted database job; retain the write lock until the real write completes.
 - Compare full compute and live replay across slice boundaries for both providers.
 - Cover reused IDs, absent owners, invisible control calls, late process announcements, and orphan target matching.
@@ -381,7 +407,11 @@ The user controls running-instance restart and migration; this design stage perf
 - With a large and small ready session, verify both advance before the large backlog drains.
 - Cover split UTF-8, incomplete tails, blank lines, malformed complete records, same-mtime appends, deletion, and truncation.
 - Fail after borrowing original-file enrichment; retry without losing full diff contents.
+- Replace the cache entry between borrow and rollback; the old source record retains its reservation and the newer value remains available.
 - Exceed the slice time target during the second pass; commit all selected records without losing speculative state.
+- Fail a migration without replay, or release it during a deferral check; settle the original path waiters.
+- Continuously append beyond a requested path watermark; let that finite waiter finish while later backlog continues.
+- Verify bounded message-ID lookup and exact aggregates across live and partial compute transactions, including parent/global buckets.
 
 Use synchronization primitives to test independence, not fragile millisecond assertions in unit tests.
 Build on existing compute replay, compute-apply, writer-lock, origin, and provider WebSocket tests.
@@ -434,3 +464,4 @@ Paths below are relative to the repository root. Line numbers refer to the inves
 | Provider compute versions | `src/twicc/settings.py`, lines 412–413 |
 
 Review findings and their dispositions are recorded in the companion `2026-09-29-websocket-sync-responsiveness-review.md`.
+Plan adversarial-review clarifications are recorded in [the plan review](../plans/2026-09-29-websocket-sync-responsiveness-review.md).
