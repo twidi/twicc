@@ -67,6 +67,7 @@ from twicc.providers_status import acknowledge_incident, broadcast_providers_sta
 from twicc.tips_manifest import manifest_to_dict
 from twicc.terminal_config import read_terminal_config, write_terminal_config
 from twicc.terminal import terminal_application
+from twicc.websocket_transport import HeartbeatTransport
 
 logger = logging.getLogger(__name__)
 
@@ -462,6 +463,43 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             key: cls(self) for key, cls in self.PROVIDER_HANDLERS.items()
         }
 
+    async def __call__(self, scope, receive, send):
+        self._heartbeat_transport = HeartbeatTransport(receive, send, self.encode_json)
+        self._connection_cleanup_task = None
+        consumer_call = super().__call__
+
+        async def application(transport_receive, transport_send):
+            try:
+                await consumer_call(scope, transport_receive, transport_send)
+            finally:
+                await self._cleanup_connection()
+
+        await self._heartbeat_transport.run(application)
+
+    async def _cleanup_connection(self) -> None:
+        """Remove group membership once, including partial connect and cancellation."""
+        transport = getattr(self, "_heartbeat_transport", None)
+        if transport is not None:
+            transport.disable_heartbeat()
+        layer = getattr(self, "channel_layer", None)
+        channel_name = getattr(self, "channel_name", None)
+        if layer is None or channel_name is None:
+            return
+        task = getattr(self, "_connection_cleanup_task", None)
+        if task is None:
+            task = self._connection_cleanup_task = asyncio.create_task(
+                layer.group_discard("updates", channel_name), name="websocket-group-cleanup",
+            )
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        task.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
     async def connect(self):
         """Accept connection, add to updates group, and send active processes.
 
@@ -522,6 +560,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
         await self.channel_layer.group_add("updates", self.channel_name)
         await self.accept()
+        self._heartbeat_transport.enable_heartbeat()
 
         # Send server version to the client (used for auto-reload on version change)
         if self._should_send("server_version"):
@@ -771,7 +810,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
     async def disconnect(self, close_code):
         """Remove from the updates group on disconnect."""
-        await self.channel_layer.group_discard("updates", self.channel_name)
+        await self._cleanup_connection()
 
     async def receive_json(self, content, **kwargs):
         """Handle incoming messages from clients.
