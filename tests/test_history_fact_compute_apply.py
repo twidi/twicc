@@ -119,10 +119,12 @@ def test_codex_rollout_replacement_removes_old_facts_with_old_items(session):
     append_history_facts(session.id, [_fact(key="call-old")])
     session.compute_version = get_provider_helpers(session.provider).current_compute_version
     session.save(update_fields=["compute_version"])
-    future = asyncio.new_event_loop().create_future()
-    job = ReplaceCodexHistoryJob(Provider.CODEX, session.id, [(1, "new")], 200, 1, 1.0, future)
-
-    _apply_replace_codex_history_job(job)
+    loop = asyncio.new_event_loop()
+    try:
+        job = ReplaceCodexHistoryJob(Provider.CODEX, session.id, [(1, "new")], 200, 1, 1.0, loop.create_future())
+        _apply_replace_codex_history_job(job)
+    finally:
+        loop.close()
 
     session.refresh_from_db()
     assert list(session.items.values_list("content", flat=True)) == ["new"]
