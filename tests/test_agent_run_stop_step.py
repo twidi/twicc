@@ -251,7 +251,7 @@ def _codex_two_pieces():
 def test_codex_completed_and_final_answer_close_once(tmp_path):
     fixture = _codex_two_pieces()
     replay = LiveReplay(fixture, tmp_path)
-    assert replay.sync(ROOT, fixture.line(ROOT, "completed") - 1)[5] == []
+    assert replay.sync(ROOT, fixture.line(ROOT, "completed") - 1).agent_stopped_updates == []
     outcome = replay.sync(ROOT)
     root = Session.objects.get(id=ROOT)
     # One stamp at the earliest evidence: the ``completed`` time, not the FINAL_ANSWER's.
@@ -403,7 +403,7 @@ def test_codex_stop_row_created_after_its_result_closes(tmp_path):
     child.meta(2.1)
     fixture = _fixture("stop_row_after_result", root, child)
     replay = LiveReplay(fixture, tmp_path)
-    assert replay.sync(ROOT, fixture.line(ROOT, "stop_output"))[5] == []
+    assert replay.sync(ROOT, fixture.line(ROOT, "stop_output")).agent_stopped_updates == []
     assert not AgentInteraction.objects.exists()
     outcome = replay.sync(ROOT)
     assert AgentInteraction.objects.get(tool_use_id="c_stop").kind == "stop"

@@ -1,7 +1,7 @@
 """The ``agent_interaction`` WebSocket messages of the live pass and the watcher.
 
 The live pass returns the ``agent_interaction`` payloads of the interactions a
-batch created or whose ``opens_run`` changed (tuple index 7), filtered by the
+batch created or whose ``opens_run`` changed (``agent_interaction_updates``), filtered by the
 tree rule. The watcher sends them after the batch's ``agent_link_created``
 messages, and follows each ``agent_link_created`` with the interactions
 targeting or owned by its agent (the late tree rule). Design:
@@ -48,7 +48,7 @@ PAYLOAD_KEYS = {
 
 
 @pytest.fixture
-def claude(transactional_db, provider_home):
+def claude(transactional_db, provider_home, compute_executor_started):
     return _claude_tree(provider_home)
 
 
@@ -70,36 +70,38 @@ def kinds(watched):
 
 
 # ---------------------------------------------------------------------------
-# Live tuple index 7
+# Named live interaction updates
 # ---------------------------------------------------------------------------
 
 
-def test_live_tuple_carries_created_and_flipped_interactions(claude):
+def test_live_updates_carry_created_and_flipped_interactions(claude):
     root, _, _ = claude
     live(claude, root, prompt(0), spawn("tool_spawn", 1), ack("tool_spawn", AGENT, 2))
     created = live(claude, root, send("tool_send", AGENT, 10))
-    assert created[7] == [payload(root, root, "tool_send", line_num=4, kind="message", opens_run=False,
-                                  started_at=at(10))]
-    assert set(created[7][0]) == PAYLOAD_KEYS
+    assert created.agent_interaction_updates == [payload(
+        root, root, "tool_send", line_num=4, kind="message", opens_run=False, started_at=at(10),
+    )]
+    assert set(created.agent_interaction_updates[0]) == PAYLOAD_KEYS
     # The first result flips opens_run: started_at moves to the ack time.
     flipped = live(claude, root, resumed_ack("tool_send", AGENT, 12))
-    assert flipped[7] == [payload(root, root, "tool_send", line_num=4, kind="message", opens_run=True,
-                                  started_at=at(12))]
+    assert flipped.agent_interaction_updates == [payload(
+        root, root, "tool_send", line_num=4, kind="message", opens_run=True, started_at=at(12),
+    )]
     # Nothing changed on the interaction: nothing to send.
-    assert live(claude, root, line("user", "more", 13))[7] == []
+    assert live(claude, root, line("user", "more", 13)).agent_interaction_updates == []
 
 
-def test_live_tuple_skips_interactions_failing_the_tree_rule(claude):
+def test_live_updates_skip_interactions_failing_the_tree_rule(claude):
     root, children, _ = claude
     live(claude, root, prompt(0), spawn("tool_spawn", 1), ack("tool_spawn", AGENT, 2))
     # A shell task id is never a linked agent.
     outcome = live(claude, root, task_stop("tool_shell", SHELL, 10))
     assert AgentInteraction.objects.filter(tool_use_id="tool_shell").exists()
-    assert outcome[7] == []
+    assert outcome.agent_interaction_updates == []
     # A subagent's call to an agent with no link yet: no payload until the link exists.
     outcome = live(claude, children[OTHER], send("tool_sub", "a3333333333333333", 11))
     assert AgentInteraction.objects.filter(tool_use_id="tool_sub").exists()
-    assert outcome[7] == []
+    assert outcome.agent_interaction_updates == []
 
 
 def test_interaction_payloads_apply_the_owner_scope(claude):
