@@ -253,12 +253,19 @@ class SessionChangeQueue:
                 self._settle(state, cancel=True)
             self._wake.set()
 
-    def close(self) -> None:
+    def close(self, *, cancel_pending: bool = False) -> None:
         """Drain admitted turns, including pre-close dirty events, then cancel waiters.
 
         Backlog alone cannot admit another turn after close. This bounds shutdown
         even when the external producer continues appending complete records.
+        A watcher stopped before activating its consumer cancels queued work
+        instead: it cannot process that work before search readiness.
         """
+        if cancel_pending and self._in_flight:
+            raise RuntimeError('Cannot cancel pending changes with an active turn')
         self.closed = True
+        if cancel_pending:
+            while self._ready:
+                self._paths[self._ready.popleft()].queued = False
         self._wake.set()
         self._settle_closed()

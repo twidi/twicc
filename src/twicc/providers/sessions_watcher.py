@@ -554,7 +554,7 @@ class BaseSessionsWatcher:
         """Signal this watcher instance to stop."""
         if self._stop_event is not None:
             self._stop_event.set()
-        self._queue.close()
+        self._queue.close(cancel_pending=self._consumer_task is None)
         for task in self._wake_tasks:
             task.cancel()
         # Wake the polling loop if it's currently sleeping.
@@ -1229,6 +1229,28 @@ class BaseSessionsWatcher:
                 return False
         return True
 
+    def prepare_start(self) -> None:
+        """Open the next lifecycle before its coordinator can publish releases.
+
+        The previous lifecycle must have drained. Preparation admits pending
+        notifications without starting a consumer before search is ready.
+        Calling this again at watcher startup preserves those notifications.
+        """
+        if not self._queue.closed:
+            return
+        if (not self._queue.idle or self._channel_layer is not None
+                or (self._consumer_task is not None and not self._consumer_task.done())
+                or any(not task.done() for task in self._wake_tasks)):
+            raise RuntimeError('Cannot prepare watcher before shutdown drains')
+        self._queue = SessionChangeQueue()
+        self._consumer_task = None
+        self._sources.clear()
+        self._replaced_paths.clear()
+        self._parsed_paths.clear()
+        self._deleted_parsed_paths.clear()
+        self._pending_source_releases.clear()
+        self._line_limits.clear()
+
     async def start_watcher(self) -> None:
         """
         Start the file watcher for this provider's :attr:`projects_dir`.
@@ -1250,12 +1272,8 @@ class BaseSessionsWatcher:
         # it cannot leak into sibling tasks.
         current_provider.set(self.get_compute().provider.value)
 
+        self.prepare_start()
         try:
-            if self._queue.closed:
-                self._queue = SessionChangeQueue()
-                self._sources.clear()
-                self._replaced_paths.clear()
-                self._line_limits.clear()
             channel_layer = get_channel_layer()
             self._channel_layer = channel_layer
             projects_dir = self.projects_dir
@@ -1293,7 +1311,7 @@ class BaseSessionsWatcher:
                 for change_type, path_str in sorted(changes, key=lambda change: change[0] != Change.deleted):
                     self._enqueue(Path(path_str), change_type)
         finally:
-            self._queue.close()
+            self.stop_watcher()
             try:
                 await self._drain_changes()
             finally:
@@ -1386,8 +1404,8 @@ class BaseSessionsWatcher:
                 and self._queue.current_change(release.path) != Change.deleted):
             # First observation and recreation can both await identification.
             # Keep the admitted event until parsing can attribute its outcome.
-            if self._queue.closed:
-                return
+            # Closing admission still drains that identification and must apply
+            # its terminal outcome before any checkpoint can settle waiters.
             pending = self._pending_source_releases.setdefault(release.path, {})
             previous = pending.get(release.session_id)
             if previous is None or release.release_token > previous.release.release_token:

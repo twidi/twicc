@@ -319,6 +319,201 @@ def test_queued_release_activates_at_start_without_filesystem_event(tmp_path, mo
     asyncio.run(run())
 
 
+@pytest.mark.parametrize('same_session', [False, True], ids=['new-identity', 'same-identity'])
+@pytest.mark.parametrize('replay_callback', [False, True], ids=['notification-only', 'with-replay'])
+@pytest.mark.parametrize('stop_before_ready', [False, True], ids=['ready', 'stop-before-ready'])
+def test_codex_restart_prepares_releases_before_watcher_start(
+    tmp_path, monkeypatch, same_session, replay_callback, stop_before_ready,
+):
+    from twicc.core.enums import Provider
+    from twicc.core.models import SessionType
+    from twicc.providers.codex import orchestrator as orchestrator_module
+    from twicc.providers.session_change_queue import MigrationRelease
+
+    async def run():
+        watcher = module.BaseSessionsWatcher()
+        watcher.projects_dir = tmp_path
+        watcher.get_compute = lambda: SimpleNamespace(provider=Provider.CODEX)
+        path = tmp_path / 'restart.jsonl'
+        path.write_bytes(b'{}\n')
+        abandoned_path = tmp_path / 'abandoned.jsonl'
+        abandoned_path.write_bytes(b'{}\n')
+        session_id = 'previous'
+        watcher.parse_session_file = AsyncMock(side_effect=lambda source: module.ParsedSessionFile(
+            'p', session_id, SessionType.SESSION, source.name,
+        ))
+        seen, watching = asyncio.Event(), asyncio.Event()
+        processed = []
+
+        async def process(source, parsed, *_args):
+            processed.append((source, parsed.session_id))
+            seen.set()
+            return module.SessionChangeResult('drained', watcher._queue.source_generation(source), 3)
+
+        async def watch(*args, stop_event):
+            watching.set()
+            await stop_event.wait()
+            if False:
+                yield set()
+
+        watcher._process_parsed_session_change = process
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'load_project_directories', lambda: None)
+        monkeypatch.setattr(module, 'load_project_git_roots', lambda: None)
+        monkeypatch.setattr(module, 'awatch', watch)
+        first = asyncio.create_task(watcher.start_watcher())
+        try:
+            await asyncio.wait_for(watching.wait(), 1)
+            await watcher.process_path(path)
+        finally:
+            watcher.stop_watcher()
+            await asyncio.wait_for(first, 1)
+        assert processed == [(path, 'previous')]
+        old_consumer = watcher._consumer_task
+        assert old_consumer.done()
+        with pytest.raises(RuntimeError, match='closed'):
+            await watcher.process_path(path)
+
+        seen.clear()
+        watching.clear()
+        session_id = 'previous' if same_session else 'replacement'
+        orchestrator = orchestrator_module.CodexOrchestrator()
+        orchestrator.initial_sync_done.set()
+        orchestrator.search_index_ready = asyncio.Event()
+        orchestrator._sync_titles_at_boot = AsyncMock()
+        monkeypatch.setattr(orchestrator_module, 'get_watcher', lambda: watcher)
+        # Exercise provider shutdown without a worker, writer, or live agents.
+        from twicc.providers import db_writer
+        monkeypatch.setattr(db_writer, 'abandon_compute_run', AsyncMock())
+        monkeypatch.setattr(orchestrator_module, 'stop_background_task', AsyncMock())
+        monkeypatch.setattr(orchestrator_module, 'get_codex_agent_manager',
+                            lambda: SimpleNamespace(shutdown=AsyncMock()))
+        released = asyncio.Event()
+        release_count = 0
+
+        async def compute(ctx, done, *, on_session_released, on_migration_released):
+            nonlocal release_count
+            release_count += 1
+            source = abandoned_path if stop_before_ready and release_count == 1 else path
+            on_migration_released(MigrationRelease(session_id, source, 'ready', True, None, 1001 + release_count))
+            released.set()
+            if replay_callback:
+                await on_session_released(session_id, source)
+
+        monkeypatch.setattr(orchestrator_module, 'start_codex_background_compute_task', compute)
+        dependency = asyncio.create_task(orchestrator._dependency_orchestrator())
+        orchestrator._orch_task = dependency
+        try:
+            await asyncio.wait_for(released.wait(), 1)
+            await asyncio.sleep(0)
+            assert not seen.is_set(), 'preparation bypassed search readiness'
+            assert watcher._consumer_task is None or watcher._consumer_task is old_consumer
+            if stop_before_ready:
+                await asyncio.wait_for(orchestrator.shutdown(), 1)
+                assert watcher._queue.closed, 'shutdown left its prepared lifecycle open'
+                assert watcher._queue.idle, 'unstarted releases survived shutdown'
+                assert not seen.is_set()
+                with pytest.raises(RuntimeError, match='closed'):
+                    await watcher.process_path(path)
+                released.clear()
+                orchestrator.compute_done.clear()
+                dependency = asyncio.create_task(orchestrator._dependency_orchestrator())
+                orchestrator._orch_task = dependency
+                await asyncio.wait_for(released.wait(), 1)
+                assert not seen.is_set()
+            orchestrator.search_index_ready.set()
+            await asyncio.wait_for(dependency, 1)
+            await asyncio.wait_for(watching.wait(), 1)
+            await asyncio.wait_for(seen.wait(), 1)
+            await asyncio.wait_for(orchestrator._compute_task, 1)
+            assert processed[1:] and set(processed[1:]) == {(path, session_id)}
+        finally:
+            dependency.cancel()
+            await asyncio.gather(dependency, return_exceptions=True)
+            watcher.stop_watcher()
+            if orchestrator._watcher_task is not None:
+                await asyncio.wait_for(orchestrator._watcher_task, 1)
+            if orchestrator._compute_task is not None:
+                orchestrator._compute_task.cancel()
+                await asyncio.gather(orchestrator._compute_task, return_exceptions=True)
+            await watcher._drain_changes()
+
+    asyncio.run(run())
+
+
+def test_restart_preparation_preserves_admitted_shutdown_callback(tmp_path):
+    async def run():
+        watcher = module.BaseSessionsWatcher()
+        path = tmp_path / 'draining.jsonl'
+        path.write_bytes(b'{}\n')
+        entered, finish = asyncio.Event(), asyncio.Event()
+
+        async def process(*_args):
+            entered.set()
+            await finish.wait()
+            return module.SessionChangeResult('drained', watcher._queue.source_generation(path), 3)
+
+        watcher._process_change = process
+        waiter = asyncio.create_task(watcher.process_path(path))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            watcher.stop_watcher()
+            queue = watcher._queue
+            with pytest.raises(RuntimeError, match='shutdown'):
+                watcher.prepare_start()
+            assert watcher._queue is queue
+            assert not waiter.done()
+            finish.set()
+            await watcher._drain_changes()
+            await asyncio.wait_for(waiter, 1)
+            watcher.prepare_start()
+            assert not watcher._queue.closed
+        finally:
+            finish.set()
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+def test_cancelled_start_discards_unactivated_releases(tmp_path):
+    from twicc.core.enums import Provider
+    from twicc.providers.session_change_queue import MigrationRelease
+
+    async def run():
+        watcher = module.BaseSessionsWatcher()
+        watcher.projects_dir = tmp_path / 'missing'
+        watcher.get_compute = lambda: SimpleNamespace(provider=Provider.CODEX)
+        entered = asyncio.Event()
+
+        async def wait_for_directory():
+            entered.set()
+            await asyncio.Event().wait()
+
+        watcher._wait_for_projects_dir = wait_for_directory
+        watcher.notify_migration_released(MigrationRelease(
+            's', watcher.projects_dir / 's.jsonl', 'ready', True, None, 1003,
+        ))
+        producer = asyncio.create_task(watcher.start_watcher())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            producer.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await producer
+            assert watcher._queue.closed and watcher._queue.idle
+            assert watcher._consumer_task is None
+            watcher.prepare_start()
+        finally:
+            producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+
+    asyncio.run(run())
+
+
 def test_producer_repeated_cancellation_drains_callback_and_waiters(tmp_path, monkeypatch):
     from twicc.core.enums import Provider
     async def run():
@@ -856,6 +1051,62 @@ def test_stop_drains_identification_before_clearing_pending_release(tmp_path, mo
         await waiter
         assert not watcher._pending_source_releases
         assert watcher._consumer_task.done() and watcher._queue.idle
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'cancelled'])
+@pytest.mark.parametrize('same_session', [False, True], ids=['other-session', 'same-session'])
+def test_terminal_release_after_close_waits_for_admitted_identity(tmp_path, monkeypatch, outcome, same_session):
+    from twicc.core.models import SessionType
+    from twicc.providers.session_change_queue import MigrationRelease
+
+    async def run():
+        watcher = module.BaseSessionsWatcher()
+        path = tmp_path / 'identifying.jsonl'
+        path.write_bytes(b'{}\n')
+        parsed = module.ParsedSessionFile('p', 'current', SessionType.SESSION, path.name)
+        entered, identified = asyncio.Event(), asyncio.Event()
+        sliced = []
+
+        async def parse(source):
+            entered.set()
+            await identified.wait()
+            return parsed
+
+        async def process(source, *_args):
+            sliced.append(source)
+            return module.SessionChangeResult('drained', watcher._queue.source_generation(source), 3)
+
+        watcher.parse_session_file = parse
+        watcher._process_parsed_session_change = process
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        waiter = asyncio.create_task(watcher.process_path(path))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            watcher.stop_watcher()
+            watcher.notify_migration_released(MigrationRelease(
+                'current' if same_session else 'old', path, outcome, False, 'migration failed', 6002,
+            ))
+            drain = asyncio.create_task(watcher._drain_changes())
+            await asyncio.sleep(0)
+            assert not drain.done()
+            assert not waiter.done()
+            identified.set()
+            await asyncio.wait_for(drain, 1)
+            if same_session and outcome == 'cancelled':
+                with pytest.raises(asyncio.CancelledError):
+                    await waiter
+            else:
+                await asyncio.wait_for(waiter, 1)
+            assert sliced == ([] if same_session else [path])
+            assert not watcher._pending_source_releases
+            assert watcher._consumer_task.done() and watcher._queue.idle
+        finally:
+            identified.set()
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+            await asyncio.gather(waiter, return_exceptions=True)
+
     asyncio.run(run())
 
 

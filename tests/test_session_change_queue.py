@@ -270,3 +270,38 @@ def test_ready_release_during_close_preserves_preclose_dirty_turn(replay):
         await waiter
         assert q.idle
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('in_flight', [False, True], ids=['unstarted', 'active-turn'])
+def test_close_cancels_unstarted_admissions_without_discarding_active_turn(in_flight):
+    async def run():
+        module = queue_type()
+        q = module.SessionChangeQueue()
+        path = Path('unstarted-release')
+        target = module.PathDrainTarget(q.source_generation(path), 3)
+        q.enqueue(path, Change.modified)
+        waiter = asyncio.create_task(q.wait_drained(path, target=target))
+        await asyncio.sleep(0)
+        try:
+            if in_flight:
+                turn = await q.next_change()
+                with pytest.raises(RuntimeError, match='active turn'):
+                    q.close(cancel_pending=True)
+                q.close()
+                q.committed(path, target)
+                q.finish(turn, has_more=True)
+                await waiter
+            else:
+                q.close(cancel_pending=True)
+                with pytest.raises(asyncio.CancelledError):
+                    await waiter
+                with pytest.raises(asyncio.CancelledError):
+                    await q.next_change()
+            assert q.closed and q.idle
+            with pytest.raises(RuntimeError, match='closed'):
+                q.enqueue(path, Change.modified)
+        finally:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+
+    asyncio.run(run())
