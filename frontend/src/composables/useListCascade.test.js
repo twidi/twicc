@@ -1,7 +1,8 @@
 // Run with: node --test src/composables/useListCascade.test.js (from the frontend dir)
-// Session-list cascade (visual refresh step 5c, docs/plans/2026-09-29-list-cascade-scheme-reveal-design.md §4.3):
+// Sidebar list cascade (visual refresh step 5c, docs/plans/2026-09-29-list-cascade-scheme-reveal-design.md §4.3):
 // the composable's state, driven in an effect scope with fake timers and animation frames,
-// and the SessionList.vue wiring (file scan, §4.4).
+// the SessionList.vue wiring (file scan, §4.4), and the ArtifactBookmarkList.vue / data.js
+// wiring (file scan, docs/plans/2026-09-29-accent-glow-design.md §17.4).
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -418,4 +419,72 @@ test('14. SessionList.vue wiring', () => {
     assert.match(bind, /draftId !== sessionId/)
     assert.match(bind, /store\.sessions\[draftId\]/)
     assert.ok(bind.includes('cascade.dropLive('))
+})
+
+test('15. ArtifactBookmarkList.vue wiring', () => {
+    const here = dirname(fileURLToPath(import.meta.url))
+    const sfc = readFileSync(join(here, '../components/artifacts/ArtifactBookmarkList.vue'), 'utf8')
+    const script = sfc.match(/<script setup>([\s\S]*?)<\/script>/)[1]
+    const template = sfc.slice(sfc.indexOf('<template>'), sfc.indexOf('<style'))
+    const flat = (text) => text.replace(/\s+/g, ' ')
+
+    // The arrival waits for the bookmarks and the projects.
+    assert.match(flat(script), /const listReady = computed\(\(\) => dataStore\.artifactBookmarksLoaded && dataStore\.projectsLoaded\)/)
+
+    // The call: before the activeBookmarkId watcher, the unfiltered size gated on listReady,
+    // the scope key naming the list the sidebar shows.
+    const composableAt = script.indexOf('useListCascade(')
+    const activeWatchAt = script.indexOf('watch(() => props.activeBookmarkId')
+    assert.ok(composableAt > 0, 'useListCascade( is called')
+    assert.ok(activeWatchAt > 0, 'the activeBookmarkId watcher')
+    assert.ok(composableAt < activeWatchAt, 'the composable exists before the activeBookmarkId watcher')
+    const call = flat(script.slice(composableAt, script.indexOf('})', composableAt)))
+    assert.match(call, /items: list,/)
+    assert.match(call, /getKey: \(b\) => b\.id,/)
+    assert.match(call, /sourceSize: \(\) => \(listReady\.value \? scoped\.value\.length : 0\),/)
+    assert.match(call, /scopeKey: \(\) => \(props\.showAllArtifacts \? 'all' : \(props\.effectiveProjectId \?\? ''\)\),/)
+    assert.match(call, /getVisibleRange: visibleEntryRange,/)
+    assert.match(script, /visibleIndexRange\(/, 'the range maths live in utils/listCascade.js')
+
+    // One element per bookmark carries the cascade's class and style.
+    const entry = template.match(/<div\b(?:[^>"]|"[^"]*")*class="bookmark-entry"(?:[^>"]|"[^"]*")*>/)
+    assert.ok(entry, 'a .bookmark-entry element')
+    assert.match(entry[0], /v-for="\(b, index\) in list"/)
+    assert.match(entry[0], /:class="cascade\.itemClass\(b\)"/)
+    assert.match(entry[0], /:style="cascade\.itemStyle\(b\)"/)
+
+    // scrollRowIntoView selects the entries and returns the promise it scrolls in.
+    const scrollFn = script.slice(script.indexOf('function scrollRowIntoView('), script.indexOf('\n}', script.indexOf('function scrollRowIntoView(')))
+    assert.ok(scrollFn.includes("':scope > .bookmark-entry'"), 'it selects the entries')
+    assert.match(scrollFn, /return nextTick\(/, 'it returns its nextTick promise')
+    assert.ok(!script.includes('.bookmark-item-wrapper'), 'no .bookmark-item-wrapper query left')
+
+    // Both reveal watchers hold the cascade on the open row.
+    const activeWatch = script.slice(activeWatchAt, script.indexOf('})', activeWatchAt) + 30)
+    assert.ok(activeWatch.includes('cascade.holdTarget('), 'the activeBookmarkId watcher holds')
+    assert.match(activeWatch, /\{ immediate: true \}\)/)
+    const readyWatchAt = script.indexOf('watch(() => listReady.value && scoped.value.some(isActive)')
+    assert.ok(readyWatchAt > 0, 'a watcher on the open row joining the complete list')
+    const readyWatch = script.slice(readyWatchAt, script.indexOf('})', readyWatchAt) + 30)
+    assert.ok(readyWatch.includes('cascade.holdTarget('), 'it holds')
+    assert.match(readyWatch, /\{ flush: 'post' \}\)/, "flush: 'post', not immediate")
+
+    // Live entrances: one action, the subscription removed on unmount.
+    const onAction = flat(script.slice(script.indexOf('dataStore.$onAction(')))
+    assert.match(script, /const \w+ = dataStore\.\$onAction\(/, 'the subscription is kept')
+    assert.match(onAction, /name === 'upsertArtifactBookmark'\) cascade\.noteLive\(args\[0\]\?\.id\)/)
+    const stop = script.match(/const (\w+) = dataStore\.\$onAction\(/)[1]
+    assert.match(flat(script), new RegExp(`onBeforeUnmount\\(\\(\\) => \\{[^}]*\\b${stop}\\(\\)`), 'removed on unmount')
+})
+
+test('16. data.js: projectsLoaded, and creation through upsertArtifactBookmark', () => {
+    const here = dirname(fileURLToPath(import.meta.url))
+    const store = readFileSync(join(here, '../stores/data.js'), 'utf8')
+    assert.match(store, /\n {8}projectsLoaded: false,/, 'a state flag')
+    const load = store.slice(store.indexOf('async loadHomeData()'), store.indexOf('\n        },', store.indexOf('async loadHomeData()')))
+    const fin = load.slice(load.lastIndexOf('} finally {'))
+    assert.ok(fin.includes('this.projectsLoaded = true'), "set in loadHomeData's finally")
+    const create = store.slice(store.indexOf('async createArtifactBookmark('), store.indexOf('\n        },', store.indexOf('async createArtifactBookmark(')))
+    assert.ok(create.includes('this.upsertArtifactBookmark(b)'), 'stored through upsertArtifactBookmark')
+    assert.ok(!create.includes('this.artifactBookmarks[b.id] = b'), 'no direct assignment left')
 })

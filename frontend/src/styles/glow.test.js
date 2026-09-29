@@ -293,16 +293,16 @@ test('10. TabBar: a thicker glowing gradient strip', () => {
     assert.equal(bar.decls['--glow-ink-thickness'], '2px')
 })
 
-test('11. the open session row: lit, and a thicker ring when multi-selected', () => {
-    const rules = parseCss(styleOf(read('../components/session/list/SessionListItem.vue')))
-    const ACTIVE = '.session-item--active::part(base)'
-    const SELECTED_ACTIVE = '.session-item-wrapper--selected .session-item--active::part(base)'
+test('11. the open sidebar row: lit, and a thicker ring when multi-selected (§7, §17.3)', () => {
+    const rules = parseCss(read('sidebar-rows.css'))
+    const ACTIVE = '.sidebar-row--active::part(base)'
+    const SELECTED_ACTIVE = '.sidebar-row-wrapper--selected .sidebar-row--active::part(base)'
     const lit = rule(rules, [ACTIVE, SELECTED_ACTIVE], topLevel)
     assert.ok(lit.decls['border-color'], 'border-color')
     assert.equal(lit.decls['background-origin'], 'border-box')
     assert.match(lit.decls['background-image'], /^linear-gradient\(100deg, var\(--wa-color-brand-fill-normal\), /)
     assert.equal(lit.decls.color, 'var(--wa-color-brand-on-quiet)')
-    const multi = rule(rules, ['.session-item-wrapper--selected .session-item::part(base)'], topLevel)
+    const multi = rule(rules, ['.sidebar-row-wrapper--selected .sidebar-row::part(base)'], topLevel)
     assert.ok(lit.order > multi.order, 'after the multi-select rule')
     const dark = rule(rules, [`html.wa-dark ${ACTIVE}`], topLevel)
     assert.match(dark.decls['background-image'], /^linear-gradient\(100deg, oklch\(from var\(--wa-color-brand-60\) /)
@@ -310,6 +310,14 @@ test('11. the open session row: lit, and a thicker ring when multi-selected', ()
         const r = rule(rules, [selector], topLevel)
         assert.equal(r.decls['border-color'], 'var(--wa-color-brand-60)', selector)
         assert.match(r.decls['box-shadow'], /^inset 0 0 0 1px var\(--wa-color-brand-60\), /, selector)
+        assert.ok(r.order > lit.order, `${selector}: after the open rule`)
+    }
+    // No copy left in the components: the global rules are the only ones.
+    for (const file of ['../components/session/list/SessionListItem.vue', '../components/artifacts/ArtifactBookmarkList.vue']) {
+        const leftovers = parseCss(styleOf(read(file)))
+            .flatMap((r) => r.selectors)
+            .filter((s) => /--(active|selected)\b[^,]*::part\(base\)/.test(s))
+        assert.deepEqual(leftovers, [], `${file}: no --active / --selected ::part(base) rule`)
     }
 })
 

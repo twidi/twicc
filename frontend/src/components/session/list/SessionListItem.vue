@@ -427,13 +427,16 @@ function handleMenuSelect(event) {
 
 <template>
     <div
-        class="session-item-wrapper"
+        class="session-item-wrapper sidebar-row-wrapper"
         :class="{
             'session-item-wrapper--active': active,
             'session-item-wrapper--highlighted': highlighted,
             'session-item-wrapper--compact': compactView,
             'session-item-wrapper--drag-pending': isDragPending,
             'session-item-wrapper--selected': selected,
+            'sidebar-row-wrapper--active': active,
+            'sidebar-row-wrapper--compact': compactView,
+            'sidebar-row-wrapper--selected': selected,
         }"
         @dragenter="onDragenter"
         @dragleave="onDragleave"
@@ -445,10 +448,12 @@ function handleMenuSelect(event) {
             :href="sessionHref"
             :appearance="active ? 'outlined' : 'plain'"
             :variant="active ? 'brand' : 'neutral'"
-            class="session-item"
+            class="session-item sidebar-row"
             :class="{
                 'session-item--active': active,
-                'session-item--highlighted': highlighted
+                'session-item--highlighted': highlighted,
+                'sidebar-row--active': active,
+                'sidebar-row--highlighted': highlighted
             }"
             @click="handleClick"
             @mousedown="handleMousedown"
@@ -603,7 +608,7 @@ function handleMenuSelect(event) {
         <AppTooltip v-if="showTitleTooltip" :for="`session-button-${session.id}`" placement="right">{{ session.title || session.id }}</AppTooltip>
         <!-- Session dropdown menu (outside button to avoid nesting issues) -->
         <wa-dropdown
-            class="session-menu"
+            class="session-menu sidebar-row-menu"
             placement="bottom-end"
             @wa-select="handleMenuSelect"
         >
@@ -613,7 +618,7 @@ function handleMenuSelect(event) {
                 variant="neutral"
                 appearance="plain"
                 size="small"
-                class="session-menu-trigger"
+                class="session-menu-trigger sidebar-row-menu-trigger"
             >
                 <wa-icon name="ellipsis-v" label="Session menu"></wa-icon>
             </wa-button>
@@ -701,70 +706,10 @@ function handleMenuSelect(event) {
 .ephemeral-icon.error { color: var(--wa-color-danger-60); }
 .ephemeral-icon.lost { color: var(--wa-color-warning-60); }
 
+/* Row look (padding, keyboard highlight, multi-select fill, the lit open row, the row
+   menu): styles/sidebar-rows.css, shared with the artifacts list. */
 .session-item-wrapper {
-    position: relative;
-    width: 100%;
     padding-inline: var(--wa-space-2xs);
-}
-
-
-.session-item {
-    width: 100%;
-}
-
-.session-item::part(base) {
-    padding: var(--wa-space-xs);
-    height: auto;
-    margin-bottom: var(--wa-shadow-offset-y-s);  /* default if border, enforce for non active items to avoid movement */
-}
-
-/* Keyboard navigation highlight */
-.session-item--highlighted::part(base) {
-    outline: var(--wa-focus-ring);
-    outline-offset: var(--wa-focus-ring-offset);
-}
-
-/* Multi-select mode: selected item */
-.session-item-wrapper--selected .session-item::part(base) {
-    background-color: var(--wa-color-brand-fill-quiet);
-    box-shadow: inset 0 0 0 1px var(--wa-color-brand-border-quiet);
-}
-
-/* The open session: a lit fill fading to the right, a thin accent ring, a soft accent
-   shadow (visual refresh 6a). No bar on its left (user decision). The ring is the
-   outlined button's own 1px border, recoloured, so it sits on the edge of the fill (an
-   inset shadow would float 1px inside it). The second selector ties with the
-   multi-select rule above and comes after it. */
-.session-item--active::part(base),
-.session-item-wrapper--selected .session-item--active::part(base) {
-    border-color: color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
-    background-origin: border-box;
-    background-image: linear-gradient(100deg, var(--wa-color-brand-fill-normal), color-mix(in oklab, var(--wa-color-brand-fill-quiet) 70%, transparent));
-    box-shadow: 0 2px 10px -4px color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
-    color: var(--wa-color-brand-on-quiet);
-}
-html.wa-dark .session-item--active::part(base) {
-    border-color: oklch(from var(--wa-color-brand-60) 0.6 0.11 h / 0.45);
-    background-image: linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.32 0.07 h), oklch(from var(--wa-color-brand-60) 0.25 0.05 h / 0.6));
-    box-shadow: 0 2px 12px -4px oklch(from var(--wa-color-brand-60) 0.6 0.13 h / 0.5);
-    color: oklch(from var(--wa-color-brand-60) 0.88 0.08 h);
-}
-/* Open and multi-selected: the selection has no other marker than its fill, so it shows
-   as a thicker accent ring (the border plus 1px inside) on top of the lit look. */
-.session-item-wrapper--selected .session-item--active::part(base) {
-    border-color: var(--wa-color-brand-60);
-    box-shadow: inset 0 0 0 1px var(--wa-color-brand-60),
-        0 2px 10px -4px color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
-}
-html.wa-dark .session-item-wrapper--selected .session-item--active::part(base) {
-    border-color: var(--wa-color-brand-60);
-    box-shadow: inset 0 0 0 1px var(--wa-color-brand-60),
-        0 2px 12px -4px oklch(from var(--wa-color-brand-60) 0.6 0.13 h / 0.5);
-}
-
-.session-item::part(label) {
-    width: 100%;
-    text-align: left;
 }
 
 .session-name-row {
@@ -849,36 +794,6 @@ html.wa-dark .session-item-wrapper--selected .session-item--active::part(base) {
     flex-shrink: 0;
     position: relative;
     left: -1.5rem;
-}
-
-/* Session dropdown menu */
-.session-menu {
-    display: block;
-    position: absolute;
-    top: var(--wa-space-2xs);
-    right: var(--wa-space-xs);
-    z-index: 1;
-}
-.session-item-wrapper--compact .session-menu {
-    top: 0;
-    right: var(--wa-space-xs);
-}
-
-.session-menu-trigger {
-    opacity: 0.4;
-    transition: opacity 0.15s;
-    font-size: var(--wa-font-size-2xs);
-}
-
-/* Show menu trigger on hover or when dropdown is open */
-.session-item-wrapper:hover .session-menu-trigger,
-.session-item-wrapper--active .session-menu-trigger,
-.session-menu[open] .session-menu-trigger {
-    opacity: 0.6;
-}
-
-.session-menu-trigger:hover {
-    opacity: 1 !important;
 }
 
 /* Unread indicator — orange eye icon (same color as warning/pending) */
@@ -1007,11 +922,6 @@ html.wa-dark .session-item-wrapper--selected .session-item--active::part(base) {
 
 .session-meta--no-cost {
     grid-template-columns: 1fr 1fr;
-}
-
-/* Compact mode: tighter padding */
-.session-item-wrapper--compact .session-item::part(base) {
-    padding-block: var(--wa-space-2xs);
 }
 
 /* Responsive: container queries reference the 'session-list' container

@@ -1,0 +1,113 @@
+/* Sidebar list rows — shared by the session list (SessionListItem.vue) and the artifacts
+   list (ArtifactBookmarkList.vue), visual refresh step 6a.
+   Design: docs/plans/2026-09-29-accent-glow-design.md §7 (the lit open row) and §17.3.
+   SPA only: the share viewer and the artifact shell have no sidebar.
+
+   Global because Vue scoped CSS cannot be shared between two components: both lists put
+   the sidebar-row* classes next to their own, and every rule of the row look lives here.
+   Unlayered, like glow.css. Specificity: multi-select (0,2,1); open (0,1,1) with a tie
+   selector (0,2,1) later in the file, so an open selected row keeps the lit fill; dark open
+   (0,2,2); open-and-selected (0,2,1) after the open rule, dark (0,3,2). */
+
+/* Row wrapper: positioning context for the absolutely-placed row menu. The gap between
+   rows stays with each list (the peer message review dialog's picker renders session rows
+   without it). */
+.sidebar-row-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.sidebar-row {
+    width: 100%;
+}
+
+.sidebar-row::part(base) {
+    padding: var(--wa-space-xs);
+    height: auto;
+    /* Reserve the outlined-appearance shadow offset so the open row does not shift the
+       others. */
+    margin-bottom: var(--wa-shadow-offset-y-s);
+}
+
+.sidebar-row::part(label) {
+    width: 100%;
+    text-align: left;
+}
+
+/* Compact mode: tighter padding. */
+.sidebar-row-wrapper--compact .sidebar-row::part(base) {
+    padding-block: var(--wa-space-2xs);
+}
+
+/* Keyboard navigation highlight. */
+.sidebar-row--highlighted::part(base) {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
+}
+
+/* Multi-select mode: selected row (only the session list sets --selected). */
+.sidebar-row-wrapper--selected .sidebar-row::part(base) {
+    background-color: var(--wa-color-brand-fill-quiet);
+    box-shadow: inset 0 0 0 1px var(--wa-color-brand-border-quiet);
+}
+
+/* The open row: a lit fill fading to the right, a thin accent ring, a soft accent shadow.
+   No bar on its left (user decision). The ring is the outlined button's own 1px border,
+   recoloured, so it sits on the edge of the fill (an inset shadow would float 1px inside
+   it). The second selector ties with the multi-select rule above and comes after it. */
+.sidebar-row--active::part(base),
+.sidebar-row-wrapper--selected .sidebar-row--active::part(base) {
+    border-color: color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
+    background-origin: border-box;
+    background-image: linear-gradient(100deg, var(--wa-color-brand-fill-normal), color-mix(in oklab, var(--wa-color-brand-fill-quiet) 70%, transparent));
+    box-shadow: 0 2px 10px -4px color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
+    color: var(--wa-color-brand-on-quiet);
+}
+html.wa-dark .sidebar-row--active::part(base) {
+    border-color: oklch(from var(--wa-color-brand-60) 0.6 0.11 h / 0.45);
+    background-image: linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.32 0.07 h), oklch(from var(--wa-color-brand-60) 0.25 0.05 h / 0.6));
+    box-shadow: 0 2px 12px -4px oklch(from var(--wa-color-brand-60) 0.6 0.13 h / 0.5);
+    color: oklch(from var(--wa-color-brand-60) 0.88 0.08 h);
+}
+/* Open and multi-selected: the selection has no other marker than its fill, so it shows
+   as a thicker accent ring (the border plus 1px inside) on top of the lit look. */
+.sidebar-row-wrapper--selected .sidebar-row--active::part(base) {
+    border-color: var(--wa-color-brand-60);
+    box-shadow: inset 0 0 0 1px var(--wa-color-brand-60),
+        0 2px 10px -4px color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
+}
+html.wa-dark .sidebar-row-wrapper--selected .sidebar-row--active::part(base) {
+    border-color: var(--wa-color-brand-60);
+    box-shadow: inset 0 0 0 1px var(--wa-color-brand-60),
+        0 2px 12px -4px oklch(from var(--wa-color-brand-60) 0.6 0.13 h / 0.5);
+}
+
+/* Row menu, tucked into the row's top-right corner (outside the row button, which is a
+   link and cannot nest it). */
+.sidebar-row-menu {
+    display: block;
+    position: absolute;
+    top: var(--wa-space-2xs);
+    right: var(--wa-space-xs);
+    z-index: 1;
+}
+.sidebar-row-wrapper--compact .sidebar-row-menu {
+    top: 0;
+}
+
+.sidebar-row-menu-trigger {
+    opacity: 0.4;
+    transition: opacity 0.15s;
+    font-size: var(--wa-font-size-2xs);
+}
+
+/* Half-visible on hover, on the open row, or while the menu is open. */
+.sidebar-row-wrapper:hover .sidebar-row-menu-trigger,
+.sidebar-row-wrapper--active .sidebar-row-menu-trigger,
+.sidebar-row-menu[open] .sidebar-row-menu-trigger {
+    opacity: 0.6;
+}
+
+.sidebar-row-menu-trigger:hover {
+    opacity: 1 !important;
+}

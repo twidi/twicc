@@ -19,6 +19,8 @@ import './styles/motion.css'
 import './styles/glow.css'
 // Canvas + floating-panel tokens (SPA only — the share bundle does not import it).
 import './styles/surfaces.css'
+// Sidebar list rows, shared by the session and artifact lists (SPA only).
+import './styles/sidebar-rows.css'
 import '@awesome.me/webawesome/dist/components/badge/badge.js'
 import '@awesome.me/webawesome/dist/components/button/button.js'
 import '@awesome.me/webawesome/dist/components/button-group/button-group.js'

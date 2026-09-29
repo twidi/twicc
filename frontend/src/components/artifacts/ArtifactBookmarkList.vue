@@ -6,18 +6,22 @@
 // mirroring session pins) and
 // filtered by the shared matchQuery util on name + relative_path.
 //
-// Rows reuse the exact session-list styling and link behaviour: each row is a
-// wa-button rendered as an anchor, `plain`/`neutral` by default and
+// Rows share the session list's styling (styles/sidebar-rows.css) and link
+// behaviour: each row is a wa-button rendered as an anchor, `plain`/`neutral` by default and
 // `outlined`/`brand` when it is the artifact currently open in the main pane
 // (--active), with a focus-ring --highlighted state for keyboard navigation.
 // Bookmark lists are small, so there is no virtual scroller — but the
 // keyboard-navigation contract mirrors SessionList (handleKeyNavigation
-// exposed, focus-search emitted on ArrowUp from the top).
+// exposed, focus-search emitted on ArrowUp from the top). The rows on screen cascade
+// in when a scope's list arrives, and a new bookmark enters alone, like sessions
+// (useListCascade; design: docs/plans/2026-09-29-accent-glow-design.md §17.4).
 import { computed, ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { useSettingsStore } from '../../stores/settings'
+import { useListCascade } from '../../composables/useListCascade'
+import { visibleIndexRange } from '../../utils/listCascade'
 import { computeArtifactBookmarkList } from '../../utils/sidebarArtifactBookmarks'
 import { matchQuery } from '../../utils/textFilter'
 import { artifactBookmarkRouteLocation, artifactTypeIcon } from '../../utils/artifactBookmark'
@@ -53,19 +57,29 @@ const settingsStore = useSettingsStore()
 const route = useRoute()
 const router = useRouter()
 
+// The bookmarks of the sidebar scope, before the search filter (the cascade's
+// source size, like allSessions for sessions)...
+const scoped = computed(() => computeArtifactBookmarkList({
+    bookmarks: dataStore.artifactBookmarks,
+    workspaces: workspacesStore,
+    effectiveProjectId: props.effectiveProjectId,
+    activeWorkspaceId: props.activeWorkspaceId,
+    mainProjectId: dataStore.getMainRepoProjectId(props.effectiveProjectId),
+    showAll: props.showAllArtifacts,
+}))
+
+// ...and the rendered rows: filtered by the search query.
 const list = computed(() => {
-    let rows = computeArtifactBookmarkList({
-        bookmarks: dataStore.artifactBookmarks,
-        workspaces: workspacesStore,
-        effectiveProjectId: props.effectiveProjectId,
-        activeWorkspaceId: props.activeWorkspaceId,
-        mainProjectId: dataStore.getMainRepoProjectId(props.effectiveProjectId),
-        showAll: props.showAllArtifacts,
-    })
     const q = props.searchQuery.trim()
-    if (q) rows = rows.filter(b => matchQuery(q, b.name) || matchQuery(q, b.relative_path))
-    return rows
+    if (!q) return scoped.value
+    return scoped.value.filter(b => matchQuery(q, b.name) || matchQuery(q, b.relative_path))
 })
+
+// The scoped list is complete once both boot loads are in: the bookmarks (a
+// bookmark's detail, fetched by the open artifact's view, may land first and
+// store that one alone) and the projects (the scope maps a worktree to its main
+// repository through them). The cascade's arrival waits for both.
+const listReady = computed(() => dataStore.artifactBookmarksLoaded && dataStore.projectsLoaded)
 
 // Publish the rendered count (search filter included) so ProjectView's
 // `data-has-items` presence flag tracks the artifacts mode exactly as
@@ -74,7 +88,11 @@ const list = computed(() => {
 watch(() => list.value.length, (count) => {
     dataStore.setDisplayedArtifactBookmarkCount(count)
 }, { immediate: true })
-onBeforeUnmount(() => dataStore.setDisplayedArtifactBookmarkCount(0))
+// Also removes the live-bookmark subscription (declared with the cascade below).
+onBeforeUnmount(() => {
+    dataStore.setDisplayedArtifactBookmarkCount(0)
+    stopLiveBookmarks()
+})
 
 /** Whether a bookmark is the one currently open in the main pane. */
 function isActive(b) {
@@ -242,13 +260,30 @@ const listRef = ref(null)
 const highlightedIndex = ref(-1)
 const PAGE_SIZE = 10
 
-/** Scroll the row at `index` into view (no virtual scroller — plain DOM). */
+/**
+ * Scroll the row at `index` into view (no virtual scroller — plain DOM).
+ * Returns the promise it scrolls in (the cascade's start waits for it).
+ */
 function scrollRowIntoView(index) {
     if (index < 0) return
-    nextTick(() => {
-        const rows = listRef.value?.querySelectorAll(':scope > .bookmark-item-wrapper')
-        rows?.[index]?.scrollIntoView({ block: 'nearest' })
+    return nextTick(() => {
+        const entries = listRef.value?.querySelectorAll(':scope > .bookmark-entry')
+        entries?.[index]?.scrollIntoView({ block: 'nearest' })
     })
+}
+
+/**
+ * The entries on screen, { start, end } with `end` exclusive (the range
+ * contract of VirtualScroller.getVisibleRange); null when the list is not
+ * mounted or has no size (hidden sidebar mode: the rows show at once).
+ */
+function visibleEntryRange() {
+    const el = listRef.value
+    if (!el) return null
+    const view = el.getBoundingClientRect()
+    if (!view.width || !view.height) return null
+    const entries = [...el.children].filter((child) => child.classList.contains('bookmark-entry'))
+    return visibleIndexRange(entries.map((entry) => entry.getBoundingClientRect()), view)
 }
 
 /**
@@ -355,19 +390,53 @@ function handleListKeydown(event) {
     if (handleKeyNavigation(event)) event.preventDefault()
 }
 
+// Entrances (visual refresh step 5c, artifacts list: accent glow §17.4): the rows
+// on screen cascade in when a scope's list arrives; a new bookmark enters alone.
+// The key names the list the sidebar shows: with "show all" on, every bookmark,
+// whatever the project; otherwise the project id (it encodes the workspace in
+// all-projects mode). Declared before the activeBookmarkId watcher: its
+// immediate run holds the cascade's start on the open row.
+const cascade = useListCascade({
+    items: list,
+    getKey: (b) => b.id,
+    sourceSize: () => (listReady.value ? scoped.value.length : 0),
+    scopeKey: () => (props.showAllArtifacts ? 'all' : (props.effectiveProjectId ?? '')),
+    getVisibleRange: visibleEntryRange,
+})
+
+// Live ids: a bookmark created in this tab or received from the server (one
+// action for both). Noted before the mutation; the full snapshot
+// (setArtifactBookmarks) and a detail refresh are not live.
+const stopLiveBookmarks = dataStore.$onAction(({ name, args }) => {
+    if (name === 'upsertArtifactBookmark') cascade.noteLive(args[0]?.id)
+})
+
 // Reset the highlight whenever the list contents change out from under it.
 watch(() => props.searchQuery, () => { highlightedIndex.value = -1 })
 watch(() => props.effectiveProjectId, () => { highlightedIndex.value = -1 })
 watch(() => props.activeWorkspaceId, () => { highlightedIndex.value = -1 })
 
 // When the open bookmark changes, drop any keyboard highlight and reveal the
-// newly-active row (mirrors SessionList scrolling to the selected session).
+// newly-active row (mirrors SessionList scrolling to the selected session). The
+// cascade's start waits (capped) for that scroll when the row is off screen.
 watch(() => props.activeBookmarkId, (id) => {
     highlightedIndex.value = -1
     if (id == null) return
     const i = list.value.findIndex(b => isActive(b))
-    if (i >= 0) scrollRowIntoView(i)
+    if (i >= 0) cascade.holdTarget(list.value[i].id, scrollRowIntoView(i))
 }, { immediate: true })
+
+// Reveal the open row when it joins the complete scoped list (the reload case:
+// the list mounts before the bookmarks load, so the watcher above saw an empty
+// list). On `scoped`, not the filtered list: the search filter never scrolls.
+// flush 'post': it runs after the cascade's pre-flush watcher has started the
+// arrival, whatever order Vue queues the pre jobs in. Not immediate: at mount,
+// the watcher above handles an open row already listed.
+watch(() => listReady.value && scoped.value.some(isActive), (hasOpenRow) => {
+    if (!hasOpenRow) return
+    const i = list.value.findIndex(isActive)
+    if (i >= 0) cascade.holdTarget(list.value[i].id, scrollRowIntoView(i))
+}, { flush: 'post' })
 
 defineExpose({ handleKeyNavigation })
 </script>
@@ -388,24 +457,38 @@ defineExpose({ handleKeyNavigation })
             tabindex="0"
             @keydown="handleListKeydown"
         >
-            <template v-for="(b, index) in list" :key="b.id">
+            <!-- One element per bookmark, holding its separator and its row, so
+                 both enter together (the cascade's classes land here). -->
+            <div
+                v-for="(b, index) in list"
+                :key="b.id"
+                class="bookmark-entry"
+                :class="cascade.itemClass(b)"
+                :style="cascade.itemStyle(b)"
+            >
             <SidebarListSeparator
                 v-if="separatorBeforeIds.has(b.id)"
                 v-bind="separatorBeforeIds.get(b.id)"
             />
             <div
-                class="bookmark-item-wrapper"
-                :class="{ 'bookmark-item-wrapper--compact': compactView }"
+                class="bookmark-item-wrapper sidebar-row-wrapper"
+                :class="{
+                    'bookmark-item-wrapper--compact': compactView,
+                    'sidebar-row-wrapper--active': isActive(b),
+                    'sidebar-row-wrapper--compact': compactView,
+                }"
             >
             <wa-button
                 :href="bookmarkHref(b)"
                 :appearance="isActive(b) ? 'outlined' : 'plain'"
                 :variant="isActive(b) ? 'brand' : 'neutral'"
-                class="bookmark-item"
+                class="bookmark-item sidebar-row"
                 :class="{
                     'bookmark-item--active': isActive(b),
                     'bookmark-item--highlighted': index === highlightedIndex,
                     'bookmark-item--compact': compactView,
+                    'sidebar-row--active': isActive(b),
+                    'sidebar-row--highlighted': index === highlightedIndex,
                 }"
                 @click="(event) => handleClick(event, b)"
             >
@@ -444,7 +527,7 @@ defineExpose({ handleKeyNavigation })
                  the ArtifactsBrowserView header. Share is gated on a configured
                  share host. -->
             <wa-dropdown
-                class="bookmark-menu"
+                class="bookmark-menu sidebar-row-menu"
                 placement="bottom-end"
                 @wa-select="(e) => handleMenuSelect(e, b)"
             >
@@ -454,7 +537,7 @@ defineExpose({ handleKeyNavigation })
                     variant="neutral"
                     appearance="plain"
                     size="small"
-                    class="bookmark-menu-trigger"
+                    class="bookmark-menu-trigger sidebar-row-menu-trigger"
                 >
                     <wa-icon name="ellipsis-v" label="Artifact actions"></wa-icon>
                 </wa-button>
@@ -478,7 +561,7 @@ defineExpose({ handleKeyNavigation })
             </wa-dropdown>
             <AppTooltip :for="`bookmark-menu-trigger-${b.id}`">Artifact actions</AppTooltip>
             </div>
-            </template>
+            </div>
         </div>
 
         <!-- Edit dialog, retargeted at the row being edited (one instance for the
@@ -519,67 +602,11 @@ defineExpose({ handleKeyNavigation })
     outline: none;
 }
 
-/* Row wrapper: positioning context for the absolutely-placed actions menu, and
-   the flex child that now carries the inter-row gap (moved off the button so the
-   menu overlays the row cleanly, mirroring SessionListItem). */
-.bookmark-item-wrapper {
-    position: relative;
-    width: 100%;
-}
+/* Row look (padding, keyboard highlight, the lit open row, the row menu):
+   styles/sidebar-rows.css, shared with the session list. Here only the gap between
+   rows, the same as the session list's (SessionList.vue). */
 .bookmark-item-wrapper:not(.bookmark-item-wrapper--compact) {
     margin-block: var(--wa-space-3xs);
-}
-
-.bookmark-item {
-    width: 100%;
-}
-
-/* Actions menu, tucked into the row's top-right corner and revealed on hover
-   (or while open), exactly like the session list's row menu. */
-.bookmark-menu {
-    display: block;
-    position: absolute;
-    top: var(--wa-space-2xs);
-    right: var(--wa-space-xs);
-    z-index: 1;
-}
-.bookmark-item-wrapper--compact .bookmark-menu {
-    top: 0;
-}
-.bookmark-menu-trigger {
-    opacity: 0.4;
-    transition: opacity 0.15s;
-    font-size: var(--wa-font-size-2xs);
-}
-.bookmark-item-wrapper:hover .bookmark-menu-trigger,
-.bookmark-menu[open] .bookmark-menu-trigger {
-    opacity: 0.6;
-}
-.bookmark-menu-trigger:hover {
-    opacity: 1 !important;
-}
-
-.bookmark-item::part(base) {
-    padding: var(--wa-space-xs);
-    height: auto;
-    /* Reserve the outlined-appearance shadow offset so the active row doesn't
-       shift the others (matches SessionListItem). */
-    margin-bottom: var(--wa-shadow-offset-y-s);
-}
-
-.bookmark-item--compact::part(base) {
-    padding-block: var(--wa-space-2xs);
-}
-
-.bookmark-item::part(label) {
-    width: 100%;
-    text-align: left;
-}
-
-/* Keyboard navigation highlight */
-.bookmark-item--highlighted::part(base) {
-    outline: var(--wa-focus-ring);
-    outline-offset: var(--wa-focus-ring-offset);
 }
 
 .bookmark-name-row {

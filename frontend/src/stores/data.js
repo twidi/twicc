@@ -455,6 +455,9 @@ export const useDataStore = defineStore('data', {
     state: () => ({
         // Server data
         projects: {},       // { id: { id, sessions_count, mtime, stale, worktree_of } } — worktree_of: parent project id when this project is a git worktree, else null
+        // True once loadHomeData has run to its end (success or not): the projects that map a
+        // worktree to its main repository are in. The artifacts list's arrival waits for it.
+        projectsLoaded: false,
         sessions: {},       // { id: { id, project_id, provider, last_line, mtime, stale } }
         artifactBookmarks: {},      // { id: { id, name, scope, session_id, project_id, relative_path, root, file_ext, available? } } — artifact bookmarks
         artifactBookmarksLoaded: false,
@@ -2308,6 +2311,7 @@ export const useDataStore = defineStore('data', {
                 if (isInitialLoad) {
                     this.localState.projectsList.loading = false
                 }
+                this.projectsLoaded = true
             }
         },
         /**
@@ -2607,7 +2611,8 @@ export const useDataStore = defineStore('data', {
                 throw new Error(err?.error || 'Failed to create artifact bookmark')
             }
             const b = await res.json()
-            this.artifactBookmarks[b.id] = b
+            // Through the live entry point: the artifacts list plays the new row's entrance.
+            this.upsertArtifactBookmark(b)
             return b
         },
         async updateArtifactBookmark(id, patch) {

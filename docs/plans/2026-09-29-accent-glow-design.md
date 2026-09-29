@@ -866,3 +866,308 @@ These override the sections they name.
   `var(--wa-color-neutral-fill-normal)`: since step 1 the footer sits on the canvas, whose
   lightness equals `neutral-fill-quiet`'s, so the lane had vanished (a step-1 regression,
   fixed here).
+
+## 17. Amendment — the artifacts list gets the session list's look and motion (user, 2026-09-29)
+
+### 17.1 User decision — do not reopen
+
+For the user, the sidebar's two lists are one component: one lists sessions, the other
+artifact bookmarks. Everything this branch gave the session list applies to the artifacts
+list, with the **same rendering and behaviour**, through **shared code** (no duplicated
+rules). Shipped in its own commit after 6a (`655c65a9`).
+
+### 17.2 Today (checked, working tree at `655c65a9`)
+
+- **Rows.** Both rows are a `wa-button` with `href`, `appearance` `outlined` / `plain`
+  and `variant` `brand` / `neutral` by active state:
+  - sessions: `components/session/list/SessionListItem.vue:443-455` (`.session-item`,
+    `--active`, `--highlighted`), wrapper `div.session-item-wrapper` with `--active`,
+    `--highlighted`, `--compact`, `--drag-pending`, `--selected` (`:428-437`); also
+    rendered by `PeerMessageReviewDialog.vue` (session picker);
+  - artifacts: inline in `components/artifacts/ArtifactBookmarkList.vue:400-470`
+    (`.bookmark-item`, `--active`, `--highlighted`, `--compact`), wrapper
+    `div.bookmark-item-wrapper` with `--compact` only (`:396-399`). Its header comment
+    (`:9-12`) says the rows "reuse the exact session-list styling": the rules are
+    **copies** in each component's scoped CSS.
+- **Copied rules** (same values in both files): wrapper `position: relative; width: 100%`
+  (`SessionListItem.vue:704-708`, `ArtifactBookmarkList.vue:523-526`); button
+  `width: 100%`; `::part(base)` `padding: var(--wa-space-xs); height: auto;
+  margin-bottom: var(--wa-shadow-offset-y-s)`; `::part(label)` `width: 100%;
+  text-align: left`; keyboard highlight `outline: var(--wa-focus-ring); outline-offset:
+  var(--wa-focus-ring-offset)`; the row menu (`.session-menu` / `.bookmark-menu`: block,
+  absolute, `top: var(--wa-space-2xs); right: var(--wa-space-xs); z-index: 1`, `top: 0`
+  in compact) and its trigger (`opacity: 0.4; transition: opacity 0.15s; font-size:
+  var(--wa-font-size-2xs)`, `0.6` on wrapper hover or open menu, `1 !important` on its
+  own hover).
+- **Gaps on the artifacts side:**
+  1. no lit open row (§7 lives only in `SessionListItem.vue:733-763`): the open artifact
+     keeps Web Awesome's outlined brand button;
+  2. the row menu trigger is not at 0.6 on the open row (sessions:
+     `.session-item-wrapper--active .session-menu-trigger`; artifacts have no wrapper
+     `--active` class) — older than the branch;
+  3. no cascade on arrival and no live entrance (step 5c, `SessionList.vue:225-248`,
+     `:645-646`).
+- **Already shared** (nothing to do): section labels (`SidebarListSeparator.vue`), the
+  divider colour, tabular numbers, the focus halo tokens, the depth and press exclusions
+  (`depth.css:99`, `motion.css:98-104` name `.session-item, .bookmark-item`), the menu
+  icon scale (`motion.css:131-138`), the sidebar controls.
+- The hover nudge, gliding inks, a list skeleton and sticky headers do not exist on the
+  session list (removed in 4a, excluded in 4c, never made): nothing to align.
+
+### 17.3 Shared row styling — `styles/sidebar-rows.css` (new)
+
+- New stylesheet, unlayered, no `!important` except the one copied from the menu
+  trigger's own hover (kept as is), imported in `main.js` only, right after
+  `surfaces.css`, with a one-line comment ("Sidebar list rows, shared by the session and
+  artifact lists (SPA only)."). Header comment in the style of `glow.css`: step, design
+  path, why global (Vue scoped CSS cannot be shared between two components).
+- Shared classes, added **next to** the existing ones (which stay for each component's own
+  rules, tests and callers):
+
+| Element | Sessions (`SessionListItem.vue`) | Artifacts (`ArtifactBookmarkList.vue`) |
+|---|---|---|
+| wrapper | `sidebar-row-wrapper` + `--active`, `--compact`, `--selected` | `sidebar-row-wrapper` + `--active` (new: `isActive(b)`), `--compact` |
+| row button | `sidebar-row` + `--active`, `--highlighted` | `sidebar-row` + `--active`, `--highlighted` |
+| menu dropdown | `sidebar-row-menu` | `sidebar-row-menu` |
+| menu trigger | `sidebar-row-menu-trigger` | `sidebar-row-menu-trigger` |
+
+- Rules moved into the file (and **deleted** from both scoped blocks), with the same
+  values, in this order:
+  1. `.sidebar-row-wrapper { position: relative; width: 100%; }`. Stay local: the
+     sessions' `padding-inline` (`SessionListItem.vue:704-708`; the artifacts list pads
+     its container instead) and the non-compact gap `margin-block: var(--wa-space-3xs)`
+     (same value in `SessionList.vue:725`, through `:deep(.session-item-wrapper)`, and
+     `ArtifactBookmarkList.vue:529-531`): it belongs to the sidebar lists, and the peer
+     message review dialog's picker, which also renders `SessionListItem`, must not get
+     it;
+  2. `.sidebar-row { width: 100%; }`, `.sidebar-row::part(base) { padding; height;
+     margin-bottom }`, `.sidebar-row::part(label) { width: 100%; text-align: left; }`,
+     and the compact padding `.sidebar-row-wrapper--compact .sidebar-row::part(base) {
+     padding-block: var(--wa-space-2xs); }` ((0,2,1), beats the base rule; today a copy
+     in `SessionListItem.vue:1013-1015` and, as `.bookmark-item--compact::part(base)`, in
+     `ArtifactBookmarkList.vue:570-572`);
+  3. `.sidebar-row--highlighted::part(base)` (keyboard highlight);
+  4. `.sidebar-row-wrapper--selected .sidebar-row::part(base)` (multi-select fill; only
+     the session list sets `--selected`);
+  5. the lit open row of §7, renamed: `.sidebar-row--active::part(base),
+     .sidebar-row-wrapper--selected .sidebar-row--active::part(base)`, `html.wa-dark
+     .sidebar-row--active::part(base)`, and the two open-and-selected rules
+     `.sidebar-row-wrapper--selected .sidebar-row--active::part(base)` / `html.wa-dark …`;
+  6. the menu: `.sidebar-row-menu`, `.sidebar-row-wrapper--compact .sidebar-row-menu {
+     top: 0; }`, `.sidebar-row-menu-trigger`, `.sidebar-row-wrapper:hover
+     .sidebar-row-menu-trigger, .sidebar-row-wrapper--active .sidebar-row-menu-trigger,
+     .sidebar-row-menu[open] .sidebar-row-menu-trigger { opacity: 0.6; }`,
+     `.sidebar-row-menu-trigger:hover { opacity: 1 !important; }`.
+- **Specificity** (global, no scoped attribute any more): multi-select (0,2,1); open
+  (0,1,1) and its tie selector (0,2,1), later in the file, so an open selected row keeps
+  the lit fill; dark open (0,2,2); open-and-selected (0,2,1) after the open rule, dark
+  (0,3,2). Same outcomes as the scoped rules of §7. Every scoped `::part(base)` /
+  `::part(label)` rule of the two files is in the moved list (items 2–5): none stays to
+  compete. The implementer lists in the report any scoped
+  `::part(base)` rule left in either file, with the properties it sets.
+- The exclusion lists name the shared class: `depth.css:99` and `motion.css:98-104`
+  replace `.session-item, .bookmark-item` with `.sidebar-row`; their comments say
+  "the sidebar rows (session and artifact lists)". The stale `motion.css:86-87` phrase
+  "session rows get their own nudge" becomes "the sidebar rows keep their lit look".
+- `ArtifactBookmarkList.vue:9-12` comment: "Rows share the session list's styling
+  (styles/sidebar-rows.css) and link behaviour".
+
+### 17.4 Cascade and live entrance — `ArtifactBookmarkList.vue`
+
+Reuse `composables/useListCascade.js` unchanged (its API is generic; only comments say
+"session"). The 5c spec (`docs/plans/2026-09-29-list-cascade-scheme-reveal-design.md` §4)
+is the reference for the rules; the same apply here.
+
+- **Per-entry element.** The `<template v-for>` becomes one element per bookmark that
+  holds the separator and the row, so both enter together (the scroller's item root plays
+  this role for sessions):
+  ```html
+  <div v-for="(b, index) in list" :key="b.id" class="bookmark-entry"
+       :class="cascade.itemClass(b)" :style="cascade.itemStyle(b)">
+      <SidebarListSeparator v-if="…" v-bind="…" />
+      <div class="bookmark-item-wrapper sidebar-row-wrapper" …>…</div>
+  </div>
+  ```
+  `.bookmark-entry` has no style of its own (a block box in the flex column); the row
+  wrapper keeps its `margin-block`. One visible change: a separator and the row after it
+  now sit in normal block flow, so the separator's bottom margin (`xs`) and the row's
+  top margin (`3xs`) collapse to `xs` instead of adding up (flex items do not collapse
+  margins). The session list already renders it this way (its scroller item is a block
+  holding both): the two lists now match. `scrollRowIntoView` (`:246-252`) selects rows with
+  `':scope > .bookmark-entry'` (the entry at `index`), since the wrapper is no longer a
+  direct child.
+- **Data.** Split `list` into `scoped` (the `computeArtifactBookmarkList` result) and
+  `list` (`scoped` filtered by the search query), so `sourceSize` is the unfiltered size,
+  like `allSessions` for sessions.
+- **Arrival waits for the full snapshot.** At a reload on an artifact's page, two requests
+  race: `App.vue:90-102` loads every bookmark (`loadArtifactBookmarks` →
+  `setArtifactBookmarks`), while `ArtifactsBrowserView.vue:131-143` (mounted at once,
+  `ProjectView.vue:2642-2648`) fetches the open bookmark's detail, which stores that one
+  bookmark (`fetchArtifactBookmarkDetail`, `stores/data.js:2589`). If the detail lands
+  first, the list holds one row: an arrival then would cascade that row alone, and the
+  others would appear at once later. The list also depends on the projects:
+  `scoped` reads `getMainRepoProjectId` (`stores/data.js:870-871`) and
+  `workspaces.workspaceContainsProject` (`stores/workspaces.js:153-160`), which map a
+  worktree to its main repository only once `dataStore.projects` is loaded — by
+  `loadHomeData` (`/api/home/`), in parallel with the bookmarks (`App.vue:90-102`), often
+  the slower of the two. Before, a worktree view lacks its main repository's bookmarks
+  and a workspace view its worktrees' ones.
+  So the arrival waits for both loads, through one predicate shared with the reveal
+  watcher below:
+  - `stores/data.js`: a new state flag `projectsLoaded: false`, set to `true` in the
+    `finally` of `loadHomeData` (every call; a failed load does not block anything).
+    `localState.projectsList.loading` is not usable: it is `false` before the first call;
+  - `const listReady = computed(() => dataStore.artifactBookmarksLoaded &&
+    dataStore.projectsLoaded)` in `ArtifactBookmarkList.vue`; `sourceSize` is 0 until it
+    is true. `setArtifactBookmarks` sets the map and its flag in one synchronous action
+    (`stores/data.js:2576-2581`), `loadHomeData` stores every project in one synchronous
+    loop before its `finally`: whichever lands last, the list is complete in the flush
+    where `listReady` turns true. `loadArtifactBookmarks` sets its flag in its `finally`
+    too.
+  Until then the rows that are already there show normally (the phase is `idle`); at the
+  arrival they hide (`list-arriving`) and come back in the cascade.
+- **Call**, declared before the `activeBookmarkId` watcher (`:365`, `immediate: true`,
+  runs during setup):
+  ```js
+  const cascade = useListCascade({
+      items: list,
+      getKey: (b) => b.id,
+      sourceSize: () => (listReady.value ? scoped.value.length : 0),
+      scopeKey: () => (props.showAllArtifacts ? 'all' : (props.effectiveProjectId ?? '')),
+      getVisibleRange: visibleEntryRange,
+  })
+  ```
+  The key names the list the sidebar shows, and only that: an arrival means a new list
+  (5c §4). With "show all" on, `computeArtifactBookmarkList` returns every bookmark and
+  ignores project and workspace (`utils/sidebarArtifactBookmarks.js:42`), so a project
+  switch there is the same list and plays nothing. Otherwise the project id carries the
+  scope: in all-projects mode `effectiveProjectId` already encodes the workspace
+  (`ProjectView.vue:640-644`), and `activeWorkspaceId` is read only for a workspace
+  project id — a workspace query change in project mode is the same list.
+- **`visibleEntryRange()`**, plain DOM (no virtual scroller): `null` when `listRef` is
+  not mounted or has no size; else the entries (`listRef.value.children` filtered on
+  `.bookmark-entry`, in list order) whose rect intersects the list's rect vertically →
+  `{ start, end }` with `end` exclusive (the `VirtualScroller.getVisibleRange` contract,
+  `planListCascade` in `utils/listCascade.js:16-24`); `{ start: 0, end: 0 }` when none
+  intersects. A pure helper `visibleIndexRange(itemRects, viewRect)` in
+  `utils/listCascade.js` does the maths (tested), the component only collects rects.
+- **Hold for the open row.** `scrollRowIntoView` returns the `nextTick` promise it
+  scrolls in. Two places reveal the open row and hold the cascade on it
+  (`cascade.holdTarget(list.value[i].id, scrollRowIntoView(i))`, the list key, not the
+  route param, which is a string):
+  - the existing `activeBookmarkId` watcher (`:365-370`, a change of the open artifact);
+  - a new watcher on `() => listReady.value && scoped.value.some(isActive)`,
+    **`flush: 'post'`**, not
+    immediate, acting when it goes from false to true (the open row first becomes part of
+    the unfiltered list): `const i = list.value.findIndex(isActive)`; when `i >= 0`,
+    reveal and hold. Watching the open row itself, not "the list has rows": `scoped` can
+    fill in two steps (`App.vue` loads the projects and the bookmarks in parallel, and
+    `scoped` reads `getMainRepoProjectId`, `stores/data.js:870-871`), so a worktree's
+    bookmark on its main repo may join the list after the first rows. The `listReady`
+    term (the arrival's own predicate, see "Arrival waits for the full snapshot") keeps
+    a partial list from firing it: it fires in the flush where the list becomes
+    complete, after the cascade's pre watcher started the arrival. After that, a later
+    false → true (the open row created or re-scoped afterwards) only reveals.
+    This is the reload case: the list mounts at once (`ProjectView.vue:2102-2103`,
+    `v-show`) while `App.vue:90-102` loads the bookmarks asynchronously, so the
+    `activeBookmarkId` watcher's immediate run sees an empty list and never runs again
+    for the same id. (The session list does not need this: it mounts after its initial
+    load, `ProjectView.vue:2076-2083`.)
+    - `flush: 'post'`: post jobs run after every pre job of the flush, so the cascade's
+      pre-flush watcher has already set the phase to `pending` (`holdTarget` only acts
+      then). Declaration order does not give this: Vue queues the pre jobs of one change
+      in an order set by the dependency graph (measured with Vue 3.5.27: a pre watcher
+      declared after the cascade ran before it). `SessionList`'s scrolling watcher is
+      post too (`SessionList.vue:311-315`).
+    - On `scoped`, not on the filtered `list`: a search query that hides the open row
+      and then shows it again must not scroll the list while the user types (the session
+      list scrolls only when the open session changes). A change of the open artifact
+      between two listed rows is true → true: the `activeBookmarkId` watcher handles it.
+    - When the bookmarks are already loaded at mount, the `activeBookmarkId` watcher's
+      immediate run (after the `useListCascade` call, whose immediate watcher has already
+      run the arrival) reveals and holds; this watcher does not fire (no false → true).
+      Hold outside `pending` (the open row joins later, after the cascade started) is a
+      no-op by design: it only reveals.
+  As for sessions, the start waits (capped at 300ms) only when that row is off the first
+  screen.
+- **Live entrance.** A bookmark created in this tab or received from the server enters
+  alone:
+  - `stores/data.js` `createArtifactBookmark` stores its result through
+    `this.upsertArtifactBookmark(b)` instead of the direct assignment (`:2609`), so one
+    action is the live entry point;
+  - the component subscribes `dataStore.$onAction(({ name, args }) => { if (name ===
+    'upsertArtifactBookmark') cascade.noteLive(args[0]?.id) })` (noted before the
+    mutation, like `addSession`). The subscription is removed on unmount (the returned
+    function, called in the existing `onBeforeUnmount`);
+  - not live: `setArtifactBookmarks` (the full snapshot on each WS connection) and
+    `fetchArtifactBookmarkDetail` (`:2582-2590`, a refresh of a known bookmark).
+    `pickLiveEntrances` keeps only keys new to the list, so a rename or an update of a
+    listed bookmark never replays the entrance.
+- CSS: nothing new (`.list-arriving` / `.list-entering` in `styles/motion.css:278-293`
+  are global, reduced motion handled there).
+- Comments that say "session" in `useListCascade.js` / `listCascade.js` become
+  "sidebar list" where they describe the generic behaviour, and the `motion.css:278-280`
+  comment ("Session-list cascade … on the virtual scroller's row wrapper") becomes
+  "Sidebar list cascade (step 5c) … on the row element: the scroller's item or
+  `.bookmark-entry`".
+
+### 17.5 Tests
+
+- `styles/glow.test.js` test 11 parses `styles/sidebar-rows.css` instead of the
+  `SessionListItem.vue` style block, with the renamed selectors; it also asserts the
+  order (multi-select, then open, then open-and-selected) and that neither
+  `SessionListItem.vue` nor `ArtifactBookmarkList.vue` still declares a `--active` or
+  `--selected` `::part(base)` rule.
+- New `styles/sidebar-rows.test.js`: the file is imported right after `surfaces.css` in
+  `main.js` and nowhere else; no `@layer`; both components put `sidebar-row` (and the
+  wrapper / menu / trigger classes) on the elements of §17.3, with the `--active` binding
+  on the artifacts wrapper; neither component keeps a copy of the moved rules (grep their
+  scoped CSS for `.session-menu-trigger`, `.bookmark-menu-trigger`, `::part(label)`
+  width rules, the keyboard highlight, the compact `padding-block` on `::part(base)`).
+- `styles/motion.test.js:288`: the press selector becomes
+  `wa-button:not([disabled], [loading], wa-button-group wa-button, .sidebar-row):active`;
+  test 10 (no `translate` in `SessionListItem.vue`) also scans `sidebar-rows.css`.
+- `utils/listCascade.test.js`: `visibleIndexRange` (all visible, partial top / bottom,
+  none, empty list).
+- `composables/useListCascade.test.js`: a new source scan for `ArtifactBookmarkList.vue`
+  (call before the `activeBookmarkId` watcher; `scopeKey` is `'all'` when
+  `showAllArtifacts`, else `effectiveProjectId`;
+  `:class="cascade.itemClass(b)"` / `:style="cascade.itemStyle(b)"` on `.bookmark-entry`;
+  a `listReady` computed on `dataStore.artifactBookmarksLoaded && dataStore.projectsLoaded`,
+  `sourceSize` gated on it; `holdTarget` in the `activeBookmarkId` watcher and in a
+  watcher on `listReady.value && scoped.value.some(isActive)` with `flush: 'post'`; the `$onAction` on `upsertArtifactBookmark` and its
+  removal on unmount), and `stores/data.js`: `createArtifactBookmark` goes through
+  `upsertArtifactBookmark`; the state declares `projectsLoaded: false` and
+  `loadHomeData`'s `finally` sets it to `true`.
+  The same `ArtifactBookmarkList.vue` scan checks `scrollRowIntoView`: it selects
+  `':scope > .bookmark-entry'`, no `.bookmark-item-wrapper` query is left in the
+  component, and it returns its `nextTick(...)` promise (a stale selector would fail
+  silently: keyboard navigation and the reload reveal would stop scrolling).
+
+### 17.6 Browser checks
+
+1. Artifacts mode, light and dark: the open artifact's row looks exactly like the open
+   session's (lit fill, ring, shadow, colours); hover over it; keyboard navigation halo;
+   the row menu trigger half-visible on the open row, fully on hover; compact mode; the
+   space between a section label and the row under it is the session list's (§17.4).
+2. Sessions mode: nothing changed (open row, multi-select fill, open-and-selected thicker
+   ring, compact mode, the peer message review dialog's picker).
+3. Artifacts mode: switching project, workspace (all-projects mode) or "show all"
+   cascades the rows on screen; switching project with "show all" on plays nothing; the search filter plays nothing; bookmarking an artifact from another browser
+   tab (this tab's artifacts list stays open) makes its row enter alone;
+   renaming a bookmark plays nothing; a reload with an open artifact far down the list
+   scrolls to it and cascades the rows around it.
+4. Reduced motion: the rows appear with the fade only (as for sessions).
+
+### 17.7 Limitations
+
+- Both lists stay mounted (`v-show`, `ProjectView.vue`). When the artifacts list's
+  bookmarks arrive while it is hidden (the app opens in sessions mode), nothing plays:
+  it has no size, `visibleEntryRange()` returns `null`, and the rows are shown at once.
+  Switching the sidebar mode plays nothing either, for either list: an arrival belongs to
+  a list's data and scope, not to the sidebar mode.
+- A live entrance noted while the artifacts list is hidden plays unseen. Bookmarks are
+  created from a session's views, which show only in sessions mode
+  (`ProjectView.vue:2629`): in the same tab, a new bookmark's entrance is over before
+  the user can switch to artifacts mode. It shows for a bookmark created in another
+  tab while this tab's artifacts list is open.

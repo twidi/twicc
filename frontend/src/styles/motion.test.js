@@ -285,7 +285,7 @@ test('5. button press: transition lists and press rules', () => {
     // The :where() list, compounds on one line each (a line break is a descendant combinator).
     const rawPress = motionStripped.slice(motionStripped.indexOf(':where(\n'), motionStripped.indexOf(')::part(base)', motionStripped.indexOf(':where(\n')))
     const branches = rawPress.split('\n').map((l) => l.trim()).filter((l) => l.includes('wa-button'))
-    assert.deepEqual(branches, ['wa-button:not([disabled], [loading], wa-button-group wa-button, .session-item, .bookmark-item):active'], 'one press branch, on one line')
+    assert.deepEqual(branches, ['wa-button:not([disabled], [loading], wa-button-group wa-button, .sidebar-row):active'], 'one press branch, on one line')
 
     const internalPress = findRule(topRules, INTERNAL_PARTS.map((s) => `${s}:active`))
     assert.equal(internalPress.decls.scale, PRESS_SCALE)
@@ -475,9 +475,13 @@ test('9. snippet chips: lift on hover, press as scale, clip room in the narrow c
 
 test('10. session rows, Send icon, settings gear', () => {
     // Session rows (§5.4): no hover movement — the row nudge and the "⋮" slide were tried
-    // and removed by the user.
-    const rows = flatten(componentTree('../components/session/list/SessionListItem.vue'))
-    assert.deepEqual(rows.filter((e) => 'translate' in e.rule.decls).map((e) => e.rule.selector), [])
+    // and removed by the user. The shared sidebar row rules (styles/sidebar-rows.css) neither.
+    for (const rows of [
+        flatten(componentTree('../components/session/list/SessionListItem.vue')),
+        flatten(parseBlocks(stripComments(read('sidebar-rows.css')))),
+    ]) {
+        assert.deepEqual(rows.filter((e) => 'translate' in e.rule.decls).map((e) => e.rule.selector), [])
+    }
     const find = (entries, selectors) => findRule(entries.map((e) => e.rule), selectors)
 
     // Send icon (§5.5): directly in .message-input-actions of the narrow container query.

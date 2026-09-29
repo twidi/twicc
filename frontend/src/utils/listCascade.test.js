@@ -1,6 +1,6 @@
 // Run with: node --test src/utils/listCascade.test.js (from the frontend dir)
-// Session-list cascade (visual refresh step 5c, docs/plans/2026-09-29-list-cascade-scheme-reveal-design.md §4.2):
-// the pure rules.
+// Sidebar list cascade (visual refresh step 5c, docs/plans/2026-09-29-list-cascade-scheme-reveal-design.md §4.2):
+// the pure rules. visibleIndexRange: docs/plans/2026-09-29-accent-glow-design.md §17.4.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -9,6 +9,7 @@ import {
     listCascadeEndMs,
     pickLiveEntrances,
     planListCascade,
+    visibleIndexRange,
 } from './listCascade.js'
 
 const keys = (n) => Array.from({ length: n }, (_, i) => `k${i}`)
@@ -54,4 +55,25 @@ test('4. pickLiveEntrances: noted live, absent before, present now, in list orde
 test('5. listCascadeEndMs: stagger × index + duration + margin', () => {
     assert.equal(listCascadeEndMs(0), 420)
     assert.equal(listCascadeEndMs(20), 860)
+})
+
+/** Rows of `height` px stacked from `top`, as { top, bottom } rects. */
+const rows = (n, height = 40, top = 0) =>
+    Array.from({ length: n }, (_, i) => ({ top: top + i * height, bottom: top + (i + 1) * height }))
+
+test('6. visibleIndexRange: the rows whose rect crosses the view, end exclusive', () => {
+    // All visible.
+    assert.deepEqual(visibleIndexRange(rows(4), { top: 0, bottom: 200 }), { start: 0, end: 4 })
+    // Scrolled: row 1 is cut at the top, row 5 at the bottom; both count.
+    assert.deepEqual(visibleIndexRange(rows(10), { top: 60, bottom: 220 }), { start: 1, end: 6 })
+    // A row that only touches an edge is not visible.
+    assert.deepEqual(visibleIndexRange(rows(10), { top: 80, bottom: 160 }), { start: 2, end: 4 })
+    // The view past the rows' end: the last rows only.
+    assert.deepEqual(visibleIndexRange(rows(5), { top: 150, bottom: 400 }), { start: 3, end: 5 })
+})
+
+test('7. visibleIndexRange: no row crosses the view, or no row at all', () => {
+    assert.deepEqual(visibleIndexRange(rows(3), { top: 500, bottom: 700 }), { start: 0, end: 0 })
+    assert.deepEqual(visibleIndexRange(rows(3, 40, 500), { top: 0, bottom: 200 }), { start: 0, end: 0 })
+    assert.deepEqual(visibleIndexRange([], { top: 0, bottom: 200 }), { start: 0, end: 0 })
 })

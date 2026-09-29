@@ -84,7 +84,7 @@
    Awesome's own list on .button (a ::part() rule replaces it) and adds scale, and filter
    for the lit brand buttons of glow.css.
    Exclusions: inert buttons, group segments (they would break the joined edges), and the
-   full-width sidebar rows (session rows get their own nudge).
+   sidebar rows (session and artifact lists): the sidebar rows keep their lit look.
    Each compound stays on one line: a line break before :not( is a descendant combinator. */
 :where(wa-button)::part(base) {
     transition-property: background, border, box-shadow, color, opacity, scale, filter;
@@ -96,7 +96,7 @@
         var(--wa-transition-easing), var(--motion-ease-spring), var(--wa-transition-easing);
 }
 :where(
-    wa-button:not([disabled], [loading], wa-button-group wa-button, .session-item, .bookmark-item):active
+    wa-button:not([disabled], [loading], wa-button-group wa-button, .sidebar-row):active
 )::part(base) {
     scale: calc(1 - 0.04 * var(--motion-amount));
     transition-duration: var(--wa-transition-fast), var(--wa-transition-fast),
@@ -275,9 +275,9 @@ wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content)::after 
     animation-name: chat-enter-fade;
 }
 
-/* Session-list cascade (step 5c). Classes and --list-enter-index are set by useListCascade
-   on the virtual scroller's row wrapper. Movement × --motion-amount: reduced motion keeps
-   the fade only. The delays and 320ms match utils/listCascade.js. */
+/* Sidebar list cascade (step 5c). Classes and --list-enter-index are set by useListCascade
+   on the row element: the scroller's item or .bookmark-entry. Movement × --motion-amount:
+   reduced motion keeps the fade only. The delays and 320ms match utils/listCascade.js. */
 @keyframes list-enter {
     from {
         opacity: 0;

@@ -91,12 +91,13 @@
    per segment breaks the group; solid accent groups such as "New session" + its menu are
    raised), buttons of an inverted box (tooltip content — the page-scheme highlight would
    draw a bright line; toasts take the page scheme since step 3, so their buttons are
-   raised), the sidebar rows (session, artifact bookmark; the selected row is step 6), and
-   the plain↔framed toggles (raised only when on would read backwards).
+   raised), the sidebar rows (session and artifact lists; the open row is lit by
+   sidebar-rows.css), and the plain↔framed toggles (raised only when on would read
+   backwards).
    Each wa-button:is(…):not(…) compound stays on one line: a line break between :is() and
    :not() would be a descendant combinator and target what is inside the buttons. */
 :where(
-    wa-button:is([appearance*='outlined'], [appearance*='filled']):not(wa-button-group wa-button, .wa-invert wa-button, .session-item, .bookmark-item, .filters-toggle, .autoattach-button)
+    wa-button:is([appearance*='outlined'], [appearance*='filled']):not(wa-button-group wa-button, .wa-invert wa-button, .sidebar-row, .filters-toggle, .autoattach-button)
 )::part(base) {
     box-shadow: var(--depth-button), var(--depth-highlight);
 }

@@ -1,9 +1,11 @@
-// Session-list cascade (visual refresh step 5c): the Vue side of utils/listCascade.js.
-// Design: docs/plans/2026-09-29-list-cascade-scheme-reveal-design.md §4.
+// Sidebar list cascade (visual refresh step 5c): the Vue side of utils/listCascade.js, used
+// by the session list and the artifacts list.
+// Design: docs/plans/2026-09-29-list-cascade-scheme-reveal-design.md §4 (artifacts list:
+// docs/plans/2026-09-29-accent-glow-design.md §17.4).
 //
 // A list "arrives" the first time the unfiltered list holds a row after the mount or a
 // scope change: from then until the start, every row is hidden (list-arriving). Two frames
-// later (the scroller has measured its rows), the rows on screen cascade; when the list is
+// later (the list has measured its rows), the rows on screen cascade; when the list is
 // scrolling to a held target outside that range, the start waits for that scroll, capped.
 // Afterwards, a row noted live that is new in the list enters alone.
 //
