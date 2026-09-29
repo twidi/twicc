@@ -2060,6 +2060,7 @@ async def _process_compute_message(msg: dict) -> None:
         return
 
     # session_complete — the heavy path.
+    received_at = perf_counter()
     state = _compute_states.get(run_id)
     if state is None or state.abandoned:
         # No live state for this run_id: either the run was never tracked / its
@@ -2077,6 +2078,7 @@ async def _process_compute_message(msg: dict) -> None:
         )
         return
 
+    apply_started = perf_counter()
     try:
         from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
 
@@ -2086,7 +2088,8 @@ async def _process_compute_message(msg: dict) -> None:
             result = ComputeApplyResult(chunk_outcome)
         else:
             with sync_timing_context(_provider_from_compute_message(msg), msg.get('session_id'),
-                                     lines=line_count, bytes=msg.get('observed_last_offset'),
+                                     items=msg.get('source_item_count'), updated_items=line_count,
+                                     bytes=msg.get('observed_last_offset'),
                                      facts=len(msg.get('history_facts', []))):
                 started = perf_counter()
                 try:
@@ -2100,6 +2103,19 @@ async def _process_compute_message(msg: dict) -> None:
             state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], "failed", str(e)))
         return
 
+    compute_ms = msg.get('compute_ms')
+    completed_at = msg.get('compute_completed_at')
+    queue_ms = (received_at - completed_at) * 1000 if completed_at is not None else None
+    apply_ms = (perf_counter() - apply_started) * 1000
+    logger.info(
+        "Session compute result: session=%s type=%s outcome=%s compute_ms=%s queue_ms=%s "
+        "apply_ms=%.1f items=%s bytes=%s updated_items=%d facts=%d",
+        msg['session_id'], msg.get('session_type'), result.outcome,
+        f'{compute_ms:.1f}' if compute_ms is not None else None,
+        f'{queue_ms:.1f}' if queue_ms is not None else None,
+        apply_ms, msg.get('source_item_count'), msg.get('observed_last_offset'),
+        line_count, len(msg.get('history_facts', [])),
+    )
     if state.applied_queue is not None:
         state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], result.outcome))
     if result.outcome != "applied":

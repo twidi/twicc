@@ -290,6 +290,32 @@ def test_final_aggregate_failure_rolls_back_items_and_version(monkeypatch):
     assert not DailyActivity.objects.exists()
 
 
+def test_repair_does_not_recalculate_unrelated_sibling_costs(monkeypatch):
+    parent = make_session('parent', compute_version=1)
+    changed = make_session('changed', type='subagent', parent_session=parent, compute_version=1)
+    sibling = make_session('sibling', type='subagent', parent_session=parent, compute_version=1,
+                           self_cost=Decimal(99))
+    SessionItem.objects.create(session=changed, line_num=1, content='{}', cost=Decimal('0.000001'))
+    SessionItem.objects.create(session=sibling, line_num=1, content='{}', cost=Decimal('0.000002'))
+
+    original = Session.recalculate_costs
+    recalculated = []
+
+    def counted(self):
+        recalculated.append(self.id)
+        return original(self)
+
+    monkeypatch.setattr(Session, 'recalculate_costs', counted)
+    with transaction.atomic():
+        apply(changed, repair=True)
+    parent.refresh_from_db()
+    sibling.refresh_from_db()
+    assert sibling.id not in recalculated
+    assert sibling.self_cost == Decimal(99)
+    assert parent.subagents_cost == Decimal('0.000003')
+    assert changed.id in recalculated and parent.id in recalculated
+
+
 @pytest.mark.django_db(transaction=True)
 def test_live_cost_delta_uses_persisted_six_decimal_precision(tmp_path, monkeypatch):
     from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute

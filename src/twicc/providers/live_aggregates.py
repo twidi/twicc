@@ -106,10 +106,11 @@ def apply_contribution_changes(
             count_delta[item.session_id] += sign * (item.kind == ItemKind.USER_MESSAGE)
     old_self = {sid: s.self_cost for sid, s in sessions.items()}
     if repair:
-        # Parent nullability relies on the partial child index. Repair every
-        # direct child's cached costs before publishing that parent baseline.
+        # An explicit parent repair also repairs its children's cached costs.
+        # Repairing one child only needs that child and the parent's raw sum;
+        # it must not recalculate every sibling for each child.
         repair_ids = session_ids | parents
-        children = list(Session.objects.filter(parent_session_id__in=repair_ids))
+        children = Session.objects.filter(parent_session_id__in=session_ids)
         for child in children:
             child.recalculate_costs()
             child.save(update_fields=['self_cost', 'subagents_cost', 'total_cost'])

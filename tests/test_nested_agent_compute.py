@@ -245,6 +245,145 @@ def test_queue_backfill_reads_uncomputed_launcher_history(tree):
     assert AgentLink.objects.get().session_id == owner.id
 
 
+def test_root_recompute_reads_each_launcher_once_for_queue_backfill(tree, monkeypatch):
+    from twicc.providers import compute_base
+    from twicc.core.models import HistoryFactKind
+
+    root, owner, _child, _home = tree
+    expected = set()
+    for n in range(8):
+        agent_id = f"ae{n:03x}"
+        tool_id = f"tool_{n}"
+        Session.objects.create(
+            id=agent_id, project=root.project, provider=Provider.CLAUDE_CODE,
+            type=SessionType.SUBAGENT, parent_session=root,
+            file_path=f"nested-project/nested-root/subagents/agent-{agent_id}.jsonl",
+        )
+        seed(owner, spawn(tool_id, f"work {n}"))
+        seed(root, queue_entry(agent_id, tool_id))
+        expected.add(agent_id)
+
+    original = compute_base.iter_resolver_items
+    launcher_reads = 0
+
+    def counted(session_id, kind, key=None, **kwargs):
+        nonlocal launcher_reads
+        if session_id == owner.id and kind == HistoryFactKind.TOOL_CALL:
+            launcher_reads += 1
+        return original(session_id, kind, key, **kwargs)
+
+    monkeypatch.setattr(compute_base, "iter_resolver_items", counted)
+    message = compute(root, apply=False)
+    assert {link["agent_id"] for link in message["agent_links_backfill"]} == expected
+    assert launcher_reads == 1
+
+
+def test_root_recompute_uses_exact_fact_lookup_for_current_launcher(tree, monkeypatch):
+    from twicc.providers import compute_base
+    from twicc.core.models import HistoryFactKind
+
+    root, owner, child, _home = tree
+    seed(owner, spawn())
+    compute(owner)
+    seed(root, queue_entry(child.id))
+    original = compute_base.iter_resolver_items
+    keys = []
+
+    def counted(session_id, kind, key=None, **kwargs):
+        if session_id == owner.id and kind == HistoryFactKind.TOOL_CALL:
+            keys.append(key)
+        return original(session_id, kind, key, **kwargs)
+
+    monkeypatch.setattr(compute_base, "iter_resolver_items", counted)
+    message = compute(root, apply=False)
+    assert message["agent_links_backfill"][0]["agent_id"] == child.id
+    assert keys == ["tool_nested"]
+
+
+def test_batch_reuses_root_queue_completions_until_root_changes(tree, monkeypatch):
+    from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+
+    root, owner, child, _home = tree
+    seed(owner, spawn())
+    seed(root, queue_entry(child.id))
+    root.last_line = 1
+    root.save(update_fields=["last_line"])
+    worker = ClaudeCodeSessionCompute()
+    worker.enable_batch_queue_cache()
+    original = worker._tree_queue_completions
+    scans = 0
+
+    def counted(root_id):
+        nonlocal scans
+        scans += 1
+        return original(root_id)
+
+    monkeypatch.setattr(worker, "_tree_queue_completions", counted)
+    worker.compute_session_metadata(root.id, Queue(), 1)
+    worker.compute_session_metadata(owner.id, Queue(), 1)
+    assert scans == 0
+
+    seed(root, queue_entry("ae999", "missing"))
+    root.last_line = 2
+    root.save(update_fields=["last_line"])
+    worker.compute_session_metadata(owner.id, Queue(), 1)
+    assert scans == 1
+
+
+def test_batch_does_not_cache_root_evidence_added_during_its_pass(tree, monkeypatch):
+    from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+
+    root, owner, child, _home = tree
+    seed(owner, spawn())
+    seed(root, queue_entry(child.id))
+    root.last_line = 1
+    root.save(update_fields=["last_line"])
+    worker = ClaudeCodeSessionCompute()
+    worker.enable_batch_queue_cache()
+    original_end = worker.end_session_compute
+    original_scan = worker._tree_queue_completions
+    scans = 0
+
+    def advance_after_root(session_id):
+        original_end(session_id)
+        if session_id == root.id:
+            seed(root, queue_entry("ae999", "missing"))
+            Session.objects.filter(id=root.id).update(last_line=2)
+
+    def counted(root_id):
+        nonlocal scans
+        scans += 1
+        return original_scan(root_id)
+
+    monkeypatch.setattr(worker, "end_session_compute", advance_after_root)
+    monkeypatch.setattr(worker, "_tree_queue_completions", counted)
+    worker.compute_session_metadata(root.id, Queue(), 1)
+    worker.compute_session_metadata(owner.id, Queue(), 1)
+    assert scans == 1
+
+
+def test_batch_prompt_recovery_does_not_revisit_own_items(tree, monkeypatch):
+    from twicc.providers import compute_base
+    from twicc.core.models import HistoryFactKind
+
+    _root, owner, child, _home = tree
+    seed(owner, spawn())
+    seed(child, entry("user", "nested work"))
+    original = compute_base.iter_resolver_items
+    own_reads = 0
+
+    def counted(session_id, kind, key=None, **kwargs):
+        nonlocal own_reads
+        if session_id == owner.id and kind == HistoryFactKind.TOOL_CALL:
+            own_reads += 1
+        return original(session_id, kind, key, **kwargs)
+
+    monkeypatch.setattr(compute_base, "iter_resolver_items", counted)
+    message = compute(owner, apply=False)
+    assert message["agent_links_to_create"][0]["agent_id"] == child.id
+    assert own_reads == 0
+
+
 def test_full_sidecar_sync_result_marks_child_stopped(tree):
     root, owner, child, home = tree
     meta(tree)

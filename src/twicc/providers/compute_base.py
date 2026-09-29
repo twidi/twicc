@@ -31,7 +31,7 @@ import copy
 import logging
 import os
 import re
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, UTC
@@ -69,7 +69,7 @@ from twicc.providers.live_aggregates import (
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
 from twicc.providers.history_facts import (
     HistoryFact, HistoryFactContext, HistoryFactKind,
-    append_history_facts, iter_resolver_items, replace_history_facts,
+    append_history_facts, history_facts_are_current, iter_resolver_items, replace_history_facts,
 )
 from twicc.providers.plan_docs import (
     FOLDED_SOURCES,
@@ -943,6 +943,15 @@ class BaseSessionCompute:
 
     provider: ClassVar[Provider]
     live_state_maps: ClassVar[tuple[str, ...]] = ()
+
+    def __init__(self) -> None:
+        # Batch workers process many children from one tree. Keep only their
+        # root's compact queue evidence, never the full transcript.
+        self._batch_queue_cache: OrderedDict[str, tuple[tuple, list]] | None = None
+
+    def enable_batch_queue_cache(self) -> None:
+        """Enable cross-session reuse only in the single-purpose compute worker."""
+        self._batch_queue_cache = OrderedDict()
 
     @contextmanager
     def live_state_transaction(self, session_id: str) -> Iterator[None]:
@@ -2336,7 +2345,8 @@ class BaseSessionCompute:
                 ))
         return None
 
-    def _recover_owned_agent_links(self, owner, tasks, claimed=(), pending_prompts=None):
+    def _recover_owned_agent_links(self, owner, tasks, claimed=(), pending_prompts=None,
+                                   known_owner_prompts=None):
         """Resolve remaining tool ids by metadata, then unique prompt evidence.
 
         ``tasks`` maps tool id to (line, background, timestamp, prompt).
@@ -2392,7 +2402,8 @@ class BaseSessionCompute:
                 prompts[child.id] = pending_prompts[child.id].strip()
         # Live callers may supply only one new item. Count the whole launcher
         # transcript, including other spawn blocks inserted in the same batch.
-        owner_prompts = {tool_id: prompt for _item, tool_id, prompt, _background in self._spawn_items(owner.id)}
+        owner_prompts = (known_owner_prompts if known_owner_prompts is not None else
+                         {tool_id: prompt for _item, tool_id, prompt, _background in self._spawn_items(owner.id)})
         # Both directions must be unique. Equal prompts do not establish filiation.
         for tool_id, (_line, _background, _timestamp, prompt) in list(remaining.items()):
             prompt = prompt.strip()
@@ -2404,13 +2415,14 @@ class BaseSessionCompute:
                 prompts.pop(matches[0])
         return links
 
-    def _resolve_queue_spawn(self, root, completion):
+    def _resolve_queue_spawn(self, root, completion, *, owner_ids=None, metas=None, candidate_cache=None):
         """Resolve terminal evidence inside one tree, without changing database state."""
         child = Session.objects.filter(id=completion.task_id).first()
         if child is not None and child.parent_session_id != root.id:
             return None
-        owners = [root.id, *Session.objects.filter(parent_session_id=root.id).values_list("id", flat=True)]
-        info = self.get_spawn_metas_for_tree(root).get(completion.task_id)
+        owners = (list(owner_ids) if owner_ids is not None else
+                  [root.id, *Session.objects.filter(parent_session_id=root.id).values_list("id", flat=True)])
+        info = (metas if metas is not None else self.get_spawn_metas_for_tree(root)).get(completion.task_id)
         if info is not None:
             if info.launcher_session_id not in owners:
                 return None
@@ -2419,7 +2431,32 @@ class BaseSessionCompute:
             owners = [info.launcher_session_id]
         matches = []
         for owner_id in owners:
-            candidates = iter_resolver_items(owner_id, HistoryFactKind.TOOL_CALL, completion.tool_use_id)
+            if candidate_cache is None:
+                candidates = iter_resolver_items(owner_id, HistoryFactKind.TOOL_CALL, completion.tool_use_id)
+            else:
+                if owner_id not in candidate_cache:
+                    owner = Session.objects.only("provider", "compute_version").filter(id=owner_id).first()
+                    if owner is not None and history_facts_are_current(owner):
+                        # The indexed path is cheaper than reading every call
+                        # when only a few completions target this owner.
+                        candidate_cache[owner_id] = None
+                    else:
+                        by_tool_id = {}
+                        for item in iter_resolver_items(owner_id, HistoryFactKind.TOOL_CALL):
+                            if item.kind not in (None, ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
+                                continue
+                            try:
+                                parsed = orjson.loads(item.content)
+                            except orjson.JSONDecodeError:
+                                continue
+                            if not isinstance(parsed, dict):
+                                continue
+                            for tool_id, _background in self.extract_task_tool_uses(parsed):
+                                by_tool_id.setdefault(tool_id, []).append(item)
+                        candidate_cache[owner_id] = by_tool_id
+                cached = candidate_cache[owner_id]
+                candidates = (iter_resolver_items(owner_id, HistoryFactKind.TOOL_CALL, completion.tool_use_id)
+                              if cached is None else cached.get(completion.tool_use_id, ()))
             for item in candidates:
                 if item.kind not in (None, ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
                     continue
@@ -2468,6 +2505,28 @@ class BaseSessionCompute:
             if completion is not None:
                 matches.append((item, completion))
         yield from reversed(matches)
+
+    def _batch_queue_completions(self, root: Session, known=None, *, known_revision=None):
+        """Reuse root queue evidence across child computes until its source advances."""
+        cache = self._batch_queue_cache
+        if cache is None:
+            return list(self._tree_queue_completions(root.id)) if known is None else list(known)
+        revision = (root.last_offset, root.last_line, root.mtime)
+        cached = cache.get(root.id)
+        if known is None and cached is not None and cached[0] == revision:
+            cache.move_to_end(root.id)
+            return cached[1]
+        completions = list(self._tree_queue_completions(root.id)) if known is None else list(known)
+        fresh_root = Session.objects.only("last_offset", "last_line", "mtime").get(id=root.id)
+        fresh_revision = (fresh_root.last_offset, fresh_root.last_line, fresh_root.mtime)
+        if fresh_revision != revision or (known_revision is not None and known_revision != revision):
+            cache.pop(root.id, None)
+            return completions
+        cache[root.id] = (revision, completions)
+        cache.move_to_end(root.id)
+        if len(cache) > 8:
+            cache.popitem(last=False)
+        return completions
 
     def create_agent_link_from_subagent(
         self,
@@ -2633,6 +2692,7 @@ class BaseSessionCompute:
         """
         from django.db import connection
 
+        compute_started = perf_counter()
         # Ensure this process/thread has its own database connection
         connection.close()
 
@@ -2664,6 +2724,7 @@ class BaseSessionCompute:
         all_agent_run_ends: dict[tuple[int, str], dict] = {}
         content_overrides: list[dict] = []
         batch_size = 500
+        source_item_count = 0
 
         def serialize_item(item: SessionItem) -> dict:
             return {
@@ -2822,8 +2883,11 @@ class BaseSessionCompute:
         # exec_command map used by remap_tool_result_id below).
         self.begin_session_compute(session_id)
         history = HistoryFactContext(self.provider)
+        batch_spawn_candidates: dict[str, list[SessionItem]] = {}
+        queue_completions = []
 
         for item in queryset.iterator(chunk_size=batch_size):
+            source_item_count += 1
             # Snapshot original state before any computation, for change detection
             original_serialized[item.id] = serialize_item(item)
 
@@ -2946,6 +3010,12 @@ class BaseSessionCompute:
                 tool_use_map[tu_id] = ToolUseEntry(item.line_num, tu_name, parsed)
             for tu_id, is_background in analysis.task_tool_uses:
                 task_tool_use_map[tu_id] = (item.line_num, is_background, item.timestamp)
+                if self.rebuild_agent_prompt_links:
+                    batch_spawn_candidates.setdefault(tu_id, []).append(item)
+            if is_main_session and self.rebuild_agent_prompt_links:
+                completion = self.extract_queue_completion(parsed)
+                if completion is not None:
+                    queue_completions.append((item, completion))
             tool_result_ref = analysis.tool_result_id
             if tool_result_ref:
                 # Provider hook: optionally substitute the tool_use_id to point
@@ -3099,10 +3169,21 @@ class BaseSessionCompute:
         if self.rebuild_agent_prompt_links:
             root_id = session.parent_session_id or session.id
             root = Session.objects.get(id=root_id)
+            owner_ids = [root_id, *Session.objects.filter(parent_session_id=root_id).values_list("id", flat=True)]
+            metas = self.get_spawn_metas_for_tree(root)
+            candidate_cache = {session_id: batch_spawn_candidates}
             # Completion evidence identifies historical agents even when their
             # ack/sidecar is missing. Replaying the launcher must retain backfills.
-            for queue_item, completion in self._tree_queue_completions(root_id):
-                recovered = self._resolve_queue_spawn(root, completion)
+            completions = self._batch_queue_completions(
+                root, queue_completions if is_main_session else None,
+                known_revision=(session.last_offset, session.last_line, session.mtime) if is_main_session else None,
+            )
+            for queue_item, completion in completions:
+                if not is_main_session and completion.tool_use_id not in batch_spawn_candidates:
+                    continue
+                recovered = self._resolve_queue_spawn(
+                    root, completion, owner_ids=owner_ids, metas=metas, candidate_cache=candidate_cache,
+                )
                 child_in_tree = Session.objects.filter(id=completion.task_id, parent_session_id=root_id).exists()
                 if is_main_session and queue_item.timestamp and (child_in_tree or recovered is not None):
                     agent_stopped_list.append({"agent_session_id": completion.task_id,
@@ -3121,13 +3202,19 @@ class BaseSessionCompute:
                 elif is_main_session:
                     agent_links_backfill.append(serialize_agent_link(recovered))
             tasks = {}
-            for tool_id, (line, background, timestamp) in task_tool_use_map.items():
+            owner_prompts = {}
+            for tool_id in batch_spawn_candidates:
                 entry = tool_use_map.get(tool_id)
                 if entry is None:
                     continue
-                prompts = {tu: prompt for tu, prompt, _bg in self.extract_task_tool_use_prompts(entry.parsed_json)}
-                tasks[tool_id] = (line, background, timestamp, prompts.get(tool_id, ""))
-            for recovered in self._recover_owned_agent_links(session, tasks, {key[0] for key in all_agent_links}):
+                for candidate_id, prompt, _background in self.extract_task_tool_use_prompts(entry.parsed_json):
+                    if candidate_id == tool_id:
+                        owner_prompts[tool_id] = prompt.strip()
+            for tool_id, (line, background, timestamp) in task_tool_use_map.items():
+                tasks[tool_id] = (line, background, timestamp, owner_prompts.get(tool_id, ""))
+            for recovered in self._recover_owned_agent_links(
+                session, tasks, {key[0] for key in all_agent_links}, known_owner_prompts=owner_prompts,
+            ):
                 all_agent_links[(recovered.agent_id, recovered.tool_use_id)] = serialize_agent_link(recovered)
 
         # Diff agent links: create / update / delete
@@ -3224,17 +3311,23 @@ class BaseSessionCompute:
                 for event, timestamp in plan_doc_events
             ]
 
+        compute_completed_at = perf_counter()
+        compute_ms = (compute_completed_at - compute_started) * 1000
         result_queue.put(orjson.dumps({
             'type': 'session_complete',
             'provider': self.provider.value,
             'run_id': run_id,
             'session_id': session_id,
+            'session_type': session.type,
+            'compute_ms': compute_ms,
+            'compute_completed_at': compute_completed_at,
             'project_id': session.project_id,
             # Revision marker — the session's last_offset as this worker saw
             # it. apply_session_complete skips the apply if the row's
             # last_offset has since advanced (watcher live-computed newer
             # lines), so a stale worker result can't clobber fresher data.
             'observed_last_offset': session.last_offset,
+            'source_item_count': source_item_count,
             'history_facts': [fact._asdict() for fact in history.facts],
             'item_updates': all_item_updates,
             'item_fields': [
@@ -3306,6 +3399,12 @@ class BaseSessionCompute:
             'parent_plan_doc_events': parent_plan_doc_events,
         }))
 
+        logger.info(
+            "Session compute finished: session=%s type=%s elapsed_ms=%.1f items=%d bytes=%d "
+            "updated_items=%d facts=%d",
+            session_id, session.type, compute_ms,
+            source_item_count, session.last_offset, len(all_item_updates), len(history.facts),
+        )
         connection.close()
 
     @staticmethod
