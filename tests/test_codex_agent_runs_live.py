@@ -11,6 +11,7 @@ compares the stored rows. The other tests pin the §9 live cases.
 from __future__ import annotations
 
 from pathlib import Path
+from queue import Queue
 
 import orjson
 import pytest
@@ -26,6 +27,7 @@ from twicc.core.models import (
     Project,
     Session,
     SessionItem,
+    SessionHistoryFact,
     SessionType,
     ToolResultLink,
 )
@@ -226,6 +228,16 @@ def test_batch_live_parity(db, tmp_path, name, per_line):
     fixture = ALL_FIXTURES[name]()
     LiveReplay(fixture, tmp_path).run(per_line=per_line)
     live = rows(fixture)
+    # Batch extraction must match both live chunking modes, including
+    # normalized private-source records already written by live transforms.
+    for session in Session.objects.filter(project_id=PROJECT_ID):
+        queue = Queue()
+        CodexSessionCompute().compute_session_metadata(session.id, queue, 1)
+        messages = [orjson.loads(queue.get()) for _ in range(queue.qsize())]
+        batch_facts = next(msg for msg in messages if msg['type'] == 'session_complete')['history_facts']
+        live_facts = list(SessionHistoryFact.objects.filter(session=session)
+                          .order_by('line_num', 'kind', 'key').values('line_num', 'kind', 'key', 'data'))
+        assert sorted(batch_facts, key=lambda fact: (fact['line_num'], fact['kind'], fact['key'])) == live_facts
     # The replay really synced: every fixture pairs at least one spawn ack,
     # and writes its own number of agent-run rows.
     assert live["results"]

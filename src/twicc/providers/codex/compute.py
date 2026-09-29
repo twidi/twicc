@@ -208,6 +208,7 @@ from twicc.pricing import calculate_line_context_usage
 from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalEvent
 from twicc.providers.helpers import humanize_identifier
 from twicc.providers.plan_docs import DocEditEvent, extract_shell_write_targets, is_plan_doc_path
+from twicc.providers.history_facts import HistoryFact, HistoryFactContext
 from twicc.providers.compute_base import (
     _EMPTY_ANALYSIS,
     _EMPTY_FILE_PATHS,
@@ -4583,6 +4584,12 @@ class CodexSessionCompute(BaseSessionCompute):
             return canonical_result_item(parsed_json) is not None
         return False
 
+    def extract_history_facts(
+        self, parsed: dict, *, line_num: int, history: HistoryFactContext,
+    ) -> list[HistoryFact]:
+        from .history_facts import extract_history_facts
+        return extract_history_facts(parsed, line_num=line_num, history=history)
+
     def extract_tool_use_entries(
         self,
         parsed_json: dict,
@@ -5720,6 +5727,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 # ``FileChange`` / ``McpToolCall`` can be
                 # rebound to them (see _remap_orphan_end_event). Bounded
                 # to the last 50 records per session.
+                targets = None
                 if sub_type == "custom_tool_call" and name == _CODE_MODE_EXEC_TOOL:
                     targets = _script_targets(payload.get("input"))
                     if targets.has_patch or targets.mcp_tools:
@@ -5735,6 +5743,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 else:
                     task_tool_uses = _EMPTY_TASK_TOOL_USES
                 return ContentAnalysis(
+                    history_evidence={"tool_name": name, "code_exec_targets": targets},
                     has_visible_content=True,
                     text_content=None,
                     is_system_xml=False,

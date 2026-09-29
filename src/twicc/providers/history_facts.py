@@ -7,7 +7,7 @@ from twicc.core.models import HistoryFactKind, Session, SessionHistoryFact, Sess
 from twicc.providers.helpers import get_provider_helpers
 
 __all__ = [
-    "HistoryFact", "HistoryFactKind", "append_history_facts", "history_facts_are_current",
+    "HistoryFact", "HistoryFactContext", "HistoryFactKind", "append_history_facts", "history_facts_are_current",
     "iter_history_facts", "iter_history_items", "replace_history_facts",
 ]
 
@@ -110,3 +110,85 @@ def history_facts_are_current(session: Session) -> bool:
     """Use the provider's normal compute version as the fact readiness gate."""
     current = get_provider_helpers(session.provider).current_compute_version
     return current is not None and session.compute_version == current
+
+
+class HistoryFactContext:
+    """Read-only extraction view over earlier records; registration belongs to the caller.
+
+    Keep references to parsed call records, never copies of scripts or outputs.
+    Persisted lookup deliberately uses raw history until the resolver version switch.
+    """
+
+    def __init__(self, provider, *, session_id: str | None = None):
+        self.provider = provider
+        self.session_id = session_id
+        self.facts: list[HistoryFact] = []
+        self._record_evidence: tuple[int, dict] | None = None
+        self._calls: dict[str, list[tuple[dict, int]]] = {}
+        self._cells: dict[str, list[tuple[str, int]]] = {}
+
+    def set_record_evidence(self, line_num: int, evidence: dict | None) -> None:
+        """Supply existing analysis for exactly one record, without replaying it."""
+        self._record_evidence = (line_num, evidence) if evidence is not None else None
+
+    def record_evidence(self, *, line_num: int) -> dict:
+        if self._record_evidence is not None and self._record_evidence[0] == line_num:
+            return self._record_evidence[1]
+        return {}
+
+    def register(self, parsed: dict, facts: Sequence[HistoryFact], *, line_num: int) -> None:
+        """Publish a complete record only after its extractor returns."""
+        self._record_evidence = None
+        self.facts.extend(facts)
+        calls = dict(self._tool_calls(parsed))
+        for fact in facts:
+            if fact.kind == HistoryFactKind.TOOL_CALL and fact.key in calls:
+                self._calls.setdefault(fact.key, []).append((calls[fact.key], line_num))
+            elif fact.kind == HistoryFactKind.CODE_CELL:
+                self._cells.setdefault(fact.key, []).append((fact.data["call_id"], line_num))
+
+    def _tool_calls(self, parsed: dict):
+        from twicc.core.enums import Provider
+
+        if self.provider == Provider.CODEX:
+            from twicc.providers.codex.history_facts import tool_calls
+        else:
+            from twicc.providers.claude_code.history_facts import tool_calls
+        return tool_calls(parsed)
+
+    def _raw_items(self, *, before_line: int):
+        import orjson
+
+        if self.session_id is None:
+            return
+        for line, content in iter_history_items(self.session_id, before_line=before_line):
+            try:
+                parsed = orjson.loads(content)
+            except orjson.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                yield line, parsed
+
+    def lookup_tool_call(self, call_id: str, *, before_line: int) -> tuple[dict, int] | None:
+        """Return the newest matching call strictly before the requested line."""
+        for payload, line in reversed(self._calls.get(call_id, ())):
+            if line < before_line:
+                return payload, line
+        for line, parsed in self._raw_items(before_line=before_line):
+            payload = dict(self._tool_calls(parsed)).get(call_id)
+            if payload is not None:
+                return payload, line
+        return None
+
+    def lookup_code_cell(self, cell_id: str, *, before_line: int) -> tuple[str, int] | None:
+        """Return the custom-output announcement, never a wait's repeated header."""
+        from twicc.providers.codex.history_facts import code_cell
+
+        for call_id, line in reversed(self._cells.get(cell_id, ())):
+            if line < before_line:
+                return call_id, line
+        for line, parsed in self._raw_items(before_line=before_line):
+            cell = code_cell(parsed)
+            if cell is not None and cell[0] == cell_id:
+                return cell[1], line
+        return None

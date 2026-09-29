@@ -35,6 +35,7 @@ from twicc.core.models import (
 from twicc.paths import get_artifacts_dir
 from twicc.pricing import calculate_line_context_usage
 from twicc.provider_homes import claude_plans_dir, claude_projects_dir
+from twicc.providers.history_facts import HistoryFact, HistoryFactContext
 from twicc.providers.compute_base import (
     _EMPTY_ANALYSIS,
     _EMPTY_FILE_PATHS,
@@ -1925,6 +1926,12 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
             isinstance(item, dict) and item.get('type') == 'tool_result'
             for item in content
         )
+
+    def extract_history_facts(
+        self, parsed: dict, *, line_num: int, history: HistoryFactContext,
+    ) -> list[HistoryFact]:
+        from .history_facts import extract_history_facts
+        return extract_history_facts(parsed, line_num=line_num, history=history)
 
     def extract_tool_use_entries(
         self,

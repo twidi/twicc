@@ -60,6 +60,7 @@ from twicc.core.models import (
 from twicc.core.session_queries import TOOL_STATE_ANNOTATIONS
 from twicc.git import is_git_root_related, read_head_branch, resolve_git_from_path
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
+from twicc.providers.history_facts import HistoryFact, HistoryFactContext, append_history_facts
 from twicc.providers.plan_docs import (
     FOLDED_SOURCES,
     DocEditEvent,
@@ -299,6 +300,8 @@ class ContentAnalysis(NamedTuple):
     # since the async-by-default CLI dropped the ``run_in_background`` input
     # flag, the ack is the only reliable backgroundness signal.
     tool_result_agent_info: tuple[str, str, bool] | None
+    # Ephemeral classification reused by the current record's fact extractor.
+    history_evidence: dict | None = None
 
 
 # Shared empty constants used by every provider's ``analyze_content`` to
@@ -1013,6 +1016,12 @@ class BaseSessionCompute:
         prior item is already in the DB).
         """
         raise NotImplementedError
+
+    def extract_history_facts(
+        self, parsed: dict, *, line_num: int, history: HistoryFactContext,
+    ) -> list[HistoryFact]:
+        """Extract compact prior-line evidence without changing provider state."""
+        return []
 
     def analyze_content(
         self,
@@ -2731,6 +2740,7 @@ class BaseSessionCompute:
         # Provider hook: per-session setup (e.g. Codex initialises its
         # exec_command map used by remap_tool_result_id below).
         self.begin_session_compute(session_id)
+        history = HistoryFactContext(self.provider)
 
         for item in queryset.iterator(chunk_size=batch_size):
             # Snapshot original state before any computation, for change detection
@@ -2756,6 +2766,10 @@ class BaseSessionCompute:
             analysis = self.analyze_content(
                 parsed, session_id=session_id, tool_use_map=tool_use_map
             )
+
+            history.set_record_evidence(item.line_num, analysis.history_evidence)
+            facts = self.extract_history_facts(parsed, line_num=item.line_num, history=history)
+            history.register(parsed, facts, line_num=item.line_num)
 
             # Compute display_level and kind
             metadata = self.compute_item_metadata(parsed)
@@ -3140,6 +3154,7 @@ class BaseSessionCompute:
             # last_offset has since advanced (watcher live-computed newer
             # lines), so a stale worker result can't clobber fresher data.
             'observed_last_offset': session.last_offset,
+            'history_facts': [fact._asdict() for fact in history.facts],
             'item_updates': all_item_updates,
             'item_fields': [
                 'display_level', 'group_head', 'group_tail', 'kind', 'message_id',
@@ -3805,6 +3820,7 @@ class BaseSessionCompute:
         # therefore not yet committed to the DB). Each entry carries the
         # ``(line_num, timestamp, parsed_json)`` triple the walker needs.
         processed_items: list[tuple[int, datetime | None, dict]] = []
+        history = HistoryFactContext(self.provider, session_id=session.id)
 
         for line in lines:
             line = line.strip()
@@ -3855,6 +3871,11 @@ class BaseSessionCompute:
                         "(session=%s, line=%d)",
                         session.id, current_line_num,
                     )
+
+            # Current-batch evidence is published before the next transform,
+            # even though raw items are only inserted after this first pass.
+            facts = self.extract_history_facts(parsed, line_num=current_line_num, history=history)
+            history.register(parsed, facts, line_num=current_line_num)
 
             # Make the parsed view of the current item visible to the
             # next iteration's transform_inline. Appended AFTER the
@@ -3986,6 +4007,7 @@ class BaseSessionCompute:
         # Bulk create all items
         items_only = [item for item, _ in items_to_create]
         SessionItem.objects.bulk_create(items_only, ignore_conflicts=True, batch_size=50)
+        append_history_facts(session.id, history.facts)
 
         # Track line_nums of new and updated items
         new_line_nums: set[int] = {item.line_num for item in items_only}

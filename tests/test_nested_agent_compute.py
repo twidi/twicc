@@ -6,7 +6,7 @@ import orjson
 import pytest
 
 from twicc.core.enums import Provider
-from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType
+from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType, SessionHistoryFact
 from twicc.providers.claude_code.compute import get_compute
 
 NOW = datetime(2026, 8, 8, 12, tzinfo=UTC)
@@ -344,3 +344,18 @@ def test_child_live_authoritative_tool_wins_same_prompt_sibling(tree):
     compute(root)
     assert AgentLink.objects.get().agent_id == child.id
     assert AgentLink.objects.get().tool_use_id == "root_tool"
+
+
+@pytest.mark.parametrize("per_line", [True, False])
+def test_claude_history_facts_batch_live_parity(tree, per_line):
+    root, owner, child, home = tree
+    records = [spawn(), ack(), queue_entry()]
+    if per_line:
+        for record in records:
+            live(owner, home, record)
+    else:
+        live(owner, home, *records)
+    persisted = list(SessionHistoryFact.objects.filter(session=owner)
+                     .order_by('line_num', 'kind', 'key').values('line_num', 'kind', 'key', 'data'))
+    assert persisted
+    assert compute(owner, apply=False)['history_facts'] == persisted
