@@ -53,6 +53,7 @@ from twicc.providers.compute_executor import run_compute_sync
 from twicc.providers.live_sync import LiveSyncLimits
 from twicc.providers.session_change_queue import MigrationRelease, PathDrainTarget, SessionChangeQueue
 from twicc.providers.db_writer import run_under_db_write_lock
+from twicc.sync_diagnostics import log_slow, sync_timing_context
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from twicc.providers.subagent_roots import resolve_flat_parent_id
 from twicc.workspaces import auto_add_project_to_workspaces
@@ -799,7 +800,10 @@ class BaseSessionsWatcher:
         old_title = session.title
         bounded = session.compute_version == compute.compute_version
         limit = self._line_limits.get(path, 500) if bounded else 500
-        result = await run_compute_sync(_sync_live_session_items, compute, session.id, path, LiveSyncLimits(limit))
+        with sync_timing_context(compute.provider, session.id):
+            result = await run_compute_sync(_sync_live_session_items, compute, session.id, path, LiveSyncLimits(limit))
+            log_slow('slice', result.elapsed_ms, lines=result.lines_processed,
+                     bytes=result.bytes_consumed, backlog=result.has_more)
         updates = result.updates
         if bounded and result.has_more:
             if result.elapsed_ms > 100:
@@ -1115,6 +1119,7 @@ class BaseSessionsWatcher:
     ) -> SessionChangeResult:
         """Run one complete callback after a provider identifies its session."""
 
+        session = None
         if change_type != Change.deleted:
             session = await get_session_by_id(parsed.session_id)
             if session is not None and session.last_offset:
@@ -1140,9 +1145,10 @@ class BaseSessionsWatcher:
         ):
             parsed.title = await self._fetch_initial_title(parsed)
 
-        result = await run_under_db_write_lock(
-            lambda: self.sync_and_broadcast(path, parsed, change_type, channel_layer)
-        )
+        with sync_timing_context(getattr(session, "provider", None), parsed.session_id):
+            result = await run_under_db_write_lock(
+                lambda: self.sync_and_broadcast(path, parsed, change_type, channel_layer)
+            )
 
         indexing = result.indexing
 

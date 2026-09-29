@@ -1180,6 +1180,9 @@ def test_gate_wake_tracks_same_session_replacement(tmp_path, monkeypatch, outcom
 
 
 def test_first_observed_claude_truncation_fails_before_slice(tmp_path, monkeypatch, caplog):
+    # ASGI initialization reapplies settings_test's disable_existing_loggers.
+    # This assertion needs its logger enabled regardless of test order.
+    monkeypatch.setattr(module.logger, 'disabled', False)
     from twicc.core.models import SessionType
     async def run():
         watcher = ClaudeCodeSessionsWatcher()

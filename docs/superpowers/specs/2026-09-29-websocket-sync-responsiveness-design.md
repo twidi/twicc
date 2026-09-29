@@ -1,7 +1,7 @@
 # WebSocket responsiveness and indexed session history
 
 Date: 2026-09-29
-Status: Approved by the user on 2026-09-29. Implementation is in progress through the linked plan.
+Status: Approved by the user on 2026-09-29. Tasks 1–9 passed independent review. Task 10 automated validation is recorded below. Independent Task 10 review, whole-change review, and deployment/client checks remain pending.
 Source baseline: `fb51f74e` on local `main`.
 Implementation plan: [Task sequence and validation](../plans/2026-09-29-websocket-sync-responsiveness.md).
 
@@ -433,12 +433,77 @@ Separate write-lock wait, executor wait, and synchronous execution time where bo
 Record handshake duration and unexpected transport termination without logging message contents or emitting every heartbeat.
 These measurements must distinguish a responsive connection from delayed session data.
 
+### Task 10 automated workload evidence (2026-09-29)
+
+The disposable benchmark replays 150,000 message-ID/cost-bearing Claude rows with 1,500,000,000 bytes of text payload.
+The JSONL source occupies 1,534,100,890 bytes. It includes reused tool identifiers, true misses, and concurrent small-session appends.
+The machine runs Linux x86_64, Python 3.13.14 and SQLite 3.53.1, with eight reported CPUs.
+Python and frontend suite execution overlaps part of the replay; this experiment does not reserve the host's CPUs.
+
+| Measurement | Observed result |
+| --- | --- |
+| Authenticated loopback application pongs | 4,937 samples; p95 54.23 ms; maximum 239.01 ms |
+| Whole backlog replay | 335.15 s |
+| First small-session commit | 0.82 s, after 410 large-session rows |
+| Append 20 rows to the established large session | 51.68 ms |
+| Current facts, new SQLite connection | Hit 4.04 ms; miss 1.00 ms |
+| Current facts, warm connection | Hit 2.01–2.16 ms; miss 0.94–0.95 ms |
+| Outdated fallback | Hit 38.28 ms; miss 5,457.10 ms |
+| VM steps per row, late/early 125-row slices | 1.00000 ratio |
+| VM steps per row, late/early 410-row slices | 1.00016 ratio |
+| Established-prefix appends, 125/500 rows | 34,900 / 139,800 SQLite VM steps |
+
+The 4 MiB limit reduces 500-line replay requests to 410 rows. Scaling comparisons use actual committed sizes.
+Cold lookup means a reopened SQLite connection; the operating-system page cache is not flushed.
+Fact, message-ID, and legacy-page query plans all use indexed `SEARCH` operations.
+The final large session has 150,645 rows, each with a message ID and cost; stored cost matches the six-decimal reference aggregate.
+
+Run [the benchmark](../../../scripts/benchmark_session_sync.py) in a new, empty scratch directory:
+
+```bash
+uv run python scripts/benchmark_session_sync.py \
+  --data-dir /absolute/scratch/new-disposable-run \
+  --lines 150000 --payload-bytes 1500000000 \
+  --report /absolute/scratch/new-report.json
+```
+
+The script refuses the normal/inherited data directory and any preexisting database or directory content.
+It verifies Django's resolved database path before migration, and starts only an ephemeral `127.0.0.1` ASGI server.
+The report includes raw pong samples, per-slice VM counts, query plans, lookup samples, and completion times.
+The recorded run's server stops and its synthetic data is removed; JSON reports remain in session scratch.
+This benchmark exercises the application heartbeat, not the browser visibility probe or a remote tunnel.
+
+### Automated suite status
+
+The full Python run reports 5,970 passed, 21 skipped, and 61 warnings, with one unrelated failure.
+`tests/test_log_retention.py::test_default_now_is_the_current_time` fails against the unchanged baseline too.
+Its fixture ends on September 5, while its assertion uses the current date, September 29.
+The minimum seven-day activity tail starts August 29; the assertion expects August 30.
+This task does not modify log retention. The full suite is therefore not entirely green.
+
+The final affected checks pass 119 tests. All 724 frontend tests and targeted Python lint pass.
+Optional real-provider integration tests remain disabled. No live provider credentials are used by the benchmark.
+
+### Deployment and real-client checks: pending
+
+The user must restart the changed instance with `uv run ./devctl.py restart all`.
+`devctl.py` applies pending migrations during startup. No running database is migrated by this validation task.
+Normal compute rebuilds facts using Claude version 112 and Codex version 52; stale lookup stays active until publication succeeds.
+
+After deployment, check localhost reconnect during catch-up and reconnect through the remote tunnel.
+On a phone, check background/foreground transitions and tab switching.
+Confirm the connection indicator recovers, session data catches up, and visibility probes do not cause false reconnects.
+These checks remain pending. Automated ASGI results do not replace them.
+
 ## 10. Remaining limits
 
 Outdated sessions can remain expensive until normal compute succeeds at a stable revision.
 Large individual lines and absent legacy matches can exceed slice time targets.
 Final compute application can still delay business writes while its writer lease is held.
 Python CPU contention, event-loop blocking elsewhere, network stalls, and saturated clients remain possible failure sources.
+Shutdown drains admitted turns but can leave backlog represented only by `has_more` for the next startup.
+Externally rewritten Claude files fail explicitly; the watcher does not destructively rebuild them.
+Forced Codex replacement intent is process-local and can be lost if the process exits before replacement succeeds.
 
 The design removes the demonstrated shared-executor coupling and repeated indexed-history scans after reconstruction.
 Validation must still confirm how much of the observed incident rate those mechanisms explain.

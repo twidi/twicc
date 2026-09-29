@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from time import perf_counter
 
 from channels.db import database_sync_to_async
 from django.db import connections
+
+from twicc.sync_diagnostics import log_slow
 
 _executor: ThreadPoolExecutor | None = None
 _shutdown_task: asyncio.Task | None = None
@@ -27,7 +30,17 @@ async def run_compute_sync[T](function: Callable[..., T], /, *args, **kwargs) ->
     if executor is None:
         raise RuntimeError("Compute executor not started")
 
-    return await database_sync_to_async(function, thread_sensitive=False, executor=executor)(*args, **kwargs)
+    submitted = perf_counter()
+
+    def measured():
+        started = perf_counter()
+        log_slow('executor_queue', (started - submitted) * 1000)
+        try:
+            return function(*args, **kwargs)
+        finally:
+            log_slow('executor_run', (perf_counter() - started) * 1000)
+
+    return await database_sync_to_async(measured, thread_sensitive=False, executor=executor)()
 
 
 async def stop_compute_executor() -> None:

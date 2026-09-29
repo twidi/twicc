@@ -38,6 +38,7 @@ class HeartbeatTransport:
         self._terminal = None
         self._terminal_delivered = False
         self.failure: Exception | None = None
+        self._termination_logged = False
 
     def enable_heartbeat(self) -> None:
         """Enable only after the consumer authorizes and completes accept."""
@@ -56,11 +57,17 @@ class HeartbeatTransport:
     def _fail(self, exc: Exception) -> None:
         if self.failure is None:
             self.failure = exc
-            logger.warning("WebSocket transport failed", exc_info=exc)
+            self._log_termination(type(exc).__name__)
         # 1006 describes an abnormal received termination; it is never sent.
         self._finish({"type": "websocket.disconnect", "code": 1006})
         if self._reader is not None and self._reader is not asyncio.current_task():
             self._reader.cancel()
+
+    def _log_termination(self, reason):
+        if not self._termination_logged:
+            self._termination_logged = True
+            logger.warning("WebSocket transport terminated connection=%x reason=%s queued_events=%d queued_bytes=%d",
+                           id(self), reason, len(self._queue), self._queued_bytes)
 
     async def _join_reader(self) -> None:
         if self._reader is None or self._reader is asyncio.current_task():
@@ -153,6 +160,9 @@ class HeartbeatTransport:
             while self._terminal is None:
                 event = await self._upstream_receive()
                 if event["type"] == "websocket.disconnect":
+                    code = event.get('code', 1000)
+                    if code not in (1000, 1001):
+                        self._log_termination(f'disconnect-{code}')
                     self._finish(event)
                     return
                 text = event.get("text")

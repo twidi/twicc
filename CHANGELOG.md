@@ -25,6 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **Connections during session catch-up** — Authenticated WebSocket heartbeats remain responsive while large sessions sync. Bounded sync slices let smaller sessions advance during a backlog. Historical links and costs use indexed facts after normal metadata recompute.
+
 - **Docked panels on medium screens** — Opening a panel over the conversation no longer shifts the layout and leaves an empty strip on the right.
 
 ## [1.94.3] - 2026-09-24

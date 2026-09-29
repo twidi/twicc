@@ -42,6 +42,7 @@ import logging
 import multiprocessing
 import queue
 import threading
+from time import perf_counter
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from contextlib import suppress
@@ -52,6 +53,8 @@ import orjson
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.db import transaction
+
+from twicc.sync_diagnostics import log_slow, sync_timing_context
 
 from twicc.core.enums import Provider
 from twicc.logging_context import provider_log_context
@@ -1362,7 +1365,9 @@ async def _run_under_db_write_lock(
         # :func:`get_db_write_lock` (RuntimeError, not AssertionError) and
         # survives ``python -O``.
         raise RuntimeError("DB writer not started")
+    waiting = perf_counter()
     async with lock:
+        log_slow('writer_lock', (perf_counter() - waiting) * 1000)
         # Install a fresh lease and admit the current Task to its
         # drive-task set BEFORE the drive. The drive will wrap the user
         # factory in a coroutine that self-admits its inner Task as its
@@ -1647,7 +1652,10 @@ async def _drain_one() -> bool:
         except Exception:
             logger.error(f"Failed to deserialize compute message: {raw!r:.500}")
         else:
-            with provider_log_context(_provider_from_compute_message(msg)):
+            with (
+                provider_log_context(_provider_from_compute_message(msg)),
+                sync_timing_context(_provider_from_compute_message(msg), msg.get('session_id')),
+            ):
                 try:
                     await _run_under_db_write_lock(lambda: _process_compute_message(msg))
                 except Exception as exc:
@@ -2072,11 +2080,19 @@ async def _process_compute_message(msg: dict) -> None:
     try:
         from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
 
+        line_count = len(msg.get('item_updates', []))
         msg, chunk_outcome = await _apply_compute_items_in_chunks(msg)
         if chunk_outcome != "ok":
             result = ComputeApplyResult(chunk_outcome)
         else:
-            result = await run_compute_sync(BaseSessionCompute.apply_session_complete, msg)
+            with sync_timing_context(_provider_from_compute_message(msg), msg.get('session_id'),
+                                     lines=line_count, bytes=msg.get('observed_last_offset'),
+                                     facts=len(msg.get('history_facts', []))):
+                started = perf_counter()
+                try:
+                    result = await run_compute_sync(BaseSessionCompute.apply_session_complete, msg)
+                finally:
+                    log_slow('final_apply', (perf_counter() - started) * 1000)
     except Exception as e:
         logger.exception("Error applying session_complete")
         state.failed_count += 1

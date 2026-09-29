@@ -8,6 +8,7 @@ messages for sending messages to agent sessions (any provider).
 
 import asyncio
 import logging
+from time import perf_counter
 from datetime import datetime
 from urllib.parse import parse_qs
 
@@ -23,6 +24,7 @@ from django.core.asgi import get_asgi_application
 from django.urls import path
 from django.utils import timezone
 
+from twicc.sync_diagnostics import log_slow
 from twicc.agent import AgentInfo, serialize_agent_info
 from twicc.auth.local_access import scope_remote_access_blocked
 from twicc.auth.access import scope_allowed
@@ -512,6 +514,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         When set, only messages whose ``type`` matches the list are sent.
         When absent, all messages are sent (backward compatible).
         """
+        handshake_started = perf_counter()
         # Unprotected instance (no password): refuse non-local connections —
         # there's nothing to authenticate against. No-op when a password is
         # configured or the operator opted out (see twicc.auth.local_access).
@@ -561,6 +564,8 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add("updates", self.channel_name)
         await self.accept()
         self._heartbeat_transport.enable_heartbeat()
+        log_slow('websocket_handshake', (perf_counter() - handshake_started) * 1000,
+                 threshold_ms=1000, connection=id(self))
 
         # Send server version to the client (used for auto-reload on version change)
         if self._should_send("server_version"):
