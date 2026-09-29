@@ -51,6 +51,9 @@ defineProps({
 
 <style scoped>
 .sidebar-list-separator {
+    /* Positioned: a list's gliding ink (the open row's fill) passes under the label, like
+       under the rows, instead of painting over it. */
+    position: relative;
     display: flex;
     align-items: center;
     gap: var(--wa-space-m);

@@ -14,6 +14,9 @@ const PROPERTIES = ['--glide-x', '--glide-y', '--glide-w', '--glide-h']
 const READY = 'data-glide-ready'
 const INSTANT = 'data-glide-instant'
 const ZERO_BOX = { x: 0, y: 0, w: 0, h: 0 }
+const ZERO_OFFSET = { x: 0, y: 0 }
+// A same-element correction under this is dropped (nearBox).
+const SAME_ELEMENT_TOLERANCE = 0.05
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -67,6 +70,16 @@ export function sameBox(a, b) {
         && Math.abs(a.w - b.w) < 0.01 && Math.abs(a.h - b.h) < 0.01
 }
 
+// true when all four values differ by at most `tolerance` px (null as in sameBox). Used for
+// the same element only: its box measured at two moments of an entrance differs by up to
+// ~0.016px in Firefox (rects rounded to 1/60px), and a same-element change is a snap that
+// would cut a running glide (sidebar row glide design §4.2).
+export function nearBox(a, b, tolerance) {
+    if (!a || !b) return !a && !b
+    return Math.abs(a.x - b.x) <= tolerance && Math.abs(a.y - b.y) <= tolerance
+        && Math.abs(a.w - b.w) <= tolerance && Math.abs(a.h - b.h) <= tolerance
+}
+
 const sameRect = (a, b) => !!a && !!b && Math.abs(a.left - b.left) < 0.01 && Math.abs(a.top - b.top) < 0.01
     && Math.abs(a.width - b.width) < 0.01 && Math.abs(a.height - b.height) < 0.01
 
@@ -87,6 +100,10 @@ export function createGlideInk({
     getActive,            // () => Element | null
     getItems = () => [],  // () => Element[] — extra elements watched for resize
     getResetKey = () => null,
+    // (active) => { x, y }, layout px subtracted from the measured box: a transient
+    // translate on the active element's ancestor (a list entrance), so the ink lands on
+    // the final box.
+    getActiveOffset = () => ZERO_OFFSET,
     // globalThis, never a plain object holding the bare window functions: those throw
     // "Illegal invocation" when called with another `this`.
     env = globalThis,
@@ -215,7 +232,15 @@ export function createGlideInk({
         // glide, so a glide the user started during the opening is retargeted, not cut.
         if (settle && mode === 'snap' && state.active === active) mode = 'glide'
 
-        if (!sameBox(box, state.box)) {
+        // Both in layout px: a scaled container stays right.
+        const offset = getActiveOffset(active)
+        box.x -= offset.x
+        box.y -= offset.y
+
+        // The same element within SAME_ELEMENT_TOLERANCE of the last written box writes
+        // nothing: its snap would cut a running glide for an invisible change.
+        const near = state.active === active && nearBox(box, state.box, SAME_ELEMENT_TOLERANCE)
+        if (!sameBox(box, state.box) && !near) {
             if (mode === 'snap') {
                 target.setAttribute(INSTANT, '')
                 writeBox(box)
@@ -227,12 +252,15 @@ export function createGlideInk({
             } else {
                 writeBox(box)
             }
+            // The last written box: sub-tolerance measures compare against what is on
+            // screen, so they cannot creep away from it.
+            state.box = box
         }
 
+        // Always, even when nothing was written: a stale reset key would snap the next move.
         state.ready = true
         state.active = active
         state.resetKey = resetKey
-        state.box = box
 
         if (!settle && isScaled(containerRect)) startSettle(containerRect)
     }

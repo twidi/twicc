@@ -197,10 +197,15 @@ export function useListCascade({ items, getKey, sourceSize, scopeKey, getVisible
         held = { key, settled: Promise.resolve(promise).then(() => {}, () => {}) }
     }
 
+    /** The arrival is pending or playing: a smooth reveal would outlast or disturb it. */
+    function isArriving() {
+        return phase.value !== 'idle'
+    }
+
     onScopeDispose(() => {
         generation++
         cancelAll()
     })
 
-    return { itemClass, itemStyle, noteLive, dropLive, holdTarget }
+    return { itemClass, itemStyle, noteLive, dropLive, holdTarget, isArriving }
 }

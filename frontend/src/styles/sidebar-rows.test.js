@@ -182,3 +182,81 @@ test('5. neither component keeps a copy of the moved rules', () => {
         }
     }
 })
+
+// Gliding open-row fill (step 6a-bis, docs/plans/2026-09-29-sidebar-row-glide-design.md §4.3):
+// the lit look moves to the list's ink once it is placed.
+test('6. lists with an ink: the ink carries the lit look, the open row hands it over', () => {
+    const vars = rule(rules, ['.sidebar-row-list'])
+    assert.deepEqual(vars.decls, {
+        '--glide-ink-bg': 'linear-gradient(100deg, var(--wa-color-brand-fill-normal), color-mix(in oklab, var(--wa-color-brand-fill-quiet) 70%, transparent))',
+        '--glide-ink-radius': 'var(--wa-form-control-border-radius)',
+        // The reveal bands (§10): none outside compact mode.
+        '--sidebar-row-reveal-top': '0rem',
+        '--sidebar-row-reveal-bottom': '0rem',
+    })
+    const darkVars = rule(rules, ['html.wa-dark .sidebar-row-list'])
+    assert.deepEqual(darkVars.decls, {
+        '--glide-ink-bg': 'linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.32 0.07 h), oklch(from var(--wa-color-brand-60) 0.25 0.05 h / 0.6))',
+    })
+    // The lit row's values (rule 3): its gradient, its ring as a 1px inset shadow, its shadow.
+    const lit = rule(rules, ['.sidebar-row--active::part(base)', '.sidebar-row-wrapper--selected .sidebar-row--active::part(base)'])
+    const darkLit = rule(rules, ['html.wa-dark .sidebar-row--active::part(base)'])
+    assert.equal(vars.decls['--glide-ink-bg'], lit.decls['background-image'])
+    assert.equal(darkVars.decls['--glide-ink-bg'], darkLit.decls['background-image'])
+    const ink = rule(rules, ['.sidebar-row-list > .glide-ink'])
+    assert.deepEqual(ink.decls, {
+        'box-shadow': `inset 0 0 0 1px ${lit.decls['border-color']}, ${lit.decls['box-shadow']}`,
+    })
+    const darkInk = rule(rules, ['html.wa-dark .sidebar-row-list > .glide-ink'])
+    assert.deepEqual(darkInk.decls, {
+        'box-shadow': `inset 0 0 0 1px ${darkLit.decls['border-color']}, ${darkLit.decls['box-shadow']}`,
+    })
+
+    const handOff = rule(rules, ['.sidebar-row-list[data-glide-ready] .sidebar-row--active::part(base)'])
+    assert.deepEqual(handOff.decls, {
+        'background-color': 'transparent',
+        'background-image': 'none',
+        'border-color': 'transparent',
+        'box-shadow': 'none',
+    })
+    const arriving = rule(rules, ['.sidebar-row-list:has(> .list-arriving) > .glide-ink'])
+    assert.deepEqual(arriving.decls, { opacity: '0' })
+    const selectedInk = rule(rules, ['.sidebar-row-list:has(.sidebar-row-wrapper--selected .sidebar-row--active) > .glide-ink'])
+    assert.deepEqual(selectedInk.decls, { background: 'var(--glide-ink-bg), var(--wa-color-brand-fill-quiet)' })
+    const selectedRing = rule(rules, ['.sidebar-row-list[data-glide-ready] .sidebar-row-wrapper--selected .sidebar-row--active::part(base)'])
+    assert.deepEqual(selectedRing.decls, {
+        'border-color': 'var(--wa-color-brand-60)',
+        'box-shadow': 'inset 0 0 0 1px var(--wa-color-brand-60)',
+    })
+    const transition = rule(rules, ['.sidebar-row-list .sidebar-row--active::part(base)'])
+    assert.deepEqual(transition.decls, { 'transition-property': 'color' })
+
+    // After every lit rule (the dark open-and-selected one is the last of them).
+    const lastLit = rule(rules, ['html.wa-dark .sidebar-row-wrapper--selected .sidebar-row--active::part(base)'])
+    for (const r of [vars, darkVars, ink, darkInk, handOff, arriving, selectedInk, selectedRing, transition]) {
+        assert.ok(r.order > lastLit.order, `${r.selectors[0]} after the lit rules`)
+    }
+    assert.ok(selectedRing.order > handOff.order, 'the selection ring comes back after the hand-off')
+})
+
+// Reveal the open row only near an edge (step 6a-bis §10): the bands are registered custom
+// properties read by the lists' own code, never scroll-padding / scroll-margin.
+test('7. the reveal bands: registered lengths, 5rem in compact mode, after the base rule', () => {
+    for (const name of ['--sidebar-row-reveal-top', '--sidebar-row-reveal-bottom', '--sidebar-row-reveal-cover']) {
+        const registered = rule(rules, [`@property ${name}`])
+        assert.deepEqual(registered.decls, { syntax: "'<length>'", inherits: 'true', 'initial-value': '0px' }, name)
+    }
+    const properties = rules.filter((r) => r.selectors[0].startsWith('@property'))
+    assert.deepEqual(properties.map((r) => r.order), [0, 1, 2], 'at the top of the file')
+    const base = rule(rules, ['.sidebar-row-list'])
+    const compact = rule(rules, ['.sidebar-row-list--compact'])
+    assert.deepEqual(compact.decls, { '--sidebar-row-reveal-top': '5rem', '--sidebar-row-reveal-bottom': '5rem' })
+    assert.ok(compact.order > base.order, 'the compact bands come after the .sidebar-row-list rule')
+    assert.equal(compact.order, base.order + 1, 'right after it')
+})
+
+test('8. no scroll-padding / scroll-margin in the lists or the shared rows', () => {
+    for (const file of ['sidebar-rows.css', '../components/session/list/SessionList.vue', ARTIFACTS]) {
+        assert.ok(!/scroll-(padding|margin)/.test(stripComments(read(file))), file)
+    }
+})

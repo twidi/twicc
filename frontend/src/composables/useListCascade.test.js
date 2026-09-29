@@ -387,6 +387,21 @@ test('13b. dropLive: before the run, and mid-animation', async () => {
     effect.stop()
 })
 
+test('13c. isArriving: true while pending and playing, false when idle', () => {
+    // Smooth reveals (sidebar-row-glide §10.7) wait for the arrival to end.
+    const { cascade, env, effect } = setup()
+    assert.equal(cascade.isArriving(), true, 'pending')
+    env.flushFrame()
+    env.flushFrame()
+    assert.equal(cascade.isArriving(), true, 'playing')
+    env.advance(listCascadeEndMs(2))
+    assert.equal(cascade.isArriving(), false, 'idle')
+    effect.stop()
+    const empty = setup([])
+    assert.equal(empty.cascade.isArriving(), false, 'idle before any row')
+    empty.effect.stop()
+})
+
 test('14. SessionList.vue wiring', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const sfc = readFileSync(join(here, '../components/session/list/SessionList.vue'), 'utf8')

@@ -16,6 +16,8 @@ import { computeSidebarSessionBlocks } from '../../../utils/sidebarSessions'
 import { matchQuery } from '../../../utils/textFilter'
 import { dateBucketSeparator } from '../../../utils/datePresets'
 import { useListCascade } from '../../../composables/useListCascade'
+import { useGlideInk } from '../../../composables/useGlideInk'
+import { activeRowBase, entranceOffset, revealBands, revealMargins } from '../../../utils/sidebarRows'
 import VirtualScroller from '../../virtual-scroller/VirtualScroller.vue'
 import SessionListItem from './SessionListItem.vue'
 import SidebarListSeparator from '../../sidebar/SidebarListSeparator.vue'
@@ -233,6 +235,25 @@ const cascade = useListCascade({
     getVisibleRange: () => scrollerRef.value?.getVisibleRange() ?? null,
 })
 
+// Gliding open-row fill (visual refresh step 6a-bis, design:
+// docs/plans/2026-09-29-sidebar-row-glide-design.md): the open row's lit look is an ink in
+// the scroller root that glides from row to row (styles/sidebar-rows.css). It takes the box
+// of the open button's base part, minus its entrance translate. The rows are observed: a row
+// mounted by the scroller renders its button a microtask later and re-places the ink then.
+// The visible range: the open row unmounted by the scroller hides the ink, remounted snaps.
+const inkRef = ref(null)
+const scrollerEl = computed(() => scrollerRef.value?.$el ?? null)
+useGlideInk({
+    container: scrollerEl,
+    flushTarget: inkRef,
+    getActive: () => activeRowBase(scrollerEl.value),
+    getActiveOffset: () => entranceOffset(scrollerEl.value),
+    getItems: () => [...(scrollerEl.value?.querySelectorAll('.sidebar-row') ?? [])],
+    sources: [() => props.sessionId, sessions, () => props.compactView,
+              () => scrollerRef.value?.getVisibleRange()],
+    resetKey: () => props.projectId,
+})
+
 // Live ids: a session received from the server or created in this tab. A Codex draft's
 // canonical row replaces a row the user already sees: it must not enter. In a tab that
 // never held the draft the new row keeps its entrance.
@@ -330,7 +351,11 @@ watch(sessions, (list) => {
 onBeforeUnmount(() => store.setDisplayedSessionIds([]))
 
 /**
- * Scroll the session list to make a session visible.
+ * Scroll the session list to reveal a session, only as far as needed: no scroll when its
+ * entry (label and row) lies inside the list's zone, the visible area minus the reveal
+ * bands (styles/sidebar-rows.css; the bottom one adds the part the floating "New session"
+ * button covers), otherwise the minimal scroll to the nearer band edge (design:
+ * docs/plans/2026-09-29-sidebar-row-glide-design.md §10).
  * Retries a few times because the VirtualScroller may be recreated (via :key)
  * when projectId changes simultaneously with sessionId, and the new scroller
  * needs time to mount and measure items.
@@ -339,6 +364,10 @@ onBeforeUnmount(() => store.setDisplayedSessionIds([]))
 function scrollToSession(targetSessionId, attempt = 0) {
     const MAX_ATTEMPTS = 5
     const RETRY_DELAY = 50
+
+    // A retry for a session that is no longer open must not start a reveal: it would
+    // cancel the newer one.
+    if (targetSessionId !== props.sessionId) return Promise.resolve()
 
     const retry = () => new Promise((resolve) => {
         setTimeout(() => resolve(scrollToSession(targetSessionId, attempt + 1)), RETRY_DELAY)
@@ -354,11 +383,25 @@ function scrollToSession(targetSessionId, attempt = 0) {
         return attempt < MAX_ATTEMPTS ? retry() : Promise.resolve()
     }
 
+    // The bands, read once per call. The scroller's positions start at 0 without the list's
+    // top padding: the margins are shifted by it so the zone edges are real pixels.
+    const pad = parseFloat(getComputedStyle(scrollerEl.value).paddingTop) || 0
+    const { marginTop, marginBottom } = revealMargins(revealBands(scrollerEl.value), pad)
+
     // Use the VirtualScroller's scrollToKey which has a robust "jump, settle, correct"
     // loop: it scrolls to the item, waits for ResizeObserver height measurements to
-    // stabilize, then verifies visibility and re-scrolls if needed. This handles all
-    // timing issues when the scroller was just recreated (via :key on projectId change).
-    return scrollerRef.value.scrollToKey(targetSessionId, { align: 'center' }).then(() => {}, () => {})
+    // stabilize, then verifies the item is in its zone and re-scrolls if needed. This
+    // handles all timing issues when the scroller was just recreated (via :key on
+    // projectId change). Any newer intent ends it: another open session (or none), a
+    // newer reveal, a user scroll, keyboard navigation. A short move scrolls smoothly (§10.7),
+    // never while the list's arrival cascade is pending or playing.
+    return scrollerRef.value.scrollToKey(targetSessionId, {
+        align: 'nearest',
+        marginTop,
+        marginBottom,
+        isCurrent: () => targetSessionId === props.sessionId,
+        allowSmooth: !cascade.isArriving(),
+    }).then(() => {}, () => {})
 }
 
 const emit = defineEmits(['select', 'drop-data', 'focus-search'])
@@ -647,11 +690,13 @@ defineExpose({
             :min-item-height="minSessionHeight"
             :buffer="SCROLLER_BUFFER"
             :unload-buffer="SCROLLER_BUFFER * 1.5"
-            class="session-list"
+            class="session-list sidebar-row-list"
+            :class="{ 'sidebar-row-list--compact': compactView }"
             tabindex="0"
             @update="onScrollerUpdate"
             @keydown="handleListKeydown"
         >
+            <template #before><span ref="inkRef" class="glide-ink" aria-hidden="true"></span></template>
             <template #default="{ item: session, index }">
                 <SidebarListSeparator
                     v-if="separatorBeforeIds.has(session.id)"
@@ -713,6 +758,10 @@ defineExpose({
     flex: 1;
     min-height: 0;
     padding-block: var(--wa-space-2xs);
+    /* The floating "New session" button covers the list's last ~3.08rem (measured: 35px +
+       11.25px at a 15px root), rounded up to 3.125rem; a row under it is not visible. The
+       open row's reveal keeps clear of it (styles/sidebar-rows.css, the reveal bands). */
+    --sidebar-row-reveal-cover: 3.125rem;
 }
 
 /* Remove default focus outline on the list - we show highlight on items instead */

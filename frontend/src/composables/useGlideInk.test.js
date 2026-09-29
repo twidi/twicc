@@ -72,6 +72,7 @@ function setup(options = {}) {
         env,
         flushPseudo: options.flushPseudo,
         resetKey: options.resetKey,
+        getActiveOffset: options.getActiveOffset,
     }))
     return { env, container, ink, rows, index, scope }
 }
@@ -169,5 +170,14 @@ test('resetKey reaches the controller: a new key snaps, the same key glides', as
     await nextTick()
     assert.equal(list.props.get('--glide-y'), '40px')
     assert.equal(env.flushes.length, 2, 'new key: a snap (flush)')
+    scope.stop()
+})
+
+test('getActiveOffset reaches the controller: the offset is subtracted', async () => {
+    const { container, scope } = setup({ getActiveOffset: () => ({ x: 0, y: 6 }) })
+    const list = element('list')
+    container.value = list
+    await nextTick()
+    assert.equal(list.props.get('--glide-y'), '-6px')
     scope.stop()
 })

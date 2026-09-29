@@ -21,10 +21,13 @@ import { useDataStore } from '../../stores/data'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { useSettingsStore } from '../../stores/settings'
 import { useListCascade } from '../../composables/useListCascade'
+import { useGlideInk } from '../../composables/useGlideInk'
 import { visibleIndexRange } from '../../utils/listCascade'
 import { computeArtifactBookmarkList } from '../../utils/sidebarArtifactBookmarks'
 import { matchQuery } from '../../utils/textFilter'
 import { artifactBookmarkRouteLocation, artifactTypeIcon } from '../../utils/artifactBookmark'
+import { activeRowBase, entranceOffset, entryReveal, revealBands } from '../../utils/sidebarRows'
+import { revealBehavior, startSmoothScroll } from '../../utils/nearestScroll'
 import { buildFilesRouteParams } from '../../utils/granularRoutes'
 import { formatDate } from '../../utils/date'
 import { dateBucketSeparator } from '../../utils/datePresets'
@@ -88,10 +91,12 @@ const listReady = computed(() => dataStore.artifactBookmarksLoaded && dataStore.
 watch(() => list.value.length, (count) => {
     dataStore.setDisplayedArtifactBookmarkCount(count)
 }, { immediate: true })
-// Also removes the live-bookmark subscription (declared with the cascade below).
+// Also removes the live-bookmark subscription (declared with the cascade below), and ends a
+// smooth reveal in flight (its listener and timer).
 onBeforeUnmount(() => {
     dataStore.setDisplayedArtifactBookmarkCount(0)
     stopLiveBookmarks()
+    endSmooth()
 })
 
 /** Whether a bookmark is the one currently open in the main pane. */
@@ -261,14 +266,92 @@ const highlightedIndex = ref(-1)
 const PAGE_SIZE = 10
 
 /**
- * Scroll the row at `index` into view (no virtual scroller — plain DOM).
- * Returns the promise it scrolls in (the cascade's start waits for it).
+ * The smooth reveal in flight (design: docs/plans/2026-09-29-sidebar-row-glide-design.md
+ * §10.7): { target, token, cancel }, null otherwise. While set, a reveal takes its target as
+ * the current scroll. `smoothToken` guards its end: an older one never clears a newer one.
+ */
+let smoothTo = null
+let smoothToken = 0
+
+/**
+ * End the smooth reveal in flight, if any: invalidate its token, clear its destination and
+ * resolve its `done`. Called on a scrolling gesture the browser performs itself (it cancels
+ * the animation: a wheel, a touch pan, a scrollbar drag, Space) and before every other
+ * scroll write of the list.
+ */
+function endSmooth() {
+    if (!smoothTo) return
+    const { cancel } = smoothTo
+    smoothTo = null
+    smoothToken++
+    cancel()
+}
+
+/** A pointercancel from a touch: the browser took it for panning. */
+function endSmoothOnTouchPan(event) {
+    if (event.pointerType === 'touch') endSmooth()
+}
+
+/**
+ * Scroll the row at `index` into view (no virtual scroller — plain DOM), for keyboard
+ * navigation. Returns the promise it scrolls in. It ends a smooth reveal in flight only when
+ * it moved the list: a no-op highlight keeps the reveal's destination.
  */
 function scrollRowIntoView(index) {
     if (index < 0) return
     return nextTick(() => {
-        const entries = listRef.value?.querySelectorAll(':scope > .bookmark-entry')
-        entries?.[index]?.scrollIntoView({ block: 'nearest' })
+        const list = listRef.value
+        if (!list) return
+        const before = list.scrollTop
+        list.querySelectorAll(':scope > .bookmark-entry')[index]?.scrollIntoView({ block: 'nearest' })
+        if (list.scrollTop !== before) endSmooth()
+    })
+}
+
+/**
+ * Reveal the open row's entry (label and row) only as far as needed: no scroll when it lies
+ * inside the list's zone, the visible area minus the reveal bands (styles/sidebar-rows.css),
+ * otherwise the minimal scroll to the nearer band edge (design:
+ * docs/plans/2026-09-29-sidebar-row-glide-design.md §10). offsetTop, not the rect: the
+ * list is the entry's offsetParent, so it is a content coordinate, unaffected by the scroll
+ * and by the entrance translate. A short move scrolls smoothly (§10.7), never while the
+ * arrival cascade is pending or playing; a reveal during a smooth one is judged from where
+ * it is going. Returns the promise it scrolls in (the cascade's start waits for it).
+ * Keyboard navigation keeps scrollRowIntoView.
+ */
+function revealEntry(index) {
+    if (index < 0) return
+    return nextTick(() => {
+        const list = listRef.value
+        const el = list?.querySelectorAll(':scope > .bookmark-entry')[index]
+        if (!list || !el) return
+        const current = smoothTo ? smoothTo.target : list.scrollTop
+        const target = entryReveal({
+            offsetTop: el.offsetTop,
+            offsetHeight: el.offsetHeight,
+            scrollTop: current,
+            clientHeight: list.clientHeight,
+            scrollHeight: list.scrollHeight,
+        }, revealBands(list))
+        // Inside the zone: no write, a smooth reveal in flight finishes.
+        if (target === null) return
+        const behavior = revealBehavior({
+            distance: Math.abs(target - current),
+            viewport: list.clientHeight,
+            reduced: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true,
+            allowed: !cascade.isArriving(),
+        })
+        endSmooth()
+        if (behavior === 'auto') {
+            list.scrollTop = target
+            return
+        }
+        const token = ++smoothToken
+        const { done, cancel } = startSmoothScroll(list, target)
+        smoothTo = { target, token, cancel }
+        done.then(() => {
+            if (smoothTo?.token === token) smoothTo = null
+        })
     })
 }
 
@@ -386,7 +469,11 @@ function handleKeyNavigation(event, { fromSearch = false } = {}) {
 /** Keydown handler bound to the list container (focus is in the list). */
 function handleListKeydown(event) {
     const navigationKeys = ['ArrowDown', 'ArrowUp', 'Home', 'End', 'PageUp', 'PageDown', 'Enter', 'Escape']
-    if (!navigationKeys.includes(event.key)) return
+    if (!navigationKeys.includes(event.key)) {
+        // A key the list does not handle and the browser scrolls: it ends a smooth reveal.
+        if (event.key === ' ' && !event.defaultPrevented) endSmooth()
+        return
+    }
     if (handleKeyNavigation(event)) event.preventDefault()
 }
 
@@ -404,6 +491,23 @@ const cascade = useListCascade({
     getVisibleRange: visibleEntryRange,
 })
 
+// Gliding open-row fill (visual refresh step 6a-bis, design:
+// docs/plans/2026-09-29-sidebar-row-glide-design.md): the open row's lit look is an ink,
+// the list's first child, that glides from row to row (styles/sidebar-rows.css). It takes
+// the box of the open button's base part, minus its entrance translate. The entries are
+// observed: a row that renders its button after the patch, or an entry above the open one
+// that changes height, re-places the ink. The cascade's scope key: a new list snaps.
+const inkRef = ref(null)
+useGlideInk({
+    container: listRef,
+    flushTarget: inkRef,
+    getActive: () => activeRowBase(listRef.value),
+    getActiveOffset: () => entranceOffset(listRef.value),
+    getItems: () => [...(listRef.value?.querySelectorAll(':scope > .bookmark-entry') ?? [])],
+    sources: [() => props.activeBookmarkId, list, () => props.compactView],
+    resetKey: () => (props.showAllArtifacts ? 'all' : (props.effectiveProjectId ?? '')),
+})
+
 // Live ids: a bookmark created in this tab or received from the server (one
 // action for both). Noted before the mutation; the full snapshot
 // (setArtifactBookmarks) and a detail refresh are not live.
@@ -417,13 +521,13 @@ watch(() => props.effectiveProjectId, () => { highlightedIndex.value = -1 })
 watch(() => props.activeWorkspaceId, () => { highlightedIndex.value = -1 })
 
 // When the open bookmark changes, drop any keyboard highlight and reveal the
-// newly-active row (mirrors SessionList scrolling to the selected session). The
+// newly-active row near an edge (mirrors SessionList revealing the selected session). The
 // cascade's start waits (capped) for that scroll when the row is off screen.
 watch(() => props.activeBookmarkId, (id) => {
     highlightedIndex.value = -1
     if (id == null) return
     const i = list.value.findIndex(b => isActive(b))
-    if (i >= 0) cascade.holdTarget(list.value[i].id, scrollRowIntoView(i))
+    if (i >= 0) cascade.holdTarget(list.value[i].id, revealEntry(i))
 }, { immediate: true })
 
 // Reveal the open row when it joins the complete scoped list (the reload case:
@@ -435,7 +539,7 @@ watch(() => props.activeBookmarkId, (id) => {
 watch(() => listReady.value && scoped.value.some(isActive), (hasOpenRow) => {
     if (!hasOpenRow) return
     const i = list.value.findIndex(isActive)
-    if (i >= 0) cascade.holdTarget(list.value[i].id, scrollRowIntoView(i))
+    if (i >= 0) cascade.holdTarget(list.value[i].id, revealEntry(i))
 }, { flush: 'post' })
 
 defineExpose({ handleKeyNavigation })
@@ -453,10 +557,15 @@ defineExpose({ handleKeyNavigation })
         <div
             v-else
             ref="listRef"
-            class="bookmark-list"
+            class="bookmark-list sidebar-row-list"
+            :class="{ 'sidebar-row-list--compact': compactView }"
             tabindex="0"
             @keydown="handleListKeydown"
+            @wheel.passive="endSmooth"
+            @pointercancel="endSmoothOnTouchPan"
+            @pointerdown.self="endSmooth"
         >
+            <span ref="inkRef" class="glide-ink" aria-hidden="true"></span>
             <!-- One element per bookmark, holding its separator and its row, so
                  both enter together (the cascade's classes land here). -->
             <div
@@ -589,6 +698,8 @@ defineExpose({ handleKeyNavigation })
 }
 
 .bookmark-list {
+    /* Containing block of the gliding ink (absolutely placed: not a flex item). */
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow-y: auto;

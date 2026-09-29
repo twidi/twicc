@@ -374,3 +374,179 @@ test('Web Awesome guard: version, tab-group and radio chunks', () => {
     assert.ok(radioStyles.includes(":host([appearance='button'][data-wa-radio-horizontal][data-wa-radio-inner]) { border-radius: 0; }"))
     assert.ok(radioStyles.includes(":host([appearance='button']:state(checked)) { border-color: var(--wa-form-control-activated-color); background-color: var(--wa-color-brand-fill-quiet); }"))
 })
+
+// ---------------------------------------------------------------------------
+// Sidebar lists (step 6a-bis, docs/plans/2026-09-29-sidebar-row-glide-design.md)
+// ---------------------------------------------------------------------------
+
+/** The useGlideInk({ … }) call of a script, up to its closing line. */
+function glideCallOf(script) {
+    const start = script.indexOf('useGlideInk({')
+    assert.ok(start >= 0, 'useGlideInk( call')
+    return script.slice(start, script.indexOf('\n})', start))
+}
+
+test('VirtualScroller: a `before` slot, first child of the scroller root', () => {
+    const template = templateOf(read('../components/virtual-scroller/VirtualScroller.vue'))
+    const slotAt = template.indexOf('<slot name="before" />')
+    const spacerAt = template.indexOf('virtual-scroller-spacer-before')
+    assert.ok(slotAt >= 0, 'the before slot')
+    assert.ok(slotAt < spacerAt, 'before the first spacer')
+    const root = template.indexOf('class="virtual-scroller"')
+    const between = template.slice(template.indexOf('>', root) + 1, slotAt)
+    assert.ok(!/<[\w-]+\b/.test(between.replace(/<!--[\s\S]*?-->/g, '')), 'no element before the slot')
+})
+
+test('SessionList: the ink in the scroller\'s before slot, controller on the open row\'s base part', () => {
+    const sfc = read('../components/session/list/SessionList.vue')
+    const template = templateOf(sfc)
+    assert.match(template, /<template #before><span ref="inkRef" class="glide-ink" aria-hidden="true"><\/span><\/template>/)
+    assert.match(template, /class="session-list sidebar-row-list"/)
+    const script = scriptOf(sfc)
+    assert.match(script, /import \{ activeRowBase, entranceOffset(, [\w, ]+)? \} from '\.\.\/\.\.\/\.\.\/utils\/sidebarRows'/)
+    assert.match(script, /const scrollerEl = computed\(\(\) => scrollerRef\.value\?\.\$el \?\? null\)/)
+    const call = glideCallOf(script)
+    assert.ok(call.includes('container: scrollerEl,'), 'container')
+    assert.ok(call.includes('flushTarget: inkRef,'), 'flush target')
+    assert.ok(call.includes('getActive: () => activeRowBase(scrollerEl.value),'), 'getActive')
+    assert.ok(call.includes('getActiveOffset: () => entranceOffset(scrollerEl.value),'), 'getActiveOffset')
+    assert.ok(call.includes("getItems: () => [...(scrollerEl.value?.querySelectorAll('.sidebar-row') ?? [])],"), 'getItems on the row hosts')
+    assert.match(collapse(call), /sources: \[\(\) => props\.sessionId, sessions, \(\) => props\.compactView, \(\) => scrollerRef\.value\?\.getVisibleRange\(\)\],/)
+    assert.ok(call.includes('resetKey: () => props.projectId,'), 'reset key')
+    assert.ok(!call.includes('document'), 'never document')
+})
+
+test('ArtifactBookmarkList: the ink first child of the positioned list, controller on the open row\'s base part', () => {
+    const sfc = read('../components/artifacts/ArtifactBookmarkList.vue')
+    const { open, child } = firstChildOf(templateOf(sfc), 'bookmark-list sidebar-row-list')
+    assert.match(open, /ref="listRef"/)
+    assert.equal(child, '<span ref="inkRef" class="glide-ink" aria-hidden="true">')
+    const script = scriptOf(sfc)
+    assert.match(script, /import \{ activeRowBase, entranceOffset(, [\w, ]+)? \} from '\.\.\/\.\.\/utils\/sidebarRows'/)
+    const call = glideCallOf(script)
+    assert.ok(call.includes('container: listRef,'), 'container')
+    assert.ok(call.includes('flushTarget: inkRef,'), 'flush target')
+    assert.ok(call.includes('getActive: () => activeRowBase(listRef.value),'), 'getActive')
+    assert.ok(call.includes('getActiveOffset: () => entranceOffset(listRef.value),'), 'getActiveOffset')
+    assert.ok(call.includes("getItems: () => [...(listRef.value?.querySelectorAll(':scope > .bookmark-entry') ?? [])],"), 'getItems on the entries')
+    assert.ok(call.includes('sources: [() => props.activeBookmarkId, list, () => props.compactView],'), 'sources')
+    assert.ok(call.includes("resetKey: () => (props.showAllArtifacts ? 'all' : (props.effectiveProjectId ?? '')),"), 'scope reset key')
+    assert.ok(!call.includes('document'), 'never document')
+    const list = rule(parseCss(styleOf(sfc)), ['.bookmark-list'], (r) => r.ancestors.length === 0)
+    assert.equal(list.decls.position, 'relative', 'the ink\'s containing block')
+})
+
+test('SidebarListSeparator: positioned, so a gliding ink passes under the label', () => {
+    const rules = parseCss(styleOf(read('../components/sidebar/SidebarListSeparator.vue')))
+    const root = rule(rules, ['.sidebar-list-separator'], (r) => r.ancestors.length === 0)
+    assert.equal(root.decls.position, 'relative')
+})
+
+// Reveal the open row only near an edge (step 6a-bis §10): no centring, the bands read from
+// the list, the minimal scroll through nearestScrollTop.
+
+/** The body of `function <name>(` in a script, up to its closing line. */
+function functionOf(script, name) {
+    const start = script.indexOf(`function ${name}(`)
+    assert.ok(start >= 0, `function ${name}`)
+    return script.slice(start, script.indexOf('\n}', start))
+}
+
+test('SessionList: the open session revealed with align nearest and the list\'s bands', () => {
+    const sfc = read('../components/session/list/SessionList.vue')
+    const script = scriptOf(sfc)
+    assert.match(script, /import \{ activeRowBase, entranceOffset, revealBands, revealMargins \} from '\.\.\/\.\.\/\.\.\/utils\/sidebarRows'/)
+    const body = functionOf(script, 'scrollToSession')
+    const guard = body.indexOf('if (targetSessionId !== props.sessionId) return Promise.resolve()')
+    assert.ok(guard >= 0, 'the stale-target guard')
+    assert.ok(guard < body.indexOf('retry()'), 'at the start of each attempt, before any retry')
+    assert.ok(body.includes('const pad = parseFloat(getComputedStyle(scrollerEl.value).paddingTop) || 0'), 'the list padding')
+    assert.ok(body.includes('const { marginTop, marginBottom } = revealMargins(revealBands(scrollerEl.value), pad)'), 'the margins')
+    const call = collapse(body.slice(body.indexOf('scrollToKey(')))
+    assert.match(call, /^scrollToKey\(targetSessionId, \{ align: 'nearest', marginTop, marginBottom, isCurrent: \(\) => targetSessionId === props\.sessionId, allowSmooth: !cascade\.isArriving\(\), \}\)/)
+    assert.ok(!body.includes("'center'"), 'no centring left')
+    const list = rule(parseCss(styleOf(sfc)), ['.session-list'], (r) => r.ancestors.length === 0)
+    assert.equal(list.decls['--sidebar-row-reveal-cover'], '3.125rem')
+})
+
+test('ArtifactBookmarkList: the reveal watchers use revealEntry, keyboard navigation scrollRowIntoView', () => {
+    const script = scriptOf(read('../components/artifacts/ArtifactBookmarkList.vue'))
+    assert.match(script, /import \{ activeRowBase, entranceOffset, entryReveal, revealBands \} from '\.\.\/\.\.\/utils\/sidebarRows'/)
+    const reveal = functionOf(script, 'revealEntry')
+    assert.ok(reveal.includes('return nextTick('), 'the promise the cascade hold waits on')
+    assert.ok(reveal.includes("':scope > .bookmark-entry'"), 'the entries')
+    assert.ok(reveal.includes('offsetTop: el.offsetTop'), 'offsetTop')
+    assert.ok(reveal.includes('offsetHeight: el.offsetHeight'), 'offsetHeight')
+    assert.ok(reveal.includes('revealBands(list)'), 'the bands of the list')
+    // The smooth reveal (§10.7): judged from where a smooth reveal in flight is going.
+    assert.ok(reveal.includes('const current = smoothTo ? smoothTo.target : list.scrollTop'), 'the current scroll')
+    assert.ok(reveal.includes('scrollTop: current,'), 'entryReveal from the current scroll')
+    assert.ok(reveal.includes('if (target === null) return'), 'written only when needed')
+    assert.match(collapse(reveal), /revealBehavior\(\{ distance: Math\.abs\(target - current\), viewport: list\.clientHeight, reduced: globalThis\.matchMedia\?\.\('\(prefers-reduced-motion: reduce\)'\)\?\.matches === true, allowed: !cascade\.isArriving\(\), \}\)/)
+    const autoWrite = reveal.indexOf('list.scrollTop = target')
+    assert.ok(autoWrite >= 0, 'the auto write')
+    assert.ok(reveal.lastIndexOf('endSmooth()', autoWrite) >= 0, 'endSmooth() before the auto write')
+    assert.ok(reveal.includes('startSmoothScroll(list, target)'), 'the smooth scroll')
+    // Its destination is cleared only by its own end (a newer smooth reveal owns it then).
+    const tokenAt = reveal.indexOf('const token = ++smoothToken')
+    assert.ok(tokenAt >= 0 && tokenAt < reveal.indexOf('startSmoothScroll(list, target)'), 'a token before the smooth scroll')
+    assert.ok(reveal.includes('if (smoothTo?.token === token) smoothTo = null'), 'cleared only by its own end')
+    assert.ok(!reveal.includes('getBoundingClientRect'), 'no rect: the entrance translate would skew it')
+    assert.ok(!reveal.includes('scrollIntoView'), 'no native scroll-into-view')
+    // The two reveal watchers: the open id, and the open row joining the scoped list.
+    assert.equal(script.match(/cascade\.holdTarget\(list\.value\[i\]\.id, revealEntry\(i\)\)/g)?.length, 2)
+    assert.ok(!script.includes('holdTarget(list.value[i].id, scrollRowIntoView'), 'no reveal through scrollRowIntoView')
+    assert.ok(functionOf(script, 'handleKeyNavigation').includes('scrollRowIntoView(newIndex)'), 'keyboard navigation unchanged')
+})
+
+test('both lists bind sidebar-row-list--compact to compactView', () => {
+    const session = templateOf(read('../components/session/list/SessionList.vue'))
+    const scroller = session.slice(session.indexOf('<VirtualScroller'), session.indexOf('>', session.indexOf('class="session-list sidebar-row-list"')))
+    assert.match(scroller, /:class="\{ 'sidebar-row-list--compact': compactView \}"/)
+    const { open } = firstChildOf(templateOf(read('../components/artifacts/ArtifactBookmarkList.vue')), 'bookmark-list sidebar-row-list')
+    assert.match(open, /:class="\{ 'sidebar-row-list--compact': compactView \}"/)
+})
+
+test('VirtualScroller: the JSDoc lists the nearest alignment and its options', () => {
+    const script = read('../components/virtual-scroller/VirtualScroller.vue')
+    const doc = (name) => {
+        const at = script.indexOf(`\nfunction ${name}(`)
+        return script.slice(script.lastIndexOf('/**', at), at)
+    }
+    assert.match(doc('scrollToIndex'), /'start' \| 'center' \| 'end' \| 'nearest'/)
+    for (const option of ['marginTop', 'marginBottom', 'allowSmooth']) assert.ok(doc('scrollToIndex').includes(`options.${option}`), `scrollToIndex ${option}`)
+    assert.match(doc('scrollToKey'), /'nearest'/)
+    for (const option of ['marginTop', 'marginBottom', 'isCurrent', 'allowSmooth']) assert.ok(doc('scrollToKey').includes(`options.${option}`), `scrollToKey ${option}`)
+})
+
+test('useVirtualScroll: onUnmounted removes the input listeners from listenedEl, then clears it', () => {
+    const source = read('../composables/useVirtualScroll.js')
+    const start = source.indexOf('onUnmounted(() => {')
+    assert.ok(start >= 0, 'onUnmounted callback')
+    const body = source.slice(start, source.indexOf('\n    })', start))
+    const removeAt = body.indexOf('if (listenedEl) removeUserScrollListeners(listenedEl)')
+    assert.ok(removeAt >= 0, 'the listeners removed from listenedEl (containerRef is already null)')
+    assert.ok(body.indexOf('listenedEl = null', removeAt) > removeAt, 'listenedEl cleared after the removal')
+})
+
+// The smooth reveal (step 6a-bis §10.7): the artifacts list ends a smooth reveal in flight on
+// a scrolling gesture the browser performs itself, and before a keyboard scroll that moved it.
+
+test('ArtifactBookmarkList: the gestures that end a smooth reveal, and scrollRowIntoView', () => {
+    const sfc = read('../components/artifacts/ArtifactBookmarkList.vue')
+    const { open } = firstChildOf(templateOf(sfc), 'bookmark-list sidebar-row-list')
+    assert.match(open, /@wheel\.passive="endSmooth"/)
+    assert.match(open, /@pointerdown\.self="endSmooth"/)
+    assert.match(open, /@pointercancel="endSmoothOnTouchPan"/)
+    assert.match(open, /@keydown="handleListKeydown"/)
+    const script = scriptOf(sfc)
+    assert.match(collapse(functionOf(script, 'endSmoothOnTouchPan')), /if \(event\.pointerType === 'touch'\) endSmooth\(\)/)
+    assert.match(collapse(functionOf(script, 'handleListKeydown')), /if \(event\.key === ' ' && !event\.defaultPrevented\) endSmooth\(\)/)
+    const row = collapse(functionOf(script, 'scrollRowIntoView'))
+    assert.match(row, /const before = list\.scrollTop/)
+    assert.match(row, /if \(list\.scrollTop !== before\) endSmooth\(\)/, 'only when it moved the list')
+    const end = collapse(functionOf(script, 'endSmooth'))
+    assert.match(end, /smoothTo = null/)
+    assert.match(end, /smoothToken\+\+/)
+    assert.match(end, /cancel\(\)/)
+})

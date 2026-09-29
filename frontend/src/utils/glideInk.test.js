@@ -5,7 +5,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-import { createGlideInk, placementMode, relativeBox, sameBox, scaleRatio } from './glideInk.js'
+import { createGlideInk, nearBox, placementMode, relativeBox, sameBox, scaleRatio } from './glideInk.js'
 
 const PROPS = ['--glide-x', '--glide-y', '--glide-w', '--glide-h']
 
@@ -100,6 +100,18 @@ test('sameBox', () => {
     assert.equal(sameBox(null, null), true)
 })
 
+test('nearBox: every value within the tolerance', () => {
+    const box = { x: 1, y: 24, w: 100, h: 30 }
+    assert.equal(nearBox(box, { ...box }, 0.05), true)
+    assert.equal(nearBox(box, { ...box, y: 24.016 }, 0.05), true)
+    assert.equal(nearBox(box, { ...box, x: 0.96, h: 30.04 }, 0.05), true)
+    assert.equal(nearBox(box, { ...box, y: 24.1 }, 0.05), false)
+    assert.equal(nearBox(box, { ...box, w: 99.9 }, 0.05), false)
+    assert.equal(nearBox(box, null, 0.05), false)
+    assert.equal(nearBox(null, box, 0.05), false)
+    assert.equal(nearBox(null, null, 0.05), true)
+})
+
 test('createGlideInk reads globalThis when no env is given', () => {
     const source = readFileSync(new URL('./glideInk.js', import.meta.url), 'utf8')
     assert.match(source, /env = globalThis/)
@@ -181,7 +193,7 @@ function makeElement(env, name, box = rect(0, 0, 0, 0), layout = {}) {
 }
 
 /** A container 400 × 300 at (100, 50), its ink, three rows of 30px. */
-function makeList(env = makeEnv()) {
+function makeList(env = makeEnv(), { getActiveOffset } = {}) {
     const container = makeElement(env, 'container', rect(100, 50, 400, 300))
     const ink = makeElement(env, 'ink')
     const rows = [0, 1, 2].map((i) => makeElement(env, `row${i}`, rect(100, 50 + i * 30, 400, 30)))
@@ -192,6 +204,7 @@ function makeList(env = makeEnv()) {
         getActive: () => site.active,
         getItems: () => site.items,
         getResetKey: () => site.resetKey,
+        ...(getActiveOffset ? { getActiveOffset } : {}),
         env,
     })
     return site
@@ -278,6 +291,93 @@ test('a reset key change with a new active element snaps', () => {
     site.resetKey = 'query'
     site.controller.update()
     assertSnapSequence(env.log, [0, 30, 400, 30])
+})
+
+test('a reset key change on the same element at the same box writes nothing; the next move glides', () => {
+    const site = makeList()
+    const { env, container, rows } = site
+    env.log = []
+    site.resetKey = 'query'
+    site.controller.update()
+    assert.deepEqual(env.log.filter((e) => e[0] !== 'style'), [], 'nothing written')
+    // The key was still recorded: another element under that key glides.
+    site.active = rows[1]
+    site.controller.update()
+    assert.deepEqual(env.log.filter((e) => e[0] !== 'style'), PROPS.map((p, i) => ['set', 'container', p, `${[0, 30, 400, 30][i]}px`]))
+    assert.equal(flushes(env).length, 0, 'a glide: no flush')
+    assert.ok(!env.log.some((e) => e[2] === 'data-glide-instant'))
+    assert.ok(container.attrs.has('data-glide-ready'))
+})
+
+test('getActiveOffset is subtracted from the measured box; without it, the box is unchanged', () => {
+    const offset = { x: 0, y: 6 }
+    const site = makeList(makeEnv(), { getActiveOffset: () => offset })
+    // rows[0] is at y 0 in the container: measured 6px low, it is written 6px higher.
+    assert.deepEqual(values(site.container), ['0px', '-6px', '400px', '30px'])
+    const calls = []
+    const other = makeList(makeEnv(), { getActiveOffset: (active) => { calls.push(active); return { x: 2, y: 0 } } })
+    assert.deepEqual(values(other.container), ['-2px', '0px', '400px', '30px'])
+    assert.deepEqual(calls, [other.rows[0]], 'called with the active element')
+
+    const plain = makeList()
+    assert.deepEqual(values(plain.container), ['0px', '0px', '400px', '30px'])
+})
+
+test('the same element re-measured within 0.05px writes nothing; 0.1px away still snaps', () => {
+    const site = makeList()
+    const { env, rows } = site
+    env.log = []
+    rows[0].rect = rect(100, 50.016, 400, 30)
+    site.controller.update()
+    assert.deepEqual(env.log.filter((e) => e[0] !== 'style'), [], 'no instant, no property write')
+    assert.equal(flushes(env).length, 0)
+
+    rows[0].rect = rect(100, 50.1, 400, 30)
+    site.controller.update()
+    assertSnapSequence(env.log, [0, 50.1 - 50, 400, 30])
+})
+
+test('no creep: successive sub-0.05px measures compare against the written box', () => {
+    const site = makeList()
+    const { env, rows } = site
+    const at = (dy) => {
+        env.log = []
+        rows[0].rect = rect(100, 50 + dy, 400, 30)
+        site.controller.update()
+        return env.log.filter((e) => e[0] !== 'style')
+    }
+    assert.deepEqual(at(0.03), [], '+0.03 from the written 0: nothing')
+    const second = at(0.06)
+    assert.ok(second.some((e) => e[0] === 'setAttribute' && e[2] === 'data-glide-instant'), '+0.06 from the written 0: a snap')
+    assert.deepEqual(second.filter((e) => e[0] === 'set').map((e) => e[2]), PROPS)
+    assert.deepEqual(at(0.09), [], '+0.03 from the written 0.06: nothing')
+})
+
+test('the 0.05px tolerance is for the same element only: another element that close glides', () => {
+    const site = makeList()
+    const { env, container, rows } = site
+    env.log = []
+    rows[1].rect = rect(100, 50.03, 400, 30)
+    site.active = rows[1]
+    site.controller.update()
+    assert.deepEqual(env.log.filter((e) => e[0] === 'set').map((e) => e[2]), PROPS, 'the box is written')
+    assert.equal(flushes(env).length, 0, 'a glide: no flush')
+    assert.ok(!env.log.some((e) => e[2] === 'data-glide-instant'))
+    assert.ok(container.attrs.has('data-glide-ready'))
+})
+
+test('the active element is recorded even when nothing is written', () => {
+    const site = makeList()
+    const { env, rows } = site
+    // Another element at the very same box: a glide with nothing to write.
+    rows[1].rect = rect(100, 50, 400, 30)
+    site.active = rows[1]
+    site.controller.update()
+    // That element moves: the same element with a new box snaps (it was recorded).
+    env.log = []
+    rows[1].rect = rect(100, 55, 400, 30)
+    site.controller.update()
+    assertSnapSequence(env.log, [0, 5, 400, 30])
 })
 
 test('no active element: hide at once, collapse after --motion-dur-1, then snap again', () => {

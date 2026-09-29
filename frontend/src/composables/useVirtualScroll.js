@@ -1,6 +1,7 @@
 // frontend/src/composables/useVirtualScroll.js
 
 import { ref, computed, reactive, watch, watchEffect, onUnmounted } from 'vue'
+import { nearestScrollTop, revealBehavior, startSmoothScroll } from '../utils/nearestScroll.js'
 
 /**
  * Default minimum item height used for items that haven't been measured yet.
@@ -28,6 +29,14 @@ const DEFAULT_UNLOAD_BUFFER = 1000
  * the 0.5px guard already used on the anchor scroll correction in batchUpdateItemHeights.
  */
 const HEIGHT_CHANGE_EPSILON_PX = 0.5
+
+/**
+ * The container input events that mean the user scrolls it (wheel, touch, a scrollbar drag),
+ * and the keys that scroll it. See userScrollSeq.
+ */
+const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'touchmove', 'pointerdown']
+const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
+const USER_SCROLL_LISTENER_OPTIONS = { passive: true }
 
 
 /**
@@ -156,10 +165,43 @@ export function useVirtualScroll(options) {
 
     /**
      * Bumped by every explicit navigation (scrollToIndex/scrollToTop/scrollToBottom/
-     * scrollToAnchor). A pending anchor restore compares it across frames and gives up
-     * when it changed: an explicit scroll is a newer intent than the position being restored.
+     * scrollToAnchor/setScrollTop; not by a `nearest` scrollToIndex that does not scroll).
+     * A pending anchor restore compares it across frames and gives up when it changed: an
+     * explicit scroll is a newer intent than the position being restored.
      */
     let explicitScrollSeq = 0
+
+    /**
+     * Bumped by the user's scroll input on the container (USER_SCROLL_EVENTS, a SCROLL_KEYS
+     * keydown). A `nearest` scrollToKey ends when it changed: the user moved the list. Input,
+     * not scroll events: the anchor correction, the anchor restores, native pin-to-bottom
+     * and the browser's own clamp all scroll without the programmatic flag.
+     */
+    let userScrollSeq = 0
+
+    /**
+     * Bumped once at the start of each `nearest` scrollToKey: a loop ends when a newer
+     * reveal started, even one that did not scroll (its row already in the zone).
+     * explicitScrollSeq is not bumped for that: a no-write reveal would cancel a pending
+     * anchor restore.
+     */
+    let revealSeq = 0
+
+    /**
+     * The element the user-input listeners are on (attached by the containerRef watcher,
+     * removed at unmount, when containerRef is already null).
+     */
+    let listenedEl = null
+
+    /**
+     * The smooth `nearest` reveal in flight: { target, token, done, cancel } (see
+     * scrollToIndex's allowSmooth), null otherwise. While set, the reveal computations take
+     * its target as the current scroll, and isProgrammaticScroll holds until its end. Ended
+     * early by endSmooth(). `smoothToken` guards the end: an older smooth scroll's end never
+     * clears a newer one.
+     */
+    let smoothTo = null
+    let smoothToken = 0
 
     /**
      * How many frames the anchor restore keeps re-applying while the DOM refuses it.
@@ -651,32 +693,194 @@ export function useVirtualScroll(options) {
         })
     }
 
+    // A scrolling gesture the browser performs itself cancels a smooth reveal's animation:
+    // it ends it (endSmooth), so the anchor correction works again at once. A click or a tap
+    // on a row does not cancel the animation: a child's pointerdown and a touchstart do not.
+    function noteUserScroll(event) {
+        userScrollSeq++
+        if (event.type === 'wheel' || (event.type === 'pointerdown' && event.target === containerRef.value)) {
+            endSmooth()
+        }
+    }
+
+    // Arrow / Home / End / PageUp / PageDown are handled by the list (defaultPrevented, often
+    // no scroll at all): only a key the browser scrolls ends a smooth reveal.
+    function noteScrollKey(event) {
+        if (!SCROLL_KEYS.has(event.key)) return
+        userScrollSeq++
+        if (!event.defaultPrevented) endSmooth()
+    }
+
+    // The browser took the touch for panning (a touchmove also fires for a tap's jitter).
+    function noteTouchPan(event) {
+        if (event.pointerType === 'touch') endSmooth()
+    }
+
+    function addUserScrollListeners(el) {
+        for (const type of USER_SCROLL_EVENTS) el.addEventListener(type, noteUserScroll, USER_SCROLL_LISTENER_OPTIONS)
+        el.addEventListener('keydown', noteScrollKey, USER_SCROLL_LISTENER_OPTIONS)
+        el.addEventListener('pointercancel', noteTouchPan, USER_SCROLL_LISTENER_OPTIONS)
+    }
+
+    function removeUserScrollListeners(el) {
+        for (const type of USER_SCROLL_EVENTS) el.removeEventListener(type, noteUserScroll, USER_SCROLL_LISTENER_OPTIONS)
+        el.removeEventListener('keydown', noteScrollKey, USER_SCROLL_LISTENER_OPTIONS)
+        el.removeEventListener('pointercancel', noteTouchPan, USER_SCROLL_LISTENER_OPTIONS)
+    }
+
+    // Sync: the listeners are on the container as soon as it is set, before any reveal.
+    watch(containerRef, (el) => {
+        if (listenedEl) removeUserScrollListeners(listenedEl)
+        if (el) addUserScrollListeners(el)
+        listenedEl = el ?? null
+    }, { immediate: true, flush: 'sync' })
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Navigation Methods
     // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * The `nearest` target of an item (see nearestScrollTop): the minimal scroll that brings
+     * it inside the viewport minus the margins, clamped to the container's real scroll range.
+     * The viewport is the container's clientHeight, read now: viewportHeight holds the
+     * content-box height after a resize but the clientHeight after a mount or a resume.
+     * Equals `current` when the item is already inside the zone.
+     *
+     * @param {HTMLElement} container - The scroll container
+     * @param {{ top: number, height: number }} pos - The item's position
+     * @param {number} marginTop - px (may be negative)
+     * @param {number} marginBottom - px
+     * @param {number} [current=scrollTop.value] - The scroll the zone is taken at
+     * @returns {number}
+     */
+    function nearestTarget(container, pos, marginTop, marginBottom, current = scrollTop.value) {
+        const viewport = container.clientHeight
+        return nearestScrollTop({
+            top: pos.top,
+            height: pos.height,
+            scrollTop: current,
+            viewport,
+            scrollMax: container.scrollHeight - viewport,
+            marginTop,
+            marginBottom,
+        })
+    }
+
+    /**
+     * End the smooth reveal in flight, if any: invalidate its token, clear its destination,
+     * release its programmatic hold and resolve its `done`. Called on a scrolling gesture the
+     * browser performs itself (it cancels the animation) and before every other programmatic
+     * write.
+     */
+    function endSmooth() {
+        if (!smoothTo) return
+        const { cancel } = smoothTo
+        smoothTo = null
+        smoothToken++
+        isProgrammaticScroll = false
+        cancel()
+    }
+
+    /**
+     * Start a smooth reveal to `target`, a running one ended first. isProgrammaticScroll
+     * holds until its end, so the anchor correction cannot write mid-scroll (a write would
+     * cancel the animation); only this scroll's own end releases it.
+     *
+     * @param {HTMLElement} container - The scroll container
+     * @param {number} target - The clamped target
+     * @returns {Promise<void>} Its `done`
+     */
+    function startSmoothReveal(container, target) {
+        endSmooth()
+        const token = ++smoothToken
+        isProgrammaticScroll = true
+        const { done, cancel } = startSmoothScroll(container, target)
+        smoothTo = { target, token, done, cancel }
+        done.then(() => {
+            if (smoothTo?.token !== token) return
+            smoothTo = null
+            isProgrammaticScroll = false
+        })
+        return done
+    }
+
+    /**
+     * Whether a smooth scroll up to `target` mounts only measured items: every index the
+     * render range will add on the way, [findIndexAtPosition(max(0, target - buffer)),
+     * renderRange.start), has a cached height. An item mounting unmeasured would step the
+     * visible rows mid-animation once measured (the anchor correction is held).
+     *
+     * @param {number} target - The smooth scroll's target
+     * @returns {boolean}
+     */
+    function upwardItemsMeasured(target) {
+        const posArray = positions.value
+        const from = findIndexAtPosition(Math.max(0, target - buffer))
+        for (let i = Math.max(0, from); i < renderRange.value.start; i++) {
+            if (!heightCache.has(posArray[i].key)) return false
+        }
+        return true
+    }
 
     /**
      * Scroll to a specific item index.
      *
      * @param {number} index - The item index to scroll to
      * @param {Object} [options] - Scroll options
-     * @param {'start' | 'center' | 'end'} [options.align='start'] - Where to position the item
-     * @param {'auto' | 'smooth'} [options.behavior='auto'] - Scroll behavior
+     * @param {'start' | 'center' | 'end' | 'nearest'} [options.align='start'] - Where to position
+     *   the item. `nearest`: no scroll when it lies inside the viewport minus the margins,
+     *   otherwise the minimal scroll that brings it to the nearer zone edge (nearestScrollTop).
+     * @param {'auto' | 'smooth'} [options.behavior='auto'] - Scroll behavior. Ignored by `nearest`.
      * @param {number} [options.offset=0] - Pixels of room to leave before the item,
-     *   i.e. how far short of it to stop. Clamped away at the top of the list.
+     *   i.e. how far short of it to stop. Clamped away at the top of the list. Ignored by `nearest`.
+     * @param {number} [options.marginTop=0] - `nearest` only: the top band, px (may be negative)
+     * @param {number} [options.marginBottom=0] - `nearest` only: the bottom band, px
+     * @param {boolean} [options.allowSmooth=false] - `nearest` only: a short move (at most
+     *   min(clientHeight, buffer), and going up only over measured items) scrolls smoothly,
+     *   unless the user prefers reduced motion
+     * @returns {Promise<void> | null | undefined} `nearest`: the started smooth scroll's `done`,
+     *   or null (an instant write or no write)
      */
     function scrollToIndex(index, options = {}) {
-        const { align = 'start', behavior = 'auto', offset = 0 } = options
+        const {
+            align = 'start',
+            behavior = 'auto',
+            offset = 0,
+            marginTop = 0,
+            marginBottom = 0,
+            allowSmooth = false,
+        } = options
         const container = containerRef.value
-        if (!container) return
+        if (!container) return null
 
         const posArray = positions.value
-        if (index < 0 || index >= posArray.length) return
-
-        explicitScrollSeq++
+        if (index < 0 || index >= posArray.length) return null
 
         const pos = posArray[index]
         let targetScrollTop
+
+        if (align === 'nearest') {
+            // The current scroll is where a smooth reveal in flight is going: a second reveal
+            // is judged against its destination, not the position mid-way.
+            const current = smoothTo ? smoothTo.target : scrollTop.value
+            // Clamped to the container's real range by nearestTarget. Inside the zone: no
+            // write (a running smooth scroll finishes), and no explicit-scroll bump (it would
+            // cancel a pending anchor restore).
+            targetScrollTop = nearestTarget(container, pos, marginTop, marginBottom, current)
+            if (targetScrollTop === current) return null
+            explicitScrollSeq++
+            const smooth = revealBehavior({
+                distance: Math.abs(targetScrollTop - current),
+                viewport: Math.min(container.clientHeight, buffer),
+                reduced: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true,
+                allowed: allowSmooth && (targetScrollTop >= current || upwardItemsMeasured(targetScrollTop)),
+            }) === 'smooth'
+            if (smooth) return startSmoothReveal(container, targetScrollTop)
+            writeProgrammaticScroll(container, targetScrollTop, 'auto')
+            return null
+        }
+
+        explicitScrollSeq++
 
         switch (align) {
             case 'center':
@@ -698,7 +902,19 @@ export function useVirtualScroll(options) {
         const maxScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
         targetScrollTop = Math.max(0, Math.min(targetScrollTop - offset, maxScrollTop))
 
-        // Mark as programmatic to avoid scroll correction during this scroll
+        writeProgrammaticScroll(container, targetScrollTop, behavior)
+    }
+
+    /**
+     * Write scrollToIndex's target, marked as programmatic to avoid the anchor correction
+     * during this scroll.
+     *
+     * @param {HTMLElement} container - The scroll container
+     * @param {number} targetScrollTop - The clamped target
+     * @param {'auto' | 'smooth'} behavior - Scroll behavior
+     */
+    function writeProgrammaticScroll(container, targetScrollTop, behavior) {
+        if (behavior !== 'smooth') endSmooth()
         isProgrammaticScroll = true
 
         if (behavior === 'smooth') {
@@ -725,6 +941,7 @@ export function useVirtualScroll(options) {
         const container = containerRef.value
         if (!container) return
 
+        endSmooth()
         explicitScrollSeq++
         isProgrammaticScroll = true
 
@@ -753,6 +970,7 @@ export function useVirtualScroll(options) {
 
         const targetScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
 
+        endSmooth()
         explicitScrollSeq++
         isProgrammaticScroll = true
 
@@ -1046,6 +1264,7 @@ export function useVirtualScroll(options) {
         const maxScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
         const wanted = Math.max(0, Math.min(targetScrollTop, maxScrollTop))
 
+        endSmooth()
         container.scrollTop = wanted
         scrollTop.value = wanted
 
@@ -1179,6 +1398,7 @@ export function useVirtualScroll(options) {
             const maxScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
             const clampedScrollTop = Math.max(0, Math.min(targetScrollTop, maxScrollTop))
 
+            endSmooth()
             container.scrollTop = clampedScrollTop
             scrollTop.value = clampedScrollTop
         }
@@ -1203,6 +1423,7 @@ export function useVirtualScroll(options) {
         if (Math.abs(container.scrollTop - clamped) <= 0.5) return
 
         explicitScrollSeq++
+        endSmooth()
         container.scrollTop = clamped
         scrollTop.value = clamped
     }
@@ -1221,14 +1442,29 @@ export function useVirtualScroll(options) {
      * The caller is responsible for ensuring the item's content is loaded and the item
      * exists in the items array before calling this method.
      *
+     * With `align: 'nearest'` the check is stricter: an attempt succeeds when the `nearest`
+     * target recomputed from the current positions equals the scroll within 1px (the first
+     * jump uses estimated heights; once measured, the anchor correction lets the target
+     * drift out of the zone). And any newer intent ends the loop after a settle, without
+     * checking or re-jumping: a user scroll input on the container, an explicit scroll, a
+     * newer `nearest` reveal, or `isCurrent()` turning false. With `allowSmooth`, an attempt
+     * that started a smooth scroll awaits its end before the settle and the check; one that
+     * did not write while a smooth scroll runs awaits that scroll's end too.
+     *
      * @param {*} key - The item key (e.g., lineNum) to scroll to
      * @param {Object} [options]
-     * @param {'start' | 'center' | 'end'} [options.align='center'] - Where to position the item
+     * @param {'start' | 'center' | 'end' | 'nearest'} [options.align='center'] - Where to position the item
      * @param {number} [options.settleMs=150] - Debounce time to wait for height stability
      * @param {number} [options.maxAttempts=3] - Max number of jump-settle-correct cycles
-     * @param {number} [options.offset=0] - Pixels of room to leave before the item
+     * @param {number} [options.offset=0] - Pixels of room to leave before the item (not for `nearest`)
+     * @param {number} [options.marginTop=0] - `nearest` only: the top band, px (may be negative)
+     * @param {number} [options.marginBottom=0] - `nearest` only: the bottom band, px
+     * @param {Function} [options.isCurrent] - `nearest` only: () => boolean, false once the
+     *   reveal no longer matters (the loop then returns)
+     * @param {boolean} [options.allowSmooth=false] - `nearest` only: see scrollToIndex
      * @param {Function} [options.onHeightChange] - Callback invoked on each height change (for abort detection)
-     * @returns {Promise<boolean>} true if the item is visible in the viewport after scrolling
+     * @returns {Promise<boolean>} true if the item is visible in the viewport (`nearest`: in
+     *   its zone) after scrolling
      */
     async function scrollToKey(key, options = {}) {
         const {
@@ -1236,8 +1472,14 @@ export function useVirtualScroll(options) {
             settleMs = 150,
             maxAttempts = 3,
             offset = 0,
+            marginTop = 0,
+            marginBottom = 0,
+            isCurrent = null,
+            allowSmooth = false,
             onHeightChange = null,
         } = options
+        const nearest = align === 'nearest'
+        const ownReveal = nearest ? ++revealSeq : 0
 
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             // Find the item index by key
@@ -1245,15 +1487,47 @@ export function useVirtualScroll(options) {
             if (index === -1) return false
 
             // Jump to the item
-            scrollToIndex(index, { align, behavior: 'auto', offset })
+            const smoothDone = scrollToIndex(index, { align, behavior: 'auto', offset, marginTop, marginBottom, allowSmooth })
+            // Read right after the jump (or no-jump): its own write is in the baseline.
+            const userSeqAtJump = userScrollSeq
+            const explicitSeqAtJump = explicitScrollSeq
+
+            // A smooth scroll: never check a position still in flight. Its own, or (no write)
+            // the one already running — a plain wait: its hold and token stay with it.
+            if (nearest && smoothDone) await smoothDone
+            else if (nearest && smoothTo) await smoothTo.done
 
             // Wait for heights to settle (no ResizeObserver changes for settleMs)
             await waitForHeightStability(settleMs, onHeightChange)
+
+            // A newer intent: the user scrolled, an explicit scroll or a newer reveal
+            // happened, or the target is no longer wanted. Leave the list where it is.
+            if (nearest && (
+                userScrollSeq !== userSeqAtJump
+                || explicitScrollSeq !== explicitSeqAtJump
+                || revealSeq !== ownReveal
+                || (isCurrent && !isCurrent())
+            )) {
+                return false
+            }
 
             // Check if the target item is now visible in the viewport
             const posArray = positions.value
             const targetPos = posArray[index]
             if (!targetPos) return false
+
+            if (nearest) {
+                const container = containerRef.value
+                if (!container) return false
+                // The list may have been reordered during the settle: check the row where
+                // it is now, not the row now at its old index.
+                const current = items.value.findIndex(item => itemKey(item) === key)
+                if (current === -1) return false
+                const currentPos = posArray[current]
+                if (!currentPos) return false
+                if (Math.abs(nearestTarget(container, currentPos, marginTop, marginBottom) - scrollTop.value) <= 1) return true
+                continue
+            }
 
             const vpTop = scrollTop.value
             const vpBottom = vpTop + viewportHeight.value
@@ -1339,6 +1613,10 @@ export function useVirtualScroll(options) {
             rafId = null
         }
         cancelResumeRetry()
+        endSmooth()
+        // containerRef is already null here: the listeners are removed from listenedEl.
+        if (listenedEl) removeUserScrollListeners(listenedEl)
+        listenedEl = null
     })
 
     // ═══════════════════════════════════════════════════════════════════════════

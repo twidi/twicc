@@ -528,18 +528,33 @@ onActivated(() => {
  *
  * @param {number} index - The item index to scroll to
  * @param {Object} [options] - Scroll options
- * @param {'start' | 'center' | 'end'} [options.align='start'] - Where to position the item
+ * @param {'start' | 'center' | 'end' | 'nearest'} [options.align='start'] - Where to position
+ *   the item. `nearest`: no scroll when it lies inside the viewport minus the margins,
+ *   otherwise the minimal scroll to the nearer zone edge.
  * @param {'auto' | 'smooth'} [options.behavior='auto'] - Scroll behavior
+ * @param {number} [options.offset=0] - Pixels of room to leave before the item (not for `nearest`)
+ * @param {number} [options.marginTop=0] - `nearest` only: the top band, px (may be negative)
+ * @param {number} [options.marginBottom=0] - `nearest` only: the bottom band, px
+ * @param {boolean} [options.allowSmooth=false] - `nearest` only: a short move scrolls
+ *   smoothly (see useVirtualScroll.scrollToIndex); `behavior` is ignored for `nearest`
+ * @returns {Promise<void> | null | undefined} `nearest`: the started smooth scroll's `done`, or null
  */
 function scrollToIndex(index, options = {}) {
-    composableScrollToIndex(index, options)
+    return composableScrollToIndex(index, options)
 }
 
 /**
  * Scroll to the item with the given key, waiting for heights to stabilize.
  * @param {*} key - The item key to scroll to
- * @param {Object} [options] - See useVirtualScroll.scrollToKey for options
- * @returns {Promise<boolean>} true if the item is visible after scrolling
+ * @param {Object} [options] - See useVirtualScroll.scrollToKey for all options
+ * @param {'start' | 'center' | 'end' | 'nearest'} [options.align='center'] - Where to position the item
+ * @param {number} [options.marginTop=0] - `nearest` only: the top band, px (may be negative)
+ * @param {number} [options.marginBottom=0] - `nearest` only: the bottom band, px
+ * @param {Function} [options.isCurrent] - `nearest` only: () => boolean, false once the
+ *   reveal no longer matters (the loop then stops)
+ * @param {boolean} [options.allowSmooth=false] - `nearest` only: a short move scrolls
+ *   smoothly; each attempt waits for the smooth scroll's end before its check
+ * @returns {Promise<boolean>} true if the item is visible (`nearest`: in its zone) after scrolling
  */
 function scrollToKey(key, options = {}) {
     return composableScrollToKey(key, options)
@@ -699,6 +714,10 @@ defineExpose({
         :class="{ 'at-bottom': isAtBottomRef }"
         @scroll.passive="onScroll"
     >
+        <!-- Optional content placed before everything else (e.g. a list's gliding ink,
+             which must be the root's first child) -->
+        <slot name="before" />
+
         <!-- Spacer before rendered items -->
         <div
             class="virtual-scroller-spacer virtual-scroller-spacer-before"

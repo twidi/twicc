@@ -14,6 +14,7 @@ export function useGlideInk({
     flushTarget,     // Ref<Element | null> (the ink element for lists)
     flushPseudo = null,
     getActive,       // () => Element | null
+    getActiveOffset, // (active) => { x, y }, optional (px subtracted from the measure)
     getItems,        // () => Element[], optional
     sources = [],    // watch sources that move the active item
     resetKey,        // () => any, optional
@@ -35,6 +36,7 @@ export function useGlideInk({
             flushTarget: flushTarget?.value ?? undefined,
             flushPseudo,
             getActive,
+            getActiveOffset,
             getItems,
             getResetKey: resetKey,
             env,
