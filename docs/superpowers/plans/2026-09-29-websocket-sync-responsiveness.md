@@ -129,11 +129,11 @@ At the investigated baseline, the leaf is `0146_agent_runs.py`; do not hardcode 
 - `append_history_facts(session_id: str, facts: Sequence[HistoryFact]) -> None`: caller-owned transaction, idempotent unique rows.
 - `history_facts_are_current(session: Session) -> bool`: compare the normal provider compute version; no new readiness state.
 
-- [ ] **Write failing storage tests.** `test_newest_fact_is_strictly_before_current_line`, `test_reused_keys_retain_both_occurrences`, `test_session_delete_cascades`, and `test_duplicate_source_fact_is_idempotent`. Assert keyset paging crosses gaps, malformed content, and page boundaries without searching text.
-- [ ] **Run the tests.** `uv run pytest tests/test_history_facts.py -q`.
-- [ ] **Implement model and readers.** Use session FK, positive line number, closed kind, exact key, and JSON data. Unique constraint `(session, kind, key, line_num)` supplies the lookup B-tree. Do not duplicate that index. Stream fact results in bounded pages when multiple candidates need validation. Context facts use key `"context"`; target facts use `"patch"` or `"mcp"`.
-- [ ] **Generate the schema migration without applying it to the running instance.** Use Django `makemigrations core --name session_history_fact` through `uv run` with `--settings=twicc.settings`. Inspect the generated dependency and SQL shape. Historical data rebuilding is absent from the migration.
-- [ ] **Verify and commit.** Run the focused tests; inspect SQLite `EXPLAIN QUERY PLAN` for exact-key/prior-line lookup. Commit `feat(compute): add computed session history facts`.
+- [x] **Write failing storage tests.** `test_newest_fact_is_strictly_before_current_line`, `test_reused_keys_retain_both_occurrences`, `test_session_delete_cascades`, and `test_duplicate_source_fact_is_idempotent`. Assert keyset paging crosses gaps, malformed content, and page boundaries without searching text.
+- [x] **Run the tests.** `uv run pytest tests/test_history_facts.py -q`.
+- [x] **Implement model and readers.** Use session FK, positive line number, closed kind, exact key, and JSON data. Unique constraint `(session, kind, key, line_num)` supplies the lookup B-tree. Do not duplicate that index. Stream fact results in bounded pages when multiple candidates need validation. Context facts use key `"context"`; target facts use `"patch"` or `"mcp"`.
+- [x] **Generate the schema migration without applying it to the running instance.** Use Django `makemigrations core --name session_history_fact` through `uv run` with `--settings=twicc.settings`. Inspect the generated dependency and SQL shape. Historical data rebuilding is absent from the migration.
+- [x] **Verify and commit.** Run the focused tests; inspect SQLite `EXPLAIN QUERY PLAN` for exact-key/prior-line lookup. Commit `feat(compute): add computed session history facts`.
 
 ### Task 4: Extract facts once in batch and live compute
 
