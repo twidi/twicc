@@ -587,3 +587,259 @@ def test_deletion_recreation_reparses_before_migration_exclusion(tmp_path, monke
         watcher.stop_watcher()
         await watcher._drain_changes()
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('replacement', ['delete_add', 'atomic_replace'])
+def test_recreated_source_does_not_defer_on_old_migrating_identity(tmp_path, monkeypatch, replacement):
+    from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
+    from twicc.providers.codex.migration_gate import mark_migrating, unmark_migrating
+    from twicc.providers.session_change_queue import MigrationRelease
+    import orjson
+    async def run():
+        watcher = CodexSessionsWatcher()
+        watcher.projects_dir = tmp_path
+        path = tmp_path / '2026' / 'rollout-source.jsonl'
+        path.parent.mkdir()
+        def content(sid):
+            return orjson.dumps({'type': 'session_meta', 'payload': {'id': sid, 'cwd': '/tmp/p'}}) + b'\n'
+        path.write_bytes(content('old'))
+        watcher._rewrite_detected = AsyncMock(return_value=False)
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        seen = []
+        async def process(self, source, parsed, *_args):
+            seen.append(parsed.session_id)
+            if parsed.session_id == 'new':
+                # An outcome for the deleted source must not cancel the new target.
+                watcher.notify_migration_released(MigrationRelease('old', source, 'cancelled', False, None, 4001))
+            return module.SessionChangeResult('drained', watcher._queue.source_generation(source), source.stat().st_size)
+        monkeypatch.setattr(module.BaseSessionsWatcher, '_process_parsed_session_change', process)
+        await watcher.process_path(path)
+        await watcher._consumer_task
+        mark_migrating('old')
+        try:
+            if replacement == 'delete_add':
+                path.unlink()
+                watcher._enqueue(path, Change.deleted)
+                path.write_bytes(content('new'))
+                watcher._enqueue(path, Change.added)
+            else:
+                other = tmp_path / 'replacement'
+                other.write_bytes(content('new'))
+                other.replace(path)
+                watcher._enqueue(path, Change.modified)
+            await asyncio.wait_for(watcher.process_path(path), 1)
+            await watcher._consumer_task
+            assert seen[0] == 'old' and seen[1:] and set(seen[1:]) == {'new'}
+            assert watcher._parsed_paths[path].session_id == 'new'
+        finally:
+            unmark_migrating('old')
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('replacement_text', ['new', 'new and larger'])
+def test_paginated_replacement_reaches_real_gated_reconstruction_and_release(tmp_path, monkeypatch, replacement_text):
+    import orjson
+    from twicc.core.models import Project, Session, SessionItem
+    from twicc.providers import db_writer
+    from twicc.providers.codex import migration_gate
+    from twicc.providers.codex.background_compute import CodexComputeCandidate, CodexComputeCoordinator, FailedCandidate
+    from twicc.providers.codex.rollout_migration import ReplaceCodexHistoryJob
+    from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
+
+    monkeypatch.setattr(migration_gate, '_rebuild_requests', set())
+    watcher = CodexSessionsWatcher()
+    watcher.projects_dir = tmp_path
+    path = tmp_path / '2026' / 'rollout-replaced.jsonl'
+    path.parent.mkdir()
+    meta = {'type': 'session_meta', 'payload': {'id': 'replaced', 'cwd': '/tmp/p', 'history_mode': 'paginated'}}
+    old_message = {'type': 'event_msg', 'payload': {'type': 'user_message', 'message': 'old'}}
+    new_message = {'type': 'event_msg', 'payload': {'type': 'user_message', 'message': replacement_text}}
+    old_records = [orjson.dumps(meta), orjson.dumps(old_message)]
+    new_records = [orjson.dumps(meta), orjson.dumps(new_message)]
+    path.write_bytes(b'\n'.join(old_records) + b'\n')
+    old_offset = path.stat().st_size
+    session = Session.objects.create(id='replaced', project=Project.objects.create(id='p'), provider='codex',
+        file_path='2026/rollout-replaced.jsonl', last_offset=old_offset, last_line=2,
+        compute_version=watcher.get_compute().compute_version)
+    for line, record in enumerate(old_records, 1):
+        SessionItem.objects.create(session=session, line_num=line, content=record.decode())
+    monkeypatch.setattr(module, 'broadcast_message', AsyncMock())
+
+    async def run():
+        releases = []
+        def notify(release):
+            releases.append(release)
+            watcher.notify_migration_released(release)
+        coordinator = CodexComputeCoordinator(SimpleNamespace(), asyncio.Event(), on_migration_released=notify)
+        # The external agent manager is irrelevant; all database jobs and source reads stay real.
+        coordinator._is_agent_active = lambda sid: False
+        db_writer.start_db_writer()
+        try:
+            await watcher._observe_source(path)
+            replacement = tmp_path / 'replacement'
+            replacement.write_bytes(b'\n'.join(new_records) + b'\n')
+            replacement.replace(path)
+            watcher._enqueue(path, Change.modified)
+            await watcher._consumer_task
+            # This is the real MarkSessionRebuildJob result, not a mocked submission.
+            marked = await Session.objects.aget(id=session.id)
+            assert marked.compute_version is None and marked.last_offset == old_offset
+            candidate = CodexComputeCandidate(session.id, path, 'session', marked.last_offset)
+            coordinator._absorb_rebuild_requests()
+
+            submit = coordinator._submit_job
+            fail_once = True
+            async def fail_replacement_once(job_type, *args):
+                nonlocal fail_once
+                if job_type is ReplaceCodexHistoryJob and fail_once:
+                    fail_once = False
+                    raise RuntimeError('injected replacement failure')
+                return await submit(job_type, *args)
+            coordinator._submit_job = fail_replacement_once
+            failed = await coordinator.prepare_candidate(candidate)
+            assert isinstance(failed, FailedCandidate)
+            assert session.id in coordinator._forced_rebuild
+            assert path in watcher._replaced_paths
+            assert releases[-1].outcome == 'failed' and releases[-1].path == path
+            assert await SessionItem.objects.filter(session_id=session.id, content=old_records[1].decode()).aexists()
+
+            # Retry the retained intent without a new request. The gated recheck
+            # sees paginated/paginated again and must still reconstruct history.
+            prepared = await coordinator.prepare_candidate(candidate)
+            assert prepared.migrated_history and prepared.kind == 'replaced'
+            assert prepared.migration_lease.locked()
+            assert session.id not in coordinator._forced_rebuild
+            assert path in watcher._replaced_paths
+            rebuilt = await Session.objects.aget(id=session.id)
+            assert rebuilt.last_offset == path.stat().st_size
+            actual = [content async for content in SessionItem.objects.filter(session_id=session.id)
+                      .order_by('line_num').values_list('content', flat=True)]
+            assert actual == [record.decode() for record in new_records]
+            coordinator.migration_leases[session.id] = prepared.migration_lease
+            coordinator._release_lease(session.id)
+            await watcher._consumer_task
+            assert releases[-1].outcome == 'ready' and releases[-1].path == path and releases[-1].replay
+            assert path not in watcher._replaced_paths
+            assert watcher._queue.idle and not prepared.migration_lease.locked()
+        finally:
+            if session.id in coordinator.migration_paths:
+                coordinator._release_lease(session.id, replay=False, outcome='cancelled')
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+            await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'cancelled'])
+@pytest.mark.parametrize('same_session', [False, True], ids=['new-identity', 'same-identity'])
+def test_release_before_replacement_parse_waits_for_source_identity(tmp_path, monkeypatch, outcome, same_session):
+    from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
+    from twicc.providers.session_change_queue import MigrationRelease
+    import orjson
+    async def run():
+        watcher = CodexSessionsWatcher()
+        watcher.projects_dir = tmp_path
+        path = tmp_path / '2026' / 'rollout-source.jsonl'
+        path.parent.mkdir()
+        def content(sid, version):
+            return orjson.dumps({'type': 'session_meta', 'payload': {'id': sid, 'cwd': '/tmp/p', 'version': version}}) + b'\n'
+        path.write_bytes(content('old', 1))
+        watcher._rewrite_detected = AsyncMock(return_value=False)
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        seen = []
+        async def process(self, source, parsed, *_args):
+            seen.append(parsed.session_id)
+            return module.SessionChangeResult('drained', watcher._queue.source_generation(source), source.stat().st_size)
+        monkeypatch.setattr(module.BaseSessionsWatcher, '_process_parsed_session_change', process)
+        await watcher.process_path(path)
+        await watcher._consumer_task
+        ensure_consumer = watcher._ensure_consumer
+        watcher._ensure_consumer = lambda: None
+        if same_session:
+            other = tmp_path / 'replacement'
+            other.write_bytes(content('old', 2))
+            other.replace(path)
+        else:
+            path.unlink()
+            watcher._enqueue(path, Change.deleted)
+            path.write_bytes(content('new', 2))
+        target = await watcher._observe_source(path)
+        watcher._enqueue(path, Change.added)
+        waiter = asyncio.create_task(watcher._queue.wait_drained(path, target=target))
+        await asyncio.sleep(0)
+        watcher.notify_migration_released(MigrationRelease('old', path, outcome, False, 'migration failed', 4002))
+        assert not watcher._queue.idle, 'terminal release dropped the only reparse event'
+        watcher._ensure_consumer = ensure_consumer
+        watcher._ensure_consumer()
+        await watcher._consumer_task
+        if same_session and outcome == 'cancelled':
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+        else:
+            await asyncio.wait_for(waiter, 1)
+        assert seen == (['old'] if same_session else ['old', 'new'])
+        watcher.stop_watcher()
+        await watcher._drain_changes()
+        assert not watcher._pending_source_releases
+    asyncio.run(run())
+
+
+def test_old_duplicate_release_does_not_defer_replacement_identity_again(tmp_path):
+    from twicc.providers.session_change_queue import MigrationRelease
+    from twicc.core.models import SessionType
+    async def run():
+        watcher = module.BaseSessionsWatcher()
+        watcher._ensure_consumer = lambda: None
+        path = tmp_path / 's.jsonl'
+        release = MigrationRelease('s', path, 'failed', False, 'old failure', 5001)
+        watcher.notify_migration_released(release)
+        watcher._deleted_parsed_paths[path] = module.ParsedSessionFile('p', 's', SessionType.SESSION, path.name)
+        watcher._enqueue(path, Change.added)
+        watcher.notify_migration_released(release)
+        assert not watcher._pending_source_releases
+        watcher.stop_watcher()
+        await watcher._drain_changes()
+    asyncio.run(run())
+
+
+def test_stop_drains_identification_before_clearing_pending_release(tmp_path, monkeypatch):
+    from twicc.core.models import SessionType
+    from twicc.providers.session_change_queue import MigrationRelease
+    async def run():
+        watcher = module.BaseSessionsWatcher()
+        path = tmp_path / 's.jsonl'
+        path.write_bytes(b'{}\n')
+        old = module.ParsedSessionFile('p', 'old', SessionType.SESSION, path.name)
+        new = module.ParsedSessionFile('p', 'new', SessionType.SESSION, path.name)
+        await watcher._observe_source(path)
+        watcher._parsed_paths[path] = old
+        replacement = tmp_path / 'replacement'
+        replacement.write_bytes(b'{"new":true}\n')
+        replacement.replace(path)
+        entered, identified = asyncio.Event(), asyncio.Event()
+        async def parse(source):
+            entered.set()
+            await identified.wait()
+            return new
+        watcher.parse_session_file = parse
+        async def process(source, *_args):
+            return module.SessionChangeResult('drained', watcher._queue.source_generation(source), source.stat().st_size)
+        watcher._process_parsed_session_change = process
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        waiter = asyncio.create_task(watcher.process_path(path))
+        await entered.wait()
+        watcher.notify_migration_released(MigrationRelease('old', path, 'cancelled', False, None, 6001))
+        assert watcher._pending_source_releases
+        watcher.stop_watcher()
+        drain = asyncio.create_task(watcher._drain_changes())
+        await asyncio.sleep(0)
+        assert not drain.done()
+        identified.set()
+        await asyncio.wait_for(drain, 1)
+        await waiter
+        assert not watcher._pending_source_releases
+        assert watcher._consumer_task.done() and watcher._queue.idle
+    asyncio.run(run())

@@ -350,6 +350,8 @@ class BaseSessionsWatcher:
         self._sources: dict[Path, _SourceSnapshot] = {}
         self._replaced_paths: set[Path] = set()
         self._parsed_paths: dict[Path, ParsedSessionFile] = {}
+        self._deleted_parsed_paths: dict[Path, ParsedSessionFile] = {}
+        self._pending_source_releases: dict[Path, MigrationRelease] = {}
         self._line_limits: dict[Path, int] = {}
 
     # ------------------------------------------------------------------
@@ -1293,6 +1295,7 @@ class BaseSessionsWatcher:
         if self._consumer_task is not None:
             tasks.append(self._consumer_task)
         if not tasks:
+            self._pending_source_releases.clear()
             return
         drain = asyncio.gather(*tasks, return_exceptions=True)
         cancelled = False
@@ -1302,6 +1305,7 @@ class BaseSessionsWatcher:
             except asyncio.CancelledError:
                 cancelled = True
         drain.result()
+        self._pending_source_releases.clear()
         if cancelled:
             raise asyncio.CancelledError
 
@@ -1312,11 +1316,19 @@ class BaseSessionsWatcher:
     def _enqueue(self, path: Path, change: Change) -> None:
         self._queue.enqueue(path, change)
         if change == Change.deleted:
+            self._invalidate_parsed_path(path)
             if path in self._sources:
                 self._replaced_paths.add(path)
             self._sources.pop(path, None)
             self._line_limits.pop(path, None)
         self._ensure_consumer()
+
+    def _invalidate_parsed_path(self, path: Path) -> None:
+        parsed = self._parsed_paths.pop(path, None)
+        if parsed is not None:
+            # A deleted turn still needs the old identity to mark it stale.
+            # This metadata must never drive a recreated source's exclusion.
+            self._deleted_parsed_paths[path] = parsed
 
     async def _observe_source(self, path: Path) -> PathDrainTarget:
         async with self._source_lock:
@@ -1329,6 +1341,7 @@ class BaseSessionsWatcher:
             ):
                 if previous is not None:
                     self._replaced_paths.add(path)
+                self._invalidate_parsed_path(path)
                 self._queue.observe_source(path, object())
                 self._line_limits.pop(path, None)
             self._sources[path] = snapshot
@@ -1351,6 +1364,23 @@ class BaseSessionsWatcher:
             await asyncio.sleep(0)
 
     def notify_migration_released(self, release: MigrationRelease) -> None:
+        if release.path is None or release.release_token <= self._queue.release_token(release.path):
+            return
+        parsed = self._parsed_paths.get(release.path)
+        if parsed is not None and parsed.session_id != release.session_id:
+            # A recreated path can belong to a different session entirely.
+            return
+        if (parsed is None and release.path in self._deleted_parsed_paths
+                and self._queue.current_change(release.path) != Change.deleted):
+            # Identity invalidation precedes asynchronous parsing. Keep the
+            # reparse event until it can attribute this outcome to its source.
+            if self._queue.closed:
+                return
+            previous = self._pending_source_releases.get(release.path)
+            if previous is None or release.release_token > previous.release_token:
+                self._pending_source_releases[release.path] = release
+                self._enqueue(release.path, Change.modified)
+            return
         if not self._queue.notify_migration_released(release):
             return
         if release.outcome == 'ready' and release.replay and release.path is not None:
@@ -1421,19 +1451,26 @@ class BaseSessionsWatcher:
             # Parse path to determine type (session or subagent).
             # Read-only (FS only, no DB) — runs outside the lock.
             if change_type != Change.deleted:
+                await self._observe_source(path)
                 cached = self._parsed_paths.get(path)
                 if cached is not None and await self.defer_session_change(cached):
                     return SessionChangeResult('deferred')
-                await self._observe_source(path)
                 parsed = await self.parse_session_file(path)
             else:
-                parsed = self._parsed_paths.pop(path, None) or await self.parse_session_file(path)
+                parsed = (self._deleted_parsed_paths.get(path) or self._parsed_paths.pop(path, None)
+                          or await self.parse_session_file(path))
             if parsed is None:
                 # Invalid path — silently skip
                 return SessionChangeResult('failed')
 
             if change_type != Change.deleted:
                 self._parsed_paths[path] = parsed
+                self._deleted_parsed_paths.pop(path, None)
+                release = self._pending_source_releases.pop(path, None)
+                if release is not None:
+                    self.notify_migration_released(release)
+                    if release.session_id == parsed.session_id and release.outcome != 'ready':
+                        return SessionChangeResult('deferred')
             if await self.defer_session_change(parsed):
                 logger.debug(
                     "Watcher: deferring %s on %s (session %s is being rebuilt)",
@@ -1445,6 +1482,8 @@ class BaseSessionsWatcher:
             result = await self._process_parsed_session_change(
                 path, parsed, change_type, channel_layer,
             )
+            if change_type == Change.deleted and result.disposition != 'deferred':
+                self._deleted_parsed_paths.pop(path, None)
             if result.source_generation is not None:
                 result = result._replace(source_generation=generation)
             return result

@@ -104,7 +104,9 @@ class SessionChangeQueue:
         self._in_flight = False
         newer = state.token > turn.token
         release = state.release
-        if release and release.release_token > state.turn_release_token and (deferred or release.replay):
+        if release and release.release_token > state.turn_release_token and (
+            deferred or release.replay or release.outcome != 'ready'
+        ):
             # A release can arrive after the provider's check, before finish.
             state.deferred = True
             self._apply_release(turn.path, state, release)
@@ -122,6 +124,9 @@ class SessionChangeQueue:
                 state.change = Change.modified
             self._schedule(turn.path, state)
         self._settle_closed()
+
+    def current_change(self, path: Path) -> Change:
+        return self._state(path).change
 
     def release_token(self, path: Path) -> int:
         release = self._state(path).release
@@ -142,6 +147,12 @@ class SessionChangeQueue:
     def committed(self, path: Path, target: PathDrainTarget) -> None:
         state = self._state(path)
         if state.generation is not target.source_generation:
+            return
+        release = state.release
+        if (state.in_flight and release is not None and release.release_token > state.turn_release_token
+                and release.outcome != 'ready'):
+            # A pre-lease classification failure can overlap a committed slice.
+            # finish must settle the terminal outcome before checkpoint success.
             return
         state.offset = max(state.offset, target.end_offset)
         for future, requested in list(state.waiters.items()):

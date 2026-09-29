@@ -103,9 +103,10 @@ def request_rebuild(session_id: str) -> None:
     """Ask the coordinator to rebuild a session from its rollout (rewrite detected).
 
     The caller also resets the session's ``compute_version`` through the DB
-    writer so the coordinator's stale-session scan picks it up; this request
-    only lifts the per-run ``failed_this_run`` / deferred exclusions and
-    wakes the scheduler.
+    writer so the coordinator's stale-session scan picks it up. The request
+    forces gated history reconstruction even for paginated-to-paginated
+    replacement, lifts per-run exclusions, and wakes the scheduler. The
+    coordinator retains this process-local intent until replacement succeeds.
     """
 
     _rebuild_requests.add(session_id)

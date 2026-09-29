@@ -164,3 +164,31 @@ def test_close_drains_dirty_event_admitted_before_close():
         q.finish(last, has_more=True)
         assert q.idle
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'cancelled'])
+@pytest.mark.parametrize('has_more', [False, True], ids=['drained', 'ready'])
+def test_terminal_release_wins_over_non_deferred_commit(outcome, has_more):
+    async def run():
+        module = queue_type()
+        q = module.SessionChangeQueue()
+        path = Path('terminal-in-flight')
+        generation = object()
+        q.observe_source(path, generation)
+        target = module.PathDrainTarget(generation, 100)
+        waiter = asyncio.create_task(q.wait_drained(path, target=target))
+        await asyncio.sleep(0)
+        q.enqueue(path, Change.modified)
+        turn = await q.next_change()
+        q.notify_migration_released(module.MigrationRelease('s', path, outcome, False, 'classification failed', 1))
+        # The real consumer reports a committed checkpoint before finish.
+        q.committed(path, target)
+        q.finish(turn, has_more=has_more)
+        assert q.idle
+        if outcome == 'cancelled':
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+        else:
+            await asyncio.wait_for(waiter, 1)
+        assert q._paths[path].terminal == outcome
+    asyncio.run(run())

@@ -189,10 +189,10 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             session.id, size, session.last_offset,
         )
         self._paginated_in_db.discard(session.id)
+        self._replaced_paths.add(path)
         future = asyncio.get_running_loop().create_future()
         await submit_async_job(MarkSessionRebuildJob(Provider.CODEX, session.id, future))
         request_rebuild(session.id)
-        self._replaced_paths.discard(path)
         return True
 
     async def parse_session_file(self, path: Path) -> ParsedSessionFile | None:

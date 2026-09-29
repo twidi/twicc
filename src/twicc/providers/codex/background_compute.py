@@ -223,6 +223,7 @@ class CodexComputeCoordinator:
         self.failures: dict[str, FailedCandidate] = {}
         self.migration_leases: dict[str, asyncio.Lock] = {}
         self.migration_paths: dict[str, Path] = {}
+        self._forced_rebuild: set[str] = set()
         self.migrated_history: set[str] = set()
         self.worker_errors: dict[str, str] = {}
         self.in_flight: str | None = None
@@ -340,7 +341,8 @@ class CodexComputeCoordinator:
             # only part of its rows.
             size = _file_size(candidate.file_path)
             truncated = (size is not None and size < candidate.last_offset) or candidate.last_offset == 0
-            if truncated and preparation == MigrationPreparation.COMPUTE_ONLY:
+            self._absorb_rebuild_requests()
+            if (truncated or session_id in self._forced_rebuild) and preparation == MigrationPreparation.COMPUTE_ONLY:
                 preparation = MigrationPreparation.REPLACE_ONLY
 
             needs_gate = preparation != MigrationPreparation.COMPUTE_ONLY or anchors_existed
@@ -357,9 +359,10 @@ class CodexComputeCoordinator:
             source_mode = await self._source_mode(candidate.file_path, session_id)
             database_mode = await self._database_mode(candidate)
             preparation = migration_preparation(source_mode, database_mode)
-            if truncated and preparation == MigrationPreparation.COMPUTE_ONLY:
-                preparation = MigrationPreparation.REPLACE_ONLY
             anchors_existed = await _has_snapshot_anchor(session_id)
+            self._absorb_rebuild_requests()
+            if (truncated or session_id in self._forced_rebuild) and preparation == MigrationPreparation.COMPUTE_ONLY:
+                preparation = MigrationPreparation.REPLACE_ONLY
             if self._is_agent_active(session_id):
                 self._release_lease(session_id, replay=False)
                 return DeferredCandidate(session_id, "active")
@@ -426,6 +429,10 @@ class CodexComputeCoordinator:
                     history.last_line,
                     history.mtime,
                 )
+                # Only successful gated reconstruction consumes the request.
+                # A classification, active-session deferral, or failed write
+                # must not downgrade the next attempt to metadata-only compute.
+                self._forced_rebuild.discard(session_id)
                 if search.is_initialized():
                     phase = "search invalidation"
                     await asyncio.to_thread(search.delete_session_documents, session_id)
@@ -760,9 +767,10 @@ class CodexComputeCoordinator:
         return tally, legacy_ids
 
     def _absorb_rebuild_requests(self) -> None:
-        """A rewrite detected by the watcher lifts the per-run exclusions."""
+        """Retain forced reconstruction intent and lift per-run exclusions."""
 
         for session_id in take_rebuild_requests():
+            self._forced_rebuild.add(session_id)
             self.failed_this_run.discard(session_id)
             self.failures.pop(session_id, None)
             self.deferred.discard(session_id)

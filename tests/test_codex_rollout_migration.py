@@ -438,6 +438,8 @@ def test_watcher_detects_a_rewritten_rollout(tmp_path, monkeypatch):
     watcher = CodexSessionsWatcher()
 
     def make(session_id, *, last_offset, db_mode, disk_mode):
+        nonlocal rollout
+        rollout = tmp_path / f"rollout-{session_id}.jsonl"
         session = Session.objects.create(
             id=session_id, project=project, provider=Provider.CODEX, last_offset=last_offset,
             file_path=f"2026/09/04/rollout-{session_id}.jsonl",
