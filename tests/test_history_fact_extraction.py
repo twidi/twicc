@@ -1,5 +1,7 @@
 """Shared chronological fact extraction and batch/live parity."""
 
+from tests.live_sync_helpers import drain_live_sync
+
 from queue import Queue
 
 import orjson
@@ -204,7 +206,7 @@ def test_batch_whole_chunk_and_per_line_live_parity(provider, tmp_path):
                 with path.open("ab") as stream:
                     for record in chunk:
                         stream.write(orjson.dumps(record) + b"\n")
-                compute.sync_session_items_from_file(session, path)
+                drain_live_sync(compute, session, path)
             snapshots.append(
                 list(
                     SessionHistoryFact.objects.filter(session=session)
@@ -305,7 +307,7 @@ def test_fact_failure_rolls_back_items_and_checkpoint(tmp_path, monkeypatch):
 
     monkeypatch.setattr("twicc.providers.compute_base.append_history_facts", fail)
     with pytest.raises(RuntimeError, match="fact insertion failed"):
-        CodexSessionCompute().sync_session_items_from_file(session, path)
+        drain_live_sync(CodexSessionCompute(), session, path)
     session.refresh_from_db()
     assert session.last_offset == 0
     assert not session.items.exists()

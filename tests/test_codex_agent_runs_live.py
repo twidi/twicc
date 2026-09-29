@@ -10,6 +10,8 @@ compares the stored rows. The other tests pin the §9 live cases.
 
 from __future__ import annotations
 
+from tests.live_sync_helpers import drain_live_sync
+
 from pathlib import Path
 from queue import Queue
 
@@ -108,7 +110,7 @@ class LiveReplay:
         with self.paths[session_id].open("a", encoding="utf-8") as handle:
             handle.writelines(f"{line}\n" for line in lines[self.synced[session_id]:end])
         self.synced[session_id] = end
-        return self.compute.sync_session_items_from_file(self.sessions[session_id], self.paths[session_id])
+        return drain_live_sync(self.compute, self.sessions[session_id], self.paths[session_id])
 
     def sync_to_mark(self, session_id: str, mark: str) -> tuple:
         return self.sync(session_id, self.fixture.line(session_id, mark))
@@ -225,7 +227,11 @@ def test_expected_row_counts_cover_every_fixture():
 @pytest.mark.parametrize("per_line", [True, False], ids=["per_line", "one_chunk"])
 @pytest.mark.parametrize("name", sorted(ALL_FIXTURES))
 @pytest.mark.parametrize("current", [False, True], ids=["stale_history", "indexed_history"])
-def test_batch_live_parity(db, tmp_path, name, per_line, current):
+@pytest.mark.parametrize('slice_lines', [1, 2, 500])
+def test_batch_live_parity(db, tmp_path, name, per_line, current, slice_lines, monkeypatch):
+    from tests import live_sync_helpers
+    from twicc.providers.live_sync import LiveSyncLimits
+    monkeypatch.setattr(live_sync_helpers, 'REPLAY_LIMITS', LiveSyncLimits(slice_lines))
     fixture = ALL_FIXTURES[name]()
     replay = LiveReplay(fixture, tmp_path)
     if current:
@@ -340,8 +346,8 @@ def test_agents_resumed_only_for_run_opening_resumes(db, tmp_path):
         assert opened.affected_agent_ids == (AGENT_A,)
     resumed_lines = [line for line, s in signals.items() if s.agents_resumed]
     assert resumed_lines == [fx.line(ROOT, "fu1_event"), fx.line(ROOT, "fu2_event")]
-    # The sync returns them as its last element, for ``_after_agents_resumed``.
-    assert returned[-1] == [(AGENT_A, PATH_A), (AGENT_A, PATH_A)]
+    # The sync returns them in its named field, for ``_after_agents_resumed``.
+    assert returned.agents_resumed == [(AGENT_A, PATH_A), (AGENT_A, PATH_A)]
 
 
 def test_send_message_resumes_nothing(db, tmp_path):

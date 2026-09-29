@@ -1,5 +1,7 @@
 """A failed live transaction preserves its one-shot evidence and replay state."""
 
+from tests.live_sync_helpers import drain_live_sync
+
 import copy
 import threading
 
@@ -147,7 +149,7 @@ def test_live_retry_preserves_diff_facts_links_and_checkpoint(live_case, monkeyp
         module.cache_original_file(baseline.id, "call", "full old file")
     else:
         module.cache_original_files(baseline.id, "call", {"/a": "full old file"})
-    type(compute)().sync_session_items_from_file(baseline, path)
+    drain_live_sync(type(compute)(), baseline, path)
     expected_facts, expected_links = _relation_rows(baseline)
     assert expected_facts
     assert len(expected_links) == 1
@@ -172,24 +174,24 @@ def test_live_retry_preserves_diff_facts_links_and_checkpoint(live_case, monkeyp
             assert ToolResultLink.objects.filter(session=session).exists()
             raise RuntimeError("injected second pass failure")
         return result
-    original_save = session.save
-    def save(*args, **kwargs):
-        original_save(*args, **kwargs)
-        if failure_point == "late_save":
+    original_save = Session.save
+    def save(instance, *args, **kwargs):
+        original_save(instance, *args, **kwargs)
+        if instance.id == session.id and failure_point == "late_save":
             raise RuntimeError("injected late save failure")
     with monkeypatch.context() as patch:
         patch.setattr(compute, "transform_tool_result_with_cache", enrich)
         patch.setattr(compute, "create_tool_result_link_live", link)
         patch.setattr(compute, "extract_history_facts", facts)
-        patch.setattr(session, "save", save)
+        patch.setattr(Session, "save", save)
         with pytest.raises(RuntimeError, match="injected"):
-            compute.sync_session_items_from_file(session, path)
+            drain_live_sync(compute, session, path)
     assert session.last_offset == 0
     assert session.last_line == 0
     assert not SessionItem.objects.filter(session=session).exists()
     assert not SessionHistoryFact.objects.filter(session=session).exists()
     assert not ToolResultLink.objects.filter(session=session).exists()
-    compute.sync_session_items_from_file(session, path)
+    drain_live_sync(compute, session, path)
     item = SessionItem.objects.get(session=session, line_num=2)
     assert "full old file" in item.content
     if captured:
@@ -199,7 +201,7 @@ def test_live_retry_preserves_diff_facts_links_and_checkpoint(live_case, monkeyp
     assert actual_links == expected_links
     assert session.last_offset == path.stat().st_size
     assert session.last_line == 2
-    assert compute.sync_session_items_from_file(session, path)[0] == []
+    assert drain_live_sync(compute, session, path).new_line_nums == []
     pop = module.pop_original_file if session.provider == Provider.CLAUDE_CODE else module.pop_original_files
     assert pop(session.id, "call") is None
 
@@ -208,7 +210,7 @@ def test_live_entry_rejects_caller_transaction(live_case):
     compute, session, path, _module = live_case
     with transaction.atomic():
         with pytest.raises(RuntimeError, match="atomic"):
-            compute.sync_session_items_from_file(session, path)
+            drain_live_sync(compute, session, path)
     assert not SessionItem.objects.filter(session=session).exists()
 
 
@@ -322,10 +324,10 @@ def test_commit_failure_restores_enrichment_and_caller_checkpoint(live_case, mon
     with monkeypatch.context() as patch:
         patch.setattr(connection, "commit", fail_commit)
         with pytest.raises(DatabaseError, match="injected commit"):
-            compute.sync_session_items_from_file(session, path)
+            drain_live_sync(compute, session, path)
     assert session.last_offset == 0
     assert not session.items.exists()
-    compute.sync_session_items_from_file(session, path)
+    drain_live_sync(compute, session, path)
     assert "full old file" in SessionItem.objects.get(session=session, line_num=2).content
     assert session.last_offset == path.stat().st_size
 
@@ -348,17 +350,17 @@ def test_failed_billing_pass_retries_token_baseline_and_message_counter(tmp_path
     path.write_bytes(b"".join(orjson.dumps(record) + b"\n" for record in records))
     compute = CodexSessionCompute()
     compute._prev_total_tokens[session.id] = 10
-    save = session.save
-    def fail_after_save(*args, **kwargs):
-        save(*args, **kwargs)
+    save = Session.save
+    def fail_after_save(instance, *args, **kwargs):
+        save(instance, *args, **kwargs)
         raise RuntimeError("injected after billing")
     with monkeypatch.context() as patch:
-        patch.setattr(session, "save", fail_after_save)
+        patch.setattr(Session, "save", fail_after_save)
         with pytest.raises(RuntimeError, match="injected"):
-            compute.sync_session_items_from_file(session, path)
+            drain_live_sync(compute, session, path)
     assert compute._prev_total_tokens[session.id] == 10
     assert session.user_message_count == 0
-    compute.sync_session_items_from_file(session, path)
+    drain_live_sync(compute, session, path)
     assert compute._prev_total_tokens[session.id] == 150
     assert SessionItem.objects.get(session=session, line_num=2).context_usage == 150
     assert session.user_message_count == 1

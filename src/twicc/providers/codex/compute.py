@@ -5812,7 +5812,7 @@ class CodexSessionCompute(BaseSessionCompute):
 
     # compute_session_metadata + apply_session_complete: inherited from base.
     # The base orchestrates DB I/O and dispatches every parsing hook
-    # declared above. ``sync_session_items_from_file`` (also inherited) is
+    # declared above. ``sync_session_slice`` (also inherited) is
     # driven by ``CodexSessionsWatcher`` for live updates.
 
 

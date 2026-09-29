@@ -1,4 +1,4 @@
-"""Compute plumbing for agent runs: hooks, batch state, batch diffs, live tuple.
+"""Compute plumbing for agent runs: hooks, batch state, batch diffs, named live updates.
 
 The provider hooks (``collect_agent_run_signals`` in batch,
 ``apply_agent_run_signals`` live) return nothing by default; these tests plug
@@ -7,6 +7,9 @@ batch path turns their rows into ``AgentInteraction`` / ``AgentRunEnd`` diffs.
 Design: ``docs/plans/2026-09-26-subagent-runs-and-control-tools-design.md``
 §6.2 and §7.1.
 """
+
+from tests.live_sync_helpers import drain_live_sync
+from twicc.providers.live_sync import LiveSyncUpdates
 import os
 from datetime import UTC, datetime
 from queue import Queue
@@ -90,7 +93,7 @@ def write_lines(session, home, *entries):
 
 def live(session, home, *entries, compute=None):
     path = write_lines(session, home, *entries)
-    return (compute or ClaudeCodeSessionCompute()).sync_session_items_from_file(session, path)
+    return drain_live_sync(compute or ClaudeCodeSessionCompute(), session, path)
 
 
 def recompute(session, compute):
@@ -164,46 +167,46 @@ class ClaudeLiveSpy(ClaudeCodeSessionCompute):
 # ---------------------------------------------------------------------------
 
 
-def test_live_tuple_appends_three_lists_and_keeps_indexes(tree):
+def test_live_updates_include_interactions_states_and_resumes(tree):
     root, owner, child, home = tree
     live(owner, home, spawn())
     child.delete()
     result = live(root, home, queue_entry())
     assert len(result) == 10
-    assert result[2][0].parent_session_id == owner.id
-    assert result[5][0].agent_session_id == "ad123"
-    assert result[6] is False
-    assert result[7] == [] and result[9] == []
+    assert result.agent_link_updates[0].parent_session_id == owner.id
+    assert result.agent_stopped_updates[0].agent_session_id == "ad123"
+    assert result.found_compact_summary is False
+    assert result.agent_interaction_updates == [] and result.agents_resumed == []
     # The stop step fills agent_run_state_updates (the recovered link is known).
-    assert [payload["agent_session_id"] for payload in result[8]] == ["ad123"]
+    assert [payload["agent_session_id"] for payload in result.agent_run_state_updates] == ["ad123"]
 
 
-def test_live_tuple_early_returns_have_ten_elements(tree):
+def test_live_empty_results_have_named_fields(tree):
     root, owner, child, home = tree
     compute = ClaudeCodeSessionCompute()
-    missing = compute.sync_session_items_from_file(root, home / "missing.jsonl")
-    assert missing == ([], [], [], [], [], [], False, [], [], [])
-    empty = ([], [], [], [], [], [], False, [], [], [])
+    missing = drain_live_sync(compute, root, home / "missing.jsonl")
+    assert missing == LiveSyncUpdates.empty()
+    empty = LiveSyncUpdates.empty()
     first = live(root, home, entry("user", "hello"))
-    assert len(first) == 10
+    assert isinstance(first, LiveSyncUpdates)
     path = home / root.file_path
     # Same mtime, nothing appended.
-    assert compute.sync_session_items_from_file(root, path) == empty
+    assert drain_live_sync(compute, root, path) == empty
     # File touched, nothing appended.
     stat = path.stat()
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
-    assert compute.sync_session_items_from_file(root, path) == empty
+    assert drain_live_sync(compute, root, path) == empty
     # Only blank lines appended.
     with path.open("ab") as f:
         f.write(b"\n  \n")
-    assert compute.sync_session_items_from_file(root, path) == empty
+    assert drain_live_sync(compute, root, path) == empty
 
 
-def test_live_tuple_carries_agents_resumed(tree):
+def test_live_updates_carry_agents_resumed(tree):
     root, owner, child, home = tree
     spy = ClaudeLiveSpy(owner.id, child.id, resumed=(("agent-x", "/root/x"),))
     result = live(owner, home, spawn(), compute=spy)
-    assert result[9] == [("agent-x", "/root/x")]
+    assert result.agents_resumed == [("agent-x", "/root/x")]
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,7 @@
 """Normal compute publishes complete history facts with its session version."""
 
+from tests.live_sync_helpers import drain_live_sync
+
 import asyncio
 import queue
 import threading
@@ -166,7 +168,7 @@ def test_live_created_session_has_facts_for_committed_rows_before_current_lookup
             "type": "function_call", "call_id": call_id, "name": "exec_command", "arguments": "{}",
         },
     }) for call_id in ("call-live-1", "call-live-2")) + b"\n")
-    get_compute().sync_session_items_from_file(session, path)
+    drain_live_sync(get_compute(), session, path)
 
     session.refresh_from_db()
     assert list(SessionItem.objects.filter(session=session).values_list("line_num", flat=True)) == [1, 2]

@@ -674,6 +674,8 @@ class Session(models.Model):
     class Meta:
         ordering = ["-mtime"]
         indexes = [
+            models.Index(fields=["parent_session"], name="idx_session_parent_cost",
+                         condition=models.Q(self_cost__isnull=False)),
             # Covers all "list sessions by project+type" queries (listing + count + sync)
             models.Index(fields=["project", "type", "-mtime"], name="idx_session_project_type_mtime"),
             # Covers API session listing and project sessions_count (most frequent queries)
@@ -815,6 +817,7 @@ class SessionItem(models.Model):
                 fields=["session", "kind", "line_num"],
                 name="idx_session_kind_line",
             ),
+            models.Index(fields=["session", "message_id", "line_num"], name="idx_item_message_line"),
             # used to recompute activity
             models.Index(
                 fields=["session", "timestamp"],

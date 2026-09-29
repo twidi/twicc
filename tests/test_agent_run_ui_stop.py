@@ -11,6 +11,8 @@ no ``_after_agents_stopped`` hook. Design:
 """
 from __future__ import annotations
 
+from tests.live_sync_helpers import drain_live_sync
+
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -82,7 +84,7 @@ def live(tree, *entries):
     """Append ``entries`` to the root file and run one live sync of it."""
     root, _ = tree
     path = append(tree, entries)
-    ClaudeCodeSessionCompute().sync_session_items_from_file(Session.objects.get(id=root.id), path)
+    drain_live_sync(ClaudeCodeSessionCompute(), Session.objects.get(id=root.id), path)
 
 
 def running_spawn(tree):

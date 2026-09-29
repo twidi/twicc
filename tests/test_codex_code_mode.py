@@ -18,6 +18,8 @@ Covers, per ``docs/plans/2026-07-10-codex-code-mode-display-design.md`` §9:
 
 from __future__ import annotations
 
+from tests.live_sync_helpers import drain_live_sync
+
 import json
 import queue
 from datetime import datetime, UTC
@@ -503,7 +505,7 @@ class TestCodeModeTasks:
             encoding="utf-8",
         )
 
-        get_compute().sync_session_items_from_file(codex_session, rollout)
+        drain_live_sync(get_compute(), codex_session, rollout)
 
         codex_session.refresh_from_db()
         assert codex_session.tasks["provider"] == "codex"

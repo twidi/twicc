@@ -9,6 +9,8 @@ fixture) and assert the rows and the resulting ``agent_run_states``. Design:
 ``docs/plans/2026-09-26-subagent-runs-and-control-tools-design.md`` §4.1,
 §5.1, §5.2, §6.1 and §9.
 """
+
+from tests.live_sync_helpers import drain_live_sync
 from datetime import UTC, datetime, timedelta
 from queue import Queue
 
@@ -189,8 +191,13 @@ def tree(db, provider_home):
     return root, children, provider_home.claude / "projects"
 
 
-@pytest.fixture(params=["live", "batch"])
-def mode(request):
+@pytest.fixture(params=["live", "live-1", "live-2", "batch"])
+def mode(request, monkeypatch):
+    from tests import live_sync_helpers
+    from twicc.providers.live_sync import LiveSyncLimits
+    if request.param.startswith('live-'):
+        monkeypatch.setattr(live_sync_helpers, 'REPLAY_LIMITS', LiveSyncLimits(int(request.param[-1])))
+        return 'live'
     return request.param
 
 
@@ -227,7 +234,7 @@ def play(mode, tree, *steps, compute=None):
     if mode == "live":
         for session, entries in steps:
             append_file(session, home, entries)
-            (compute or ClaudeCodeSessionCompute()).sync_session_items_from_file(session, home / session.file_path)
+            drain_live_sync(compute or ClaudeCodeSessionCompute(), session, home / session.file_path)
         return
     touched = []
     for session, entries in steps:

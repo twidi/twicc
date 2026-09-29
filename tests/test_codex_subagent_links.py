@@ -27,6 +27,8 @@ which resolve the same links through different machinery.
 
 from __future__ import annotations
 
+from tests.live_sync_helpers import drain_live_sync
+
 import json
 import queue
 from datetime import UTC, datetime, timedelta
@@ -214,18 +216,18 @@ def _run_batch_compute(session: Session) -> None:
 def _run_live_sync_collecting(session: Session, lines: list[str], tmp_path: Path) -> tuple[list, list]:
     """Same as :func:`_run_live_sync`, returning the broadcast payloads.
 
-    The live tuple's link and tool-result updates are exactly what the
+    The live result's link and tool-result updates are exactly what the
     watcher turns into the ``agent_link_created`` / ``tool_state`` WS
     messages, which drive both spinners in the frontend: the synthetic
     process state of the subagent tab, and the tool card's
     ``isAgentRunning`` (``result_count`` vs the background threshold).
     """
     outcome = _run_live_sync(session, lines, tmp_path)
-    return outcome[2], outcome[4]
+    return outcome.agent_link_updates, outcome.tool_result_updates
 
 
 def _run_live_sync(session: Session, lines: list[str], tmp_path: Path) -> tuple:
-    """Write ``lines`` to the session's rollout and run one live sync; return the live tuple.
+    """Write ``lines`` to the session's rollout and run one live sync; return the named updates.
 
     Each line gets its own timestamp (``_NOW`` + its index in seconds): with
     one shared time the ack and the ``FINAL_ANSWER`` would count as a single
@@ -237,7 +239,7 @@ def _run_live_sync(session: Session, lines: list[str], tmp_path: Path) -> tuple:
             entry = orjson.loads(content)
             entry["timestamp"] = (_NOW + timedelta(seconds=index)).isoformat()
             handle.write(orjson.dumps(entry) + b"\n")
-    return get_compute().sync_session_items_from_file(session, path)
+    return drain_live_sync(get_compute(), session, path)
 
 
 def _links(session: Session, tool_use_id: str) -> list[ToolResultLink]:
@@ -508,7 +510,7 @@ class TestSubagentIdleness:
         rollout = tmp_path / f"rollout-{session.id}.jsonl"
         with rollout.open("a", encoding="utf-8") as handle:
             handle.writelines(f"{line}\n" for line in lines)
-        get_compute().sync_session_items_from_file(session, rollout)
+        drain_live_sync(get_compute(), session, rollout)
 
     def test_turn_end_marks_the_subagent_stopped(self, parent_session, tmp_path):
         subagent = self._subagent(parent_session)
@@ -658,7 +660,7 @@ class TestSubagentOpeningPrompt:
         rollout = tmp_path / "rollout-prompt-live.jsonl"
         rollout.write_text(f"{_task_started()}\n{_new_task_v2()}\n", encoding="utf-8")
 
-        get_compute().sync_session_items_from_file(subagent, rollout)
+        drain_live_sync(get_compute(), subagent, rollout)
 
         subagent.refresh_from_db()
         assert subagent.user_message_count == 1
@@ -672,7 +674,7 @@ class TestSubagentOpeningPrompt:
             f"{_new_task_v2()}\n{_new_task_v2('/root/second_round')}\n", encoding="utf-8",
         )
 
-        get_compute().sync_session_items_from_file(subagent, rollout)
+        drain_live_sync(get_compute(), subagent, rollout)
 
         subagent.refresh_from_db()
         assert subagent.user_message_count == 2

@@ -240,7 +240,14 @@ def test_hide_session_mutes_the_live_agent_before_the_recompute():
     with patch.object(session_visibility, "_push_hidden_to_live_agent", _push), \
             patch.object(session_visibility, "_broadcast_session_removed", _removed), \
             patch.object(session_visibility, "_broadcast_project_updated", _project):
-        result = asyncio.run(session_visibility.hide_session(session))
+        async def hide_with_writer():
+            from twicc.providers import db_writer
+            db_writer.start_db_writer()
+            try:
+                return await session_visibility.hide_session(session)
+            finally:
+                await db_writer.stop_db_writer()
+        result = asyncio.run(hide_with_writer())
 
     assert result.success, result.errors
     session.refresh_from_db()

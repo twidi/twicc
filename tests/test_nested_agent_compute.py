@@ -1,4 +1,6 @@
 """Nested Claude agent evidence across live ingestion and background compute."""
+
+from tests.live_sync_helpers import drain_live_sync
 from datetime import UTC, datetime
 from queue import Queue
 
@@ -63,7 +65,7 @@ def live(session, home, *entries):
     with path.open("ab") as f:
         for parsed in entries:
             f.write(orjson.dumps(parsed) + b"\n")
-    return get_compute().sync_session_items_from_file(session, path)
+    return drain_live_sync(get_compute(), session, path)
 
 
 def compute(session, apply=True):
@@ -84,7 +86,7 @@ def test_live_sidecar_then_ack_upgrades_before_stop(tree):
     assert AgentLink.objects.get(agent_id=child.id).session_id == owner.id
     result = live(owner, home, ack())
     assert AgentLink.objects.get(agent_id=child.id).is_background
-    assert result[5] == []
+    assert result.agent_stopped_updates == []
 
 
 def test_authoritative_sidecar_waits_for_exact_tool(tree):
@@ -144,9 +146,9 @@ def test_live_queue_only_completion_and_missing_child_transport(tree):
     live(owner, home, spawn())
     child.delete()
     result = live(root, home, queue_entry())
-    assert result[2][0].parent_session_id == owner.id
-    assert result[5][0].agent_session_id == "ad123"
-    assert not result[5][0].stamped  # the recovered link is created already closed; no child row to stamp
+    assert result.agent_link_updates[0].parent_session_id == owner.id
+    assert result.agent_stopped_updates[0].agent_session_id == "ad123"
+    assert not result.agent_stopped_updates[0].stamped  # the recovered link is created already closed; no child row to stamp
     assert not Session.objects.filter(id="ad123").exists()
 
 
@@ -154,10 +156,10 @@ def test_live_queue_rejects_foreign_child_and_nonterminal(tree):
     root, owner, child, home = tree
     child.parent_session = None
     child.save(update_fields=["parent_session"])
-    assert live(root, home, queue_entry())[5] == []
+    assert live(root, home, queue_entry()).agent_stopped_updates == []
     child.parent_session = root
     child.save(update_fields=["parent_session"])
-    assert live(root, home, queue_entry(status="running"))[5] == []
+    assert live(root, home, queue_entry(status="running")).agent_stopped_updates == []
 
 
 def test_sidecar_cannot_claim_existing_foreign_child(tree):
@@ -259,7 +261,7 @@ def test_queue_upgrades_existing_matching_launch_only(tree):
     assert not AgentLink.objects.get().is_background
     result = live(root, home, queue_entry())
     assert AgentLink.objects.get().is_background
-    assert result[2][0].is_background
+    assert result.agent_link_updates[0].is_background
 
 
 def test_live_queue_ignores_stale_stop_after_child_activity(tree):
@@ -267,7 +269,7 @@ def test_live_queue_ignores_stale_stop_after_child_activity(tree):
     root, owner, child, home = tree
     child.last_updated_at = NOW + timedelta(seconds=10)
     child.save(update_fields=["last_updated_at"])
-    assert live(root, home, queue_entry())[5] == []
+    assert live(root, home, queue_entry()).agent_stopped_updates == []
     child.refresh_from_db()
     assert child.last_stopped_at is None
 
@@ -282,7 +284,7 @@ def test_live_queue_stale_stop_of_a_linked_child_is_returned_unstamped(tree):
     assert AgentLink.objects.get(agent_id=child.id).is_background
     child.last_updated_at = NOW + timedelta(seconds=10)
     child.save(update_fields=["last_updated_at"])
-    assert live(root, home, queue_entry())[5] == [AgentStoppedUpdate("ad123", NOW, stamped=False)]
+    assert live(root, home, queue_entry()).agent_stopped_updates == [AgentStoppedUpdate("ad123", NOW, stamped=False)]
     child.refresh_from_db()
     assert child.last_stopped_at is None
 
@@ -295,9 +297,9 @@ def test_queue_sendmessage_stops_without_creating_or_upgrading_launch(tree):
     data = entry("assistant", [{"type": "tool_use", "id": "continuation", "name": "SendMessage", "input": {"to": child.id}}])
     live(owner, home, data)
     result = live(root, home, queue_entry(tool="continuation"))
-    assert result[5] == []
+    assert result.agent_stopped_updates == []
     assert AgentRunEnd.objects.filter(agent_id=child.id, tool_use_id="continuation").exists()
-    assert result[2] == []
+    assert result.agent_link_updates == []
     assert AgentLink.objects.count() == 1
     assert not AgentLink.objects.get().is_background
 
@@ -317,7 +319,7 @@ def test_child_live_prompt_rejects_same_prompt_siblings(tree):
     seed(root, spawn("root_tool"))
     seed(sibling, entry("user", "nested work"))
     result = live(child, home, entry("user", "nested work", agentId=child.id))
-    assert result[2] == []
+    assert result.agent_link_updates == []
     assert not AgentLink.objects.exists()
     compute(root)
     assert not AgentLink.objects.exists()
@@ -327,7 +329,7 @@ def test_launcher_live_prompt_rejects_same_prompt_tools_in_batch(tree):
     root, owner, child, home = tree
     seed(child, entry("user", "nested work"))
     result = live(root, home, spawn("first_tool"), spawn("second_tool"))
-    assert result[2] == []
+    assert result.agent_link_updates == []
     assert not AgentLink.objects.exists()
     compute(root)
     assert not AgentLink.objects.exists()

@@ -359,7 +359,11 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     from .agent.original_files_cache import clear_session
     from .compute import get_compute
 
-    Session.objects.select_for_update().get(id=job.session_id)
+    from twicc.providers.live_aggregates import apply_contribution_changes, item_contributions, session_contribution
+
+    session = Session.objects.select_for_update().get(id=job.session_id)
+    before_session = session_contribution(session)
+    before_items = item_contributions(SessionItem.objects.filter(session_id=job.session_id))
     # Clear only after deletion commits. A rolled-back replacement keeps retry evidence.
     transaction.on_commit(lambda: clear_session(job.session_id))
     transaction.on_commit(lambda: get_compute().end_session_compute(job.session_id))
@@ -373,6 +377,9 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     Session.objects.filter(id=job.session_id).update(
         last_offset=0, last_line=0, tasks={}, search_version=None, compute_version=None,
     )
+    session.refresh_from_db()
+    apply_contribution_changes(before_items, [], before_sessions=[before_session],
+        after_sessions=[session_contribution(session)], repair=True)
 
 
 @transaction.atomic

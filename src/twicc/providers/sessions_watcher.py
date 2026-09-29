@@ -50,6 +50,7 @@ from twicc.projects import (
     update_project_metadata as _update_project_metadata_sync,
 )
 from twicc.providers.compute_executor import run_compute_sync
+from twicc.providers.live_sync import LiveSyncLimits, LiveSyncUpdates, merge_live_updates
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from twicc.providers.subagent_roots import resolve_flat_parent_id
@@ -63,8 +64,7 @@ logger = logging.getLogger(__name__)
 
 def _sync_live_session_items(compute: BaseSessionCompute, session_id: str, path: Path):
     """Load the ORM row and apply one live batch on the compute worker."""
-    session = Session.objects.get(id=session_id)
-    return compute.sync_session_items_from_file(session, path)
+    return compute.sync_session_slice(session_id, path, limits=LiveSyncLimits())
 
 
 # Polling intervals (seconds) for the "waiting for projects dir" phase.
@@ -331,7 +331,7 @@ class BaseSessionsWatcher:
         Used for:
 
         - new-line ingestion via
-          :meth:`~twicc.providers.compute_base.BaseSessionCompute.sync_session_items_from_file`,
+          :meth:`~twicc.providers.compute_base.BaseSessionCompute.sync_session_slice`,
         - reading provider metadata (:attr:`provider`,
           :attr:`compute_version`) when creating fresh ``Session`` rows
           and when looking up the matching helpers for search indexing.
@@ -711,7 +711,7 @@ class BaseSessionsWatcher:
 
         # Ensure project exists. ``register_project`` broadcasts
         # ``project_added`` on creation. Auto-add is deferred until after
-        # ``sync_session_items_from_file`` has resolved the directory from
+        # ``sync_session_slice`` has resolved the directory from
         # the JSONL body — see the explicit call at the end of this method.
         project, project_created = await register_project(parsed.project_id)
 
@@ -744,11 +744,24 @@ class BaseSessionsWatcher:
             )
 
         old_title = session.title
-        (
-            new_line_nums, modified_line_nums, agent_link_updates, workflow_link_updates, tool_result_updates,
-            agent_stopped_updates, found_compact_summary, agent_interaction_updates, agent_run_state_updates,
-            agents_resumed,
-        ) = await run_compute_sync(_sync_live_session_items, compute, session.id, path)
+        # Temporary bridge: release each SQL transaction, but retain the
+        # existing admission locks. Fair scheduling belongs to task 9.
+        updates = LiveSyncUpdates.empty()
+        while True:
+            result = await run_compute_sync(_sync_live_session_items, compute, session.id, path)
+            updates = merge_live_updates(updates, result.updates)
+            if not result.has_more:
+                break
+        new_line_nums = updates.new_line_nums
+        modified_line_nums = updates.modified_line_nums
+        agent_link_updates = updates.agent_link_updates
+        workflow_link_updates = updates.workflow_link_updates
+        tool_result_updates = updates.tool_result_updates
+        agent_stopped_updates = updates.agent_stopped_updates
+        found_compact_summary = updates.found_compact_summary
+        agent_interaction_updates = updates.agent_interaction_updates
+        agent_run_state_updates = updates.agent_run_state_updates
+        agents_resumed = updates.agents_resumed
         session = await refresh_session(session)
         title_changed = session.title != old_title
 
@@ -1017,7 +1030,7 @@ class BaseSessionsWatcher:
         # Auto-add the project to workspaces whose patterns match its
         # directory. Deferred to here (rather than into ``register_project``
         # above) because the directory is only resolved by
-        # ``sync_session_items_from_file`` — at creation time the watcher
+        # ``sync_session_slice`` — at creation time the watcher
         # only knows ``project_id``, not the cwd. Gated on the directory
         # having been unknown BEFORE this sync (not on ``project_created``):
         # the event that creates the project often syncs only cwd-less header

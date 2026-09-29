@@ -618,7 +618,7 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
     The full :class:`BaseSessionCompute` surface — extraction, live
     machinery, batch (analyze_content + compute_session_metadata +
     apply_session_complete), and watcher live sync
-    (sync_session_items_from_file) — is wired here. Each method
+    (sync_session_slice) — is wired here. Each method
     delegates to a matching free function defined earlier in this file.
 
     Per-instance state held by this class:
@@ -2876,7 +2876,7 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
     # Watcher live sync
     # ------------------------------------------------------------------
 
-    # sync_session_items_from_file: inherited from base
+    # sync_session_slice: inherited from base
     # (the base orchestrates the file read, item creation, link wiring and
     # session-level updates; everything provider-specific is dispatched
     # through hooks declared above).

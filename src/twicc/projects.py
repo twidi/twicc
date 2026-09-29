@@ -382,7 +382,7 @@ async def refresh_all_project_directory_states() -> int:
 # workspace auto-add (when the directory is already known).
 #
 # For callers that learn the directory only later (the watcher between
-# ``parse_session_file`` and ``sync_session_items_from_file``, and the
+# ``parse_session_file`` and ``sync_session_slice``, and the
 # claude_code initial sync where the cwd is in the JSONL body), pass
 # ``directory=None`` here and call :func:`auto_add_project_to_workspaces`
 # once the directory has been resolved. That second call is idempotent —

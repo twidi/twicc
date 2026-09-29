@@ -11,6 +11,8 @@ Design: ``docs/plans/2026-09-26-subagent-runs-and-control-tools-design.md``
 """
 from __future__ import annotations
 
+from tests.live_sync_helpers import drain_live_sync
+
 import asyncio
 import shutil
 from unittest.mock import AsyncMock
@@ -122,12 +124,10 @@ def append(session, home, entries):
 
 
 def live(tree, session, *entries, compute=None):
-    """Append ``entries`` to ``session``'s file and run one live sync; return the live tuple."""
+    """Append ``entries`` to ``session``'s file and run one live sync; return the named updates."""
     _, _, home = tree
     path = append(session, home, entries)
-    return (compute or ClaudeCodeSessionCompute()).sync_session_items_from_file(
-        Session.objects.get(id=session.id), path,
-    )
+    return drain_live_sync(compute or ClaudeCodeSessionCompute(), Session.objects.get(id=session.id), path)
 
 
 def prompt(seconds):
@@ -208,8 +208,8 @@ def test_run_opened_and_closed_in_one_batch_returns_the_update(claude):
     root, _, _ = claude
     outcome = live(claude, root, prompt(0), spawn("tool_spawn", 1), ack("tool_spawn", AGENT, 2),
                    notif_user(AGENT, "tool_spawn", 3))
-    assert outcome[5] == [AgentStoppedUpdate(AGENT, at(3), True)]
-    assert [payload["agent_session_id"] for payload in outcome[8]] == [AGENT]
+    assert outcome.agent_stopped_updates == [AgentStoppedUpdate(AGENT, at(3), True)]
+    assert [payload["agent_session_id"] for payload in outcome.agent_run_state_updates] == [AGENT]
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ def test_codex_completed_and_final_answer_close_once(tmp_path):
     outcome = replay.sync(ROOT)
     root = Session.objects.get(id=ROOT)
     # One stamp at the earliest evidence: the ``completed`` time, not the FINAL_ANSWER's.
-    assert outcome[5] == [AgentStoppedUpdate(AGENT_A, codex_at(11), True)]
+    assert outcome.agent_stopped_updates == [AgentStoppedUpdate(AGENT_A, codex_at(11), True)]
     assert stopped_state(root, AGENT_A).stopped_at == codex_at(11)
     assert last_stopped_at(AGENT_A) == codex_at(11)
 
@@ -264,7 +264,7 @@ def test_codex_completed_and_final_answer_close_once(tmp_path):
         patch.setattr(sessions_watcher, "broadcast_message", messages)
         asyncio.run(broadcast_agent_run_outcome(
             None, root_session_id=ROOT, project_id=root.project_id,
-            run_state_payloads=outcome[8], stopped_updates=outcome[5],
+            run_state_payloads=outcome.agent_run_state_updates, stopped_updates=outcome.agent_stopped_updates,
         ))
     sent = [call.args[1] for call in messages.call_args_list]
     assert [message["type"] for message in sent] == ["agent_run_state", "session_updated", "agent_stopped"]
@@ -282,12 +282,12 @@ def test_late_final_answer_after_rule_five_closes_nothing(tmp_path):
     replay = LiveReplay(fixture, tmp_path)
     replay.sync(ROOT, fixture.line(ROOT, "final_0") - 1)
     child_outcome = replay.sync(AGENT_A)
-    assert child_outcome[5] == [AgentStoppedUpdate(AGENT_A, codex_at(50), True)]
+    assert child_outcome.agent_stopped_updates == [AgentStoppedUpdate(AGENT_A, codex_at(50), True)]
 
     outcome = replay.sync(ROOT, fixture.line(ROOT, "final_0"))
     assert ToolResultLink.objects.filter(session_id=ROOT, tool_use_id="c_spawn").count() == 2
-    assert outcome[5] == []
-    assert [(payload["agent_session_id"], payload["running"]) for payload in outcome[8]] == [(AGENT_A, False)]
+    assert outcome.agent_stopped_updates == []
+    assert [(payload["agent_session_id"], payload["running"]) for payload in outcome.agent_run_state_updates] == [(AGENT_A, False)]
     assert last_stopped_at(AGENT_A) == codex_at(50)
     assert stopped_state(Session.objects.get(id=ROOT), AGENT_A).stopped_at == codex_at(50)
 
@@ -319,8 +319,8 @@ def test_late_tree_rule_closes_the_run_once(claude):
     root, children, _ = claude
     caller, target = children[OTHER], children[AGENT]
     assert live(claude, root, prompt(0), foreground_spawn("tool_spawn", 1), result("tool_spawn", "done", 2),
-                notif_user(AGENT, "tool_sub", 20))[5] == []
-    assert live(claude, caller, send("tool_sub", AGENT, 10), text_resumed_ack("tool_sub", AGENT, 11))[5] == []
+                notif_user(AGENT, "tool_sub", 20)).agent_stopped_updates == []
+    assert live(claude, caller, send("tool_sub", AGENT, 10), text_resumed_ack("tool_sub", AGENT, 11)).agent_stopped_updates == []
     assert AgentInteraction.objects.get(session=caller, tool_use_id="tool_sub").opens_run
     assert not AgentLink.objects.exists()
 
@@ -328,10 +328,10 @@ def test_late_tree_rule_closes_the_run_once(claude):
     assert AgentLink.objects.get().agent_id == AGENT
     state = stopped_state(root, AGENT)
     assert [run.closed_at for run in state.runs] == [at(2), at(20)]
-    assert outcome[5] == [AgentStoppedUpdate(AGENT, at(20), True)]
+    assert outcome.agent_stopped_updates == [AgentStoppedUpdate(AGENT, at(20), True)]
     assert last_stopped_at(AGENT) == at(20)
 
-    assert live(claude, target, line("user", "more", 21))[5] == []
+    assert live(claude, target, line("user", "more", 21)).agent_stopped_updates == []
     assert last_stopped_at(AGENT) == at(20)
 
 
@@ -376,7 +376,7 @@ def test_null_stop_time_returns_an_unstamped_update(claude):
     live(claude, root, prompt(0), spawn("tool_spawn", 1), ack("tool_spawn", AGENT, 2))
     untimed = notif_user(AGENT, "tool_spawn", 3)
     del untimed["timestamp"]
-    assert live(claude, root, untimed)[5] == [AgentStoppedUpdate(AGENT, None, False)]
+    assert live(claude, root, untimed).agent_stopped_updates == [AgentStoppedUpdate(AGENT, None, False)]
 
 
 def test_stopped_update_has_no_stamped_default():
@@ -407,7 +407,7 @@ def test_codex_stop_row_created_after_its_result_closes(tmp_path):
     assert not AgentInteraction.objects.exists()
     outcome = replay.sync(ROOT)
     assert AgentInteraction.objects.get(tool_use_id="c_stop").kind == "stop"
-    assert outcome[5] == [AgentStoppedUpdate(AGENT_A, codex_at(11), True)]
+    assert outcome.agent_stopped_updates == [AgentStoppedUpdate(AGENT_A, codex_at(11), True)]
     assert last_stopped_at(AGENT_A) == codex_at(11)
 
 
@@ -417,7 +417,7 @@ def test_claude_task_stop_result_is_a_new_stop_record(claude):
     live(claude, root, prompt(0), spawn("tool_spawn", 1), ack("tool_spawn", AGENT, 2),
          task_stop("tool_stop", AGENT, 5))
     outcome = live(claude, root, stop_ok("tool_stop", AGENT, 6))
-    assert outcome[5] == [AgentStoppedUpdate(AGENT, at(6), True)]
+    assert outcome.agent_stopped_updates == [AgentStoppedUpdate(AGENT, at(6), True)]
 
 
 def test_stop_record_needs_all_its_results_in_the_batch(claude):
@@ -425,11 +425,11 @@ def test_stop_record_needs_all_its_results_in_the_batch(claude):
     root, _, _ = claude
     live(claude, root, prompt(0), spawn("tool_spawn", 1), ack("tool_spawn", AGENT, 2),
          task_stop("tool_stop", AGENT, 5))
-    assert live(claude, root, stop_ok("tool_stop", AGENT, 6))[5] == [AgentStoppedUpdate(AGENT, at(6), True)]
+    assert live(claude, root, stop_ok("tool_stop", AGENT, 6)).agent_stopped_updates == [AgentStoppedUpdate(AGENT, at(6), True)]
     Session.objects.filter(id=AGENT).update(last_stopped_at=at(8), last_updated_at=at(8))
     outcome = live(claude, root, stop_ok("tool_stop", AGENT, 7))
     assert ToolResultLink.objects.filter(session=root, tool_use_id="tool_stop", error__isnull=True).count() == 2
-    assert outcome[5] == []
+    assert outcome.agent_stopped_updates == []
     assert last_stopped_at(AGENT) == at(8)
 
 
@@ -440,12 +440,12 @@ def test_subagent_send_message_flip_closes_an_already_ended_run_once(claude):
          notif_user(AGENT, "tool_spawn", 3))
     assert last_stopped_at(AGENT) == at(3)
     # The run's end reaches the root before the caller's first result.
-    assert live(claude, root, notif_user(AGENT, "tool_sub", 20))[5] == []
+    assert live(claude, root, notif_user(AGENT, "tool_sub", 20)).agent_stopped_updates == []
     outcome = live(claude, caller, send("tool_sub", AGENT, 10), text_resumed_ack("tool_sub", AGENT, 11))
     assert AgentInteraction.objects.get(session=caller, tool_use_id="tool_sub").opens_run
-    assert outcome[5] == [AgentStoppedUpdate(AGENT, at(20), True)]
+    assert outcome.agent_stopped_updates == [AgentStoppedUpdate(AGENT, at(20), True)]
     assert last_stopped_at(AGENT) == at(20)
-    assert live(claude, caller, line("user", "next", 30))[5] == []
+    assert live(claude, caller, line("user", "next", 30)).agent_stopped_updates == []
 
 
 # ---------------------------------------------------------------------------
@@ -459,10 +459,10 @@ def test_rule_three_only_close_stamps_at_the_cutoff(claude):
     live(claude, root, session_start(5))
     outcome = live(claude, root, ack("tool_spawn", AGENT, 6))
     assert AgentLink.objects.get().started_at == at(1)
-    assert outcome[5] == [AgentStoppedUpdate(AGENT, at(5), True)]
+    assert outcome.agent_stopped_updates == [AgentStoppedUpdate(AGENT, at(5), True)]
     assert last_stopped_at(AGENT) == at(5)
     # A later restart alone stamps nothing live.
-    assert live(claude, root, session_start(10))[5] == []
+    assert live(claude, root, session_start(10)).agent_stopped_updates == []
     assert last_stopped_at(AGENT) == at(5)
 
 
@@ -479,8 +479,8 @@ def test_no_run_state_for_shell_or_monitor_ends(claude):
                          ("tool_monitor", "Monitor", {"command": "tail -f log"})),
                    notif_user(SHELL, "tool_bash", 2), notif_user(monitor, "tool_monitor", 3))
     assert {end.agent_id for end in AgentRunEnd.objects.all()} == {SHELL, monitor}
-    assert outcome[8] == []
-    assert outcome[5] == []
+    assert outcome.agent_run_state_updates == []
+    assert outcome.agent_stopped_updates == []
 
 
 # ---------------------------------------------------------------------------

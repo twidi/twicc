@@ -36,12 +36,13 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, UTC
 from pathlib import Path
+from time import perf_counter
 from typing import Any, ClassVar, Literal, NamedTuple
 
 import orjson
 from django.core.exceptions import MultipleObjectsReturned
 from django.db import connection, transaction
-from django.db.models import F, Q, QuerySet
+from django.db.models import F, QuerySet
 
 from twicc.context_injection import strip_context_blocks_in_place
 from twicc.core.agent_runs import RunStateExclude, StopStepResult, interaction_payloads, run_stop_step
@@ -61,6 +62,10 @@ from twicc.core.models import (
 from twicc.core.session_queries import TOOL_STATE_ANNOTATIONS
 from twicc.git import is_git_root_related, read_head_branch, resolve_git_from_path
 from twicc.providers.enrichment_cache import BorrowedEnrichment, EnrichmentCache
+from twicc.providers.live_sync import LiveSyncLimits, LiveSyncResult, LiveSyncUpdates, RawLiveSlice, read_live_slice
+from twicc.providers.live_aggregates import (
+    ItemContribution, apply_contribution_changes, item_contributions, needs_repair, persisted_cost, session_contribution,
+)
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
 from twicc.providers.history_facts import (
     HistoryFact, HistoryFactContext, HistoryFactKind,
@@ -933,7 +938,7 @@ class BaseSessionCompute:
       :meth:`compute_item_metadata_live` and link methods.
     - Step 3 migrates the batch path (:meth:`compute_session_metadata`,
       :meth:`apply_session_complete`).
-    - Step 4 migrates the watcher's :meth:`sync_session_items_from_file`.
+    - Step 4 migrates the watcher's :meth:`sync_session_slice`.
     """
 
     provider: ClassVar[Provider]
@@ -1556,7 +1561,7 @@ class BaseSessionCompute:
         """
         Write the agent-run rows this line creates (live) and describe them.
 
-        Called by ``sync_session_items_from_file`` for every item, after the
+        Called by ``sync_session_slice`` for every item, after the
         line's ``create_tool_result_link_live`` and before the agent links
         created from a ``tool_use`` on the same line. The provider writes
         its rows immediately, so a later line of the same batch sees them.
@@ -2727,7 +2732,7 @@ class BaseSessionCompute:
 
         tool_use_map: dict[str, ToolUseEntry] = {}
         task_tool_use_map: dict[str, tuple[int, bool, datetime]] = {}
-        # Mirror the live path's guard (see sync_session_items_from_file:
+        # Mirror the live path's guard (see sync_session_slice:
         # ``initial_title_needs_set = session.title is None``). The
         # first-user-message title is only an INITIAL placeholder; it must never
         # overwrite a title that already exists — whether set by a manual rename,
@@ -3341,7 +3346,10 @@ class BaseSessionCompute:
         assignments = ", ".join(f"{connection.ops.quote_name(field.column)} = %s" for field in fields)
         sql = f"UPDATE {table} SET {assignments} WHERE {connection.ops.quote_name('id')} = %s"
         rows = [
-            [field.get_db_prep_save(update.get(field.name), connection=connection) for field in fields]
+            [field.get_db_prep_save(
+                persisted_cost(update.get(field.name)) if field.name == 'cost' else update.get(field.name),
+                connection=connection,
+            ) for field in fields]
             + [update['id']]
             for update in item_updates
         ]
@@ -3372,10 +3380,10 @@ class BaseSessionCompute:
     ) -> str:
         """Apply one slice of a compute result's item writes in its own transaction.
 
-        The DB writer feeds a large result to the shared ``sync_to_async``
-        thread in slices, so the WebSocket consumer, the REST views and the
-        watcher can interleave between them instead of waiting minutes
-        behind one giant apply. Each slice re-checks the revision guard;
+        The DB writer feeds a large result to the dedicated compute worker
+        in slices. Each slice releases its SQL transaction, while the outer
+        writer lease remains held for the full result. Each slice re-checks
+        the revision guard;
         returns its outcome (``"ok"`` / ``"superseded"`` / ``"missing"``).
         A slice applied before a later ``superseded`` is harmless: the
         session's ``compute_version`` never advances, the next recompute
@@ -3384,8 +3392,16 @@ class BaseSessionCompute:
         outcome = BaseSessionCompute.guard_compute_revision(session_id, observed_last_offset)
         if outcome != "ok":
             return outcome
+        session = Session.objects.get(id=session_id)
+        before_session = session_contribution(session)
+        changed = SessionItem.objects.filter(session_id=session_id, id__in=[u['id'] for u in item_updates])
+        before_items = item_contributions(changed)
         BaseSessionCompute.apply_item_updates(item_fields, item_updates)
         BaseSessionCompute.apply_content_overrides(content_overrides)
+        apply_contribution_changes(
+            before_items, item_contributions(changed), before_sessions=[before_session],
+            after_sessions=[session_contribution(session)], repair=needs_repair(session),
+        )
         return "ok"
 
     @staticmethod
@@ -3435,6 +3451,17 @@ class BaseSessionCompute:
             return ComputeApplyResult(outcome)
         if 'history_facts' not in msg:
             raise ValueError("session_complete is missing history_facts")
+
+        before_session = session_contribution(Session.objects.get(id=session_id))
+        changed = SessionItem.objects.filter(session_id=session_id,
+            id__in=[u['id'] for u in msg.get('item_updates', [])])
+        before_items = item_contributions(changed)
+        # Worker-supplied days can describe history removed by pre-apply
+        # work. Keep them in the final repair even if no row remains there.
+        before_items.extend(ItemContribution(
+            session_id, before_session.project_id, before_session.provider,
+            datetime.fromisoformat(day).replace(tzinfo=UTC), None, None,
+        ) for day in (msg.get('affected_days') or []))
 
         # 1. Apply item updates (only items that changed). The DB writer
         # pre-applies large batches in slices (``apply_session_items_chunk``)
@@ -3658,16 +3685,14 @@ class BaseSessionCompute:
             share.options = new_options
             share.save(update_fields=["options"])
 
-        # 6. Recalculate session costs from SessionItem data (idempotent)
+        # Publish an exact baseline in this same transaction before the
+        # new compute version becomes visible to the next live operation.
         session = Session.objects.get(id=session_id)
-        session.recalculate_costs()
-        session.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
-
-        # 7. Recalculate parent session costs if subagent
-        if session.parent_session_id:
-            parent = Session.objects.get(id=session.parent_session_id)
-            parent.recalculate_costs()
-            parent.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
+        apply_contribution_changes(
+            before_items, item_contributions(changed), before_sessions=[before_session],
+            after_sessions=[session_contribution(session)], repair=True,
+        )
+        session.refresh_from_db()
 
         # 7bis. Fold subagent-detected plan docs into the top-level ancestor
         folded_ancestor_id: str | None = None
@@ -3727,115 +3752,40 @@ class BaseSessionCompute:
     # Watcher orchestration — concrete in later steps
     # ------------------------------------------------------------------
 
-    def sync_session_items_from_file(self, session: Session, file_path: Path) -> tuple[
-        list[int], list[int], list[AgentLinkUpdate], list[WorkflowLinkUpdate],
-        list[ToolResultUpdate], list[AgentStoppedUpdate], bool, list[dict],
-        list[dict], list[tuple[str, str]],
-    ]:
-        """Commit one live ingestion transaction, restoring the caller's model on failure."""
-        fields = {field.attname: copy.deepcopy(getattr(session, field.attname))
-                  for field in session._meta.concrete_fields}
-        try:
-            with self.live_state_transaction(session.id):
-                return self._sync_session_items_from_file(session, file_path)
-        except BaseException:
-            for name, value in fields.items():
-                setattr(session, name, value)
-            raise
+    def sync_session_slice(
+        self, session_id: str, file_path: Path, *, limits: LiveSyncLimits,
+    ) -> LiveSyncResult:
+        """Reload and commit one complete slice, including provider state protection."""
+        started = perf_counter()
+        with self.live_state_transaction(session_id):
+            session = Session.objects.get(id=session_id)
+            if not file_path.exists():
+                raw = RawLiveSlice([], session.last_offset, False, 0)
+                updates = LiveSyncUpdates.empty()
+            else:
+                raw = read_live_slice(file_path, offset=session.last_offset, limits=limits)
+                updates = self._sync_session_slice(session, file_path, raw)
+        return LiveSyncResult(updates, raw.has_more, len(updates.new_line_nums),
+                              raw.bytes_consumed, (perf_counter() - started) * 1000)
 
-    def _sync_session_items_from_file(
-        self,
-        session: Session,
-        file_path: Path,
-    ) -> tuple[
-        list[int],
-        list[int],
-        list[AgentLinkUpdate],
-        list[WorkflowLinkUpdate],
-        list[ToolResultUpdate],
-        list[AgentStoppedUpdate],
-        bool,
-        list[dict],
-        list[dict],
-        list[tuple[str, str]],
-    ]:
-        """
-        Synchronise new lines from ``file_path`` into ``session``.
-
-        Reads from ``session.last_offset``, transforms / parses every new
-        line, computes metadata, persists items, links, lifecycle
-        timestamps, costs, and returns the broadcast payload tuple
-        ``(new_line_nums, modified_line_nums, agent_link_updates,
-        workflow_link_updates, tool_result_updates, agent_stopped_updates,
-        found_compact_summary, agent_interaction_updates,
-        agent_run_state_updates, agents_resumed)``. The last three are
-        appended at the end so the existing positional indexes stay valid:
-        the ``agent_interaction`` and ``agent_run_state`` WS payloads, and
-        the Codex ``(agent_id, agent_path)`` pairs of resumed agents.
-
-        ``found_compact_summary`` is ``True`` when this batch ingested at
-        least one ``COMPACT_SUMMARY`` line. It is the live, append-only
-        signal the Codex watcher relays to the agent manager so a live
-        agent knows a compaction just landed (a manually-triggered
-        ``/compact`` ends its ``ASSISTANT_TURN`` on it). Never fires during
-        the background recompute — that path goes through
-        :meth:`compute_session_metadata`, not this method.
-
-        Generic algorithm — every parsing or provider-specific decision
-        is delegated through hooks (``transform_inline``,
-        ``transform_tool_result_with_cache``, ``compute_item_metadata``,
-        ``extract_item_timestamp``, ``compute_item_cost_and_usage``,
-        ``extract_runtime_fields``, ``is_session_start_marker``,
-        ``extract_title_from_user_message``, ``extract_subagent_marker``,
-        ``extract_user_message_text``, ``extract_custom_title``,
-        ``apply_session_title``).
-        """
-        if not file_path.exists():
-            return [], [], [], [], [], [], False, [], [], []
-
-        stat = file_path.stat()
-        file_mtime = stat.st_mtime
-
-        # If mtime hasn't changed and no new data appended, nothing to do.
-        # Check file size too: mtime has ~1s resolution, so two writes within the same second
-        # share the same mtime. Without the size check, the second write would be silently skipped.
-        if session.mtime == file_mtime and session.last_offset >= stat.st_size:
-            return [], [], [], [], [], [], False, [], [], []
-
-        # Read raw bytes, then decode leniently — see
-        # read_session_items_from_file in sync_helpers.py for the full
-        # rationale. The watcher's global try/except would catch a strict-decode
-        # UnicodeDecodeError, but the session's offset would never advance, so a
-        # durably-corrupt file would re-fail on every watcher event and block
-        # all further live updates for that session. Replacing invalid bytes
-        # with U+FFFD confines the damage to its own line; reading in binary
-        # keeps last_offset an exact byte count.
-        with open(file_path, "rb") as f:
-            f.seek(session.last_offset)
-            raw = f.read()
-            # Capture file position immediately to release the file.
-            new_offset = f.tell()
-
-        try:
-            new_content = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            logger.warning("Invalid UTF-8 in %s — decoding with replacement", file_path)
-            new_content = raw.decode("utf-8", errors="replace")
-
-        if not new_content:
-            # Update mtime even if no new content (file may have been touched)
-            session.mtime = file_mtime
-            session.save(update_fields=["mtime"])
-            return [], [], [], [], [], [], False, [], [], []
-
-        lines = [line for line in new_content.split("\n") if line.strip()]
-
-        session.last_offset = new_offset
-        session.mtime = file_mtime
-
+    def _sync_session_slice(self, session: Session, file_path: Path, raw: RawLiveSlice) -> LiveSyncUpdates:
+        """Process every selected record through both passes before committing."""
+        before_session = session_contribution(session)
+        repair_aggregates = needs_repair(session)
+        session.last_offset = raw.end_offset
+        session.mtime = file_path.stat().st_mtime
+        lines = []
+        for record in raw.records:
+            try:
+                line = record.decode('utf-8')
+            except UnicodeDecodeError:
+                logger.warning("Invalid UTF-8 in %s — decoding with replacement", file_path)
+                line = record.decode('utf-8', errors='replace')
+            if line.strip():
+                lines.append(line)
         if not lines:
-            session.save(update_fields=["last_offset", "mtime"])
-            return [], [], [], [], [], [], False, [], [], []
+            session.save(update_fields=['last_offset', 'mtime'])
+            return LiveSyncUpdates.empty()
 
         # Create SessionItem objects for bulk insert
         items_to_create: list[tuple[SessionItem, dict]] = []
@@ -3903,13 +3853,10 @@ class BaseSessionCompute:
             and not AgentLink.objects.filter(agent_id=session.id).exists()
         )
 
-        # Load existing message_ids for deduplication of cost computation
-        seen_message_ids: set[str] = set(
-            SessionItem.objects.filter(
-                session_id=session.id,
-                message_id__isnull=False,
-            ).values_list('message_id', flat=True)
-        )
+        # Query each message ID at most once per slice. Provider hooks keep
+        # their chronological in-slice set, without materializing history.
+        seen_message_ids: set[str] = set()
+        checked_message_ids: set[str] = set()
 
         # Track items already processed in this batch so ``transform_inline``
         # can resolve ``<twicc:insert-screenshot />`` tags against
@@ -4044,9 +3991,19 @@ class BaseSessionCompute:
             # so we fall back to the persisted ``Session.model`` when this
             # batch hasn't yet observed a fresh ``turn_context`` (typical
             # for Codex billing items arriving mid-turn).
+            if self.provider == Provider.CLAUDE_CODE:
+                message = parsed.get('message')
+                message_id = message.get('id') if isinstance(message, dict) else None
+                if message_id and message_id not in checked_message_ids:
+                    checked_message_ids.add(message_id)
+                    if SessionItem.objects.filter(
+                        session_id=session.id, message_id=message_id, line_num__lt=current_line_num,
+                    ).exists():
+                        seen_message_ids.add(message_id)
             self.compute_item_cost_and_usage(
                 item, parsed, seen_message_ids, last_model or session.model,
             )
+            item.cost = persisted_cost(item.cost)
 
             items_to_create.append((item, parsed))
 
@@ -4200,21 +4157,12 @@ class BaseSessionCompute:
         # Update session tracking fields
         session.last_line = current_line_num
 
-        # Recompute user_message_count using the optimized index
-        session.user_message_count = SessionItem.objects.filter(
-            session=session,
-            kind=ItemKind.USER_MESSAGE,
-        ).count()
-
         # Update session cost and context usage from the new items
         # Find last context_usage among new items (most recent non-null value)
         for item, _ in reversed(items_to_create):
             if item.context_usage is not None:
                 session.context_usage = item.context_usage
                 break
-
-        # Recalculate costs from DB (idempotent)
-        session.recalculate_costs()
 
         # Update runtime environment fields if changed
         if last_cwd and last_cwd != session.cwd:
@@ -4322,15 +4270,6 @@ class BaseSessionCompute:
         if found_compact_summary and not session.compacted:
             session.compacted = True
 
-        # Recalculate activity counters for affected days
-        affected_days = {
-            item.timestamp.date()
-            for item, _ in items_to_create
-            if item.timestamp and (item.kind == ItemKind.USER_MESSAGE or item.cost)
-        }
-        if is_new_session and session.type == SessionType.SESSION and first_timestamp:
-            affected_days.add(first_timestamp.date())
-
         session_update_fields = [
             "last_offset", "last_line", "mtime", "user_message_count", "context_usage",
             "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch",
@@ -4376,21 +4315,12 @@ class BaseSessionCompute:
             session_update_fields.append("goals")
         session.save(update_fields=session_update_fields)
 
-        # Recalculate activities after session.save (needs created_at in DB for session_count)
-        from twicc.core.models import PeriodicActivity
-        PeriodicActivity.recalculate_for_days(
-            session.project_id, affected_days, provider=self.provider,
+        apply_contribution_changes(
+            [], item_contributions(SessionItem.objects.filter(session=session, line_num__in=new_line_nums)),
+            before_sessions=[before_session], after_sessions=[session_contribution(session)],
+            repair=repair_aggregates,
         )
-
-        # If this is a subagent, propagate cost to parent session
-        if session.type == SessionType.SUBAGENT and session.parent_session_id:
-            try:
-                parent = Session.objects.get(id=session.parent_session_id)
-            except Session.DoesNotExist:
-                pass
-            else:
-                parent.recalculate_costs()
-                parent.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
+        session.refresh_from_db()
 
         # Fold subagent-detected plan docs into the top-level ancestor's
         # plan_paths. The watcher's post-sync parent broadcast (a refreshed
@@ -4413,7 +4343,7 @@ class BaseSessionCompute:
         )
 
         # Exclude new items from modified_line_nums
-        return (
+        return LiveSyncUpdates(
             sorted(new_line_nums),
             sorted(modified_line_nums - new_line_nums),
             agent_link_updates,

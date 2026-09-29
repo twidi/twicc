@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections import defaultdict
-from datetime import date
+from datetime import UTC, datetime
 
 import pytest
 from channels.db import database_sync_to_async
 from django.db import connections
 
 from twicc.core.enums import Provider
-from twicc.core.models import PeriodicActivity
+from twicc.core.models import DailyActivity, Project, Session
 from twicc.providers import db_writer
 from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
 
@@ -27,6 +26,7 @@ async def _shared_cleanup_completes_while_blocked(started):
     return await asyncio.wait_for(database_sync_to_async(lambda: "channels-ready")(), 0.5)
 
 
+@pytest.mark.django_db(transaction=True)
 def test_heavy_work_does_not_block_channels_cleanup(monkeypatch):
     started = threading.Event()
     release = threading.Event()
@@ -57,52 +57,48 @@ def test_heavy_work_does_not_block_channels_cleanup(monkeypatch):
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize("path", ["threshold", "completed", "abandoned"])
-def test_finalize_activity_flush_does_not_block_channels_cleanup(monkeypatch, path):
+@pytest.mark.parametrize("path", ["completed", "abandoned"])
+def test_final_apply_aggregate_does_not_block_channels_or_repeat_at_finalization(monkeypatch, path):
     started = threading.Event()
     release = threading.Event()
-
-    def recalculate(_project_id, _days, *, provider, do_global):
+    project = Project.objects.create(id='aggregate-project')
+    session = Session.objects.create(id='aggregate-session', project=project, provider=Provider.CODEX,
+                                     created_at=datetime(2026, 9, 29, tzinfo=UTC))
+    calls = []
+    original = DailyActivity.recalculate
+    def recalculate(project_id, day, provider):
+        calls.append((project_id, day, provider))
         _blocked_work(started, release)
+        original(project_id, day, provider)
+    monkeypatch.setattr(DailyActivity, 'recalculate', staticmethod(recalculate))
 
-    monkeypatch.setattr(PeriodicActivity, "recalculate_for_days", staticmethod(recalculate))
+    async def no_broadcast(_session_id):
+        pass
+    monkeypatch.setattr(db_writer, 'broadcast_session_updated', no_broadcast)
 
     async def scenario():
         db_writer.start_db_writer()
         run_id, future = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0)
-        state = db_writer._compute_states[run_id]
-        state.pending_activity_days = defaultdict(set, {"project-1": {date(2026, 9, 29)}})
-        if path == "threshold":
-            state.sessions_since_activities_flush = db_writer.BATCH_ACTIVITY_COUNT
-
-            def apply(_message):
-                return ComputeApplyResult("applied")
-
-            monkeypatch.setattr(BaseSessionCompute, "apply_session_complete", staticmethod(apply))
-
-            async def no_broadcast(_session_id):
-                pass
-
-            monkeypatch.setattr(db_writer, "broadcast_session_updated", no_broadcast)
-            task = asyncio.create_task(db_writer._process_compute_message({
-                "type": "session_complete", "provider": Provider.CODEX.value,
-                "run_id": run_id, "session_id": "heavy-session", "project_id": "project-1",
-            }))
-        elif path == "completed":
-            task = asyncio.create_task(db_writer._finalize_compute_run(run_id, Provider.CODEX))
-        else:
-            task = asyncio.create_task(db_writer._finalize_abandoned_run(run_id, Provider.CODEX))
+        task = asyncio.create_task(db_writer._process_compute_message({
+            'type': 'session_complete', 'provider': Provider.CODEX.value,
+            'run_id': run_id, 'session_id': session.id, 'history_facts': [],
+            'observed_last_offset': 0,
+        }))
         try:
-            assert await _shared_cleanup_completes_while_blocked(started) == "channels-ready"
+            assert await _shared_cleanup_completes_while_blocked(started) == 'channels-ready'
         finally:
             release.set()
             await task
-            if path == "completed":
+            count = len(calls)
+            assert count == 2  # Project and global buckets, maintained in final apply.
+            assert db_writer._compute_states[run_id].failed_count == 0
+            if path == 'completed':
+                await db_writer._finalize_compute_run(run_id, Provider.CODEX)
                 assert future.done() and future.result() == 0
-            db_writer._compute_states.pop(run_id, None)
-            db_writer._compute_done_events.pop(run_id, None)
+            else:
+                await db_writer._finalize_abandoned_run(run_id, Provider.CODEX)
+            assert len(calls) == count
             await db_writer.stop_db_writer()
-
     asyncio.run(scenario())
 
 
