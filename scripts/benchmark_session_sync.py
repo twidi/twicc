@@ -119,9 +119,9 @@ def lookup_report(lines):
             0 if mode == 'outdated_fallback' else ClaudeCodeSessionCompute().compute_version))
         samples = []
         for attempt in range(3 if mode == 'current_warm' else 1):
-            if mode != 'current_warm':
-                connection.close()
             for key in ('reused-tool', 'true-miss'):
+                if mode != 'current_warm':
+                    connection.close()
                 started = perf_counter()
                 owner = HistoryFactContext('claude_code', session_id='large').lookup_tool_call(
                     key, before_line=lines + 1)
@@ -130,7 +130,8 @@ def lookup_report(lines):
                 assert (owner[1] if owner else None) == (expected if key == 'reused-tool' else None)
         results[mode] = samples
     Session.objects.filter(id='large').update(compute_version=ClaudeCodeSessionCompute().compute_version)
-    return {'plans': plans, 'lookups': results, 'cold_definition': 'Reopened SQLite connection; OS cache retained'}
+    return {'plans': plans, 'lookups': results,
+            'cold_definition': 'New SQLite connection for each cold hit/miss; OS cache retained'}
 
 
 def scaling_report(slices):
@@ -218,17 +219,43 @@ async def exercise(path, lines, report):
         return f'{settings.SESSION_COOKIE_NAME}={auth.session_key}'
     cookie = await sync_to_async(make_cookie)()
     sock = socket.socket()
-    sock.bind(('127.0.0.1', 0))
-    sock.listen(128)
-    port = sock.getsockname()[1]
-    report['server'] = {'host': '127.0.0.1', 'port': port, 'authentication': 'Disposable database session cookie'}
-    server = uvicorn.Server(uvicorn.Config(application, host='127.0.0.1', port=port, lifespan='off',
-                                           log_level='error', access_log=False))
-    server_task = asyncio.create_task(server.serve(sockets=[sock]))
+    server = server_task = None
     tasks = []
-    db_writer.start_db_writer()
     began = perf_counter()
+
+    async def cleanup():
+        # Each resource owns an independent finally boundary. In particular,
+        # stop_db_writer may re-raise cancellation after its successful drain.
+        try:
+            try:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                watcher.stop_watcher()
+                await watcher._drain_changes()
+        finally:
+            try:
+                await db_writer.stop_db_writer()
+            finally:
+                try:
+                    if server is not None:
+                        server.should_exit = True
+                    if server_task is not None:
+                        await server_task
+                finally:
+                    sock.close()
+
     try:
+        sock.bind(('127.0.0.1', 0))
+        sock.listen(128)
+        port = sock.getsockname()[1]
+        report['server'] = {'host': '127.0.0.1', 'port': port, 'authentication': 'Disposable database session cookie'}
+        server = uvicorn.Server(uvicorn.Config(application, host='127.0.0.1', port=port, lifespan='off',
+                                               log_level='error', access_log=False))
+        server_task = asyncio.create_task(server.serve(sockets=[sock]))
+        db_writer.start_db_writer()
         async with asyncio.timeout(10):
             while not server.started:
                 if server_task.done():
@@ -284,20 +311,17 @@ async def exercise(path, lines, report):
                 done.set()
                 await heartbeat
     finally:
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        watcher.stop_watcher()
-        try:
-            await watcher._drain_changes()
-        finally:
-            await db_writer.stop_db_writer()
-            server.should_exit = True
+        # Repeated caller cancellation must not interrupt resource drainage.
+        cleanup_task = asyncio.create_task(cleanup())
+        cancelled = False
+        while not cleanup_task.done():
             try:
-                await server_task
-            finally:
-                sock.close()
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                cancelled = True
+        cleanup_task.result()
+        if cancelled:
+            raise asyncio.CancelledError
     report['slices'] = slices
     report['small_completions'] = small_completions
     report['pong'] = {'samples_ms': samples, 'count': len(samples),

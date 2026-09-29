@@ -438,23 +438,24 @@ These measurements must distinguish a responsive connection from delayed session
 The disposable benchmark replays 150,000 message-ID/cost-bearing Claude rows with 1,500,000,000 bytes of text payload.
 The JSONL source occupies 1,534,100,890 bytes. It includes reused tool identifiers, true misses, and concurrent small-session appends.
 The machine runs Linux x86_64, Python 3.13.14 and SQLite 3.53.1, with eight reported CPUs.
-Python and frontend suite execution overlaps part of the replay; this experiment does not reserve the host's CPUs.
+This is the repeated full workload after the Task 10 review corrections. Each cold lookup uses a distinct SQLite connection.
+Focused benchmark tests overlap short parts of the replay; this experiment does not reserve the host's CPUs.
 
 | Measurement | Observed result |
 | --- | --- |
-| Authenticated loopback application pongs | 4,937 samples; p95 54.23 ms; maximum 239.01 ms |
-| Whole backlog replay | 335.15 s |
-| First small-session commit | 0.82 s, after 410 large-session rows |
-| Append 20 rows to the established large session | 51.68 ms |
-| Current facts, new SQLite connection | Hit 4.04 ms; miss 1.00 ms |
-| Current facts, warm connection | Hit 2.01–2.16 ms; miss 0.94–0.95 ms |
-| Outdated fallback | Hit 38.28 ms; miss 5,457.10 ms |
+| Authenticated loopback application pongs | 4,007 samples; p95 58.63 ms; maximum 223.07 ms |
+| Whole backlog replay | 288.14 s |
+| First small-session commit | 0.81 s, after 410 large-session rows |
+| Append 20 rows to the established large session | 54.02 ms |
+| Current facts, distinct new SQLite connections | Hit 3.84 ms; miss 1.89 ms |
+| Current facts, warm connection | Hit 2.16–2.18 ms; miss 0.97–1.00 ms |
+| Outdated fallback | Hit 39.10 ms; miss 4,921.45 ms |
 | VM steps per row, late/early 125-row slices | 1.00000 ratio |
 | VM steps per row, late/early 410-row slices | 1.00016 ratio |
 | Established-prefix appends, 125/500 rows | 34,900 / 139,800 SQLite VM steps |
 
 The 4 MiB limit reduces 500-line replay requests to 410 rows. Scaling comparisons use actual committed sizes.
-Cold lookup means a reopened SQLite connection; the operating-system page cache is not flushed.
+Every cold hit and miss starts with its own newly opened SQLite connection; the operating-system page cache is not flushed.
 Fact, message-ID, and legacy-page query plans all use indexed `SEARCH` operations.
 The final large session has 150,645 rows, each with a message ID and cost; stored cost matches the six-decimal reference aggregate.
 
@@ -469,6 +470,7 @@ uv run python scripts/benchmark_session_sync.py \
 
 The script refuses the normal/inherited data directory and any preexisting database or directory content.
 It verifies Django's resolved database path before migration, and starts only an ephemeral `127.0.0.1` ASGI server.
+Resource cleanup covers startup failure and drains through writer-shutdown cancellation and repeated caller cancellation.
 The report includes raw pong samples, per-slice VM counts, query plans, lookup samples, and completion times.
 The recorded run's server stops and its synthetic data is removed; JSON reports remain in session scratch.
 This benchmark exercises the application heartbeat, not the browser visibility probe or a remote tunnel.
@@ -481,7 +483,8 @@ Its fixture ends on September 5, while its assertion uses the current date, Sept
 The minimum seven-day activity tail starts August 29; the assertion expects August 30.
 This task does not modify log retention. The full suite is therefore not entirely green.
 
-The final affected checks pass 119 tests. All 724 frontend tests and targeted Python lint pass.
+The original affected checks pass 119 tests. All 724 frontend tests and targeted Python lint pass.
+After the benchmark-only review corrections, 45 affected tests and targeted lint pass. The full suites are not repeated.
 Optional real-provider integration tests remain disabled. No live provider credentials are used by the benchmark.
 
 ### Deployment and real-client checks: pending
