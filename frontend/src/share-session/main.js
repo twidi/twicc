@@ -30,6 +30,8 @@ import '../styles/transcript-tokens.css'
 import '../styles/depth.css'
 import '../styles/glass.css'
 import '../styles/motion.css'
+// Accent glow: buttons, focus and toggles look the same as in the SPA.
+import '../styles/glow.css'
 import ShareSessionApp from './ShareSessionApp.vue'
 import ShareDocApp from './ShareDocApp.vue'
 import ShareRecentApp from './ShareRecentApp.vue'   // 3.20

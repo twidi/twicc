@@ -111,6 +111,11 @@ wa-radio[appearance='button']:state(checked) {
     color: var(--wa-color-brand-on-quiet);
 }
 
+/* The ink is lit (visual refresh 6a): a thin accent edge and a soft accent shadow. */
+.segmented-control > .glide-ink {
+    box-shadow: 0 0 0 1px var(--wa-color-brand-border-quiet), 0 2px 8px -2px color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
+}
+
 /* Until the ink is placed, the checked segment carries the fill itself. */
 .segmented-control:not([data-glide-ready]) wa-radio[appearance='button']:state(checked) {
     background-color: var(--glide-ink-bg);

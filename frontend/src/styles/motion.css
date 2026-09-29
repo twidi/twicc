@@ -81,18 +81,19 @@
 }
 
 /* Button press: sinks in 60ms, springs back on release. The property list repeats Web
-   Awesome's own list on .button (a ::part() rule replaces it) and adds scale.
+   Awesome's own list on .button (a ::part() rule replaces it) and adds scale, and filter
+   for the lit brand buttons of glow.css.
    Exclusions: inert buttons, group segments (they would break the joined edges), and the
    full-width sidebar rows (session rows get their own nudge).
    Each compound stays on one line: a line break before :not( is a descendant combinator. */
 :where(wa-button)::part(base) {
-    transition-property: background, border, box-shadow, color, opacity, scale;
+    transition-property: background, border, box-shadow, color, opacity, scale, filter;
     transition-duration: var(--wa-transition-fast), var(--wa-transition-fast),
         var(--wa-transition-fast), var(--wa-transition-fast), var(--wa-transition-fast),
-        var(--motion-dur-2);
+        var(--motion-dur-2), var(--wa-transition-fast);
     transition-timing-function: var(--wa-transition-easing), var(--wa-transition-easing),
         var(--wa-transition-easing), var(--wa-transition-easing),
-        var(--wa-transition-easing), var(--motion-ease-spring);
+        var(--wa-transition-easing), var(--motion-ease-spring), var(--wa-transition-easing);
 }
 :where(
     wa-button:not([disabled], [loading], wa-button-group wa-button, .session-item, .bookmark-item):active
@@ -100,7 +101,7 @@
     scale: calc(1 - 0.04 * var(--motion-amount));
     transition-duration: var(--wa-transition-fast), var(--wa-transition-fast),
         var(--wa-transition-fast), var(--wa-transition-fast), var(--wa-transition-fast),
-        var(--motion-dur-press);
+        var(--motion-dur-press), var(--wa-transition-fast);
 }
 
 /* The same press on the plain buttons Web Awesome renders in its own shadow roots (dialog

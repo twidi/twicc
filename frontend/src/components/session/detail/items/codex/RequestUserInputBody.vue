@@ -483,8 +483,8 @@ usePendingRequestDraft({
 }
 
 .option-card:focus-visible {
-    outline: 2px solid var(--wa-color-brand-fill-loud);
-    outline-offset: 2px;
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
 }
 
 /* Always show the focus outline on the primary target of the form (first
@@ -493,8 +493,8 @@ usePendingRequestDraft({
    auto-focus on mount / new request. Default :focus-visible would skip
    mouse and programmatic focus, which hides the indicator here. */
 .option-card.auto-focused:focus-within {
-    outline: 2px solid var(--wa-color-brand-fill-loud);
-    outline-offset: 2px;
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
 }
 
 wa-textarea.auto-focused:focus-within::part(base),

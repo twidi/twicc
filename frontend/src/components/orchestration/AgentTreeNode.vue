@@ -103,7 +103,7 @@ const contextUsageColor = computed(() => {
     if (pct == null) return null
     if (pct > 70) return 'var(--wa-color-danger)'
     if (pct > 50) return 'var(--wa-color-warning)'
-    return 'var(--wa-color-primary)'
+    return 'var(--glow-context-ring)'
 })
 const contextUsageIndicatorWidth = computed(() => {
     const pct = contextUsagePercentage.value

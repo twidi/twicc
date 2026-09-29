@@ -144,7 +144,11 @@ test('TabBar: the ink rules on ::part(tabs)::after', () => {
     assert.equal(base.decls.width, 'var(--glide-w, 0px)')
     assert.equal(base.decls.height, 'var(--glide-h, 0px)')
     assert.equal(base.decls.translate, 'var(--glide-x, 0px) var(--glide-y, 0px)')
-    assert.equal(base.decls['border-block-end'], 'var(--safe-track-width) solid var(--indicator-color)')
+    // Accent glow (step 6a §8): a gradient strip with a glow instead of the border.
+    assert.equal(base.decls['border-block-end'], undefined)
+    assert.equal(base.decls.border, '0')
+    assert.match(base.decls.background, /var\(--glow-ink-thickness\)/)
+    assert.ok(base.decls.filter, 'the ink glows')
     assert.equal(base.decls.opacity, '0')
     assert.equal(base.decls.transition, 'var(--glide-fade)')
     const ready = rule(rules, ['.tab-bar[data-glide-ready]::part(tabs)::after'])
@@ -168,6 +172,8 @@ test('TabBar: controller, active observer, unmount guard', () => {
         assert.ok(!(call.includes('childList: true') && call.includes('subtree: true')), `no childList + subtree observer: ${call}`)
     }
     assert.match(script, /m\.target\.tagName === 'WA-TAB' && m\.target\.closest\('wa-tab-group'\) === host/)
+    // An active switch made just before a view transition glides after its update (overlay bar).
+    assert.match(script, /=== host\)\) \{\s*afterViewTransitionUpdate\(\(\) => glideInk\?\.update\(\)\)/)
     // The list observer also re-places the ink (a reorder moves the active tab).
     assert.match(script, /listObserver = new MutationObserver\(\(\) => \{\s*scheduleEnsureActiveVisible\(\)\s*glideInk\?\.update\(\)/)
     // Unmounted during the await: nothing is created.
@@ -247,7 +253,7 @@ test('list sites: ink colors and radii, sources and reset keys', () => {
         '../components/app/SearchOverlay.vue': ['var(--glass-item-highlight)', 'var(--wa-border-radius-s)', 'sources: [selectedIndex, results]', 'resetKey: () => results.value'],
         '../components/message/CommandPickerPopup.vue': ['var(--glass-item-highlight)', '0', 'sources: [activeIndex, filteredCommands]', 'resetKey: () => searchQuery.value'],
         '../components/message/MessageHistoryPickerPopup.vue': ['var(--glass-item-highlight)', '0', 'sources: [activeIndex, filteredMessages]', 'resetKey: () => searchQuery.value'],
-        '../components/app/SettingsPopover.vue': ['var(--glass-item-hover)', 'var(--wa-border-radius-m)', 'sources: [activeSection, sections, hasTips, hasHelp]', null],
+        '../components/app/SettingsPopover.vue': ['linear-gradient(100deg, var(--wa-color-brand-fill-normal), var(--wa-color-brand-fill-quiet))', 'var(--wa-border-radius-m)', 'sources: [activeSection, sections, hasTips, hasHelp]', null],
     }
     for (const site of SITES) {
         const sfc = read(site.file)

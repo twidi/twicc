@@ -2344,6 +2344,11 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
 .message-input wa-textarea::part(base) {
     box-shadow: var(--depth-2);
 }
+/* Focused: the accent glow of fields (glow.css), small enough for the 4px the footer
+   leaves above the box. */
+.message-input wa-textarea:focus-within::part(base) {
+    box-shadow: var(--depth-2), 0 0 0.5rem -0.25rem color-mix(in oklab, var(--glow-accent) 45%, transparent);
+}
 
 .message-input-toolbar {
     display: flex;

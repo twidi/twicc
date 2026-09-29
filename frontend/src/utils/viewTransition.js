@@ -17,6 +17,9 @@ const FALLBACK_END_MS = 1000
 let currentRun = 0
 let depth = 0
 let appliedProperties = []
+// Settles when the latest transition's update callback is done (or failed); null when none
+// is in flight.
+let updatePending = null
 
 /** True when the browser has same-document view transitions. */
 export function supportsViewTransitions(env = globalThis) {
@@ -26,6 +29,17 @@ export function supportsViewTransitions(env = globalThis) {
 /** True while a transition's update callback runs. */
 export function isViewTransitionUpdating() {
     return depth > 0
+}
+
+/**
+ * Run `fn` once the in-flight transition's update is done, or at once when none is. For a
+ * change made just before a transition starts (the overlay's tab bar switches on the click,
+ * its transition starts in the same task): a CSS transition started then runs behind the
+ * frozen old image and is over when the page shows again.
+ */
+export function afterViewTransitionUpdate(fn) {
+    if (updatePending) updatePending.then(fn)
+    else fn()
 }
 
 function clearMarks(root) {
@@ -175,6 +189,11 @@ export function runViewTransition(update, {
         }, pseudoAnimationsEnd(root) + overrunMs)
     }, onReadySettled)
     transition.updateCallbackDone.catch(() => {})
+    const updateDone = transition.updateCallbackDone.then(() => {}, () => {})
+    updatePending = updateDone
+    updateDone.then(() => {
+        if (updatePending === updateDone) updatePending = null
+    })
     const onFinished = () => {
         finishedSettled = true
         cleanup()

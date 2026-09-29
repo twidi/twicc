@@ -15,6 +15,8 @@ import './styles/depth.css'
 import './styles/glass.css'
 // Motion tokens and micro-interactions (also imported by the share bundle and the artifact shell).
 import './styles/motion.css'
+// Accent glow tokens and rules (also imported by the share bundle and the artifact shell).
+import './styles/glow.css'
 // Canvas + floating-panel tokens (SPA only — the share bundle does not import it).
 import './styles/surfaces.css'
 import '@awesome.me/webawesome/dist/components/badge/badge.js'

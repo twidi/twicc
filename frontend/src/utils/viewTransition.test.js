@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { isViewTransitionUpdating, runViewTransition, supportsViewTransitions } from './viewTransition.js'
+import { afterViewTransitionUpdate, isViewTransitionUpdating, runViewTransition, supportsViewTransitions } from './viewTransition.js'
 
 const flushMicrotasks = () => new Promise((resolve) => setImmediate(resolve))
 
@@ -379,4 +379,31 @@ test('32c. supportsViewTransitions', () => {
     assert.equal(supportsViewTransitions(makeEnv()), true)
     assert.equal(supportsViewTransitions(makeEnv({ support: false })), false)
     assert.equal(supportsViewTransitions({}), false)
+})
+
+test('32d. afterViewTransitionUpdate: now when idle, after the update when a transition is in flight', async () => {
+    const env = makeEnv()
+    const calls = []
+    afterViewTransitionUpdate(() => calls.push('idle'))
+    assert.deepEqual(calls, ['idle'], 'no transition: at once')
+
+    // A change made just before a transition started (the overlay's tab bar switches on the
+    // click, the transition starts in the same task): its follow-up waits for the update.
+    runViewTransition(() => {}, { kind: 'tab', env })
+    afterViewTransitionUpdate(() => calls.push('deferred'))
+    await flushMicrotasks()
+    assert.deepEqual(calls, ['idle'], 'not before the update callback is done')
+    env.transitions[0].invoke()
+    await flushMicrotasks()
+    assert.deepEqual(calls, ['idle', 'deferred'])
+
+    afterViewTransitionUpdate(() => calls.push('after'))
+    assert.deepEqual(calls, ['idle', 'deferred', 'after'], 'update done: at once again')
+
+    // A failed update still releases the waiters.
+    runViewTransition(() => { throw new Error('boom') }, { kind: 'tab', env })
+    afterViewTransitionUpdate(() => calls.push('after-failure'))
+    try { await env.transitions[1].invoke() } catch { /* the update's own error */ }
+    await flushMicrotasks()
+    assert.deepEqual(calls.at(-1), 'after-failure')
 })

@@ -730,6 +730,38 @@ function handleMenuSelect(event) {
     box-shadow: inset 0 0 0 1px var(--wa-color-brand-border-quiet);
 }
 
+/* The open session: a lit fill fading to the right, a thin accent ring, a soft accent
+   shadow (visual refresh 6a). No bar on its left (user decision). The ring is the
+   outlined button's own 1px border, recoloured, so it sits on the edge of the fill (an
+   inset shadow would float 1px inside it). The second selector ties with the
+   multi-select rule above and comes after it. */
+.session-item--active::part(base),
+.session-item-wrapper--selected .session-item--active::part(base) {
+    border-color: color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
+    background-origin: border-box;
+    background-image: linear-gradient(100deg, var(--wa-color-brand-fill-normal), color-mix(in oklab, var(--wa-color-brand-fill-quiet) 70%, transparent));
+    box-shadow: 0 2px 10px -4px color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
+    color: var(--wa-color-brand-on-quiet);
+}
+html.wa-dark .session-item--active::part(base) {
+    border-color: oklch(from var(--wa-color-brand-60) 0.6 0.11 h / 0.45);
+    background-image: linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.32 0.07 h), oklch(from var(--wa-color-brand-60) 0.25 0.05 h / 0.6));
+    box-shadow: 0 2px 12px -4px oklch(from var(--wa-color-brand-60) 0.6 0.13 h / 0.5);
+    color: oklch(from var(--wa-color-brand-60) 0.88 0.08 h);
+}
+/* Open and multi-selected: the selection has no other marker than its fill, so it shows
+   as a thicker accent ring (the border plus 1px inside) on top of the lit look. */
+.session-item-wrapper--selected .session-item--active::part(base) {
+    border-color: var(--wa-color-brand-60);
+    box-shadow: inset 0 0 0 1px var(--wa-color-brand-60),
+        0 2px 10px -4px color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
+}
+html.wa-dark .session-item-wrapper--selected .session-item--active::part(base) {
+    border-color: var(--wa-color-brand-60);
+    box-shadow: inset 0 0 0 1px var(--wa-color-brand-60),
+        0 2px 12px -4px oklch(from var(--wa-color-brand-60) 0.6 0.13 h / 0.5);
+}
+
 .session-item::part(label) {
     width: 100%;
     text-align: left;

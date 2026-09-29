@@ -2351,10 +2351,14 @@ function onChangelogClose() {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-2xs);
-    /* The gliding fill under the chosen section (motion.css .glide-ink). */
+    /* The gliding fill under the chosen section (motion.css .glide-ink), lit (step 6a). */
     position: relative;
-    --glide-ink-bg: var(--glass-item-hover);
+    --glide-ink-bg: linear-gradient(100deg, var(--wa-color-brand-fill-normal), var(--wa-color-brand-fill-quiet));
     --glide-ink-radius: var(--wa-border-radius-m);
+}
+
+.settings-nav > .glide-ink {
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--wa-color-brand-60) 35%, transparent);
 }
 
 .settings-nav-item {
@@ -2377,7 +2381,9 @@ function onChangelogClose() {
     }
 }
 
-.settings-nav-item:hover {
+/* Not on the chosen section: the item paints above the ink, and a flat tint would hide
+   its gradient. */
+.settings-nav-item:not(.active):hover {
     background: var(--glass-item-hover);
 }
 
@@ -2480,6 +2486,11 @@ function onChangelogClose() {
     /* A drill-down list: no chosen section to mark. */
     .settings-nav-ink {
         display: none;
+    }
+
+    /* No chosen section here: every item gets its hover tint back. */
+    .settings-nav-item:hover {
+        background: var(--glass-item-hover);
     }
 
     .settings-nav-item::after {

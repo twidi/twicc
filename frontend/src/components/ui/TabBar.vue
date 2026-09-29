@@ -35,7 +35,7 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { createGlideInk } from '../../utils/glideInk.js'
 import { installTabCrossfade } from '../../utils/tabCrossfade.js'
-import { supportsViewTransitions } from '../../utils/viewTransition.js'
+import { afterViewTransitionUpdate, supportsViewTransitions } from '../../utils/viewTransition.js'
 
 defineOptions({ inheritAttrs: false })
 
@@ -122,10 +122,13 @@ function createTabGlide(host) {
     })
     // Every path that changes the active tab goes through WA's setActiveTab, which
     // reflects `active` on the tabs. No subtree childList: it would fire on every change
-    // inside the panels.
+    // inside the panels. A switch made just before a view transition (the overlay's bar:
+    // WA switches on the click, the overlay crossfade starts in the same task) moves the
+    // ink after the transition's update, so it glides in the new image instead of behind
+    // the frozen old one.
     activeObserver = new MutationObserver((mutations) => {
         if (mutations.some((m) => m.target.tagName === 'WA-TAB' && m.target.closest('wa-tab-group') === host)) {
-            glideInk?.update()
+            afterViewTransitionUpdate(() => glideInk?.update())
         }
     })
     activeObserver.observe(host, { attributes: true, attributeFilter: ['active'], subtree: true })
@@ -174,6 +177,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .tab-bar {
     --track-width: var(--divider-size);
+    /* The glowing ink (glow.css tokens): a thin line; its glow carries the emphasis. */
+    --glow-ink-thickness: 2px;
 }
 
 /* The compact size, carried once for every call site. Slotted <wa-tab>s come from
@@ -193,9 +198,9 @@ onBeforeUnmount(() => {
     border-bottom: var(--track-width) solid var(--track-color);
 }
 
-/* The gliding line (step 4c): the active tab's own box with WA's bottom border, so the
-   line stays exactly where WA draws it (some call sites center shorter tabs in the strip).
-   --safe-track-width and --indicator-color are WA's, declared on its :host. */
+/* The gliding line (step 4c): the active tab's own box, with the line at its bottom, so the
+   line stays exactly where WA draws its border (some call sites center shorter tabs in the
+   strip). --safe-track-width is WA's, declared on its :host. */
 .tab-bar::part(tabs)::after {
     content: '';
     position: absolute;
@@ -205,7 +210,12 @@ onBeforeUnmount(() => {
     width: var(--glide-w, 0px);
     height: var(--glide-h, 0px);
     translate: var(--glide-x, 0px) var(--glide-y, 0px);
-    border-block-end: var(--safe-track-width) solid var(--indicator-color);
+    /* An accent gradient strip at the bottom of the active tab's box, glowing (step 6a). The
+       nav clips its overflow: only the upward half of the glow shows. */
+    border: 0;
+    background: linear-gradient(90deg, var(--glow-accent), var(--glow-accent-shifted))
+        no-repeat left bottom / 100% var(--glow-ink-thickness);
+    filter: drop-shadow(0 0 0.3125rem color-mix(in oklab, var(--glow-accent) 70%, transparent));
     pointer-events: none;
     opacity: 0;
     transition: var(--glide-fade);

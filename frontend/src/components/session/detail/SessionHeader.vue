@@ -145,7 +145,7 @@ const contextUsageColor = computed(() => {
     if (pct == null) return null
     if (pct > 70) return 'var(--wa-color-danger)'
     if (pct > 50) return 'var(--wa-color-warning)'
-    return 'var(--wa-color-primary)'
+    return 'var(--glow-context-ring)'
 })
 
 // Calculate indicator width multiplier (1x at 0%, 2x at 80%+)

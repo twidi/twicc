@@ -14,6 +14,8 @@ import '@awesome.me/webawesome/dist/styles/themes/default.css'
 import '../styles/depth.css'
 import '../styles/glass.css'
 import '../styles/motion.css'
+// Accent glow: the consent prompt's buttons and focus look the same as in the SPA.
+import '../styles/glow.css'
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome/dist/components/button/button.js'
 import '@awesome.me/webawesome/dist/components/callout/callout.js'

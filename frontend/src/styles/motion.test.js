@@ -249,6 +249,12 @@ const EASING = 'var(--wa-transition-easing)'
 const BASE_DURATIONS = [FAST, FAST, FAST, FAST, FAST, 'var(--motion-dur-2)']
 const PRESS_DURATIONS = [FAST, FAST, FAST, FAST, FAST, 'var(--motion-dur-press)']
 const TIMINGS = [EASING, EASING, EASING, EASING, EASING, 'var(--motion-ease-spring)']
+// Internal parts: Web Awesome's list plus scale. wa-button adds filter for the lit brand
+// buttons of glow.css (accent glow design §5).
+const INTERNAL_REST = { durations: BASE_DURATIONS, properties: `${WA_PROPERTIES}, scale`, timings: TIMINGS }
+const INTERNAL_PRESS = { durations: PRESS_DURATIONS, properties: undefined }
+const BUTTON_REST = { durations: [...BASE_DURATIONS, FAST], properties: `${WA_PROPERTIES}, scale, filter`, timings: [...TIMINGS, EASING] }
+const BUTTON_PRESS = { durations: [...PRESS_DURATIONS, FAST], properties: undefined }
 const INTERNAL_PARTS = [
     ':where(wa-dialog, wa-drawer)::part(close-button__base)',
     ':where(wa-tab-group)::part(scroll-button__base)',
@@ -256,25 +262,26 @@ const INTERNAL_PARTS = [
 ]
 const PRESS_SCALE = 'calc(1 - 0.04 * var(--motion-amount))'
 
-/** Rest rules carry the three lists; press rules only swap the duration list. */
-function assertTransitionLists(rule, durations, label) {
+/** Rest rules carry the three lists; press rules only swap the duration list
+ *  (`properties: undefined` asserts the rule has no property list). */
+function assertTransitionLists(rule, { durations, properties, timings }, label) {
     assert.deepEqual(splitTopLevel(rule.decls['transition-duration']), durations, `${label}: duration list`)
-    if (durations === BASE_DURATIONS) {
-        assert.equal(rule.decls['transition-property'], `${WA_PROPERTIES}, scale`, `${label}: property list`)
-        assert.deepEqual(splitTopLevel(rule.decls['transition-timing-function']), TIMINGS, `${label}: timing list`)
+    if (properties !== undefined) {
+        assert.equal(rule.decls['transition-property'], properties, `${label}: property list`)
+        assert.deepEqual(splitTopLevel(rule.decls['transition-timing-function']), timings, `${label}: timing list`)
     } else {
         assert.equal(rule.decls['transition-property'], undefined, `${label}: property list is the rest rule's`)
     }
 }
 
 test('5. button press: transition lists and press rules', () => {
-    assertTransitionLists(findRule(topRules, [':where(wa-button)::part(base)']), BASE_DURATIONS, 'wa-button base')
-    assertTransitionLists(findRule(topRules, INTERNAL_PARTS), BASE_DURATIONS, 'internal parts')
+    assertTransitionLists(findRule(topRules, [':where(wa-button)::part(base)']), BUTTON_REST, 'wa-button base')
+    assertTransitionLists(findRule(topRules, INTERNAL_PARTS), INTERNAL_REST, 'internal parts')
 
     const press = topRules.filter((r) => r.selector.startsWith(':where(') && r.selector.endsWith(')::part(base)') && r.selector.includes(':active'))
     assert.equal(press.length, 1, 'one wa-button press rule')
     assert.equal(press[0].decls.scale, PRESS_SCALE)
-    assertTransitionLists(press[0], PRESS_DURATIONS, 'wa-button press')
+    assertTransitionLists(press[0], BUTTON_PRESS, 'wa-button press')
     // The :where() list, compounds on one line each (a line break is a descendant combinator).
     const rawPress = motionStripped.slice(motionStripped.indexOf(':where(\n'), motionStripped.indexOf(')::part(base)', motionStripped.indexOf(':where(\n')))
     const branches = rawPress.split('\n').map((l) => l.trim()).filter((l) => l.includes('wa-button'))
@@ -282,7 +289,7 @@ test('5. button press: transition lists and press rules', () => {
 
     const internalPress = findRule(topRules, INTERNAL_PARTS.map((s) => `${s}:active`))
     assert.equal(internalPress.decls.scale, PRESS_SCALE)
-    assertTransitionLists(internalPress, PRESS_DURATIONS, 'internal parts press')
+    assertTransitionLists(internalPress, INTERNAL_PRESS, 'internal parts press')
 })
 
 test('6. plain icon grow and go arrows', () => {

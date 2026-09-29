@@ -1,0 +1,148 @@
+/* Accent glow — lit controls, visual refresh step 6a.
+   Design: docs/plans/2026-09-29-accent-glow-design.md.
+   Shared by the SPA (main.js), the share viewer (share-session/main.js) and the artifact
+   shell (artifact-shell/main.js): nothing here may depend on another app stylesheet.
+
+   Unlayered, so it beats the theme's @layer wa-theme declarations. Global rules are
+   wrapped in :where() (specificity 0 + ::part), like depth.css: a component rule on the
+   same part wins. Imported after depth.css: on the same part, source order makes these
+   rules win over depth.css's. Each :is( / :not( compound stays on one line: a line break
+   before :not( is a descendant combinator. */
+
+/* The theme re-declares brand colours on .wa-invert: the tokens follow them there. */
+:root,
+.wa-invert {
+    /* Accent at mid lightness, for glows (both schemes). */
+    --glow-accent: var(--wa-color-brand-60);
+    /* Second colour of accent gradients: the accent hue turned by +50°, a touch lighter. */
+    --glow-accent-shifted: oklch(from var(--wa-color-brand-60) calc(l + 0.08) c calc(h + 50));
+    /* Coloured shadow of a solid brand button, at rest and on hover. */
+    --glow-button: 0 6px 18px -6px color-mix(in oklab, var(--glow-accent) 60%, transparent);
+    --glow-button-hover: 0 10px 26px -6px color-mix(in oklab, var(--glow-accent) 70%, transparent);
+    /* Light-to-dark shading laid over a solid button's own colour. */
+    --glow-button-shading: linear-gradient(180deg, oklch(1 0 0 / 0.14), oklch(0 0 0 / 0.1));
+    /* Context ring below its warning threshold: a softer accent than the loud fill. */
+    --glow-context-ring: color-mix(in oklab, var(--wa-color-brand-border-loud), var(--wa-color-brand-border-normal));
+}
+/* Dark: the soft accent of light mode reads too faint on the dark header; one step
+   brighter. After the block above (same specificity on <html>). */
+.wa-dark {
+    --glow-context-ring: color-mix(in oklab, var(--wa-color-brand-50), var(--wa-color-brand-60));
+}
+
+/* Soft halo instead of the hard 3px ring. Same total thickness (width + offset = 4px), so
+   layouts that reserve room for the ring (MessageInput, ChatNavToolbar) keep their
+   measures. Declared on every element where the theme declares the ring: the value is a
+   var() chain resolved where it is declared. */
+:root,
+.wa-theme-default,
+.wa-light,
+.wa-dark,
+.wa-invert {
+    --glow-focus-halo: color-mix(in oklab, var(--wa-color-focus) 45%, transparent);
+    --wa-focus-ring-width: 0.25rem;
+    /* A length, never a bare 0: calc() consumers add or subtract it from lengths. */
+    --wa-focus-ring-offset: 0rem;
+    --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-width) var(--glow-focus-halo);
+}
+/* Tabs draw their ring inside the tab (negative offset minus this token): keep the old
+   1px there, so the wider ring still ends at the tab's edge (−4px to 0) instead of 1px
+   outside it, where the tab strip's scroller would cut it. */
+:where(wa-tab) {
+    --wa-focus-ring-offset: 0.0625rem;
+}
+
+/* wa-input and wa-select fade their ring in (outline transition), from the resting
+   outline's colour, currentColor: the halo flashed dark for a frame, then faded to the
+   accent. At rest the colour is already the halo's; only the width grows. The style and
+   width stay Web Awesome's, so nothing shows at rest. (wa-textarea has no transition.) */
+:where(wa-input)::part(base),
+:where(wa-select)::part(combobox) {
+    outline-color: var(--glow-focus-halo);
+}
+
+/* Focused fields add a soft outer glow to their recessed look. */
+:where(:is(wa-input, wa-textarea):focus-within)::part(base),
+:where(wa-select:focus-within)::part(combobox) {
+    box-shadow: var(--depth-inset), 0 0 0.75rem -0.25rem color-mix(in oklab, var(--glow-accent) 45%, transparent);
+}
+
+/* Solid brand buttons. Not: buttons of an inverted box and the layout window buttons (as
+   depth.css), the dock's Restore window button (its top bar clips overflow), the
+   transcript's small corner toggle, disabled and fake-disabled buttons (they keep the
+   step-2 look). Hover and sheen also skip loading buttons. */
+
+/* Lit: shading over Web Awesome's own background-color, drawn from the border edge (the
+   1px transparent border would otherwise repeat the gradient's far end in it), the depth
+   shadow plus a brighter top light and a coloured glow. Longhands only: the background
+   shorthand would reset background-color. Positioned and isolated for the sheen below. */
+:where(wa-button[variant='brand'][appearance='accent']:not(.wa-invert wa-button, .layout-winbtn, .dock-winbtn, .detail-toggle, [disabled], .fake-disabled))::part(base) {
+    position: relative;
+    isolation: isolate;
+    background-image: var(--glow-button-shading);
+    background-origin: border-box;
+    box-shadow: var(--depth-button), inset 0 1px 0 oklch(1 0 0 / 0.28), var(--glow-button);
+}
+/* Hover: the rest colour (not Web Awesome's darker mix), brightened, a larger glow. */
+@media (hover: hover) {
+    :where(wa-button[variant='brand'][appearance='accent']:not(.wa-invert wa-button, .layout-winbtn, .dock-winbtn, .detail-toggle, [disabled], .fake-disabled, [loading]):hover)::part(base) {
+        background-color: var(--wa-color-fill-loud);
+        filter: brightness(1.07) saturate(1.1);
+        box-shadow: var(--depth-button), inset 0 1px 0 oklch(1 0 0 / 0.3), var(--glow-button-hover);
+    }
+}
+/* Press: Web Awesome's press mix again, without the brightening. After the hover block
+   (same specificity), so it wins while both match. */
+:where(wa-button[variant='brand'][appearance='accent']:not(.wa-invert wa-button, .layout-winbtn, .dock-winbtn, .detail-toggle, [disabled], .fake-disabled, [loading]):active)::part(base) {
+    background-color: color-mix(in oklab, var(--wa-color-fill-loud), var(--wa-color-mix-active));
+    filter: none;
+}
+
+/* Sheen: a light band parked off the left edge; on hover it sweeps to the right in 700ms.
+   It moves inside the button's own box (background-position), so nothing is clipped. Back
+   off hover, it returns at once (no reverse sweep). z-index -1 in the isolated part: above
+   the button's background, under its label, icons and badge. */
+:where(wa-button[variant='brand'][appearance='accent']:not(.wa-invert wa-button, .layout-winbtn, .dock-winbtn, .detail-toggle, [disabled], .fake-disabled, [loading]))::part(base)::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(105deg, transparent 35%, oklch(1 0 0 / 0.3) 50%, transparent 65%)
+        no-repeat 100% 0 / 400% 100%;
+}
+@media (hover: hover) {
+    :where(wa-button[variant='brand'][appearance='accent']:not(.wa-invert wa-button, .layout-winbtn, .dock-winbtn, .detail-toggle, [disabled], .fake-disabled, [loading]):hover)::part(base)::after {
+        background-position: 0% 0;
+        transition: background-position 700ms var(--motion-ease-out);
+    }
+}
+/* The sweep is movement: gone under reduced motion. The brightening and glow stay. */
+@media (prefers-reduced-motion: reduce) {
+    :where(wa-button[variant='brand'][appearance='accent'])::part(base)::after {
+        display: none;
+    }
+}
+
+/* The context ring glows in its own colour (--indicator-color is set inline on the host
+   and inherits into the shadow tree). On the base part, an HTML box: the SVG clips its own
+   overflow and its indicator circle touches the SVG edge. */
+:where(wa-progress-ring:is(.context-usage-ring, .onode-context-ring))::part(base) {
+    filter: drop-shadow(0 0 0.1875rem color-mix(in oklab, var(--indicator-color) 35%, transparent));
+}
+/* Dark: Web Awesome's track (neutral-fill-normal) nearly vanishes on the dark header; the
+   same lifted grey as the quota bars' empty lane (ProjectView). A rule on the host beats
+   the component's own :host declaration. */
+.wa-dark :where(wa-progress-ring:is(.context-usage-ring, .onode-context-ring)) {
+    --track-color: var(--wa-color-neutral-border-normal);
+}
+
+/* A checked switch: an accent gradient track with a soft glow. The track's border goes
+   transparent, the gradient drawn under it, so the lighter end has no darker rim. */
+:where(wa-switch:state(checked):not([disabled]))::part(control) {
+    border-color: transparent;
+    background-origin: border-box;
+    background-image: linear-gradient(90deg, var(--wa-form-control-activated-color), oklch(from var(--wa-form-control-activated-color) calc(l + 0.08) c calc(h + 30)));
+    box-shadow: 0 0 0.75rem -0.125rem color-mix(in oklab, var(--wa-form-control-activated-color) 70%, transparent);
+}

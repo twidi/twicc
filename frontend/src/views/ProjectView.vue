@@ -2416,7 +2416,7 @@ function updateSidebarClosedClass(closed) {
                     <div id="quota-five-hour" class="usage-quota" v-if="quotaFiveHour">
                         <div class="usage-bar">
                             <div class="usage-lane">
-                                <div class="usage-lane-fill" :style="{ width: usageLaneWidth(quotaFiveHour), background: quotaFiveHourRingColor }"></div>
+                                <div class="usage-lane-fill" :style="{ width: usageLaneWidth(quotaFiveHour), '--usage-fill': quotaFiveHourRingColor }"></div>
                             </div>
                             <div class="usage-lane">
                                 <div class="usage-lane-fill usage-lane-time" :style="{ width: timeLaneWidth(quotaFiveHour) }"></div>
@@ -2464,7 +2464,7 @@ function updateSidebarClosedClass(closed) {
                     <div id="quota-seven-day" class="usage-quota" v-if="quotaSevenDay">
                         <div class="usage-bar">
                             <div class="usage-lane">
-                                <div class="usage-lane-fill" :style="{ width: usageLaneWidth(quotaSevenDay), background: quotaSevenDayRingColor }"></div>
+                                <div class="usage-lane-fill" :style="{ width: usageLaneWidth(quotaSevenDay), '--usage-fill': quotaSevenDayRingColor }"></div>
                             </div>
                             <div class="usage-lane">
                                 <div class="usage-lane-fill usage-lane-time" :style="{ width: timeLaneWidth(quotaSevenDay) }"></div>
@@ -2512,7 +2512,7 @@ function updateSidebarClosedClass(closed) {
                     <div id="quota-extra-usage" class="usage-quota" v-if="quotaExtraUsage">
                         <div class="usage-bar usage-bar-extra">
                             <div v-if="quotaExtraUsage.utilization != null" class="usage-lane usage-lane-solo">
-                                <div class="usage-lane-fill" :style="{ width: quotaExtraUsageRingValue + '%', background: quotaExtraUsageRingColor }"></div>
+                                <div class="usage-lane-fill" :style="{ width: quotaExtraUsageRingValue + '%', '--usage-fill': quotaExtraUsageRingColor }"></div>
                             </div>
                             <span v-else-if="quotaExtraUsage.remainingCredits != null" class="usage-balance">
                                 <span class="usage-balance-dot" :style="{ background: quotaExtraUsageRingColor }"></span>{{ Math.round(quotaExtraUsage.remainingCredits).toLocaleString() }} credits
@@ -3407,7 +3407,9 @@ wa-dropdown-item:hover .row-menu-trigger,
     position: relative;
     height: 6px;
     border-radius: var(--wa-border-radius-pill);
-    background: var(--wa-color-neutral-fill-quiet);
+    /* One step darker than the light canvas the footer now sits on (fill-quiet has the
+       canvas's own lightness and vanished there). */
+    background: var(--wa-color-neutral-fill-normal);
 }
 /* Dark: lift the empty track off the dark footer so the remaining (unfilled)
    portion of each bar stays readable instead of blending into the background. */
@@ -3419,6 +3421,12 @@ html.wa-dark .usage-lane {
     position: absolute;
     inset: 0 auto 0 0;
     border-radius: var(--wa-border-radius-pill);
+}
+
+/* Severity fills: a gradient from a lighter step of the colour, with a soft glow of it. */
+.usage-lane-fill:not(.usage-lane-time) {
+    background: linear-gradient(90deg, oklch(from var(--usage-fill) calc(l + 0.08) c h), var(--usage-fill));
+    box-shadow: 0 0 0.25rem color-mix(in oklab, var(--usage-fill) 30%, transparent);
 }
 
 /* Time-elapsed reference lane — a neutral fill, distinct from the severity-colored

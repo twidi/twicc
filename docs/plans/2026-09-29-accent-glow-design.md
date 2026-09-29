@@ -834,3 +834,35 @@ why.
 One commit (after the user's review in the browser and an explicit "commit"):
 `feat(ui): accent glow on buttons, focus, selected session and indicators`. Roadmap
 update (status row 6, a §6j) in a separate docs commit.
+
+## 16. Amendments after the browser review (user, 2026-09-29) — binding
+
+These override the sections they name.
+
+- **§6.1 — no dark flash on focus.** `wa-input` and `wa-select` transition their ring
+  (`outline`) from the resting outline's colour, `currentColor`: the halo flashed near-black
+  for a frame, then faded to the accent (seen frame by frame in Firefox). `glow.css` sets
+  `outline-color: var(--glow-focus-halo)` at rest on `:where(wa-input)::part(base)` and
+  `:where(wa-select)::part(combobox)` (colour only: the style stays `none` at rest, so
+  nothing shows; on focus only the width grows). `wa-textarea` has no transition.
+- **§8 — thinner tab line.** `--glow-ink-thickness: 2px` (3px was too heavy with the glow;
+  1px was tried).
+- **§8 — the line glides in the overlay dock too.** The overlay's tab bar switches on the
+  click, then the overlay crossfade starts in the same task: the ink's CSS transition ran
+  behind the frozen old image and was over when the page showed again (measured: the ink
+  stood still ~400ms, then jumped). `utils/viewTransition.js` exports
+  `afterViewTransitionUpdate(fn)` (at once when no transition is in flight, else once its
+  update callback is done or failed); `TabBar.vue`'s active observer moves the ink through
+  it. The dock bars, which switch inside the transition, behave as before.
+- **§9 — softer ring, readable in dark.** Below the warning threshold the ring uses
+  `var(--glow-context-ring)`: light `color-mix(in oklab, var(--wa-color-brand-border-loud),
+  var(--wa-color-brand-border-normal))`, dark (`.wa-dark`, after the token block)
+  `color-mix(in oklab, var(--wa-color-brand-50), var(--wa-color-brand-60))`. In dark, the
+  ring's track is `var(--wa-color-neutral-border-normal)` (Web Awesome's nearly vanished on
+  the dark header), the same grey as the quota bars' empty lane. Ring glow:
+  `drop-shadow(0 0 0.1875rem …35%…)`.
+- **§10.1 — lighter glow, visible empty lane.** Quota fill glow:
+  `0 0 0.25rem color-mix(… 30% …)`. The empty lane in light becomes
+  `var(--wa-color-neutral-fill-normal)`: since step 1 the footer sits on the canvas, whose
+  lightness equals `neutral-fill-quiet`'s, so the lane had vanished (a step-1 regression,
+  fixed here).

@@ -1416,8 +1416,8 @@ wa-textarea.auto-focused:focus-within::part(base) {
 /* Match the existing .option-card:focus-visible style so Alt+Shift+M and Tab focus
    look identical on the same card. */
 .option-card.auto-focused:focus-within {
-    outline: 2px solid var(--wa-color-brand-fill-loud);
-    outline-offset: 2px;
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
 }
 
 .pending-request-actions {
@@ -1519,8 +1519,8 @@ wa-textarea.auto-focused:focus-within::part(base) {
 }
 
 .option-card:focus-visible {
-    outline: 2px solid var(--wa-color-brand-fill-loud);
-    outline-offset: 2px;
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
 }
 
 .option-card-content {
