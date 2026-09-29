@@ -3426,12 +3426,12 @@ class CodexSessionCompute(BaseSessionCompute):
         Code-mode counterpart of :meth:`_lookup_exec_command_call_id`:
         searches for the ``custom_tool_call_output`` line whose status
         header announced ``Script running with cell ID <cell_id>`` —
-        that line's ``call_id`` IS the owning ``exec``'s call_id. The
-        textual pre-filter can over-match (``cell ID 2`` is a prefix of
-        ``cell ID 23``, and a still-running ``wait`` output repeats the
-        same header on a ``function_call_output``), so each candidate is
-        re-verified by parsing its output and comparing the exact cell
-        id. The NEWEST match wins: cell ids are small counters a new
+        that line's ``call_id`` IS the owning ``exec``'s call_id. Current
+        sessions select fact pointers; outdated sessions read bounded raw
+        pages. Each source must be a ``custom_tool_call_output`` whose
+        parsed output announces the exact cell id. This rejects id prefixes
+        and repeated headers on a wait's ``function_call_output``.
+        The NEWEST match wins: cell ids are small counters a new
         app-server run starts over, and a ``wait`` polls the latest cell to
         carry its id. Returns ``fallback`` when nothing matches, so the live
         link is still created (just under the naive id).
