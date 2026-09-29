@@ -14,7 +14,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 3 | Accent-tinted glass overlays | **Done** — commit `709f9cf9` on branch `enhanced-ui` (see §6c) |
 | 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (§6d); **4b done** — commit `d11ea446` (§6e); **4c done** — commit `116f9d10` (§6f) |
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
-| 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c** (list cascade, tab crossfade, theme reveal): to specify |
+| 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c done** (list cascade, theme reveal, tab crossfade + overlay slide): spec `b181801d`, code `024f8532` (§6i) |
 | 6 | Accent glow + live states | To specify |
 | 7 | Secondary screens | To specify |
 
@@ -539,6 +539,44 @@ Spec: `docs/plans/2026-09-28-overlay-motion-design.md` (commit `2d19c1af`, revie
   Option A (opaque glass while moving, then easing back to translucent) was tried and
   rejected in the browser: it moved the step to the end of the animation.
 
+## 6i. Step 5c — list cascade, light/dark reveal, tab crossfade (done)
+
+Spec: `docs/plans/2026-09-29-list-cascade-scheme-reveal-design.md` (commit `b181801d`;
+§4–§5 reviewed PASS in 7 rounds, §12 written after a browser probe and reviewed PASS in 6
+rounds). Implemented by a sub-agent, code review by another (PASS, 20 mutations).
+
+### 6i.1 What it does
+
+- `utils/listCascade.js` + `composables/useListCascade.js`: the session list cascades in when
+  a list arrives (app load, project / workspace switch; 22ms stagger, 320ms, rows on screen
+  only, cap 20); the start waits two frames, or for the scroll to a selected session off the
+  first screen (cap 300ms). Live rows (`addSession`, `createDraftSession`) enter alone; a
+  Codex draft rekey (`bindDraftSession`) drops its entrance.
+- `utils/viewTransition.js`: the only `startViewTransition` user. One `twicc-vt-<kind>`
+  class on `<html>`, run token, `settle` (await route + Vue), depth counter for nesting,
+  watchdogs (capture 150ms, callback → ready 400ms, animation + 150ms, update cap 3s).
+- `utils/colorSchemeTransition.js` + `stores/settings.js`: the scheme is applied in one
+  place; circle from the settings select or the screen center (palette), fade otherwise and
+  under reduced motion, nothing when the effective scheme does not change.
+- `utils/tabCrossfade.js` + `TabBar` `crossfade`: a click / key on a tab of the center or a
+  dock bar defers Web Awesome's `setActiveTab` into a view transition (250ms crossfade) and
+  cancels the pane-focus claim. Overlay: `SessionView` wraps `overlay-activate` /
+  `overlay-dismiss`; open / close slide the card and its pooled iframe cell.
+
+### 6i.2 Lessons (do not regress)
+
+- A view transition captures the old state at the next frame, after rAF callbacks: any rAF
+  that changes the DOM (here `requestPaneFocus`) lands in the "old" image. Measure the
+  capture delay before judging a transition invisible.
+- The UA crossfade (`plus-lighter`) collapsed to one washed frame on Firefox Android: use
+  our own keyframe (old image opaque, new image fading in over it).
+- `--motion-ease` is front-loaded (~80% in the first quarter): a fade with it reads as a
+  snap. Fades use `ease-in-out`.
+- While a view transition runs, the page takes no pointer input and shows a frozen image: a
+  busy page turned 250ms into 1–3s and lost clicks. Watchdogs are part of the design.
+- A phone probe needs an on-screen debug line (no console); frame-by-frame videos plus the
+  line found every cause.
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -768,4 +806,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c).
