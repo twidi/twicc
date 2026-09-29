@@ -452,6 +452,9 @@ class _ComputeProviderState:
     display_session_ids: set[str] | None
     total_display: int
     pending_project_ids: set[str] = field(default_factory=set)
+    # A bucket enters this set only after its exact repair transaction commits.
+    # Later sessions in this run can maintain it with their persisted deltas.
+    repaired_activity_buckets: set[tuple] = field(default_factory=set)
     auto_added_project_ids: set[str] = field(default_factory=set)
     sessions_since_project_broadcast: int = 0
     completed_count: int = 0
@@ -2008,6 +2011,7 @@ async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
             BaseSessionCompute.apply_session_items_chunk,
             session_id, observed_last_offset, item_fields,
             item_updates[start:start + COMPUTE_APPLY_CHUNK_SIZE], [],
+            msg.get('_repaired_activity_buckets'),
         )
         if outcome != "ok":
             return msg, outcome
@@ -2016,6 +2020,7 @@ async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
             BaseSessionCompute.apply_session_items_chunk,
             session_id, observed_last_offset, [], [],
             content_overrides[start:start + COMPUTE_APPLY_CHUNK_SIZE],
+            msg.get('_repaired_activity_buckets'),
         )
         if outcome != "ok":
             return msg, outcome
@@ -2082,6 +2087,7 @@ async def _process_compute_message(msg: dict) -> None:
     try:
         from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
 
+        msg['_repaired_activity_buckets'] = state.repaired_activity_buckets
         line_count = len(msg.get('item_updates', []))
         msg, chunk_outcome = await _apply_compute_items_in_chunks(msg)
         if chunk_outcome != "ok":

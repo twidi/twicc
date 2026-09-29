@@ -22,10 +22,11 @@ def make_session(name='s', **kwargs):
                                   file_path=name, **kwargs)
 
 
-def apply(session, before_items=(), before=None, repair=False):
+def apply(session, before_items=(), before=None, repair=False, repaired_activity_buckets=None):
     apply_contribution_changes(before_items, item_contributions(session.items.all()),
                                before_sessions=[before or session_contribution(session)],
-                               after_sessions=[session_contribution(session)], repair=repair)
+                               after_sessions=[session_contribution(session)], repair=repair,
+                               repaired_activity_buckets=repaired_activity_buckets)
     session.refresh_from_db()
 
 
@@ -314,6 +315,95 @@ def test_repair_does_not_recalculate_unrelated_sibling_costs(monkeypatch):
     assert sibling.self_cost == Decimal(99)
     assert parent.subagents_cost == Decimal('0.000003')
     assert changed.id in recalculated and parent.id in recalculated
+
+
+@pytest.mark.django_db(transaction=True)
+def test_repaired_activity_bucket_uses_delta_for_later_session(monkeypatch):
+    stamp = datetime(2026, 9, 29, tzinfo=UTC)
+    first = make_session('first', created_at=stamp)
+    second = make_session('second', created_at=stamp)
+    counts = {'daily': 0, 'weekly': 0}
+    for model, name in ((DailyActivity, 'daily'), (WeeklyActivity, 'weekly')):
+        original = model.recalculate
+
+        def counted(project_id, day, provider, *, original=original, name=name):
+            counts[name] += 1
+            return original(project_id, day, provider)
+
+        monkeypatch.setattr(model, 'recalculate', staticmethod(counted))
+
+    repaired = set()
+    SessionItem.objects.create(session=first, line_num=1, content='{}', timestamp=stamp,
+                               kind=ItemKind.USER_MESSAGE, cost=Decimal('1.000001'))
+    with transaction.atomic():
+        apply(first, repair=True, repaired_activity_buckets=repaired)
+    assert counts == {'daily': 2, 'weekly': 2}
+    assert len(repaired) == 4
+
+    live = make_session('live', created_at=stamp)
+    SessionItem.objects.create(session=live, line_num=1, content='{}', timestamp=stamp,
+                               kind=ItemKind.USER_MESSAGE, cost=Decimal('3.000003'))
+    with transaction.atomic():
+        apply(live)
+
+    SessionItem.objects.create(session=second, line_num=1, content='{}', timestamp=stamp,
+                               kind=ItemKind.USER_MESSAGE, cost=Decimal('2.000002'))
+    with transaction.atomic():
+        apply(second, repair=True, repaired_activity_buckets=repaired)
+    assert counts == {'daily': 2, 'weekly': 2}
+    for model in (DailyActivity, WeeklyActivity):
+        for row in model.objects.all():
+            assert (row.user_message_count, row.session_count, row.cost) == (3, 3, Decimal('6.000006'))
+
+
+@pytest.mark.django_db(transaction=True)
+def test_rolled_back_repair_does_not_cache_activity_bucket(monkeypatch):
+    stamp = datetime(2026, 9, 29, tzinfo=UTC)
+    session = make_session('rollback', created_at=stamp)
+    SessionItem.objects.create(session=session, line_num=1, content='{}', timestamp=stamp,
+                               kind=ItemKind.USER_MESSAGE, cost=Decimal('1.000001'))
+    repaired = set()
+    calls = []
+    original = DailyActivity.recalculate
+
+    def counted(project_id, day, provider):
+        calls.append((project_id, day, provider))
+        return original(project_id, day, provider)
+
+    monkeypatch.setattr(DailyActivity, 'recalculate', staticmethod(counted))
+    with pytest.raises(RuntimeError, match='rollback'), transaction.atomic():
+        apply(session, repair=True, repaired_activity_buckets=repaired)
+        raise RuntimeError('rollback')
+    assert not repaired
+    with transaction.atomic():
+        apply(session, repair=True, repaired_activity_buckets=repaired)
+    assert len(calls) == 4
+    assert len(repaired) == 4
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('change', ['hide', 'move_project'])
+def test_metadata_change_recalculates_cached_historical_activity(change):
+    stamp = datetime(2026, 9, 29, tzinfo=UTC)
+    session = make_session('metadata-change', created_at=stamp)
+    SessionItem.objects.create(session=session, line_num=1, content='{}', timestamp=stamp,
+                               kind=ItemKind.USER_MESSAGE, cost=Decimal('1.000001'))
+    repaired = set()
+    with transaction.atomic():
+        apply(session, repair=True, repaired_activity_buckets=repaired)
+
+    before = session_contribution(session)
+    if change == 'hide':
+        session.hidden = True
+        session.save(update_fields=['hidden'])
+    else:
+        session.project = Project.objects.create(id='moved-to')
+        session.save(update_fields=['project'])
+    with transaction.atomic():
+        apply_contribution_changes([], [], before_sessions=[before],
+                                   after_sessions=[session_contribution(session)], repair=False,
+                                   repaired_activity_buckets=repaired)
+    assert_activities_match_reference()
 
 
 @pytest.mark.django_db(transaction=True)

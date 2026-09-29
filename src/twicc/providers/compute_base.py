@@ -3476,6 +3476,7 @@ class BaseSessionCompute:
         item_fields: list[str],
         item_updates: list[dict],
         content_overrides: list[dict],
+        repaired_activity_buckets: set[tuple] | None = None,
     ) -> str:
         """Apply one slice of a compute result's item writes in its own transaction.
 
@@ -3500,6 +3501,7 @@ class BaseSessionCompute:
         apply_contribution_changes(
             before_items, item_contributions(changed), before_sessions=[before_session],
             after_sessions=[session_contribution(session)], repair=needs_repair(session),
+            repaired_activity_buckets=repaired_activity_buckets,
         )
         return "ok"
 
@@ -3790,6 +3792,7 @@ class BaseSessionCompute:
         apply_contribution_changes(
             before_items, item_contributions(changed), before_sessions=[before_session],
             after_sessions=[session_contribution(session)], repair=True,
+            repaired_activity_buckets=msg.get('_repaired_activity_buckets'),
         )
         session.refresh_from_db()
 

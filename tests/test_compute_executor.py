@@ -10,8 +10,8 @@ import pytest
 from channels.db import database_sync_to_async
 from django.db import connections
 
-from twicc.core.enums import Provider
-from twicc.core.models import DailyActivity, Project, Session
+from twicc.core.enums import ItemKind, Provider
+from twicc.core.models import DailyActivity, Project, Session, SessionItem
 from twicc.providers import db_writer
 from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
 
@@ -100,6 +100,51 @@ def test_final_apply_aggregate_does_not_block_channels_or_repeat_at_finalization
             assert len(calls) == count
             await db_writer.stop_db_writer()
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compute_run_reuses_exact_activity_bucket_after_first_apply(monkeypatch):
+    project = Project.objects.create(id='shared-activity-project')
+    stamp = datetime(2026, 9, 29, tzinfo=UTC)
+    sessions = [Session.objects.create(id=f'activity-{index}', project=project, provider=Provider.CODEX,
+                                       file_path=f'activity-{index}.jsonl', created_at=stamp, user_message_count=1)
+                for index in (1, 2)]
+    for session in sessions:
+        SessionItem.objects.create(session=session, line_num=1, content='{}',
+                                   timestamp=stamp, kind=ItemKind.USER_MESSAGE)
+    calls = []
+    original = DailyActivity.recalculate
+
+    def counted(project_id, day, provider):
+        calls.append((project_id, day, provider))
+        return original(project_id, day, provider)
+
+    monkeypatch.setattr(DailyActivity, 'recalculate', staticmethod(counted))
+
+    async def no_broadcast(_session_id):
+        pass
+
+    monkeypatch.setattr(db_writer, 'broadcast_session_updated', no_broadcast)
+
+    async def scenario():
+        db_writer.start_compute_executor()
+        run_id, _ = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0)
+        try:
+            for session in sessions:
+                await db_writer._process_compute_message({
+                    'type': 'session_complete', 'provider': Provider.CODEX.value,
+                    'run_id': run_id, 'session_id': session.id, 'history_facts': [],
+                    'observed_last_offset': 0,
+                })
+            assert db_writer._compute_states[run_id].failed_count == 0
+        finally:
+            db_writer._compute_states.pop(run_id, None)
+            db_writer._compute_done_events.pop(run_id, None)
+            await db_writer.stop_compute_executor()
+
+    asyncio.run(scenario())
+    assert len(calls) == 2  # Project and global are each rebuilt once.
+    assert {row.session_count for row in DailyActivity.objects.all()} == {2}
 
 
 @pytest.mark.django_db(transaction=True)

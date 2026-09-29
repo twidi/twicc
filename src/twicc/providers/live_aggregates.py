@@ -6,13 +6,14 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import NamedTuple
 
-from django.db import connection
+from django.db import connection, transaction
 
 from twicc.core.enums import ItemKind, Provider
 from twicc.core.models import DailyActivity, Session, SessionItem, SessionType, WeeklyActivity
 
 ZERO = Decimal(0)
 COST_QUANTUM = Decimal("0.000001")
+MAX_REPAIRED_ACTIVITY_BUCKETS = 4096
 
 
 class ItemContribution(NamedTuple):
@@ -75,14 +76,38 @@ def _save_session_aggregates(session: Session) -> None:
     session.save(update_fields=['self_cost', 'subagents_cost', 'total_cost', 'user_message_count'])
 
 
+def _apply_activity_delta(key: tuple, delta: list) -> None:
+    model, project_id, provider, day = key
+    messages, count, cost = delta
+    if messages == count == cost == 0:
+        return
+    row, _ = model.objects.get_or_create(project_id=project_id, provider=provider, date=day)
+    row.user_message_count += messages
+    row.session_count += count
+    row.cost += cost
+    if row.user_message_count == row.session_count == row.cost == 0:
+        row.delete()
+    else:
+        row.save(update_fields=['user_message_count', 'session_count', 'cost'])
+
+
+def _remember_repaired_bucket(repaired: set[tuple], key: tuple) -> None:
+    if len(repaired) >= MAX_REPAIRED_ACTIVITY_BUCKETS:
+        repaired.clear()
+    repaired.add(key)
+
+
 def apply_contribution_changes(
     before_items: Sequence[ItemContribution], after_items: Sequence[ItemContribution], *,
     before_sessions: Sequence[SessionContribution], after_sessions: Sequence[SessionContribution], repair: bool,
+    repaired_activity_buckets: set[tuple] | None = None,
 ) -> None:
     """Maintain aggregates after source writes, under the caller's transaction.
 
     Full repair deliberately reads stored history. Current-version appends
     use only changed rows and indexed existence probes for nullable costs.
+    A compute run may reuse an exact, committed activity bucket and apply
+    later persisted deltas. Other callers continue to repair each bucket.
     """
     if not connection.in_atomic_block:
         raise RuntimeError('Contribution changes require a caller-owned transaction')
@@ -163,17 +188,19 @@ def apply_contribution_changes(
             if old:
                 for key in _activity_keys(old.project_id, old.provider, item.timestamp):
                     buckets[key]
-        for model, project_id, provider, day in buckets:
+        for key, delta in buckets.items():
+            model, project_id, provider, day = key
+            # Project, provider, visibility, and session type change the
+            # contribution of unchanged historical items. Their delta is not
+            # represented by before_items/after_items, so recalculate them.
+            if repaired_activity_buckets is not None and key in repaired_activity_buckets and not metadata_changed:
+                _apply_activity_delta(key, delta)
+                continue
             model.recalculate(project_id, day, Provider(provider))
+            if repaired_activity_buckets is not None:
+                transaction.on_commit(
+                    lambda key=key: _remember_repaired_bucket(repaired_activity_buckets, key),
+                )
         return
-    for (model, project_id, provider, day), (messages, count, cost) in buckets.items():
-        if messages == count == cost == 0:
-            continue
-        row, _ = model.objects.get_or_create(project_id=project_id, provider=provider, date=day)
-        row.user_message_count += messages
-        row.session_count += count
-        row.cost += cost
-        if row.user_message_count == row.session_count == row.cost == 0:
-            row.delete()
-        else:
-            row.save(update_fields=['user_message_count', 'session_count', 'cost'])
+    for key, delta in buckets.items():
+        _apply_activity_delta(key, delta)
