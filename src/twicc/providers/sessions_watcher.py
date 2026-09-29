@@ -80,9 +80,14 @@ class SessionChangeResult(NamedTuple):
 class _SourceSnapshot(NamedTuple):
     identity: tuple[int, int]
     size: int
-    mtime_ns: int
     prefix: bytes
+    suffix: bytes
     end_offset: int
+
+
+class _SourceObservation(NamedTuple):
+    snapshot: _SourceSnapshot
+    replaced: bool
 
 
 class _PendingSourceRelease(NamedTuple):
@@ -90,13 +95,32 @@ class _PendingSourceRelease(NamedTuple):
     event_token: int
 
 
-def _read_source_snapshot(path: Path) -> _SourceSnapshot:
-    """Capture a finite complete-record watermark, using bounded read buffers."""
+def _read_source_snapshot(path: Path, previous: _SourceSnapshot | None) -> _SourceObservation:
+    """Capture a watermark and compare bounded evidence from the same file handle.
+
+    Metadata-only changes do not establish replacement. Compare the previous
+    suffix at its original offset, so appends preserve the source generation.
+    This samples append-only history; it cannot detect arbitrary interior edits.
+    """
     import os
     with path.open('rb') as source:
         stat = os.fstat(source.fileno())
         size = stat.st_size
         prefix = source.read(min(size, 4096))
+        source.seek(max(0, size - 4096))
+        suffix = source.read(min(size, 4096))
+        identity = (stat.st_dev, stat.st_ino)
+        replaced = previous is not None and (
+            previous.identity != identity or size < previous.size
+            or not prefix.startswith(previous.prefix)
+        )
+        if previous is not None and not replaced:
+            if size == previous.size:
+                previous_suffix = suffix
+            else:
+                source.seek(previous.size - len(previous.suffix))
+                previous_suffix = source.read(len(previous.suffix))
+            replaced = previous_suffix != previous.suffix
         end = size
         while end:
             start = max(0, end - 65536)
@@ -107,7 +131,7 @@ def _read_source_snapshot(path: Path) -> _SourceSnapshot:
                 end = start + newline + 1
                 break
             end = start
-        return _SourceSnapshot((stat.st_dev, stat.st_ino), size, stat.st_mtime_ns, prefix, end)
+        return _SourceObservation(_SourceSnapshot(identity, size, prefix, suffix, end), replaced)
 
 
 # Polling intervals (seconds) for the "waiting for projects dir" phase.
@@ -1368,13 +1392,9 @@ class BaseSessionsWatcher:
 
     async def _observe_source(self, path: Path) -> PathDrainTarget:
         async with self._source_lock:
-            snapshot = await asyncio.to_thread(_read_source_snapshot, path)
             previous = self._sources.get(path)
-            if previous is None or (
-                previous.identity != snapshot.identity or snapshot.size < previous.size
-                or (snapshot.size == previous.size and snapshot.mtime_ns != previous.mtime_ns)
-                or not snapshot.prefix.startswith(previous.prefix)
-            ):
+            snapshot, replaced = await asyncio.to_thread(_read_source_snapshot, path, previous)
+            if previous is None or replaced:
                 if previous is not None:
                     self._replaced_paths.add(path)
                 self._invalidate_parsed_path(path)

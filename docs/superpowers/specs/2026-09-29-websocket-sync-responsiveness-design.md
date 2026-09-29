@@ -357,6 +357,8 @@ Re-read Session state before the next slice.
 Do not implement a private `while has_more` loop that retains `_change_lock` or the writer lease.
 Coalesce repeated events without losing an append that arrives during processing.
 Deletion, truncation, and replacement must follow existing provider handling before another slice is admitted.
+Source observations compare file identity, size, and 4-KiB prefix/suffix samples; mtime alone never establishes replacement.
+Compare the previous suffix at its original byte offset, including after growth, so unchanged history retains its source generation.
 Preserve Codex `defer_session_change`, migration exclusion, and explicit `process_path` behavior.
 An explicit `process_path` waiter captures the finite complete-record backlog present when requested.
 It completes after that source generation's target offset commits; later appends must not extend its target indefinitely.
@@ -433,23 +435,23 @@ Separate write-lock wait, executor wait, and synchronous execution time where bo
 Record handshake duration and unexpected transport termination without logging message contents or emitting every heartbeat.
 These measurements must distinguish a responsive connection from delayed session data.
 
-### Task 10 automated workload evidence (2026-09-29)
+### Automated workload evidence, repeated after whole-change correction (2026-09-29)
 
 The disposable benchmark replays 150,000 message-ID/cost-bearing Claude rows with 1,500,000,000 bytes of text payload.
 The JSONL source occupies 1,534,100,890 bytes. It includes reused tool identifiers, true misses, and concurrent small-session appends.
 The machine runs Linux x86_64, Python 3.13.14 and SQLite 3.53.1, with eight reported CPUs.
-This is the repeated full workload after the Task 10 review corrections. Each cold lookup uses a distinct SQLite connection.
-Focused benchmark tests overlap short parts of the replay; this experiment does not reserve the host's CPUs.
+This repeat includes the whole-change source-observation correction. Each cold lookup uses a distinct SQLite connection.
+No additional test suite runs concurrently; this experiment does not reserve the host's CPUs.
 
 | Measurement | Observed result |
 | --- | --- |
-| Authenticated loopback application pongs | 4,007 samples; p95 58.63 ms; maximum 223.07 ms |
-| Whole backlog replay | 288.14 s |
-| First small-session commit | 0.81 s, after 410 large-session rows |
-| Append 20 rows to the established large session | 54.02 ms |
-| Current facts, distinct new SQLite connections | Hit 3.84 ms; miss 1.89 ms |
-| Current facts, warm connection | Hit 2.16–2.18 ms; miss 0.97–1.00 ms |
-| Outdated fallback | Hit 39.10 ms; miss 4,921.45 ms |
+| Authenticated loopback application pongs | 4,094 samples; p95 56.55 ms; maximum 260.56 ms |
+| Whole backlog replay | 289.85 s |
+| First small-session commit | 0.77 s, after 410 large-session rows |
+| Append 20 rows to the established large session | 66.21 ms |
+| Current facts, distinct new SQLite connections | Hit 3.82 ms; miss 1.91 ms |
+| Current facts, warm connection | Hit 2.21–2.31 ms; miss 0.98–1.10 ms |
+| Outdated fallback | Hit 41.67 ms; miss 5,012.84 ms |
 | VM steps per row, late/early 125-row slices | 1.00000 ratio |
 | VM steps per row, late/early 410-row slices | 1.00016 ratio |
 | Established-prefix appends, 125/500 rows | 34,900 / 139,800 SQLite VM steps |
@@ -506,6 +508,8 @@ Final compute application can still delay business writes while its writer lease
 Python CPU contention, event-loop blocking elsewhere, network stalls, and saturated clients remain possible failure sources.
 Shutdown drains admitted turns but can leave backlog represented only by `has_more` for the next startup.
 Externally rewritten Claude files fail explicitly; the watcher does not destructively rebuild them.
+Source sampling cannot detect arbitrary in-place edits between unchanged prefix and suffix windows, even when mtime changes.
+This follows the append-only source contract; source observation does not hash or rescan complete history for integrity.
 Forced Codex replacement intent is process-local and can be lost if the process exits before replacement succeeds.
 
 The design removes the demonstrated shared-executor coupling and repeated indexed-history scans after reconstruction.
