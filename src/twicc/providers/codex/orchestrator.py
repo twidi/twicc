@@ -519,11 +519,13 @@ class CodexOrchestrator(BaseOrchestrator):
         async def _replay_after_migration(session_id: str, path: Path) -> None:
             # The watcher skipped this session's events while the coordinator
             # rebuilt it; replay the file so appended lines are ingested.
+            await self.search_index_ready.wait()
             await get_watcher().process_path(path)
 
         self._compute_task = self._create_task(
             start_codex_background_compute_task(
                 self._compute_ctx, self.compute_done, on_session_released=_replay_after_migration,
+                on_migration_released=get_watcher().notify_migration_released,
             )
         )
         self._compute_task.add_done_callback(lambda _t: self.compute_done.set())

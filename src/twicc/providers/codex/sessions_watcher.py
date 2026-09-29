@@ -40,6 +40,7 @@ from twicc.providers.db_writer import submit_async_job
 from twicc.providers.sessions_watcher import (
     BaseSessionsWatcher,
     ParsedSessionFile,
+    SessionChangeResult,
     get_session_by_id,
 )
 
@@ -47,7 +48,7 @@ from .canonical import ended_command_process_id
 from .compute import announced_running_process_id, rollout_line_epoch
 from .compute import get_compute as _get_compute
 from .initial_sync import extract_session_meta, is_session_file
-from .migration_gate import is_migrating, request_rebuild
+from .migration_gate import gate_for, is_migrating, request_rebuild
 from .rollout_migration import (
     HistoryMode,
     MarkSessionRebuildJob,
@@ -78,6 +79,7 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         # rewrite check (legacy in DB, paginated on disk) is skipped for
         # them, so a live paginated session costs no extra DB read per event.
         self._paginated_in_db: set[str] = set()
+        self._gate_wakes: dict[str, asyncio.Task] = {}
 
     async def defer_session_change(self, parsed: ParsedSessionFile) -> bool:
         # The coordinator is rewriting this session's history: skip the
@@ -90,10 +92,58 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         parsed: ParsedSessionFile,
         change_type: Change,
         channel_layer,
-    ) -> None:
-        if change_type != Change.deleted and await self._rewrite_detected(parsed, path):
+    ) -> SessionChangeResult:
+        if is_migrating(parsed.session_id):
+            return SessionChangeResult('deferred')
+        # Order: provider callback lock -> session gate -> DB writer lease.
+        # The coordinator never acquires the callback lock while holding a gate.
+        gate = gate_for(parsed.session_id)
+        try:
+            # Free acquisition does not suspend. A queued gate cannot stall
+            # the consumer, even before its future migration owner marks it.
+            async with asyncio.timeout(0):
+                await gate.acquire()
+        except TimeoutError:
+            self._wake_after_gate(parsed.session_id, path, gate)
+            return SessionChangeResult('deferred')
+        try:
+            if is_migrating(parsed.session_id):
+                return SessionChangeResult('deferred')
+            if change_type != Change.deleted and await self._rewrite_detected(parsed, path):
+                self._queue.observe_source(path, object())
+                return SessionChangeResult('deferred')
+            return await super()._process_parsed_session_change(path, parsed, change_type, channel_layer)
+        finally:
+            gate.release()
+
+    def _wake_after_gate(self, session_id: str, path: Path, gate: asyncio.Lock) -> None:
+        if session_id in self._gate_wakes or self._queue.closed:
             return
-        await super()._process_parsed_session_change(path, parsed, change_type, channel_layer)
+        generation = self._queue.source_generation(path)
+        release_token = self._queue.release_token(path)
+
+        async def wake():
+            try:
+                async with gate:
+                    pass
+                # A coordinator outcome or a replacement wins over this older
+                # gate wake. Never turn a failed migration into an implicit retry.
+                if (not self._queue.closed
+                        and generation is self._queue.source_generation(path)
+                        and release_token == self._queue.release_token(path)):
+                    self._enqueue(path, Change.modified)
+            finally:
+                self._gate_wakes.pop(session_id, None)
+
+        task = asyncio.create_task(wake(), name=f'session-gate-wake-{session_id}')
+        self._gate_wakes[session_id] = task
+        self._wake_tasks.add(task)
+        def forget(done):
+            self._wake_tasks.discard(done)
+            if self._gate_wakes.get(session_id) is done:
+                self._gate_wakes.pop(session_id, None)
+
+        task.add_done_callback(forget)
 
     async def _rewrite_detected(self, parsed: ParsedSessionFile, path: Path) -> bool:
         """Whether the rollout was rewritten under TwiCC (not appended to).
@@ -121,7 +171,7 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             size = path.stat().st_size
         except OSError:
             return False
-        rewritten = size < session.last_offset
+        rewritten = size < session.last_offset or path in self._replaced_paths
         if not rewritten and parsed.compute_ready_on_create and session.id not in self._paginated_in_db:
             try:
                 database_mode = await get_db_history_mode(session.id)
@@ -142,6 +192,7 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         future = asyncio.get_running_loop().create_future()
         await submit_async_job(MarkSessionRebuildJob(Provider.CODEX, session.id, future))
         request_rebuild(session.id)
+        self._replaced_paths.discard(path)
         return True
 
     async def parse_session_file(self, path: Path) -> ParsedSessionFile | None:

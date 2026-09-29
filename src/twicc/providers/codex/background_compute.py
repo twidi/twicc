@@ -50,6 +50,7 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from itertools import count
 from pathlib import Path
 from typing import Literal, NamedTuple
 
@@ -72,6 +73,7 @@ from twicc.providers.db_writer import (
     arm_compute_completion,
     submit_async_job,
 )
+from twicc.providers.session_change_queue import MigrationRelease
 from twicc.startup_progress import broadcast_startup_progress
 
 from .agent import get_codex_agent_manager
@@ -117,6 +119,8 @@ _SUMMARY_EVERY_SECONDS = 30.0
 # Called after a session's gate is released, with its rollout path, so the
 # owner (the orchestrator) can replay the file through the watcher.
 SessionReleasedCallback = Callable[[str, Path], Awaitable[None]]
+MigrationReleasedCallback = Callable[[MigrationRelease], None]
+_release_tokens = count(1)
 
 
 class CodexComputeCandidate(NamedTuple):
@@ -201,10 +205,13 @@ class CodexComputeCoordinator:
         ctx: ComputeContext,
         initial_done: asyncio.Event,
         on_session_released: SessionReleasedCallback | None = None,
+        on_migration_released: MigrationReleasedCallback | None = None,
     ) -> None:
         self.ctx = ctx
         self.initial_done = initial_done
         self.on_session_released = on_session_released
+        self.on_migration_released = on_migration_released
+        self._replays: set[asyncio.Task] = set()
         self.runner = CodexMigrationRunner()
         self.applied_queue: asyncio.Queue[ComputeApplied] = asyncio.Queue()
         self.events: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
@@ -403,7 +410,7 @@ class CodexComputeCoordinator:
                     if outcome.failure_reason in ROLLOUT_UNREADABLE_REASONS:
                         return await self._condemn(
                             session_id, phase, error, lease,
-                            reason=f"codex_migration_failed:{outcome.failure_reason}",
+                            reason=f"codex_migration_failed:{outcome.failure_reason}", path=candidate.file_path,
                         )
                     raise RolloutMigrationError(error)
 
@@ -430,30 +437,35 @@ class CodexComputeCoordinator:
                 registered=registered,
             )
         except asyncio.CancelledError:
-            await self.runner.stop()
-            if lease is not None and lease.locked():
-                self._release_lease(session_id, replay=False)
+            try:
+                await self.runner.stop()
+            finally:
+                self._release_lease(session_id, replay=False, outcome='cancelled', fallback_path=candidate.file_path)
             raise
         except _RolloutMissing as error:
-            return await self._condemn(session_id, phase, str(error), lease, reason=UNAVAILABLE_ROLLOUT_MISSING)
+            return await self._condemn(
+                session_id, phase, str(error), lease, reason=UNAVAILABLE_ROLLOUT_MISSING, path=candidate.file_path,
+            )
         except Exception as error:  # noqa: BLE001 - one session failure must not stop the coordinator
-            if lease is not None and lease.locked():
-                self._release_lease(session_id, replay=False)
+            self._release_lease(
+                session_id, replay=False, outcome='failed', error=str(error), fallback_path=candidate.file_path,
+            )
             return FailedCandidate(session_id, phase, str(error))
 
     async def _condemn(
         self, session_id: str, phase: str, error: str, lease: asyncio.Lock | None, *, reason: str,
+        path: Path | None = None,
     ) -> FailedCandidate:
         """Fail a candidate whose rollout cannot be shown, recording why for the UI."""
 
         try:
             await self._submit_job(MarkSessionUnavailableJob, session_id, reason)
         except asyncio.CancelledError:
+            self._release_lease(session_id, replay=False, outcome='cancelled', fallback_path=path)
             raise
         except Exception:
             logger.exception("Could not flag Codex session %s as unavailable", session_id)
-        if lease is not None and lease.locked():
-            self._release_lease(session_id, replay=False)
+        self._release_lease(session_id, replay=False, outcome='failed', error=error, fallback_path=path)
         return FailedCandidate(session_id, phase, error, unavailable_reason=reason)
 
     # ------------------------------------------------------------------
@@ -595,7 +607,11 @@ class CodexComputeCoordinator:
         self._final_summary_pending = False
         self._log_summary(force=True, label="Codex rollout migration: initial pass complete")
 
-    def _release_lease(self, session_id: str, *, replay: bool = True) -> None:
+    def _release_lease(
+        self, session_id: str, *, replay: bool = True,
+        outcome: Literal['ready', 'failed', 'cancelled'] = 'ready', error: str | None = None,
+        fallback_path: Path | None = None,
+    ) -> None:
         """Release a session's gate and migrating flag; replay its file when asked.
 
         ``replay`` schedules the watcher catch-up (through
@@ -603,15 +619,21 @@ class CodexComputeCoordinator:
         the session are ingested. Not needed when nothing was replaced.
         """
 
+        path = self.migration_paths.pop(session_id, None)
         lease = self.migration_leases.pop(session_id, None)
         gate = gate_for(session_id)
-        if gate.locked() and (lease is None or lease is gate):
+        if gate.locked() and (lease is gate or (lease is None and path is not None)):
             gate.release()
         unmark_migrating(session_id)
         self.migrated_history.discard(session_id)
-        path = self.migration_paths.pop(session_id, None)
-        if replay and path is not None and self.on_session_released is not None:
-            asyncio.get_running_loop().create_task(self._replay(session_id, path))
+        if self.on_migration_released is not None:
+            self.on_migration_released(MigrationRelease(
+                session_id, path or fallback_path, outcome, replay, error, next(_release_tokens),
+            ))
+        if outcome == 'ready' and replay and path is not None and self.on_session_released is not None:
+            task = asyncio.get_running_loop().create_task(self._replay(session_id, path))
+            self._replays.add(task)
+            task.add_done_callback(self._replays.discard)
 
     async def _replay(self, session_id: str, path: Path) -> None:
         try:
@@ -627,7 +649,7 @@ class CodexComputeCoordinator:
         self.failed_this_run.add(failure.session_id)
         self.failures[failure.session_id] = failure
         self.deferred.discard(failure.session_id)
-        self._release_lease(failure.session_id, replay=False)
+        self._release_lease(failure.session_id, replay=False, outcome='failed', error=failure.error)
         self._prepared.pop(failure.session_id, None)
         self._record_outcome(failure.session_id, "unavailable" if failure.unavailable_reason else "failed")
         await self._classify_initial(failure.session_id)
@@ -912,8 +934,12 @@ class CodexComputeCoordinator:
                 self._status_pump.cancel()
                 with suppress(Exception, asyncio.CancelledError):
                     await self._status_pump
-            for session_id in list(self.migration_leases):
-                self._release_lease(session_id, replay=False)
+            for session_id in set(self.migration_leases) | set(self.migration_paths):
+                self._release_lease(session_id, replay=False, outcome='cancelled')
+            for task in self._replays:
+                task.cancel()
+            if self._replays:
+                await asyncio.gather(*self._replays, return_exceptions=True)
             await stop_background_task(self.ctx)
             if not self.initial_done.is_set():
                 self.initial_done.set()
@@ -931,7 +957,8 @@ async def start_codex_background_compute_task(
     ctx: ComputeContext,
     initial_done: asyncio.Event,
     on_session_released: SessionReleasedCallback | None = None,
+    on_migration_released: MigrationReleasedCallback | None = None,
 ) -> None:
     """Run the migration-aware Codex coordinator for the provider's lifetime."""
 
-    await CodexComputeCoordinator(ctx, initial_done, on_session_released).run()
+    await CodexComputeCoordinator(ctx, initial_done, on_session_released, on_migration_released).run()
