@@ -180,7 +180,8 @@ def test_generation_from_before_slice_is_not_relabelled_after_delete(tmp_path, m
     asyncio.run(run())
 
 
-def test_replacement_runs_codex_rebuild_before_append_slice(tmp_path, monkeypatch):
+@pytest.mark.parametrize('first_observation', [False, True])
+def test_replacement_runs_codex_rebuild_before_append_slice(tmp_path, monkeypatch, first_observation):
     from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
     from twicc.providers.codex import sessions_watcher as codex_module
     from twicc.providers.sessions_watcher import ParsedSessionFile
@@ -189,14 +190,15 @@ def test_replacement_runs_codex_rebuild_before_append_slice(tmp_path, monkeypatc
         watcher = CodexSessionsWatcher()
         path = tmp_path / 's.jsonl'
         path.write_bytes(b'{"old": 1}\n')
-        await watcher._observe_source(path)
+        if not first_observation:
+            await watcher._observe_source(path)
         replacement = tmp_path / 'replacement'
         replacement.write_bytes(b'{"new": 2}\n')
         replacement.replace(path)
         await watcher._observe_source(path)
         monkeypatch.setattr(module.BaseSessionsWatcher, '_process_parsed_session_change',
                             AsyncMock(side_effect=AssertionError('append ran before replacement handling')))
-        session = SimpleNamespace(id='replaced', last_offset=path.stat().st_size)
+        session = SimpleNamespace(id='replaced', last_offset=300 if first_observation else path.stat().st_size)
         monkeypatch.setattr(codex_module, 'get_session_by_id', AsyncMock(return_value=session))
         jobs = []
         async def submit(job):
@@ -438,7 +440,7 @@ def test_stop_cancels_gate_wake_and_drain_waiter(tmp_path, monkeypatch):
         await watcher._drain_changes()
         with pytest.raises(asyncio.CancelledError):
             await waiter
-        assert not watcher._wake_tasks and not watcher._gate_wakes
+        assert not watcher._wake_tasks and not watcher._gate_wakes and not watcher._gate_wake_targets
         assert gate.locked()
         gate.release()
     asyncio.run(run())
@@ -842,4 +844,99 @@ def test_stop_drains_identification_before_clearing_pending_release(tmp_path, mo
         await waiter
         assert not watcher._pending_source_releases
         assert watcher._consumer_task.done() and watcher._queue.idle
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('outcome, release_during_gate_wait', [
+    (None, False), ('failed', False), ('cancelled', False), ('failed', True), ('cancelled', True),
+])
+def test_gate_wake_tracks_same_session_replacement(tmp_path, monkeypatch, outcome, release_during_gate_wait):
+    from twicc.core.models import SessionType
+    from twicc.providers.codex.migration_gate import gate_for
+    from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
+    from twicc.providers.session_change_queue import MigrationRelease
+
+    async def run():
+        watcher = CodexSessionsWatcher()
+        path = tmp_path / 'busy-replacement.jsonl'
+        path.write_bytes(b'{}\n')
+        parsed = module.ParsedSessionFile('p', 'same-session-gate', SessionType.SESSION, path.name)
+        watcher.parse_session_file = AsyncMock(return_value=parsed)
+        watcher._rewrite_detected = AsyncMock(return_value=False)
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        sliced = []
+        async def process(self, source, *_args):
+            sliced.append(source)
+            return module.SessionChangeResult('drained', watcher._queue.source_generation(source), source.stat().st_size)
+        monkeypatch.setattr(module.BaseSessionsWatcher, '_process_parsed_session_change', process)
+        gate = gate_for(parsed.session_id)
+        await gate.acquire()
+        try:
+            original = await watcher._observe_source(path)
+            watcher._enqueue(path, Change.modified)
+            await watcher._consumer_task
+            assert watcher._gate_wakes and not sliced
+            old_wake = watcher._gate_wakes[parsed.session_id]
+            replacement = tmp_path / 'replacement'
+            replacement.write_bytes(b'{"new":true}\n')
+            replacement.replace(path)
+            target = await watcher._observe_source(path)
+            assert target.source_generation is not original.source_generation
+            waiter = asyncio.create_task(watcher._queue.wait_drained(path, target=target))
+            await asyncio.sleep(0)
+            release = MigrationRelease(parsed.session_id, path, outcome, False, None, 7001)
+            if release_during_gate_wait:
+                wake_after_gate = watcher._wake_after_gate
+                def release_before_wake(*args):
+                    watcher.notify_migration_released(release)
+                    wake_after_gate(*args)
+                monkeypatch.setattr(watcher, '_wake_after_gate', release_before_wake)
+            watcher._enqueue(path, Change.modified)
+            await watcher._consumer_task
+            assert watcher._gate_wakes[parsed.session_id] is old_wake
+            if outcome is not None and not release_during_gate_wait:
+                watcher.notify_migration_released(release)
+            gate.release()
+            await old_wake
+            if watcher._consumer_task is not None:
+                await watcher._consumer_task
+            assert waiter.done(), 'replacement lost its gate wake'
+            if outcome == 'cancelled':
+                with pytest.raises(asyncio.CancelledError):
+                    await waiter
+            else:
+                await waiter
+            assert sliced == ([path] if outcome is None else [])
+        finally:
+            if gate.locked():
+                gate.release()
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+        assert not watcher._gate_wakes and not watcher._wake_tasks and not watcher._gate_wake_targets
+    asyncio.run(run())
+
+
+def test_first_observed_claude_truncation_fails_before_slice(tmp_path, monkeypatch, caplog):
+    from twicc.core.models import SessionType
+    async def run():
+        watcher = ClaudeCodeSessionsWatcher()
+        path = tmp_path / 'first-truncated.jsonl'
+        path.write_bytes(b'{}\n')
+        target = await watcher._observe_source(path)
+        assert path not in watcher._replaced_paths
+        parsed = module.ParsedSessionFile('p', 'first-truncated', SessionType.SESSION, path.name, title='known')
+        monkeypatch.setattr(module, 'get_session_by_id', AsyncMock(return_value=SimpleNamespace(last_offset=300)))
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        watcher.sync_and_broadcast = AsyncMock(return_value=module.SessionChangeResult('drained', target.source_generation, 300))
+        result = await watcher._process_parsed_session_change(path, parsed, Change.modified, None)
+        assert result.disposition == 'failed'
+        watcher.sync_and_broadcast.assert_not_awaited()
+        assert path in watcher._replaced_paths
+        assert watcher._queue.source_generation(path) is not target.source_generation
+        assert 'without a provider rebuild handler' in caplog.text
+        # Later growth cannot make the obsolete checkpoint valid again.
+        path.write_bytes(b'{}\n' * 101)
+        result = await watcher._process_parsed_session_change(path, parsed, Change.modified, None)
+        assert result.disposition == 'failed'
+        watcher.sync_and_broadcast.assert_not_awaited()
     asyncio.run(run())

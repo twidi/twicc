@@ -1110,11 +1110,18 @@ class BaseSessionsWatcher:
     ) -> SessionChangeResult:
         """Run one complete callback after a provider identifies its session."""
 
-        if change_type != Change.deleted and path in self._replaced_paths:
+        if change_type != Change.deleted:
             session = await get_session_by_id(parsed.session_id)
             if session is not None and session.last_offset:
-                logger.error('Session source replaced without a provider rebuild handler: %s', path)
-                return SessionChangeResult('failed')
+                size = (await asyncio.to_thread(path.stat)).st_size
+                if path in self._replaced_paths or size < session.last_offset:
+                    if path not in self._replaced_paths:
+                        # Initial sync can precede the watcher's first snapshot.
+                        # Its committed checkpoint still detects truncation.
+                        self._replaced_paths.add(path)
+                        self._queue.observe_source(path, object())
+                    logger.error('Session source replaced without a provider rebuild handler: %s', path)
+                    return SessionChangeResult('failed')
             self._replaced_paths.discard(path)
 
         # Out-of-band initial-title fetch runs outside the DB write lock but

@@ -26,6 +26,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 import orjson
 from asgiref.sync import sync_to_async
@@ -59,6 +60,11 @@ from .rollout_migration import (
 logger = logging.getLogger(__name__)
 
 
+class _GateWakeTarget(NamedTuple):
+    source_generation: object
+    release_token: int
+
+
 class CodexSessionsWatcher(BaseSessionsWatcher):
     """File watcher for Codex's ``<codex home>/sessions/`` layout.
 
@@ -80,6 +86,7 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         # them, so a live paginated session costs no extra DB read per event.
         self._paginated_in_db: set[str] = set()
         self._gate_wakes: dict[str, asyncio.Task] = {}
+        self._gate_wake_targets: dict[str, dict[Path, _GateWakeTarget]] = {}
 
     async def defer_session_change(self, parsed: ParsedSessionFile) -> bool:
         # The coordinator is rewriting this session's history: skip the
@@ -98,13 +105,14 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         # Order: provider callback lock -> session gate -> DB writer lease.
         # The coordinator never acquires the callback lock while holding a gate.
         gate = gate_for(parsed.session_id)
+        wake_target = _GateWakeTarget(self._queue.source_generation(path), self._queue.release_token(path))
         try:
             # Free acquisition does not suspend. A queued gate cannot stall
             # the consumer, even before its future migration owner marks it.
             async with asyncio.timeout(0):
                 await gate.acquire()
         except TimeoutError:
-            self._wake_after_gate(parsed.session_id, path, gate)
+            self._wake_after_gate(parsed.session_id, path, gate, wake_target)
             return SessionChangeResult('deferred')
         try:
             if is_migrating(parsed.session_id):
@@ -116,11 +124,19 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         finally:
             gate.release()
 
-    def _wake_after_gate(self, session_id: str, path: Path, gate: asyncio.Lock) -> None:
-        if session_id in self._gate_wakes or self._queue.closed:
+    def _wake_after_gate(
+        self, session_id: str, path: Path, gate: asyncio.Lock, target: _GateWakeTarget,
+    ) -> None:
+        if self._queue.closed:
             return
-        generation = self._queue.source_generation(path)
-        release_token = self._queue.release_token(path)
+        targets = self._gate_wake_targets.setdefault(session_id, {})
+        # Coalesce the task, but retain responsibility for each latest admitted
+        # source. A replacement can defer while the original wake still waits.
+        # The callback captured this before awaiting the gate. A terminal
+        # outcome received during that await must still invalidate its wake.
+        targets[path] = target
+        if session_id in self._gate_wakes:
+            return
 
         async def wake():
             try:
@@ -128,12 +144,14 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
                     pass
                 # A coordinator outcome or a replacement wins over this older
                 # gate wake. Never turn a failed migration into an implicit retry.
-                if (not self._queue.closed
-                        and generation is self._queue.source_generation(path)
-                        and release_token == self._queue.release_token(path)):
-                    self._enqueue(path, Change.modified)
+                for source, (generation, release_token) in targets.items():
+                    if (not self._queue.closed
+                            and generation is self._queue.source_generation(source)
+                            and release_token == self._queue.release_token(source)):
+                        self._enqueue(source, Change.modified)
             finally:
                 self._gate_wakes.pop(session_id, None)
+                self._gate_wake_targets.pop(session_id, None)
 
         task = asyncio.create_task(wake(), name=f'session-gate-wake-{session_id}')
         self._gate_wakes[session_id] = task
@@ -142,6 +160,7 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             self._wake_tasks.discard(done)
             if self._gate_wakes.get(session_id) is done:
                 self._gate_wakes.pop(session_id, None)
+                self._gate_wake_targets.pop(session_id, None)
 
         task.add_done_callback(forget)
 
