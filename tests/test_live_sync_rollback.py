@@ -123,9 +123,35 @@ def live_case(request, transactional_db, tmp_path):
         module.clear_session(session.id)
 
 
+def _relation_rows(session):
+    """Compare every persisted fact/link field except database identity and session FK."""
+    facts = list(SessionHistoryFact.objects.filter(session=session).order_by("line_num", "kind", "key").values(
+        "line_num", "kind", "key", "data",
+    ))
+    links = list(ToolResultLink.objects.filter(session=session).order_by(
+        "tool_use_line_num", "tool_result_line_num", "tool_use_id",
+    ).values(
+        "tool_use_line_num", "tool_result_line_num", "tool_use_id", "tool_name",
+        "tool_result_at", "extra", "error",
+    ))
+    return facts, links
+
+
 @pytest.mark.parametrize("failure_point", ["first_pass", "second_pass", "late_save"])
 def test_live_retry_preserves_diff_facts_links_and_checkpoint(live_case, monkeypatch, failure_point):
     compute, session, path, module = live_case
+    baseline = Session.objects.create(
+        id="successful-baseline", project=session.project, provider=session.provider, file_path=str(path),
+    )
+    if session.provider == Provider.CLAUDE_CODE:
+        module.cache_original_file(baseline.id, "call", "full old file")
+    else:
+        module.cache_original_files(baseline.id, "call", {"/a": "full old file"})
+    type(compute)().sync_session_items_from_file(baseline, path)
+    expected_facts, expected_links = _relation_rows(baseline)
+    assert expected_facts
+    assert len(expected_links) == 1
+
     captured = []
     original_enrich = compute.transform_tool_result_with_cache
     def enrich(*args, **kwargs):
@@ -168,8 +194,9 @@ def test_live_retry_preserves_diff_facts_links_and_checkpoint(live_case, monkeyp
     assert "full old file" in item.content
     if captured:
         assert orjson.loads(item.content) == orjson.loads(captured[0])
-    assert SessionHistoryFact.objects.filter(session=session).exists()
-    assert ToolResultLink.objects.filter(session=session).count() == 1
+    actual_facts, actual_links = _relation_rows(session)
+    assert actual_facts == expected_facts
+    assert actual_links == expected_links
     assert session.last_offset == path.stat().st_size
     assert session.last_line == 2
     assert compute.sync_session_items_from_file(session, path)[0] == []
