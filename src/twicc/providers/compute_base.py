@@ -33,6 +33,7 @@ import os
 import re
 from collections import Counter
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, ClassVar, Literal, NamedTuple
@@ -59,6 +60,7 @@ from twicc.core.models import (
 )
 from twicc.core.session_queries import TOOL_STATE_ANNOTATIONS
 from twicc.git import is_git_root_related, read_head_branch, resolve_git_from_path
+from twicc.providers.enrichment_cache import BorrowedEnrichment, EnrichmentCache
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
 from twicc.providers.history_facts import (
     HistoryFact, HistoryFactContext, HistoryFactKind,
@@ -689,8 +691,11 @@ AGENTS_PROMPT_CACHE: dict[tuple[str, str], str] = {}
 
 def mark_agent_link_done(session_id: str, agent_id: str) -> None:
     """Record that the AgentLink for this subagent has been created."""
-    AGENTS_LINKS_DONE_CACHE.add((session_id, agent_id))
-    uncache_agent_prompt(session_id, agent_id)
+    def publish():
+        AGENTS_LINKS_DONE_CACHE.add((session_id, agent_id))
+        AGENTS_PROMPT_CACHE.pop((session_id, agent_id), None)
+
+    transaction.on_commit(publish)
 
 
 def is_agent_link_done(session_id: str, agent_id: str) -> bool:
@@ -705,12 +710,15 @@ def get_cached_agent_prompt(session_id: str, agent_id: str) -> str | None:
 
 def cache_agent_prompt(session_id: str, agent_id: str, prompt: str) -> None:
     """Store a subagent prompt for later matching against parent tool_uses."""
-    AGENTS_PROMPT_CACHE[(session_id, agent_id)] = prompt
+    def publish():
+        AGENTS_PROMPT_CACHE[(session_id, agent_id)] = prompt
+
+    transaction.on_commit(publish)
 
 
 def uncache_agent_prompt(session_id: str, agent_id: str) -> None:
     """Drop a cached subagent prompt (e.g. after a successful link)."""
-    AGENTS_PROMPT_CACHE.pop((session_id, agent_id), None)
+    transaction.on_commit(lambda: AGENTS_PROMPT_CACHE.pop((session_id, agent_id), None))
 
 
 # =============================================================================
@@ -929,6 +937,59 @@ class BaseSessionCompute:
     """
 
     provider: ClassVar[Provider]
+    live_state_maps: ClassVar[tuple[str, ...]] = ()
+
+    @contextmanager
+    def live_state_transaction(self, session_id: str) -> Iterator[None]:
+        """Own the outer live transaction and restore per-session replay state on failure.
+
+        Only declared provider maps are copied, never compute objects or connections.
+        Some ownership and pending-context evidence cannot be reconstructed from DB
+        facts, so restore the complete per-session values rather than clearing them.
+        """
+        snapshots = {
+            name: copy.deepcopy(getattr(self, name)[session_id])
+            for name in self.live_state_maps if session_id in getattr(self, name)
+        }
+        borrowed: list[tuple[EnrichmentCache, BorrowedEnrichment]] = []
+        previous = getattr(self, "_live_enrichment_borrows", None)
+        if previous is not None:
+            raise RuntimeError("A live state transaction is already active")
+        self._live_enrichment_borrows = borrowed
+        try:
+            # Returning a broadcast result from inside a caller's transaction could
+            # report success before an outer rollback discards all durable evidence.
+            with transaction.atomic(durable=True):
+                yield
+                if transaction.get_rollback():
+                    raise transaction.TransactionManagementError("Live transaction requires rollback")
+                for cache, entry in borrowed:
+                    transaction.on_commit(lambda cache=cache, entry=entry: cache.commit(entry))
+        except BaseException:
+            for name in self.live_state_maps:
+                mapping = getattr(self, name)
+                if name in snapshots:
+                    mapping[session_id] = snapshots[name]
+                else:
+                    mapping.pop(session_id, None)
+            for cache, entry in borrowed:
+                cache.rollback(entry)
+            raise
+        finally:
+            self._live_enrichment_borrows = previous
+
+    def borrow_enrichment[T](
+        self, cache: EnrichmentCache[T], session_id: str, call_id: str, line_num: int,
+    ) -> T | None:
+        """Keep live evidence until commit; preserve standalone transform compatibility."""
+        borrowed = getattr(self, "_live_enrichment_borrows", None)
+        if borrowed is None:
+            return cache.pop((session_id, call_id))
+        entry = cache.borrow((session_id, call_id), source_line=line_num)
+        if entry is None:
+            return None
+        borrowed.append((cache, entry))
+        return entry.value
 
     # ------------------------------------------------------------------
     # Extraction surface — overridden by each provider
@@ -3666,8 +3727,23 @@ class BaseSessionCompute:
     # Watcher orchestration — concrete in later steps
     # ------------------------------------------------------------------
 
-    @transaction.atomic
-    def sync_session_items_from_file(
+    def sync_session_items_from_file(self, session: Session, file_path: Path) -> tuple[
+        list[int], list[int], list[AgentLinkUpdate], list[WorkflowLinkUpdate],
+        list[ToolResultUpdate], list[AgentStoppedUpdate], bool, list[dict],
+        list[dict], list[tuple[str, str]],
+    ]:
+        """Commit one live ingestion transaction, restoring the caller's model on failure."""
+        fields = {field.attname: copy.deepcopy(getattr(session, field.attname))
+                  for field in session._meta.concrete_fields}
+        try:
+            with self.live_state_transaction(session.id):
+                return self._sync_session_items_from_file(session, file_path)
+        except BaseException:
+            for name, value in fields.items():
+                setattr(session, name, value)
+            raise
+
+    def _sync_session_items_from_file(
         self,
         session: Session,
         file_path: Path,

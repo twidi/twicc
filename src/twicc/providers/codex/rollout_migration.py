@@ -356,7 +356,13 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     or only some of the new rows — is repaired by the next start instead of
     being computed as a complete history.
     """
+    from .agent.original_files_cache import clear_session
+    from .compute import get_compute
+
     Session.objects.select_for_update().get(id=job.session_id)
+    # Clear only after deletion commits. A rolled-back replacement keeps retry evidence.
+    transaction.on_commit(lambda: clear_session(job.session_id))
+    transaction.on_commit(lambda: get_compute().end_session_compute(job.session_id))
     ToolResultLink.objects.filter(session_id=job.session_id).delete()
     AgentLink.objects.filter(session_id=job.session_id).delete()
     # Stale run rows would keep their old lines and keep closing runs (rule 4).

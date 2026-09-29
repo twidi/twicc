@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
+from twicc.providers.enrichment_cache import EnrichmentCache
 from twicc.providers.claude_code.agent import original_file_cache
 from twicc.providers.codex.agent import original_files_cache
 
@@ -39,10 +39,13 @@ def test_cache_compound_operation_is_safe_during_concurrent_capture(monkeypatch,
     paused = threading.Event()
     resume = threading.Event()
     inserted = threading.Event()
-    expired = time.monotonic() - module.ENTRY_TTL - 1
-    value = ("old content", expired) if module is original_file_cache else ({"/old": "content"}, expired)
-    cache = _PausedCache({("old", "a"): value, ("old", "b"): value}, paused, resume)
-    monkeypatch.setattr(module, "_cache", cache)
+    shared = EnrichmentCache()
+    value = "old content" if module is original_file_cache else {"/old": "content"}
+    shared.put(("old", "a"), value)
+    shared.put(("old", "b"), value)
+    cache = _PausedCache(shared._entries, paused, resume)
+    monkeypatch.setattr(shared, "_entries", cache)
+    monkeypatch.setattr(module, "_cache", shared)
     errors = []
 
     def run_compound():

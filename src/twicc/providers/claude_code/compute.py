@@ -55,7 +55,7 @@ from twicc.providers.compute_base import (
 )
 from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalEvent
 from twicc.providers.plan_docs import DocEditEvent, extract_shell_write_targets, is_plan_doc_path
-from .agent.original_file_cache import pop_original_file
+from .agent import original_file_cache
 from .agent_runs import (
     SEND_MESSAGE_TOOL,
     carries_task_notification,
@@ -643,6 +643,12 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
     """
 
     provider: ClassVar[Provider] = Provider.CLAUDE_CODE
+
+    live_state_maps = (
+        "_monitor_task_to_tool_use_id",
+        "_session_task_states",
+        "_context_baselines",
+    )
 
     def __init__(self) -> None:
         super().__init__()
@@ -2590,8 +2596,8 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         if not tool_use_id:
             return None
 
-        # Always pop from the cache (consume the entry whether we use it or not).
-        cached = pop_original_file(session_id, tool_use_id)
+        # Consume only after commit, even when the source already has enrichment.
+        cached = self.borrow_enrichment(original_file_cache._cache, session_id, tool_use_id, line_num)
         if cached is None:
             return None
 

@@ -226,7 +226,7 @@ from twicc.providers.compute_base import (
     substitute_insert_screenshot_tags,
 )
 
-from .agent.original_files_cache import pop_original_files
+from .agent import original_files_cache
 from .agent_runs import (
     END_STATUS_COMPLETED,
     END_STATUS_OWNER_TURN_ABORTED,
@@ -2277,6 +2277,20 @@ class CodexSessionCompute(BaseSessionCompute):
     """
 
     provider: ClassVar[Provider] = Provider.CODEX
+
+    live_state_maps = (
+        "_exec_command_maps",
+        "_code_cell_maps",
+        "_code_exec_targets",
+        "_process_owners",
+        "_ended_processes",
+        "_spawn_targets",
+        "_turn_started_lines",
+        "_fork_fields",
+        "_prev_total_tokens",
+        "_plan_prefix_states",
+        "_goal_context_states",
+    )
 
     def __init__(self) -> None:
         super().__init__()
@@ -5377,7 +5391,7 @@ class CodexSessionCompute(BaseSessionCompute):
         # CodexAgent captures pre-patch file contents when it sees a
         # ``FileChangeThreadItem`` arrive on ``item/started`` (the SDK's
         # equivalent of Claude's PreToolUse hook). When the matching
-        # canonical ``FileChange`` item lands here, we pop the captured
+        # canonical ``FileChange`` item lands here, we borrow the captured
         # contents and splice them into the item under
         # ``original_files`` so the frontend can render a full-file diff
         # (``EditContent.vue``-style) instead of only the ``unified_diff``
@@ -5389,8 +5403,8 @@ class CodexSessionCompute(BaseSessionCompute):
         if payload is None or payload.get("type") != "FileChange":
             return None
 
-        # Always pop from the cache (consume the entry whether we use it or not).
-        cached = pop_original_files(session_id, call_id)
+        # Consume only after commit, even when the source already has enrichment.
+        cached = self.borrow_enrichment(original_files_cache._cache, session_id, call_id, line_num)
         if not cached:
             return None
 
