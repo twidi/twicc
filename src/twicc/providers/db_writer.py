@@ -56,6 +56,7 @@ from django.db import transaction
 
 from twicc.core.enums import Provider
 from twicc.logging_context import provider_log_context
+from twicc.providers.compute_executor import run_compute_sync, start_compute_executor, stop_compute_executor
 from twicc.startup_progress import broadcast_startup_progress
 from twicc.workspaces import auto_add_project_to_workspaces
 
@@ -75,10 +76,9 @@ BATCH_ACTIVITY_COUNT = 50
 INITIAL_SYNC_QUEUE_MAXSIZE = 200
 COMPUTE_QUEUE_MAXSIZE = 200
 # A compute result carrying more item writes than this is applied in slices
-# of this size, each in its own ``sync_to_async`` call and transaction, so a
-# giant session (hundreds of thousands of items) cannot hold the shared
-# thread-sensitive executor — and with it every REST view, WebSocket
-# connect and watcher write of the process — for minutes.
+# of this size, each in its own worker call and transaction, so a giant
+# session (hundreds of thousands of items) can share the compute worker
+# with other admitted writes between chunks.
 COMPUTE_APPLY_CHUNK_SIZE = 2000
 
 # "spawn" context — the compute result queue is created here and passed to
@@ -600,6 +600,7 @@ def start_db_writer() -> None:
     if _db_writer_task is not None:
         raise RuntimeError("DB writer already started")
 
+    start_compute_executor()
     _thread_queue = queue.Queue(maxsize=INITIAL_SYNC_QUEUE_MAXSIZE)
     _subprocess_queue = _mp_ctx.Queue(maxsize=COMPUTE_QUEUE_MAXSIZE)
     _async_queue = asyncio.Queue()
@@ -706,6 +707,12 @@ async def stop_db_writer() -> None:
                     exc_info=exc,
                 ),
             )
+        # Every admitted writer has released its lease. The compute worker
+        # can now close its own connections and join without blocking the loop.
+        try:
+            await stop_compute_executor()
+        except asyncio.CancelledError:
+            cancelled = True
     finally:
         # Reset the entire lifecycle bundle once the writer task is done
         # AND in-flight external lock holders have released. Same-process
@@ -1889,7 +1896,7 @@ async def _settle_async_job(job, apply_fn, label: str) -> None:
     """Run a periodic-task job's sync apply, then settle its Future.
 
     ``apply_fn`` is a synchronous function (it runs in ``transaction.atomic``
-    on a worker thread via ``sync_to_async``) that takes the job and returns
+    on the compute worker via ``run_compute_sync``) that takes the job and returns
     the value the caller awaits. Any exception is logged and forwarded to the
     Future as an exception result, so the producer sees a real failure rather
     than a stranded ``await``.
@@ -1904,7 +1911,7 @@ async def _settle_async_job(job, apply_fn, label: str) -> None:
     provider value.
     """
     try:
-        result = await sync_to_async(apply_fn)(job)
+        result = await run_compute_sync(apply_fn, job)
     except Exception as exc:
         logger.error(
             f"Error applying {label} job: {exc}",
@@ -1979,7 +1986,7 @@ async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
 
     Small results are returned untouched (``apply_session_complete`` writes
     their items itself). For large ones every slice runs as its own
-    ``sync_to_async`` call, so other thread-sensitive callers interleave,
+    worker call, so other heavy writers interleave,
     and re-checks the revision guard; the first non-``ok`` outcome stops the
     apply and is returned so the caller reports it exactly as
     ``apply_session_complete`` would have.
@@ -1994,16 +2001,17 @@ async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
     session_id = msg['session_id']
     observed_last_offset = msg.get('observed_last_offset')
     item_fields = msg.get('item_fields') or []
-    apply_chunk = sync_to_async(BaseSessionCompute.apply_session_items_chunk)
     for start in range(0, len(item_updates), COMPUTE_APPLY_CHUNK_SIZE):
-        outcome = await apply_chunk(
+        outcome = await run_compute_sync(
+            BaseSessionCompute.apply_session_items_chunk,
             session_id, observed_last_offset, item_fields,
             item_updates[start:start + COMPUTE_APPLY_CHUNK_SIZE], [],
         )
         if outcome != "ok":
             return msg, outcome
     for start in range(0, len(content_overrides), COMPUTE_APPLY_CHUNK_SIZE):
-        outcome = await apply_chunk(
+        outcome = await run_compute_sync(
+            BaseSessionCompute.apply_session_items_chunk,
             session_id, observed_last_offset, [], [],
             content_overrides[start:start + COMPUTE_APPLY_CHUNK_SIZE],
         )
@@ -2074,7 +2082,7 @@ async def _process_compute_message(msg: dict) -> None:
         if chunk_outcome != "ok":
             result = ComputeApplyResult(chunk_outcome)
         else:
-            result = await sync_to_async(BaseSessionCompute.apply_session_complete)(msg)
+            result = await run_compute_sync(BaseSessionCompute.apply_session_complete, msg)
     except Exception as e:
         logger.exception("Error applying session_complete")
         state.failed_count += 1
@@ -2296,8 +2304,12 @@ async def _broadcast_project_updated(project_id: str) -> None:
         logger.error(f"Error broadcasting project_updated for {project_id}: {e}")
 
 
-@sync_to_async
-def _flush_pending_activities(provider: Provider, pending_activity_days: dict[str, set]) -> None:
+async def _flush_pending_activities(provider: Provider, pending_activity_days: dict[str, set]) -> None:
+    """Run the activity transaction without occupying Channels' shared worker."""
+    await run_compute_sync(_flush_pending_activities_sync, provider, pending_activity_days)
+
+
+def _flush_pending_activities_sync(provider: Provider, pending_activity_days: dict[str, set]) -> None:
     """Flush accumulated activity recalculations for all projects."""
     from twicc.core.models import PeriodicActivity
 
@@ -2336,7 +2348,7 @@ async def _process_thread_message(msg) -> None:
 
     try:
         if isinstance(msg, CreateSessionPayload):
-            project, created, adopted = await sync_to_async(_apply_create_session_payload)(msg)
+            project, created, adopted = await run_compute_sync(_apply_create_session_payload, msg)
             if project is not None:
                 # Post-commit side effects, kept out of transaction.atomic so
                 # a project is never announced before it commits. Workspace
@@ -2360,11 +2372,11 @@ async def _process_thread_message(msg) -> None:
                 # counted separately, but still surfaced in the run summary.
                 _initial_sync_orphan_skips[msg.provider] += 1
         elif isinstance(msg, UpdateSessionPayload):
-            await sync_to_async(_apply_update_session_payload)(msg)
+            await run_compute_sync(_apply_update_session_payload, msg)
         elif isinstance(msg, MarkSessionsStalePayload):
-            await sync_to_async(_apply_mark_sessions_stale_payload)(msg)
+            await run_compute_sync(_apply_mark_sessions_stale_payload, msg)
         elif isinstance(msg, DeleteSessionsPayload):
-            deleted_ids = await sync_to_async(_apply_delete_sessions_payload)(msg)
+            deleted_ids = await run_compute_sync(_apply_delete_sessions_payload, msg)
             if deleted_ids:
                 from twicc import search
 
@@ -2373,11 +2385,11 @@ async def _process_thread_message(msg) -> None:
                         await asyncio.to_thread(search.delete_session_documents, session_id)
                     await asyncio.to_thread(search.commit)
         elif isinstance(msg, UpdateProjectMetadataPayload):
-            await sync_to_async(_apply_update_project_metadata_payload)(msg)
+            await run_compute_sync(_apply_update_project_metadata_payload, msg)
         elif isinstance(msg, ResolveProjectGitRootsPayload):
-            await sync_to_async(_apply_resolve_git_roots_payload)(msg)
+            await run_compute_sync(_apply_resolve_git_roots_payload, msg)
         elif isinstance(msg, UpsertWorkflowPayload):
-            await sync_to_async(_apply_upsert_workflow_payload)(msg)
+            await run_compute_sync(_apply_upsert_workflow_payload, msg)
         else:
             logger.error(
                 f"Unexpected initial-sync message type: {type(msg).__name__} => {msg!r:.300}"
@@ -2679,7 +2691,7 @@ def _apply_upsert_workflow_payload(payload: UpsertWorkflowPayload) -> None:
 # Periodic-task job handlers (commands, usage, model retirement, pricing)
 # =============================================================================
 #
-# Each handler runs synchronously on a worker thread (via ``sync_to_async`` in
+# Each handler runs synchronously on the compute worker (via ``run_compute_sync`` in
 # :func:`_settle_async_job`) inside its own ``transaction.atomic``, like
 # every other DB writer write. The producer side prepared everything that does
 # not touch DB (HTTP fetches, filesystem scans, parsing); only the actual

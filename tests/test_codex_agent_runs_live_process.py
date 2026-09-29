@@ -60,6 +60,9 @@ OTHER = "live-process-other"
 NESTED = "live-process-nested"
 
 
+pytestmark = pytest.mark.usefixtures("compute_executor_started")
+
+
 def t(seconds: float) -> datetime:
     return datetime(2026, 9, 27, 10, tzinfo=UTC) + timedelta(seconds=seconds)
 

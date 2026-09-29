@@ -925,8 +925,8 @@ class CodexHelpers(BaseProviderHelpers):
             await settle_async_job(job, _apply_clear_snapshot_anchors_job, "Codex snapshot anchor cleanup")
             return True
         if isinstance(job, ReplaceCodexHistoryJob):
-            # Sliced: several short transactions on the shared thread-sensitive
-            # executor rather than one long one (see REPLACE_HISTORY_CHUNK_SIZE).
+            # Sliced: several short transactions on the compute worker rather
+            # than one long one (see REPLACE_HISTORY_CHUNK_SIZE).
             try:
                 count = await apply_replace_codex_history_job_in_slices(job)
             except Exception as exc:

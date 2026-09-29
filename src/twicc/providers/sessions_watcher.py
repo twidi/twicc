@@ -49,6 +49,7 @@ from twicc.projects import (
     register_project,
     update_project_metadata as _update_project_metadata_sync,
 )
+from twicc.providers.compute_executor import run_compute_sync
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from twicc.providers.subagent_roots import resolve_flat_parent_id
@@ -58,6 +59,12 @@ if TYPE_CHECKING:
     from twicc.providers.compute_base import AgentStoppedUpdate, BaseSessionCompute, ToolResultUpdate
 
 logger = logging.getLogger(__name__)
+
+
+def _sync_live_session_items(compute: BaseSessionCompute, session_id: str, path: Path):
+    """Load the ORM row and apply one live batch on the compute worker."""
+    session = Session.objects.get(id=session_id)
+    return compute.sync_session_items_from_file(session, path)
 
 
 # Polling intervals (seconds) for the "waiting for projects dir" phase.
@@ -741,9 +748,8 @@ class BaseSessionsWatcher:
             new_line_nums, modified_line_nums, agent_link_updates, workflow_link_updates, tool_result_updates,
             agent_stopped_updates, found_compact_summary, agent_interaction_updates, agent_run_state_updates,
             agents_resumed,
-        ) = await sync_to_async(
-            compute.sync_session_items_from_file
-        )(session, path)
+        ) = await run_compute_sync(_sync_live_session_items, compute, session.id, path)
+        session = await refresh_session(session)
         title_changed = session.title != old_title
 
         # Live-only signal: a freshly-ingested COMPACT_SUMMARY line means a

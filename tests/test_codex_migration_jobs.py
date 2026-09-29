@@ -40,7 +40,7 @@ from twicc.providers.codex.rollout_migration import (
 )
 from twicc.providers.compute_base import BaseSessionCompute
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("compute_executor_started")]
 
 
 @pytest.fixture

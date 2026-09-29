@@ -48,6 +48,9 @@ from tests.test_claude_agent_runs import (
 PROJECT = "ui-stop-project"
 
 
+pytestmark = pytest.mark.usefixtures("compute_executor_started")
+
+
 @pytest.fixture(autouse=True)
 def db_write_lock(monkeypatch):
     """A running DB writer's lock state: a real lock, a stop event never set."""

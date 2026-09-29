@@ -9,6 +9,7 @@ each test starts from a clean slate.
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -546,6 +547,42 @@ def test_lease_invalidation_is_defense_in_depth():
         "sub:acquired",
         "sub:after-release",
     ]
+
+
+def test_cancelled_write_keeps_lease_until_thread_finishes():
+    started = threading.Event()
+    release = threading.Event()
+    order: list[str] = []
+
+    def slow_write():
+        order.append("first:enter")
+        started.set()
+        assert release.wait(5)
+        order.append("first:exit")
+
+    async def scenario():
+        db_writer.start_compute_executor()
+        first = asyncio.create_task(run_under_db_write_lock(
+            lambda: db_writer.run_compute_sync(slow_write)
+        ))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            first.cancel()
+            await asyncio.sleep(0)
+            second = asyncio.create_task(run_under_db_write_lock(
+                lambda: _append_then("second:enter", order)
+            ))
+            await asyncio.sleep(0)
+            assert order == ["first:enter"]
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await asyncio.wait_for(second, 2)
+        await db_writer.stop_compute_executor()
+
+    asyncio.run(scenario())
+    assert order == ["first:enter", "first:exit", "second:enter"]
 
 
 # ---------------------------------------------------------------------------

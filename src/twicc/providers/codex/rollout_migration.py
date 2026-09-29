@@ -339,9 +339,8 @@ def _apply_clear_snapshot_anchors_job(job: ClearSnapshotAnchorsJob) -> int:
 
 
 # Rows inserted per transaction by the history replacement. Each slice is
-# its own ``sync_to_async`` call, so a 500 MB rollout does not hold the shared
-# thread-sensitive executor (and every REST view, WebSocket connect and
-# watcher write behind it) for the whole rebuild.
+# its own compute-worker call, so a 500 MB rollout does not monopolize
+# the worker for the whole rebuild.
 REPLACE_HISTORY_CHUNK_SIZE = 2000
 
 
@@ -400,15 +399,16 @@ def _apply_replace_codex_history_job(job: ReplaceCodexHistoryJob) -> int:
 
 
 async def apply_replace_codex_history_job_in_slices(job: ReplaceCodexHistoryJob) -> int:
-    """The DB writer's form: one ``sync_to_async`` call per slice."""
-    from asgiref.sync import sync_to_async
+    """The DB writer's form: one compute-worker call per slice."""
+    from twicc.providers.compute_executor import run_compute_sync
 
-    await sync_to_async(_begin_replace_codex_history)(job)
+    await run_compute_sync(_begin_replace_codex_history, job)
     for start in range(0, len(job.items), REPLACE_HISTORY_CHUNK_SIZE):
-        await sync_to_async(_insert_replace_codex_history_chunk)(
+        await run_compute_sync(
+            _insert_replace_codex_history_chunk,
             job.session_id, job.items[start:start + REPLACE_HISTORY_CHUNK_SIZE],
         )
-    return await sync_to_async(_finish_replace_codex_history)(job)
+    return await run_compute_sync(_finish_replace_codex_history, job)
 
 
 def _apply_mark_session_unavailable_job(job: MarkSessionUnavailableJob) -> int:

@@ -5,11 +5,13 @@ The PreToolUse hook reads file contents before the tool modifies them.
 The watcher injects cached contents into tool_result items that lack originalFile.
 This gives the frontend full-file diffs even when the SDK omits originalFile.
 
-Thread safety: all access is from the same asyncio event loop (single process).
+Thread safety: the agent writes on the event loop; live compute pops on its
+database worker. A lock protects compound cleanup and concurrent writes.
 """
 
 import asyncio
 import logging
+import threading
 import time
 
 logger = logging.getLogger(__name__)
@@ -25,11 +27,13 @@ ENTRY_TTL = 300  # 5 minutes
 
 # Cache: (session_id, tool_use_id) → (file_content, timestamp)
 _cache: dict[tuple[str, str], tuple[str, float]] = {}
+_cache_lock = threading.Lock()
 
 
 def cache_original_file(session_id: str, tool_use_id: str, content: str) -> None:
     """Store file content captured before a tool execution."""
-    _cache[(session_id, tool_use_id)] = (content, time.monotonic())
+    with _cache_lock:
+        _cache[(session_id, tool_use_id)] = (content, time.monotonic())
 
 
 def pop_original_file(session_id: str, tool_use_id: str) -> str | None:
@@ -37,7 +41,8 @@ def pop_original_file(session_id: str, tool_use_id: str) -> str | None:
 
     Returns the file content if found, None otherwise.
     """
-    entry = _cache.pop((session_id, tool_use_id), None)
+    with _cache_lock:
+        entry = _cache.pop((session_id, tool_use_id), None)
     if entry is None:
         return None
     content, ts = entry
@@ -49,12 +54,13 @@ def pop_original_file(session_id: str, tool_use_id: str) -> str | None:
 
 def cleanup_expired() -> None:
     """Remove all expired entries."""
-    if not _cache:
-        return
-    now = time.monotonic()
-    expired = [key for key, (_, ts) in _cache.items() if now - ts > ENTRY_TTL]
-    for key in expired:
-        del _cache[key]
+    with _cache_lock:
+        if not _cache:
+            return
+        now = time.monotonic()
+        expired = [key for key, (_, ts) in _cache.items() if now - ts > ENTRY_TTL]
+        for key in expired:
+            del _cache[key]
     if expired:
         logger.debug("original_file_cache: cleaned up %d expired entries", len(expired))
 

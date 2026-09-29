@@ -14,12 +14,13 @@ The value is a ``{abs_path: content}`` mapping because a single
 ``apply_patch`` can touch multiple files — one cache entry per call,
 not per file.
 
-Thread safety: all access is from the same asyncio event loop (single
-process), matching ``claude_code/agent/original_file_cache.py``.
+Thread safety: the agent writes on the event loop; live compute pops on its
+database worker. A lock protects compound cleanup and concurrent writes.
 """
 
 import asyncio
 import logging
+import threading
 import time
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ ENTRY_TTL = 300  # 5 minutes
 
 # Cache: (session_id, call_id) → ({abs_path: content}, timestamp)
 _cache: dict[tuple[str, str], tuple[dict[str, str], float]] = {}
+_cache_lock = threading.Lock()
 
 
 def cache_original_files(
@@ -53,7 +55,8 @@ def cache_original_files(
     """
     if not files:
         return
-    _cache[(session_id, call_id)] = (files, time.monotonic())
+    with _cache_lock:
+        _cache[(session_id, call_id)] = (files, time.monotonic())
 
 
 def pop_original_files(
@@ -65,7 +68,8 @@ def pop_original_files(
     ``None`` otherwise. Always consumes the entry whether it's used or
     not (so a stale entry never lingers past its first lookup).
     """
-    entry = _cache.pop((session_id, call_id), None)
+    with _cache_lock:
+        entry = _cache.pop((session_id, call_id), None)
     if entry is None:
         return None
     files, ts = entry
@@ -79,13 +83,14 @@ def clear_session(session_id: str) -> None:
 
     Called from ``CodexAgent.interrupt_or_kill`` so an interrupted turn
     doesn't leave its in-flight captures sitting in memory until the TTL
-    expires. The session id is the second part of the key tuple, hence
+    expires. The session id is the first part of the key tuple, hence
     the linear scan — there are at most a handful of in-flight calls per
     session, so the cost is negligible.
     """
-    keys = [k for k in _cache if k[0] == session_id]
-    for k in keys:
-        del _cache[k]
+    with _cache_lock:
+        keys = [k for k in _cache if k[0] == session_id]
+        for k in keys:
+            del _cache[k]
     if keys:
         logger.debug(
             "original_files_cache: cleared %d entries for session %s",
@@ -95,12 +100,13 @@ def clear_session(session_id: str) -> None:
 
 def cleanup_expired() -> None:
     """Remove all expired entries."""
-    if not _cache:
-        return
-    now = time.monotonic()
-    expired = [key for key, (_, ts) in _cache.items() if now - ts > ENTRY_TTL]
-    for key in expired:
-        del _cache[key]
+    with _cache_lock:
+        if not _cache:
+            return
+        now = time.monotonic()
+        expired = [key for key, (_, ts) in _cache.items() if now - ts > ENTRY_TTL]
+        for key in expired:
+            del _cache[key]
     if expired:
         logger.debug(
             "original_files_cache: cleaned up %d expired entries", len(expired),

@@ -79,7 +79,7 @@ from tests.test_claude_agent_runs import (
 )
 from tests.test_codex_agent_runs_live import LiveReplay
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("compute_executor_started")]
 
 PROJECT = "stop-step-project"
 

@@ -11,6 +11,7 @@ from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
 
 def _run_compute_message(monkeypatch, outcome: str):
     async def scenario():
+        db_writer.start_compute_executor()
         applied_queue = asyncio.Queue()
         run_id, _ = db_writer.arm_compute_completion(
             Provider.CODEX,
@@ -39,6 +40,7 @@ def _run_compute_message(monkeypatch, outcome: str):
         finally:
             db_writer._compute_states.pop(run_id, None)
             db_writer._compute_done_events.pop(run_id, None)
+            await db_writer.stop_compute_executor()
 
     return asyncio.run(scenario())
 
@@ -52,6 +54,7 @@ def test_db_writer_emits_non_applied_compute_outcomes(monkeypatch, outcome):
 
 def test_db_writer_emits_apply_exception(monkeypatch):
     async def scenario():
+        db_writer.start_compute_executor()
         applied_queue = asyncio.Queue()
         run_id, _ = db_writer.arm_compute_completion(
             Provider.CODEX,
@@ -75,6 +78,7 @@ def test_db_writer_emits_apply_exception(monkeypatch):
         finally:
             db_writer._compute_states.pop(run_id, None)
             db_writer._compute_done_events.pop(run_id, None)
+            await db_writer.stop_compute_executor()
 
     signal = asyncio.run(scenario())
 
