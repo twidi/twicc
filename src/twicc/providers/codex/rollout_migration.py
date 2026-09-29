@@ -18,6 +18,7 @@ from twicc.core.models import (
     AgentRunEnd,
     AgentRunEndSource,
     Session,
+    SessionHistoryFact,
     SessionItem,
     Share,
     ToolResultLink,
@@ -361,9 +362,10 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     # Stale run rows would keep their old lines and keep closing runs (rule 4).
     AgentInteraction.objects.filter(session_id=job.session_id).delete()
     AgentRunEnd.objects.filter(session_id=job.session_id, source=AgentRunEndSource.TRANSCRIPT).delete()
+    SessionHistoryFact.objects.filter(session_id=job.session_id).delete()
     SessionItem.objects.filter(session_id=job.session_id).delete()
     Session.objects.filter(id=job.session_id).update(
-        last_offset=0, last_line=0, tasks={}, search_version=None,
+        last_offset=0, last_line=0, tasks={}, search_version=None, compute_version=None,
     )
 
 

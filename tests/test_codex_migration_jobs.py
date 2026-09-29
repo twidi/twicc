@@ -181,7 +181,6 @@ def _seed_links(session):
 
 def test_replace_history_resets_structure_but_keeps_compute_stale(session):
     _seed_links(session)
-    old_compute_version = session.compute_version
     # An earlier attempt may have condemned the session; a rebuilt history
     # makes it showable again.
     Session.objects.filter(id=session.id).update(unavailable_reason="rollout_missing", stale=True)
@@ -208,7 +207,7 @@ def test_replace_history_resets_structure_but_keeps_compute_stale(session):
     assert (session.last_offset, session.last_line, session.mtime) == (555, 2, 99.5)
     assert session.tasks == {}
     assert session.search_version is None
-    assert session.compute_version == old_compute_version
+    assert session.compute_version is None
     assert session.unavailable_reason is None
     assert session.stale is False
 
@@ -388,6 +387,7 @@ def test_final_compute_apply_remaps_snapshot_and_invalidates_search(session):
             {"id": second.id, "timestamp": anchor.isoformat()},
         ],
         "item_fields": ["timestamp"],
+        "history_facts": [],
         "session_fields": {"compute_version": 43},
     }
 

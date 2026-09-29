@@ -5,8 +5,10 @@ import asyncio
 import pytest
 
 from twicc.core.enums import Provider
+from twicc.core.models import HistoryFactKind, Project, Session, SessionHistoryFact
 from twicc.providers import db_writer
 from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
+from twicc.providers.helpers import get_provider_helpers
 
 
 def _run_compute_message(monkeypatch, outcome: str):
@@ -110,3 +112,44 @@ def test_db_writer_emits_worker_error(monkeypatch):
     signal = asyncio.run(scenario())
 
     assert signal == db_writer.ComputeApplied("session-3", "failed", "worker failed")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_invalid_final_facts_emit_failure_without_publishing_version():
+    project = Project.objects.create(id="compute-signal-facts-project")
+    session = Session.objects.create(
+        id="compute-signal-facts-session", project=project, provider=Provider.CODEX,
+        file_path="history.jsonl", last_offset=10,
+    )
+
+    async def scenario():
+        db_writer.start_compute_executor()
+        applied_queue = asyncio.Queue()
+        run_id, _ = db_writer.arm_compute_completion(
+            Provider.CODEX, display_session_ids=set(), total_display=0, applied_queue=applied_queue,
+        )
+        try:
+            await db_writer._process_compute_message({
+                "type": "session_complete", "provider": Provider.CODEX.value,
+                "run_id": run_id, "session_id": session.id, "observed_last_offset": 10,
+                "history_facts": [{
+                    "line_num": 1, "kind": HistoryFactKind.TOOL_CALL, "key": "", "data": {},
+                }],
+                "session_fields": {
+                    "compute_version": get_provider_helpers(Provider.CODEX).current_compute_version,
+                },
+            })
+            return applied_queue.get_nowait()
+        finally:
+            db_writer._compute_states.pop(run_id, None)
+            db_writer._compute_done_events.pop(run_id, None)
+            await db_writer.stop_compute_executor()
+
+    signal = asyncio.run(scenario())
+
+    session.refresh_from_db()
+    assert signal.session_id == session.id
+    assert signal.outcome == "failed"
+    assert "key must be a nonempty string" in signal.error
+    assert session.compute_version is None
+    assert not SessionHistoryFact.objects.filter(session=session).exists()

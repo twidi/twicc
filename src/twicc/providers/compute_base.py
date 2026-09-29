@@ -60,7 +60,7 @@ from twicc.core.models import (
 from twicc.core.session_queries import TOOL_STATE_ANNOTATIONS
 from twicc.git import is_git_root_related, read_head_branch, resolve_git_from_path
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
-from twicc.providers.history_facts import HistoryFact, HistoryFactContext, append_history_facts
+from twicc.providers.history_facts import HistoryFact, HistoryFactContext, append_history_facts, replace_history_facts
 from twicc.providers.plan_docs import (
     FOLDED_SOURCES,
     DocEditEvent,
@@ -3357,6 +3357,8 @@ class BaseSessionCompute:
                 outcome, session_id, observed_last_offset,
             )
             return ComputeApplyResult(outcome)
+        if 'history_facts' not in msg:
+            raise ValueError("session_complete is missing history_facts")
 
         # 1. Apply item updates (only items that changed). The DB writer
         # pre-applies large batches in slices (``apply_session_items_chunk``)
@@ -3503,6 +3505,10 @@ class BaseSessionCompute:
             )
         if run_ends_to_delete := msg.get('agent_run_ends_to_delete'):
             AgentRunEnd.objects.filter(id__in=run_ends_to_delete).delete()
+
+        # Publish the complete fact set only in the final transaction. Item
+        # pre-apply chunks do not advance the compute version.
+        replace_history_facts(session_id, [HistoryFact(**fact) for fact in msg['history_facts']])
 
         # 5. Update session fields (always includes compute_version)
         session_fields = msg.get('session_fields', {})
