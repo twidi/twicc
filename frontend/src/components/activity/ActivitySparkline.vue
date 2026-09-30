@@ -13,6 +13,12 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    /** Reveal the curve left to right on mount (page headers; a card's sparkline reveals
+     *  with its card's entrance instead, docs/plans/2026-09-30-home-motion-design.md §4) */
+    reveal: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 const SVG_HEIGHT = 30
@@ -45,7 +51,7 @@ const polylinePoints = computed(() => {
 </script>
 
 <template>
-    <svg v-if="data.length" :width="svgWidth" aria-hidden="true" :height="SVG_HEIGHT" class="activity-sparkline">
+    <svg v-if="data.length" :width="svgWidth" aria-hidden="true" :height="SVG_HEIGHT" class="activity-sparkline" :class="{ 'activity-sparkline--reveal': reveal }">
         <defs>
             <linearGradient :id="gradientId" x1="0" x2="0" y1="1" y2="0">
                 <stop offset="0%" stop-color="var(--sparkline-project-gradient-color-1)"></stop>
@@ -80,4 +86,26 @@ const polylinePoints = computed(() => {
 .activity-sparkline {
     display: block;
 }
+
+/* Reveal (step 7b): with its home card's entrance (.home-card-entering on the card, outside
+   this component: a plain descendant selector, Vue scopes only the last compound), or on
+   mount with the reveal prop. The keyframes stay here: scoped keyframes are renamed. */
+.home-card-entering .activity-sparkline,
+.activity-sparkline.activity-sparkline--reveal {
+    animation: activity-sparkline-reveal 800ms var(--motion-ease-out) backwards;
+    animation-delay: calc(var(--home-card-index, 0) * 60ms);
+}
+@keyframes activity-sparkline-reveal {
+    from { clip-path: inset(0 100% 0 0); }
+    to { clip-path: inset(0 0 0 0); }
+}
+/* Reduced, not none: a fade, same delay. After the base rule (same specificity). */
+@media (prefers-reduced-motion: reduce) {
+    .home-card-entering .activity-sparkline,
+    .activity-sparkline.activity-sparkline--reveal {
+        animation: activity-sparkline-fade 300ms ease-in-out backwards;
+        animation-delay: calc(var(--home-card-index, 0) * 60ms);
+    }
+}
+@keyframes activity-sparkline-fade { from { opacity: 0; } }
 </style>

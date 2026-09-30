@@ -428,6 +428,8 @@ test('8. invariants: individual transforms, scaled by --motion-amount, hover ins
         ['../components/message/MessageInput.vue', (s) => s.includes('.send-button')],
         ['../components/app/SettingsPopover.vue', (s) => s.includes('#settings-trigger')],
         ['../components/session/detail/items/TodoContent.vue', (s) => s.includes('todo-item-icon')],
+        ['../components/workspace/WorkspaceCard.vue', (s) => s.includes('.workspace-card')],
+        ['../components/project/ProjectCard.vue', (s) => s.includes('.project-card')],
     ]
     for (const [file, pick] of changed) {
         const tree = componentTree(file)

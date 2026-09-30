@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useWorkspacesStore } from '../stores/workspaces'
 import { useStartupPolling } from '../composables/useStartupPolling'
+import { provideHomeCardCascade } from '../composables/useHomeCardCascade'
 import ProjectList from '../components/project/ProjectList.vue'
 import WorkspaceList from '../components/workspace/WorkspaceList.vue'
 import FetchErrorPanel from '../components/ui/FetchErrorPanel.vue'
@@ -20,6 +21,9 @@ import { ARTIFACT_ICON } from '../utils/artifactBookmark'
 const router = useRouter()
 const store = useDataStore()
 const workspacesStore = useWorkspacesStore()
+
+// Home card cascade (step 7b): the workspace and project cards enter top to bottom.
+provideHomeCardCascade()
 
 // Poll home data during startup so sparklines and project stats update
 // as sessions are indexed by background compute.
@@ -109,7 +113,7 @@ onBeforeUnmount(() => {
             <BrandLogo :size="36" animated />
             <h1>Welcome to TwiCC</h1>
             <span id="home-global-sparkline" class="global-sparkline">
-                <ActivitySparkline :data="globalWeeklyActivity" />
+                <ActivitySparkline reveal :data="globalWeeklyActivity" />
             </span>
             <AppTooltip for="home-global-sparkline">Overall activity (message turns per week)</AppTooltip>
             <div class="home-header-actions">

@@ -286,6 +286,7 @@ function handleUnarchive() {
             <div class="detail-sparkline-row">
                 <span :id="`detail-sparkline-${projectId}`" class="detail-sparkline">
                     <ActivitySparkline
+                        reveal
                         :id-suffix="`${projectId}-detail`"
                         :data="weeklyActivity"
                     />

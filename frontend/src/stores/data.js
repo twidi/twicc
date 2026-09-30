@@ -2218,7 +2218,14 @@ export const useDataStore = defineStore('data', {
          */
         async loadProjects({ isInitialLoading = false } = {}) {
             const changedIds = new Set()
-            this.localState.projectsList.loading = true
+            // Same rule as loadHomeData: the flag drives the home page spinner, which
+            // unmounts every card. Only raise it when no project is shown yet — the
+            // reconciliation of every WebSocket connect (the first one included) would
+            // otherwise flash "Loading projects..." and replay the card cascade.
+            const isInitialLoad = Object.keys(this.projects).length === 0
+            if (isInitialLoad) {
+                this.localState.projectsList.loading = true
+            }
             try {
                 const res = await apiFetch('/api/projects/')
                 if (!res.ok) {
@@ -2256,7 +2263,9 @@ export const useDataStore = defineStore('data', {
                 }
                 throw error  // Re-throw for reconciliation retry logic
             } finally {
-                this.localState.projectsList.loading = false
+                if (isInitialLoad) {
+                    this.localState.projectsList.loading = false
+                }
             }
         },
         /**

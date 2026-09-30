@@ -8,7 +8,8 @@
  * When the workspace has no visible projects (not activable), the card is
  * shown in a disabled state with reduced opacity and no interaction.
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { useHomeCardEntrance } from '../../composables/useHomeCardCascade'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { useWorkspacesStore } from '../../stores/workspaces'
@@ -34,6 +35,10 @@ const emit = defineEmits(['select', 'menu-select'])
 const dataStore = useDataStore()
 const settingsStore = useSettingsStore()
 const workspacesStore = useWorkspacesStore()
+
+// Home card cascade (step 7b): the card enters when the home shows it.
+const cardRef = ref(null)
+useHomeCardEntrance(cardRef)
 
 const visibleProjectIds = computed(() =>
     workspacesStore.getVisibleProjectIds(props.workspace.id)
@@ -107,8 +112,10 @@ function handleMenuSelect(event) {
 
 <template>
     <wa-card
+        ref="cardRef"
         class="workspace-card"
         :class="{ disabled: !isActivable }"
+        :style="{ '--card-glow-color': workspace.color || null }"
         appearance="outlined"
         @click="handleSelect"
     >
@@ -191,25 +198,41 @@ function handleMenuSelect(event) {
 <style scoped>
 .workspace-card {
     cursor: pointer;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    transition:
+        translate var(--motion-dur-2) var(--motion-ease-spring),
+        box-shadow var(--motion-dur-2) var(--motion-ease),
+        border-color var(--motion-dur-2) var(--motion-ease);
     &::part(body) {
         position: relative;
     }
 }
 
-.workspace-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--depth-2);
+/* While the card enters (home cascade, step 7b), its animation owns translate: a hover
+   transition on it would make the card snap. */
+.workspace-card.home-card-entering {
+    transition:
+        box-shadow var(--motion-dur-2) var(--motion-ease),
+        border-color var(--motion-dur-2) var(--motion-ease);
+}
+
+/* Lift and glow in the workspace colour (accent when none). */
+@media (hover: hover) {
+    .workspace-card:hover {
+        translate: 0 calc(-0.125rem * var(--motion-amount));
+        border-color: color-mix(in oklab, var(--card-glow-color, var(--wa-color-brand-60)) 55%, transparent);
+        box-shadow: var(--depth-2), 0 0.5rem 1.75rem -0.75rem color-mix(in oklab, var(--card-glow-color, var(--wa-color-brand-60)) 70%, transparent);
+    }
+
+    .workspace-card.disabled:hover {
+        translate: none;
+        border-color: var(--wa-color-surface-border);
+        box-shadow: var(--wa-shadow-s);
+    }
 }
 
 .workspace-card.disabled {
     opacity: 0.5;
     cursor: not-allowed;
-}
-
-.workspace-card.disabled:hover {
-    transform: none;
-    box-shadow: none;
 }
 
 .workspace-info {

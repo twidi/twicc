@@ -9,7 +9,9 @@
  * Provides a `title-prefix` slot for injecting extra content before the
  * project badge (used by ProjectTreeNode for the tree chevron).
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { useHomeCardEntrance } from '../../composables/useHomeCardCascade'
+import { useProjectMark } from '../../composables/useProjectMark'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { formatDate } from '../../utils/date'
@@ -34,6 +36,13 @@ const emit = defineEmits(['select', 'menu-select'])
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
+
+// Home card cascade (step 7b): the card enters when the home shows it.
+const cardRef = ref(null)
+useHomeCardEntrance(cardRef)
+
+// Hover glow colour: the project's dot colour (worktree → main-repo fallback).
+const { dotColor } = useProjectMark(computed(() => props.project.id))
 
 // Settings
 const showCosts = computed(() => settingsStore.areCostsShown)
@@ -66,7 +75,9 @@ function handleMenuSelect(event) {
 
 <template>
     <wa-card
+        ref="cardRef"
         class="project-card"
+        :style="{ '--card-glow-color': dotColor || null }"
         appearance="outlined"
         @click="handleSelect"
     >
@@ -141,15 +152,30 @@ function handleMenuSelect(event) {
 <style scoped>
 .project-card {
     cursor: pointer;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    transition:
+        translate var(--motion-dur-2) var(--motion-ease-spring),
+        box-shadow var(--motion-dur-2) var(--motion-ease),
+        border-color var(--motion-dur-2) var(--motion-ease);
     &::part(body) {
         position: relative;
     }
 }
 
-.project-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--depth-2);
+/* While the card enters (home cascade, step 7b), its animation owns translate: a hover
+   transition on it would make the card snap. */
+.project-card.home-card-entering {
+    transition:
+        box-shadow var(--motion-dur-2) var(--motion-ease),
+        border-color var(--motion-dur-2) var(--motion-ease);
+}
+
+/* Lift and glow in the project's dot colour (accent when none). */
+@media (hover: hover) {
+    .project-card:hover {
+        translate: 0 calc(-0.125rem * var(--motion-amount));
+        border-color: color-mix(in oklab, var(--card-glow-color, var(--wa-color-brand-60)) 55%, transparent);
+        box-shadow: var(--depth-2), 0 0.5rem 1.75rem -0.75rem color-mix(in oklab, var(--card-glow-color, var(--wa-color-brand-60)) 70%, transparent);
+    }
 }
 
 .project-info {
