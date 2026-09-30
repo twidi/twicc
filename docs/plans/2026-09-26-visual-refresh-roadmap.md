@@ -16,7 +16,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
 | 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c done** (list cascade, theme reveal, tab crossfade + overlay slide): spec `b181801d`, code `024f8532` (§6i) |
 | 6 | Accent glow + live states | **6a done** (accent glow): spec `0f1c5979` (§16–§17 amendments in the code commits), code `655c65a9` + artifacts-list parity `a2020d6d` (§6j); **6a-bis done** (gliding open-row fill + edge-only smooth reveal): spec and code `7c8b2529` (§6k); **6b done** (live states): spec and code `b5f625a5`, browser-review amendments (spec §14) `02a59eaa` (§6l) |
-| 7 | Secondary screens | To specify, split in **7a–7f** (see §6m); order 7a → 7f |
+| 7 | Secondary screens | Split in **7a–7f** (see §6m); order 7a → 7f. **7a done** (stats motion): spec and code `f6d68b71` (§6n) |
 
 **No merge into `main` and no pull request until the whole redesign (steps 1–7) is done.**
 We keep iterating on branch `enhanced-ui`.
@@ -710,6 +710,39 @@ Decisions:
   for the browser review (the user has not enabled it so far).
 - The question widget's gradient border is done (step 6b).
 
+## 6n. Step 7a — project stats motion (done)
+
+Spec: `docs/plans/2026-09-30-stats-motion-design.md` (reviewed PASS in 4 rounds). Code
+`f6d68b71` (implemented and code-reviewed by sub-agents, 54 mutants: every pinned-area
+mutant killed after one test addition; the `AnimatedNumber` runtime has no component
+harness).
+
+### 6n.1 What it does
+
+- `components/ui/AnimatedNumber.vue` + `utils/countUp.js`: the overview numbers count up
+  (1s ease-out cubic) whenever the Stats tab shows, and count old → new (600ms) on a data
+  change; a vertical text gradient toward the accent on them. Reduced motion: value at
+  once.
+- Heatmap (`ContributionGraph.vue`): cells fade in as a left-to-right wave (registered
+  `--heat-week-delay` in `motion.css` + `sibling-index()`); always horizontal (the vertical
+  mode below 600px was removed, user decision).
+- Graph (`ContributionSparklines.vue` + `utils/sparklineArea.js`): curves reveal left to
+  right (`clip-path` wipe, fade under reduced motion), a halo on every line, a gradient
+  area under each Separate curve (Combined: lines only).
+- The header sparkline's "draw in" is left to 7b (same component as the home cards).
+
+### 6n.2 Lessons (do not regress)
+
+- One trigger for CSS and JS effects: a JS effect that must replay on every display change
+  starts on the `animationstart` of a short CSS fade on its element (the fade also hides the
+  first frame). No visibility observer needed.
+- An SVG element positioned by its `transform` attribute cannot be scaled in CSS: a CSS
+  `transform` replaces the attribute, `scale` composes around the origin. Animate opacity.
+- A `sibling-index()` value must be computed on an ancestor through a registered
+  `@property` (an unregistered custom property is substituted where it is used).
+- `clip-path: inset()` does not interpolate with `none`: write both keyframes.
+- In probe HTML, quote attribute values: `height=5/>` puts the slash in the value.
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -939,4 +972,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b, 896 with step 7a).
