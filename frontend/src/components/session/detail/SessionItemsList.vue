@@ -2422,6 +2422,13 @@ defineExpose({
     min-height: 0;
     overflow: hidden;
     position: relative;
+    /* The maximized pending request card's corners follow the host card's clip: in a
+       panel card, under a tab bar or a header, the list reaches its bottom corners only. */
+    --pending-maximized-radius: 0 0 var(--panel-inner-radius) var(--panel-inner-radius);
+}
+/* The ephemeral session's list is the card itself: all four corners. */
+.session-items-list.panel-card {
+    --pending-maximized-radius: var(--panel-inner-radius);
 }
 
 /* Drop zone visual feedback */

@@ -329,6 +329,26 @@ wa-divider {
     display: none;
 }
 
+/* Not minimized: an inset card with a gradient accent border and a soft accent glow
+   (live states design §8.1). The minimized bar keeps its plain look. */
+.pending-request-form:not(.minimized) {
+    margin: var(--wa-space-xs);
+    border: 1px solid transparent;
+    border-radius: var(--wa-border-radius-l);
+    background:
+        linear-gradient(var(--wa-color-surface-default), var(--wa-color-surface-default)) padding-box,
+        linear-gradient(120deg, var(--glow-accent), var(--glow-accent-shifted), var(--glow-accent)) border-box;
+    box-shadow: 0 0 1rem -0.5rem color-mix(in oklab, var(--glow-accent) 45%, transparent);
+}
+/* Maximized: edge to edge (a margin would show the transcript around it), no glow (the
+   list's overflow clips it). The corners follow the host card's clip
+   (SessionItemsList.vue). After the rule above: same specificity, source order decides. */
+.pending-request-form.maximized {
+    margin: 0;
+    border-radius: var(--pending-maximized-radius, 0);
+    box-shadow: none;
+}
+
 .pending-request-header {
     display: flex;
     align-items: center;
@@ -360,7 +380,7 @@ wa-divider {
 }
 
 .question-icon {
-    color: var(--wa-color-primary-60);
+    color: var(--wa-color-brand-60);
 }
 
 </style>

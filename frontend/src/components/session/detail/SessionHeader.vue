@@ -8,6 +8,7 @@ import { PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES, DISPLAY_MODE 
 import { getProviderHelpers, getProviderLabel, getProviderIcon } from '../../../providers'
 import ProviderIcon from '../../ui/ProviderIcon.vue'
 import { getAgentDisplay } from '../../../utils/agentLabel'
+import { isContextRingLive } from '../../../utils/liveStates'
 import { stopSubagent, interruptSession } from '../../../composables/useWebSocket'
 import { stopSessionProcess, hardKillSessionProcess } from '../../../composables/useStopSessionProcess'
 import ProjectBadge from '../../project/ProjectBadge.vue'
@@ -191,6 +192,9 @@ const formattedModel = computed(() => {
 
 // Process state for current session
 const processState = computed(() => store.getProcessState(props.sessionId))
+
+/** The context ring pulses while the agent works, not while it waits for the user. */
+const contextRingLive = computed(() => isContextRingLive(processState.value, store.getPendingRequests(props.sessionId)))
 
 /** Whether the process has active cron jobs. */
 const hasActiveCrons = computed(() => processState.value?.active_crons?.length > 0)
@@ -719,6 +723,7 @@ defineExpose({
                 <wa-progress-ring
                     v-if="contextUsagePercentage != null"
                     class="context-usage-ring compact-context-ring"
+                    :class="{ 'is-live': contextRingLive }"
                     :value="Math.min(contextUsagePercentage, 100)"
                     :style="{
                         '--indicator-color': contextUsageColor,
@@ -818,6 +823,7 @@ defineExpose({
                     <wa-progress-ring
                         :id="`session-header-${sessionId}-context`"
                         class="context-usage-ring"
+                        :class="{ 'is-live': contextRingLive }"
                         :value="Math.min(contextUsagePercentage, 100)"
                         :style="{
                             '--indicator-color': contextUsageColor,

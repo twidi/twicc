@@ -146,3 +146,39 @@
     background-image: linear-gradient(90deg, var(--wa-form-control-activated-color), oklch(from var(--wa-form-control-activated-color) calc(l + 0.08) c calc(h + 30)));
     box-shadow: 0 0 0.75rem -0.125rem color-mix(in oklab, var(--wa-form-control-activated-color) 70%, transparent);
 }
+
+/* Live states (step 6b, docs/plans/2026-09-30-live-states-design.md). */
+
+/* The comet's angle: registered, so it interpolates in a keyframe. */
+@property --glow-live-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+}
+@keyframes glow-live-spin {
+    to { --glow-live-angle: 360deg; }
+}
+@keyframes glow-live-shimmer {
+    from { background-position: 100% 0; }
+    /* One tile (250% size: offset travel = 2.5 × the width): a seamless loop, one pass.
+       The mock's -150% travelled 1.5 tiles and cut the highlight at each restart. */
+    to { background-position: -66.667% 0; }
+}
+/* Movement × --motion-amount: under reduced motion only the opacity pulses. */
+@keyframes glow-live-dot {
+    0%, 60%, 100% { translate: none; opacity: 0.35; }
+    30% { translate: 0 calc(-0.25rem * var(--motion-amount)); opacity: 1; }
+}
+/* The context ring's soft pulse (the mock's ring-pulse): shallower than
+   motion-status-pulse (0.45), as roadmap §8.9 asks for a soft pulse. */
+@keyframes glow-live-ring-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.65; }
+}
+
+/* The context ring pulses while its session or agent works (not while it waits for the
+   user). Opacity only: safe on the indicator (nothing painted outside the arc), and kept
+   under reduced motion. */
+:where(wa-progress-ring.is-live:is(.context-usage-ring, .onode-context-ring))::part(indicator) {
+    animation: glow-live-ring-pulse 2.4s ease-in-out infinite;
+}

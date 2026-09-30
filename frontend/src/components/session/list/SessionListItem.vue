@@ -786,6 +786,8 @@ function handleMenuSelect(event) {
     font-size: var(--wa-font-size-xs);
     position: relative;
     left: -1.5rem;
+    /* The unread eye breathes (opacity only: kept under reduced motion). */
+    animation: motion-status-pulse 2.4s ease-in-out infinite;
 }
 
 /* Compact mode: inline process indicator pushed to the right */
@@ -801,6 +803,8 @@ function handleMenuSelect(event) {
     color: var(--wa-color-warning-60);
     font-size: var(--wa-font-size-s);
     flex-shrink: 0;
+    /* Both eyes (standalone and process line) breathe, as the compact one. */
+    animation: motion-status-pulse 2.4s ease-in-out infinite;
 }
 
 /* Project + unread row wrapper (non-compact mode) */

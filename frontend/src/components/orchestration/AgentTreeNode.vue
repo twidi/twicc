@@ -176,6 +176,7 @@ const expanded = ref(true)
                     Started {{ startedLabel }}<template v-if="finishedLabel"> · Finished {{ finishedLabel }}</template><template v-if="durationLabel"> · <wa-icon auto-width name="clock" variant="regular"></wa-icon> {{ durationLabel }}</template><template v-if="turnsLabel"> · <wa-icon auto-width name="comment" variant="regular"></wa-icon> {{ turnsLabel }}</template><template v-if="contextUsagePercentage != null"><wa-progress-ring
                         :id="`atree-context-${node.id}`"
                         class="onode-context-ring"
+                        :class="{ 'is-live': isRunning }"
                         :value="Math.min(contextUsagePercentage, 100)"
                         :style="{
                             '--indicator-color': contextUsageColor,

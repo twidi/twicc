@@ -528,7 +528,7 @@ wa-input.auto-focused:focus-within::part(base) {
 
 .other-toggle-link {
     font-size: var(--wa-font-size-s);
-    color: var(--wa-color-primary-60);
+    color: var(--wa-color-brand-60);
     cursor: pointer;
     text-decoration: none;
 }

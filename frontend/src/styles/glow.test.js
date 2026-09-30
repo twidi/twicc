@@ -32,7 +32,8 @@ function splitTopLevel(text) {
 }
 
 /** Every rule of a stylesheet, nesting-aware, in source order:
- *  { head, selectors, decls, order, ancestors } (ancestors = the enclosing heads). */
+ *  { head, selectors, decls, list, order, ancestors } (list = the [property, value] pairs in
+ *  source order; ancestors = the enclosing heads). */
 function rulesOf(css, ancestors = [], out = []) {
     let i = 0
     let own = ''
@@ -50,27 +51,37 @@ function rulesOf(css, ancestors = [], out = []) {
             else if (css[j] === '}') depth--
             j++
         }
-        const entry = { head, selectors: head.startsWith('@') ? [] : splitTopLevel(head), ancestors, decls: {}, order: out.length }
+        const entry = { head, selectors: head.startsWith('@') ? [] : splitTopLevel(head), ancestors, decls: {}, list: [], order: out.length }
         out.push(entry)
-        entry.decls = declarationsOf(rulesOf(css.slice(open + 1, j - 1), [...ancestors, head], out))
+        entry.list = declarationList(rulesOf(css.slice(open + 1, j - 1), [...ancestors, head], out))
+        entry.decls = Object.fromEntries(entry.list)
         i = j
     }
     return own + css.slice(i)
 }
 
-function declarationsOf(body) {
-    const out = {}
+/** The declarations of a rule body as [property, value] pairs, in source order. */
+function declarationList(body) {
+    const out = []
     for (const part of body.split(';')) {
         const match = part.match(/^\s*(-?-?[\w-]+)\s*:\s*([\s\S]+?)\s*$/)
-        if (match) out[match[1]] = collapse(match[2])
+        if (match) out.push([match[1], collapse(match[2])])
     }
     return out
 }
 
-function parseCss(css) {
+/** Every rule, at-rules included (@property, @keyframes, @media). */
+function parseAll(css) {
     const out = []
     rulesOf(stripComments(css), [], out)
-    return out.filter((r) => !r.head.startsWith('@'))
+    return out
+}
+
+const parseCss = (css) => parseAll(css).filter((r) => !r.head.startsWith('@'))
+
+/** A rule pinned whole: its ordered declaration list equals the spec block's exactly. */
+function assertPinned(r, specBody, label = r.head) {
+    assert.deepEqual(r.list, declarationList(stripComments(specBody)), `${label}: declaration list`)
 }
 
 const styleOf = (sfc) => [...sfc.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
@@ -234,7 +245,10 @@ test('7. context ring: a real colour at every percentage, glow on the base part'
     }
     const ring = rule(glow, [':where(wa-progress-ring:is(.context-usage-ring, .onode-context-ring))::part(base)'], topLevel)
     assert.match(ring.decls.filter, /^drop-shadow\(.*var\(--indicator-color\)/)
-    assert.ok(!glowStripped.includes('::part(indicator)'), 'never on the indicator (the SVG clips it)')
+    // No drop-shadow on the indicator: the SVG clips it (live states §7.2: an opacity pulse is safe).
+    for (const r of glow.filter((x) => x.selectors.some((s) => s.includes('::part(indicator)')))) {
+        assert.equal(r.decls.filter, undefined, `no filter on the indicator: ${r.head}`)
+    }
     const light = rule(glow, [':root', '.wa-invert'], topLevel)
     assert.match(light.decls['--glow-context-ring'], /^color-mix\(in oklab, var\(--wa-color-brand-border-loud\), /)
     const dark = rule(glow, ['.wa-dark'], topLevel)
@@ -352,4 +366,249 @@ test('14. gliding inks: segmented control and settings nav', () => {
     assert.equal(settings.filter((r) => topLevel(r) && r.selectors.includes('.settings-nav-item:hover')).length, 0, 'no plain top-level hover rule')
     const mobile = rule(settings, ['.settings-nav-item:hover'], (r) => r.ancestors.length === 1 && r.ancestors[0] === '@media (width < 640px)')
     assert.deepEqual(mobile.decls, { background: 'var(--glass-item-hover)' })
+})
+
+// Live states (visual refresh step 6b, docs/plans/2026-09-30-live-states-design.md §10).
+// New rules are pinned whole (ordered declaration list equal to the spec block); existing
+// rules are asserted on the declaration they gain.
+
+const inKeyframes = (name) => (r) => r.ancestors.length === 1 && r.ancestors[0] === `@keyframes ${name}`
+
+/** The frames of a top-level @keyframes block, pinned whole: [[selectors, spec body], ...] in order. */
+function assertKeyframes(name, frames) {
+    const blocks = parseAll(glowCss).filter((r) => r.head === `@keyframes ${name}` && r.ancestors.length === 0)
+    assert.equal(blocks.length, 1, `one top-level @keyframes ${name}`)
+    const actual = glow.filter(inKeyframes(name))
+    assert.deepEqual(actual.map((r) => r.selectors), frames.map(([selectors]) => selectors), `${name}: frames`)
+    frames.forEach(([selectors, body], k) => assertPinned(actual[k], body, `${name} ${selectors.join(', ')}`))
+}
+
+test('15. live states: the registered comet angle and the live keyframes (§4)', () => {
+    const property = parseAll(glowCss).filter((r) => r.head === '@property --glow-live-angle')
+    assert.equal(property.length, 1, 'one @property --glow-live-angle')
+    assert.equal(property[0].ancestors.length, 0, 'at the top level')
+    assertPinned(property[0], "syntax: '<angle>'; inherits: false; initial-value: 0deg;")
+
+    assertKeyframes('glow-live-spin', [[['to'], '--glow-live-angle: 360deg;']])
+    assertKeyframes('glow-live-shimmer', [
+        [['from'], 'background-position: 100% 0;'],
+        [['to'], 'background-position: -66.667% 0;'],
+    ])
+    assertKeyframes('glow-live-dot', [
+        [['0%', '60%', '100%'], 'translate: none; opacity: 0.35;'],
+        [['30%'], 'translate: 0 calc(-0.25rem * var(--motion-amount)); opacity: 1;'],
+    ])
+    assertKeyframes('glow-live-ring-pulse', [
+        [['0%', '100%'], 'opacity: 1;'],
+        [['50%'], 'opacity: 0.65;'],
+    ])
+})
+
+const WAM = '../components/session/detail/items/WorkingAssistantMessage.vue'
+
+// §5.2 and §5.3, as written in the spec (comments are stripped before the comparison).
+const PILL_RULES = [
+    ['.working-assistant-message', `
+        display: flex;
+        width: fit-content;
+        align-items: center;
+        max-width: 100%;
+        gap: var(--wa-space-s);
+        padding: var(--wa-space-3xs) var(--wa-space-m);
+        font-style: italic;
+        font-size: var(--wa-font-size-m);
+        border-radius: 1em;
+        border: 1px solid transparent;
+        --live-pill-fill: var(--assistant-card-bg-color, var(--wa-color-surface-default));
+        --live-pill-rim: color-mix(in oklab, var(--glow-accent) 22%, transparent);
+        background:
+            linear-gradient(var(--live-pill-fill), var(--live-pill-fill)) padding-box,
+            conic-gradient(from var(--glow-live-angle), transparent 0 55%, var(--glow-accent) 78%,
+                var(--glow-accent-shifted) 90%, transparent 100%) border-box,
+            linear-gradient(var(--live-pill-rim), var(--live-pill-rim)) border-box;
+        box-shadow: 0 0 1.5rem -0.5rem color-mix(in oklab, var(--glow-accent) 45%, transparent);
+        animation: glow-live-spin 2.8s linear infinite;`],
+    ['.working-assistant-message__phrase', `
+        background: linear-gradient(90deg, var(--wa-color-text-quiet) 0%, var(--wa-color-text-quiet) 38%,
+            var(--wa-color-text-normal) 50%, var(--wa-color-text-quiet) 62%, var(--wa-color-text-quiet) 100%);
+        background-size: 250% 100%;
+        background-clip: text;
+        color: transparent;
+        animation: glow-live-shimmer 1.47s linear infinite;
+        min-width: 0;
+        overflow-wrap: anywhere;`],
+    ['.working-assistant-message__phrase code', 'color: var(--wa-color-text-normal);'],
+    ['.working-assistant-message__dots', `
+        display: inline-flex;
+        gap: 0.1875rem;
+        margin-inline-start: 0.125rem;
+        color: var(--wa-color-text-quiet);`],
+    ['.working-assistant-message__dots i', `
+        display: block;
+        width: 0.25rem;
+        height: 0.25rem;
+        border-radius: 50%;
+        background: currentColor;
+        animation: glow-live-dot 1.2s var(--motion-ease-out) infinite;
+        animation-fill-mode: backwards;`],
+    ['.working-assistant-message__dots i:nth-child(2)', 'animation-delay: 0.15s;'],
+    ['.working-assistant-message__dots i:nth-child(3)', 'animation-delay: 0.3s;'],
+]
+const CALM_BACKGROUND = `background:
+        linear-gradient(var(--live-pill-fill), var(--live-pill-fill)) padding-box,
+        linear-gradient(var(--live-pill-rim), var(--live-pill-rim)) border-box;`
+const CALM_PHRASE = `
+    animation: none;
+    background: none;
+    color: var(--wa-color-text-quiet);`
+const CALM_RULES = [
+    ['.working-assistant-message--calm', `animation: none; ${CALM_BACKGROUND} box-shadow: none;`],
+    ['.working-assistant-message--calm .working-assistant-message__phrase', CALM_PHRASE],
+    ['.working-assistant-message--calm .working-assistant-message__dots i', 'animation: none; opacity: 1;'],
+]
+const REDUCED_RULES = [
+    ['.working-assistant-message', `animation: none; ${CALM_BACKGROUND}`],
+    ['.working-assistant-message__phrase', CALM_PHRASE],
+]
+
+/** The inner HTML of the element opened at `start` (a <span>), matching nested spans. */
+function spanInner(html, start) {
+    const open = html.indexOf('>', start) + 1
+    let depth = 1
+    const tags = /<span\b|<\/span>/g
+    tags.lastIndex = open
+    for (let m = tags.exec(html); m; m = tags.exec(html)) {
+        depth += m[0] === '</span>' ? -1 : 1
+        if (depth === 0) return html.slice(open, m.index)
+    }
+    assert.fail('unclosed span')
+}
+
+test('16. the working pill: every rule pinned whole, in the stated order (§5.2, §5.3)', () => {
+    const rules = parseCss(styleOf(read(WAM)))
+    const base = PILL_RULES.map(([selector, body]) => {
+        const r = rule(rules, [selector], topLevel)
+        assertPinned(r, body, selector)
+        return r
+    })
+    const calm = CALM_RULES.map(([selector, body]) => {
+        const r = rule(rules, [selector], topLevel)
+        assertPinned(r, body, selector)
+        return r
+    })
+    const reduced = REDUCED_RULES.map(([selector, body]) => {
+        const r = rule(rules, [selector], inReduced)
+        assertPinned(r, body, `reduced motion ${selector}`)
+        return r
+    })
+    const lastBase = Math.max(...base.map((r) => r.order))
+    for (const r of calm) assert.ok(r.order > lastBase, `${r.head}: after the base rules`)
+    const firstReduced = Math.min(...reduced.map((r) => r.order))
+    for (const r of rules.filter((x) => !inReduced(x))) assert.ok(r.order < firstReduced, `${r.head}: before the reduced-motion block`)
+    assert.equal(rules.filter(inReduced).length, 2, 'the reduced-motion block holds the root and phrase rules only')
+})
+
+test('17. the working pill template: phrase spans, dots, calm class (§5.1)', () => {
+    const template = collapse(templateOf(read(WAM)))
+    const DOTS = '<span class="working-assistant-message__dots" aria-hidden="true"><i></i><i></i><i></i></span>'
+    const phrases = [...template.matchAll(/<span\b[^>]*class="working-assistant-message__phrase"[^>]*>/g)]
+    assert.equal(phrases.length, 2, 'two phrase spans')
+    assert.match(phrases[0][0], /\sv-if="plainPhrase !== null"/)
+    assert.match(phrases[1][0], /\sv-else[\s>]/)
+    for (const m of phrases) {
+        const inner = spanInner(template, m.index)
+        assert.ok(inner.endsWith(DOTS), `the dots end the phrase: ${m[0]}`)
+        assert.equal(inner.split(DOTS).length, 2, 'one dots span per phrase')
+        // No whitespace before the dots, in either branch: it renders a space before them.
+        assert.ok(!inner.endsWith(` ${DOTS}`), `no space before the dots: ${m[0]}`)
+    }
+    // No whitespace between the text and the dots: it would render a space before them.
+    assert.ok(spanInner(template, phrases[0].index).endsWith(`}}${DOTS}`), 'plain branch: }}<span class="working-assistant-message__dots"')
+    assert.ok(template.includes(`:class="{ 'working-assistant-message--calm': isAwaiting }"`), 'calm class bound to isAwaiting')
+    assert.ok(!template.includes('text-content'), 'no text-content class')
+    assert.ok(!template.includes('...'), 'no literal "..."')
+})
+
+test('18. the breathing unread eye: five rules, six sites (§6)', () => {
+    const PULSE = 'motion-status-pulse 2.4s ease-in-out infinite'
+    for (const [file, selector] of [
+        ['../components/ui/AggregatedProcessIndicator.vue', '.unread-indicator'],
+        ['../components/session/list/SessionListItem.vue', '.unread-indicator'],
+        ['../components/session/list/SessionListItem.vue', '.compact-unread-indicator'],
+        ['../components/app/CommandPalette.vue', '.palette-unread-icon'],
+        ['../components/app/SessionSwitcher.vue', '.switcher-unread'],
+    ]) {
+        assert.equal(rule(parseCss(styleOf(read(file))), [selector], topLevel).decls.animation, PULSE, `${file} ${selector}`)
+    }
+})
+
+test('19. the gap above the pill: on the card, after a text block (§5.4)', () => {
+    const sfc = read('../components/session/detail/SessionItem.vue')
+    const unscoped = [...sfc.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+    const SELECTOR = `.virtual-scroller-item:has( > .session-item[data-kind="assistant_message"] > .text-content:last-child)
+        + .virtual-scroller-item > .session-item[data-kind="assistant_message"]:has(> .working-assistant-message:nth-child(2))`
+    const r = rule(parseCss(unscoped), [SELECTOR], (x) => x.ancestors.length === 1 && x.ancestors[0] === '.session-items')
+    assert.ok(r.head.endsWith(':has(> .working-assistant-message:nth-child(2))'))
+    assertPinned(r, '--assistant-card-top-spacing: var(--wa-space-xl);')
+})
+
+test('20. the pulsing context ring: rule, keyframes, bindings (§7)', () => {
+    const ring = rule(glow, [':where(wa-progress-ring.is-live:is(.context-usage-ring, .onode-context-ring))::part(indicator)'], topLevel)
+    assertPinned(ring, 'animation: glow-live-ring-pulse 2.4s ease-in-out infinite;')
+    assert.deepEqual(rule(glow, ['50%'], inKeyframes('glow-live-ring-pulse')).decls, { opacity: '0.65' })
+
+    const ringTags = (file) => [...collapse(templateOf(read(file))).matchAll(/<wa-progress-ring\b[^>]*>/g)].map((m) => m[0])
+    const header = read('../components/session/detail/SessionHeader.vue')
+    assert.ok(collapse(header).includes('isContextRingLive(processState.value, store.getPendingRequests(props.sessionId))'), 'SessionHeader: the helper')
+    const headerRings = ringTags('../components/session/detail/SessionHeader.vue')
+    assert.equal(headerRings.length, 2, 'SessionHeader: two rings')
+    for (const tag of headerRings) assert.ok(tag.includes(`:class="{ 'is-live': contextRingLive }"`), tag)
+    for (const [file, binding] of [
+        ['../components/orchestration/OrchestrationNode.vue', `:class="{ 'is-live': nodeData?.process?.state === 'assistant_turn' }"`],
+        ['../components/orchestration/AgentTreeNode.vue', `:class="{ 'is-live': isRunning }"`],
+    ]) {
+        const tags = ringTags(file)
+        assert.equal(tags.length, 1, `${file}: one ring`)
+        assert.ok(tags[0].includes(binding), `${file}: ${binding}`)
+    }
+})
+
+test('21. the pending request card and the accent fixes (§8)', () => {
+    const form = parseCss(styleOf(read('../components/message/PendingRequestForm.vue')))
+    const card = rule(form, ['.pending-request-form:not(.minimized)'], topLevel)
+    assertPinned(card, `
+        margin: var(--wa-space-xs);
+        border: 1px solid transparent;
+        border-radius: var(--wa-border-radius-l);
+        background:
+            linear-gradient(var(--wa-color-surface-default), var(--wa-color-surface-default)) padding-box,
+            linear-gradient(120deg, var(--glow-accent), var(--glow-accent-shifted), var(--glow-accent)) border-box;
+        box-shadow: 0 0 1rem -0.5rem color-mix(in oklab, var(--glow-accent) 45%, transparent);`)
+    const maximized = rule(form, ['.pending-request-form.maximized'], topLevel)
+    assertPinned(maximized, `
+        margin: 0;
+        border-radius: var(--pending-maximized-radius, 0);
+        box-shadow: none;`)
+    assert.ok(maximized.order > card.order, 'the maximized rule follows the card rule')
+
+    const list = parseCss(styleOf(read('../components/session/detail/SessionItemsList.vue')))
+    assert.equal(rule(list, ['.session-items-list'], topLevel).decls['--pending-maximized-radius'],
+        '0 0 var(--panel-inner-radius) var(--panel-inner-radius)')
+    assertPinned(rule(list, ['.session-items-list.panel-card'], topLevel), '--pending-maximized-radius: var(--panel-inner-radius);')
+
+    for (const file of [
+        '../components/message/PendingRequestForm.vue',
+        '../components/session/detail/items/claude_code/PendingRequestBody.vue',
+        '../components/session/detail/items/codex/RequestUserInputBody.vue',
+    ]) {
+        assert.ok(!read(file).includes('--wa-color-primary'), `${file}: no --wa-color-primary`)
+    }
+    assert.equal(rule(form, ['.question-icon'], topLevel).decls.color, 'var(--wa-color-brand-60)')
+    for (const file of [
+        '../components/session/detail/items/claude_code/PendingRequestBody.vue',
+        '../components/session/detail/items/codex/RequestUserInputBody.vue',
+    ]) {
+        assert.equal(rule(parseCss(styleOf(read(file))), ['.other-toggle-link'], topLevel).decls.color,
+            'var(--wa-color-brand-60)', `${file}: .other-toggle-link`)
+    }
 })

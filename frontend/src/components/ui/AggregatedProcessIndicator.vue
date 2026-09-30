@@ -216,6 +216,8 @@ const animateStates = ['assistant_turn']
     display: inline-flex;
     align-items: center;
     color: var(--wa-color-warning-60);
+    /* The unread eye breathes (opacity only: kept under reduced motion). */
+    animation: motion-status-pulse 2.4s ease-in-out infinite;
 }
 
 .unread-indicator--small {

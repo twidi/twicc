@@ -340,6 +340,8 @@ useGlideInk({
 
 .switcher-unread {
     color: var(--wa-color-brand-60);
+    /* The unread eye breathes (opacity only: kept under reduced motion). */
+    animation: motion-status-pulse 2.4s ease-in-out infinite;
 }
 
 .switcher-pending {

@@ -686,3 +686,12 @@ test('39. tab crossfade and overlay slide (step 5c §12.6)', () => {
     assert.deepEqual(keyframeDecls('twicc-vt-slide-in', 'from'), { translate: SLIDE })
     assert.deepEqual(keyframeDecls('twicc-vt-slide-out', 'to'), { translate: SLIDE })
 })
+
+test('40. the working pill dots (glow.css): movement × --motion-amount (live states design §4)', () => {
+    // Self-check: the invariant catches an unscaled translate.
+    assert.throws(() => assertMotionInvariants([{ rule: { selector: '30%', body: 'translate: 0 0; opacity: 1;' }, ancestors: [] }], 'self-check'))
+    const glowTree = parseBlocks(stripComments(read('glow.css')))
+    const dot = keyframeEntries(glowTree, 'glow-live-dot')
+    assert.ok(dot.length > 0, 'glow.css declares @keyframes glow-live-dot')
+    assertMotionInvariants(dot, 'glow-live-dot')
+})

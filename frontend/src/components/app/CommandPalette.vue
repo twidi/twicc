@@ -1136,6 +1136,8 @@ wa-divider {
     flex-shrink: 0;
     color: var(--wa-color-warning-60);
     font-size: var(--wa-font-size-xs);
+    /* The unread eye breathes (opacity only: kept under reduced motion). */
+    animation: motion-status-pulse 2.4s ease-in-out infinite;
 }
 
 .palette-empty {

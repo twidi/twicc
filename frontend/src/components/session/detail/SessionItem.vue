@@ -894,6 +894,12 @@ wa-details.item-details {
     + .virtual-scroller-item > .session-item[data-kind="assistant_message"] > .text-content:nth-child(2) {
         padding-top: var(--wa-space-xl);
     }
+    /* The working pill after a text block: same gap, as the card's own top padding (a pill
+       margin would collapse out of the card). */
+    .virtual-scroller-item:has( > .session-item[data-kind="assistant_message"] > .text-content:last-child)
+    + .virtual-scroller-item > .session-item[data-kind="assistant_message"]:has(> .working-assistant-message:nth-child(2)) {
+        --assistant-card-top-spacing: var(--wa-space-xl);
+    }
 }
 
 /* Responsive styles for narrow containers */
