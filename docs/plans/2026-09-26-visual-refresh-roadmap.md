@@ -16,7 +16,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
 | 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c done** (list cascade, theme reveal, tab crossfade + overlay slide): spec `b181801d`, code `024f8532` (§6i) |
 | 6 | Accent glow + live states | **6a done** (accent glow): spec `0f1c5979` (§16–§17 amendments in the code commits), code `655c65a9` + artifacts-list parity `a2020d6d` (§6j); **6a-bis done** (gliding open-row fill + edge-only smooth reveal): spec and code `7c8b2529` (§6k); **6b done** (live states): spec and code `b5f625a5`, browser-review amendments (spec §14) `02a59eaa` (§6l) |
-| 7 | Secondary screens | To specify |
+| 7 | Secondary screens | To specify, split in **7a–7f** (see §6m); order 7a → 7f |
 
 **No merge into `main` and no pull request until the whole redesign (steps 1–7) is done.**
 We keep iterating on branch `enhanced-ui`.
@@ -683,6 +683,32 @@ test additions), amendments `02a59eaa`.
   top has no padding or border: put it on the card's own padding variable.
 - A browser check must state its trigger conditions (display mode, viewport height,
   session state, share host): a correct change looks broken otherwise.
+
+## 6m. Step 7 — secondary screens: split and decisions (user, 2026-09-30)
+
+One sub-step per topic, each with its own spec, review loop, implementation, browser
+review and commit. Order: 7a → 7f. Values: §8.11 and §9 "Step 7".
+
+| Sub-step | Topic |
+|---|---|
+| **7a** | **Project stats**: numbers count up, heatmap fills in a wave, cost sparkline draws itself with a soft gradient, deltas as soft pills. |
+| **7b** | **Home**: cards cascade in, sparklines draw, a hovered card lifts and glows in its workspace's colour. |
+| **7c** | **Tasks tab**: tasks tick one by one (check pop, strike-through, progress bar fills). |
+| **7d** | **Footer blocks** (the blocks pinned at the bottom of a session): one shared open / close / collapse animation for all of them — composer (it can be collapsed), question widget, tool approvals, goal block, hybrid terminal block, and any other block found in the code there. |
+| **7e** | **Question widget interior**: options as cards, springy radio, accent outline and glow on the selected option. |
+| **7f** | **Settings**: content crossfade between sections. |
+
+Decisions:
+
+- The "slides up from the composer" of §8.11 is not a question-widget feature: every
+  footer block gets the same animation (7d), separate from the widget's interior (7e).
+- Settings: the gliding section indicator already exists (step 4c); only the content
+  crossfade remains (7f).
+- Home: keep the lifted, glowing hovered card; the user judges with use and may remove
+  it.
+- 7d includes the hybrid terminal block: enable the hybrid mode in the worktree instance
+  for the browser review (the user has not enabled it so far).
+- The question widget's gradient border is done (step 6b).
 
 ## 7. Deferred / open topics
 
