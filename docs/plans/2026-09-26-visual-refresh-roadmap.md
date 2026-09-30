@@ -16,7 +16,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
 | 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c done** (list cascade, theme reveal, tab crossfade + overlay slide): spec `b181801d`, code `024f8532` (§6i) |
 | 6 | Accent glow + live states | **6a done** (accent glow): spec `0f1c5979` (§16–§17 amendments in the code commits), code `655c65a9` + artifacts-list parity `a2020d6d` (§6j); **6a-bis done** (gliding open-row fill + edge-only smooth reveal): spec and code `7c8b2529` (§6k); **6b done** (live states): spec and code `b5f625a5`, browser-review amendments (spec §14) `02a59eaa` (§6l) |
-| 7 | Secondary screens | Split in **7a–7f** (see §6m); order 7a → 7f. **7a done** (stats motion): spec and code `f6d68b71` (§6n); **7b done** (home motion): spec and code `23204e18` (§6o); **7c done** (tasks tab motion): spec and code `a1faf330` (§6p); **7d done** (footer blocks motion): spec and code `1a292d76` (§6q); **7e done** (question options): spec and code `b2757e62` (§6r) |
+| 7 | Secondary screens | Split in **7a–7f** (see §6m); order 7a → 7f. **7a done** (stats motion): spec and code `f6d68b71` (§6n); **7b done** (home motion): spec and code `23204e18` (§6o); **7c done** (tasks tab motion): spec and code `a1faf330` (§6p); **7d done** (footer blocks motion): spec and code `1a292d76` (§6q); **7e done** (question options): spec and code `b2757e62` (§6r); **7f done** (settings content crossfade): spec and code `53928263` (§6s). Step 7 complete |
 
 **No merge into `main` and no pull request until the whole redesign (steps 1–7) is done.**
 We keep iterating on branch `enhanced-ui`.
@@ -887,6 +887,41 @@ by sub-agents, 72 mutants: all killed after pins were added; CSS only, source-pi
 - A global sheet of generic class names is safe only after grepping that nothing else uses
   them (`.option-label`, `.question-options`: only the two bodies do).
 
+## 6s. Step 7f — settings content crossfade (done)
+
+Spec: `docs/plans/2026-09-30-settings-crossfade-design.md` (reviewed PASS in 3 rounds). Code
+`53928263` (implemented and code-reviewed by sub-agents, 20 mutants: all killed after one pin
+was added). The rise and its duration were retuned after a browser review video, without a
+new review loop (two CSS values and their pins).
+
+### 6s.1 What it does
+
+- Picking another section in the settings popover: the old content fades out (120ms), then
+  the new one fades in (200ms) and rises 0.75rem over 380ms. The rise outlasts the fade so
+  its end stays visible (a rise as short as the fade was invisible in the user's video).
+- The detail panel scrolls back to the top between the two; the leaving DOM is `inert`.
+- Below 640px the existing panel slide stays alone: the Transition gets `:css="false"` and
+  the default mode there.
+- The Tips and Help menu entries are always listed (`hasTips` / `hasHelp` and their fallback
+  watchers removed): their sections already have an empty state, and the Tips switch was
+  unreachable when the list was empty.
+
+### 6s.2 Lessons (do not regress)
+
+- `<Transition mode="out-in">` with `:css="false"` and no `@leave` hook crashes Vue 3.5.27
+  (the leave completes synchronously, the nested update reads `parentNode` of a placeholder
+  comment): switch the mode back to the default whenever CSS is off. No source pin can catch
+  it, so the narrow-width browser check is mandatory.
+- With a delayed mount (out-in), code that reads a ref or focuses a field right after the
+  section changes finds nothing: run it from the Transition's `enter` hook (one parameter at
+  most, a second one makes Vue wait for a `done` that never comes), with a fallback when no
+  swap happens.
+- Vue unmounts the leaving components at the click and only keeps their DOM for the exit:
+  components that tear down live state (the `SegmentedControl` glide ink) show their
+  fallback look while fading out.
+- A movement that lasts as long as its fade, with an ease-out, is finished while the content
+  is still faint: give the movement a longer duration than the fade.
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -1116,4 +1151,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b, 896 with step 7a, 912 with step 7b, 929 with step 7c, 1010 with step 7d, 1021 with step 7e).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b, 896 with step 7a, 912 with step 7b, 929 with step 7c, 1010 with step 7d, 1021 with step 7e, 1027 with step 7f).
