@@ -24,7 +24,7 @@ Scores are built from the evaluations published by
 benchmarking site. It measures each model, at each reasoning effort, on
 many evaluations, with the **cost** and **time** of each task.
 
-TwiCC ships a snapshot of these results taken on **2026-09-23**. It is not
+TwiCC ships a snapshot of these results taken on **2026-09-30**. It is not
 refreshed automatically.
 
 ## The controls
