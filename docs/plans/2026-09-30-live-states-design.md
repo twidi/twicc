@@ -670,3 +670,35 @@ this spec (as step 6a-bis did):
 `feat(ui): live states — working pill, breathing unread eye, pulsing ring, pending card`.
 Roadmap update (status row 6, a §6l, and the test count in roadmap §10) in a separate
 docs commit.
+
+## 14. Amendments after the browser review (user, 2026-09-30) — binding
+
+Made after `b5f625a5`, on the user's requests in the browser; they supersede §5 and §9–§11
+where they differ.
+
+- **Assistant block without card chrome** (`SessionItem.vue`): the assistant block sits
+  straight on the session background. `background: transparent`, card border width `0`,
+  card spacing `0` (top, bottom, left), no card shadow and no dark top edge. The right
+  padding keeps `--card-spacing`. The card structure and its per-row variables stay (the
+  §5.4 gap above the working line still works). User messages are unchanged.
+- **Assistant markdown toolbars** (assistant message, Thinking / compaction summary, Codex
+  reasoning): moved left by half the card spacing
+  (`--assistant-markdown-toolbar-offset`). The user message's toolbar is unchanged.
+- **Conversation mode "Show details" toggle:** inactive, it shows only while its item is
+  hovered or the toggle has keyboard focus (same on touch, like the markdown toolbar);
+  active, it stays visible.
+- **Assistant timestamp:** half the gap above it (`--wa-space-s / 2`); it stays on the
+  right.
+- **Working line, no pill:** no background, border, padding, radius, comet or glow; it
+  sits on the session background. `@property --glow-live-angle`, `glow-live-spin`, the
+  calm root rule and the reduced-motion root rule are removed. The shimmer, the dots and
+  the calm / reduced-motion phrase and dots rules stay. The user wants something nicer
+  later.
+- **Tool targets** (`<code>` in the phrase): no background, border, radius or padding; the
+  code font alone sets them apart.
+- **Dots:** about a space's width from the text (`margin-inline-start: 0.3em`), and the
+  robot's hop duration (`1.4s`, `robot-working.css`). A phase alignment with the hop was
+  tried and dropped by the user.
+
+§10 tests follow: the pill rule, the calm and reduced-motion root rules and the comet
+keyframes are no longer pinned; test 15 asserts no comet is left.

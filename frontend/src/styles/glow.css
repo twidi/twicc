@@ -149,15 +149,6 @@
 
 /* Live states (step 6b, docs/plans/2026-09-30-live-states-design.md). */
 
-/* The comet's angle: registered, so it interpolates in a keyframe. */
-@property --glow-live-angle {
-    syntax: '<angle>';
-    inherits: false;
-    initial-value: 0deg;
-}
-@keyframes glow-live-spin {
-    to { --glow-live-angle: 360deg; }
-}
 @keyframes glow-live-shimmer {
     from { background-position: 100% 0; }
     /* One tile (250% size: offset travel = 2.5 × the width): a seamless loop, one pass.

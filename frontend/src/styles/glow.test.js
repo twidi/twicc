@@ -383,13 +383,9 @@ function assertKeyframes(name, frames) {
     frames.forEach(([selectors, body], k) => assertPinned(actual[k], body, `${name} ${selectors.join(', ')}`))
 }
 
-test('15. live states: the registered comet angle and the live keyframes (§4)', () => {
-    const property = parseAll(glowCss).filter((r) => r.head === '@property --glow-live-angle')
-    assert.equal(property.length, 1, 'one @property --glow-live-angle')
-    assert.equal(property[0].ancestors.length, 0, 'at the top level')
-    assertPinned(property[0], "syntax: '<angle>'; inherits: false; initial-value: 0deg;")
+test('15. live states: the live keyframes (§4; the comet was removed after the browser review)', () => {
+    assert.ok(!glowCss.includes('glow-live-angle') && !glowCss.includes('glow-live-spin'), 'no comet left')
 
-    assertKeyframes('glow-live-spin', [[['to'], '--glow-live-angle: 360deg;']])
     assertKeyframes('glow-live-shimmer', [
         [['from'], 'background-position: 100% 0;'],
         [['to'], 'background-position: -66.667% 0;'],
@@ -414,20 +410,8 @@ const PILL_RULES = [
         align-items: center;
         max-width: 100%;
         gap: var(--wa-space-s);
-        padding: var(--wa-space-3xs) var(--wa-space-m);
         font-style: italic;
-        font-size: var(--wa-font-size-m);
-        border-radius: 1em;
-        border: 1px solid transparent;
-        --live-pill-fill: var(--assistant-card-bg-color, var(--wa-color-surface-default));
-        --live-pill-rim: color-mix(in oklab, var(--glow-accent) 22%, transparent);
-        background:
-            linear-gradient(var(--live-pill-fill), var(--live-pill-fill)) padding-box,
-            conic-gradient(from var(--glow-live-angle), transparent 0 55%, var(--glow-accent) 78%,
-                var(--glow-accent-shifted) 90%, transparent 100%) border-box,
-            linear-gradient(var(--live-pill-rim), var(--live-pill-rim)) border-box;
-        box-shadow: 0 0 1.5rem -0.5rem color-mix(in oklab, var(--glow-accent) 45%, transparent);
-        animation: glow-live-spin 2.8s linear infinite;`],
+        font-size: var(--wa-font-size-m);`],
     ['.working-assistant-message__phrase', `
         background: linear-gradient(90deg, var(--wa-color-text-quiet) 0%, var(--wa-color-text-quiet) 38%,
             var(--wa-color-text-normal) 50%, var(--wa-color-text-quiet) 62%, var(--wa-color-text-quiet) 100%);
@@ -441,7 +425,7 @@ const PILL_RULES = [
     ['.working-assistant-message__dots', `
         display: inline-flex;
         gap: 0.1875rem;
-        margin-inline-start: 0.125rem;
+        margin-inline-start: 0.3em;
         color: var(--wa-color-text-quiet);`],
     ['.working-assistant-message__dots i', `
         display: block;
@@ -449,25 +433,20 @@ const PILL_RULES = [
         height: 0.25rem;
         border-radius: 50%;
         background: currentColor;
-        animation: glow-live-dot 1.2s var(--motion-ease-out) infinite;
+        animation: glow-live-dot 1.4s var(--motion-ease-out) infinite;
         animation-fill-mode: backwards;`],
     ['.working-assistant-message__dots i:nth-child(2)', 'animation-delay: 0.15s;'],
     ['.working-assistant-message__dots i:nth-child(3)', 'animation-delay: 0.3s;'],
 ]
-const CALM_BACKGROUND = `background:
-        linear-gradient(var(--live-pill-fill), var(--live-pill-fill)) padding-box,
-        linear-gradient(var(--live-pill-rim), var(--live-pill-rim)) border-box;`
 const CALM_PHRASE = `
     animation: none;
     background: none;
     color: var(--wa-color-text-quiet);`
 const CALM_RULES = [
-    ['.working-assistant-message--calm', `animation: none; ${CALM_BACKGROUND} box-shadow: none;`],
     ['.working-assistant-message--calm .working-assistant-message__phrase', CALM_PHRASE],
     ['.working-assistant-message--calm .working-assistant-message__dots i', 'animation: none; opacity: 1;'],
 ]
 const REDUCED_RULES = [
-    ['.working-assistant-message', `animation: none; ${CALM_BACKGROUND}`],
     ['.working-assistant-message__phrase', CALM_PHRASE],
 ]
 
@@ -505,7 +484,8 @@ test('16. the working pill: every rule pinned whole, in the stated order (§5.2,
     for (const r of calm) assert.ok(r.order > lastBase, `${r.head}: after the base rules`)
     const firstReduced = Math.min(...reduced.map((r) => r.order))
     for (const r of rules.filter((x) => !inReduced(x))) assert.ok(r.order < firstReduced, `${r.head}: before the reduced-motion block`)
-    assert.equal(rules.filter(inReduced).length, 2, 'the reduced-motion block holds the root and phrase rules only')
+    assert.equal(rules.filter(inReduced).length, 1, 'the reduced-motion block holds the phrase rule only')
+    assert.ok(!rules.some((r) => r.head === '.working-assistant-message--calm'), 'no calm root rule: nothing to calm on the root')
 })
 
 test('17. the working pill template: phrase spans, dots, calm class (§5.1)', () => {

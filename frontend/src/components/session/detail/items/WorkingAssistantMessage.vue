@@ -117,10 +117,11 @@ function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, t
 </template>
 
 <style scoped>
-/* The working pill (live states design, docs/plans/2026-09-30-live-states-design.md §5): a
-   comet runs around the border, the phrase shimmers, three dots bounce. No text-content
-   class on the root: the transcript's gap after a text block would land inside the pill
-   (SessionItem.vue puts it on the card instead). The keyframes live in glow.css. */
+/* The working line (live states design, docs/plans/2026-09-30-live-states-design.md §5,
+   simplified after the browser review: no pill, it sits on the session background): the
+   phrase shimmers, three dots bounce. No text-content class on the root: the transcript's
+   gap after a text block goes on the card instead (SessionItem.vue). The keyframes live in
+   glow.css. */
 .working-assistant-message {
     /* flex + fit-content, not inline-flex: no anonymous line box (and strut) around it. */
     display: flex;
@@ -128,23 +129,8 @@ function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, t
     align-items: center;
     max-width: 100%;
     gap: var(--wa-space-s);
-    padding: var(--wa-space-3xs) var(--wa-space-m);
     font-style: italic;
     font-size: var(--wa-font-size-m);
-    /* 1em: a full pill on one line, a rounded box when a long phrase wraps. */
-    border-radius: 1em;
-    border: 1px solid transparent;
-    --live-pill-fill: var(--assistant-card-bg-color, var(--wa-color-surface-default));
-    --live-pill-rim: color-mix(in oklab, var(--glow-accent) 22%, transparent);
-    /* Fill, comet, then a faint static rim: the pill keeps its shape where the comet is
-       transparent. */
-    background:
-        linear-gradient(var(--live-pill-fill), var(--live-pill-fill)) padding-box,
-        conic-gradient(from var(--glow-live-angle), transparent 0 55%, var(--glow-accent) 78%,
-            var(--glow-accent-shifted) 90%, transparent 100%) border-box,
-        linear-gradient(var(--live-pill-rim), var(--live-pill-rim)) border-box;
-    box-shadow: 0 0 1.5rem -0.5rem color-mix(in oklab, var(--glow-accent) 45%, transparent);
-    animation: glow-live-spin 2.8s linear infinite;
 }
 
 .working-assistant-message__phrase {
@@ -167,12 +153,12 @@ function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, t
 /* Inside the phrase (color: transparent): an explicit colour. A text-less inline-flex box
    takes its bottom edge as baseline: the dots sit on the last line's baseline.
    Smaller than the mock's (0.375rem dots, 0.25rem gap, accent) and in the phrase's quiet
-   colour: they replace the "..." and sit like periods in the italic phrase, next to an
-   accent comet that already carries the colour. */
+   colour: they replace the "..." and sit like periods in the italic phrase. */
 .working-assistant-message__dots {
     display: inline-flex;
     gap: 0.1875rem;
-    margin-inline-start: 0.125rem;
+    /* About a space's width from the text. */
+    margin-inline-start: 0.3em;
     color: var(--wa-color-text-quiet);
 }
 .working-assistant-message__dots i {
@@ -181,17 +167,21 @@ function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, t
     height: 0.25rem;
     border-radius: 50%;
     background: currentColor;
-    animation: glow-live-dot 1.2s var(--motion-ease-out) infinite;
+    /* 1.4s: the robot's hop cycle (robot-working.css), so both beat together. */
+    animation: glow-live-dot 1.4s var(--motion-ease-out) infinite;
     /* The delayed dots show the first keyframe (0.35) during their delay, not 1. */
     animation-fill-mode: backwards;
 }
 .working-assistant-message__dots i:nth-child(2) { animation-delay: 0.15s; }
 .working-assistant-message__dots i:nth-child(3) { animation-delay: 0.3s; }
 
+/* Tool targets: the code font alone sets them apart (no background, border or padding, which
+   the native code style would otherwise add on some of them). */
 code {
-    background: var(--wa-color-neutral-fill-quiet);
-    border-radius: var(--wa-border-radius-s);
-    padding: 0 var(--wa-space-3xs);
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 0;
     font-size: 0.95em;
 }
 
@@ -209,15 +199,7 @@ code {
     50% { opacity: 0.3; }
 }
 
-/* Calm while the agent waits for the user: no comet, no shimmer, static dots. After the
-   base rules: the root rules have the same specificity, source order decides. */
-.working-assistant-message--calm {
-    animation: none;
-    background:
-        linear-gradient(var(--live-pill-fill), var(--live-pill-fill)) padding-box,
-        linear-gradient(var(--live-pill-rim), var(--live-pill-rim)) border-box;
-    box-shadow: none;
-}
+/* Calm while the agent waits for the user: no shimmer, static dots. */
 .working-assistant-message--calm .working-assistant-message__phrase {
     animation: none;
     background: none;
@@ -229,16 +211,9 @@ code {
     opacity: 1;
 }
 
-/* Reduced motion: the comet and the shimmer stop; the static glow stays (not movement), so
-   a working pill still differs from a calm one. The dots keep fading (their movement is
-   × --motion-amount). Last: same specificity as the base rules, later in the source. */
+/* Reduced motion: the shimmer stops. The dots keep fading (their movement is
+   × --motion-amount). Last: same specificity as the base rule, later in the source. */
 @media (prefers-reduced-motion: reduce) {
-    .working-assistant-message {
-        animation: none;
-        background:
-            linear-gradient(var(--live-pill-fill), var(--live-pill-fill)) padding-box,
-            linear-gradient(var(--live-pill-rim), var(--live-pill-rim)) border-box;
-    }
     .working-assistant-message__phrase {
         animation: none;
         background: none;

@@ -382,6 +382,11 @@ function toggleJsonView() {
         opacity: 1;
     }
 }
+/* The inactive toggle shows only while the item is hovered (or the toggle has keyboard
+   focus), like the markdown toolbar; once active (details shown) it stays visible. */
+.session-item:not(:hover) .detail-toggle[variant="neutral"]:not(:focus-within) {
+    opacity: 0;
+}
 
 .detail-toggle-comments {
     font-size: var(--wa-font-size-xs);
@@ -512,6 +517,9 @@ function toggleJsonView() {
 
 .session-items {
     --markdown-toolbar-offset: -2.5rem;
+    /* The assistant block keeps only a right padding: its toolbars move left by half of
+       it. */
+    --assistant-markdown-toolbar-offset: calc(var(--markdown-toolbar-offset) - var(--card-spacing) / 2);
 }
 /* React to the chat's own width (center zone / dock), not the viewport. */
 @container session-items-list (width < 40rem) {
@@ -528,7 +536,7 @@ function toggleJsonView() {
 
 .session-items .session-item[data-kind="assistant_message"] > .text-content > .markdown-content-wrapper > .markdown-toolbar {
     right: auto;
-    left: calc(100% + var(--markdown-toolbar-offset));
+    left: calc(100% + var(--assistant-markdown-toolbar-offset));
     top: 0;
     width: 6rem;
     display: flex;
@@ -546,7 +554,7 @@ function toggleJsonView() {
     .thinking-body, .compact-summary-body {
         > .markdown-content-wrapper > .markdown-toolbar {
             right: auto;
-            left: calc(100% + var(--markdown-toolbar-offset));
+            left: calc(100% + var(--assistant-markdown-toolbar-offset));
             top: 0;
             width: 7rem;
             display: flex;
@@ -558,7 +566,7 @@ function toggleJsonView() {
 /* Codex reasoning renders as its own item kind: same placement as Thinking. */
 .session-items .session-item[data-kind="reasoning"] .reasoning-body > .markdown-content-wrapper > .markdown-toolbar {
     right: auto;
-    left: calc(100% + var(--markdown-toolbar-offset));
+    left: calc(100% + var(--assistant-markdown-toolbar-offset));
     top: 0;
     width: 7rem;
     display: flex;
@@ -572,9 +580,14 @@ function toggleJsonView() {
     .virtual-scroller-item:not(:has(.session-item[data-kind="user_message"])) {
 
         /* define our own properties */
-        --assistant-card-border-width: var(--wa-panel-border-width);
+        /* No card chrome: the assistant block sits straight on the session background
+           (no border, no inner spacing but on the right; background and shadow cleared
+           below). The card
+           structure stays, so the per-row variables keep working (e.g. the gap above
+           the working pill). */
+        --assistant-card-border-width: 0;
         --assistant-card-border-radius: var(--wa-panel-border-radius);
-        --assistant-card-spacing: var(--card-spacing);
+        --assistant-card-spacing: 0;
 
         /* by default no radius because default style is only for "inner" (not first/last) rows */
         --assistant-card-border-top-left-radius: 0;
@@ -610,12 +623,12 @@ function toggleJsonView() {
             --assistant-card-bg-color: var(--assistant-card-base-color);
             --xxxassistant-card-bg-color: oklch(from var(--assistant-card-base-color) calc(l*1.025) c h);
             --assistant-card-border-color: oklch(from var(--assistant-card-bg-color) calc(l / 1.05) c h);
-            background: var(--assistant-card-bg-color);
+            /* Transparent: the session background shows through. */
+            background: transparent;
             border-color: var(--assistant-card-border-color);
             border-style: var(--wa-panel-border-style);
-            padding-inline: var(--card-spacing);
-            /* Downward only: a side reach would be cut flat at the top of the last row. */
-            --assistant-card-default-shadow: var(--depth-card);
+            /* No card shadow (a transparent layer: the row's box-shadow is a list). */
+            --assistant-card-default-shadow: 0 0 transparent;
 
             border-radius:
                 var(--assistant-card-border-top-left-radius)
@@ -629,9 +642,10 @@ function toggleJsonView() {
                 var(--assistant-card-border-bottom-width)
                 var(--assistant-card-border-width);
 
+            /* The right padding keeps the card's spacing. */
             padding:
                 var(--assistant-card-top-spacing)
-                var(--assistant-card-spacing)
+                var(--card-spacing)
                 var(--assistant-card-bottom-spacing)
                 var(--assistant-card-spacing);
 
@@ -654,7 +668,6 @@ function toggleJsonView() {
                 --assistant-card-border-top-right-radius: var(--assistant-card-border-radius);
                 --assistant-card-border-top-width: var(--assistant-card-border-width);
                 --assistant-card-top-spacing: var(--assistant-card-spacing);
-                --assistant-card-edge: var(--depth-edge);
             }
         }
     }
@@ -704,6 +717,10 @@ function toggleJsonView() {
 
 .session-items .session-item > *:nth-child(n + 2):not(:last-child) {    /* 1 is json toggle and its tooltip */
     margin-bottom: var(--wa-space-s);
+}
+/* Assistant side: half the gap above the block's timestamp. */
+.session-items .session-item:not([data-kind="user_message"]) > *:nth-child(n + 2):has(+ .message-timestamp) {
+    margin-bottom: calc(var(--wa-space-s) / 2);
 }
 
 /* Handle many wa-details one after the other */
