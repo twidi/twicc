@@ -16,7 +16,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
 | 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c done** (list cascade, theme reveal, tab crossfade + overlay slide): spec `b181801d`, code `024f8532` (§6i) |
 | 6 | Accent glow + live states | **6a done** (accent glow): spec `0f1c5979` (§16–§17 amendments in the code commits), code `655c65a9` + artifacts-list parity `a2020d6d` (§6j); **6a-bis done** (gliding open-row fill + edge-only smooth reveal): spec and code `7c8b2529` (§6k); **6b done** (live states): spec and code `b5f625a5`, browser-review amendments (spec §14) `02a59eaa` (§6l) |
-| 7 | Secondary screens | Split in **7a–7f** (see §6m); order 7a → 7f. **7a done** (stats motion): spec and code `f6d68b71` (§6n); **7b done** (home motion): spec and code `23204e18` (§6o); **7c done** (tasks tab motion): spec and code `a1faf330` (§6p); **7d done** (footer blocks motion): spec and code `1a292d76` (§6q) |
+| 7 | Secondary screens | Split in **7a–7f** (see §6m); order 7a → 7f. **7a done** (stats motion): spec and code `f6d68b71` (§6n); **7b done** (home motion): spec and code `23204e18` (§6o); **7c done** (tasks tab motion): spec and code `a1faf330` (§6p); **7d done** (footer blocks motion): spec and code `1a292d76` (§6q); **7e done** (question options): spec and code `b2757e62` (§6r) |
 
 **No merge into `main` and no pull request until the whole redesign (steps 1–7) is done.**
 We keep iterating on branch `enhanced-ui`.
@@ -854,6 +854,39 @@ test additions; the SFC wiring has no component harness, so it is source-pinned)
 - A running `opacity` animation on an ancestor creates a stacking context and hides a
   `z-index` child under later siblings: fade the maximized block itself, not its wrapper.
 
+## 6r. Step 7e — question options (done)
+
+Spec: `docs/plans/2026-09-30-question-options-motion-design.md` (reviewed PASS in 5 rounds; the
+hover changed twice after the browser review). Code `b2757e62` (implemented and code-reviewed
+by sub-agents, 72 mutants: all killed after pins were added; CSS only, source-pinned).
+
+### 6r.1 What it does
+
+- The option cards of the two question bodies (Claude `ask_user_question`, Codex
+  `request_user_input`) get a radio (single choice) or a check box (multiple choice); its dot
+  or tick springs in (`scale` with `--motion-amount`, `clip-path` tick, no `transform`).
+- The chosen card: accent border, accent-tinted surface (9% light, 16% dark), soft glow.
+- Hover (pointer devices, not disabled): ONE THIRD of the way from "not chosen" to "chosen"
+  on an unchosen card, TWO THIRDS on a chosen one; the pointer leaving gives the full state,
+  so a click is always visible (1/3 → 2/3 → full, and 2/3 → 1/3 → rest to un-choose).
+- The card rules, duplicated in the two bodies, live in `styles/option-cards.css` (SPA only,
+  `:where()` rules, imported after `sidebar-rows.css`). Approvals and MCP forms unchanged.
+
+### 6r.2 Lessons (do not regress)
+
+- `wa-card` does not read `--border-color` / `--background-color`: it paints its colours from
+  its own shadow styles, so a global sheet must declare `border-color` / `background-color`
+  on the host (a rule in the outer tree beats `:host` whatever its specificity).
+- `assertMotionInvariants` accepts only `none` or a value containing `var(--motion-amount)`
+  for `scale` / `translate` / `rotate`: a static `rotate: 45deg` or `scale: 1` fails it (the
+  tick is a `clip-path` polygon instead of a rotated L).
+- A hover that sits at the same specificity as the chosen rule is decided by source order:
+  pin the order of the sheet, not only each rule.
+- A mid-state hover on the chosen card hides the click feedback (the pointer stays on it):
+  use two different fractions (1/3 unchosen, 2/3 chosen) so the click moves the colours.
+- A global sheet of generic class names is safe only after grepping that nothing else uses
+  them (`.option-label`, `.question-options`: only the two bodies do).
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -1083,4 +1116,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b, 896 with step 7a, 912 with step 7b, 929 with step 7c, 1010 with step 7d).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b, 896 with step 7a, 912 with step 7b, 929 with step 7c, 1010 with step 7d, 1021 with step 7e).
