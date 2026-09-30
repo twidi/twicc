@@ -1,6 +1,7 @@
 """Authorizer effects select child checks and reject unsupported mutations."""
 
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -316,3 +317,76 @@ def test_dependencies_from_before_and_after_select_both_children(connection):
     connection.set_authorizer(None)
     connection.execute("CREATE TABLE later_child (key INTEGER REFERENCES parent(id))")
     assert observer.decision(before, read_schema(connection)).tables == frozenset({"child", "code_child", "later_child"})
+
+
+@pytest.mark.parametrize("alias", ["rowid", "_rowid_", "oid"])
+def test_child_primary_key_foreign_key_updates_through_rowid_aliases(connection, alias):
+    connection.executescript('''
+        CREATE TABLE primary_key_child (id INTEGER PRIMARY KEY REFERENCES parent(id));
+        INSERT INTO primary_key_child VALUES (1);
+    ''')
+    observer, decision = observe_sql(connection, f"UPDATE primary_key_child SET {alias} = 999")
+    assert any(effect.table == "primary_key_child" and effect.column == "rowid" for effect in observer.effects)
+    assert decision.scope == "tables"
+    assert decision.tables == frozenset({"primary_key_child"})
+    assert connection.execute("PRAGMA foreign_key_check(primary_key_child)").fetchall() == [
+        ("primary_key_child", 999, "parent", 0),
+    ]
+
+
+def test_attached_argument_free_incremental_vacuum_is_denied_before_page_changes(connection, tmp_path):
+    path = tmp_path / "attached.sqlite"
+    with closing(sqlite3.connect(path)) as attached:
+        attached.execute("PRAGMA auto_vacuum = INCREMENTAL")
+        attached.execute("CREATE TABLE target (data BLOB)")
+        attached.execute("INSERT INTO target VALUES (zeroblob(100000))")
+        attached.execute("DELETE FROM target")
+        attached.commit()
+    connection.execute("ATTACH DATABASE ? AS other", (str(path),))
+    before = (
+        connection.execute("PRAGMA other.page_count").fetchone(),
+        connection.execute("PRAGMA other.freelist_count").fetchone(),
+    )
+    assert before[1][0] > 0
+    observer = EffectObserver()
+    connection.set_authorizer(observer.observe)
+    try:
+        with pytest.raises(sqlite3.DatabaseError):
+            connection.execute("PRAGMA other.incremental_vacuum")
+    finally:
+        connection.set_authorizer(None)
+    assert (
+        connection.execute("PRAGMA other.page_count").fetchone(),
+        connection.execute("PRAGMA other.freelist_count").fetchone(),
+    ) == before
+    assert observer.decision({}, {}).scope == "global"
+
+
+@pytest.mark.parametrize("pragma", ["incremental_vacuum", "optimize", "unknown_pragma"])
+def test_unproved_argument_free_main_pragmas_require_global_fallback(connection, pragma):
+    _, decision = observe_sql(connection, f"PRAGMA main.{pragma}")
+    assert decision.scope == "global"
+    assert decision.reasons
+
+
+@pytest.mark.parametrize("schema", ["other", "temp"])
+def test_unknown_argument_free_non_main_pragmas_are_rejected(connection, schema):
+    connection.execute("ATTACH ':memory:' AS other")
+    observer = EffectObserver()
+    connection.set_authorizer(observer.observe)
+    try:
+        with pytest.raises(sqlite3.DatabaseError):
+            connection.execute(f"PRAGMA {schema}.unknown_pragma")
+    finally:
+        connection.set_authorizer(None)
+
+
+@pytest.mark.parametrize("pragma", [
+    "page_count", "freelist_count", "auto_vacuum", "user_version", "schema_version", "journal_mode",
+    "foreign_keys", "defer_foreign_keys", "writable_schema", "database_list", "compile_options",
+])
+@pytest.mark.parametrize("schema", ["main", "other", "temp"])
+def test_proven_argument_free_readonly_pragmas_keep_scope_none(connection, pragma, schema):
+    connection.execute("ATTACH ':memory:' AS other")
+    _, decision = observe_sql(connection, f"PRAGMA {schema}.{pragma}")
+    assert decision.scope == "none"

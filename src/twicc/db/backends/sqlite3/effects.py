@@ -47,6 +47,13 @@ _READ_PRAGMAS_WITH_ARGUMENT = frozenset({
     "table_info", "table_xinfo", "table_list", "index_info", "index_xinfo", "index_list",
     "foreign_key_list", "foreign_key_check", "integrity_check", "quick_check",
 })
+# These argument-free forms query metadata or configuration. Other PRAGMAs
+# can mutate a database without arguments, for example incremental_vacuum.
+_READ_PRAGMAS_WITHOUT_ARGUMENT = frozenset({
+    "application_id", "auto_vacuum", "collation_list", "compile_options", "database_list", "data_version",
+    "defer_foreign_keys", "encoding", "foreign_keys", "freelist_count", "function_list", "journal_mode",
+    "module_list", "page_count", "page_size", "pragma_list", "schema_version", "user_version", "writable_schema",
+})
 _MAIN_CATALOGS = frozenset({"sqlite_master", "sqlite_schema", "sqlite_sequence"})
 _TEMP_CATALOGS = frozenset({"sqlite_temp_master", "sqlite_temp_schema"})
 _ROWID_ALIASES = frozenset({"rowid", "_rowid_", "oid"})
@@ -85,12 +92,14 @@ class EffectObserver:
             if pragma == "writable_schema" and arg2 is not None:
                 self.unknown_reasons.append("writable_schema setters are unsupported")
                 return sqlite3.SQLITE_DENY
-            if arg2 is None or pragma in _READ_PRAGMAS_WITH_ARGUMENT:
+            if pragma in _READ_PRAGMAS_WITH_ARGUMENT or (
+                arg2 is None and pragma in _READ_PRAGMAS_WITHOUT_ARGUMENT
+            ):
                 return sqlite3.SQLITE_OK
             if database not in (None, "main"):
-                self.unknown_reasons.append("temp and attached PRAGMA mutations are unsupported")
+                self.unknown_reasons.append("unproved temp and attached PRAGMA operations are unsupported")
                 return sqlite3.SQLITE_DENY
-            self.unknown_reasons.append(f"unclassified PRAGMA setter: {pragma}")
+            self.unknown_reasons.append(f"unclassified PRAGMA operation: {pragma}")
             return sqlite3.SQLITE_OK
 
         if action in _WRITES or action in _SCHEMA_ACTIONS:
@@ -136,7 +145,9 @@ class EffectObserver:
                 if effect.table in after and (
                     effect.action == sqlite3.SQLITE_INSERT and table.foreign_keys
                     or effect.action == sqlite3.SQLITE_UPDATE and (
-                        effect.column in outgoing_columns or outgoing_columns.intersection(table.generated_columns)
+                        effect.column in outgoing_columns
+                        or outgoing_columns.intersection(table.generated_columns)
+                        or effect.column in _ROWID_ALIASES and table.foreign_keys
                     )
                 ):
                     selected.add(effect.table)
