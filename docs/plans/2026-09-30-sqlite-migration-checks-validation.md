@@ -1647,3 +1647,1904 @@ All three task reviews approve spec compliance and quality.
 The broad whole-branch review remains pending.
 The six broad-suite failures reproduce with the standard backend.
 Main commit `5767bc2c` subsequently fixes the log-retention test; this branch does not duplicate it.
+
+---
+
+## Archived final-review.md
+
+# Final review: SQLite migration checks, milestone 1
+
+**Ready to merge: No.** One Important integrity finding requires correction.
+
+Reviewed range: `87ffc25f79da436f702310b697875dbaf371d73e..6c4f3957`.
+Review input: `review-87ffc25f..6c4f3957.diff`, including its seven-commit list and context.
+Worktree: `/home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks`.
+
+The review follows `superpowers/6.4.2/skills/requesting-code-review/code-reviewer.md`.
+No product file, index, HEAD, branch, live database, server, or dependency changes occur during this review.
+This report is the only review artifact written. No subagent runs.
+
+## Strengths
+
+- Metadata discovery reads schema metadata rather than application rows.
+- ASCII identifier normalization follows SQLite identifier behavior. Original names remain available for quoted checks.
+- Generated columns, implicit parent keys, rowid aliases, and unique-conflict inputs receive conservative treatment.
+- `INSERT OR REPLACE` and `UPDATE OR REPLACE` account for deleted parents without DELETE authorization events.
+- Schema proofs remove matched schema effects only. Independent writes and unknown effects remain visible.
+- Deferred SQL requires object identity, frozen SQL, parameters, and matching object effects.
+- Deferred SQL executes before validation. Normal operation and validation failures enter atomic cleanup with their original exception.
+- Explicit transaction controls, nested editors, and unsupported non-main mutations fail before the prohibited action.
+- Native writes, cached statements, triggers, and custom callbacks have direct regression coverage.
+- Backend selection happens before connection creation. The standard-backend opt-out remains available.
+- Command logging delegates execution to Django and restores the caller's ContextVar state.
+- Full graph tests exercise fresh installation, populated replay, original 0149, squash bookkeeping, and reverse migration.
+- Performance claims use executed check scopes. Reported timings do not claim live-startup speedups.
+
+## Issues
+
+### Critical
+
+None found.
+
+### Important: implicit rollback permits writes and migration recording after the atomic transaction ends
+
+**Location:** `src/twicc/db/backends/sqlite3/schema.py:119`.
+Related cleanup: `src/twicc/db/backends/sqlite3/schema.py:139`.
+Related validation boundary: `src/twicc/db/backends/sqlite3/schema.py:84`.
+
+The atomic guard rejects `SQLITE_TRANSACTION` authorization events.
+SQLite can end a transaction without such an event.
+A conflicting `INSERT OR ROLLBACK` does this.
+
+A supported native SQL callback can catch that constraint error and continue.
+The connection then runs subsequent writes in autocommit mode while FK enforcement remains disabled.
+Validation detects an invalid FK at editor exit, but cleanup cannot undo those committed writes.
+
+The real MigrationExecutor also commits its migration record before editor exit in this case.
+The migration raises `IntegrityError`, retains the invalid row, and remains recorded as applied.
+A retry can therefore skip the failed migration.
+
+#### Exact reproduced conditions
+
+1. Use the optimized backend and the default atomic schema editor.
+2. Start with valid parent and child rows.
+3. Execute a parameterized child UPDATE with its original valid parent value.
+4. Execute a duplicate parent INSERT with `OR ROLLBACK`.
+5. Catch the native `sqlite3.IntegrityError` inside `RunPython`.
+6. Reuse the same cached UPDATE with a missing parent value.
+7. Let the editor validate on normal exit.
+
+No observer replacement, explicit COMMIT, custom driver, non-main schema, or `atomic=False` is involved.
+
+Observed direct-editor state:
+
+```text
+before conflict in_transaction: True
+after conflict in_transaction: False
+after update in_transaction: False
+editor exit: IntegrityError
+persisted child: [(1, 99)]
+violations: [('child', 1, 'parent', 0)]
+enforcement: (1,)
+```
+
+Observed authorizer data-effect counts for the cached variant:
+
+```text
+after first UPDATE: 1
+after conflicting INSERT: 2
+after repeated cached UPDATE: 2
+```
+
+The cached UPDATE does not invoke a new authorizer callback.
+Adding only an `in_transaction` check inside `_authorize()` does not cover this path.
+Checking only at editor exit also occurs too late.
+
+Observed real MigrationExecutor result:
+
+```text
+failure: IntegrityError
+persisted child: (99,)
+applied record: True
+violations: [('child', 1, 'parent', 0)]
+enforcement: (1,)
+```
+
+#### Reproduction
+
+This command uses an in-memory database and the worktree interpreter.
+The review first verifies the TwiCC import path and `settings_test` database path.
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python - <<'PY'
+import os
+import sqlite3
+
+os.environ['DJANGO_SETTINGS_MODULE'] = 'twicc.settings_test'
+import django
+django.setup()
+
+from django.db import connections
+from django.db.migrations import Migration, RunPython
+from django.db.migrations.executor import MigrationExecutor
+from django.db.migrations.state import ProjectState
+from twicc.db.backends.sqlite3.base import DatabaseWrapper
+
+config = {**connections['default'].settings_dict, 'NAME': ':memory:'}
+db = DatabaseWrapper(config, 'counterexample')
+setattr(connections._connections, db.alias, db)
+db.ensure_connection()
+c = db.connection
+c.execute('CREATE TABLE parent(id INTEGER PRIMARY KEY)')
+c.execute('CREATE TABLE child(id INTEGER PRIMARY KEY,parent_id INTEGER REFERENCES parent(id))')
+c.execute('INSERT INTO parent VALUES(1)')
+c.execute('INSERT INTO child VALUES(1,1)')
+
+def mutate(apps, editor):
+    native = editor.connection.connection
+    sql = 'UPDATE child SET parent_id=? WHERE id=1'
+    native.execute(sql, (1,))
+    try:
+        native.execute('INSERT OR ROLLBACK INTO parent VALUES(1)')
+    except sqlite3.IntegrityError:
+        pass
+    native.execute(sql, (99,))
+
+executor = MigrationExecutor(db)
+executor.recorder.ensure_schema()
+migration = Migration('implicit_rollback', 'counterexample')
+migration.operations = [RunPython(mutate, mutate)]
+try:
+    executor.apply_migration(ProjectState(), migration)
+except Exception as error:
+    print('failure:', type(error).__name__)
+print('persisted child:', c.execute('SELECT parent_id FROM child').fetchone())
+print('applied record:', ('counterexample', 'implicit_rollback') in executor.recorder.applied_migrations())
+print('violations:', c.execute('PRAGMA foreign_key_check').fetchall())
+print('enforcement:', c.execute('PRAGMA foreign_keys').fetchone())
+db.close()
+delattr(connections._connections, db.alias)
+PY
+```
+
+#### Required correction
+
+Preserve the owned atomic boundary across execution, including SQLite-initiated rollback.
+Reject further mutation before it can autocommit after boundary loss.
+The protection must cover native connection/cursor execution and cached statements.
+
+Add focused executor regressions for forward and backward migration records.
+Include the cached parameterized statement variant.
+Also cover schema-level `ON CONFLICT ROLLBACK` and trigger `RAISE(ROLLBACK)` when selecting the protection mechanism.
+Those related triggers are correction coverage requests; this review does not claim separate reproductions for them.
+
+Do not solve this by documenting all native SQL as unsupported.
+Native SQL observation and rollback are explicit requirements of this milestone.
+
+#### Severity calibration
+
+The direct-editor case also reproduces with standard Django.
+This finding is an unmet atomicity guarantee, not a regression from Django's current behavior.
+
+The trigger requires a caught rollback-producing constraint error followed by another write.
+That restricted trigger supports Important severity rather than Critical severity.
+Persisted invalid data and an applied record after migration failure still block readiness under the accepted design.
+
+### Minor
+
+No new product finding.
+Existing warning debt is triaged below.
+
+## Plan and architecture assessment
+
+The implementation delivers the intended first milestone, apart from the atomicity gap above.
+It keeps Django's migration executor, recorder, operation classes, and FK comparison implementation.
+No historical migration or compute-version change appears in the supplied package.
+
+Module boundaries are clear: metadata, effect selection, editor lifecycle, backend selection, and logging.
+The known-operation proofs and default global fallback are conservative for the reviewed schema paths.
+The extension remains coupled to Django schema-editor internals; focused tests make that coupling visible.
+
+Unknown main-schema changes retain global checks.
+Unsupported temp/attached writes fail before execution; existing temp/attached reads remain supported.
+The opt-out provides standard behavior for unsupported connection customization.
+
+The first milestone does not prove native-column or rebuild preservation.
+That limitation is explicit and acceptable for this milestone.
+It must remain visible when reporting the broader design's completion status.
+
+## Evidence reviewed
+
+Production review covers every changed backend, settings, and command module.
+Test review covers all four added production test modules.
+The supplied package establishes scope, commit order, settings changes, ignore changes, and the Unreleased changelog addition.
+
+The design, implementation plan, workflow ledger, task reports, review history, and validation archive provide historical evidence.
+The prototype declares itself experimental and does not provide production proof by itself.
+The actual-backend probe and full graph tests provide the relevant integration evidence.
+
+Accepted prior verification:
+
+- 212 focused tests pass, including existing peer migration tests.
+- The broad run reports 6213 passed, 21 skipped, and 6 failures.
+- All six failures reproduce with the standard backend.
+- Ruff checks pass for the reported changed files.
+- `makemigrations --check --dry-run` reports no changes.
+- Synthetic probes show four standard global checks versus zero optimized checks for the replay sequence.
+
+This review does not rerun passed routine suites.
+It runs three focused in-memory probes for the uncovered rollback question.
+The probes cover direct editing, cached execution with a standard-backend comparison, and actual MigrationExecutor recording.
+
+Verified import: `.../.worktrees/bugfix-sqlite-migration-checks/src/twicc/__init__.py`.
+Configured test database: `:memory:`.
+The inherited `VIRTUAL_ENV` warning confirms the project environment selection; no `--active` command runs.
+
+## Deferred issues and ledger rulings
+
+| Item | Final review ruling |
+| --- | --- |
+| Stage-2 native-column and rebuild optimization | Accept deferral. Global fallback preserves the intended conservative boundary. Broader design remains incomplete. |
+| Test-extra environment correction | Accept. Worktree Python and disposable database paths provide valid isolation. Earlier inherited-pytest RED remains invalid evidence. |
+| Anchored `/db/` ignore rule | Accept. The runtime root stays ignored and the source package becomes visible. |
+| Task 3 modification of `schema.py` for timing | Accept. Logging integration belongs at the actual check boundary. |
+| Explicit transaction-control rejection | Accept the restriction, but reopen its completeness through the Important finding. |
+| Nested savepoint support | Accept while the outer transaction exists. The implicit rollback finding shows why boundary ownership must also survive execution. |
+| Custom Meta.indexes provenance correction | Accept. Custom Index subclasses no longer inherit standard deferred trust. |
+| Child rowid-alias correction | Accept. Dedicated regression covers the previously missed outgoing FK update. |
+| Argument-free attached PRAGMA correction | Accept. Unproved attached/temp PRAGMAs reject before mutation. |
+| Five wait_reply failures | Nonblocking for this branch. Standard comparison reproduces provider-configuration failures outside this diff. |
+| Date-dependent log-retention failure | Nonblocking here. Standard comparison reproduces it; the controller reports main commit `5767bc2c` fixes it. No duplicate fix or integration is requested. |
+| Two AsyncMock warnings | Defer as existing test cleanup debt. No evidence links them to these database changes. |
+| 59 Click protected_args warnings | Defer as existing CLI compatibility debt. No affected CLI implementation changes appear in this branch. |
+| Historical pending statuses in archived reports | Treat as dated evidence, not present task status. The current ledger records all three task approvals. |
+| No live-instance restart or main integration | Accept. Both remain outside authorization for this worktree task. |
+
+## Declined to judge
+
+Each line states a behavior considered but not assessed for completion in this review.
+
+- Live startup duration on the user's database: no live operation is authorized; in-memory timing cannot establish it.
+- Cold-disk performance: supplied samples use resident in-memory pages and do not measure cold I/O.
+- Stage-2 preservation optimization for native columns and rebuilds: explicitly deferred; this review assesses the retained global fallback.
+- Full rollback for `atomic=False`: explicitly outside the design's guarantee; prior committed effects can remain.
+- Successful temp/attached mutations: explicitly unsupported by the optimized editor; rejection behavior is reviewed instead.
+- Replacement or removal of the observer through raw driver customization: explicitly outside the supported contract.
+- Production readiness of experimental prototype shortcuts: the prototype is archived evidence and is not the selected backend.
+- Behavioral repair of the five wait_reply failures: standard reproduction establishes unrelated provider setup failures; those unchanged flows are outside this work.
+- Repair of the log-retention failure: the controller reports its fix on main; this review does not integrate or re-review that separate commit.
+- Runtime consequences of existing AsyncMock and Click warnings: unchanged code produces them; this review triages but does not diagnose that separate debt.
+- Compatibility across other Django, Python, or SQLite versions: installed-version evidence supports this review; no runtime version matrix is supplied.
+
+The implicit rollback counterexample is not declined or treated as unsupported customization.
+It uses the milestone's supported native SQL path and violates its atomic validation guarantee.
+
+## Assessment
+
+**Ready to merge: No.** Correct the Important atomicity finding and run focused counterexample regressions before approval.
+
+The remaining reviewed milestone behavior has strong integration and regression evidence.
+Stage 2, unrelated suite failures, and deferred warning cleanup do not independently block milestone 1.
+
+---
+
+## Archived final-fix-report.md
+
+# Final-review correction report
+
+Status: DONE. Commit recorded below after creation.
+Base: `6c4f3957`.
+Branch: `bugfix/sqlite-migration-checks`.
+Worktree: `/home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks`.
+Model: `GPT-6 Astra`, as assigned by the controller.
+Review: `final-review.md` in this directory.
+
+## Finding and correction
+
+The authorizer observes statement compilation. It does not run for every cached execution.
+SQLite can implicitly roll back without a SQLITE_TRANSACTION authorization.
+After a caught rollback, native writes and Django migration records previously escaped into autocommit.
+The single Important finding is corrected with a local driver execution guard.
+No global monkeypatch, SQL parser, executor copy, dependency, migration, or historical-record rewrite is added.
+
+The backend's default factory now subclasses sqlite3.Connection.
+Its native execute/executemany/executescript shortcuts route through guarded cursors.
+The native cursor factory places a guard mixin before SQLite's default cursor, Django's cursor, or a custom cursor class.
+Cursors obtained before schema-editor entry use the active connection guard too.
+
+The guard checks native in_transaction before execution and after successful execution.
+It covers execute, executemany, executescript, fetchone, fetchmany, fetchall, and iteration via __next__.
+The executemany parameter iterator checks between rows, after user iterator callbacks have run.
+This prevents a caught rollback inside the iterator from permitting another autocommitted row.
+If execution itself raises, its original error propagates without replacement.
+
+An atomic editor installs its guard after starting its transaction.
+The guard remains active during deferred SQL, metadata refresh, and FK validation.
+Editor exit checks ownership even when no more SQL follows a caught rollback.
+Cleanup removes the guard before its own transaction and enforcement cleanup.
+The existing authorizer still rejects explicit transaction controls and observes effects.
+The statement-proof mechanism, relation decisions, and Django FK checks remain unchanged.
+
+## Supported interfaces and limits
+
+- Normal native connection shortcuts and connection.cursor() remain supported, including cached SQL.
+- Class-based custom cursor factories remain supported through guarded subclasses.
+- Custom connection factories that inherit the local Connection and preserve its methods remain supported.
+- Other custom connection factories retain normal behavior, atomic=False, and collect_sql. Atomic editor entry rejects them before PRAGMA changes.
+- Opaque callable cursor factories retain normal behavior outside atomic editing.
+- If one returns an unguarded cursor, later atomic editor entry rejects that connection.
+- During atomic editing, an opaque callable cursor factory is rejected before its callback runs.
+- Direct raw sqlite3.Cursor construction, unbound base-driver calls, or overrides/removal of the guards bypass subclass dispatch. These remain unsupported driver customization.
+- The standard-backend opt-out remains unchanged and available for unsupported customization.
+- No new complete-rollback claim applies to atomic=False.
+- Stage-2 native-column/rebuild preservation remains deferred. Existing global fallbacks remain intact.
+
+The guard is inactive outside an owned atomic editor.
+Tests verify ordinary autocommit behavior after a caught rollback outside editing, under atomic=False, and under collect_sql.
+The persistent flag for an opaque unguarded cursor records factory compatibility; it is not an active editor guard.
+
+## Files changed
+
+- `src/twicc/db/backends/sqlite3/driver.py`: new local connection and cursor execution guards.
+- `src/twicc/db/backends/sqlite3/base.py`: select the guarded default connection factory without replacing explicit custom factories.
+- `src/twicc/db/backends/sqlite3/schema.py`: verify factory compatibility, install/check/remove the atomic guard.
+- `tests/test_sqlite_migration_schema.py`: 60 new real-database regressions and boundary cases.
+- `docs/plans/2026-09-30-sqlite-migration-checks-design.md`: actual driver contract and validation requirements.
+
+The existing Unreleased changelog entry already promises validation before commit.
+This correction completes that promise. No changelog edit is necessary.
+All writes use fixture-owned disposable databases or in-memory probes.
+No live database, server restart, package installation command, main integration, or subagent occurs.
+
+## Environment verification
+
+Command:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python - <<'PY'
+import os
+os.environ['DJANGO_SETTINGS_MODULE']='twicc.settings_test'
+import django, twicc, inspect
+django.setup()
+from django.conf import settings
+from django.db.backends.sqlite3.base import DatabaseWrapper
+print(twicc.__file__)
+print(settings.DATABASES['default']['NAME'])
+print(inspect.getsource(DatabaseWrapper.get_connection_params))
+print(inspect.getsource(DatabaseWrapper.get_new_connection))
+print(inspect.getsource(DatabaseWrapper.create_cursor))
+PY
+```
+
+Relevant output:
+
+```text
+/home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks/src/twicc/__init__.py
+:memory:
+```
+
+Django uses the supplied `factory` option and creates its SQLiteCursorWrapper via native connection.cursor(factory=...).
+Python 3.13.14, Django 6.0.4, pytest 9.0.3.
+The inherited VIRTUAL_ENV mismatch warning confirms project-environment selection. No --active or uv pip runs.
+
+## TDD: first RED and GREEN
+
+Before production changes:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k 'implicit_rollback or parameter_iterator_callbacks' > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-red.log 2>&1
+```
+
+```text
+45 failed, 71 deselected in 8.26s
+```
+
+The 42 executor cases cross forward/backward, three rollback sources, and seven continuation paths.
+Sources: INSERT OR ROLLBACK, schema-level ON CONFLICT ROLLBACK, trigger RAISE(ROLLBACK).
+Paths: connection/cursor execute, connection/cursor executemany, connection/cursor executescript, and recorder-only continuation.
+The other three cases cover editor exit without further SQL and both executemany iterator paths.
+The cached UPDATE cases prime the same parameterized statement before the rollback.
+
+Representative RED:
+
+```text
+django.db.utils.IntegrityError: The row in table 'child' ... parent_id ... '99' ...
+Failed: DID NOT RAISE <class 'sqlite3.OperationalError'>
+```
+
+The first failure occurs at late FK validation, after the data escaped.
+Recorder-only and no-more-SQL cases can otherwise finish without an error.
+These are behavior failures, not fixture/import failures.
+
+After the first guard implementation:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k 'implicit_rollback or parameter_iterator_callbacks' > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-green.log 2>&1
+```
+
+```text
+45 passed, 71 deselected in 4.60s
+```
+
+Every executor case verifies unchanged child data, no FK violations, the expected unchanged migration record, restored enforcement, and released ownership.
+
+## TDD: cursor stepping and callable factories
+
+The first pending-cursor test incorrectly permitted the editor-exit guard to satisfy its assertion.
+That test was corrected to assert rejection inside the context, before any production change for cursor stepping.
+The corrected RED below is the evidence; the earlier four passing cases are not RED evidence.
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k 'pending_native_cursor or callable_cursor_factory' > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-cursor-red.log 2>&1
+```
+
+```text
+6 failed, 121 deselected in 0.72s
+```
+
+Four cases show fetchone/fetchmany/fetchall/__next__ do not reject immediately after rollback.
+Two cases show a new driver compatibility error: issubclass() receives a callable factory and raises TypeError.
+The correction guards result stepping and preserves callable factory behavior outside editing.
+Unsupported opaque factories receive explicit early rejection under atomic editing.
+
+Following correction:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-schema-green.log 2>&1
+```
+
+```text
+127 passed in 12.43s
+```
+
+Four subsequent boundary cases require no production change:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k 'custom_connection_factory or successful_native_callback'
+```
+
+```text
+4 passed, 127 deselected in 0.49s
+```
+
+These verify custom connection factory behavior and post-execution detection when a native SQL function catches its internal rollback.
+The callback case requires immediate driver rejection as well as editor-exit rejection.
+
+## Final covering verification
+
+After the final production change:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_metadata.py tests/test_sqlite_migration_effects.py tests/test_sqlite_migration_schema.py tests/test_sqlite_migration_integration.py tests/test_peer_threading_migration.py tests/test_peer_revocation_migration.py -q > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-focused.log 2>&1
+```
+
+```text
+272 passed in 33.59s
+```
+
+This includes all 131 schema-editor tests and the complete disposable migration-graph integration cases.
+No pytest warning summary appears. Only the expected inherited VIRTUAL_ENV warning precedes pytest.
+No unrelated broad-suite rerun occurs, per the controller's explicit scope.
+The six earlier unrelated full-suite failures and warning debt retain their final-review disposition.
+
+A later test-only formatting correction combines equivalent context-manager statements.
+The affected test is rerun:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k successful_native_callback
+```
+
+```text
+1 passed, 130 deselected in 0.29s
+```
+
+Static validation:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && uvx ruff check src/twicc/db/backends/sqlite3/base.py src/twicc/db/backends/sqlite3/driver.py src/twicc/db/backends/sqlite3/schema.py tests/test_sqlite_migration_schema.py && git diff --check
+```
+
+```text
+All checks passed!
+```
+
+Initial lint catches two nested-with style issues, then a third in the additional callback case.
+All three are corrected with equivalent combined context managers.
+No production logic changes after the covering run begins.
+
+## Exact review reproducer after correction
+
+The same in-memory MigrationExecutor reproducer from final-review.md executes with the worktree interpreter:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python - <<'PY'
+import os
+import sqlite3
+os.environ['DJANGO_SETTINGS_MODULE'] = 'twicc.settings_test'
+import django
+django.setup()
+from django.db import connections
+from django.db.migrations import Migration, RunPython
+from django.db.migrations.executor import MigrationExecutor
+from django.db.migrations.state import ProjectState
+from twicc.db.backends.sqlite3.base import DatabaseWrapper
+config = {**connections['default'].settings_dict, 'NAME': ':memory:'}
+db = DatabaseWrapper(config, 'counterexample')
+setattr(connections._connections, db.alias, db)
+db.ensure_connection()
+c = db.connection
+c.execute('CREATE TABLE parent(id INTEGER PRIMARY KEY)')
+c.execute('CREATE TABLE child(id INTEGER PRIMARY KEY,parent_id INTEGER REFERENCES parent(id))')
+c.execute('INSERT INTO parent VALUES(1)')
+c.execute('INSERT INTO child VALUES(1,1)')
+def mutate(apps, editor):
+    native = editor.connection.connection
+    sql = 'UPDATE child SET parent_id=? WHERE id=1'
+    native.execute(sql, (1,))
+    try:
+        native.execute('INSERT OR ROLLBACK INTO parent VALUES(1)')
+    except sqlite3.IntegrityError:
+        pass
+    native.execute(sql, (99,))
+executor = MigrationExecutor(db)
+executor.recorder.ensure_schema()
+migration = Migration('implicit_rollback', 'counterexample')
+migration.operations = [RunPython(mutate, mutate)]
+try:
+    executor.apply_migration(ProjectState(), migration)
+except Exception as error:
+    print('failure:', type(error).__name__)
+print('persisted child:', c.execute('SELECT parent_id FROM child').fetchone())
+print('applied record:', ('counterexample', 'implicit_rollback') in executor.recorder.applied_migrations())
+print('violations:', c.execute('PRAGMA foreign_key_check').fetchall())
+print('enforcement:', c.execute('PRAGMA foreign_keys').fetchone())
+db.close()
+delattr(connections._connections, db.alias)
+PY
+```
+
+```text
+failure: OperationalError
+persisted child: (1,)
+applied record: False
+violations: []
+enforcement: (1,)
+```
+
+## Probe verification after the final driver change
+
+Both commands exit 0:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python scripts/prototypes/sqlite_migration_checks.py > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-prototype.json
+```
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/task-3-backend-probe.py > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-backend-probe.json
+```
+
+The old prototype remains unchanged and experimental.
+The actual-backend probe uses the production driver and real 0147/squash classes on representative historical tables.
+Every standard sample executes four global checks. Every optimized sample executes zero checks.
+All samples preserve existing SessionItem rows and expected migration records.
+
+| SessionItem rows | Payload bytes | Standard total median seconds | Optimized total median seconds |
+| --- | --- | --- | --- |
+| 10,000 | 256 | 0.014768 | 0.013318 |
+| 100,000 | 256 | 0.056899 | 0.014314 |
+| 100,000 | 4,096 | 0.072817 | 0.016461 |
+
+The JSON files preserve all samples and exact check timings.
+Each case uses three fresh in-memory connections. Seed time is excluded; seeded pages are resident.
+The two probes and covering tests run concurrently on isolated disposable databases.
+These timings are not controlled performance comparisons with earlier runs and do not predict live startup.
+Check counts establish the retained optimization.
+
+## Self-review and concerns
+
+Self-review checks the driver dispatch paths, Django cursor integration, lifecycle cleanup, original-error precedence, and staged scope.
+The initial cursor-fetch test assertion weakness is corrected before its RED evidence.
+Native cached statements and both executor record directions now have direct regression coverage.
+Existing proof, observer, savepoint, opt-out, non-atomic, collection, and cleanup tests remain green.
+
+No unresolved correctness concern remains within the documented driver contract.
+The factory restrictions are explicit and tested; arbitrary bypass of Python subclass dispatch is unsupported customization.
+No claim changes for stage 2, atomic=False rollback, supported schemas, or live timing.
+The controller owns exactly one scoped independent re-review after this fix wave.
+
+## Commit
+
+`43aed681` — `fix(sqlite): guard migration execution after implicit rollback`.
+
+The commit contains exactly the five product/test/design files listed above.
+Its descriptive body explains the execution guard and regression coverage.
+Trailer: `Co-Authored-By: Codex GPT-6 Astra <codex@openai.com>`.
+The ignored workflow report and captured evidence remain beside the final review.
+Post-commit `git status --short` is empty.
+
+## Round 2 supersedes the finding-completion claim
+
+The scoped re-review finds a residual binding-time autocommit path through __conform__.
+The controller authorizes another narrow correction and re-review.
+See `final-fix-round2-report.md` for the private binding-adapter correction, native compatibility evidence, and final verification.
+Round 1's tests remain valid historical evidence, but its claim that the Important finding is fully closed is superseded.
+
+---
+
+## Archived final-rereview.md
+
+# Scoped final re-review
+
+**Implicit rollback permits invalid autocommit — NOT ADDRESSED completely.**
+The original cached execution and migration-record reproducer is corrected.
+Parameter adaptation exposes the same atomicity failure inside the new execution guard.
+
+Reviewed fix: `6c4f3957..43aed681`.
+Inputs: supplied fix diff, `final-review.md`, `final-fix-report.md`, and the captured covering-test output.
+Scope: the previous Important finding and new breakage introduced by this fix only.
+
+## Finding verdict
+
+### Important: implicit rollback and cached native writes — NOT ADDRESSED completely
+
+**Correction confirmed:** `src/twicc/db/backends/sqlite3/driver.py:10` adds an execution guard independent of authorizer compilation.
+`driver.py:95` routes native connection shortcuts through guarded cursors.
+`schema.py:73` installs the guard, and `schema.py:147` removes it before cleanup.
+
+The reported cached statement, cursor, executemany, executescript, and recorder paths receive this guard.
+`tests/test_sqlite_migration_schema.py:736` verifies both executor directions across those paths and three rollback sources.
+The test checks preserved data, unchanged records, restored enforcement, and released ownership.
+
+The exact prior reproducer now fails before the invalid UPDATE executes.
+The fix report records parent value `1`, no violation, and no applied record.
+The supplied covering output confirms `272 passed in 33.59s`.
+
+**Residual defect:** `src/twicc/db/backends/sqlite3/driver.py:12` calls the native driver between the two transaction checks.
+The native driver adapts bound parameters during that call.
+A standard parameter `__conform__` callback can cause a caught rollback before SQLite steps the outer UPDATE.
+
+The outer UPDATE then auto-commits with foreign key enforcement disabled.
+The check at `driver.py:13` raises after that commit.
+Editor cleanup cannot undo the invalid row.
+
+This is the same atomic-boundary loss covered by the prior finding.
+It requires no observer replacement, raw Cursor construction, base-driver bypass, or custom connection/cursor factory.
+The changed design does not exclude parameter adaptation from the supported native SQL path.
+
+### Focused reproduction
+
+Code inspection raises a specific question about callbacks between the pre-check and SQLite statement execution.
+The existing covering tests exercise parameter iterators but do not exercise parameter adaptation.
+One focused in-memory probe answers that question; no suite reruns.
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python - <<'PY'
+import os
+import sqlite3
+os.environ['DJANGO_SETTINGS_MODULE'] = 'twicc.settings_test'
+import django
+django.setup()
+from django.db import connections
+from twicc.db.backends.sqlite3.base import DatabaseWrapper
+
+db = DatabaseWrapper(
+    {**connections['default'].settings_dict, 'NAME': ':memory:'},
+    'adapter_review',
+)
+setattr(connections._connections, db.alias, db)
+db.ensure_connection()
+c = db.connection
+c.execute('CREATE TABLE parent(id INTEGER PRIMARY KEY)')
+c.execute('CREATE TABLE child(id INTEGER PRIMARY KEY,parent_id INTEGER REFERENCES parent(id))')
+c.execute('INSERT INTO parent VALUES(1)')
+c.execute('INSERT INTO child VALUES(1,1)')
+
+class Parameter:
+    def __conform__(self, protocol):
+        try:
+            c.execute('INSERT OR ROLLBACK INTO parent VALUES(1)')
+        except sqlite3.IntegrityError:
+            pass
+        print('inside adapter transaction:', c.in_transaction)
+        return 99
+
+try:
+    with db.schema_editor():
+        c.execute('UPDATE child SET parent_id=?', (Parameter(),))
+except Exception as error:
+    print('failure:', type(error).__name__, str(error))
+print('persisted child:', c.execute('SELECT parent_id FROM child').fetchone())
+print('violations:', c.execute('PRAGMA foreign_key_check').fetchall())
+db.close()
+delattr(connections._connections, db.alias)
+PY
+```
+
+Observed output:
+
+```text
+inside adapter transaction: False
+failure: OperationalError The SQLite migration transaction ended before validation.
+persisted child: (99,)
+violations: [('child', 1, 'parent', 0)]
+```
+
+The wrapper reports boundary loss correctly but does not prevent this write.
+The original record-persistence defect is corrected; this probe claims only residual data persistence.
+
+### Required outcome
+
+Prevent native statement execution after parameter adaptation ends the owned transaction.
+Do not rely only on checks before and after the whole `super().execute()` call.
+Add a focused regression that asserts the invalid row cannot persist through this supported callback path.
+
+The trigger is narrower than the original case, but its effect remains persistent FK corruption after an atomic failure.
+The finding remains Important. No Critical finding is added.
+
+## New breakage in the fix diff
+
+- **Important:** incomplete execution boundary at `driver.py:12`, documented above under the existing finding.
+- **No separate new Critical/Important finding.**
+- **No new Minor finding.**
+
+The default factory is selected with `setdefault`, preserving explicit custom connection factories outside atomic editing.
+Class-based custom cursor factories retain their class behavior through the guard mixin.
+Unsupported opaque factories reject before callbacks during atomic editing.
+Those compatibility limits are explicit in the changed design and have focused tests.
+
+The guard remains inactive during normal SQL, `atomic=False`, and `collect_sql`.
+The fix preserves original execution exceptions and removes the active guard before lifecycle cleanup.
+The reviewed diff leaves effect selection, statement proofs, and the standard-backend opt-out unchanged.
+
+## Checks and evidence
+
+- Read the supplied diff and all five changed files relevant to this fix.
+- Matched the covering test claims against the added test cases.
+- Read `final-fix-focused.log`: `272 passed in 33.59s`.
+- Read the exact prior-reproducer result and the post-fix replay probe results in `final-fix-report.md`.
+- Ran one new disposable, in-memory parameter-adaptation counterexample.
+- No routine tests, broad suite, live database, server, dependency operation, or subagent runs.
+- No product file, index, HEAD, or branch mutation occurs. Only this requested report is written.
+
+## Out-of-scope observations
+
+None newly identified.
+The previous whole-branch review's Stage-2 and warning dispositions remain unchanged.
+
+## Declined to judge
+
+- Broad application SQL regression results: the controller owns the independent final broad run; this reviewer does not duplicate it.
+- Actual production performance of the new cursor dispatch: no live benchmark is authorized; existing probes establish retained check counts only.
+- Raw base-driver calls and deliberate guard replacement: the changed design explicitly excludes these dispatch bypasses.
+- Unchanged Stage-2 behavior and unrelated warnings: the prior complete review already rules on them; this scoped review does not reopen them.
+
+Parameter adaptation is not declined as unsupported driver customization.
+It uses the ordinary guarded connection and a standard bound-parameter protocol.
+
+## Verdict
+
+**Fix round: Findings remain open.**
+The original cached-execution and migration-record cases are corrected.
+The Important atomicity finding remains open through parameter adaptation at `driver.py:12`.
+
+---
+
+## Archived final-fix-round2-report.md
+
+# Final-review correction, round 2
+
+Status: DONE. Commit recorded below after creation.
+Base: `43aed681`.
+Branch: `bugfix/sqlite-migration-checks`.
+Worktree: `/home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks`.
+Model: `GPT-6 Astra`, as assigned by the controller.
+Input: `final-rereview.md`, read verbatim before implementation.
+
+## Residual finding
+
+The first correction checks before and after native execute calls.
+SQLite parameter adaptation occurs inside that call, before sqlite3_step.
+A parameter's __conform__ can catch an implicit rollback and return an invalid FK.
+The previous post-check detects the lost transaction after that write auto-commits.
+Round 1 therefore does not fully close the Important finding.
+This report supersedes its completion claim for that finding.
+
+The controller authorizes this narrow second correction and another scoped re-review.
+The controller explicitly allows one normal sqlite3 adapter registration for a new private wrapper type.
+No existing adapter, driver method, executor, or global function is replaced.
+The controller owns the final broad run. Its earlier interrupted run is superseded, not passing evidence.
+
+## Correction and interfaces
+
+`bindings.py` owns the native binding guard.
+A `BindingCursor` subclass sits immediately before sqlite3.Cursor in the cursor MRO.
+Django and custom cursor transformations run before this layer.
+The outer GuardedCursor retains its existing execution and result-stepping checks.
+Custom cursors receive the original parameter object; the binding layer wraps it only before native execution.
+
+For atomic editing only, lazy sequence/dict proxies supply private Parameter records to SQLite.
+SQLite still chooses placeholder names, positions, repeated parameters, and which mapping values to access.
+The proxies do not parse SQL or eagerly enumerate/adapt dictionary values.
+They check transaction ownership after successful length/item callbacks.
+The binding entry checks ownership again after Django/custom cursor transformations, including zero-binding statements.
+Unsupported parameter containers pass through for the native error.
+
+One private Parameter adapter calls `sqlite3.adapt(value, sqlite3.PrepareProtocol, value)`.
+That uses native registry/protocol precedence and the original-value fallback.
+A guard runs after successful adaptation and before SQLite receives the bound result.
+The registered wrapper adapter returns the final value directly; SQLite does not adapt that result again.
+An adapter returning None therefore produces SQL NULL.
+A __conform__ returning None still means no adaptation, matching the native driver.
+Existing adapters, including adapters for native scalar/buffer types, remain unchanged.
+A fresh-process test proves the registry delta contains exactly the new private type and no replaced entries.
+
+Buffer acquisition and release can also execute Python during binding.
+The private adapter takes a bytes snapshot with the native PyBUF_SIMPLE request, flags=0.
+Both buffer callbacks finish before the ownership check.
+The native memoryview lifecycle preserves buffer release behavior.
+Static capability lookup avoids invoking a buffer descriptor twice.
+Integers, floats, and strings retain SQLite's precedence over buffer support.
+
+Temporary parameter and adapter-result references remain alive through sqlite3_step.
+Their destructors therefore cannot roll back between the binding check and the native step.
+The outer execution guard checks again after retained references are released.
+This deliberately extends temporary lifetimes through execution, without retaining them on the connection after the call.
+
+Original adaptation, lookup, preparation, and binding errors remain authoritative when those operations fail.
+The correction does not rewrite existing registry entries, install trace/progress handlers, interrupt queries, or parse SQL.
+Outside an atomic editor, BindingCursor delegates unchanged parameters to the native cursor.
+The existing atomic=False, collect_sql, opt-out, cleanup, and driver-factory boundaries remain intact.
+
+## Source checks
+
+The implementation checks the installed CPython and SQLite interfaces against primary sources.
+CPython's binding code selects sequence/dict parameters before adapting individual values.
+Its adapter protocol gives registry entries precedence and treats __conform__ returning None as fallback.
+The binding code requests a simple buffer and copies its bytes before stepping.
+
+Sources:
+
+- [CPython 3.13.14 cursor binding implementation](https://raw.githubusercontent.com/python/cpython/v3.13.14/Modules/_sqlite/cursor.c).
+- [CPython 3.13.14 adapter protocol](https://raw.githubusercontent.com/python/cpython/v3.13.14/Modules/_sqlite/microprotocols.c).
+
+A trace/interrupt alternative is examined and rejected before implementation.
+The selected correction keeps SQLite's native parameter selection and does not depend on VM interrupt timing.
+
+## Files
+
+- `src/twicc/db/backends/sqlite3/bindings.py`: new private binding adapter, lazy containers, buffer handling, and final cursor layer.
+- `src/twicc/db/backends/sqlite3/driver.py`: place the binding layer after standard/custom cursor transformations.
+- `tests/test_sqlite_migration_schema.py`: 48 additional real-database and native-comparison cases.
+- `docs/plans/2026-09-30-sqlite-migration-checks-design.md`: document the actual parameter-binding contract and proof cases.
+
+No schema migration, dependency, compute version, historical migration, or changelog change.
+The existing Unreleased SQLite entry already covers the atomic validation guarantee being corrected.
+All writes use in-memory or fixture-owned disposable databases.
+No live migration, server operation, main integration, package installation command, or subagent occurs.
+
+## Environment
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python - <<'PY'
+import os
+os.environ['DJANGO_SETTINGS_MODULE']='twicc.settings_test'
+import django, sqlite3, twicc
+django.setup()
+from django.conf import settings
+print(twicc.__file__)
+print(settings.DATABASES['default']['NAME'])
+print(django.get_version(), sqlite3.sqlite_version)
+PY
+```
+
+```text
+/home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks/src/twicc/__init__.py
+:memory:
+6.0.4 3.53.1
+```
+
+Python 3.13.14 and pytest 9.0.3.
+The expected inherited VIRTUAL_ENV mismatch warning appears. No --active or uv pip command runs.
+
+## TDD: adapter rollback
+
+Before production changes:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k parameter_adaptation_rollback > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-red.log 2>&1
+```
+
+```text
+AssertionError: assert (99,) == (1,)
+12 failed, 131 deselected in 1.72s
+```
+
+The failures cross forward/backward executor direction, registered adapter/__conform__, and connection/cursor/executemany.
+Every case first primes the same cached statement.
+The expected exception already occurs, but the invalid row remains persisted. The data assertion catches the residual defect.
+
+After the first binding correction:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k parameter_adaptation_rollback > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-green.log 2>&1
+```
+
+```text
+12 passed, 131 deselected in 1.22s
+```
+
+The final matrix adds Django and custom-class cursor paths, totaling 20 executor cases.
+Each verifies original data, no FK violation, unchanged applied/unapplied record, and connection cleanup.
+
+## TDD: remaining binding callbacks
+
+Compatibility and callback boundary tests run before buffer handling is added:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k 'buffer_binding or binding_container or binding_matches or named_binding or binding_errors or binding_adapter_error or custom_cursor_receives' > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-binding-red.log 2>&1
+```
+
+```text
+AssertionError: assert (b'invalid',) == (1,)
+2 failed, 20 passed, 143 deselected in 1.82s
+```
+
+Both failures show autocommit after a buffer acquisition/release callback catches a rollback.
+The passing cases establish native compatibility for the initial adapter mechanism.
+
+Before retaining temporary references:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k binding_temporaries > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-temporaries-red.log 2>&1
+```
+
+```text
+AssertionError: assert (99,) == (1,)
+2 failed, 165 deselected in 0.46s
+```
+
+A temporary parameter or adapted integer subclass can finalize between adaptation and step.
+Both cases preserve the original row after temporary retention is implemented.
+
+Following buffer snapshots and retained references:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k 'parameter_adaptation_rollback or buffer_binding or binding_container or binding_matches or named_binding or binding_errors or binding_adapter_error or custom_cursor_receives or binding_temporaries' > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-binding-green.log 2>&1
+```
+
+```text
+36 passed, 131 deselected in 3.32s
+```
+
+## TDD: cursor transformation and descriptor compatibility
+
+Django can iterate an empty mapping before passing a zero-binding statement to the native layer.
+That callback can catch a rollback too.
+Before the binding-entry check:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k django_mapping_conversion > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-empty-mapping-red.log 2>&1
+```
+
+```text
+AssertionError: assert (99,) == (1,)
+1 failed, 167 deselected in 0.38s
+```
+
+After that correction and the expanded compatibility cases:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-schema-green.log 2>&1
+```
+
+```text
+178 passed in 18.20s
+```
+
+Self-review adds a custom buffer descriptor comparison.
+Before static capability inspection:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k buffer_descriptor > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-descriptor-red.log 2>&1
+```
+
+```text
+['buffer_descriptor', 'buffer_descriptor', ('release', b'descriptor')]
+!= ['buffer_descriptor', ('release', b'descriptor')]
+1 failed, 178 deselected in 0.37s
+```
+
+The capability check now uses getattr_static and leaves descriptor binding to the actual buffer request.
+Following focused GREEN:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_schema.py -q -k buffer_descriptor
+```
+
+```text
+1 passed, 178 deselected in 0.23s
+```
+
+## Final verification
+
+After the final production correction:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_sqlite_migration_metadata.py tests/test_sqlite_migration_effects.py tests/test_sqlite_migration_schema.py tests/test_sqlite_migration_integration.py tests/test_peer_threading_migration.py tests/test_peer_revocation_migration.py -q > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-focused-final.log 2>&1
+```
+
+```text
+320 passed in 36.58s
+```
+
+This includes 179 schema tests, full disposable migration-graph integration, and both existing peer migration tests.
+There is no pytest warning summary. The expected VIRTUAL_ENV warning precedes pytest.
+An earlier covering run has 319 passes; the final run supersedes it after the descriptor correction.
+No agent-owned broad-suite rerun occurs. The controller owns that final validation.
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && uvx ruff check src/twicc/db/backends/sqlite3/bindings.py src/twicc/db/backends/sqlite3/driver.py tests/test_sqlite_migration_schema.py && git diff --check
+```
+
+```text
+All checks passed!
+```
+
+## Exact residual reproducer
+
+The Python body from final-rereview.md is copied unchanged to `final-fix-round2-reproducer.py` beside this report.
+It uses an in-memory database and the ordinary __conform__ path.
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-reproducer.py > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-reproducer.log 2>&1
+```
+
+```text
+inside adapter transaction: False
+failure: OperationalError The SQLite migration transaction ended before validation.
+persisted child: (1,)
+violations: []
+```
+
+## Final probes
+
+Both commands exit 0 after the final production change:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python scripts/prototypes/sqlite_migration_checks.py > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-prototype-final.json
+```
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/task-3-backend-probe.py > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-fix-round2-backend-probe-final.json
+```
+
+The actual-backend probe retains four global checks for every standard sample and zero checks for every optimized sample.
+It verifies preserved data and records through real 0147/squash apply/unapply.
+The old prototype remains unchanged and experimental.
+
+| Rows | Payload bytes | Standard total median seconds | Optimized total median seconds |
+| --- | --- | --- | --- |
+| 10,000 | 256 | 0.015114 | 0.014147 |
+| 100,000 | 256 | 0.054962 | 0.014800 |
+| 100,000 | 4,096 | 0.070545 | 0.016267 |
+
+The JSON files retain exact samples and check timings.
+Each case uses three fresh in-memory connections with resident seeded pages and seed time excluded.
+Probes and covering tests run concurrently on isolated databases.
+These timings do not establish a controlled comparison with prior runs and do not predict live startup.
+The check counts establish that the optimization remains intact.
+
+## Self-review and limits
+
+Self-review checks lazy native parameter selection, NULL and adaptation precedence, native error order, cursor MRO, and callback lifetimes.
+It finds and corrects buffer callbacks, temporary finalizers, zero-binding cursor transformations, and duplicate descriptor binding with RED/GREEN evidence.
+No known integrity gap remains within the supported binding contract.
+
+The additional binding work applies only during owned atomic editing.
+Buffer snapshots add a temporary bytes copy for bound buffers during that editing.
+Temporary values live through statement execution; this is required to prevent destructor-triggered rollback between binding and step.
+The native interface assumptions are verified against Python 3.13.14 / SQLite 3.53.1 and encoded in comparison tests.
+No runtime version matrix is claimed.
+
+The schema test module is now large. The cases remain beside its existing disposable executor fixture; unrelated test restructuring is not introduced.
+Stage-2 preservation optimization, atomic=False rollback limits, driver-dispatch bypass exclusions, and unrelated broad-suite findings remain unchanged.
+The controller owns scoped independent re-review and the final broad run.
+
+## Commit
+
+`b9e81207` — `fix(sqlite): guard migration parameter binding before execution`.
+The commit contains exactly the four product/test/design files listed above.
+It includes a descriptive body and `Co-Authored-By: Codex GPT-6 Astra <codex@openai.com>`.
+Post-commit `git status --short` is empty.
+The ignored report, reproducer, and captured logs remain beside the scoped review.
+
+---
+
+## Archived final-rereview-round2.md
+
+# Scoped final re-review, round 2
+
+**Binding-time implicit rollback — ADDRESSED.**
+No new Critical or Important breakage is identified in the four-file fix diff.
+
+Reviewed range: `43aed681..b9e81207`.
+Inputs: `final-rereview.md`, `final-fix-round2-report.md`, and `review-43aed681..b9e81207.diff`.
+The review follows the scoped re-review instructions. It does not reopen unchanged whole-branch behavior.
+
+## Finding verdict
+
+### Important: binding callback permits invalid autocommit — ADDRESSED
+
+**Evidence:** `src/twicc/db/backends/sqlite3/bindings.py:34`.
+The private adapter delegates value adaptation to `sqlite3.adapt()`.
+It checks native transaction ownership after adaptation and before returning the bound value to SQLite.
+The former `__conform__` callback escape therefore fails before the outer UPDATE steps.
+
+**Evidence:** `bindings.py:102` and `src/twicc/db/backends/sqlite3/driver.py:64`.
+The binding layer runs after Django and custom cursor transformations, immediately before the native cursor.
+A guard also runs at binding entry, including statements with zero bound values.
+The outer cursor continues to guard execution and result stepping.
+
+**Evidence:** `bindings.py:61` and `bindings.py:79`.
+Lazy sequence and dictionary proxies check ownership after successful container callbacks.
+SQLite continues to select placeholder positions and names.
+The proxies do not enumerate unused dictionary values or adapt repeated named values again.
+
+**Evidence:** `bindings.py:43` and `bindings.py:50`.
+Bound parameter and adapted-result references remain alive through the native step.
+Buffer acquisition and release complete before the final ownership check.
+The buffer snapshot uses the native simple-buffer flags.
+These paths prevent the same boundary loss through binding callbacks and temporary finalizers.
+
+The exact residual reproducer now reports:
+
+```text
+inside adapter transaction: False
+failure: OperationalError The SQLite migration transaction ended before validation.
+persisted child: (1,)
+violations: []
+```
+
+The preceding round already corrects the original cached-statement and migration-record paths.
+The new executor matrix adds registered-adapter and `__conform__` cases in both migration directions.
+It verifies unchanged data, no FK violations, unchanged applied/unapplied records, and cleanup.
+
+## New breakage in the fix diff
+
+**Critical:** None identified.
+
+**Important:** None identified.
+
+**Minor:** None identified.
+
+The private adapter registration follows the controller's explicit ruling.
+It adds one private-type registry entry and replaces no existing adapter or driver method.
+The fresh-process registry test checks both properties.
+
+Native adaptation remains authoritative for registered-adapter precedence and protocol fallback.
+An adapter result of `None` remains SQL NULL.
+A `__conform__` result of `None` retains the native no-adaptation meaning.
+The adapter result is not adapted a second time.
+
+The added comparison tests cover native scalar adapters, bytes, bytearray, memoryview, buffer hooks, and descriptor calls.
+They also compare exception types and messages for malformed bindings and SQL preparation failures.
+An adaptation error retains precedence over a caught rollback error.
+
+The binding proxy is enabled only while an atomic editor owns the transaction.
+Normal SQL and `atomic=False` delegate their original parameters to the native cursor.
+The fix leaves lifecycle cleanup, `collect_sql`, factory restrictions, and the standard opt-out unchanged.
+
+Temporary buffer copies and extended value lifetimes are explicit correctness costs during atomic editing.
+The code does not retain those objects on the connection after the call.
+These costs do not constitute a new blocker for this migration-only path.
+
+## Checks and evidence
+
+- Read the supplied four-file diff and the complete new binding module.
+- Read the fix report and matched its claims against the implementation and added tests.
+- Read the captured final covering output: `320 passed in 36.58s`.
+- Read the exact residual-reproducer output shown above.
+- Reviewed the adapter/`__conform__` executor matrix, buffer callbacks, container callbacks, and temporary-finalizer tests.
+- Reviewed native adaptation/error comparisons, original-parameter identity, registry-delta, and zero-binding transformation tests.
+- Reviewed the reported actual-backend probe: four standard global checks versus zero optimized checks, with preserved data and records.
+- No new focused doubt requires an additional execution probe.
+- No suite is rerun. The controller owns the separate final broad run.
+- No subagent, live operation, dependency operation, product edit, index change, or HEAD change occurs.
+- This requested report is the only written review artifact.
+
+## Out-of-scope observations
+
+None newly identified.
+The previous complete review's Stage-2 and unrelated-warning dispositions remain unchanged.
+
+## Declined to judge
+
+- Final broad-suite result: the controller owns its independent run; this review does not duplicate or predeclare its result.
+- Live startup and cold-disk timing: no live benchmark is authorized; supplied probes establish check counts only.
+- Runtime versions beyond the reported Python 3.13.14, Django 6.0.4, and SQLite 3.53.1: no compatibility matrix is supplied.
+- Deliberate raw-driver dispatch bypass or guard replacement: explicitly excluded by the accepted driver contract and unchanged here.
+- Stage-2 preservation optimization and unrelated warning repairs: previously ruled nonblocking and outside this narrow fix.
+
+The supported parameter-adaptation path is judged and approved; it is not excluded as unsupported customization.
+
+## Verdict
+
+**Fix round: All findings addressed, no new Critical/Important breakage.**
+
+The residual binding-time rollback finding closes at `b9e81207`.
+Milestone-1 review approval is restored, subject to the controller's independent final broad validation.
+The broader Stage-2 optimization remains pending.
+
+## Final actual-backend samples
+
+```json
+{
+  "storage": "in-memory",
+  "repetitions": 3,
+  "seed_time_excluded": true,
+  "operations": "real 0147 and squash apply/unapply on representative historical core tables",
+  "conditions": "fresh in-memory connection per sample; seeded pages already resident; no cold-disk measurement",
+  "cases": [
+    {
+      "SessionItem_rows": 10000,
+      "payload_bytes": 256,
+      "backends": {
+        "standard": {
+          "samples": [
+            {
+              "total_seconds": 0.01710923499194905,
+              "fk_check_seconds": 0.004601906999596395,
+              "global_checks": 4,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.015113838002434932,
+              "fk_check_seconds": 0.00430821102054324,
+              "global_checks": 4,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.01506683201296255,
+              "fk_check_seconds": 0.004012524004792795,
+              "global_checks": 4,
+              "selected_checks": 0
+            }
+          ],
+          "median_total_seconds": 0.015113838002434932
+        },
+        "optimized": {
+          "samples": [
+            {
+              "total_seconds": 0.014214144001016393,
+              "fk_check_seconds": 0,
+              "global_checks": 0,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.014117129991063848,
+              "fk_check_seconds": 0,
+              "global_checks": 0,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.014147223002510145,
+              "fk_check_seconds": 0,
+              "global_checks": 0,
+              "selected_checks": 0
+            }
+          ],
+          "median_total_seconds": 0.014147223002510145
+        }
+      }
+    },
+    {
+      "SessionItem_rows": 100000,
+      "payload_bytes": 256,
+      "backends": {
+        "standard": {
+          "samples": [
+            {
+              "total_seconds": 0.05496220198983792,
+              "fk_check_seconds": 0.043710027006454766,
+              "global_checks": 4,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.05836915300460532,
+              "fk_check_seconds": 0.045849953981814906,
+              "global_checks": 4,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.05072046699933708,
+              "fk_check_seconds": 0.040508869002223946,
+              "global_checks": 4,
+              "selected_checks": 0
+            }
+          ],
+          "median_total_seconds": 0.05496220198983792
+        },
+        "optimized": {
+          "samples": [
+            {
+              "total_seconds": 0.014799850003328174,
+              "fk_check_seconds": 0,
+              "global_checks": 0,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.014437238991376944,
+              "fk_check_seconds": 0,
+              "global_checks": 0,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.0166087710094871,
+              "fk_check_seconds": 0,
+              "global_checks": 0,
+              "selected_checks": 0
+            }
+          ],
+          "median_total_seconds": 0.014799850003328174
+        }
+      }
+    },
+    {
+      "SessionItem_rows": 100000,
+      "payload_bytes": 4096,
+      "backends": {
+        "standard": {
+          "samples": [
+            {
+              "total_seconds": 0.07054491000599228,
+              "fk_check_seconds": 0.060031319997506216,
+              "global_checks": 4,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.06997292299638502,
+              "fk_check_seconds": 0.05924087596940808,
+              "global_checks": 4,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.07209327600139659,
+              "fk_check_seconds": 0.05996038498415146,
+              "global_checks": 4,
+              "selected_checks": 0
+            }
+          ],
+          "median_total_seconds": 0.07054491000599228
+        },
+        "optimized": {
+          "samples": [
+            {
+              "total_seconds": 0.016388118005124852,
+              "fk_check_seconds": 0,
+              "global_checks": 0,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.015930758992908522,
+              "fk_check_seconds": 0,
+              "global_checks": 0,
+              "selected_checks": 0
+            },
+            {
+              "total_seconds": 0.01626667199889198,
+              "fk_check_seconds": 0,
+              "global_checks": 0,
+              "selected_checks": 0
+            }
+          ],
+          "median_total_seconds": 0.01626667199889198
+        }
+      }
+    }
+  ]
+}
+
+```
+
+---
+
+## Broad-suite cascade analysis
+
+# Final broad-suite cascade analysis
+
+## Finding
+
+The cascade starts with a timing-sensitive watcher test and incomplete test cleanup.
+Both database engines reproduce the first timeout and locked database teardown.
+The evidence does not identify a new migration driver correctness failure.
+
+The test processes 1,001 real records with a five-second wall-clock limit.
+The worker performs real per-record metadata queries and updates.
+Observed successful completion times approach that limit.
+On timeout, the test skips its explicit watcher and writer shutdown.
+The remaining writer and compute executor globals then reject subsequent startup.
+A worker transaction can also overlap pytest's database flush.
+
+No product code changes, server operations, live migrations, dependency additions, or broad-suite reruns occur during this investigation.
+
+## Environment
+
+- Worktree: `/home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks`.
+- HEAD: `b9e81207`.
+- Python: `3.13.14`.
+- Django: `6.0.4`.
+- pytest: `9.0.3`.
+- pytest-django: `4.12.0`.
+- Optimized settings: `twicc.settings_test`.
+- Standard settings: existing `task3_standard_settings` workflow module.
+- Test database: `file:memorydb_default?mode=memory&cache=shared`.
+
+Import verification:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -c 'import twicc; from django.conf import settings; import os; os.environ.setdefault("DJANGO_SETTINGS_MODULE", "twicc.settings"); print(twicc.__file__); print(settings.DATABASES)'
+```
+
+Output starts with:
+
+```text
+/home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks/src/twicc/__init__.py
+{'default': {'ENGINE': 'twicc.db.backends.sqlite3', 'NAME': PosixPath('/home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks/db/data.sqlite'), ...}}
+```
+
+This command reads settings only. pytest uses its isolated test settings and disposable database.
+The inherited `VIRTUAL_ENV` mismatch warning confirms uv ignores the main checkout environment.
+
+## Reproduction commands and results
+
+Each log resides under `.superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/`.
+
+### Optimized watcher module
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_watcher_slice_fairness.py -q > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-broad-optimized-watcher.log 2>&1
+```
+
+```text
+5 failed, 61 passed, 7 errors in 11.25s
+```
+
+The first timeout occurs in `[False]`, unlike the broad run's `[True]`.
+The remaining errors include locked flush and already-started worker globals.
+
+### Standard watcher module
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD TWICC_SQLITE_STANDARD_MIGRATIONS=1 PYTHONPATH=$PWD/.superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation uv run --extra test python -m pytest --ds=task3_standard_settings tests/test_watcher_slice_fairness.py -q > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-broad-standard-watcher.log 2>&1
+```
+
+```text
+69 passed in 32.25s
+```
+
+This passing module run alone does not establish an engine-specific failure.
+The following isolated standard run also fails.
+
+### Optimized isolated first case
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest 'tests/test_watcher_slice_fairness.py::test_real_slices_release_locks_and_small_file_commits_first[False]' -q --durations=5 > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-broad-optimized-false.log 2>&1
+```
+
+```text
+5.02s call
+4.88s setup
+1 failed, 1 error in 11.63s
+```
+
+### Standard isolated first case
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD TWICC_SQLITE_STANDARD_MIGRATIONS=1 PYTHONPATH=$PWD/.superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation uv run --extra test python -m pytest --ds=task3_standard_settings 'tests/test_watcher_slice_fairness.py::test_real_slices_release_locks_and_small_file_commits_first[False]' -q --durations=5 > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-broad-standard-false.log 2>&1
+```
+
+```text
+8.90s setup
+5.02s call
+1 failed, 1 error in 18.12s
+```
+
+The standard engine raises the same `TimeoutError` and locked teardown error.
+
+## Minimal diagnostic experiment
+
+The ignored `final_broad_probe.py` plugin changes only five-second `asyncio.wait_for` limits to thirty seconds.
+It records elapsed time and dumps thread stacks at four seconds.
+Its final version also measures slice work and counts active/inactive migration guard checks.
+No repository test or product file changes.
+
+### Optimized isolated case with diagnostic limit
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD PYTHONPATH=$PWD/.superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation uv run --extra test python -m pytest -p final_broad_probe 'tests/test_watcher_slice_fairness.py::test_real_slices_release_locks_and_small_file_commits_first[False]' -q -s --durations=5 > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-broad-optimized-probe.log 2>&1
+```
+
+```text
+PROBE five-second wait duration=4.829s
+1 passed in 10.21s
+```
+
+At four seconds, the compute worker runs this stack:
+
+```text
+django/db/backends/sqlite3/base.py:375 convert_query
+sqlite3/base.py:358 execute
+src/twicc/db/backends/sqlite3/driver.py:14 execute
+django/db/models/query.py:1145 first
+src/twicc/providers/compute_base.py:1897 find_open_group_head
+src/twicc/providers/compute_base.py:1945 compute_item_metadata_live
+src/twicc/providers/compute_base.py:4198 _sync_session_slice
+src/twicc/providers/compute_base.py:3869 sync_session_slice
+src/twicc/providers/sessions_watcher.py:69 _sync_live_session_items
+src/twicc/providers/compute_executor.py:39 measured
+```
+
+The worker makes progress through ordinary metadata computation.
+The stack does not show a migration guard, migration observer, or blocked lock acquisition.
+
+### Standard isolated case with diagnostic limit
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD TWICC_SQLITE_STANDARD_MIGRATIONS=1 PYTHONPATH=$PWD/.superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation uv run --extra test python -m pytest --ds=task3_standard_settings -p final_broad_probe 'tests/test_watcher_slice_fairness.py::test_real_slices_release_locks_and_small_file_commits_first[False]' -q -s --durations=5 > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-broad-standard-probe.log 2>&1
+```
+
+```text
+PROBE five-second wait duration=4.253s
+1 passed in 7.71s
+```
+
+### Optimized parameter pair with guard instrumentation
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD PYTHONPATH=$PWD/.superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation uv run --extra test python -m pytest -p final_broad_probe tests/test_watcher_slice_fairness.py::test_real_slices_release_locks_and_small_file_commits_first -q -s --durations=5 > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-broad-optimized-probe-pair.log 2>&1
+```
+
+```text
+4.49s call ...[False]
+4.84s call ...[True]
+2 passed in 13.54s
+```
+
+All measured guard checks during slice execution have `active: 0`.
+Final latest-test counter: `{'inactive': 32670, 'active': 0}`.
+The plugin wraps measurements again for the second parameter.
+This causes duplicate slice lines; it does not indicate duplicate database execution.
+
+The two successful probes do not mean that five seconds is sufficient.
+Two unmodified runs already show the wall-clock limit expiring with both engines.
+They demonstrate that processing completes when cleanup can run normally.
+
+## Causal chain
+
+1. `tests/test_watcher_slice_fairness.py:59` waits for both files with a five-second wall-clock limit.
+2. Real compute processes many ORM operations per record.
+3. The limit expires during work on a slow run.
+4. `run()` has no `try/finally` around worker lifetime.
+5. The exception skips `stop_watcher()`, consumer drain, and `stop_db_writer()` at lines 60–63.
+6. `asyncio.run()` cancels remaining tasks, but dedicated compute work and lifecycle globals need explicit shutdown.
+7. pytest's flush overlaps remaining worker transaction state and reports `database table is locked`.
+8. Later tests see `_db_writer_task` or `_executor` still set and fail with `already started`.
+
+The test and watcher/compute paths have no diff from baseline `6c4f3957`.
+The standard-engine reproduction avoids the new custom driver entirely.
+
+## Driver and binding comparison
+
+- Outside an atomic schema editor, `_migration_transaction_guard` is `None`.
+- `BindingCursor.execute()` then passes the original parameters directly to SQLite.
+- `BindingCursor.executemany()` then passes the original parameter iterable directly to SQLite.
+- Guarded fetch and execute methods still add Python method calls.
+- The new private `Parameter` adapter does not adapt normal ORM parameters.
+- The diagnostic slice counters confirm the atomic guard stays inactive during watcher work.
+
+This investigation does not quantify the driver's ordinary-path overhead precisely.
+The optimized probe takes longer than the standard probe in these separate runs.
+Run-to-run setup durations also vary substantially.
+A controlled performance comparison could measure overhead if the controller requests it.
+Current evidence establishes an existing fragile timeout and missing cleanup, independent of engine correctness.
+
+## Scope decision for the controller
+
+A test lifetime correction can prevent this cascade.
+The correction must always drain the watcher and stop the writer, including timeout and assertion failures.
+A less timing-sensitive completion guard can prevent the initial failure.
+The existing lock-release and small-file-first assertions should remain intact.
+
+No correction is implemented here.
+The existing six unrelated failures remain outside this investigation.
+The broad run remains failed; these focused results must not be reported as a passing broad suite.
+
+## Deployment assessment
+
+The current implementation remains an isolated prototype.
+Do not activate this backend in the main instance on the strength of the focused review alone.
+Driver wrappers also execute outside atomic schema editing, though the guards are inactive.
+Ordinary-path overhead remains unquantified. Parameter/buffer guard complexity and runtime-specific native interface assumptions increase maintenance risk.
+A future design should keep the standard backend for ordinary application work and isolate selective checks to migration execution.
+That redesign is a recommendation, not implemented work. Real database-copy validation and compatibility evidence remain required before integration.
+
+
+## Final broad validation disposition before process isolation
+
+At b9e81207, the unfiltered completed run reports 32 failed, 6286 passed, 21 skipped, 11 errors, and 61 warnings. The Watcher timeout and missing cleanup produce the cascade described above. A separate completed run deselects only the two documented Watcher watchdog cases and reports 7 failed, 6319 passed, 21 skipped, 2 deselected, and 61 warnings. This is not a passing full suite. Six failures match the prior standard-engine reproductions; the remaining scheduler failure is analyzed below. No product changes result from those diagnostics.
+
+# Remaining scheduler failure analysis
+
+## Finding
+
+The remaining scheduler failure also occurs with the standard Django SQLite engine.
+The unmodified focused test reproduces the same `core_session` locked SELECT.
+This establishes a baseline concurrency race independent of the custom migration driver.
+
+A controlled overlap probe confirms the lock mechanism with both engines.
+The scheduler reads `core_session` while the compute worker holds its transactional write lock.
+The shared-memory test database returns `SQLITE_LOCKED_SHAREDCACHE` immediately.
+The migration transaction guard remains inactive.
+
+No product or repository test changes occur during this investigation.
+No broad-suite rerun, server operation, dependency addition, or live migration occurs.
+Ignored workflow probes and logs are the only written artifacts.
+
+## Environment and unchanged source
+
+- Worktree: `/home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks`.
+- HEAD: `b9e812070033ce1252f1645198b13dc2e4c78d43`.
+- Python: `3.13.14`.
+- Django: `6.0.4`.
+- pytest: `9.0.3`.
+- pytest-django: `4.12.0`.
+- Custom engine settings: `twicc.settings_test`.
+- Standard engine settings: existing workflow module `task3_standard_settings`.
+
+This comparison produces no diff and exits zero:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && git diff --exit-code 6c4f3957 -- src/twicc/providers/codex/background_compute.py src/twicc/providers/compute_base.py src/twicc/providers/compute_executor.py src/twicc/providers/codex/migration_gate.py tests/test_codex_migration_scheduler.py
+```
+
+Existing controller-owned document modifications remain untouched.
+
+## Unmodified module results
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest tests/test_codex_migration_scheduler.py -q > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-scheduler-optimized.log 2>&1
+```
+
+```text
+23 passed in 8.05s
+```
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD TWICC_SQLITE_STANDARD_MIGRATIONS=1 PYTHONPATH=$PWD/.superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation uv run --extra test python -m pytest --ds=task3_standard_settings tests/test_codex_migration_scheduler.py -q > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-scheduler-standard.log 2>&1
+```
+
+```text
+23 passed in 6.13s
+```
+
+The module passes do not establish that the race never occurs.
+
+## Spontaneous standard-engine reproduction
+
+An attempted duplicate-node repetition experiment collects twenty items but executes one item.
+It is **one focused execution**, not twenty repetitions.
+The test itself remains unmodified and uses no diagnostic plugin.
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD TWICC_SQLITE_STANDARD_MIGRATIONS=1 PYTHONPATH=$PWD/.superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation uv run --extra test python -c 'import pytest; node="tests/test_codex_migration_scheduler.py::test_forced_rebuild_is_discovered_after_older_compute_restores_current_version[False]"; raise SystemExit(pytest.main(["-q", "--ds=task3_standard_settings", "--keep-duplicates"] + [node] * 20))' > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-scheduler-standard-repeat.log 2>&1
+```
+
+```text
+collected 20 items
+E       django.db.utils.OperationalError: database table is locked: core_session
+.venv/lib/python3.13/site-packages/django/db/backends/sqlite3/base.py:359: OperationalError
+FAILED tests/test_codex_migration_scheduler.py::test_forced_rebuild_is_discovered_after_older_compute_restores_current_version[False]
+1 failed in 5.17s
+```
+
+The stack reaches the same scheduler query:
+
+```text
+tests/test_codex_migration_scheduler.py:777 await task
+src/twicc/providers/codex/background_compute.py:871 run
+src/twicc/providers/codex/background_compute.py:172 _load_stale_candidates
+src/twicc/providers/codex/background_compute.py:173 lambda
+...
+django/db/backends/sqlite3/base.py:359 execute
+OperationalError: database table is locked: core_session
+```
+
+This stack contains the standard cursor and does not execute the custom driver or binding cursor.
+It matches the controlled full-suite failure's query and table.
+
+The matching optimized attempted-repetition command passes its one executed item:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD uv run --extra test python -c 'import pytest; node="tests/test_codex_migration_scheduler.py::test_forced_rebuild_is_discovered_after_older_compute_restores_current_version[False]"; raise SystemExit(pytest.main(["-q", "--keep-duplicates"] + [node] * 20))' > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-scheduler-optimized-repeat.log 2>&1
+```
+
+```text
+collected 20 items
+1 passed in 6.81s
+```
+
+## Source-level synchronization
+
+The test controls worker command/status transport and observes coordinator state.
+It does not serialize the scheduler's database discovery reads with compute apply transactions.
+
+- `background_compute.py:168–184`: `_load_stale_candidates()` reads through `sync_to_async` and does not acquire the DB write lock.
+- `background_compute.py:868–874`: the coordinator performs this read after each wake or status/apply event.
+- `compute_base.py:3411–3428`: `guard_compute_revision()` performs a conditional UPDATE on `core_session`.
+- `compute_base.py:3509–3510`: `apply_session_complete()` runs inside `transaction.atomic`.
+- `compute_executor.py:24–44`: this apply runs on a separate dedicated worker thread.
+- `test_codex_migration_scheduler.py:740–743`: the test submits the older apply under the write lock.
+- `test_codex_migration_scheduler.py:746–750`: the test controls apply/status ordering after the older apply returns.
+
+The DB write lock serializes writes, but the scheduler SELECT does not use that lock.
+The migration gate protects migration/session activity, not the scheduler's general discovery query.
+A pending wake can therefore start a discovery read during the older apply transaction.
+
+The test has nested `finally` cleanup and stops the writer after failure.
+This explains why the controlled full run has one failure instead of the earlier watcher cleanup cascade.
+
+## Controlled overlap probe
+
+The ignored `final_scheduler_probe.py` fixture modifies execution timing only.
+It uses pytest's `transactional_db` fixture before reading any database state.
+
+The probe wraps existing functions:
+
+1. Capture the running coordinator and its event loop.
+2. Run the real `guard_compute_revision()` inside the real apply transaction.
+3. After the UPDATE acquires the table write lock, queue a scheduler wake.
+4. Hold the writer until the real `_load_stale_candidates()` SELECT finishes.
+5. Record the original SQLite error and release the writer.
+
+The probe uses a real SELECT and real write transaction.
+It injects no database error and changes no production SQL.
+The deliberate wake controls overlap; it does not reproduce the broad run's exact timing history.
+
+### Optimized probe
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD PYTHONPATH=$PWD/.superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation uv run --extra test python -m pytest -p final_scheduler_probe 'tests/test_codex_migration_scheduler.py::test_forced_rebuild_is_discovered_after_older_compute_restores_current_version[False]' -q -s > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-scheduler-optimized-probe.log 2>&1
+```
+
+```text
+PROBE database twicc.db.backends.sqlite3 file:memorydb_default?mode=memory&cache=shared
+PROBE journal_mode ('memory',)
+PROBE read_uncommitted (0,)
+PROBE writer holds core_session write lock twicc-compute_0 atomic True migration_guard None
+PROBE scheduler SELECT overlaps writer transaction {'forced_ids': frozenset({'forced-scheduler'})}
+PROBE scheduler error OperationalError database table is locked: core_session 262 SQLITE_LOCKED_SHAREDCACHE
+1 failed in 11.74s
+```
+
+### Standard probe
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks && TWICC_DATA_DIR=$PWD TWICC_SQLITE_STANDARD_MIGRATIONS=1 PYTHONPATH=$PWD/.superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation uv run --extra test python -m pytest --ds=task3_standard_settings -p final_scheduler_probe 'tests/test_codex_migration_scheduler.py::test_forced_rebuild_is_discovered_after_older_compute_restores_current_version[False]' -q -s > .superpowers/sdd/2026-09-30-sqlite-migration-checks-implementation/final-scheduler-standard-probe.log 2>&1
+```
+
+```text
+PROBE database django.db.backends.sqlite3 file:memorydb_default?mode=memory&cache=shared
+PROBE journal_mode ('memory',)
+PROBE read_uncommitted (0,)
+PROBE writer holds core_session write lock twicc-compute_0 atomic True migration_guard None
+PROBE scheduler SELECT overlaps writer transaction {'forced_ids': frozenset({'forced-scheduler'})}
+PROBE scheduler error OperationalError database table is locked: core_session 262 SQLITE_LOCKED_SHAREDCACHE
+1 failed in 11.03s
+```
+
+The initial probe preparation fails at pytest's database-access gate.
+The correction explicitly requests `transactional_db`; the final logs above capture corrected executions.
+
+## Limits and validation status
+
+The standard spontaneous reproduction establishes a baseline race.
+The controlled probes confirm the shared-cache lock mechanism with both engines.
+They do not prove which exact transaction overlaps the SELECT in the original full run.
+They do not measure or compare ordinary driver performance under controlled conditions.
+Different elapsed times in these separate runs do not establish overhead or throughput.
+The custom driver's extra ordinary-path Python calls can alter race timing or frequency.
+
+The test database uses shared-memory SQLite without WAL.
+Production settings use a file database with WAL and do not request shared cache.
+This evidence must not be presented as a reproduced production outage.
+It also does not establish deployment safety for the custom driver.
+
+Controller-provided full-suite result remains:
+
+```text
+7 failed, 6319 passed, 21 skipped, 2 deselected, 61 warnings
+```
+
+Those seven failures comprise the six previously established unrelated failures and this established baseline scheduler race.
+The broad suite remains failed.
+No product or test correction is implemented, and no deployment recommendation changes.
+
+
+The user subsequently authorizes migration-only process isolation. The deployment assessment above describes the superseded shared-backend prototype. See 2026-09-30-migration-process-isolation.md for the new boundary.
+
+
+## Historical implementation ledger before process isolation
+
+# SDD ledger — plan: docs/plans/2026-09-30-sqlite-migration-checks-implementation.md
+
+User approval: 2026-09-30, "let's go". Execution: SubAgentDriven Development.
+Worktree: /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-migration-checks
+Branch base: 87ffc25f. Two independent plan reviewers approve after three rounds.
+
+## Preflight interface and task consistency scan
+
+| Tasks | Produced / consumed or shared file | Result |
+| --- | --- | --- |
+| 1 / 2 | read_schema, EffectObserver, CheckDecision -> schema editor | Compatible; task 2 uses task 1's actual interfaces. |
+| 1 / 3 | Metadata/effect decisions -> integration assertions | Compatible; task 3 verifies real graph behavior. |
+| 2 / 3 | schema.py lifecycle -> FK duration logging with migration context | Task 3 also needs a small schema.py integration change; its global file map already includes schema.py. |
+| 1 | Metadata/observer tests vs API/files | Consistent; enabled writable_schema entry check belongs to the later editor while observer setter rejection belongs here. |
+| 2 | Exact standard-operation and immutable deferred provenance vs experimental shortcut | Consistent; cannot copy prototype trust flags. |
+| 3 | Backend opt-out + command logging + full graph vs tests | Consistent; user approval excludes server restart and merge. |
+
+Ruling: Task 3 may modify schema.py to connect migration context and FK timing logs — task 2 owns lifecycle, task 3 owns logging integration — if wrong, task 3 review must correct that integration change.
+
+## Progress
+
+No implementation tasks complete.
+
+Task 1: dispatched to sqlite_task1_implement (model gpt-6.1-sol; BASE87ffc25f79da436f702310b697875dbaf371d73e).
+
+Ruling: Use TWICC_DATA_DIR=$PWD uv run --extra test python -m pytest for worktree tests — the fresh project environment does not automatically select optional test dependencies, and inherited pytest can otherwise execute main sources — if wrong, environment setup changes only this worktree and test evidence must be repeated.
+Ruling: Task 1 anchors .gitignore db/ to /db/ — the runtime root DB directory must stay ignored while the new src/twicc/db package must remain visible to git and rg — if wrong, nested runtime data may appear untracked; existing SQLite filename patterns still protect data files.
+Task 1: initial RED using inherited pytest is invalid evidence; implementer repeats RED with the worktree test extra and local interpreter.
+
+Task 1: initial review requires fixes: child rowid-alias FK updates and attached argument-free mutating PRAGMAs. Fix round 1/5 starts at b1d9d293; reviewer sqlite_task1_review.
+Documentation/prototype evidence preserved in b1d9d293 (no product-code changes).
+
+Task 1: fix round 1/5 (2 addressed, 0 open; commits b1d9d293..b4bafaa2). Re-review sqlite_task1_review approved, no new breakage.
+Task 1: complete (commits 87ffc25f..b4bafaa2, review clean). 122 focused tests pass. Deferred verification items explicitly assigned: writable_schema entry/transaction/observer/nested cleanup to Task 2; standard-backend override to Task 3.
+Task 2: ready for dispatch; BASEb4bafaa289ee60645c4ff3a3096869d18cae5913.
+Task 2: dispatched to sqlite_task2_implement (model gpt-6.1-sol, high); no concurrent implementers.
+Task 2: implementation DONE at b56c3e3562092232414a4bba81407d6e7d407223; 52 schema and 174 combined tests pass. Fresh reviewer sqlite_task2_review dispatched (GPT-6.1 Sol high), package b4bafaa2..b56c3e35.
+
+Task 2: initial review requires fixes: explicit transaction completion bypasses pre-commit checks; custom Meta.indexes subclass gets trusted deferred proof. Fix round 1/5 starts b56c3e35.
+Ruling: Reject user transaction-control statements during atomic schema observation before they execute, allowing only editor-owned lifecycle controls — validation must precede commit and global fallback cannot undo an early commit — if wrong, migrations with explicit transaction customization require the standard-backend opt-out. Preserve atomic=False semantics without claiming full rollback.
+Task 2 transaction ruling clarification: SQLITE_TRANSACTION is rejected during atomic observation; SQLITE_SAVEPOINT remains supported only while outer BEGIN prevents RELEASE from committing the owning transaction. Implementer must cover Django nested savepoints and RELEASE.
+
+Task 2: fix round 1/5 (2 addressed, 0 open; commits b56c3e35..12b00c6c). Scoped re-review approved spec and quality; no new Important/Critical breakage.
+Task 2: complete (commits b4bafaa2..12b00c6c, review clean). 71 schema tests pass; existing snapshot/effect suite remains unchanged. Task3 settings/logging/full graph verification remains pending.
+Task 3: dispatched to sqlite_task3_implement (GPT-6.1 Sol high), BASE12b00c6cc45a336ff2ed10d3f8c521012a058264. Controller authorizes preserving/appending and committing review.md evidence. Broader suite appropriate after integration; no live operations.
+Task 3 broad evidence: 6 failed, 6213 passed, 21 skipped, 61 warnings. Targeted standard-backend comparison reproduces all 6 failures: five wait_reply no_provider_configured cases and date-dependent log-retention case. Affected files unchanged from BASE; unrelated fixes excluded. Warnings: 2 AsyncMock coroutine, 59 Click protected_args deprecations. Full details requested in report.
+Task 3: DONEd3207b2b; 212 focused pass, Ruff pass, no model drift; reviewer sqlite_task3_review dispatched with 12b00c6c..d3207b2b package. User confirms log-retention test fixed later on main5767bc2c; no duplicate correction or rebase.
+
+Task 3: complete (commits 12b00c6c..d3207b2b, review clean). Spec and quality approved. Commit body/model trailer verified separately. Cross-task observer/proof obligations were verified in Tasks1/2.
+Task 3: minor (deferred): existing 2 AsyncMock coroutine warnings and 59 Click protected_args deprecations, outside changed scope; final reviewer must triage.
+Final broad review dispatched sqlite_final_review (GPT-6 Astra high), package87ffc25f..6c4f3957. Approved reports, rulings, actual benchmark source/samples archived in committed validation.md.
+
+Final broad review: NOT READY; 1 Important implicit transaction rollback/cached native write hole, can persist invalid FK and applied record. Standard Django also reproduces; accepted atomicity invariant still requires correction. Single final fix wave starts BASE6c4f3957.
+Ruling: Guard loss of the owned atomic transaction before further SQL execution, including cached/native statements — authorizer callbacks alone do not cover implicit SQLite rollbacks or cached reuse — if wrong, the local driver integration can reject valid migration code or need rework; standard-backend opt-out remains available. No SQL parser/global monkeypatch.
+Final declined-to-judge audit accepted: live cold-disk/startup performance unauthorized; stage2 deferred; atomic=False full rollback unpromised; attached/temp mutation and observer replacement unsupported; prototype historical only; six existing failures/warnings confirmed outside diff; runtime versions beyond Python3.13.14/Django6.0.4/SQLite3.53.1 not validated. These are explicit limitations, not dropped product requirements.
+Single final fix wave dispatched sqlite_final_fix (GPT-6 Astra high), BASE6c4f3957. Scope includes runtime guard + actual executor/cached/schema-conflict/trigger regressions; covering focused suite required.
+Final fix DONE43aed681: 272 covering tests pass, probes preserve4vs0 checks, exact reproducer preserves valid FK/unapplied record. Exactly one scoped re-review dispatched sqlite_final_review; 6c4f3957..43aed681.
+Final driver connection/cursor factory changes justify one broad suite on final product state; controller starts it with final-full-suite.log. Prior unrelated failures remain recorded, no second standard comparison ritual required.
+
+Final scoped re-review: original native/cached/record cases addressed, Important finding remains NOT fully addressed via parameter __conform__ rollback during binding; invalid UPDATE commits before post-execution guard. No distinct new finding.
+Ruling: Continue a narrowly scoped correction/re-review for the remaining supported parameter-adapter path despite the skill single-final-wave limit — user requires a correction/re-review loop and developer instructions require completing authorized work; a known integrity failure cannot be declared complete — if wrong, this adds implementation/review cost. No widening to stage2 or unrelated failures.
+Superseded final broad run cancelled with Ctrl-C, exit130; partial1849pass/5knownwaitfail/17skip, not completion evidence. No pytest remains running. Final narrow correction resumed sqlite_final_fix at43aed681 for parameter adaptation. Controller runs broad suite only after stable final product code.
+Ruling: Permit normal sqlite3.register_adapter registration for a newly defined private binding-guard type, without replacing existing adapter entries or sqlite methods — private type dispatch preserves SQLite parameter adaptation and can check ownership before statement stepping — if wrong, a process-wide registry entry can need removal or binding compatibility can require rework; ordinary values outside the editor must remain unchanged. Tests must cover registry delta, None semantics, native types/buffers, unused mapping values and error precedence.
+Final narrow correction DONEb9e81207: 320 focused tests pass, no adapter replacement, probes4vs0, buffers snapshot/temporary lifetime bounds documented. Scoped residual re-review resumed sqlite_final_review,43aed681..b9e81207; final stable full-suite run started (final-stable-full-suite.log).
+
+Final residual scoped review: ADDRESSED; no new Important/Critical; original record/cache plus parameter-binding guard approved. Final broad suite still pending; no unresolved reviewed integrity finding.
+Final stable broad run disappears without summary at41%; no pytest remains, process/session handle unknown. Cause unverified. It is incomplete evidence. Detached harness restarts same final code with persistent PID/log/exit file.
+Final detached broad run completes exit1:32failed6286pass21skip61warnings11errors. New cascade begins watcher fairness timeout then locked teardown and leftover DBwriter/Computeexecutor; cannot classify as existing until evidence. Fresh read-only diagnostic sqlite_broad_failure_analysis dispatched; no product edits.
+Broad cascade diagnostic confirms both engines reproduce5s watcher timeout and missing finally cleanup; migration guards inactive; ordinary driver overhead unquantified. Controlled final full run deselects only2 documented flaky watchdog cases, separately verified with diagnostic30s timeout. No product/test source edit. This checks all other application cases without cascade contamination and is explicitly not an all-green unfiltered suite claim.
+User asks deployment risk. Controller assessment: do not activate current prototype in main; driver wrappers affect ordinary connections even while atomic guards are inactive, overhead unquantified, binding/C API increases complexity. Recommend future migrations-only isolation + real-copy validation; no such redesign authorized/implemented yet. Current review approval is scoped correctness evidence, not deployment recommendation.
+
+
+The final reviewed process isolation supersedes the historical shared-backend deployment recommendation. See 2026-09-30-migration-process-isolation-validation.md. Ordinary runtime no longer loads the custom driver. Broad-suite and live-validation limits remain explicit.

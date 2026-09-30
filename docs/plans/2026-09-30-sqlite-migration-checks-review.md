@@ -159,3 +159,17 @@ Those tests and production files remain unchanged from the Task 3 base.
 Warnings comprise two existing AsyncMock coroutine warnings and 59 Click protected_args deprecations.
 The extra custom-operation regression runs separately after the complete-suite collection.
 Independent Task 3 review remains pending. Stage-2 rebuild preservation remains pending.
+
+## Final architecture and integrity review
+
+Reviewer: `sqlite_final_review` (GPT-6 Astra).
+Initial final review finds one Important atomicity hole: caught SQLite implicit rollback
+allows cached native writes and migration recording to escape before final validation.
+The first correction (`43aed681`) adds local driver execution guards and closes those cases.
+Scoped review exposes the same hole during native parameter adaptation.
+The second narrow correction (`b9e81207`) guards binding before sqlite3_step, including
+buffers and temporary lifetimes, without replacing existing adapters or parsing SQL.
+The final scoped review marks the finding addressed and finds no new Important/Critical defect.
+All 320 focused migration tests pass. Full final application regression results follow separately.
+Stage 2, unsupported raw-driver dispatch bypass, non-atomic rollback limits, and the
+installed-version validation boundary remain explicit. No main integration occurs.

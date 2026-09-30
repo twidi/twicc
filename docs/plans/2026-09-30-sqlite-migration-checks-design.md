@@ -1,6 +1,8 @@
 # Selective SQLite migration checks
 
-Status: first milestone implemented in the isolated worktree. Final integration review remains pending.
+Status: first milestone implemented and independently reviewed in the isolated worktree.
+Migration execution is isolated in an awaited child; normal runtime uses the standard backend.
+See 2026-09-30-migration-process-isolation-validation.md for final review and validation limits.
 Stage-2 table-rebuild preservation proof remains pending. Main integration and live-instance validation remain outside this work.
 
 ## Goal
