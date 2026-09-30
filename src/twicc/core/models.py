@@ -817,7 +817,6 @@ class SessionItem(models.Model):
                 fields=["session", "kind", "line_num"],
                 name="idx_session_kind_line",
             ),
-            models.Index(fields=["session", "message_id", "line_num"], name="idx_item_message_line"),
             # used to recompute activity
             models.Index(
                 fields=["session", "timestamp"],
