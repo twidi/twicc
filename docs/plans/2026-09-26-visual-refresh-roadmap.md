@@ -16,7 +16,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
 | 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c done** (list cascade, theme reveal, tab crossfade + overlay slide): spec `b181801d`, code `024f8532` (§6i) |
 | 6 | Accent glow + live states | **6a done** (accent glow): spec `0f1c5979` (§16–§17 amendments in the code commits), code `655c65a9` + artifacts-list parity `a2020d6d` (§6j); **6a-bis done** (gliding open-row fill + edge-only smooth reveal): spec and code `7c8b2529` (§6k); **6b done** (live states): spec and code `b5f625a5`, browser-review amendments (spec §14) `02a59eaa` (§6l) |
-| 7 | Secondary screens | Split in **7a–7f** (see §6m); order 7a → 7f. **7a done** (stats motion): spec and code `f6d68b71` (§6n) |
+| 7 | Secondary screens | Split in **7a–7f** (see §6m); order 7a → 7f. **7a done** (stats motion): spec and code `f6d68b71` (§6n); **7b done** (home motion): spec and code `23204e18` (§6o) |
 
 **No merge into `main` and no pull request until the whole redesign (steps 1–7) is done.**
 We keep iterating on branch `enhanced-ui`.
@@ -743,6 +743,42 @@ harness).
 - `clip-path: inset()` does not interpolate with `none`: write both keyframes.
 - In probe HTML, quote attribute values: `height=5/>` puts the slash in the value.
 
+## 6o. Step 7b — home motion (done)
+
+Spec: `docs/plans/2026-09-30-home-motion-design.md` (reviewed PASS in 4 rounds). Code
+`23204e18` (implemented and code-reviewed by sub-agents, 53 mutants all killed; the
+coordinator's runtime has no component harness).
+
+### 6o.1 What it does
+
+- `composables/useHomeCardCascade.js` + `utils/homeCardCascade.js`: `HomeView` provides a
+  coordinator; each `WorkspaceCard` / `ProjectCard` enters on mount. One batch per render,
+  sorted in document order, on-screen cards only (60ms stagger, 420ms, cap 10); the
+  `home-card-entering` class (in `motion.css`) is removed by a timer.
+- `ActivitySparkline`: left-to-right reveal (800ms) inside an entering card, or with the
+  new `reveal` prop (home header, project page header).
+- Card hover: lift (`translate` × `--motion-amount`, spring) plus border and glow in the
+  workspace / project colour (accent fallback), only under `(hover: hover)`; no translate
+  transition while entering.
+- Fix found in the browser review (same commit): `loadProjects()` raised the projects list
+  loading flag on every call, so the reconciliation of each WebSocket connect (the first
+  one right after the initial load) showed the home spinner again, remounted every card
+  and replayed the cascade. It now raises it only when no project is loaded, like
+  `loadHomeData()` (`stores/projectsListLoading.test.js`). This supersedes the spec's
+  §3.1 note that a reconnect replays the cascade: it no longer does.
+
+### 6o.2 Lessons (do not regress)
+
+- In a scoped block, `:global(.a) .b` compiles to `.a` alone: use the plain descendant
+  selector (Vue scopes only the last compound) and test the compiled selector with
+  `compileStyle`, not the source text.
+- A moved DOM node restarts its CSS animations: an entrance class on a list item must be
+  removed once played, or a reorder replays it.
+- A hover transition on a property an entrance animation owns starts from the base value
+  and sits above the animation: drop that transition while the entrance runs.
+- A `:style` binding that can go to `null` removes the whole `style` attribute, wiping
+  imperatively set custom properties: bind an object with `null` values instead.
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -972,4 +1008,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b, 896 with step 7a).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b, 896 with step 7a, 912 with step 7b).
