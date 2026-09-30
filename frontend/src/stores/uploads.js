@@ -19,6 +19,7 @@ import { generateUUID } from '../utils/crypto'
 import { isAppNavigation, markAppNavigation } from '../utils/appNavigation'
 import { createUploadsController } from '../utils/uploads/controller'
 import { randomHexFromUUID } from '../utils/uploads/ids'
+import UploadSuccessToastContent from '../components/files/UploadSuccessToastContent.vue'
 
 /** `sessionStorage` key of the tab id (survives a reload of the same tab). */
 const TAB_ID_STORAGE_KEY = 'twicc:uploads:tab-id'
@@ -91,7 +92,19 @@ function buildController() {
     return createUploadsController({
         apiFetch,
         createTusUpload: (file, options) => new Upload(file, options),
-        toast: { success: toast.success, error: toast.error },
+        toast: {
+            // A success with a path gets the "Copy path" button.
+            success: (message, { copyPath, ...options } = {}) => {
+                if (!copyPath) return toast.success(message, options)
+                return toast.custom(UploadSuccessToastContent, {
+                    type: 'success',
+                    title: options.title,
+                    duration: options.duration,
+                    props: { targetDir: message, path: copyPath },
+                })
+            },
+            error: toast.error,
+        },
         now: () => Date.now(),
         setTimeout: (fn, ms) => window.setTimeout(fn, ms),
         clearTimeout: id => window.clearTimeout(id),

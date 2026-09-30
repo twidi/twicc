@@ -33,7 +33,7 @@ import {
 } from './transport.js'
 
 /** Duration of every upload toast. */
-export const TOAST_DURATION_MS = 15_000
+export const TOAST_DURATION_MS = 5_000
 
 /** Period of the timer that refreshes `now` for the stalled rule. */
 export const STALLED_TICK_MS = 15_000
@@ -70,7 +70,8 @@ function isDeleteDone(status) {
  * @param {(url: string, options?: object) => Promise<Response>} deps.apiFetch
  * @param {(file: Blob, options: object) => {start(): void, abort(): unknown}} deps.createTusUpload
  *     - the tus `Upload` factory (`(file, options) => new tus.Upload(file, options)`)
- * @param {{success: Function, error: Function}} deps.toast
+ * @param {{success: Function, error: Function}} deps.toast - `success` also
+ *     receives a `copyPath` option (the uploaded file's path, or null)
  * @param {() => number} deps.now - client clock, in ms
  * @param {Function} deps.setTimeout
  * @param {Function} deps.clearTimeout
@@ -252,6 +253,7 @@ export function createUploadsController(deps) {
             toast.success(record.target_dir, {
                 title: `Uploaded ${baseName(record.final_path) || record.filename}`,
                 duration: TOAST_DURATION_MS,
+                copyPath: record.final_path || null,
             })
         } else if (record.state === 'failed') {
             failureToast(record.filename, record.error || 'The server stopped the upload.')

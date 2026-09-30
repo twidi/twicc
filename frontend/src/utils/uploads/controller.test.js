@@ -823,8 +823,8 @@ test('completed: success toast with the final name, completion event, entry remo
     assert.equal(upload.aborted, 1)
     assert.equal(h.list().length, 0)
     assert.equal(events.length, 1)
-    assert.deepEqual(h.toasts.map(t => [t.type, t.title, t.message, t.duration]),
-        [['success', 'Uploaded a (1).txt', '/p', TOAST_DURATION_MS]])
+    assert.deepEqual(h.toasts.map(t => [t.type, t.title, t.message, t.duration, t.copyPath]),
+        [['success', 'Uploaded a (1).txt', '/p', TOAST_DURATION_MS, '/p/a (1).txt']])
 })
 
 test('a non-local entry does not toast on its end', () => {
