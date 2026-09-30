@@ -335,7 +335,7 @@ Provide `TWICC_SQLITE_STANDARD_MIGRATIONS=1` as a migration-child opt-out that s
 
 Direct optimized migration commands must select `--settings=twicc.settings_migration`.
 The settings selection applies before connections open, for command-line migrations and application startup.
-Test settings explicitly select the optimized backend. Comparison fixtures instantiate the standard backend separately.
+Ordinary test settings select the standard backend. Optimized regression fixtures explicitly instantiate the custom backend. Comparison fixtures instantiate the standard backend.
 
 The command subclass delegates execution and CLI output to Django.
 ContextVar state identifies each migration and direction; finally restores the caller's previous context.
