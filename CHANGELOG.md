@@ -24,14 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Message timestamps while the agent works** — The time now also shows under the agent's last message while it is still working, not only once its turn is over.
 - **Claude Agent SDK** — Upgrade from 0.2.159 to 0.2.162 (bundled Claude Code CLI: 2.1.281 → 2.1.285)
 - **Codex runtime** — Update from v0.156.1 to v0.159.2.
-- **Recompute diagnostics** — Backend logs now report per-session compute, queue, and apply durations with item count and source size.
 
 ### Fixed
-
-- **Codex error recovery** — Failed turns now show their native recorded error with the Retry action, even when Codex drops an injected error marker.
-- **Connections during session catch-up** — Authenticated WebSocket heartbeats remain responsive while large sessions sync. Bounded sync slices let smaller sessions advance during a backlog. Historical links and costs use indexed facts after normal metadata recompute.
-- **Metadata recompute backlog** — Claude reuses spawn evidence and root queue completions across child sessions, and reads each stale launcher once per pass. Cost repair no longer recalculates every sibling when one subagent is recomputed.
-- **Repeated activity repair during recompute** — Each date and week gets an exact baseline once per compute run. Later sessions update the same activity rows from their changed contributions.
 
 - **Docked panels on medium screens** — Opening a panel over the conversation no longer shifts the layout and leaves an empty strip on the right.
 
