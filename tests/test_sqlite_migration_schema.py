@@ -616,3 +616,112 @@ def test_collect_sql_context_rejects_nested_editors_and_releases_ownership(conne
     with connection.schema_editor():
         pass
     assert_restored(connection)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["sql_commit", "sql_rollback", "sql_begin", "native_sql", "native_commit", "native_rollback", "native_script"],
+)
+@pytest.mark.parametrize("backward", [False, True])
+def test_executor_transaction_controls_reject_before_atomic_boundary_changes(connection, path, backward):
+    if path.startswith("sql_"):
+        statements = ["UPDATE child SET parent_id=99", path.removeprefix("sql_").upper()]
+        operation = RunSQL(statements, statements)
+    else:
+
+        def write(apps, editor):
+            native = editor.connection.connection
+            native.execute("UPDATE child SET parent_id=99")
+            if path == "native_sql":
+                native.cursor().execute("COMMIT")
+            elif path == "native_commit":
+                native.commit()
+            elif path == "native_rollback":
+                native.rollback()
+            else:
+                native.executescript("UPDATE child SET label='escaped';")
+
+        operation = RunPython(write, write)
+    executor = MigrationExecutor(connection)
+    executor.recorder.ensure_schema()
+    item = migration(operation)
+    if backward:
+        executor.recorder.record_applied("scope_app", "scope_test")
+    expected_error = DatabaseError if path.startswith("sql_") else sqlite3.DatabaseError
+    with checks(connection) as statements, pytest.raises(expected_error, match="not authorized"):
+        if backward:
+            executor.unapply_migration(state(), item)
+        else:
+            executor.apply_migration(state(), item)
+    assert "COMMIT" not in statements
+    assert connection.connection.execute("SELECT parent_id, label FROM child").fetchall() == [(1, "child")]
+    assert (("scope_app", "scope_test") in executor.recorder.applied_migrations()) is backward
+    assert_restored(connection)
+
+
+@isolate_apps()
+def test_custom_meta_index_cannot_inherit_trusted_deferred_provenance(connection):
+    class CustomIndex(models.Index):
+        pass
+
+    class Entry(models.Model):
+        label = models.TextField(db_index=True)
+
+        class Meta:
+            app_label = "scope_app"
+            indexes = [
+                CustomIndex(fields=["label"], name="custom_meta_idx"),
+                models.Index(fields=["label"], name="standard_meta_idx"),
+            ]
+
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        editor.create_model(Entry)
+    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert sum(sql.startswith('CREATE INDEX "custom_meta_idx"') for sql in statements) == 1
+    assert sum(sql.startswith('CREATE INDEX "standard_meta_idx"') for sql in statements) == 1
+    assert_restored(connection)
+
+
+def test_deferred_commit_is_rejected_before_persisting_invalid_data(connection):
+    with pytest.raises(DatabaseError, match="not authorized"), connection.schema_editor() as editor:
+        editor.execute("UPDATE child SET parent_id=99")
+        editor.deferred_sql.append("COMMIT")
+    assert connection.connection.execute("SELECT parent_id FROM child").fetchall() == [(1,)]
+    assert_restored(connection)
+
+
+def test_caught_transaction_denial_keeps_later_outer_writes_observed(connection):
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+            connection.connection.commit()
+        assert connection.connection.in_transaction
+        editor.execute("UPDATE child SET parent_id=99")
+    assert fk_checks(statements) == ['PRAGMA foreign_key_check("child")']
+    assert connection.connection.execute("SELECT parent_id FROM child").fetchall() == [(1,)]
+    assert_restored(connection)
+
+
+def test_nonatomic_editor_preserves_explicit_native_transaction_behavior(connection):
+    with checks(connection) as statements, connection.schema_editor(atomic=False):
+        connection.connection.execute("BEGIN")
+        connection.connection.execute("UPDATE child SET label='nonatomic'")
+        connection.connection.commit()
+    assert fk_checks(statements) == []
+    assert connection.connection.execute("SELECT label FROM child").fetchall() == [("nonatomic",)]
+    assert_restored(connection)
+
+
+def test_nested_django_and_native_savepoint_release_cannot_commit_outer_editor(connection):
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        with transaction.atomic(using=connection.alias):
+            editor.execute("UPDATE child SET label='savepoint'")
+        assert connection.connection.in_transaction
+        native = connection.connection
+        native.execute("SAVEPOINT explicit_savepoint")
+        native.execute("UPDATE child SET parent_id=99")
+        native.execute("RELEASE explicit_savepoint")
+        assert native.in_transaction
+        assert connection.in_atomic_block
+    assert fk_checks(statements) == ['PRAGMA foreign_key_check("child")']
+    assert connection.connection.execute("SELECT parent_id, label FROM child").fetchall() == [(1, "child")]
+    assert_restored(connection)

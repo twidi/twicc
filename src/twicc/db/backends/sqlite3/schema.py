@@ -61,7 +61,7 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
                 raise NotSupportedError("SQLite foreign key enforcement cannot be disabled in this transaction.")
             BaseDatabaseSchemaEditor.__enter__(self)
             self._entered_atomic = self.atomic_migration
-            connection.connection.set_authorizer(self.observer.observe)
+            connection.connection.set_authorizer(self._authorize)
             self._observing = True
             return self
         except BaseException:
@@ -105,6 +105,13 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
             raise
         finally:
             self._finish(error)
+
+    def _authorize(self, action, arg1, arg2, database, source):
+        # The editor starts its transaction before observation and finishes
+        # it after observation. User controls must not end that transaction.
+        if self.atomic_migration and action == sqlite3.SQLITE_TRANSACTION:
+            return sqlite3.SQLITE_DENY
+        return self.observer.observe(action, arg1, arg2, database, source)
 
     def _stop_observing(self):
         if self._observing:
@@ -179,13 +186,27 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         with self._operation(kind, model._meta.db_table):
             return super().remove_index(model, index)
 
+    def _model_indexes_sql(self, model):
+        if not model._meta.managed or model._meta.proxy or model._meta.swapped:
+            return []
+        statements = []
+        for field in model._meta.local_fields:
+            with self._operation("field_index", model._meta.db_table):
+                statements.extend(self._field_indexes_sql(model, field))
+        for index in model._meta.indexes:
+            if not index.contains_expressions or self.connection.features.supports_expression_indexes:
+                kind = "index" if type(index) is Index else "unknown"
+                with self._operation(kind, model._meta.db_table):
+                    statements.append(index.create_sql(model, self))
+        return statements
+
     def _create_index_sql(self, model, **kwargs):
         statement = super()._create_index_sql(model, **kwargs)
         if (
             self._operations
             and self._operations[-1]
             in (
-                ("create", model._meta.db_table),
+                ("field_index", model._meta.db_table),
                 ("index", model._meta.db_table),
             )
             and kwargs.get("sql") in (None, self.sql_create_index)
