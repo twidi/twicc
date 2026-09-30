@@ -42,3 +42,16 @@ test('keeps the Shortcuts entry reachable on touch devices', () => {
     assert.ok(shortcutsButton, 'the Shortcuts nav entry must exist')
     assert.doesNotMatch(shortcutsButton[0], /v-if/)
 })
+
+// Tips and Help are always in the menu: an empty list shows the section's own empty state,
+// and the "Tips enabled" switch stays reachable (step 7f, settings-crossfade-design §2b).
+test('keeps the Tips and Help entries always in the menu', () => {
+    for (const name of ['tips', 'help']) {
+        const button = source.match(new RegExp(`<button[^>]*${name}-nav-item[^>]*>`))
+        assert.ok(button, `the ${name} nav entry must exist`)
+        assert.doesNotMatch(button[0], /v-if/)
+    }
+    for (const name of ['hasTips', 'hasHelp', 'availableTips', 'availableHelp']) {
+        assert.ok(!source.includes(name), `${name} is gone`)
+    }
+})

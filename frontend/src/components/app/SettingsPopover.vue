@@ -3,12 +3,11 @@ import McpSettings from '../mcp/McpSettings.vue'
 // SettingsPopover.vue - Settings button with popover panel
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useMediaQuery } from '@vueuse/core'
 import { useSettingsStore, SETTINGS_SCHEMA } from '../../stores/settings'
 import { useDataStore } from '../../stores/data'
 import { useLayoutsStore } from '../../stores/layouts'
 import { useAuthStore } from '../../stores/auth'
-import { useTipsStore } from '../../stores/tips'
-import { useHelpStore } from '../../stores/help'
 import { usePeersStore } from '../../stores/peers'
 import { useBenchmarkTaskStore } from '../../stores/benchmarkTask'
 import { getProviderHelpers, getProviderLabel, getProviderOptions, getRegisteredProviders, getProviderIcon } from '../../providers'
@@ -57,31 +56,8 @@ const store = useSettingsStore()
 const dataStore = useDataStore()
 const layoutsStore = useLayoutsStore()
 const authStore = useAuthStore()
-const tipsStore = useTipsStore()
-const helpStore = useHelpStore()
 const peersStore = usePeersStore()
 const benchmarkTaskStore = useBenchmarkTaskStore()
-
-// Tips section is hidden from the nav (and the active-section watcher
-// below redirects away from it) when no tip matches the current
-// environment's constraints. Empty manifest, or all tips filtered out
-// by platform / os / providers, → no entry. Reactive: re-evaluates when
-// the manifest, the touch-device flag, the OS, or enabledProviders changes.
-const availableTips = computed(() => tipsStore.getAvailableTips({
-    platform: store._isTouchDevice ? 'mobile' : 'desktop',
-    os: store.os,
-    enabledProviders: store.enabledProviders,
-}))
-const hasTips = computed(() => availableTips.value.length > 0)
-
-// Help section: same gating as tips — hidden from the nav when no help
-// page matches the current environment's constraints.
-const availableHelp = computed(() => helpStore.getAvailableHelp({
-    platform: store._isTouchDevice ? 'mobile' : 'desktop',
-    os: store.os,
-    enabledProviders: store.enabledProviders,
-}))
-const hasHelp = computed(() => availableHelp.value.length > 0)
 
 // Reactive set of currently enabled providers (derived from the settings store).
 const enabledProviders = computed(() => new Set(store.enabledProviders))
@@ -143,25 +119,33 @@ useGlideInk({
     getActive: () => navRef.value?.querySelector('.settings-nav-item.active') ?? null,
     // A badge appearing on an item above (the peers inbox count) moves the chosen one.
     getItems: () => [...(navRef.value?.querySelectorAll('.settings-nav-item') ?? [])],
-    sources: [activeSection, sections, hasTips, hasHelp],
+    sources: [activeSection, sections],
 })
 
-// If the user is sitting on the Tips section when its nav entry
-// disappears (e.g. they just toggled the last enabled provider that
-// gated the only available tip), bounce them back to General so the
-// detail panel doesn't render an empty/orphaned TipsSettings.
-watch(hasTips, (now) => {
-    if (!now && activeSection.value === 'tips') {
-        activeSection.value = 'general'
-    }
-})
+// The section content crossfades on a section change (visual refresh step 7f): the old one
+// fades out, then the new one fades in with a small rise. Desktop only: on a phone the panel
+// slide is the only transition, so the swap is instant there (the slide rules' breakpoint).
+const isNarrow = useMediaQuery('(width < 640px)')
+const detailRef = ref(null)
 
-// Same bounce for the Help section when its nav entry disappears.
-watch(hasHelp, (now) => {
-    if (!now && activeSection.value === 'help') {
-        activeSection.value = 'general'
-    }
-})
+// The leaving section's DOM stays for its fade: it takes no click and no Tab.
+function onSectionLeaving(el) {
+    el.inert = true
+}
+
+// The next section starts at its top (it is still at opacity 0: the jump is invisible).
+function onSectionLeft() {
+    if (detailRef.value) detailRef.value.scrollTop = 0
+}
+
+// Work that needs the entering section mounted (see goToPublicBaseUrl). One slot, cleared
+// before it runs. Keep at most one parameter: a second one makes Vue wait for a done() call.
+let afterSwap = null
+function onSectionEnter() {
+    const run = afterSwap
+    afterSwap = null
+    if (run) nextTick(run)
+}
 
 function handleCloseRequest() {
     const el = popoverRef.value
@@ -867,10 +851,14 @@ function openPeerInbox() {
 }
 
 // Called when the Notifications section's callout is clicked: jump to General and
-// focus the External address field.
+// focus the External address field. After a section swap the field only exists once General
+// enters (after the exit fade), so the focus waits for the Transition's enter hook.
 function goToPublicBaseUrl() {
+    const swaps = activeSection.value !== 'general'
     selectSection('general')
-    nextTick(() => publicBaseUrlInputRef.value?.focus())
+    const focusInput = () => publicBaseUrlInputRef.value?.focus()
+    if (swaps) afterSwap = focusInput
+    else nextTick(focusInput)
 }
 
 /**
@@ -1207,6 +1195,8 @@ function onPopoverShow() {
     // popover) left behind.
     benchmarkTaskStore.resetTransientControls()
     mobileShowContent.value = false
+    // A pending post-swap focus whose swap never ran must not fire later.
+    afterSwap = null
     // Seed the worktree-directory template input from the persisted value
     // (General is the default section, so selectSection('general') may not fire
     // on open).
@@ -1306,7 +1296,6 @@ function onChangelogClose() {
                         Shortcuts
                     </button>
                     <button
-                        v-if="hasTips"
                         class="settings-nav-item tips-nav-item"
                         :class="{ active: activeSection === 'tips' }"
                         @click="selectSection('tips')"
@@ -1314,7 +1303,6 @@ function onChangelogClose() {
                         Tips
                     </button>
                     <button
-                        v-if="hasHelp"
                         class="settings-nav-item help-nav-item"
                         :class="{ active: activeSection === 'help' }"
                         @click="selectSection('help')"
@@ -1326,7 +1314,7 @@ function onChangelogClose() {
                 <wa-divider class="settings-vertical-divider" orientation="vertical"></wa-divider>
 
                 <!-- Detail: section content -->
-                <div class="settings-detail">
+                <div ref="detailRef" class="settings-detail">
                     <div class="settings-detail-header glass-sticky" @click="goBackToNav">
                         <wa-button
                             variant="neutral"
@@ -1341,6 +1329,16 @@ function onChangelogClose() {
                         </span>
                     </div>
                     <div class="settings-sections">
+                    <!-- Section crossfade (step 7f): one keyed wrapper, desktop only (see isNarrow). -->
+                    <Transition
+                        name="settings-swap"
+                        :mode="isNarrow ? undefined : 'out-in'"
+                        :css="!isNarrow"
+                        @before-leave="onSectionLeaving"
+                        @enter="onSectionEnter"
+                        @after-leave="onSectionLeft"
+                    >
+                    <div :key="activeSection" class="settings-swap">
 
                 <!-- General Section -->
                 <section v-if="activeSection === 'general'" class="settings-section">
@@ -2230,6 +2228,8 @@ function onChangelogClose() {
                 </section>
 
                     </div>
+                    </Transition>
+                    </div>
                 </div>
             </div>
         </div>
@@ -2409,6 +2409,24 @@ function onChangelogClose() {
     min-width: 0;
     overflow-y: auto;
     padding: var(--wa-space-m);
+}
+
+/* Section crossfade (step 7f): a fast fade out, then a fade in with a small rise. No mobile
+   media query: `:css="!isNarrow"` turns the classes off on a phone. */
+.settings-swap-leave-active {
+    transition: opacity var(--motion-dur-1) ease-in-out;
+}
+.settings-swap-leave-to {
+    opacity: 0;
+}
+.settings-swap-enter-active {
+    transition:
+        opacity var(--motion-dur-2) ease-in-out,
+        translate var(--motion-dur-3) var(--motion-ease-out);
+}
+.settings-swap-enter-from {
+    opacity: 0;
+    translate: 0 calc(0.75rem * var(--motion-amount));
 }
 
 /* Detail header (back button) - hidden on desktop */

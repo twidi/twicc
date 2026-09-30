@@ -428,7 +428,7 @@ test('8. invariants: individual transforms, scaled by --motion-amount, hover ins
     const changed = [
         ['../components/message/MessageSnippetsBar.vue', (s) => s.includes('.snippet-btn')],
         ['../components/message/MessageInput.vue', (s) => s.includes('.send-button')],
-        ['../components/app/SettingsPopover.vue', (s) => s.includes('#settings-trigger')],
+        ['../components/app/SettingsPopover.vue', (s) => s.includes('#settings-trigger') || s.includes('.settings-swap')],
         ['../components/session/detail/items/TodoContent.vue', (s) => s.includes('todo-item-icon')],
         ['../components/workspace/WorkspaceCard.vue', (s) => s.includes('.workspace-card')],
         ['../components/project/ProjectCard.vue', (s) => s.includes('.project-card')],

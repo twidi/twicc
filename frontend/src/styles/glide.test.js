@@ -253,7 +253,7 @@ test('list sites: ink colors and radii, sources and reset keys', () => {
         '../components/app/SearchOverlay.vue': ['var(--glass-item-highlight)', 'var(--wa-border-radius-s)', 'sources: [selectedIndex, results]', 'resetKey: () => results.value'],
         '../components/message/CommandPickerPopup.vue': ['var(--glass-item-highlight)', '0', 'sources: [activeIndex, filteredCommands]', 'resetKey: () => searchQuery.value'],
         '../components/message/MessageHistoryPickerPopup.vue': ['var(--glass-item-highlight)', '0', 'sources: [activeIndex, filteredMessages]', 'resetKey: () => searchQuery.value'],
-        '../components/app/SettingsPopover.vue': ['linear-gradient(100deg, var(--wa-color-brand-fill-normal), var(--wa-color-brand-fill-quiet))', 'var(--wa-border-radius-m)', 'sources: [activeSection, sections, hasTips, hasHelp]', null],
+        '../components/app/SettingsPopover.vue': ['linear-gradient(100deg, var(--wa-color-brand-fill-normal), var(--wa-color-brand-fill-quiet))', 'var(--wa-border-radius-m)', 'sources: [activeSection, sections]', null],
     }
     for (const site of SITES) {
         const sfc = read(site.file)
