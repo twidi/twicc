@@ -13,6 +13,7 @@ from django.db.models import Index
 
 from twicc.db.migration_logging import log_fk_check
 
+from .driver import Connection
 from .effects import CheckDecision, EffectObserver
 from .metadata import canonical_identifier, read_schema
 
@@ -40,6 +41,11 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         if getattr(connection, "_migration_effect_editor", None) is not None or connection.in_atomic_block:
             raise NotSupportedError("Nested SQLite schema editors and existing atomic blocks are unsupported.")
         connection.ensure_connection()
+        if self.atomic_migration and not self.collect_sql:
+            if not isinstance(connection.connection, Connection):
+                raise NotSupportedError("Atomic SQLite schema editing requires the guarded connection factory.")
+            if connection.connection._migration_unguarded_cursor:
+                raise NotSupportedError("Atomic SQLite schema editing cannot use an unguarded cursor factory.")
         if connection.connection.in_transaction:
             raise NotSupportedError("SQLite schema editing cannot enter an existing native transaction.")
         if connection.connection.execute("PRAGMA writable_schema").fetchone()[0]:
@@ -64,6 +70,8 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
                 raise NotSupportedError("SQLite foreign key enforcement cannot be disabled in this transaction.")
             BaseDatabaseSchemaEditor.__enter__(self)
             self._entered_atomic = self.atomic_migration
+            if self.atomic_migration:
+                connection.connection._migration_transaction_guard = self._check_atomic_transaction
             connection.connection.set_authorizer(self._authorize)
             self._observing = True
             return self
@@ -82,6 +90,7 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         error = (exc_type, exc_value, traceback)
         try:
             if exc_type is None:
+                self._check_atomic_transaction()
                 # Django normally drains these after its SQLite check. Drain
                 # them here instead, while observation and rollback still work.
                 for statement in self.deferred_sql:
@@ -116,6 +125,10 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         finally:
             self._finish(error)
 
+    def _check_atomic_transaction(self):
+        if self._entered_atomic and not self.connection.connection.in_transaction:
+            raise sqlite3.OperationalError("The SQLite migration transaction ended before validation.")
+
     def _authorize(self, action, arg1, arg2, database, source):
         # The editor starts its transaction before observation and finishes
         # it after observation. User controls must not end that transaction.
@@ -131,6 +144,8 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
     def _finish(self, error):
         """Run every cleanup step and preserve the original operation error."""
         cleanup_error = None
+        if isinstance(self.connection.connection, Connection):
+            self.connection.connection._migration_transaction_guard = None
         try:
             self._stop_observing()
         except BaseException:

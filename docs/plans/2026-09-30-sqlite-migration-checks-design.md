@@ -103,6 +103,8 @@ The callback must not execute SQL or query metadata.
 Build the dependency snapshot before observation and refresh it after deferred SQL.
 Do not use the callback as a per-row observer.
 Installing the callback covers previously prepared statements in the tested Python/SQLite combination; pin that behavior in tests.
+A cached statement can execute again without another authorizer callback.
+The authorizer therefore cannot enforce transaction ownership by itself.
 
 Do not select a check just because an operation is named `RunPython` or `RunSQL`.
 A write to an ordinary column requires no FK scan unless a generated key, a trigger, or unique-conflict deletion introduces a relation effect.
@@ -157,6 +159,28 @@ Validate before the atomic migration commits.
 On operation or validation failure, exit the transaction with the exception.
 Restore foreign key enforcement and remove observers in a `finally` path.
 Preserve the original exception if cleanup also fails.
+
+Atomic editing also guards the native driver's execution methods.
+SQLite can roll back implicitly through OR ROLLBACK, schema-level ON CONFLICT ROLLBACK, or trigger RAISE(ROLLBACK).
+A callback can catch that error while Django still reports an active atomic block.
+Check the native in_transaction state before further execution, including cached statements and cursor result steps.
+Check again after successful execution. Preserve the original driver error when execution itself fails.
+Guard each executemany parameter iteration because its iterator can execute SQL between rows.
+Keep this guard through deferred SQL, metadata refresh, and validation. Remove it before transaction cleanup.
+Check editor exit even when a caught rollback has no subsequent SQL.
+Reject after boundary loss before another data write or migration-record write can autocommit.
+
+The local sqlite3 Connection factory routes native connection shortcuts through guarded cursor classes.
+It also guards Django's cursor class and class-based custom cursor factories.
+Cursors obtained through connection.cursor() before editor entry receive the same active guard.
+The guard is inactive outside atomic editing, including atomic=False and collect_sql.
+Custom connection factories must inherit the local Connection and preserve its methods for atomic editing.
+Other factories retain normal behavior outside atomic editing and are rejected before editor entry changes enforcement.
+Opaque callable cursor factories retain normal behavior outside atomic editing.
+If one creates an unguarded cursor, that connection cannot enter an atomic editor afterward.
+Such factories are rejected before invocation during atomic editing.
+Direct construction of raw sqlite3 cursors, unbound base-driver method calls, and overriding or removing guards bypass the supported driver contract.
+The standard-backend opt-out remains available for those customizations.
 
 Do not use a background validation task: it would run after the migration commits.
 Do not claim complete rollback for an `atomic=False` migration.
@@ -264,6 +288,9 @@ Required correctness cases:
 - `RunPython` ORM writes and `RunSQL` after otherwise safe schema work.
 - Deferred SQL, operation failure, validation failure, and enforcement restoration.
 - Migration records and schema rollback on atomic failure.
+- Caught implicit rollback from statement conflicts, schema conflicts, and triggers in both executor directions.
+- Cached native connection/cursor execution, pre-existing cursors, executemany iterators, and pending cursor result steps.
+- Early rejection of unsupported factories, original-error precedence, and inactive guards outside atomic editing.
 - Non-atomic migrations, unknown custom operations, and collected SQL.
 - Fresh database installation and migration squash replacement bookkeeping.
 - Existing database triggers and unexpected execution paths.

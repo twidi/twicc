@@ -725,3 +725,198 @@ def test_nested_django_and_native_savepoint_release_cannot_commit_outer_editor(c
     assert fk_checks(statements) == ['PRAGMA foreign_key_check("child")']
     assert connection.connection.execute("SELECT parent_id, label FROM child").fetchall() == [(1, "child")]
     assert_restored(connection)
+
+
+@pytest.mark.parametrize("rollback_kind", ["statement", "schema", "trigger"])
+@pytest.mark.parametrize(
+    "path",
+    ["connection", "cursor", "many_connection", "many_cursor", "script_connection", "script_cursor", "recorder"],
+)
+@pytest.mark.parametrize("backward", [False, True])
+def test_executor_implicit_rollback_blocks_cached_writes_and_record_changes(connection, rollback_kind, path, backward):
+    native = connection.connection
+    if rollback_kind == "schema":
+        native.execute("CREATE TABLE conflict (id INTEGER UNIQUE ON CONFLICT ROLLBACK)")
+        native.execute("INSERT INTO conflict VALUES (1)")
+        conflict = "INSERT INTO conflict VALUES (1)"
+    elif rollback_kind == "trigger":
+        native.execute("CREATE TRIGGER rollback_insert BEFORE INSERT ON parent BEGIN SELECT RAISE(ROLLBACK, 'stop'); END")
+        conflict = "INSERT INTO parent(id) VALUES (2)"
+    else:
+        conflict = "INSERT OR ROLLBACK INTO parent(id) VALUES (1)"
+    # A cursor acquired before editor entry must still receive the execution guard.
+    cursor = native.cursor()
+    update = "UPDATE child SET parent_id=? WHERE id=1"
+
+    def write(apps, editor):
+        cursor.execute(update, (1,))  # Populate SQLite's statement cache under observation.
+        with pytest.raises(sqlite3.IntegrityError):
+            native.execute(conflict)
+        assert not native.in_transaction
+        target = cursor if path.endswith("cursor") or path == "cursor" else native
+        if path.startswith("many_"):
+            target.executemany(update, [(99,)])
+        elif path.startswith("script_"):
+            target.executescript("UPDATE child SET parent_id=99;")
+        elif path != "recorder":
+            target.execute(update, (99,))
+
+    executor = MigrationExecutor(connection)
+    executor.recorder.ensure_schema()
+    item = migration(RunPython(write, write))
+    if backward:
+        executor.recorder.record_applied("scope_app", "scope_test")
+    with pytest.raises((sqlite3.OperationalError, OperationalError), match="migration transaction"):
+        if backward:
+            executor.unapply_migration(state(), item)
+        else:
+            executor.apply_migration(state(), item)
+    assert native.execute("SELECT parent_id FROM child").fetchall() == [(1,)]
+    assert native.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert (("scope_app", "scope_test") in executor.recorder.applied_migrations()) is backward
+    assert_restored(connection)
+
+
+def test_caught_implicit_rollback_fails_editor_exit_without_more_sql(connection):
+    with (
+        pytest.raises(sqlite3.OperationalError, match="migration transaction"),
+        connection.schema_editor(),
+        pytest.raises(sqlite3.IntegrityError),
+    ):
+        connection.connection.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+    assert_restored(connection)
+
+
+@pytest.mark.parametrize("cursor", [False, True])
+def test_executemany_checks_transaction_after_parameter_iterator_callbacks(connection, cursor):
+    native = connection.connection
+
+    def parameters():
+        yield (1,)
+        with pytest.raises(sqlite3.IntegrityError):
+            native.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+        yield (99,)
+
+    target = native.cursor() if cursor else native
+    with pytest.raises(sqlite3.OperationalError, match="migration transaction"), connection.schema_editor():
+        target.executemany("UPDATE child SET parent_id=?", parameters())
+    assert native.execute("SELECT parent_id FROM child").fetchall() == [(1,)]
+    assert_restored(connection)
+
+
+@pytest.mark.parametrize("method", ["fetchone", "fetchmany", "fetchall", "__next__"])
+def test_implicit_rollback_blocks_pending_native_cursor_steps(connection, method):
+    native = connection.connection
+    with pytest.raises(sqlite3.OperationalError, match="migration transaction"), connection.schema_editor():
+        cursor = native.execute("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3")
+        with pytest.raises(sqlite3.IntegrityError):
+            native.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+        with pytest.raises(sqlite3.OperationalError, match="migration transaction"):
+            getattr(cursor, method)()
+    assert_restored(connection)
+
+
+def test_callable_cursor_factory_keeps_normal_behavior_and_rejects_atomic_editing(connection):
+    native = connection.connection
+    cursor = native.cursor(factory=lambda db: sqlite3.Cursor(db))
+    assert cursor.execute("SELECT 1").fetchone() == (1,)
+    with pytest.raises(NotSupportedError, match="cursor factory"), connection.schema_editor():
+        pass
+    assert_restored(connection)
+
+
+def test_callable_cursor_factory_rejects_before_creating_unguarded_cursor_during_atomic_editing(connection):
+    called = []
+
+    def factory(db):
+        called.append(True)
+        return sqlite3.Cursor(db)
+
+    with connection.schema_editor(), pytest.raises(sqlite3.NotSupportedError, match="cursor factory"):
+        connection.connection.cursor(factory=factory)
+    assert called == []
+    assert_restored(connection)
+
+
+@pytest.mark.parametrize("mode", ["normal", "nonatomic", "collect"])
+def test_implicit_rollback_keeps_standard_behavior_without_owned_atomic_boundary(connection, mode):
+    native = connection.connection
+
+    def write():
+        native.execute("BEGIN")
+        with pytest.raises(sqlite3.IntegrityError):
+            native.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+        native.execute("UPDATE child SET label='autocommitted'")
+
+    if mode == "normal":
+        write()
+    else:
+        with connection.schema_editor(atomic=False, collect_sql=mode == "collect"):
+            write()
+    assert native.execute("SELECT label FROM child").fetchone() == ("autocommitted",)
+    assert_restored(connection)
+
+
+def test_uncaught_implicit_rollback_preserves_original_error_and_cleans_up(connection):
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint"), connection.schema_editor():
+        connection.connection.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+    assert_restored(connection)
+
+
+def test_custom_cursor_subclass_keeps_behavior_and_receives_atomic_guard(connection):
+    class CustomCursor(sqlite3.Cursor):
+        def execute(self, sql, parameters=()):
+            return super().execute(sql, parameters)
+
+    native = connection.connection
+    cursor = native.cursor(factory=CustomCursor)
+    assert isinstance(cursor, CustomCursor)
+    with pytest.raises(sqlite3.OperationalError, match="migration transaction"), connection.schema_editor():
+        cursor.execute("UPDATE child SET parent_id=?", (1,))
+        with pytest.raises(sqlite3.IntegrityError):
+            cursor.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+        cursor.execute("UPDATE child SET parent_id=?", (99,))
+    assert native.execute("SELECT parent_id FROM child").fetchone() == (1,)
+    assert_restored(connection)
+
+
+@pytest.mark.parametrize("mode", ["atomic", "nonatomic", "collect"])
+def test_custom_connection_factory_preserved_with_explicit_atomic_contract(connection, mode):
+    config = {
+        **connection.settings_dict,
+        "NAME": ":memory:",
+        "OPTIONS": {"factory": sqlite3.Connection},
+    }
+    db = DatabaseWrapper(config, "custom_factory")
+    try:
+        db.ensure_connection()
+        assert type(db.connection) is sqlite3.Connection
+        if mode == "atomic":
+            with pytest.raises(NotSupportedError, match="connection factory"), db.schema_editor():
+                pass
+        else:
+            with db.schema_editor(atomic=False, collect_sql=mode == "collect") as editor:
+                editor.execute("CREATE TABLE custom_table(id integer)")
+            exists = db.connection.execute("SELECT name FROM sqlite_master WHERE name='custom_table'").fetchall()
+            assert exists == ([] if mode == "collect" else [("custom_table",)])
+        assert_restored(db)
+    finally:
+        db.close()
+
+
+def test_successful_native_callback_detects_implicit_rollback_before_return(connection):
+    native = connection.connection
+
+    def rollback_callback():
+        with pytest.raises(sqlite3.IntegrityError):
+            native.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+        return 1
+
+    native.create_function("rollback_callback", 0, rollback_callback)
+    with (
+        pytest.raises(sqlite3.OperationalError, match="migration transaction"),
+        connection.schema_editor(),
+        pytest.raises(sqlite3.OperationalError, match="migration transaction"),
+    ):
+        native.execute("SELECT rollback_callback()")
+    assert_restored(connection)
