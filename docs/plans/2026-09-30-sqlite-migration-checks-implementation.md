@@ -110,7 +110,10 @@ Its broad schema trust flag and deferred-statement identity shortcut must be rep
 
 **Interfaces:**
 
-- Settings select `twicc.db.backends.sqlite3`, unless `TWICC_SQLITE_STANDARD_MIGRATIONS=1` selects `django.db.backends.sqlite3`.
+- Runtime settings use `django.db.backends.sqlite3`.
+- Migration settings select `twicc.db.backends.sqlite3`, unless `TWICC_SQLITE_STANDARD_MIGRATIONS=1` selects `django.db.backends.sqlite3`.
+- Run direct optimized migrations with `python -m django migrate --settings=twicc.settings_migration`.
+- Startup waits for a migration child process before backfill or server startup.
 - Test settings explicitly select the project backend for its regression suite; comparison fixtures instantiate the standard backend.
 - `migration_logging` holds a context-local migration identity and direction. No global mutable current-migration value.
 - `Command` subclasses Django's migrate command. Its progress callback logs start/end at verbosity 0 and delegates normal CLI output.

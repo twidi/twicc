@@ -67,7 +67,7 @@ def check_sql(statements):
 @pytest.mark.parametrize("opt_out", ["", "1", "0"])
 def test_backend_selected_before_connection_opens(opt_out):
     script = """
-import twicc.settings as settings
+import twicc.settings_migration as settings
 from django.db.utils import load_backend
 config = settings.DATABASES['default']
 db = load_backend(config['ENGINE']).DatabaseWrapper(config)
@@ -82,8 +82,8 @@ print(db.connection is None)
     assert result.stdout.splitlines() == [expected, "True"]
 
 
-def test_test_settings_select_optimized_backend():
-    assert connections["default"].settings_dict["ENGINE"] == "twicc.db.backends.sqlite3"
+def test_test_settings_select_standard_backend():
+    assert connections["default"].settings_dict["ENGINE"] == "django.db.backends.sqlite3"
 
 
 @pytest.fixture

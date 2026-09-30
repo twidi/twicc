@@ -61,8 +61,8 @@ get_provider_helpers_registry().purge_env_vars(os.environ)
 # (e.g. its ``manage.py`` would load twicc's settings instead of its own).
 #
 # Safe to drop here: ``django.setup()`` above has already cached the settings
-# for this process, and the in-process uvicorn / migrations never re-read the
-# env var. The one process that still needs it — the spawned compute worker
+# for this process, and in-process uvicorn never re-reads the env var.
+# The migration child selects settings with --settings. The compute worker
 # (multiprocessing "spawn") — sets it itself before its own ``django.setup()``
 # (see ``twicc.providers.background_compute_task.compute_worker_main``), so it
 # no longer relies on inheriting it from here.
@@ -78,7 +78,7 @@ _startup_console.setFormatter(logging.Formatter("%(message)s"))
 logging.getLogger("twicc").addHandler(_startup_console)
 
 # Now we can import Django-dependent modules
-from django.core.management import call_command  # noqa: E402
+from twicc.db.migration_process import run_migrations  # noqa: E402
 
 from twicc.instance_lock import InstanceAlreadyRunning, InstanceLock  # noqa: E402
 from twicc.log_retention import log_trim_enabled, trim_log_file  # noqa: E402
@@ -562,7 +562,7 @@ def main():
             logger.info("First run in this data dir: no database yet")
 
         # Migrations auto
-        call_command("migrate", verbosity=0)
+        run_migrations()
         logger.info("Migrations applied")
 
         # Backfill Project.worktree_of from strong filesystem signals. Must run

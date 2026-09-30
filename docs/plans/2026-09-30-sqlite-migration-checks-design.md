@@ -329,7 +329,11 @@ Clear logging context after both command success and command failure.
 There is no Django failure progress callback. Catch failures in handle(), log the active migration, then restore the context.
 fake_initial may start with fake=False and finish with fake=True; use the final callback's flag for outcome logging.
 
-Provide `TWICC_SQLITE_STANDARD_MIGRATIONS=1` as a startup-time opt-out that selects standard Django SQLite behavior.
+Runtime settings use standard Django SQLite behavior. Startup runs migrations synchronously in a child interpreter with `twicc.settings_migration`.
+
+Provide `TWICC_SQLITE_STANDARD_MIGRATIONS=1` as a migration-child opt-out that selects standard Django SQLite behavior.
+
+Direct optimized migration commands must select `--settings=twicc.settings_migration`.
 The settings selection applies before connections open, for command-line migrations and application startup.
 Test settings explicitly select the optimized backend. Comparison fixtures instantiate the standard backend separately.
 
