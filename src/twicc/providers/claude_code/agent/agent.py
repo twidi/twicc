@@ -1134,6 +1134,14 @@ class ClaudeCodeAgent(BaseAgent):
             env_option = {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
             if _mcp_on:
                 env_option["MCP_TOOL_TIMEOUT"] = "600000"
+            # Claude Code 2.1.285 stops a background Bash command after 30 minutes
+            # by default and 2 hours at most — before, it ran until it ended. Lift
+            # the ceiling the agent may request (foreground and background alike)
+            # to the timer maximum, ~24.8 days, so it can keep a long-running shell
+            # alive on purpose. The defaults stay (2 minutes foreground, 30 minutes
+            # background): raising them would let a hung foreground command block
+            # the turn just as long.
+            env_option["BASH_MAX_TIMEOUT_MS"] = "2147483647"
             # Configured provider homes (CLAUDE_CONFIG_DIR & co): explicit even
             # though os.environ inheritance would carry them — the invariant
             # that a launched process never touches another home must not
